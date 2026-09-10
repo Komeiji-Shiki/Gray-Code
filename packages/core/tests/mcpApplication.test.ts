@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
+import { captureBotAgent } from '../../../apps/server/src/bots/profiles';
 import { fixture } from './fixtures';
 
 test('MCP configuration drafts do not spawn processes; committed stdio discovery and calls run through the task core', async () => {
@@ -24,24 +25,52 @@ test('MCP configuration drafts do not spawn processes; committed stdio discovery
       transport: { type: 'stdio', command: process.execPath, args: [path.resolve('packages/core/tests/fixtures/mcp-server.cjs'), marker] } } });
     await expect(access(marker)).rejects.toThrow();
     await expect(call('connectMcpServer', { serverId: 'fixture' })).rejects.toThrow('请先保存');
-    await call('tools.setToolAutoExec', { toolName: 'mcp__fixture__echo', autoExec: true });
+    expect((await call('tools.getAutoExecConfig')).config.mcp__fixture__echo).toBeUndefined();
     await call('ui.settings.save');
     await call('connectMcpServer', { serverId: 'fixture' });
     expect((await call('getMcpServers')).servers[0].status).toBe('connected');
     expect((await call('tools.getMcpTools')).tools[0].name).toBe('mcp__fixture__echo');
     const chat = await router.call(owner, 'conversations.create', { title: 'MCP' }) as { id: string };
-    const start = () => app.runtime.start({ actorId: 'owner', agentId: 'default', requestKey: toolText, conversationId: chat.id, message: { role: 'user', parts: [{ text: toolText }] } });
+    const start = (agentId = 'default') => app.runtime.start({ actorId: 'owner', agentId, requestKey: toolText, conversationId: chat.id, message: { role: 'user', parts: [{ text: toolText }] } });
     const run = await start();
     expect((await app.runtime.wait(run.id))?.status).toBe('completed');
     const history = await app.storage.readFullHistory(chat.id);
     expect(history.messages.find(message => message.isFunctionResponse)?.parts[0]).toMatchObject({ functionResponse: { response: { success: true, data: { structuredContent: { echoed: 'stdio works' } } } } });
     expect(history.messages.find(message => message.isFunctionResponse)?.parts[1]).toMatchObject({ inlineData: { mimeType: 'application/octet-stream', data: Buffer.from('fixture binary').toString('base64') } });
+    // Discord 捕获的配置同样保留 MCP 缺省自动执行，避免桌面正常而 Bot 再次请求确认。
+    toolText = 'bot default';
+    const bot = await captureBotAgent(app, 'owner', chat.id, { agentId: 'default', toolsEnabled: true });
+    const botRun = await start(bot.id);
+    expect((await app.runtime.wait(botRun.id))?.status).toBe('completed');
+    expect((await app.storage.readRunEvents(botRun.id)).some(event => event.type === 'approval.requested')).toBe(false);
+
+    await call('ui.settings.begin');
+    await call('tools.setToolAutoExec', { toolName: 'mcp__fixture__echo', autoExec: false });
+    await call('ui.settings.save');
+    const approvalReady = new Promise<string>(resolve => {
+      const off = app.runtime.subscribe(event => {
+        if (event.type === 'event' && event.event.type === 'approval.requested') { off(); resolve(String(event.event.payload.id)); }
+      });
+    });
+    toolText = 'confirmed';
+    const askingBot = await captureBotAgent(app, 'owner', chat.id, { agentId: 'default', toolsEnabled: true });
+    const askingRun = await start(askingBot.id);
+    const approvalId = await approvalReady;
+    expect((await app.storage.readRunEvents(askingRun.id)).some(event => event.type === 'tool.started')).toBe(false);
+    await app.runtime.resolveApproval(approvalId, 'owner', true);
+    expect((await app.runtime.wait(askingRun.id))?.status).toBe('completed');
+    expect((await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse).at(-1)?.parts[0])
+      .toMatchObject({ functionResponse: { response: { success: true, data: { structuredContent: { echoed: 'confirmed' } } } } });
+
+    await call('ui.settings.begin');
+    await call('tools.setToolAutoExec', { toolName: 'mcp__fixture__echo', autoExec: true });
+    await call('ui.settings.save');
     toolText = 'wait';
     const started = new Promise<void>(resolve => { const off = app.subscribe(event => { if (event.type === 'event' && (event.event as any).type === 'tool.started') { off(); resolve(); } }); });
     const pending = await start(); await started; await app.runtime.cancel(pending.id, 'owner');
     expect((await app.runtime.wait(pending.id))?.status).toBe('cancelled');
     expect(captured.every(names => names.includes('mcp__fixture__echo'))).toBe(true);
-    expect((await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse)).toHaveLength(2);
+    expect((await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse)).toHaveLength(4);
     await call('disconnectMcpServer', { serverId: 'fixture' });
     expect(app.mcp.names()).toEqual([]);
   } finally { await app.close(); await f.cleanup(); }
