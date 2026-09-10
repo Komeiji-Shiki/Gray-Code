@@ -12,6 +12,12 @@ export interface ActorIdentity {
   role: AccountRole;
   effects: ToolEffect[];
   workspaceIds: string[] | '*';
+  /** 默认允许当前 Bot 会话的专用目录，仍需具备相应的读写操作权限。 */
+  botWorkspaceAccess?: boolean;
+  /** 配置后只允许列出的 MCP 工具；未配置的旧账号继续使用原操作权限。 */
+  mcpTools?: string[];
+  /** 默认访客的权限模板账号；实际发言人仍使用独立的运行身份。 */
+  permissionAccountId?: string;
   revoked?: boolean;
 }
 

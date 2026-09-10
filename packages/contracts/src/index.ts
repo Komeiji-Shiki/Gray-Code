@@ -35,6 +35,7 @@ export interface ConversationSummary {
   updatedAt: number;
   workspaceUri?: string;
   workspaceId?: string;
+  botPlatform?: 'discord' | 'onebot';
   messageCount: number;
   revision: number;
 }

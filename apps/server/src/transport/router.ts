@@ -1,5 +1,6 @@
 import { workspaceForRoot } from '../workspace/paths';
 import { workspaceDirectoryKey } from '../workspace/identity';
+import { ProjectNavigation } from '../conversations/projects';
 import type { PlatformApplication } from "../application";
 import type { SettingsDraft, StartRunInput, WorkspaceDefinition } from "@graycode/contracts";
 import { randomUUID } from "node:crypto";
@@ -71,11 +72,13 @@ export class ApplicationRouter {
             delete existing.managedConversationId; existing.name = String(params.name || existing.name);
             await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
           }
+          await new ProjectNavigation(app).restore(session.actorId, { workspaceId: existing.id });
           return existing;
         }
         const workspace: WorkspaceDefinition = { id: randomUUID(), deviceId: 'local', name: String(params.name || '工作区'), directory: String(params.directory), ...(params.roots !== undefined ? { roots: params.roots } : {}) };
         snapshot.settings.workspaces.push(workspace);
         const saved = await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+        await new ProjectNavigation(app).restore(session.actorId, { workspaceId: workspace.id });
         return saved.settings.workspaces.find(item => item.id === workspace.id);
       }
       case 'workspace.checkpoints.list':

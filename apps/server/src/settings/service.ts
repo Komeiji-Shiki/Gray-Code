@@ -2,6 +2,7 @@ import { workspaceRoots } from '../workspace/paths';
 import { validateDevelopmentSettings } from '../development/settings';
 import { validateDiscordSettings } from '../bots/config';
 import { validateRemoteAccess } from '../transport/webOrigin';
+import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import type {
@@ -248,7 +249,12 @@ export class SettingsService<T = never> {
         (account.workspaceIds !== "*" && !Array.isArray(account.workspaceIds))
       )
         throw new Error("Invalid account grant.");
+      if (account.botWorkspaceAccess !== undefined && typeof account.botWorkspaceAccess !== 'boolean') throw new Error('机器人专用工作区权限必须是布尔值。');
+      if (account.mcpTools !== undefined && (!Array.isArray(account.mcpTools) || account.mcpTools.some(name => typeof name !== 'string' || !isMcpToolName(name))
+        || new Set(account.mcpTools).size !== account.mcpTools.length)) throw new Error('MCP 授权必须是具体工具名称，且不能重复。');
     }
+    if (settings.botGuestAccountId && !settings.accounts.some(account => account.id === settings.botGuestAccountId && account.role !== 'owner'))
+      throw new Error('未绑定用户的默认权限必须选择非主人账号。');
     for (const workspace of settings.workspaces) {
       if (workspace.managedConversationId !== undefined && !identifier.test(workspace.managedConversationId)) throw new Error('自动工作区的对话标识无效。');
       const previous = this.current?.settings.workspaces.find(item => item.id === workspace.id);
@@ -357,9 +363,10 @@ export class SettingsService<T = never> {
         !["discord", "onebot"].includes(binding.platform) ||
         (binding.platform === 'discord' ? !/^\d+$/.test(binding.platformUserId) : typeof binding.platformUserId !== 'string' || !binding.platformUserId.trim()) ||
         bindings.has(key) ||
-        !settings.accounts.some((account) => account.id === binding.accountId)
+        typeof binding.accountId !== 'string' || binding.accountId !== '' && !settings.accounts.some((account) => account.id === binding.accountId)
       )
         throw new Error("Invalid or duplicate platform identity binding.");
+      if (binding.blocked !== undefined && typeof binding.blocked !== 'boolean') throw new Error('拉黑状态必须是布尔值。');
       bindings.add(key);
     }
     for (const bot of [settings.discord, settings.onebot]) {

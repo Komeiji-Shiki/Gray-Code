@@ -18,7 +18,7 @@ export class BotWorkspaces {
       await mkdir(directory, { recursive: true });
       const current = this.app.settings.snapshot();
       if (!current.settings.workspaces.some(workspace => workspace.id === id)) {
-        current.settings.workspaces.push({ id, directory, deviceId: 'local', name: `${context.platform === 'discord' ? 'Discord' : 'QQ'} · ${context.channelId}` });
+        current.settings.workspaces.push({ id, directory, deviceId: 'local', managedConversationId: conversationId, name: `${context.platform === 'discord' ? 'Discord' : 'QQ'} · ${context.channelId}` });
         await this.app.settings.save({ settings: current.settings, expectedRevision: current.revision });
       }
       return id;

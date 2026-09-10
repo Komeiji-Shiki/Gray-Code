@@ -1,6 +1,7 @@
 import { workspaceFilePath } from './workspace/paths';
 import { prepareDeepSeekVisionHistory } from '../../../backend/modules/channel/deepseekVision';
 import { configuredAgent } from './settings/agent';
+import { actorForBotRun, resolveBotGuestActor } from './bots/permissions';
 import { resolveBotAgent } from './bots/profiles';
 import { canReadBotConversation } from './bots/channelAccess';
 import { BotWorkspaces } from './bots/workspaces';
@@ -269,7 +270,7 @@ export class PlatformApplication {
         await this.subagents.feedback.continuation.consume(run);
         return delivered;
       },
-      actor: async (id) => this.actor(id),
+      actor: (id, run) => actorForBotRun(this, id, run),
       canAccessConversation: (actor, conversation) => canReadBotConversation(this, actor, conversation.id),
       agent: async (id, actor, conversationId) => {
         const child = this.subagents.agent(id, actor?.id, conversationId);
@@ -397,7 +398,7 @@ export class PlatformApplication {
       this.settings
         .snapshot()
         .settings.accounts.find((actor) => actor.id === id && !actor.revoked) ??
-      null
+      resolveBotGuestActor(this.settings.snapshot().settings, id)
     );
   }
   requireOwner(actorId: string): ActorIdentity {

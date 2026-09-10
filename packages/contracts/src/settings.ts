@@ -27,6 +27,7 @@ export interface PlatformBinding {
   platform: "discord" | "onebot";
   platformUserId: string;
   accountId: string;
+  blocked?: boolean;
   /** OneBot 12 的平台标识；旧 QQ 绑定对应 qq。 */
   network?: string;
 }
@@ -115,6 +116,8 @@ export interface AppSettings {
   workspaces: WorkspaceDefinition[];
   accounts: ActorIdentity[];
   bindings: PlatformBinding[];
+  /** 空值保持未绑定用户不能主动对话；只能选择非主人账号作为权限模板。 */
+  botGuestAccountId?: string;
   discord: DiscordSettings;
   onebot?: OneBotSettings;
 }

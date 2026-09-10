@@ -22,6 +22,9 @@ import { productSettingsHandlers } from './productSettings';
 import { ProductChat } from './productChat';
 import { SettingsTransfer } from '../settings/transfer';
 import { ConversationNavigation } from '../conversations/navigation';
+import { ProjectNavigation } from '../conversations/projects';
+import { deleteConversation } from '../conversations/delete';
+import { removePermissionAccount, resolveBotGuestActor } from '../bots/permissions';
 import { activateConversationWorkspace } from '../conversations/workspace';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
@@ -77,7 +80,7 @@ export class ProductUi {
   }
   private applyAccountActions(settings: ProductSettingsDraft['app']) {
     for (const [id, action] of this.accountActions) {
-      if (action === 'delete') { settings.accounts = settings.accounts.filter(account => account.id !== id); settings.bindings = settings.bindings.filter(binding => binding.accountId !== id); }
+      if (action === 'delete') removePermissionAccount(settings, id);
       else { const account = settings.accounts.find(account => account.id === id); if (account) account.revoked = true; }
     }
   }
@@ -87,7 +90,7 @@ export class ProductUi {
     const before = this.app.settings.snapshot(); const next = structuredClone(before.settings);
     const target = next.accounts.find(account => account.id === id);
     if (target) {
-      if (action === 'delete') { next.accounts = next.accounts.filter(account => account.id !== id); next.bindings = next.bindings.filter(binding => binding.accountId !== id); }
+      if (action === 'delete') removePermissionAccount(next, id);
       else target.revoked = true;
       await this.app.settings.save({ settings: next, expectedRevision: before.revision });
     }
@@ -98,7 +101,9 @@ export class ProductUi {
       this.applyAccountActions(session.preferences.app); this.applyAccountActions(session.preferences.baseApp);
       if (session.preferences.revision === before.revision) session.preferences.revision = after.revision;
     }
-    for (const run of await this.app.storage.listRuns({ actorId: id, activeOnly: true })) await this.app.runtime.cancel(run.id, client.actorId);
+    for (const run of await this.app.storage.listRuns({ activeOnly: true, limit: 1000 })) {
+      if (run.actorId === id || resolveBotGuestActor(before.settings, run.actorId)?.permissionAccountId === id) await this.app.runtime.cancel(run.id, client.actorId);
+    }
     return { success: true };
   }
   private invoke(client: ClientSession, type: string, data: Record<string, any>): Promise<unknown> {
@@ -253,6 +258,9 @@ export class ProductUi {
       }
       case 'chat.resumeConversationStream': return this.chat.resumeConversationStream(client, data.conversationId);
       case 'conversation.navigation': return new ConversationNavigation(this.app).list(client.actorId, data);
+      case 'projects.rename': return new ProjectNavigation(this.app).update(client.actorId, data, { name: data.name });
+      case 'projects.previewRemoval': return new ProjectNavigation(this.app).previewRemoval(client.actorId, data);
+      case 'projects.remove': return new ProjectNavigation(this.app).remove(client.actorId, data, data);
       case 'conversation.pin': return new ConversationNavigation(this.app).pin(client.actorId, data.conversationId, data.pinned === true);
       case 'conversation.rename': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);
       case 'ui.conversation.views': {
@@ -456,10 +464,7 @@ export class ProductUi {
       case 'conversation.setTitle': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);
       case 'conversation.updateSummary': await this.conversations.updateSummary(data.conversationId, data); return { success: true };
       case 'conversation.deleteConversation': {
-        const runs = await this.app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true });
-        for (const run of runs) { await this.app.runtime.cancel(run.id, client.actorId); await this.app.runtime.wait(run.id); }
-        await this.app.subagents.removeParent(client.actorId, data.conversationId);
-        await this.conversations.deleteConversation(data.conversationId); this.app.publish({ type: 'conversation.changed', conversationId: data.conversationId, deleted: true }); return { success: true };
+        await deleteConversation(this.app, client.actorId, data.conversationId); return { success: true };
       }
       case 'getOpenTabs': return { tabs: this.app.files.editorContext(client.clientId, workspace).openFiles };
       case 'getActiveEditor': return { path: this.app.files.editorContext(client.clientId, workspace).activeFile ?? null };

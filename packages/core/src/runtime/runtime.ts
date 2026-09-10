@@ -15,7 +15,7 @@ export interface RuntimeServices {
   tools: RuntimeToolRegistry;
   /** 按已选渠道捕获声明与执行选项，同一回合内保持稳定。 */
   prepareTools?: (names: string[], input: StartRunInput | ContinueRunInput, agent: AgentDefinition) => Promise<ToolCatalog>;
-  actor: (id: string) => Promise<ActorIdentity | null>;
+  actor: (id: string, scope?: RunRecord | Pick<RunRecord, 'conversationId' | 'workspaceId'>) => Promise<ActorIdentity | null>;
   agent: (id: string, actor?: ActorIdentity, conversationId?: string) => Promise<AgentDefinition | null>;
   workspace: (id: string) => Promise<WorkspaceDefinition | null>;
   /** 共享频道等额外读取授权由可信宿主按当前账号检查，公开请求不能自行授予。 */
@@ -114,7 +114,7 @@ export class PlatformRuntime {
   }
   private async begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
     if (this.closing) throw new Error('Runtime is closing.');
-    const actor = await this.services.actor(input.actorId);
+    const actor = await this.services.actor(input.actorId, { conversationId: input.conversationId, workspaceId: input.workspaceId });
     const agent = await this.services.agent(input.agentId, actor ?? undefined, input.conversationId);
     if (!actor || actor.revoked || !agent) throw new Error('Actor or agent is unavailable.');
     if (actor.role !== 'owner' && (input.providerId || input.modelOverride || input.reasoningEffort || input.promptModeId)) throw new Error('Only the owner may override the configured provider or preset for a run.');
@@ -218,7 +218,7 @@ export class PlatformRuntime {
         signal.throwIfAborted();
         await this.services.deliverFeedback?.(run);
         await this.drainFeedback(run);
-        const actor = await this.services.actor(run.actorId);
+        const actor = await this.services.actor(run.actorId, run);
         if (!actor || actor.revoked) throw new Error('Run account was revoked.');
         const access = authorizeEffects(actor, [], workspace);
         if (access) throw new Error(access);
@@ -319,8 +319,8 @@ export class PlatformRuntime {
       call = { ...call, args: normalizeToolArguments(call.args, entry.tool.declaration.parameters) };
       if (!entry.validate(call.args)) return { success: false, code: 'INVALID_ARGUMENTS', error: 'Tool arguments do not match its schema.' };
       const effects = entry.tool.effects(call.args);
-      const actor = await this.services.actor(run.actorId);
-      const denied = actor ? authorizeEffects(actor, effects, workspace) : 'Run account no longer exists.';
+      const actor = await this.services.actor(run.actorId, run);
+      const denied = actor ? authorizeEffects(actor, effects, workspace, call.name) : 'Run account no longer exists.';
       if (denied || agent.toolApproval?.[call.name] === 'deny') return { success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' };
       let approval = needsApproval(agent, call.name, effects);
       let reviewReason: string | undefined;
@@ -335,8 +335,8 @@ export class PlatformRuntime {
       // Grants may change while a task waits for approval or a reviewer.
       let current = actor;
       if (reviewed || approval) {
-        current = await this.services.actor(run.actorId);
-        const revoked = current ? authorizeEffects(current, effects, workspace) : 'Run account no longer exists.';
+        current = await this.services.actor(run.actorId, run);
+        const revoked = current ? authorizeEffects(current, effects, workspace, call.name) : 'Run account no longer exists.';
         if (revoked) return { success: false, code: 'PERMISSION_DENIED', error: revoked };
       }
       signal.throwIfAborted();
@@ -347,8 +347,8 @@ export class PlatformRuntime {
         requestApproval: async reason => {
           if (approval) return true;
           if (!await this.approve(run, call, effects, signal, reason)) return false;
-          const latest = await this.services.actor(run.actorId);
-          const denied = latest ? authorizeEffects(latest, effects, workspace) : 'Run account no longer exists.';
+          const latest = await this.services.actor(run.actorId, run);
+          const denied = latest ? authorizeEffects(latest, effects, workspace, call.name) : 'Run account no longer exists.';
           if (denied) throw new Error(denied);
           context.actor = latest ?? undefined;
           approval = true;

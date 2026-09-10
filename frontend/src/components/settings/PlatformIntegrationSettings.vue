@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import PlatformWorkspaceSettings from './PlatformWorkspaceSettings.vue';
 import BotConversationFields from './discord/BotConversationFields.vue';
-import type { AppSettings } from '../../../../packages/contracts/src/settings';
+import McpToolPermissions from './McpToolPermissions.vue';
+import SearchableMultiSelect from '../common/SearchableMultiSelect.vue';
+import type { AppSettings, PlatformBinding } from '../../../../packages/contracts/src/settings';
+import type { ActorIdentity } from '../../../../packages/contracts/src/runtime';
 import { sendToExtension } from '../../utils/vscode';
 import { useDesktopSettingsDraft } from '../../platform/settingsDraft';
 const props = defineProps<{ section: 'discord' | 'onebot' | 'accounts' | 'workspaces' }>();
@@ -17,7 +20,25 @@ const id = (prefix: string) => prefix + '_' + crypto.randomUUID().slice(0, 8);
 const pendingDeleteId = ref('');
 const accountBusy = ref('');
 const botChannel = ref('');
+const mcpPermissionTools = ref<Array<{ name: string; description?: string; serverName?: string }>>([]);
+const workspacePermissionOptions = computed(() => [{ value: '$bot', label: '当前机器人专用工作区', description: '当前 Discord / QQ 聊天的独立目录，不包含其他频道或普通项目。' },
+  { value: '*', label: '全部工作区', description: '包含以后添加的工作区。' },
+  ...(settings.value?.workspaces ?? []).filter(workspace => !workspace.managedConversationId && !workspace.id.startsWith('workspace-bot_')).map(workspace => ({ value: workspace.id, label: workspace.name, description: workspace.directory }))]);
+function updateWorkspacePermissions(account: ActorIdentity, selected: string[]) {
+  account.botWorkspaceAccess = selected.includes('$bot');
+  account.workspaceIds = selected.includes('*') ? '*' : selected.filter(value => value !== '$bot');
+  void action(save);
+}
 const permissions = [{ id: 'public_read', label: '公开网页读取与搜索' }, { id: 'workspace_read', label: '读取工作区' }, { id: 'workspace_write', label: '修改工作区' }, { id: 'process_execute', label: '执行命令' }, { id: 'data_delete', label: '删除数据' }, { id: 'external_send', label: '向外部发送' }, { id: 'private_browser', label: '私人浏览器' }, { id: 'desktop_control', label: '操作桌面' }, { id: 'administration', label: '管理类操作' }, { id: 'high_risk', label: '高风险操作' }];
+async function createPermissionAccount(binding?: PlatformBinding) {
+  if (!settings.value) return;
+  const previous = binding && settings.value.accounts.find(account => account.id === binding.accountId && account.role !== 'owner');
+  const account: ActorIdentity = { ...(previous ? JSON.parse(JSON.stringify(previous)) : { role: 'guest', workspaceIds: [], botWorkspaceAccess: true, effects: ['public_read'], mcpTools: [] }),
+    id: id('account'), displayName: binding ? `用户 ${binding.platformUserId || '待填写'} 的权限` : '新权限账号', revoked: false };
+  settings.value.accounts.push(account);
+  if (binding) binding.accountId = account.id;
+  await save(); await nextTick(); document.getElementById(`permission-${account.id}`)?.scrollIntoView({ block: 'start' });
+}
 async function accountAction(accountId: string, operation: 'revoke' | 'delete') {
   accountBusy.value = accountId;
   try {
@@ -46,6 +67,7 @@ function setToken(value: string) {
 }
 onMounted(async () => {
   await action(async () => { settings.value = await sendToExtension('platform.settings.get', {});
+    if (props.section === 'accounts') mcpPermissionTools.value = (await sendToExtension<{ tools: typeof mcpPermissionTools.value }>('tools.getMcpTools', {})).tools ?? [];
     if (props.section === 'onebot') {
       settings.value!.onebot ??= { endpoint: '', enabled: false, protocolVersion: 11, self: { platform: 'qq', userId: '' }, allowedChannelIds: [], agentId: settings.value!.agents[0]?.id ?? '', mentionOnly: true };
       settings.value!.onebot.self ??= { platform: 'qq', userId: '' };
@@ -86,25 +108,45 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <div v-for="binding in settings.bindings.filter(item => item.platform === platform)" :key="binding.id" class="integration-entry">
         <label v-if="section === 'onebot'">平台标识<input v-model="binding.network" placeholder="qq" /></label>
         <label>平台用户 ID<input v-model="binding.platformUserId" /></label>
-        <label>本地账号<select v-model="binding.accountId"><option v-for="account in settings.accounts" :key="account.id" :value="account.id">{{ account.displayName }} · {{ account.role }}</option></select></label>
+        <label>权限账号<select v-model="binding.accountId"><option value="">使用未绑定用户的默认权限</option><option v-for="account in settings.accounts" :key="account.id" :value="account.id">{{ account.displayName }} · {{ account.role }}</option></select></label>
+        <label>拉黑此用户<input v-model="binding.blocked" type="checkbox" /></label>
         <button @click="settings.bindings = settings.bindings.filter(item => item.id !== binding.id); action(save)">移除绑定</button>
       </div>
-      <button @click="settings.bindings.push({ id: id('binding'), platform, platformUserId: '', accountId: 'owner', ...(section === 'onebot' ? { network: settings.onebot?.protocolVersion === 12 ? settings.onebot.self?.platform : 'qq' } : {}) })">添加绑定</button>
+      <button @click="settings.bindings.push({ id: id('binding'), platform, platformUserId: '', accountId: '', ...(section === 'onebot' ? { network: settings.onebot?.protocolVersion === 12 ? settings.onebot.self?.platform : 'qq' } : {}) })">添加绑定</button>
       <div class="connection-actions"><span>{{ status }}</span><button :disabled="busy" @click="action(connect)">连接 / 重连</button><button @click="action(async () => { await sendToExtension(`platform.${platform}.stop`, {}); status = '已断开'; })">断开</button></div>
     </template>
     <template v-else-if="section === 'accounts'">
-      <h4>账号与授权</h4><p>身份由平台用户 ID 绑定确认。昵称、引用消息和消息正文不会改变权限。</p>
-      <div v-for="account in settings.accounts" :key="account.id" class="integration-entry">
+      <h4>账号与授权</h4><p>可以配置统一的访客权限，也可以为每位用户指定不同权限。身份由真实平台用户 ID 确认。</p>
+      <section class="bot-access-settings">
+        <h3>未绑定用户的默认权限</h3>
+        <label>默认权限账号<select v-model="settings.botGuestAccountId" aria-label="未绑定用户默认权限"><option :value="undefined">不允许主动对话</option><option v-for="account in settings.accounts.filter(item => item.role !== 'owner')" :key="account.id" :value="account.id" :disabled="account.revoked">{{ account.displayName }}{{ account.revoked ? '（已撤销）' : '' }}</option></select></label>
+        <p>选择账号后，未绑定用户可在允许的频道中使用这套权限，每位用户仍独立识别。下方可以创建权限账号，并逐项选择 MCP 工具。Discord 私聊继续只对主人开放。</p>
+        <h3>指定用户与黑名单</h3>
+        <p>可以复用已有权限，也可点击“新建独立权限”为此用户单独配置。拉黑优先于默认权限和账号授权。</p>
+        <div v-for="binding in settings.bindings" :key="binding.id" class="integration-entry bot-user-rule" :class="{ blocked: binding.blocked }">
+          <label>平台<select v-model="binding.platform"><option value="discord">Discord</option><option value="onebot">QQ / OneBot</option></select></label>
+          <label v-if="binding.platform === 'onebot'">平台标识<input v-model="binding.network" placeholder="qq" /></label>
+          <label>平台用户 ID<input v-model.trim="binding.platformUserId" :inputmode="binding.platform === 'discord' ? 'numeric' : 'text'" /></label>
+          <label>权限账号<select v-model="binding.accountId"><option value="">使用默认权限</option><option v-for="account in settings.accounts" :key="account.id" :value="account.id">{{ account.displayName }} · {{ account.role === 'owner' ? '主人，完全权限' : account.role === 'guest' ? '访客' : '授权成员' }}{{ account.revoked ? '（已撤销）' : '' }}</option></select></label>
+          <label>拉黑此用户<input v-model="binding.blocked" type="checkbox" /></label>
+          <div class="account-actions"><button :disabled="!binding.platformUserId" @click="action(() => createPermissionAccount(binding))">新建独立权限</button><button @click="settings.bindings = settings.bindings.filter(item => item.id !== binding.id); action(save)">移除用户规则</button></div>
+        </div>
+        <button @click="settings.bindings.push({ id: id('binding'), platform: 'discord', platformUserId: '', accountId: '' })">添加用户规则</button>
+      </section>
+      <h3>权限账号</h3>
+      <div v-for="account in settings.accounts" :id="`permission-${account.id}`" :key="account.id" class="integration-entry">
         <label>显示名称<input v-model="account.displayName" /></label>
         <label>身份<select v-model="account.role" :disabled="account.id === 'owner'"><option v-if="account.id === 'owner'" value="owner">主人</option><option value="member">授权成员</option><option value="guest">访客</option></select></label>
         <template v-if="account.id !== 'owner'">
-          <div class="grant-row"><span>允许的工作区</span><div class="grant-options"><label class="grant-option"><input type="checkbox" :checked="account.workspaceIds === '*'" @change="account.workspaceIds = ($event.target as HTMLInputElement).checked ? '*' : []" /><span>全部工作区（包含以后添加的工作区）</span></label><label v-for="workspace in settings.workspaces" :key="workspace.id" class="grant-option"><input v-if="account.workspaceIds !== '*'" v-model="account.workspaceIds" type="checkbox" :value="workspace.id" /><input v-else type="checkbox" checked disabled /><span>{{ workspace.name }}</span></label><small v-if="!settings.workspaces.length">尚未添加工作区</small></div></div>
-          <div class="grant-row"><span>操作权限</span><div class="grant-options"><label v-for="permission in permissions" :key="permission.id" class="grant-option" :class="{ checked: account.effects.includes(permission.id as any) }"><input v-model="account.effects" type="checkbox" :value="permission.id" /><span>{{ permission.label }}</span></label></div></div>
+          <div class="grant-row"><span>允许的工作区</span><div class="grant-options"><SearchableMultiSelect :model-value="[...(account.botWorkspaceAccess !== false ? ['$bot'] : []), ...(account.workspaceIds === '*' ? ['*'] : account.workspaceIds)]" :options="workspacePermissionOptions" label="允许的工作区" @update:model-value="updateWorkspacePermissions(account, $event)" /></div></div>
+          <div class="grant-row"><span>操作权限</span><div class="grant-options"><SearchableMultiSelect :model-value="account.effects" :options="permissions.map(permission => ({ value: permission.id, label: permission.label }))" label="操作权限" @update:model-value="account.effects = $event as ActorIdentity['effects']; action(save)" /></div></div>
+          <p v-if="account.role === 'guest'">访客只可使用公开信息能力与单独允许的 MCP 工具。如需授予工作区等权限，请选择“授权成员”。</p>
+          <McpToolPermissions :model-value="account.mcpTools" :tools="mcpPermissionTools" @update:model-value="account.mcpTools = $event; action(save)" />
           <div class="account-actions"><span :class="{ revoked: account.revoked }">{{ account.revoked ? '授权已撤销' : '账号权限随保存全部生效' }}</span><button :disabled="account.revoked || accountBusy === account.id" @click="action(() => accountAction(account.id, 'revoke'))">{{ account.revoked ? '已撤销授权' : '立即撤销授权' }}</button><button class="danger-button" :disabled="accountBusy === account.id" @click="pendingDeleteId = account.id">删除账号</button></div>
-          <div v-if="pendingDeleteId === account.id" class="account-delete"><p>删除账号及其平台绑定，保留已有对话记录。此操作立即生效。</p><button class="danger-button" :disabled="accountBusy === account.id" @click="action(() => accountAction(account.id, 'delete'))">确认删除</button><button @click="pendingDeleteId = ''">取消</button></div>
+          <div v-if="pendingDeleteId === account.id" class="account-delete"><p>删除账号，保留已有对话，关联用户会保留为拉黑规则。此操作立即生效。</p><button class="danger-button" :disabled="accountBusy === account.id" @click="action(() => accountAction(account.id, 'delete'))">确认删除</button><button @click="pendingDeleteId = ''">取消</button></div>
         </template>
       </div>
-      <button @click="settings.accounts.push({ id: id('account'), displayName: '新账号', role: 'guest', workspaceIds: [], effects: ['public_read'] }); action(save)">添加账号</button>
+      <button @click="action(() => createPermissionAccount())">添加权限账号</button>
     </template>
     <template v-else>
       <PlatformWorkspaceSettings :workspaces="settings.workspaces" @change="action(save)" @error="error = $event" />
@@ -121,6 +163,7 @@ button { padding: 8px 14px; color: var(--gc-text-primary); background: var(--gc-
 .integration-entry { padding: 12px 0 24px; margin-bottom: 20px; border-bottom: 1px solid var(--gc-border-control); }
 .connection-actions { display: flex; gap: 12px; align-items: center; padding: 24px 0; }
 .connection-actions span { flex: 1; } .integration-error { color: var(--gc-danger); } .workspace-directory { overflow-wrap: anywhere; }
+.bot-access-settings{border:1px solid var(--gc-border-control);padding:18px;margin:24px 0}.bot-access-settings h3{font-size:17px;margin:0 0 12px}.bot-access-settings p{font-size:13px}.bot-user-rule{padding:12px;margin-top:14px;border:1px solid var(--gc-border-control)}.bot-user-rule.blocked{border-color:var(--gc-danger)}
 </style>
 
 <style scoped>

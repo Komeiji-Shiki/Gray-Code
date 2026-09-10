@@ -349,9 +349,11 @@ export class PlatformDatabase {
 
   private summary(row: ConversationRow): ConversationSummary {
     const history = this.histories.info(row.history_id);
-    const { workspaceId } = this.objects.getValue<{ workspaceId?: unknown }>(row.metadata_hash, { fields: ['workspaceId'] });
+    const { workspaceId, custom } = this.objects.getValue<{ workspaceId?: unknown; custom?: { botOrigin?: { platform?: unknown } } }>(row.metadata_hash, { fields: ['workspaceId', 'custom'] });
+    const botPlatform = custom?.botOrigin?.platform;
     return { id: row.id, title: row.title ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
       ...(typeof workspaceId === 'string' ? { workspaceId } : {}),
+      ...(botPlatform === 'discord' || botPlatform === 'onebot' ? { botPlatform } : {}),
       workspaceUri: row.workspace_uri ?? undefined, messageCount: history.message_count, revision: history.revision };
   }
 

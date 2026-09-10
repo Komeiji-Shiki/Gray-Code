@@ -84,10 +84,12 @@ export class RuntimeToolRegistry {
   }
 }
 
-export function authorizeEffects(actor: ActorIdentity, effects: ToolEffect[], workspace?: WorkspaceDefinition): string | null {
+export function authorizeEffects(actor: ActorIdentity, effects: ToolEffect[], workspace?: WorkspaceDefinition, toolName?: string): string | null {
   if (actor.revoked) return 'This account has been revoked.';
   if (workspace && actor.role !== 'owner' && actor.workspaceIds !== '*' && !actor.workspaceIds.includes(workspace.id)) return 'This account cannot use the selected workspace.';
   if (actor.role === 'owner') return null;
+  if (toolName?.startsWith('mcp__') && actor.mcpTools !== undefined)
+    return actor.mcpTools.includes(toolName) ? null : 'This MCP tool is not allowed for this account.';
   if (actor.role === 'guest' && effects.some(effect => effect !== 'public_read')) return 'Ordinary members may only use public information tools.';
   if (effects.some(effect => !actor.effects.includes(effect))) return 'This operation is outside the account grant.';
   return null;

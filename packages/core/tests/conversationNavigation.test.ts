@@ -25,3 +25,19 @@ test('侧边导航从存储分页搜索，置顶与重命名可保留，项目�
     await expect(navigation.list('unknown')).rejects.toThrow('Owner access');
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('Discord 和 QQ 对话使用独立导航，搜索及置顶按实际来源分开', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  try {
+    const navigation = new ConversationNavigation(app);
+    for (const [id, platform] of [['normal', ''], ['bot_discord', 'discord'], ['bot_qq', 'onebot']]) await app.storage.initializeConversation({
+      id, actorId: 'owner', title: `Discord 测试 ${id}`, createdAt: 1, updatedAt: 1, ...(platform ? { custom: { botOrigin: { platform } } } : {}),
+    }, []);
+    await navigation.pin('owner', 'bot_qq', true);
+    expect((await navigation.list('owner')).items.map(item => item.id)).toEqual(['normal']);
+    expect((await navigation.list('owner')).pinned).toEqual([]);
+    const bots = await navigation.list('owner', { scope: 'bots', query: 'Discord' });
+    expect(bots.items.map(item => item.id)).toEqual(['bot_discord']); expect(bots.items[0].botPlatform).toBe('discord');
+    expect(bots.pinned.map(item => item.id)).toEqual(['bot_qq']); expect(bots.workspaces).toEqual([]);
+  } finally { await app.close(); await f.cleanup(); }
+});

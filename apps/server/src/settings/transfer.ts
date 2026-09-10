@@ -38,7 +38,7 @@ export class SettingsTransfer {
     const imported = { vscodeSettings: false, channelConfigs: 0, mcpServers: 0, skills: 0 };
     // 保留本机账号和工作区授权；设置导入不隐式替换部署的认证身份。
     if (data.format === 'graycode-platform' && data.settings) {
-      const { accounts, bindings, workspaces, ...preferences } = data.settings;
+      const { accounts, bindings, workspaces, botGuestAccountId, ...preferences } = data.settings;
       draft.app = { ...draft.app, ...preferences, accounts: draft.app.accounts, bindings: draft.app.bindings, workspaces: draft.app.workspaces };
       Object.assign(draft.credentials, data.credentials ?? {});
     }

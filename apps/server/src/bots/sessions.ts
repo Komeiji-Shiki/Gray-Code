@@ -8,6 +8,8 @@ import { captureBotAgent } from './profiles';
 import { BOT_CHANNEL_ACCESS, addBotParticipant, sameBotChannel, type BotChannelAccess } from './channelAccess';
 import { BotInbox, type BotInboxItem } from './inbox';
 import { captureBotEnvironment } from './prompt';
+import { actorForBotRun, isBotUserBlocked, resolveBotUser } from './permissions';
+import { authorizeEffects } from '@graycode/core';
 
 export type BotPlatform = 'discord' | 'onebot';
 export interface BotRoute {
@@ -51,6 +53,7 @@ export class BotSessions {
     return actor;
   }
   canRecord(context: BotContext): boolean {
+    if (isBotUserBlocked(this.app.settings.snapshot().settings, { platform: context.platform, platformUserId: context.authorId, network: context.network })) return false;
     const config = this.app.settings.snapshot().settings[context.platform];
     if (!config?.enabled) return false;
     if (!context.direct) return config.allowedChannelIds.includes(context.channelId);
@@ -58,10 +61,9 @@ export class BotSessions {
   }
   authorize(context: BotContext): ActorIdentity {
     const settings = this.app.settings.snapshot().settings;
-    const binding = settings.bindings.find(item => item.platform === context.platform && item.platformUserId === context.authorId
-      && (context.platform !== 'onebot' || (item.network ?? 'qq') === (context.network ?? 'qq')));
-    const actor = binding && this.app.actor(binding.accountId);
-    if (!actor) throw new Error(`账号尚未绑定或授权已撤销。你的数字用户 ID 是 ${context.authorId}，请在桌面管理页确认绑定。`);
+    const source = { platform: context.platform, platformUserId: context.authorId, network: context.network };
+    const actor = resolveBotUser(settings, source);
+    if (!actor) throw new Error(isBotUserBlocked(settings, source) ? '这个用户已被拉黑或授权已撤销。' : `账号尚未绑定，默认访客对话也未启用。你的数字用户 ID 是 ${context.authorId}，请由主人配置默认权限或单独授权。`);
     if (context.platform === 'discord') {
       if (context.direct && actor.role !== 'owner') throw new Error('Discord 私聊当前只对主人开放。');
       if (!discordAdmitted(settings.discord, context, actor)) throw new Error(context.direct ? '主人已关闭 Bot 私聊。' : '这个频道尚未启用，请在桌面管理页选择允许响应的频道。');
@@ -73,9 +75,11 @@ export class BotSessions {
     const platform = route.platform ?? 'discord';
     const settings = this.app.settings.snapshot().settings;
     const actor = this.app.actor(route.actorId);
-    if (!actor || !settings.bindings.some(binding => binding.platform === platform && binding.accountId === actor.id
-      && (!route.platformUserId || binding.platformUserId === route.platformUserId)
-      && (platform !== 'onebot' || (binding.network ?? 'qq') === (route.network ?? 'qq')))) return false;
+    const candidates = settings.bindings.filter(binding => binding.platform === platform && binding.accountId === route.actorId
+      && (platform !== 'onebot' || (binding.network ?? 'qq') === (route.network ?? 'qq')));
+    const userId = route.platformUserId ?? (candidates.length === 1 ? candidates[0].platformUserId : undefined);
+    const current = userId && resolveBotUser(settings, { platform, platformUserId: userId, network: route.network });
+    if (!actor || !current || current.id !== actor.id) return false;
     return platform === 'discord' ? discordAdmitted(settings.discord, { direct: route.direct, channelId: route.channelId }, actor)
       : !!settings.onebot?.enabled && settings.onebot.allowedChannelIds.includes(route.channelId);
   }
@@ -298,7 +302,11 @@ export class BotSessions {
         let channelWorkspaceId = loaded.profile.workspaceId === null ? undefined : loaded.profile.workspaceId ?? (typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined);
         if (!channelWorkspaceId && loaded.profile.workspaceId !== null) channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id);
         let workspaceId = channelWorkspaceId;
-        if (workspaceId) { try { this.app.workspace(loaded.actor.id, workspaceId, ['workspace_read']); } catch { workspaceId = undefined; } }
+        if (workspaceId) {
+          const actor = await actorForBotRun(this.app, loaded.actor.id, { conversationId: conversation.id, workspaceId });
+          const workspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === workspaceId);
+          if (!actor || !workspace || authorizeEffects(actor, ['workspace_read'], workspace)) workspaceId = undefined;
+        }
         const requestKey = `${context.platform}:${context.id}`;
         const route: BotRoute = { platform: context.platform, botId: context.botId, channelId: context.channelId, actorId: loaded.actor.id,
           conversationId: conversation.id, platformUserId: context.authorId, network: context.network, direct: context.direct,
@@ -309,7 +317,7 @@ export class BotSessions {
           custom: { ...state.metadata.custom as Record<string, unknown>, botEnvironment: captureBotEnvironment(this.app, context, loaded.profile, channelWorkspaceId) } };
         run = await this.app.runtime.start({ requestKey, actorId: loaded.actor.id, conversationId: conversation.id, workspaceId, agentId: agent.id,
           message: { role: 'user', parts: action.input?.message.parts ?? [{ text: action.text }] } }, { state,
-          messageMetadata: { ...action.input?.message, source: { platform: context.platform, messageId: context.id, platformUserId: context.authorId, displayName: context.authorName } },
+          messageMetadata: { ...action.input?.message, source: { ...(action.input?.message.source as Record<string, unknown> | undefined), platform: context.platform, messageId: context.id, platformUserId: context.authorId, displayName: context.authorName } },
           commit: { metadata, records: [this.mutation(loaded), receiptRecord(), ...(action.input ? this.inbox.consumed(action.input) : [await this.inbox.activity(conversation.id, context)]),
             { namespace: botRouteNamespace, id: requestKey, ownerId: conversation.id, value: route }] } });
         return { reply: '', run };

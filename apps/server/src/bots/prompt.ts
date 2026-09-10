@@ -15,6 +15,7 @@ export function captureBotEnvironment(app: PlatformApplication, context: BotCont
 }
 export function botIdentityMessage(environment: CapturedBotEnvironment, actor: ActorIdentity, workspace?: WorkspaceDefinition): PlatformMessage | undefined {
   const text = renderBotTemplate(environment.identityTemplate, { BOT_CONTEXT: JSON.stringify(environment.channel),
-    TASK_CONTEXT: JSON.stringify({ actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace }) }).trim();
+    TASK_CONTEXT: JSON.stringify({ actor: { id: actor.permissionAccountId ?? actor.id, displayName: actor.displayName, role: actor.role,
+      ...(actor.mcpTools ? { allowedMcpTools: actor.mcpTools } : {}) }, workspace }) }).trim();
   return text ? { role: 'user', parts: [{ text }] } : undefined;
 }

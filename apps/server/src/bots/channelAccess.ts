@@ -2,6 +2,7 @@ import type { ActorIdentity } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { BotContext } from './sessions';
 import { discordAdmitted } from './config';
+import { resolveBotUser } from './permissions';
 
 export const BOT_CHANNEL_ACCESS = 'bot-channel-access';
 export type BotChannelIdentity = Pick<BotContext, 'platform' | 'botId' | 'channelId' | 'direct' | 'network'>;
@@ -21,9 +22,9 @@ export async function canReadBotConversation(app: PlatformApplication, actor: Ac
   if (!access || actor.revoked) return false;
   const settings = app.settings.snapshot().settings;
   const context = access.context;
-  const bound = access.participants.some(participant => participant.actorId === actor.id && settings.bindings.some(binding =>
-    binding.accountId === actor.id && binding.platform === context.platform && binding.platformUserId === participant.platformUserId
-    && (context.platform !== 'onebot' || (binding.network ?? 'qq') === (context.network ?? 'qq'))));
+  const bound = access.participants.some(participant => participant.actorId === actor.id && resolveBotUser(settings, {
+    platform: context.platform, platformUserId: participant.platformUserId, network: context.network,
+  })?.id === actor.id);
   if (!bound) return false;
   return context.platform === 'discord' ? discordAdmitted(settings.discord, context, actor)
     : !!settings.onebot?.enabled && settings.onebot.allowedChannelIds.includes(context.channelId);
