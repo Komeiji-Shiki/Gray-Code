@@ -112,6 +112,8 @@ export interface UsageStatsResult {
 
 /** 聚合器对数据源的最小依赖（ConversationManager 结构上满足） */
 export interface UsageStatsSource {
+    /** 独立存储可直接提供一致的只读用量快照，无需实现旧文件索引的写入接口。 */
+    getUsageIndex?(conversationId: string): Promise<UsageIndex | null>;
     listConversations(): Promise<string[]>;
     getMetadata(conversationId: string): Promise<ConversationMetadata | null | undefined>;
     getMessages(conversationId: string): Promise<Content[]>;
@@ -319,6 +321,12 @@ async function tryReadConversationTitle(source: UsageStatsSource, conversationId
 }
 
 async function loadOne(source: UsageStatsSource, conversationId: string, indexStore?: UsageIndexStore): Promise<LoadedConversation | null> {
+    if (source.getUsageIndex) {
+        try {
+            const index = await source.getUsageIndex(conversationId);
+            return index ? { metadata: await readMetadataLight(source, conversationId), messages: [], index } : null;
+        } catch { return null; }
+    }
     if (indexStore) {
         try {
             const freshness = await indexStore.getFreshness(conversationId);

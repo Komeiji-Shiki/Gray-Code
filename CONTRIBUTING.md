@@ -2,6 +2,10 @@
 
 [简体中文](#简体中文) · [English](#english)
 
+`main` 维护 2.0 独立桌面版，开发与打包请先阅读[桌面说明](apps/desktop/README.md)。旧版扩展位于 `v1-extension` 分支；本文保留其开发流程作为参考。
+
+`main` maintains the 2.0 standalone desktop edition; start with the [desktop guide](apps/desktop/README.md). The legacy extension is preserved on `v1-extension`, and its development workflow remains below for reference.
+
 ## 简体中文
 
 感谢你愿意参与 GrayCode。你可以通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 报告问题、提出建议，也可以直接提交 Pull Request。
@@ -9,7 +13,7 @@
 ### 开发环境
 
 - VS Code `^1.84.0`
-- Node.js 20 或更高版本
+- Node.js 22.15 或更新的 22.x 版本
 - npm（仓库提交并维护 `package-lock.json`）
 
 ```bash

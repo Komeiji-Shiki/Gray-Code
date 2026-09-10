@@ -6,7 +6,7 @@
  * 采用特殊样式区别于普通消息
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { MarkdownRenderer } from '../common'
 import type { Message } from '../../types'
 import { formatTime } from '../../utils/format'
@@ -35,6 +35,32 @@ const isRestoring = ref(false)
 
 // 展开/收起状态
 const isExpanded = ref(false)
+const isDesktopHost = Boolean(window.__GRAYCODE_HOST)
+const isEditing = ref(false)
+const isSaving = ref(false)
+const editDraft = ref('')
+const editOriginal = ref('')
+const editError = ref('')
+const editor = ref<HTMLTextAreaElement>()
+async function beginEdit() {
+  editOriginal.value = props.message.content || ''
+  editDraft.value = editOriginal.value
+  editError.value = ''
+  isEditing.value = true
+  isExpanded.value = true
+  await nextTick()
+  editor.value?.focus()
+}
+async function saveEdit() {
+  if (isSaving.value || !editDraft.value.trim()) return
+  isSaving.value = true
+  editError.value = ''
+  try {
+    await chatStore.editSummaryMessage(props.message.id, editDraft.value, editOriginal.value)
+    isEditing.value = false
+  } catch (error) { editError.value = (error as Error).message }
+  finally { isSaving.value = false }
+}
 
 // 格式化时间（timestamp 缺失/非法时不显示，避免出现 "00:00"）
 const formattedTime = computed(() => {
@@ -81,7 +107,7 @@ const tokenModeLabel = computed(() => summaryTokenStats.value
 
 // 删除总结消息（后端会自动恢复其覆盖的原文，避免上下文真空）
 async function handleDelete() {
-  if (isDeleting.value || isRestoring.value) return  // 与恢复互斥，防并发双 IPC + 双次历史重载
+  if (isDeleting.value || isRestoring.value || isEditing.value) return
 
   isDeleting.value = true
   try {
@@ -96,7 +122,7 @@ async function handleDelete() {
 
 // 恢复原文：取消该总结覆盖消息的 isSummarized 标记并删除总结消息，原文重新参与发送
 async function handleRestore() {
-  if (isRestoring.value || isDeleting.value) return  // 与删除互斥
+  if (isRestoring.value || isDeleting.value || isEditing.value) return
   if (!props.message.id) return
 
   isRestoring.value = true
@@ -124,11 +150,11 @@ async function handleRestore() {
         type="button"
         class="summary-toggle"
         :aria-expanded="isExpanded"
-        @click="isExpanded = !isExpanded"
+        @click="isExpanded = isEditing ? true : !isExpanded"
       >
         <i class="codicon" :class="isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'" aria-hidden="true"></i>
         <i class="codicon codicon-fold summary-icon" aria-hidden="true"></i>
-        <span class="summary-title">{{ t('components.message.summary.title') }}</span>
+        <span class="summary-title">{{ message.contextMethod === 'notes' ? '上下文已换窗口' : t('components.message.summary.title') }}</span>
         <span v-if="floor" class="message-floor">#{{ floor }}</span>
         <span v-if="message.summarizedMessageCount" class="summary-count">
           {{ t('components.message.summary.compressed', { count: message.summarizedMessageCount }) }}
@@ -136,6 +162,7 @@ async function handleRestore() {
         <span v-if="message.isAutoSummary" class="summary-auto-badge">
           {{ t('components.message.summary.autoTriggered') }}
         </span>
+        <span v-if="message.summaryEditedAt" class="summary-edited-badge" title="摘要正文已经手动编辑，Token 数为本地估算">已编辑</span>
       </button>
       
       <!-- 右侧：删除按钮 + 时间和 Token 信息 -->
@@ -148,10 +175,12 @@ async function handleRestore() {
           <span v-if="summaryTokenStats" class="token-saved">−{{ summaryTokenStats.estimatedTokensSaved }}</span>
         </span>
         <span class="summary-time">{{ formattedTime }}</span>
+        <button v-if="isDesktopHost && message.contextMethod !== 'notes'" type="button" class="delete-button summary-edit-button" title="编辑摘要正文" aria-label="编辑摘要正文"
+          :disabled="isEditing || isDeleting || isRestoring" @click.stop="beginEdit"><i class="codicon codicon-edit" aria-hidden="true"></i></button>
         <button
           type="button"
           class="delete-button"
-          :disabled="isRestoring"
+          :disabled="isRestoring || isDeleting || isEditing"
           @click.stop="handleRestore"
           :title="t('components.message.summary.restoreTitle')"
           :aria-label="t('components.message.summary.restoreTitle')"
@@ -161,7 +190,7 @@ async function handleRestore() {
         <button
           type="button"
           class="delete-button"
-          :disabled="isDeleting"
+          :disabled="isDeleting || isRestoring || isEditing"
           @click.stop="handleDelete"
           :title="t('components.message.summary.deleteTitle')"
           :aria-label="t('components.message.summary.deleteTitle')"
@@ -172,7 +201,13 @@ async function handleRestore() {
     </div>
     
     <!-- 展开时显示内容 -->
-    <div v-if="isExpanded" class="summary-content">
+    <div v-if="isEditing" class="summary-editor">
+      <textarea ref="editor" v-model="editDraft" aria-label="摘要正文" rows="9" :disabled="isSaving" @keydown.ctrl.enter.prevent="saveEdit" @keydown.meta.enter.prevent="saveEdit" />
+      <p>只修改这条摘要的正文，原文与压缩范围会保留。保存不会调用模型。</p>
+      <p v-if="editError" class="summary-edit-error" role="alert">{{ editError }}</p>
+      <div class="summary-edit-actions"><button type="button" :disabled="isSaving" @click="isEditing = false">取消</button><button type="button" class="summary-save" :disabled="isSaving || !editDraft.trim()" @click="saveEdit">{{ isSaving ? '正在保存…' : '保存摘要' }}</button></div>
+    </div>
+    <div v-else-if="isExpanded" class="summary-content">
       <MarkdownRenderer
         :content="summaryContent"
         :latex-only="false"
@@ -188,6 +223,16 @@ async function handleRestore() {
 </template>
 
 <style scoped>
+.summary-editor { padding: 12px 16px; border-top: 1px solid var(--gc-border-control); }
+.summary-editor textarea { box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--vscode-input-background); color: var(--gc-text-primary); padding: 10px 12px; font: inherit; line-height: 1.6; }
+.summary-editor p { color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; margin: 8px 0; }
+.summary-editor .summary-edit-error { color: var(--vscode-errorForeground); }
+.summary-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.summary-edit-actions button { border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-raised); color: var(--gc-text-primary); padding: 6px 14px; cursor: pointer; }
+.summary-edit-actions .summary-save { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.summary-edit-actions button:disabled { opacity: .5; cursor: default; }
+.summary-right .summary-edit-button { opacity: .8; border-radius: 0; }
+.summary-edited-badge { font-size: 11px; color: var(--gc-text-muted); border: 1px solid var(--gc-border-control); padding: 1px 5px; }
 .summary-message {
   margin: 2px 0;
   border: none;

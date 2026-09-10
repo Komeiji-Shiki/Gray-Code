@@ -3,7 +3,7 @@
  */
 
 import { createHash } from 'crypto';
-import { normalizeLineEndingsToLF } from '../utils';
+import { normalizeLineEndingsToLF } from '../shared/textUtils';
 import { normalizeSingleLineText } from '../shared/textUtils';
 import { findDuplicateIds, isTodoStatus, validateTodos } from '../shared/todoValidation';
 import {

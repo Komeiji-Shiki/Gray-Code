@@ -100,7 +100,7 @@
 <script setup lang="ts">
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { sendToExtension } from '../../utils/vscode';
+import { sendToExtension, onMessageFromExtension } from '../../utils/vscode';
 import { TOOL_DEPENDENCIES } from '../../composables/useDependency';
 import { useI18n } from '@/i18n';
 
@@ -327,22 +327,22 @@ function handleProgressEvent(event: any) {
 }
 
 // 消息处理器
-function handleMessage(event: MessageEvent) {
-  const message = event.data;
+function handleMessage(message: { type: string; command?: string; data?: any }) {
   if (message.type === 'command' && message.command === 'dependencyProgress') {
     handleProgressEvent(message.data);
   }
 }
 
+let unsubscribeProgress: (() => void) | undefined;
 onMounted(() => {
   loadExpandedState();
   loadDependencies();
   getInstallPath();
-  window.addEventListener('message', handleMessage);
+  unsubscribeProgress = onMessageFromExtension(handleMessage);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('message', handleMessage);
+  unsubscribeProgress?.();
   // 清理成功消息自动消失定时器
   if (progressClearTimer) {
     clearTimeout(progressClearTimer);

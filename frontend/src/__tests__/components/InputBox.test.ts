@@ -4,6 +4,9 @@ import { nextTick, ref } from 'vue'
 import InputBox from '../../components/input/InputBox.vue'
 import type { EditorNode } from '../../types/editorNode'
 
+// 输入框会订阅宿主焦点事件，组件测试提供该接口，不依赖真实 VS Code 全局。
+vi.mock('../../utils/vscode', () => ({ onExtensionCommand: vi.fn(() => () => {}), sendToExtension: vi.fn() }))
+
 function createClipboardItem(kind: 'string' | 'file', file: File | null = null): DataTransferItem {
   return {
     kind,

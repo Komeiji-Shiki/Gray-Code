@@ -5,11 +5,13 @@
  */
 
 import { IconButton, Tooltip } from '../common'
+const platformHost = !!window.__GRAYCODE_HOST
 import { t } from '../../i18n'
 
 defineEmits<{
   newChat: []
   showHistory: []
+  showUsage: []
   showSettings: []
 }>()
 </script>
@@ -17,7 +19,7 @@ defineEmits<{
 <template>
   <header class="chat-header">
     <div class="header-left">
-      <span class="header-title">GrayCode</span>
+      <span class="header-title">{{ platformHost ? '对话' : 'GrayCode' }}</span>
     </div>
 
     <div class="header-right">
@@ -40,6 +42,9 @@ defineEmits<{
       </Tooltip>
 
       <!-- 设置 -->
+      <Tooltip content="用量统计" placement="bottom">
+        <IconButton icon="codicon-graph" size="medium" @click="$emit('showUsage')" />
+      </Tooltip>
       <Tooltip :content="t('components.header.settings')" placement="bottom">
         <IconButton
           icon="codicon-settings-gear"

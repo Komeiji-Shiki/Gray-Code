@@ -20,9 +20,10 @@ export function toDisplayMessages(history: ConversationHistory): Content[] {
             turnDynamicContext,
             turnDynamicContextStrategy,
             foregroundWorkTransition,
+            characterTurn,
             ...rest
         } = ensureBackgroundTaskSourceForDisplay(message);
-        return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
+        return { ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}), index } as Content;
     });
 }
 
@@ -526,9 +527,15 @@ export function formatHistoryForAPI(
         if (message.isUserInput) {
             result.isUserInput = true;
         }
+        // 内部回合边界必须保留到 formatter，避免把摘要和提醒误判为新用户输入。
+        if (message.isSummary) result.isSummary = true;
+        if (message.contextMethod) result.contextMethod = message.contextMethod;
+        if (message.contextWindowId) result.contextWindowId = message.contextWindowId;
+        if (message.contextControl) result.contextControl = message.contextControl;
 
         // preserve 动态上下文策略需要在 formatter 构建请求时读取旧回合缓存。
         // 字段本身仍会在 formatter.cleanInternalFields 中被过滤，不会直接发送给模型。
+        if (opts.includeTurnDynamicContext && message.id) result.id = message.id;
         if (opts.includeTurnDynamicContext && message.turnDynamicContext) {
             result.turnDynamicContext = message.turnDynamicContext;
             result.turnDynamicContextStrategy = message.turnDynamicContextStrategy;

@@ -13,7 +13,7 @@
 import type { ToolResult } from '../types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
 import { t } from '../../i18n';
-import { createSuspectedRegexSuggestion, detectSuspectedRegexIntent, escapeRegExp } from '../utils';
+import { createSuspectedRegexSuggestion, detectSuspectedRegexIntent, escapeRegExp } from '../shared/textUtils';
 import { validateRegexPattern } from '../../core/services/regexGuard';
 import { addLineNumbers, truncateLineForDisplay } from './virtualDocument';
 

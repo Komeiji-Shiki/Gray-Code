@@ -53,7 +53,7 @@ export const RENDER_LATEX_ONLY_BLOCK_RE = /\$\$([\s\S]*?)\$\$/g
  *
  * 使用浏览器原生 DOM 解析（template 元素），不会下载/执行资源。
  */
-export function sanitizeHtml(dirty: string): string {
+export function sanitizeHtml(dirty: string, options: { allowStyles?: boolean; trustedMath?: ReadonlyMap<string, string> } = {}): string {
   const template = document.createElement('template')
   template.innerHTML = dirty
 
@@ -61,6 +61,15 @@ export function sanitizeHtml(dirty: string): string {
     if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as Element
       const tagName = el.tagName.toLowerCase()
+
+      // 仅恢复本轮 KaTeX 生成的公式；用户 HTML 仍经过下方的完整净化。
+      const math = tagName === 'span' ? options.trustedMath?.get(el.getAttribute('data-graycode-math') ?? '') : undefined
+      if (math !== undefined) {
+        const fragment = document.createElement('template')
+        fragment.innerHTML = math
+        el.replaceWith(fragment.content)
+        return
+      }
 
       // 移除危险元素（脚本、内嵌框架、表单控件、样式引入、meta 等）
       if ([
@@ -74,7 +83,7 @@ export function sanitizeHtml(dirty: string): string {
         const isCodeToolbarBtn =
           tagName === 'button' &&
           el.classList.contains('code-tool-btn')
-        if (!isCodeToolbarBtn) {
+        if (!isCodeToolbarBtn && !(tagName === 'style' && options.allowStyles)) {
           el.remove()
           return
         }
@@ -92,7 +101,7 @@ export function sanitizeHtml(dirty: string): string {
         }
 
         // srcdoc 可在 iframe 上下文执行 HTML；style 可携带 url(javascript:)/expression()/behavior
-        if (name === 'srcdoc' || name === 'style') {
+        if (name === 'srcdoc' || name === 'style' && !options.allowStyles) {
           el.removeAttribute(name)
           continue
         }

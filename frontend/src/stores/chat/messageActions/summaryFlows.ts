@@ -1,8 +1,7 @@
 /**
  * 上下文总结流程（从 messageActions.ts 拆出）。
  *
- * 包含 summarizeContext / cancelSummarizeRequest / restoreSummarizedMessages。
- * 逻辑逐字迁移：对话级隔离（快照回写）、归属校验等已修 bug 注释原样保留，一行未改。
+ * 总结、取消、恢复及摘要正文编辑均保留发起会话的归属。
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
@@ -13,6 +12,17 @@ import { MESSAGES_PAGE_SIZE } from '../conversationActions'
 import { contentToMessageEnhanced } from '../parsers'
 import { rebuildMessageIndexById } from '../state'
 import { safeSetError, resolveConversationModelOverride } from './sendMessageFlow'
+
+export async function editSummaryMessage(state: ChatStoreState, summaryMessageId: string, text: string, expectedText: string): Promise<void> {
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) throw new Error('请先打开摘要所在的会话。')
+  const response = await sendToExtension<{ success: boolean; message: Content }>('context.editSummary', { conversationId, summaryMessageId, text, expectedText })
+  if (!response.success) throw new Error('摘要保存失败。')
+  if (state.currentConversationId.value !== conversationId) return
+  // 按稳定 ID 更新当前页，编辑较早的摘要也不跳到历史末尾。
+  state.allMessages.value = state.allMessages.value.map(message => message.id === summaryMessageId ? contentToMessageEnhanced(response.message) : message)
+  rebuildMessageIndexById(state)
+}
 
 // ============ 上下文总结（L-2：从 checkpointActions 迁入，职责归位） ============
 

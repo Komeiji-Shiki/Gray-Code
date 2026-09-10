@@ -16,6 +16,7 @@ defineProps<{
   canRetry?: boolean
   canViewResponse?: boolean
   canBranch?: boolean
+  canDelete?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -115,6 +116,7 @@ function handleCopy() {
 
     <!-- 删除按钮 -->
     <IconButton
+      v-if="canDelete !== false"
       icon="codicon-trash"
       size="small"
       variant="danger"

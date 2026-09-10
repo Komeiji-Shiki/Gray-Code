@@ -76,6 +76,28 @@ function toConversationFromSummary(raw: any): Conversation | null {
   } as Conversation
 }
 
+/** 由 Bot、其他客户端或搜索结果打开的对话，可能尚未进入本地摘要页。 */
+export async function ensureConversationSummary(state: ChatStoreState, id: string, refresh = false): Promise<void> {
+  if (!refresh && state.conversations.value.some(item => item.id === id)) return
+  const values = await sendToExtension<Array<Record<string, unknown>>>(MESSAGE_NAMES['conversation.getConversationMetadataBatch'], { conversationIds: [id] })
+  const conversation = toConversationFromSummary(values?.[0])
+  if (!conversation) throw new Error('这段对话已不存在，或当前账号无法访问。')
+  const index = state.conversations.value.findIndex(item => item.id === id)
+  if (index < 0) state.conversations.value.push(conversation)
+  else state.conversations.value[index] = { ...state.conversations.value[index], ...conversation }
+  for (const tab of state.openTabs.value) if (tab.conversationId === id) tab.title = conversation.title
+}
+
+export async function resumeDesktopConversation(state: ChatStoreState, conversationId: string): Promise<void> {
+  if (!window.__GRAYCODE_HOST || !validateSessionIdentity(state, conversationId) || state.activeStreamId.value || state.isStreaming.value || state.isWaitingForResponse.value) return
+  const wasLoading = state.isLoading.value; state.isLoading.value = true
+  try {
+    const resumed = await sendToExtension<{ active: boolean; latestMessageId?: string }>('chat.resumeConversationStream', { conversationId })
+    if (!validateSessionIdentity(state, conversationId)) return
+    if (!resumed.active && resumed.latestMessageId && !state.allMessages.value.some(message => message.id === resumed.latestMessageId)) await loadHistory(state)
+  } finally { if (validateSessionIdentity(state, conversationId)) state.isLoading.value = wasLoading }
+}
+
 /**
  * 取消流式并拒绝工具的回调类型
  */
@@ -300,7 +322,8 @@ export async function syncConversationWorkspaceUri(
   } catch {
     // ignore and fallback to store value
   }
-  if (!workspaceUri) return
+  // 独立平台按对话绑定目标，切换工作台不能自动重绑已保存的任务。
+  if (window.__GRAYCODE_HOST || !workspaceUri) return
 
   const conv = state.conversations.value.find(c => c.id === conversationId)
   if (!conv || !conv.isPersisted) return
@@ -361,10 +384,11 @@ export async function createAndPersistConversation(
   
   try {
     // 创建对话时传递工作区 URI
-    await sendToExtension(MESSAGE_NAMES['conversation.createConversation'], {
+    const created = await sendToExtension<{ success: boolean; workspaceUri?: string }>(MESSAGE_NAMES['conversation.createConversation'], {
       conversationId: id,
       title: title,
-      workspaceUri: state.currentWorkspaceUri.value || undefined
+      ...(window.__GRAYCODE_HOST ? { promptModeId: state.currentPromptModeId.value } : {}),
+      workspaceUri: window.__GRAYCODE_HOST ? undefined : state.currentWorkspaceUri.value || undefined
     })
     
     // 添加到对话列表
@@ -375,7 +399,7 @@ export async function createAndPersistConversation(
       updatedAt: Date.now(),
       messageCount: 0,
       isPersisted: true,
-      workspaceUri: state.currentWorkspaceUri.value || undefined
+      workspaceUri: window.__GRAYCODE_HOST ? created?.workspaceUri : state.currentWorkspaceUri.value || undefined
     }
     
     state.conversations.value.unshift(newConversation)
@@ -431,7 +455,7 @@ export async function createBranchConversation(
       sourceConversationId,
       branchAtIndex,
       title: options.title,
-      workspaceUri: state.currentWorkspaceUri.value || undefined
+      workspaceUri: window.__GRAYCODE_HOST ? undefined : state.currentWorkspaceUri.value || undefined
     })
 
     if (!result?.success || !result.conversationId) {
@@ -495,9 +519,9 @@ export async function loadConversations(state: ChatStoreState): Promise<void> {
     )
 
     // 重置分页游标；把请求在途期间创建的新会话并入远端快照。
-    state.persistedConversationIds.value = sortConversationIds([
-      ...new Set([...remoteIds, ...concurrentlyCreatedIds])
-    ])
+    const orderedIds = [...new Set([...concurrentlyCreatedIds, ...remoteIds])]
+    // 独立存储已经按更新时间排序，UUID 或 Bot 对话 ID 不能再按字典顺序推断时间。
+    state.persistedConversationIds.value = window.__GRAYCODE_HOST ? orderedIds : sortConversationIds(orderedIds)
     state.persistedConversationsLoaded.value = 0
 
     // 保留未持久化会话，以及远端快照尚未包含、但本次加载期间刚创建的持久化会话。
@@ -574,11 +598,24 @@ export async function loadMoreConversations(
  * 存储所有消息，包括 functionResponse 消息
  * 前端索引与后端索引一一对应
  */
-export async function loadHistory(state: ChatStoreState): Promise<void> {
+export async function loadHistory(state: ChatStoreState, propagateError = false, options: { preserveWindow?: boolean } = {}): Promise<void> {
   if (!state.currentConversationId.value) return
 
   // 固化会话标识：catch 中校验归属需要（await 失败期间当前会话可能已切换）
   const conversationId = state.currentConversationId.value
+
+  // 摘要正文编辑不改变历史长度，各窗口重新读取原来可见的范围。
+  if (options.preserveWindow && state.allMessages.value.length) {
+    const offset = state.windowStartIndex.value
+    const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
+      conversationId, offset, limit: state.allMessages.value.length
+    })
+    if (state.currentConversationId.value !== conversationId || state.windowStartIndex.value !== offset) return
+    state.allMessages.value = result.messages.map(content => contentToMessageEnhanced(content))
+    state.totalMessages.value = result.total
+    rebuildMessageIndexById(state)
+    return
+  }
 
   try {
     // 重置折叠提示（重新加载最后一页）
@@ -615,6 +652,7 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
         code: err.code || 'LOAD_ERROR',
         message: err.message || 'Failed to load history'
       }
+      if (propagateError) throw err
     }
   }
 }
@@ -825,6 +863,8 @@ export async function switchConversation(
 
       // 更新对话的消息数量（在加载后才有准确数据）
       conv.messageCount = state.totalMessages.value || state.allMessages.value.length
+
+      await resumeDesktopConversation(state, requestedId)
 
       // 工作区同步不阻塞切换主链路
       void syncConversationWorkspaceUri(state, requestedId)

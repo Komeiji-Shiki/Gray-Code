@@ -1,0 +1,48 @@
+body {
+  margin: 0;
+  font:
+    12px "Segoe UI",
+    "Microsoft YaHei",
+    sans-serif;
+  background: #111215;
+  color: #e5e7eb;
+}
+.toolbar {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  gap: 6px;
+  box-sizing: border-box;
+  border-bottom: 1px solid #30333b;
+}
+button {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  font: inherit;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+button:hover {
+  background: #242730;
+}
+form {
+  flex: 1;
+  display: flex;
+}
+input {
+  width: 100%;
+  background: #1d2026;
+  color: #e5e7eb;
+  border: 1px solid #363b45;
+  padding: 8px 12px;
+  outline-color: #e1ac5b;
+  font: inherit;
+}
+.error {
+  max-width: 230px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #e0a8a8;
+}

@@ -9,6 +9,8 @@
 import type { StreamChunk } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
 import { nextTick } from 'vue'
+import { appendMessage } from './state'
+import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { bufferBackgroundChunk, updateTabStreamingStatus } from './tabActions'
 
 import {
@@ -27,6 +29,7 @@ import {
   finishSmoothStreamForState
 } from './streamChunkHandlers'
 import { loadBranchGraph } from './branchActions'
+import { appendPersistedToolContents, insertUserFeedback } from './chunkHandlers/persistedContent'
 
 // 重新导出辅助函数，保持向后兼容
 export {
@@ -179,6 +182,32 @@ export function handleStreamChunk(
     updateTabStreamingStatus(state, chunk)
     return
   }
+  // 历史装载期间先等待宿主快照；接入完成后再处理紧随其后的增量。
+  if (chunk.backgroundRun && state.isLoading.value && !state.activeStreamId.value && !chunk.resumeSnapshot) return
+  if (chunk.resumeSnapshot && state.activeStreamId.value) return
+
+  if (chunk.backgroundRun && chunk.previousStreamId && state.activeStreamId.value === chunk.previousStreamId)
+    state.activeStreamId.value = chunk.streamId ?? null
+
+  // 后台运行由服务发起，首次收到输出时接入原流式界面，不再向后端发送新请求。
+  if (chunk.backgroundRun && chunk.streamId && !state.activeStreamId.value &&
+      !state.isStreaming.value && !state.isWaitingForResponse.value &&
+      !(state._lastCancelledStreamId.value?.conversationId === chunk.conversationId && state._lastCancelledStreamId.value?.streamId === chunk.streamId) &&
+      !['complete', 'cancelled', 'error'].includes(chunk.type)) {
+    const snapshotId = chunk.resumeSnapshot ? chunk.chunk?.contentSnapshot?.id : undefined
+    const existing = snapshotId ? state.allMessages.value.find(message => message.id === snapshotId) : undefined
+    const id = existing?.id ?? `placeholder:${chunk.streamId}`
+    state.error.value = null
+    state.activeStreamId.value = chunk.streamId
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
+    state.streamingMessageId.value = id
+    if (!state.allMessages.value.some(message => message.id === id)) appendMessage(state, { id, role: 'assistant', content: '',
+      timestamp: Date.now(), backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
+      streaming: true, localOnly: true, metadata: { modelVersion: currentModelName() } })
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
+  }
 
   // 同一对话可能并发/串行触发多次流式请求，
   // 通过 streamId 只接收“当前活跃请求”的 chunk，避免迟到 chunk 污染新请求状态。
@@ -208,6 +237,9 @@ export function handleStreamChunk(
   }
   
   switch (chunk.type) {
+    case 'userFeedback':
+      if (chunk.feedbackContent) insertUserFeedback(chunk.feedbackContent, state)
+      break
     case 'chunk':
       if (chunk.chunk && state.streamingMessageId.value) {
         handleChunkType(chunk, state)
@@ -223,6 +255,7 @@ export function handleStreamChunk(
       break
       
     case 'awaitingConfirmation':
+      appendPersistedToolContents(chunk, state)
       handleAwaitingConfirmation(chunk, state, addCheckpoint)
       // 编辑分支 / reroll 流停在工具确认（awaitingConfirmation 终结）时同样消费刷新标记：
       // 后端候选已创建并落盘（editCandidate 在流开始时就 save），此时刷新分支图可让
@@ -234,6 +267,7 @@ export function handleStreamChunk(
       
     case 'toolIteration':
       if (chunk.content) {
+        appendPersistedToolContents(chunk, state)
         handleToolIteration(chunk, state, currentModelName, addCheckpoint)
         // 工具迭代可能因「需用户确认 / 审批门闸 / 工具被取消」而终结流（后端不再发 complete）：
         // handleToolIteration 终结路径会把 activeStreamId 置空，据此消费分支图刷新标记；

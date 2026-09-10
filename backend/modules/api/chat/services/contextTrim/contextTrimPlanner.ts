@@ -6,6 +6,7 @@
  */
 
 import type { Content } from '../../../../conversation/types';
+import type { ContextConversationStore } from './ports';
 import type { ConversationManager, GetHistoryOptions } from '../../../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../../../config/configs/base';
 import type { DynamicContextStrategy } from '../../../../settings/types';
@@ -19,7 +20,7 @@ import { saveTrimState, clearTrimState } from './trimState';
 import type { RoundTokenInfo } from './tokenAccumulator';
 
 export interface ContextTrimPlannerDeps {
-    conversationManager: ConversationManager;
+    conversationManager: ContextConversationStore;
     log: Logger;
 }
 

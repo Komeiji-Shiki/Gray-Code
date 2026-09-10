@@ -205,7 +205,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     if (state.retryStatus.value?.isRetrying) return false  // 正在重试
     
     const lastMessage = state.allMessages.value[state.allMessages.value.length - 1]
-    if (!lastMessage.isFunctionResponse) return false
+    if (!lastMessage.isFunctionResponse && lastMessage.source !== 'background_task') return false
     // 本地占位/未终结的流式消息不算“已中断回合”：localOnly 占位可能马上被清理、
     // streaming 消息仍在收尾，此时显示“继续对话”按钮会误导用户
     if (lastMessage.localOnly || lastMessage.streaming) return false

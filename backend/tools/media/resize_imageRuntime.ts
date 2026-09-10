@@ -1,0 +1,518 @@
+import * as path from 'path';
+import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
+import type { TaskEvent } from '../taskManager';
+import { withLinkedAbort } from '../abortLink';
+import { getSharp } from '../../modules/dependencies/runtime';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
+import { buildResizeImageDescriptions } from '../localization/dynamicDescriptions';
+import type { MediaToolHost } from './host';
+import { calculateAspectRatio } from '../shared/imageMath';
+import { getImageDimensions, parseImageDimensionsFromBase64, createFetchSignal } from './imageData';
+
+
+/**
+ * 缩放输出事件类型
+ */
+export interface ResizeImageOutputEvent {
+    toolId: string;
+    type: 'start' | 'progress' | 'complete' | 'cancelled' | 'error';
+    data?: {
+        message?: string;
+        currentTask?: number;
+        totalTasks?: number;
+    };
+    error?: string;
+}
+/** 图片算法与批量流程复用，文件和任务服务由当前宿主提供。 */
+export function createResizeImageRuntime(host: MediaToolHost) {
+const { getAllWorkspaces, readImageFile, saveImage } = host;
+const TaskManager = host.tasks;
+
+
+/** 缩放任务类型常量 */
+const TASK_TYPE_RESIZE = 'resize_image';
+
+
+/**
+ * 缩放图片工具配置（从 context.config 获取）
+ */
+interface ResizeImageConfig {
+    /** 是否将图片返回给 AI */
+    returnImageToAI?: boolean;
+}
+
+
+/**
+ * 订阅缩放输出
+ */
+function onResizeImageOutput(listener: (event: ResizeImageOutputEvent) => void): () => void {
+    return TaskManager.onTaskEventByType(TASK_TYPE_RESIZE, (taskEvent: TaskEvent) => {
+        const event: ResizeImageOutputEvent = {
+            toolId: taskEvent.taskId,
+            type: taskEvent.type as ResizeImageOutputEvent['type'],
+            data: taskEvent.data as ResizeImageOutputEvent['data'],
+            error: taskEvent.error
+        };
+        listener(event);
+    });
+}
+
+
+/**
+ * 取消缩放任务
+ */
+function cancelResizeImage(toolId: string): { success: boolean; error?: string } {
+    return TaskManager.cancelTask(toolId);
+}
+
+
+/**
+ * 单个缩放任务
+ */
+interface ResizeTask {
+    /** 原始图片路径 */
+    image_path: string;
+    /** 输出文件路径 */
+    output_path: string;
+    /** 目标宽度（像素） */
+    width: number;
+    /** 目标高度（像素） */
+    height: number;
+}
+
+
+/**
+ * 单个任务的结果
+ */
+interface TaskResult {
+    index: number;
+    success: boolean;
+    error?: string;
+    outputPath?: string;
+    originalDimensions?: { width: number; height: number; aspectRatio: string };
+    resizedDimensions?: { width: number; height: number; aspectRatio: string };
+    multimodal?: MultimodalData[];
+    cancelled?: boolean;
+}
+
+
+/**
+ * 执行单个缩放任务
+ */
+async function executeResizeTask(
+    task: ResizeTask,
+    index: number,
+    abortSignal?: AbortSignal,
+    context?: ToolContext
+): Promise<TaskResult> {
+    const { image_path, output_path, width, height } = task;
+
+    // 验证参数
+    if (!image_path) {
+        return { index, success: false, error: `Task ${index + 1}: image_path is required` };
+    }
+
+    if (!output_path) {
+        return { index, success: false, error: `Task ${index + 1}: output_path is required` };
+    }
+
+    // 验证目标尺寸（NaN/Infinity 会穿透 !width 与 width <= 0 检查，显式要求有限数）
+    if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0) {
+        return { index, success: false, error: `Task ${index + 1}: width must be a positive finite number` };
+    }
+
+    if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) {
+        return { index, success: false, error: `Task ${index + 1}: height must be a positive finite number` };
+    }
+
+    // 验证尺寸范围（防止过大导致内存问题）
+    const MAX_DIMENSION = 16384;  // 16K
+    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        return { index, success: false, error: `Task ${index + 1}: Target dimensions cannot exceed ${MAX_DIMENSION}x${MAX_DIMENSION}` };
+    }
+
+    try {
+        // 检查是否已取消
+        if (abortSignal?.aborted) {
+            return { index, success: false, error: `Task ${index + 1}: User cancelled the resize operation`, cancelled: true };
+        }
+
+        // 获取 sharp（工具依赖已在 ToolRegistry 层面检查）
+        const sharp = await getSharp();
+        
+        if (!sharp) {
+            return { index, success: false, error: `Task ${index + 1}: sharp library not installed, please install in Settings -> Extension Dependencies` };
+        }
+
+        // 读取原图
+        const imageFile = await readImageFile(image_path, context, 'resize_image');
+        if (!imageFile) {
+            return { index, success: false, error: `Task ${index + 1}: Cannot read image: ${image_path}` };
+        }
+
+        // 获取图片尺寸
+        const metadata = await sharp(imageFile.data).metadata();
+        if (!metadata.width || !metadata.height) {
+            return { index, success: false, error: `Task ${index + 1}: Cannot get image dimensions` };
+        }
+
+        const originalWidth = metadata.width;
+        const originalHeight = metadata.height;
+
+        // 检查是否已取消
+        if (abortSignal?.aborted) {
+            return { index, success: false, error: `Task ${index + 1}: User cancelled the resize operation`, cancelled: true };
+        }
+
+        // 执行缩放（使用 fit: 'fill' 进行拉伸填充，不保持宽高比）
+        const resizedBuffer = await sharp(imageFile.data)
+            .resize(width, height, {
+                fit: 'fill',  // 拉伸填充整个目标尺寸
+                kernel: 'lanczos3'  // 使用高质量的 Lanczos 算法
+            })
+            .toBuffer();
+
+        // 确定输出格式
+        const outputExt = path.extname(output_path).toLowerCase();
+        let finalBuffer: Buffer;
+        let outputMimeType = 'image/png';
+
+        if (outputExt === '.jpg' || outputExt === '.jpeg') {
+            finalBuffer = await sharp(resizedBuffer).jpeg({ quality: 90 }).toBuffer();
+            outputMimeType = 'image/jpeg';
+        } else if (outputExt === '.webp') {
+            finalBuffer = await sharp(resizedBuffer).webp({ quality: 90 }).toBuffer();
+            outputMimeType = 'image/webp';
+        } else {
+            finalBuffer = await sharp(resizedBuffer).png().toBuffer();
+            outputMimeType = 'image/png';
+        }
+
+        // 保存结果
+        await saveImage(finalBuffer, output_path, context, 'resize_image');
+
+        // 构建多模态数据（任务级判定：仅当 returnImageToAI=true 时构造 base64，默认关闭以节省 token）
+        const resizeConfig = (context?.config || {}) as ResizeImageConfig;
+        const shouldReturnImageToAI = resizeConfig.returnImageToAI === true;
+        const multimodal: MultimodalData[] = shouldReturnImageToAI ? [{
+            mimeType: outputMimeType,
+            data: finalBuffer.toString('base64'),
+            name: path.basename(output_path)
+        }] : [];
+
+        return {
+            index,
+            success: true,
+            outputPath: output_path,
+            originalDimensions: {
+                width: originalWidth,
+                height: originalHeight,
+                aspectRatio: calculateAspectRatio(originalWidth, originalHeight)
+            },
+            resizedDimensions: {
+                width,
+                height,
+                aspectRatio: calculateAspectRatio(width, height)
+            },
+            multimodal
+        };
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorName = error instanceof Error ? error.name : '';
+        
+        const isCancelled = abortSignal?.aborted ||
+            errorName === 'AbortError' ||
+            errorMessage.includes('aborted') ||
+            errorMessage.includes('cancelled');
+        
+        return {
+            index,
+            success: false,
+            error: isCancelled
+                ? `Task ${index + 1}: User cancelled the resize operation`
+                : `Task ${index + 1}: ${errorMessage}`,
+            cancelled: isCancelled
+        };
+    }
+}
+
+
+/**
+ * 创建缩放图片工具
+ *
+ * @param maxBatchTasks 单次调用允许的最大任务数
+ */
+function createResizeImageTool(maxBatchTasks: number = 10): Tool {
+    const workspaces = getAllWorkspaces();
+    const isMultiRoot = workspaces.length > 1;
+
+    // 语言感知说明：根据当前实际界面语言（zh-CN/en/ja）生成模型可见说明。
+    // 顶层说明（Limits、16384x16384 上限、多根尾巴）与参数说明统一由
+    // localization/dynamicDescriptions 的语言感知生成器负责。
+    const lang = resolveLocalizationLanguage(getActualLanguage());
+    const descriptions = buildResizeImageDescriptions({
+        lang,
+        maxBatchTasks,
+        isMultiRoot,
+        workspaceNames: workspaces.map(w => w.name)
+    });
+
+    const description = descriptions.description;
+
+    return {
+        declaration: {
+            name: 'resize_image',
+            description,
+            category: 'media',
+            dependencies: ['sharp'],  // 声明依赖 sharp
+            parameters: {
+                type: 'object',
+                properties: {
+                    // 批量模式参数
+                    images: {
+                        type: 'array',
+                        description: descriptions.images,
+                        items: {
+                            type: 'object',
+                            properties: {
+                                image_path: {
+                                    type: 'string',
+                                    description: descriptions.batchImagePath
+                                },
+                                output_path: {
+                                    type: 'string',
+                                    description: descriptions.batchOutputPath
+                                },
+                                width: {
+                                    type: 'integer',
+                                    description: descriptions.batchWidth
+                                },
+                                height: {
+                                    type: 'integer',
+                                    description: descriptions.batchHeight
+                                }
+                            },
+                            required: ['image_path', 'output_path', 'width', 'height']
+                        }
+                    },
+                    // 单张模式参数（向后兼容）
+                    image_path: {
+                        type: 'string',
+                        description: descriptions.singleImagePath
+                    },
+                    output_path: {
+                        type: 'string',
+                        description: descriptions.singleOutputPath
+                    },
+                    width: {
+                        type: 'integer',
+                        description: descriptions.singleWidth
+                    },
+                    height: {
+                        type: 'integer',
+                        description: descriptions.singleHeight
+                    }
+                }
+            }
+        },
+        handler: withLinkedAbort(async (args, context: ToolContext | undefined, abortController): Promise<ToolResult> => {
+            const toolId = context?.toolId || TaskManager.generateTaskId('resize');
+            const config = (context?.config || {}) as ResizeImageConfig;
+
+            const abortSignal = abortController.signal;
+
+            // 检查使用哪种模式
+            const imagesArray = args.images as ResizeTask[] | undefined;
+            const singleImagePath = args.image_path as string | undefined;
+            const singleOutputPath = args.output_path as string | undefined;
+            const singleWidth = args.width as number | undefined;
+            const singleHeight = args.height as number | undefined;
+
+            let tasks: ResizeTask[] = [];
+
+            if (imagesArray && Array.isArray(imagesArray) && imagesArray.length > 0) {
+                // 批量模式
+                tasks = imagesArray;
+            } else if (singleImagePath && singleOutputPath && 
+                       singleWidth !== undefined && singleHeight !== undefined) {
+                // 单张模式 - 转换为单任务数组
+                tasks = [{
+                    image_path: singleImagePath,
+                    output_path: singleOutputPath,
+                    width: singleWidth,
+                    height: singleHeight
+                }];
+            } else {
+                return {
+                    success: false,
+                    error: 'Please use one of the following:\n1. Single mode: Provide image_path, output_path, width, height\n2. Batch mode: Provide images array'
+                };
+            }
+
+            // 验证任务数量
+            if (tasks.length === 0) {
+                return { success: false, error: 'No valid resize tasks' };
+            }
+
+            if (tasks.length > maxBatchTasks) {
+                return { success: false, error: `Maximum ${maxBatchTasks} resize tasks per call (current: ${tasks.length})` };
+            }
+
+            // 注册任务
+            TaskManager.registerTask(toolId, TASK_TYPE_RESIZE, abortController, {
+                totalTasks: tasks.length
+            });
+
+            try {
+                // 并发执行所有任务
+                // 修改原因：同一次调用的多个任务并发写同一 output_path 会互相覆盖（后写者胜出）。
+                // 修改方式：进入并发前检测重复输出路径并拒绝。
+                const seenOutputPaths = new Set<string>();
+                const duplicateOutputTask = tasks.find(task => {
+                    if (!task.output_path) return false;
+                    if (seenOutputPaths.has(task.output_path)) return true;
+                    seenOutputPaths.add(task.output_path);
+                    return false;
+                });
+                if (duplicateOutputTask) {
+                    // 与同文件其他早退分支保持一致：先注销任务再返回，避免任务管理器残留永久 running 任务
+                    TaskManager.unregisterTask(toolId, 'error', { error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` });
+                    return { success: false, error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` };
+                }
+
+                const results = await Promise.all(
+                    tasks.map((task, index) => executeResizeTask(task, index, abortSignal, context))
+                );
+
+                // 统计结果
+                const successResults = results.filter(r => r.success);
+                const failedResults = results.filter(r => !r.success && !r.cancelled);
+                const cancelledResults = results.filter(r => r.cancelled);
+
+                // 任务完成（若所有任务均被取消，终态为 cancelled）
+                const allCancelled = cancelledResults.length === results.length;
+                TaskManager.unregisterTask(
+                    toolId,
+                    allCancelled ? 'cancelled' : 'completed',
+                    allCancelled ? undefined : {
+                        totalTasks: tasks.length,
+                        successCount: successResults.length
+                    }
+                );
+
+                // 如果所有任务都被取消
+                if (cancelledResults.length === results.length) {
+                    return {
+                        success: false,
+                        error: 'User cancelled the resize request. Please wait for user\'s next instruction.',
+                        cancelled: true
+                    };
+                }
+
+                // 收集所有多模态数据
+                const allMultimodal: MultimodalData[] = [];
+                const allPaths: string[] = [];
+
+                for (const result of successResults) {
+                    if (result.multimodal) {
+                        allMultimodal.push(...result.multimodal);
+                    }
+                    if (result.outputPath) {
+                        allPaths.push(result.outputPath);
+                    }
+                }
+
+                // 生成报告
+                const isBatch = tasks.length > 1;
+                let message: string;
+
+                if (failedResults.length === 0 && cancelledResults.length === 0) {
+                    // 全部成功
+                    if (isBatch) {
+                        message = `✅ Batch resize completed: ${successResults.length}/${tasks.length} tasks succeeded\n\nSaved to:\n${allPaths.map(p => `• ${p}`).join('\n')}`;
+                    } else {
+                        const r = successResults[0];
+                        message = `✅ Resize completed!\n\nOriginal: ${r.originalDimensions?.width}×${r.originalDimensions?.height} (${r.originalDimensions?.aspectRatio})\nResized: ${r.resizedDimensions?.width}×${r.resizedDimensions?.height} (${r.resizedDimensions?.aspectRatio})\n\nOutput: ${allPaths[0]}`;
+                    }
+                } else if (successResults.length === 0) {
+                    // 全部失败
+                    const errors = failedResults.map(r => r.error).join('\n');
+                    return {
+                        success: false,
+                        error: isBatch
+                            ? `Batch resize failed: All ${tasks.length} tasks failed\n\n${errors}`
+                            : failedResults[0]?.error || 'Resize failed'
+                    };
+                } else {
+                    // 部分成功
+                    const errors = failedResults.map(r => r.error).join('\n');
+                    message = `⚠️ Batch resize partially completed: ${successResults.length}/${tasks.length} succeeded, ${failedResults.length} failed\n\n`;
+                    message += `Saved to:\n${allPaths.map(p => `• ${p}`).join('\n')}\n\n`;
+                    if (failedResults.length > 0) {
+                        message += `Failure reasons:\n${errors}`;
+                    }
+                }
+
+                // 如果有部分任务被取消
+                if (cancelledResults.length > 0) {
+                    message += `\n\n⚠️ Note: ${cancelledResults.length} tasks were cancelled by user`;
+                }
+
+                // 根据配置决定是否返回多模态数据给 AI（默认关闭以节省 token）
+                const shouldReturnImageToAI = config.returnImageToAI === true;
+                
+                return {
+                    success: true,
+                    data: {
+                        message,
+                        toolId,
+                        totalTasks: tasks.length,
+                        successCount: successResults.length,
+                        failedCount: failedResults.length,
+                        cancelledCount: cancelledResults.length,
+                        paths: allPaths
+                    },
+                    multimodal: shouldReturnImageToAI && allMultimodal.length > 0 ? allMultimodal : undefined,
+                    cancelled: cancelledResults.length > 0
+                };
+
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                const isCancelled = abortSignal.aborted ||
+                    errorMessage.includes('aborted') ||
+                    errorMessage.includes('cancelled');
+
+                TaskManager.unregisterTask(
+                    toolId,
+                    isCancelled ? 'cancelled' : 'error',
+                    isCancelled ? undefined : { error: errorMessage }
+                );
+
+                if (isCancelled) {
+                    return {
+                        success: false,
+                        error: 'User cancelled the resize operation.',
+                        cancelled: true
+                    };
+                }
+
+                return {
+                    success: false,
+                    error: `Resize failed: ${errorMessage}`
+                };
+            }
+        })
+    };
+}
+
+
+/**
+ * 注册缩放图片工具（默认配置）
+ */
+function registerResizeImage(): Tool {
+    return createResizeImageTool();
+}
+return { onResizeImageOutput, cancelResizeImage, createResizeImageTool, registerResizeImage };
+}

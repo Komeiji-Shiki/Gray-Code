@@ -2,9 +2,9 @@
  * Plan 文档布局辅助函数
  */
 
-import { normalizeLineEndingsToLF } from '../utils';
+import { normalizeLineEndingsToLF } from '../shared/textUtils';
 import { normalizePlanTodoList, renderPlanTodoListSection, stripPlanTodoListSection, type PlanTodoItem } from './todoListSection';
-import { stripPlanSourceArtifactSection } from './sourceArtifactSection';
+import { stripPlanSourceArtifactSection } from './sourceArtifactSectionRuntime';
 
 export function extractPlanBodyContent(content: string): string {
   const normalized = normalizeLineEndingsToLF(content || '');

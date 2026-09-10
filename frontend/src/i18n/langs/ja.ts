@@ -459,6 +459,53 @@ const ja: LanguageMessages = {
                 cannotGetFilePath: 'ファイルパスを取得できません。VSCode エクスプローラーまたはタブからドラッグしてください',
                 fileNotMatchOrNotInWorkspace: 'ファイルがワークスペース内にないか、ファイル名が一致しません',
                 removeFailed: '削除に失敗しました: {error}'
+            },
+            contextDetail: {
+                open: 'コンテキスト統計を表示',
+                title: 'コンテキスト統計',
+                close: '閉じる',
+                refresh: '更新',
+                loading: '読み込み中...',
+                noConversation: '会話が選択されていません。',
+                desktopOnly: 'デスクトップ版のみ利用可能',
+                tokensTitle: 'トークン使用量',
+                used: '使用済み',
+                limit: '上限',
+                usage: '使用率',
+                source: '算出元',
+                sourcePrecise: 'プロバイダー実測値',
+                sourceEstimate: '要約の推定値',
+                sourceNone: '使用量なし',
+                localEstimate: 'ローカル推定',
+                preciseTokens: '精密カウント',
+                preciseUnavailable: '精密カウント不可',
+                rangeTitle: '表示範囲と要約範囲',
+                total: '全メッセージ',
+                visible: '表示中',
+                summarized: '要約済み',
+                summariesCount: '保存済み要約',
+                lastSummary: '最終要約位置',
+                trimStart: 'トリム開始',
+                fallbackActive: 'フォールバック中',
+                fallbackInactive: 'フォールバックなし',
+                policy: 'コンテキスト管理',
+                enabled: '有効',
+                disabled: '無効',
+                unknown: '不明',
+                summariesTitle: '保存済み要約一覧',
+                emptySummaries: '保存済み要約がありません。',
+                viewDetail: '詳細を表示',
+                backToList: '一覧に戻る',
+                detailTitle: '要約詳細',
+                auto: '自動',
+                manual: '手動',
+                summarizedCount: '{count} 件を圧縮',
+                timeLabel: '時刻',
+                indexLabel: '位置',
+                tokenBefore: '圧縮前',
+                tokenAfter: '圧縮後',
+                tokenSaved: '削減',
+                noDetail: '詳細がありません。'
             }
         },
 
@@ -1788,6 +1835,30 @@ const ja: LanguageMessages = {
                     message: 'サーバー "{name}" を削除してもよろしいですか？この操作は元に戻せません。',
                     confirm: '削除',
                     cancel: 'キャンセル'
+                },
+                browse: {
+                    title: 'リソースとプロンプト閲覧',
+                    description: '接続中サーバーのリソースとプロンプトを読み取り専用で閲覧します。設定は変更しません。',
+                    serverLabel: 'サーバー',
+                    resourcesTab: 'リソース',
+                    promptsTab: 'プロンプト',
+                    refresh: '更新',
+                    loading: '読み込み中...',
+                    noConnected: '接続中の MCP サーバーがありません。先に接続してください。',
+                    emptyResources: 'このサーバーに利用可能なリソースがありません。',
+                    emptyPrompts: 'このサーバーにプロンプトテンプレートがありません。',
+                    read: '表示',
+                    reading: '読み込み中...',
+                    preview: 'プレビュー',
+                    previewing: 'プレビュー中...',
+                    argsTitle: '引数',
+                    required: '必須',
+                    desktopOnly: 'デスクトップ版のみ利用可能',
+                    disconnectedHint: 'サーバーが未接続のため閲覧できません。',
+                    contentEmpty: '内容が空です。',
+                    resourceContentTitle: 'リソース内容',
+                    promptMessagesTitle: '返却メッセージ',
+                    closeDetail: '閉じる'
                 }
             },
             subagents: {
@@ -3027,7 +3098,7 @@ const ja: LanguageMessages = {
                 },
                 deepSeekVision: {
                     title: 'DeepSeek Vision 画像前処理',
-                    hint: 'deepseek-v4-flash-vision-exp で PDF のページ単位画像化を有効にし、約 800×800 総ピクセルを超える画像を分割して DeepSeek の自動縮小を避けます。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
+                    hint: 'deepseek-flash と旧 Vision モデル名で PDF をページごとに画像化し、画像を約 1300×1300 総ピクセル以内に等比縮小して全体を送信します。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
                     toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
                 }
             },
@@ -3069,7 +3140,7 @@ const ja: LanguageMessages = {
                 },
                 deepSeekVision: {
                     title: 'DeepSeek Vision 画像前処理',
-                    hint: 'deepseek-v4-flash-vision-exp で PDF のページ単位画像化を有効にし、約 800×800 総ピクセルを超える画像を分割して DeepSeek の自動縮小を避けます。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
+                    hint: 'deepseek-flash と旧 Vision モデル名で PDF をページごとに画像化し、画像を約 1300×1300 総ピクセル以内に等比縮小して全体を送信します。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
                     toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
                 },
                 pdfAttachment: {
@@ -3116,7 +3187,7 @@ const ja: LanguageMessages = {
             'openai-responses': {
                 deepSeekVision: {
                     title: 'DeepSeek Vision 画像前処理',
-                    hint: 'deepseek-v4-flash-vision-exp で PDF のページ単位画像化を有効にし、約 800×800 総ピクセルを超える画像を分割して DeepSeek の自動縮小を避けます。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
+                    hint: 'deepseek-flash と旧 Vision モデル名で PDF をページごとに画像化し、画像を約 1300×1300 総ピクセル以内に等比縮小して全体を送信します。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
                     toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
                 },
                 promptCacheKey: {

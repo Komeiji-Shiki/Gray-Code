@@ -24,7 +24,8 @@ export function useViewNavigation(chatStore: ChatStore, settingsStore: SettingsS
 
   // 处理新建对话
   function handleNewChat() {
-    chatStore.createNewConversation()
+    if (window.__GRAYCODE_HOST) chatStore.createNewTab()
+    else chatStore.createNewConversation()
     settingsStore.showChat()
   }
 

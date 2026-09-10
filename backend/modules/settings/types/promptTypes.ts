@@ -118,6 +118,8 @@ export interface PromptEntry {
  * 每个模式包含独立的系统提示词和动态上下文配置
  */
 export interface PromptMode {
+    /** Original legacy configuration retained when converting to preset entries. */
+    legacyPrompt?: { template: string; dynamicTemplate: string; dynamicTemplateEnabled: boolean; promptEntries?: PromptEntry[] };
     /**
      * 模式 ID（唯一标识）
      */

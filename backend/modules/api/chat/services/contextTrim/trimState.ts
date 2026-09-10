@@ -6,6 +6,7 @@
  */
 
 import type { ConversationManager } from '../../../../conversation/ConversationManager';
+import type { ContextConversationStore } from './ports';
 import { CONVERSATION_CONTEXT_TRIM_STATE_KEY } from '../../../../conversation/types';
 import type { Logger } from '../../../../../core/logger';
 
@@ -30,7 +31,7 @@ export interface PersistedTrimState {
  * 获取持久化的裁剪状态
  */
 export async function getTrimState(
-    conversationManager: ConversationManager,
+    conversationManager: ContextConversationStore,
     conversationId: string,
     log: Logger
 ): Promise<PersistedTrimState | null> {
@@ -61,7 +62,7 @@ export async function getTrimState(
  * 保存裁剪状态到持久化存储
  */
 export async function saveTrimState(
-    conversationManager: ConversationManager,
+    conversationManager: ContextConversationStore,
     conversationId: string,
     state: Omit<PersistedTrimState, 'schemaVersion'>
 ): Promise<void> {
@@ -75,7 +76,7 @@ export async function saveTrimState(
  * 清除指定会话的裁剪状态
  */
 export async function clearTrimState(
-    conversationManager: ConversationManager,
+    conversationManager: ContextConversationStore,
     conversationId: string
 ): Promise<void> {
     await conversationManager.invalidateContextManagementState(conversationId, 'context_trim_service_clear');

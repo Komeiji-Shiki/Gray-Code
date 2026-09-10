@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { sendToExtension, showNotification } from '../../../utils/vscode'
+import { useChatStore } from '../../../stores/chatStore'
 import { computed } from 'vue'
 import { useI18n } from '@/composables'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../../common'
@@ -8,8 +10,10 @@ import { computeTaskCardStatus } from '../../../utils/tools/subagents/background
 
 const { t } = useI18n()
 const backgroundStore = useBackgroundTaskStore()
+const chatStore = useChatStore()
 
 const props = defineProps<{
+  toolId?: string
   args: Record<string, unknown>
   result?: Record<string, unknown>
 }>()
@@ -89,10 +93,16 @@ const preview = computed(() => {
   const src = responseText.value || prompt.value
   return extractPreviewText(src, { maxLines: 10, maxChars: 1200 })
 })
+async function openRun() {
+  try { await sendToExtension('subagents.openMonitor', { runId: resultData.value.runId || backgroundTask.value?.runId, toolId: props.toolId, conversationId: chatStore.currentConversationId }); }
+  catch (error) { await showNotification((error as Error).message, 'warning'); }
+}
 </script>
 
 <template>
   <TaskCard
+    :openable="!!(toolId || resultData.runId || backgroundTask?.runId)"
+    @open="openRun"
     :title="`Sub-Agent · ${agentName}`"
     icon="codicon-hubot"
     :status="cardStatus"

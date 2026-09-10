@@ -316,7 +316,7 @@ export interface ChatStoreState {
    * 用于防止迟到的 cancelled/error/complete chunk 误清新请求状态：stale 判定先比会话——
    * 切到其他会话（标签页）后，该会话合法终结 chunk 不得因「消息 id 不同」被误判丢弃（M-front）。
    */
-  _lastCancelledStreamId: Ref<{ conversationId: string; messageId: string } | null>
+  _lastCancelledStreamId: Ref<{ conversationId: string; messageId: string; streamId?: string } | null>
 
   /** 最近一个因审批门闸停止的 streamId（用于迟到 chunk 诊断） */
   _lastApprovalGatedStreamId: Ref<string | null>

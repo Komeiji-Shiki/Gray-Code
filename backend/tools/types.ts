@@ -316,7 +316,7 @@ export interface ToolContext {
 /**
  * 工具执行结果
  */
-export interface ToolResult {
+export type ToolResult = {
     /** 是否成功 */
     success: boolean;
     
@@ -339,7 +339,7 @@ export interface ToolResult {
      * 而此字段控制"工具执行后是否继续 AI 循环"（执行后的门闸）。
      */
     requiresUserConfirmation?: boolean;
-}
+};
 
 /**
  * 多模态数据

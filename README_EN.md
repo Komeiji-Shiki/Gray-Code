@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>An AI coding assistant for VS Code</strong>
+  <strong>A local AI workspace and coding assistant</strong>
 </p>
 
 <p align="center">
@@ -25,14 +25,16 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
 </p>
 
-GrayCode brings agentic coding into VS Code. It understands your workspace, searches and edits code, runs commands, queries language services, and presents file changes in native diffs before they are accepted. It works equally well for quick questions, bug investigation, and structured design-to-review workflows.
+GrayCode 2.0 provides a standalone desktop workspace for model conversations, coding, character chat, bot integrations, and subagents with shared tasks. It searches and edits files, runs commands, queries language services, and presents file changes for review.
+
+The current preview is **[2.0.0-pre](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)**, available as a portable Windows x64 application. `main` now maintains the standalone desktop edition. The 1.x VS Code extension source is preserved on [`v1-extension`](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension), and the extension remains available through its existing channels.
 
 Core data stays local. You can choose among multiple model providers, extend the assistant with MCP, Skills, and Sub-Agents, and retain project conventions and decisions across conversations with persistent memory.
 
 ## Quick Start
 
-1. Install **Gray Code** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode), or download a VSIX from [Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases).
-2. Open Gray Code from the Activity Bar, then go to **Settings → Channels** and add a Gemini, OpenAI Compatible, OpenAI Responses, or Anthropic channel.
+1. Download the Windows ZIP from the [2.0.0-pre prerelease](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre), extract the full archive, and run `GrayCode.exe`. Keep its DLLs and resources directory. Exit an older running version from the tray first.
+2. Go to **Settings → Channels** and configure your own Gemini, OpenAI Compatible, OpenAI Responses, or Anthropic channel.
 3. Return to chat, select a channel, model, and Code / Design / Plan / Ask / Review mode, then describe the task.
 
 Try one of these prompts:
@@ -41,7 +43,7 @@ Try one of these prompts:
 
 > Investigate this bug. Search the relevant code and explain the evidence before changing and testing it.
 
-[Read the full getting-started guide →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started)
+[Desktop setup and builds](apps/desktop/README.md) · [Web access](apps/server/WEB.md) · [1.x extension guide](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started)
 
 ## Highlights
 
@@ -94,7 +96,7 @@ The complete user guide lives in the [GrayCode Wiki](https://github.com/Komeiji-
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, repository structure, and contribution guidelines. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
-## Installation and Updates
+## 1.x Extension Installation and Updates
 
 GrayCode requires VS Code `^1.84.0` or newer. Install it from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode), or download `graycode-*.vsix` from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) and run `Extensions: Install from VSIX...` from the Command Palette.
 
@@ -104,7 +106,6 @@ The extension can check GitHub Releases automatically. You can also check or upd
 
 - Use [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) for bug reports and proposals.
 - Pull Requests are welcome; read the [contribution guide](CONTRIBUTING.md) before starting.
-- The community-maintained [GrayCode Desktop](https://github.com/czocelot/Gray-Code-Desktop) provides an Electron desktop edition for Windows, macOS, and Linux. Its release schedule is independent of this repository.
 
 ## Acknowledgements
 

@@ -84,3 +84,22 @@ AUDIT_REMEDIATION.md
 # historical planning/research docs (mission complete, keep local)
 .graycode/
 checkpoint-history-branch-architecture.plan.md
+
+# 独立桌面发行产物与本地运行数据
+/release/
+/platform-data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# 本地试用、设计讨论和交接记录，保留在工作区，不进入公开源码
+/DESKTOP_TRIAL_FEEDBACK.md
+/PLATFORM_IMPLEMENTATION_HANDOFF.md
+/PLATFORM_MIGRATION_PLAN.md
+/PLATFORM_SIMPLIFICATION.md
+/STORAGE_ARCHITECTURE_PLAN.md
+/BOT_CONVERSATION_PLAN.md
+/CHARACTER_CHAT_PLAN.md
+/AGENT_TEAMS_REVIEW.md
+/frontend/AGENTS.md
+/apps/client/AGENTS.md

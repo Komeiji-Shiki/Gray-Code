@@ -12,6 +12,9 @@ import { computed } from 'vue'
 import { t, SUPPORTED_LANGUAGES } from '@/i18n'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../../common'
 
+const isPlatform = !!window.__GRAYCODE_HOST
+const isWeb = window.__GRAYCODE_HOST?.kind === 'web'
+
 defineProps<{
   // 代理设置
   proxyEnabled: boolean
@@ -47,7 +50,7 @@ defineProps<{
   importExportMessage: string
   importExportMessageType: 'success' | 'error'
   // 应用信息
-  appInfo: { name: string; displayName: string; version: string }
+  appInfo: { name: string; displayName: string; version: string; buildCommit?: string; buildDirty?: boolean; buildTime?: string; executablePath?: string }
 }>()
 
 const emit = defineEmits<{
@@ -103,7 +106,7 @@ function onCustomPathInput(event: Event) {
 </script>
 
 <template>
-  <div class="settings-form">
+  <div class="settings-form" :class="{ 'platform-general': isPlatform }">
     <!-- 代理设置 -->
     <div class="form-group" data-search-anchor="proxy">
       <label class="group-label">
@@ -144,7 +147,7 @@ function onCustomPathInput(event: Event) {
             :disabled="isSaving || (!!proxyUrl && !isValidProxyUrl(proxyUrl))"
           >
             <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.settingsPanel.proxy.save') }}</span>
+            <span v-else>{{ isPlatform ? '应用到草稿' : t('components.settings.settingsPanel.proxy.save') }}</span>
           </button>
           <span v-if="saveMessage" class="save-message" :class="{ success: saveMessageType === 'success' }">
             {{ saveMessage }}
@@ -179,9 +182,9 @@ function onCustomPathInput(event: Event) {
     <div class="form-group" data-search-anchor="update">
       <label class="group-label">
         <i class="codicon codicon-cloud-download"></i>
-        {{ t('components.settings.settingsPanel.update.title') }}
+        {{ isPlatform ? '桌面应用更新' : t('components.settings.settingsPanel.update.title') }}
       </label>
-      <p class="field-description">{{ t('components.settings.settingsPanel.update.description') }}</p>
+      <p class="field-description">{{ isPlatform ? '检查独立桌面版发行包。下载后退出应用，再手动替换程序目录；Web 客户端随核心服务一起更新。' : t('components.settings.settingsPanel.update.description') }}</p>
 
       <div class="update-settings">
         <CustomCheckbox
@@ -205,9 +208,10 @@ function onCustomPathInput(event: Event) {
             <i v-if="isUpdateChecking" class="codicon codicon-loading codicon-modifier-spin"></i>
             <span v-else>{{ t('components.settings.settingsPanel.update.checkNow') }}</span>
           </button>
-          <button class="update-now-btn" :disabled="isUpdateChecking || isUpdating" @click="emit('updateNow')">
+          <a v-if="isWeb" class="update-now-btn" href="https://github.com/Komeiji-Shiki/Gray-Code/releases" target="_blank" rel="noopener noreferrer">打开发行页面</a>
+          <button v-else class="update-now-btn" :disabled="isUpdateChecking || isUpdating" @click="emit('updateNow')">
             <i v-if="isUpdating" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.settingsPanel.update.updateNow') }}</span>
+            <span v-else>{{ isPlatform ? '打开发行页面' : t('components.settings.settingsPanel.update.updateNow') }}</span>
           </button>
           <span v-if="updateCheckResult" class="save-message" :class="updateCheckResult.type">
             {{ updateCheckResult.text }}
@@ -249,7 +253,7 @@ function onCustomPathInput(event: Event) {
               <i class="codicon codicon-folder-opened"></i>
             </button>
           </div>
-          <p class="field-hint">{{ t('components.settings.storageSettings.customPathHint') }}</p>
+          <p class="field-hint">{{ isPlatform ? '留空使用独立应用的默认数据目录。路径变更在应用下次启动时处理，原目录保留。' : t('components.settings.storageSettings.customPathHint') }}</p>
           <p class="current-path-note">
             {{ t('components.settings.storageSettings.currentPath') }}：
             <span class="path-note-value" :title="storageSettings.currentPath">{{ storageSettings.currentPath || '-' }}</span>
@@ -316,7 +320,7 @@ function onCustomPathInput(event: Event) {
         <i class="codicon codicon-export"></i>
         {{ t('components.settings.settingsPanel.exportImport.title') }}
       </label>
-      <p class="field-description">{{ t('components.settings.settingsPanel.exportImport.description') }}</p>
+      <p class="field-description">{{ isPlatform ? '导出模型渠道、MCP、技能及应用设置，或导入已有设置文件。导入内容先进入设置草稿；此文件不包含对话历史和检查点。' : t('components.settings.settingsPanel.exportImport.description') }}</p>
 
       <div class="import-export-actions">
         <button
@@ -357,6 +361,9 @@ function onCustomPathInput(event: Event) {
       <div class="info-text">
         <p>{{ t('components.settings.settingsPanel.appInfo.name', { appName: appInfo.displayName || appInfo.name }) }}</p>
         <p class="version">{{ t('components.settings.settingsPanel.appInfo.version', { version: appInfo.version }) }}</p>
+        <p v-if="appInfo.buildCommit" class="version">构建：{{ appInfo.buildCommit.slice(0, 12) }}{{ appInfo.buildDirty ? '（包含未提交修改）' : '' }}</p>
+        <p v-if="appInfo.buildTime" class="version">构建时间：{{ new Date(appInfo.buildTime).toLocaleString() }}</p>
+        <p v-if="appInfo.executablePath" class="version executable-path">程序位置：<code>{{ appInfo.executablePath }}</code></p>
         <div class="github-links">
           <a href="https://github.com/Komeiji-Shiki/Gray-Code" target="_blank" class="github-link">
             <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor">
@@ -382,6 +389,14 @@ function onCustomPathInput(event: Event) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.platform-general :is(input, button, .info-text, .proxy-settings, .storage-settings) {
+  border-radius: 0;
+}
+.platform-general a.update-now-btn {
+  text-decoration: none;
+  border-radius: 0;
 }
 
 .form-group {
@@ -412,6 +427,8 @@ function onCustomPathInput(event: Event) {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
+
+.executable-path code { overflow-wrap: anywhere; user-select: text; font-size: inherit; }
 
 .github-links {
   display: flex;

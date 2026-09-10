@@ -8,6 +8,8 @@
  * 上下文总结配置
  */
 export interface SummarizeConfig {
+    /** 常规总结或持久笔记换窗口；旧配置继续使用常规总结。 */
+    method?: import('../../../../shared/contextManagement').ContextManagementMethod;
     /**
      * 手动总结提示词
      */
@@ -108,6 +110,7 @@ export function clampSummarizeMaxInputRatio(value: unknown): number {
  * 默认总结配置
  */
 export const DEFAULT_SUMMARIZE_CONFIG: SummarizeConfig = {
+    method: 'summary',
     summarizePrompt: 'Please summarize the above conversation, keeping key information and context points while removing redundant content.',
     autoSummarizePrompt: `Please summarize the above conversation history and output the following sections, so that the AI can continue completing the unfinished tasks.
 

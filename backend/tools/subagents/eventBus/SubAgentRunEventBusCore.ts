@@ -1,3 +1,4 @@
+import { createRunContentWindow } from './contentWindow';
 /**
  * SubAgent 运行时事件总线核心（事件发布/订阅 + run 快照与状态 + transcript 写入口）。
  *
@@ -10,7 +11,7 @@ import type { ITranscriptRepository } from '../../../modules/conversation/Transc
 import type { Content } from '../../../modules/conversation/types';
 import type { ToolProgressEvent } from '../../types';
 import { SubAgentTranscriptRepository } from '../SubAgentTranscriptRepository';
-import { bumpContentRevision, cloneContentsForWindow, extractContentPreview } from './transcript';
+import { bumpContentRevision, extractContentPreview } from './transcript';
 import { ensureSnapshotProtocolFields, isLiveOnlyEvent, stampRunEvent, toManifest } from './protocol';
 import {
     DEFAULT_CONTENT_WINDOW_LIMIT,
@@ -450,58 +451,7 @@ export abstract class SubAgentRunEventBusCore {
 
     getContentWindow(runId: string, options: SubAgentRunContentWindowOptions = {}): SubAgentRunContentWindow | undefined {
         const snapshot = this.snapshots.get(runId);
-        if (!snapshot || snapshot.transcriptLoaded === false) {
-            return undefined;
-        }
-
-        // 修改原因：聚焦 run 后只需要先渲染一段 transcript，不应一次性传输完整 contents。
-        // 修改方式：基于 snapshot.contents 做窗口切片；默认从尾部取最后 20 条，显式 start/end/limit 可支持后续“加载更多”。
-        // 修改目的：保持 Content[]/MessageItem 渲染语义不分叉，同时把传输、反序列化和 Markdown 渲染成本限制在窗口内。
-        const contents = snapshot.contents || [];
-        const totalCount = contents.length;
-        const rawLimit = Number.isFinite(options.limit) ? Math.max(0, Math.floor(options.limit!)) : DEFAULT_CONTENT_WINDOW_LIMIT;
-        const limit = rawLimit > 0 ? rawLimit : DEFAULT_CONTENT_WINDOW_LIMIT;
-        let startIndex: number;
-        let endIndex: number;
-
-        if (typeof options.startIndex === 'number' || typeof options.endIndex === 'number') {
-            // 修改原因：“加载更早消息”会只传 endIndex=当前窗口 startIndex，语义是取该位置之前的一页；旧逻辑会错误返回 0..limit。
-            // 修改方式：分别处理 start-only、end-only、start+end 三种窗口请求；end-only 从 endIndex 向前回退 limit 条。
-            // 修改目的：前端可以用真实 backendIndex 分页向前加载，而不需要知道完整 transcript 长度或自行换算。
-            if (typeof options.startIndex === 'number' && typeof options.endIndex === 'number') {
-                startIndex = Math.max(0, Math.min(totalCount, Math.floor(options.startIndex)));
-                endIndex = Math.max(startIndex, Math.min(totalCount, Math.floor(options.endIndex)));
-                if (endIndex - startIndex > limit) {
-                    endIndex = startIndex + limit;
-                }
-            } else if (typeof options.endIndex === 'number') {
-                endIndex = Math.max(0, Math.min(totalCount, Math.floor(options.endIndex)));
-                startIndex = Math.max(0, endIndex - limit);
-            } else {
-                startIndex = Math.max(0, Math.min(totalCount, Math.floor(options.startIndex!)));
-                endIndex = Math.min(totalCount, startIndex + limit);
-            }
-        } else if (options.fromTail !== false) {
-            endIndex = totalCount;
-            startIndex = Math.max(0, endIndex - limit);
-        } else {
-            startIndex = 0;
-            endIndex = Math.min(totalCount, limit);
-        }
-
-        ensureSnapshotProtocolFields(snapshot);
-        return {
-            runId,
-            contents: cloneContentsForWindow(contents.slice(startIndex, endIndex)),
-            startIndex,
-            endIndex,
-            totalCount,
-            contentRevision: snapshot.contentRevision,
-            eventSequence: snapshot.eventSequence,
-            contextCompactions: JSON.parse(JSON.stringify(snapshot.contextCompactions || [])) as SubAgentContextCompactionRecord[],
-            hasMoreBefore: startIndex > 0,
-            hasMoreAfter: endIndex < totalCount
-        };
+        return snapshot ? createRunContentWindow(snapshot, options) : undefined;
     }
 
     getSnapshots(): SubAgentRunSnapshot[] {

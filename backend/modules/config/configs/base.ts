@@ -162,6 +162,8 @@ export interface ModelInfo {
  * 所有渠道配置都继承此接口
  */
 export interface BaseChannelConfig {
+    /** Explicit provider capability; undefined retains the legacy model-name behavior. */
+    providerReasoningContentEnabled?: boolean;
     /** 唯一标识符 */
     id: string;
     

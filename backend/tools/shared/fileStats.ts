@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import * as fsp from 'fs/promises';
 import { isBinaryFile } from './multimodal';
 import { MAX_LINE_COUNT_FILE_BYTES } from './fileSizeGuards';
+export { formatFileSize } from './fileSize';
 
 /** 分块读取统计行数时的块大小 */
 const LINE_COUNT_CHUNK_SIZE = 64 * 1024;
@@ -69,15 +70,3 @@ export async function countTextFileLines(uri: vscode.Uri, filePath: string): Pro
     }
 }
 
-/**
- * 格式化文件大小
- */
-export function formatFileSize(bytes: number): string {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`;
-    }
-    return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}

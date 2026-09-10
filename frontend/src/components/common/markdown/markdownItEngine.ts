@@ -32,6 +32,7 @@ import deflist from 'markdown-it-deflist'
 import taskLists from 'markdown-it-task-lists'
 
 export type RenderProfile = 'default' | 'artifactSafe'
+interface MathRenderEnvironment { trustedMath?: Map<string, string> }
 
 /**
  * 将 highlight.js 的 HTML 按“原始换行”安全拆成行，避免拆坏跨行的 <span>
@@ -533,13 +534,19 @@ function markdownItKatex(md: MarkdownIt) {
     return backslashCount % 2 === 1
   }
 
-  const renderFormula = (formula: string, displayMode: boolean, markup: string) => {
+  const renderFormula = (formula: string, displayMode: boolean, markup: string, environment?: MathRenderEnvironment) => {
     try {
-      return katex.renderToString(formula.trim(), {
+      const rendered = katex.renderToString(formula.trim(), {
         displayMode,
         throwOnError: false,
-        output: 'html'
+        output: 'html',
+        trust: false
       })
+      if (!environment?.trustedMath) return rendered
+      // 独立的不可预测标识确保原始 HTML 不能冒充公式占位节点。
+      const id = Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16)).join('-')
+      environment.trustedMath.set(id, rendered)
+      return `<span data-graycode-math="${id}"></span>`
     } catch {
       const raw = markup === '\\['
         ? `\\[${formula}\\]`
@@ -612,11 +619,11 @@ function markdownItKatex(md: MarkdownIt) {
     alt: ['paragraph', 'reference', 'blockquote', 'list']
   })
 
-  md.renderer.rules.math_inline = (tokens: any, idx: number) => {
-    return renderFormula(tokens[idx].content, false, tokens[idx].markup)
+  md.renderer.rules.math_inline = (tokens: any, idx: number, _options, environment: MathRenderEnvironment) => {
+    return renderFormula(tokens[idx].content, false, tokens[idx].markup, environment)
   }
-  md.renderer.rules.math_block = (tokens: any, idx: number) => {
-    return `<div class="katex-block">${renderFormula(tokens[idx].content, true, tokens[idx].markup)}</div>`
+  md.renderer.rules.math_block = (tokens: any, idx: number, _options, environment: MathRenderEnvironment) => {
+    return `<div class="katex-block">${renderFormula(tokens[idx].content, true, tokens[idx].markup, environment)}</div>`
   }
 }
 
@@ -698,12 +705,13 @@ export function renderContent(content: string, latexOnly: boolean, renderProfile
   
   // 完整 Markdown 模式：LaTeX 由 markdown-it 插件解析（$...$ / $$...$$）
   // 每次渲染传入独立 env，保证 code block 的序号从 1 开始
-  let html = markdownIt.render(content, {})
+  const environment: MathRenderEnvironment = { trustedMath: renderProfile !== 'artifactSafe' ? new Map() : undefined }
+  let html = markdownIt.render(content, environment)
 
   // #66：html:true 模式下净化产物，避免模型正文中的原始 HTML（script/on*）在 webview 执行
   // artifactSafe 模式已使用 html:false，无需重复净化
   if (renderProfile !== 'artifactSafe') {
-    html = sanitizeHtml(html)
+    html = sanitizeHtml(html, { trustedMath: environment.trustedMath })
   }
   
   // 保留多个连续空格（在段落内容中）

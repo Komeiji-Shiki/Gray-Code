@@ -7,7 +7,7 @@
  */
 
 import type { PromptMode, SystemPromptConfig } from './types';
-import { MEMORY_TOOL_NAMES } from '../memory';
+import { MEMORY_TOOL_NAMES } from '../memory/types';
 import {
     CODE_MODE_TEMPLATE,
     DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
@@ -395,4 +395,3 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
     customPrefix: '',
     customSuffix: ''
 };
-

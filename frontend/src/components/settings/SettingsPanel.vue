@@ -27,6 +27,14 @@ import { useUpdateSettings } from '@/composables/useUpdateSettings'
 import { useSettingsImportExport } from '@/composables/useSettingsImportExport'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { useOneShotTimer } from '@/composables/useOneShotTimer'
+import PlatformSettingsFooter from './PlatformSettingsFooter.vue'
+import { desktopSettingsDraft, markDesktopSettingsDirty, useDesktopSettingsDraft } from '@/platform/settingsDraft'
+const isDesktopHost = Boolean(window.__GRAYCODE_HOST)
+const platformFooter = ref<InstanceType<typeof PlatformSettingsFooter>>()
+function closeSettings() {
+  if (isDesktopHost) void platformFooter.value?.requestClose()
+  else settingsStore.showChat()
+}
 
 // 设置外壳保持同步；每个页签在首次进入时单独加载，避免主聊天与设置首页携带全部配置 UI。
 const ChannelSettings = defineAsyncComponent(() => import('./ChannelSettings.vue'))
@@ -42,6 +50,13 @@ const PromptSettings = defineAsyncComponent(() => import('./PromptSettings.vue')
 const TokenCountSettings = defineAsyncComponent(() => import('./TokenCountSettings.vue'))
 const SubAgentsSettings = defineAsyncComponent(() => import('./SubAgentsSettings.vue'))
 const MemorySettings = defineAsyncComponent(() => import('./MemorySettings.vue'))
+const PlatformDevelopmentSettings = defineAsyncComponent(() => import('./PlatformDevelopmentSettings.vue'))
+const PlatformModeSettings = defineAsyncComponent(() => import('./PlatformModeSettings.vue'))
+const PlatformReviewSettings = defineAsyncComponent(() => import('./PlatformReviewSettings.vue'))
+const PlatformIntegrationSettings = defineAsyncComponent(() => import('./PlatformIntegrationSettings.vue'))
+const PlatformMigrationSettings = defineAsyncComponent(() => import('./PlatformMigrationSettings.vue'))
+const DiscordSettings = defineAsyncComponent(() => import('./DiscordSettings.vue'))
+const PlatformRemoteSettings = defineAsyncComponent(() => import('./PlatformRemoteSettings.vue'))
 const AppearanceSettings = defineAsyncComponent(() => import('./AppearanceSettings.vue'))
 const SoundSettings = defineAsyncComponent(() => import('./SoundSettings.vue'))
 const GeneralSettingsSection = defineAsyncComponent(() => import('./panel/GeneralSettingsSection.vue'))
@@ -73,6 +88,13 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
   { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
+  ...(isDesktopHost ? [
+    { id: 'discord' as const, label: 'Discord Bot', icon: 'codicon-comment-discussion' },
+    { id: 'onebot' as const, label: 'NapCat / OneBot', icon: 'codicon-radio-tower' },
+    { id: 'accounts' as const, label: '账号与授权', icon: 'codicon-account' },
+    { id: 'workspaces' as const, label: '工作区', icon: 'codicon-folder' },
+    { id: 'remote' as const, label: '远程连接', icon: 'codicon-remote' },
+  ] : []),
 ])
 
 // ========== 设置项搜索 ==========
@@ -943,8 +965,8 @@ async function loadSettings() {
   }
 }
 
-// 应用信息（名称/版本号来自扩展 package.json）
-const appInfo = ref<{ name: string; displayName: string; version: string }>({
+// 应用信息来自当前宿主，独立桌面同时提供构建来源与程序位置。
+const appInfo = ref<{ name: string; displayName: string; version: string; buildCommit?: string; buildDirty?: boolean; buildTime?: string; executablePath?: string }>({
   name: '',
   displayName: '',
   version: ''
@@ -957,7 +979,11 @@ async function loadAppInfo() {
       appInfo.value = {
         name: response.name || '',
         displayName: response.displayName || '',
-        version: response.version || ''
+        version: response.version || '',
+        buildCommit: response.buildCommit,
+        buildDirty: response.buildDirty,
+        buildTime: response.buildTime,
+        executablePath: response.executablePath
       }
     }
   } catch (error) {
@@ -1045,6 +1071,7 @@ onUnmounted(() => {
     unsubscribeSettingsImported = null
   }
 })
+useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'general')
 </script>
 
 <template>
@@ -1067,13 +1094,14 @@ onUnmounted(() => {
         class="settings-close-btn"
         :title="t('components.settings.settingsPanel.backToChat')"
         :aria-label="t('components.settings.settingsPanel.backToChat')"
-        @click="settingsStore.showChat"
+        @click="closeSettings"
       >
         <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
     
     <div class="settings-content">
+      <label v-if="isDesktopHost" class="mobile-settings-category">设置分类<select :value="settingsStore.activeTab" aria-label="设置分类" @change="settingsStore.setActiveTab(($event.target as HTMLSelectElement).value as SettingsTab)"><option v-for="tab in tabs" :key="tab.id" :value="tab.id">{{ tab.label }}</option></select></label>
       <!-- 左侧页签（T12：拆至 SettingsSidebar；可折叠：展开显示图标+文字，折叠仅图标+tooltip） -->
       <SettingsSidebar
         :tabs="tabs"
@@ -1086,7 +1114,10 @@ onUnmounted(() => {
       
       <!-- 右侧内容 -->
       <CustomScrollbar ref="scrollbarRef" class="settings-main-scrollbar">
-        <div class="settings-main" role="region" :aria-label="t(`components.settings.tabs.${settingsStore.activeTab}`)">
+        <div :key="desktopSettingsDraft.generation" class="settings-main" role="region" :aria-label="tabs.find(tab => tab.id === settingsStore.activeTab)?.label" @input.capture="markDesktopSettingsDirty" @change.capture="markDesktopSettingsDirty">
+          <DiscordSettings v-if="isDesktopHost && settingsStore.activeTab === 'discord'" />
+          <PlatformRemoteSettings v-if="isDesktopHost && settingsStore.activeTab === 'remote'" />
+          <PlatformIntegrationSettings v-if="isDesktopHost && ['onebot', 'accounts', 'workspaces'].includes(settingsStore.activeTab)" :key="settingsStore.activeTab" :section="settingsStore.activeTab as 'onebot' | 'accounts' | 'workspaces'" />
           <!-- 渠道设置 -->
           <div v-if="settingsStore.activeTab === 'channel'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.channel.title') }}</h4>
@@ -1101,6 +1132,8 @@ onUnmounted(() => {
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.tools.description') }}</p>
             
             <ToolsSettings />
+            <PlatformDevelopmentSettings v-if="isDesktopHost" />
+            <PlatformReviewSettings v-if="isDesktopHost" />
           </div>
           
           <!-- 自动执行设置 -->
@@ -1161,6 +1194,7 @@ onUnmounted(() => {
             <h4>{{ t('components.settings.settingsPanel.sections.prompt.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.prompt.description') }}</p>
             
+            <PlatformModeSettings v-if="isDesktopHost" />
             <PromptSettings />
           </div>
           
@@ -1209,6 +1243,7 @@ onUnmounted(() => {
             <h4>{{ t('components.settings.settingsPanel.sections.general.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.general.description') }}</p>
 
+            <PlatformMigrationSettings v-if="isDesktopHost" class="platform-migration-section" />
             <GeneralSettingsSection
               v-model:proxy-enabled="proxySettings.enabled"
               v-model:proxy-url="proxySettings.url"
@@ -1273,6 +1308,7 @@ onUnmounted(() => {
       </CustomScrollbar>
     </div>
     
+    <PlatformSettingsFooter v-if="isDesktopHost" ref="platformFooter" @close="settingsStore.showChat" />
     <!-- 迁移确认对话框（T12：拆至 StorageMigrateDialog） -->
     <StorageMigrateDialog
       v-model:show="showMigrateDialog"

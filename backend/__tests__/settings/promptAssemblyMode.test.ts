@@ -53,7 +53,7 @@ describe('prompt assembly mode settings', () => {
     })
   })
 
-  test('does not force chat-history into legacy mode', async () => {
+  test('converts legacy templates to entries and retains the original configuration', async () => {
     const manager = createManager()
     await manager.initialize()
 
@@ -69,8 +69,11 @@ describe('prompt assembly mode settings', () => {
     await manager.savePromptMode(mode)
 
     const saved = manager.getSystemPromptConfig().modes['legacy-mode']
-    expect(saved.promptAssemblyMode).toBe('legacy')
-    expect(saved.promptEntries).toBeUndefined()
+    expect(saved.promptAssemblyMode).toBe('entries')
+    expect(saved.dynamicContextStrategy).toBe('preserve')
+    expect(saved.promptEntries?.map(entry => entry.type)).toEqual(['prompt', 'chat_history', 'prompt'])
+    expect(saved.promptEntries?.map(entry => entry.content)).toEqual(['legacy template', '', 'legacy dynamic'])
+    expect(saved.legacyPrompt?.template).toBe('legacy template')
   })
 
   test('renames a newly saved custom mode without overwriting its config', async () => {

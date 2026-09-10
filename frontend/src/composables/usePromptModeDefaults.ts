@@ -1,3 +1,4 @@
+import { CHARACTER_PROMPT_MODULES } from '@shared/characterPromptModules'
 import { computed } from 'vue'
 import { useI18n } from '@/i18n'
 import type { PromptModule, PromptAssemblyMode } from '@/components/settings/prompt/types'
@@ -97,6 +98,7 @@ Call memory_note whenever you learn something new...`,
 
   // 动态变量（作为上下文消息临时插入，不存储到历史记录）
   const DYNAMIC_CONTEXT_MODULES = computed<PromptModule[]>(() => [
+    ...CHARACTER_PROMPT_MODULES.map(module => ({ ...module, example: '由当前角色会话生成' })),
     {
       id: 'TODO_LIST',
       name: t('components.settings.promptSettings.modules.TODO_LIST.name'),

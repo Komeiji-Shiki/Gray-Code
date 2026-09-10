@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { t } from '../../i18n';
 import { IS_WINDOWS } from './textUtils';
+import { parseNamedWorkspacePath } from './workspacePathParsing';
 
 // TODO(02#05): `(fs as any).realpathSync?.native` 访问 fs 的 native 绑定（@types/node 未声明），
 // 且测试环境可能 mock 掉 realpathSync；保留 as any 并做运行时可选链守卫。
@@ -87,83 +88,7 @@ export function parseWorkspacePath(pathStr: string): {
     isExplicit: boolean;  // 是否显式指定了工作区
     error?: string;       // 错误信息
 } {
-    const workspaces = getAllWorkspaces();
-    
-    // 如果没有工作区
-    if (workspaces.length === 0) {
-        return { workspace: undefined, relativePath: pathStr, isExplicit: false, error: 'No workspace folder open' };
-    }
-    
-    // 如果只有一个工作区，直接返回
-    if (workspaces.length === 1) {
-        return { workspace: workspaces[0], relativePath: pathStr, isExplicit: false };
-    }
-    
-    // 多工作区模式，必须显式指定前缀
-    
-    // 处理 @ 前缀格式
-    if (pathStr.startsWith('@')) {
-        const slashIndex = pathStr.indexOf('/');
-        if (slashIndex > 1) {
-            // @workspace_name/path 格式
-            const workspaceName = pathStr.substring(1, slashIndex);
-            const relativePath = pathStr.substring(slashIndex + 1);
-            const workspace = getWorkspaceByIdentifier(workspaceName);
-            if (workspace) {
-                return { workspace, relativePath, isExplicit: true };
-            }
-            return {
-                workspace: undefined,
-                relativePath: pathStr,
-                isExplicit: false,
-                error: `Unknown workspace: ${workspaceName}. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
-            };
-        } else {
-            // @workspace_name 格式（没有路径，访问根目录）
-            const workspaceName = pathStr.substring(1);
-            const workspace = getWorkspaceByIdentifier(workspaceName);
-            if (workspace) {
-                return { workspace, relativePath: '.', isExplicit: true };
-            }
-            return {
-                workspace: undefined,
-                relativePath: pathStr,
-                isExplicit: false,
-                error: `Unknown workspace: ${workspaceName}. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
-            };
-        }
-    }
-    
-    // 检查是否以工作区名称开头（带 /）
-    for (const workspace of workspaces) {
-        const prefix = workspace.name + '/';
-        if (pathStr.startsWith(prefix)) {
-            return {
-                workspace,
-                relativePath: pathStr.substring(prefix.length),
-                isExplicit: true
-            };
-        }
-    }
-    
-    // 检查是否精确匹配工作区名称（不带 /，访问根目录）
-    for (const workspace of workspaces) {
-        if (pathStr === workspace.name) {
-            return {
-                workspace,
-                relativePath: '.',
-                isExplicit: true
-            };
-        }
-    }
-    
-    // 多工作区时未指定前缀，返回错误
-    return {
-        workspace: undefined,
-        relativePath: pathStr,
-        isExplicit: false,
-        error: `Multi-root workspace requires workspace prefix. Use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
-    };
+    return parseNamedWorkspacePath(pathStr, getAllWorkspaces());
 }
 
 /**

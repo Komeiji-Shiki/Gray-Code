@@ -153,7 +153,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         //   sendHistoryThoughtSignatures 控制；不能因为 DeepSeek 的兼容限制而删掉 GPT 思考衔接。
         // - 非 DeepSeek 的 content-only reasoning：不构造 reasoning item，也不降级成普通文本，
         //   避免把不被当前 Responses endpoint 接受的 reasoning_text 发出去。
-        const isDeepSeek = isDeepSeekModel(config.model);
+        const isDeepSeek = config.providerReasoningContentEnabled ?? isDeepSeekModel(config.model);
         const input = this.convertToResponsesInput(processedHistory, {
             allowReasoningContent: isDeepSeek && config.sendHistoryThoughts === true,
             allowReasoningSignatures: config.sendHistoryThoughtSignatures === true,
@@ -980,4 +980,3 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         return 'openai-responses';
     }
 }
-

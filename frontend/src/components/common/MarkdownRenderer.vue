@@ -887,7 +887,6 @@ onUnmounted(()=> {
 }
 
 .markdown-content :deep(.katex) {
-  font-family: 'Times New Roman', Times, serif;
   font-size: 1.1em;
 }
 

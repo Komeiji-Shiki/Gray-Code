@@ -12,6 +12,8 @@ import MessageTaskCards from '../MessageTaskCards.vue'
 import InlineContextMessage from '../InlineContextMessage.vue'
 import MessageRenderBlock from '../MessageRenderBlock.vue'
 import { MarkdownRenderer } from '../../common'
+import CharacterText from '../../character/CharacterText.vue'
+import { characterPresentation } from '../../../platform/characterPresentation'
 import type { Message, ToolUsage } from '../../../types'
 import { hasContextBlocks } from '../../../types/contextParser'
 import { formatTime } from '../../../utils/format'
@@ -34,10 +36,13 @@ const { t } = useI18n()
 
 const props = defineProps<{
   message: Message
+  /** 用户时间由消息标题显示，底部只保留实际存在的其他统计。 */
+  timeInHeader?: boolean
 }>()
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
+const characterMode = computed(() => props.message.characterMode || (props.message.streaming && characterPresentation.active && characterPresentation.conversationId === chatStore.currentConversationId))
 
 // 流式输出指示器文本：支持用户自定义（外观设置），为空时使用 i18n 默认值
 const streamingIndicatorText = computed(() => {
@@ -447,9 +452,9 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
 </script>
 
 <template>
-  <!-- 用户消息的附件显示 -->
+  <!-- 图片、音视频或文件可独立于文字显示，助手返回的媒体也使用相同预览。 -->
   <MessageAttachments
-    v-if="isUser && message.attachments && message.attachments.length > 0"
+    v-if="message.attachments && message.attachments.length > 0"
     :attachments="message.attachments"
   />
 
@@ -466,7 +471,7 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
       <MessageRenderBlock
         v-for="block in contentRenderBlocks"
         :key="getRenderBlockKey(block)"
-        :block="block"
+        :block="block" :character-mode="characterMode"
         :message-id="message.id"
         :message-role="isUser ? 'user' : 'assistant'"
         :message-backend-index="message.backendIndex"
@@ -476,12 +481,13 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
         :thinking-time-display="thinkingTimeDisplay"
         :smooth-display-active="isSmoothThoughtBlock(block)"
         :set-thought-view-mode="setThoughtViewMode"
-        v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, isSmoothThoughtBlock(block))"
+        v-memo="[characterMode, ...getRenderBlockMemoDeps(block, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, isSmoothThoughtBlock(block))]"
       />
     </template>
 
     <!-- 活动正文尾块：已完成段落渐进 markdown + 活动尾巴 CharFlow 托管（批内错峰淡入流水） -->
-    <div v-if="tailInfo?.type === 'text'" class="tail-stream">
+    <CharacterText v-if="characterMode && tailInfo?.type === 'text'" :content="message.parts?.at(-1)?.text ?? ''" :streaming="true" :user="isUser" />
+    <div v-else-if="tailInfo?.type === 'text'" class="tail-stream">
       <MarkdownRenderer
         v-if="tailRendered"
         :key="tailRenderGeneration"
@@ -496,9 +502,10 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
 
     <!-- 仅在没有 parts 渲染块和活动尾块时使用 content 兜底。显式互斥，避免新增兄弟节点拆断 v-else-if 链。 -->
     <template v-if="renderBlocks.length === 0 && !tailInfo">
+      <CharacterText v-if="characterMode && message.content" :content="message.content" :streaming="isStreaming" :user="isUser" />
       <!-- 用户消息仅渲染 LaTeX；有上下文块时使用内联上下文渲染。 -->
       <InlineContextMessage
-        v-if="isUser && message.content && hasContextBlocks(message.content)"
+        v-else-if="isUser && message.content && hasContextBlocks(message.content)"
         :content="message.content"
       />
 
@@ -510,8 +517,8 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
         class="content-text"
       />
 
-      <!-- 无内容兜底（模型返回空内容/仅返回签名等场景） -->
-      <div v-else-if="!isStreaming" class="empty-response">
+      <!-- 仅对没有可显示正文或附件的助手回复提示空内容。 -->
+      <div v-else-if="!isStreaming && !isUser && !isTool && !message.attachments?.length" class="empty-response">
         {{ t('components.message.emptyResponse') }}
       </div>
     </template>
@@ -524,7 +531,8 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
 
     <!-- 消息底部信息：时间 + 响应时间 + Token 速率 + Token 统计 -->
     <MessageFooter
-      :formatted-time="formattedTime"
+      v-if="!timeInHeader || ttft || responseDuration || tokenRate || hasUsage"
+      :formatted-time="timeInHeader ? null : formattedTime"
       :ttft="ttft"
       :response-duration="responseDuration"
       :token-rate="tokenRate"

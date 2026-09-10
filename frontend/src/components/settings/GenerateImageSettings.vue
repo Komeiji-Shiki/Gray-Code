@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 /**
  * GenerateImageSettings - 图像生成工具设置面板
  * 配置图像生成 API 和默认参数
@@ -126,6 +127,8 @@ onUnmounted(() => {
     void persistConfig()
   }
 })
+function cancelDesktopDraftTimer() { if (configSaveDebounceTimer) { clearTimeout(configSaveDebounceTimer); configSaveDebounceTimer = null } }
+useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistConfig() }, () => true, cancelDesktopDraftTimer)
 </script>
 
 <template>

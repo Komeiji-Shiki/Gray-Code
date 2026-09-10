@@ -68,7 +68,7 @@ const emit = defineEmits<{
               >
                 <div class="module-info">
                 <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                <span class="module-name">{{ module.name }}</span>
                 </div>
               </button>
               <button
@@ -83,7 +83,7 @@ const emit = defineEmits<{
             </div>
 
             <div v-if="expandedModule === module.id" class="module-details">
-              <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+              <p class="module-description">{{ module.description }}</p>
 
               <div v-if="module.requiresConfig" class="module-requires">
                 <i class="codicon codicon-info"></i>
@@ -124,7 +124,7 @@ const emit = defineEmits<{
               >
                 <div class="module-info">
                 <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                <span class="module-name">{{ module.name }}</span>
                 </div>
               </button>
               <button
@@ -139,7 +139,7 @@ const emit = defineEmits<{
             </div>
 
             <div v-if="expandedModule === module.id" class="module-details">
-              <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+              <p class="module-description">{{ module.description }}</p>
 
               <div v-if="module.requiresConfig" class="module-requires">
                 <i class="codicon codicon-info"></i>

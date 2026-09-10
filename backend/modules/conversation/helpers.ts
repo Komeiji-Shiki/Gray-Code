@@ -25,6 +25,7 @@ export function isRealUserMessage(message: {
     isAutoSummary?: boolean;
     isSummarized?: boolean;
     isUserInput?: boolean;
+    contextControl?: string;
     source?: 'user' | 'background_task' | 'agent_message';
 }): boolean {
     return message.role === 'user'
@@ -33,7 +34,8 @@ export function isRealUserMessage(message: {
         && !message.isFunctionResponse
         && !message.isSummary
         && !message.isAutoSummary
-        && !message.isSummarized;
+        && !message.isSummarized
+        && !message.contextControl;
 }
 
 /**

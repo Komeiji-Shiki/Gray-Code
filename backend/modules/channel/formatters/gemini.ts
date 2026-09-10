@@ -198,7 +198,8 @@ export class GeminiFormatter extends BaseFormatter {
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory);
+        // Gemini 不接受中途的 system 消息，保留预设指定的位置并转换为 user。
+        processedHistory = this.cleanInternalFields(processedHistory).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
 
         // 根据配置限制发送给 Gemini 的图片总数，优先保留越新的图片。
         const maxImages = config.options?.maxImages;

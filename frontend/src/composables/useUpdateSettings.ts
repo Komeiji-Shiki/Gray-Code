@@ -60,7 +60,9 @@ export function useUpdateSettings() {
     try {
       const response = await sendToExtension<any>(MESSAGE_NAMES.checkUpdateNow, {})
       const status = response?.status
-      if (!status) {
+      if (status?.message) {
+        updateCheckResult.value = { type: status.state === 'error' ? 'error' : 'info', text: status.message }
+      } else if (!status) {
         updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
       } else if (status.state === 'updateAvailable') {
         updateCheckResult.value = {
@@ -89,7 +91,9 @@ export function useUpdateSettings() {
     updateCheckResult.value = null
     try {
       const response = await sendToExtension<any>(MESSAGE_NAMES.updateNow, {})
-      if (response?.alreadyUpToDate) {
+      if (response?.manual) {
+        updateCheckResult.value = { type: 'info', text: response.message }
+      } else if (response?.alreadyUpToDate) {
         updateCheckResult.value = { type: 'success', text: t('components.settings.settingsPanel.update.upToDate') }
       } else if (response?.version) {
         updateCheckResult.value = {

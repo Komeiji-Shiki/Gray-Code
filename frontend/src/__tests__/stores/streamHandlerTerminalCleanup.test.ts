@@ -88,6 +88,41 @@ function createCtx(state: ChatStoreState, overrides: Partial<StreamHandlerContex
 }
 
 describe('streamHandler 终结事件状态复位', () => {
+  test('独立宿主保留审批期间的运行流，其他入口完成审批后仍接收最终结果', () => {
+    const state = createState({ allMessages: ref([{ id: 'msg_1', role: 'assistant', content: '', timestamp: 1, streaming: true, backendIndex: 0 } as Message]),
+      streamingMessageId: ref('msg_1'), activeStreamId: ref('stream_1'), isWaitingForResponse: ref(true) });
+    const ctx = createCtx(state);
+    handleStreamChunk({ type: 'awaitingConfirmation', conversationId: 'conv_1', streamId: 'stream_1', keepStreamOpen: true,
+      content: { id: 'stored-model', role: 'model', parts: [{ functionCall: { id: 'call_1', name: 'delete_file', args: { path: 'fixture.txt' } } }] },
+      pendingToolCalls: [{ id: 'call_1', name: 'delete_file', args: { path: 'fixture.txt' } }] }, ctx);
+    expect(state.activeStreamId.value).toBe('stream_1');
+    handleStreamChunk({ type: 'complete', conversationId: 'conv_1', streamId: 'stream_1', content: { id: 'done', role: 'model', parts: [{ text: 'Done' }] } }, ctx);
+    expect(state.isWaitingForResponse.value).toBe(false);
+    expect(state.activeStreamId.value).toBeNull();
+    expect(state.allMessages.value.at(-1)?.content).toBe('Done');
+  });
+
+  test('逐条工具结果保留真实 ID 和索引，异步回答插在下一段输出之前', () => {
+    const state = createState({ allMessages: ref([
+      { id: 'user', role: 'user', content: 'Read files', timestamp: 0, backendIndex: 0 } as Message,
+      { id: 'msg_1', role: 'assistant', content: '', timestamp: 1, streaming: true, backendIndex: 1 } as Message]),
+      streamingMessageId: ref('msg_1'), activeStreamId: ref('stream_1'), isWaitingForResponse: ref(true) });
+    const ctx = createCtx(state);
+    const content = { id: 'stored-model', role: 'model' as const, parts: ['a', 'b'].map(id => ({ functionCall: { id, name: 'read_file', args: {} } })) };
+    handleStreamChunk({ type: 'toolsExecuting', conversationId: 'conv_1', streamId: 'stream_1', content }, ctx);
+    handleStreamChunk({ type: 'toolIteration', conversationId: 'conv_1', streamId: 'stream_1', content,
+      toolResults: ['a', 'b'].map(id => ({ id, name: 'read_file', result: { success: true } })),
+      toolResultContents: ['a', 'b'].map(id => ({ id: `result-${id}`, role: 'user', isFunctionResponse: true,
+        parts: [{ functionResponse: { id, name: 'read_file', response: { success: true } } }] })) }, ctx);
+    handleStreamChunk({ type: 'userFeedback', conversationId: 'conv_1', streamId: 'stream_1', feedbackContent: {
+      id: 'answer', role: 'user', parts: [{ text: 'Internal model annotation' }],
+      userFeedback: { requestId: 'question', questions: [{ title: '选择颜色' }], answers: ['蓝色'], timedOut: false },
+    } }, ctx);
+    expect(state.allMessages.value.slice(0, 5).map(message => message.id)).toEqual(['user', 'stored-model', 'result-a', 'result-b', 'answer']);
+    expect(state.allMessages.value.map(message => message.backendIndex)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(state.allMessages.value[4].content).toBe('选择颜色\n蓝色');
+  });
+
   test('content-less complete 无条件复位流式状态并调度 processQueue', async () => {
     const state = createState({
       isStreaming: ref(true),

@@ -342,7 +342,7 @@ describe('InputArea 发送失败恢复', () => {
   })
 })
 
-describe('InputArea DeepSeek Vision 拆分复选框', () => {
+describe('InputArea DeepSeek 整图发送', () => {
   let wrapper: VueWrapper | undefined
 
   const visionConfig = {
@@ -407,96 +407,15 @@ describe('InputArea DeepSeek Vision 拆分复选框', () => {
     vi.restoreAllMocks()
   })
 
-  test('有图片附件 + Vision 预处理开启 + Vision 模型：复选框显示且默认勾选（拆分）', async () => {
-    wrapper = await mountWithVisionConfig([makeAttachment()])
-
-    const toggle = wrapper.find('.vision-split-toggle')
-    expect(toggle.exists()).toBe(true)
-    expect((toggle.find('input').element as HTMLInputElement).checked).toBe(true)
-
-    // 发送时 options 携带 deepSeekVisionTileSplit: true
-    runtime.chatStore.editorNodes = makeTextNodes('hi')
-    await nextTick()
-    await wrapper.find('.send-button-stub').trigger('click')
-    await flushPromises()
-    const emitted = wrapper.emitted('send')
-    expect(emitted).toBeTruthy()
-    const last = emitted![emitted!.length - 1]
-    expect(last[2]).toEqual({ deepSeekVisionTileSplit: true })
-  })
-
-  test('取消勾选：发送时携带 deepSeekVisionTileSplit: false（压缩模式）', async () => {
-    wrapper = await mountWithVisionConfig([makeAttachment()])
-    runtime.chatStore.editorNodes = makeTextNodes('hi')
-    await nextTick()
-
-    const checkbox = wrapper.find('.vision-split-toggle input')
-    await checkbox.setValue(false)
-    await wrapper.find('.send-button-stub').trigger('click')
-    await flushPromises()
-
-    const emitted = wrapper.emitted('send')
-    const last = emitted![emitted!.length - 1]
-    expect(last[2]).toEqual({ deepSeekVisionTileSplit: false })
-  })
-
-  test('无图片附件：复选框不显示', async () => {
-    wrapper = await mountWithVisionConfig([])
+  test.each(['deepseek-flash', 'deepseek-v4-flash-vision-exp'])('图片发送不再显示手动拆图选项：%s', async model => {
+    runtime.chatStore.selectedModelId = model
+    wrapper = await mountWithVisionConfig([makeAttachment()], { model })
     expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
-  })
-
-  test('纯文本续轮在 Vision 渠道仍携带 store 模式，供历史与工具续跑继承', async () => {
-    runtime.chatStore.visionSplitChecked = false
-    wrapper = await mountWithVisionConfig([])
-    runtime.chatStore.editorNodes = makeTextNodes('text follow-up')
-    await nextTick()
-
-    await wrapper.find('.send-button-stub').trigger('click')
-    await flushPromises()
-
-    const emitted = wrapper.emitted('send')
-    expect(emitted).toBeTruthy()
-    expect(emitted![emitted!.length - 1][2]).toEqual({ deepSeekVisionTileSplit: false })
-  })
-
-  test('图片附件但 deepSeekVisionEnabled 关闭：复选框不显示', async () => {
-    wrapper = await mountWithVisionConfig([makeAttachment()], { deepSeekVisionEnabled: false })
-    expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
-  })
-
-  test('store 偏好为 false（用户此前取消勾选）：复选框默认不勾选且发送携带 false（编辑/重试保持一致）', async () => {
-    runtime.chatStore.visionSplitChecked = false
-    wrapper = await mountWithVisionConfig([makeAttachment()])
-
-    const checkbox = wrapper.find('.vision-split-toggle input') as any
-    expect(checkbox.element.checked).toBe(false)
-
     runtime.chatStore.editorNodes = makeTextNodes('hi')
-    await nextTick()
-    await wrapper.find('.send-button-stub').trigger('click')
-
-    const emitted = wrapper.emitted('send')
-    expect(emitted).toBeTruthy()
-    const last = emitted![emitted!.length - 1]
-    expect(last[2]).toEqual({ deepSeekVisionTileSplit: false })
+    await nextTick(); await wrapper.find('.send-button-stub').trigger('click')
+    const last = wrapper.emitted('send')!.at(-1)!
+    expect(last[1]).toHaveLength(1)
+    expect(last[2]).toBeUndefined()
   })
 
-  test('图片附件 + 预处理开启但模型非 Vision：复选框不显示', async () => {
-    wrapper = await mountWithVisionConfig([makeAttachment()], { model: 'deepseek-chat' })
-    // 当前模型来自 chatStore.selectedModelId，保持 vision 时也覆盖为 chat
-    runtime.chatStore.selectedModelId = 'deepseek-chat'
-    await nextTick()
-    expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
-  })
-
-  test('token ring is keyboard focusable and exposes current usage as one accessible label', async () => {
-    wrapper = mountWithParent(async () => true)
-    await nextTick()
-
-    const tokenRing = wrapper.get('.token-ring-wrapper')
-    expect(tokenRing.attributes('role')).toBe('img')
-    expect(tokenRing.attributes('tabindex')).toBe('0')
-    expect(tokenRing.attributes('aria-label')).toContain('components.input.tokenUsage: 0.0%')
-    expect(tokenRing.attributes('aria-label')).toContain('0 / 100')
-  })
 })

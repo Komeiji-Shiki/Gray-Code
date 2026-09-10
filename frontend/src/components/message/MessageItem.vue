@@ -21,15 +21,26 @@ import type { ResponseViewerData } from './responseViewer/buildResponseViewerDat
 import type { Message, CheckpointRecord, Attachment } from '../../types'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
+import { formatTime } from '../../utils/format'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   message: Message
   messageIndex: number  // 后端消息索引
   /** 楼层号（用户消息/模型回复各占一楼；不传则不显示） */
   floor?: number
-}>()
+  allowEdit?: boolean
+  allowRetry?: boolean
+  allowBranch?: boolean
+  allowDelete?: boolean
+}>(), {
+  // Vue 会把未传入的布尔参数转换为 false；普通对话默认保留原消息操作。
+  allowEdit: true,
+  allowRetry: true,
+  allowBranch: true,
+  allowDelete: true
+})
 
 const emit = defineEmits<{
   edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean]
@@ -41,6 +52,17 @@ const emit = defineEmits<{
   branch: [messageId: string]
 }>()
 
+const characterProcessingErrors = computed(() => {
+  const source = Array.isArray(props.message.characterStages) ? props.message.characterStages : []
+  const display = Array.isArray(props.message.characterDisplayStages) ? props.message.characterDisplayStages : []
+  return [...source, ...display].flatMap(stage => Array.isArray(stage?.errors) ? stage.errors : [])
+})
+const characterDisplayMessage = computed(() => {
+  const parts = props.message.characterDisplayParts
+  return parts ? { ...props.message, parts, content: parts.filter(part => part.text && !part.thought).map(part => part.text).join('\n') } : props.message
+})
+const characterEditContent = computed(() => props.message.characterOriginalParts
+  ? props.message.characterOriginalParts.filter(part => part.text && !part.thought).map(part => part.text).join('\n') : props.message.content)
 const chatStore = useChatStore()
 
 const showActions = ref(false)
@@ -120,7 +142,7 @@ const modelVersion = computed(() => props.message.metadata?.modelVersion)
 // 角色显示名称
 const roleDisplayName = computed(() => {
   if (isAgentMessage.value) return t('components.message.roles.agent')
-  if (isBackgroundTask.value) return t('components.backgroundTasks.completed')
+  if (isBackgroundTask.value) return '后台任务结果'
   if (isUser.value) return t('components.message.roles.user')
   if (isTool.value) return t('components.message.roles.tool')
   // 助手消息显示模型版本
@@ -214,15 +236,17 @@ function handleRestoreAndRetry(checkpointId: string) {
           {{ roleDisplayName }}
         </span>
         <span v-if="floor" class="message-floor">#{{ floor }}</span>
+        <span v-if="isUser && !isSummary && !isBackgroundTask && message.timestamp" class="message-header-time">{{ formatTime(message.timestamp, 'HH:mm') }}</span>
       </div>
 
       <!-- 操作按钮 -->
       <MessageActions
         :class="{ 'actions-visible': showActions }"
         :message="message"
-        :can-edit="isUser && !props.message.agentMessage"
-        :can-retry="!isUser"
-        :can-branch="typeof message.backendIndex === 'number' && !isStreaming"
+        :can-edit="allowEdit !== false && isUser && !props.message.agentMessage"
+        :can-retry="allowRetry !== false && !isUser"
+        :can-delete="allowDelete !== false"
+        :can-branch="allowBranch !== false && typeof message.backendIndex === 'number' && !isStreaming"
         :can-view-response="!isUser"
         @edit="startEdit"
         @copy="handleCopy"
@@ -245,7 +269,7 @@ function handleRestoreAndRetry(checkpointId: string) {
     <EditDialog
       v-model="showEditDialog"
       :checkpoints="checkpointsBeforeMessage"
-      :original-content="message.content"
+      :original-content="characterEditContent"
       :original-attachments="message.attachments || []"
       :original-deep-seek-vision-tile-split="message.deepSeekVisionTileSplit"
       :is-root-message="message.parentId == null"
@@ -275,12 +299,15 @@ function handleRestoreAndRetry(checkpointId: string) {
       <BackgroundTaskCard
         v-else-if="isBackgroundTask"
         :message-id="message.id"
-        :content="agentCardContent"
+        :content="message.agentMessage?.text ?? message.content"
         :is-agent="isAgentMessage"
+        :agent-message="message.agentMessage"
+        :task="message.backgroundTask"
       />
 
       <!-- 普通消息显示 -->
-      <MessageContent v-else :message="message" />
+      <MessageContent v-else :message="characterDisplayMessage" :time-in-header="isUser" />
+      <details v-if="characterProcessingErrors.length"><summary>角色文本处理提示</summary><p v-for="(error, index) in characterProcessingErrors" :key="index">{{ error.message }}</p></details>
     </div>
   </div>
 </template>
@@ -290,8 +317,8 @@ function handleRestoreAndRetry(checkpointId: string) {
 .message-item {
   display: flex;
   flex-direction: column;
-  gap: var(--gc-space-3);
-  padding: var(--gc-space-4);
+  gap: var(--gc-space-1);
+  padding: var(--gc-space-2) var(--gc-space-4);
   border-bottom: 1px solid color-mix(in srgb, var(--gc-border-subtle) 65%, transparent);
   transition: background-color var(--transition-fast, 0.1s);
   /* 性能优化：布局隔离 */
@@ -312,7 +339,8 @@ function handleRestoreAndRetry(checkpointId: string) {
 /* 用户消息使用轻量卡片，助手正文保留完整阅读宽度。 */
 .user-message {
   margin: var(--gc-space-2) var(--gc-space-3);
-  padding: var(--gc-space-3);
+  margin-bottom: var(--gc-space-1);
+  padding: var(--gc-space-2) var(--gc-space-3);
   background-color: color-mix(in srgb, var(--gc-link) 6%, var(--gc-surface-base));
   border: 1px solid color-mix(in srgb, var(--gc-link) 18%, var(--gc-border-subtle));
   border-radius: var(--gc-radius-md);
@@ -342,12 +370,22 @@ function handleRestoreAndRetry(checkpointId: string) {
   color: var(--vscode-foreground);
 }
 
+/* 用户正文和时间之间只保留短间距，与标签到正文的距离一致。 */
+.user-message :deep(.message-footer) {
+  margin-top: var(--gc-space-1);
+}
+
 .assistant-message .role-label {
   color: var(--vscode-descriptionForeground);
 }
 
+.assistant-message {
+  padding-top: var(--gc-space-1);
+}
+
 /* 楼层号徽标（角色名称右侧） */
-.message-floor {
+.message-floor,
+.message-header-time {
   font-size: var(--gc-font-size-caption);
   color: var(--gc-text-muted);
   font-variant-numeric: tabular-nums;

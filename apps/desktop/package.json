@@ -1,0 +1,12 @@
+{
+  "name": "@graycode/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.cjs",
+  "dependencies": {
+    "@graycode/core": "0.1.0"
+  },
+  "devDependencies": {
+    "electron": "44.2.0"
+  }
+}

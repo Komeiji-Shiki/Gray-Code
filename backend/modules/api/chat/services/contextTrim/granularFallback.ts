@@ -54,8 +54,8 @@ export class ContextBudgetExceededError extends Error {
 }
 
 export interface GranularFallbackDeps {
-    conversationManager: ConversationManager;
-    tokenEstimationService: TokenEstimationService;
+    conversationManager: Pick<ConversationManager, 'getHistoryRef' | 'getHistoryForAPIFrom'>;
+    tokenEstimationService: Pick<TokenEstimationService, 'estimateMessageTokens'>;
     log: Logger;
 }
 

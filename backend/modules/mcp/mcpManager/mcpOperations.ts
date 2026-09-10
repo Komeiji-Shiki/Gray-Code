@@ -101,7 +101,8 @@ export async function performResourceRead(
         text: textContents.length > 0
             ? textContents.map(c => (singleUri ? c.text as string : `[${c.uri}] ${c.text as string}`)).join('\n')
             : first.text,
-        blob: first.blob
+        blob: first.blob,
+        contents: structuredClone(contents)
     };
 }
 
@@ -119,11 +120,10 @@ export async function performPromptGet(
     }
     
     const result = await client.getPrompt(request.promptName, request.arguments, request.signal);
-    return result.messages.map(m => ({
-        role: m.role as 'user' | 'assistant',
-        content: {
-            type: m.content.type as 'text' | 'image' | 'resource',
-            text: m.content.text
-        }
-    }));
+    return result.messages.map(message => {
+        if (!['user', 'assistant'].includes(message.role) || !message.content || typeof message.content.type !== 'string')
+            throw new Error('MCP 提示模板返回了无效消息。');
+        // 图片、音频和内嵌资源完整保留，不将内容缩减为 type/text。
+        return structuredClone(message) as McpPromptMessage;
+    });
 }

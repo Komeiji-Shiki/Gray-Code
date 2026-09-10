@@ -1,13 +1,11 @@
 import {
     calculateDeepSeekDownscaleSize,
-    calculateDeepSeekTileGrid,
-    buildDeepSeekTileRegions,
     clearDeepSeekVisionCache,
     countHistoryImages,
     DEEPSEEK_VISION_MAX_IMAGES,
     DEEPSEEK_VISION_MAX_REQUEST_BYTES,
-    DEEPSEEK_VISION_MAX_TILE_LONG_EDGE,
-    DEEPSEEK_VISION_MAX_TILE_PIXELS,
+    DEEPSEEK_VISION_MAX_IMAGE_LONG_EDGE,
+    DEEPSEEK_VISION_MAX_IMAGE_PIXELS,
     isDeepSeekVisionModel,
     prepareDeepSeekVisionHistory,
     validateDeepSeekVisionRequestBody
@@ -16,9 +14,9 @@ import { LruCache } from '../../modules/channel/deepseekVisionCache';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getCanvas, getDependencyPath, getPdfjs, getSharp } from '../../modules/dependencies';
+import { getCanvas, getDependencyPath, getPdfjs, getSharp } from '../../modules/dependencies/runtime';
 
-jest.mock('../../modules/dependencies', () => ({
+jest.mock('../../modules/dependencies/runtime', () => ({
     getCanvas: jest.fn(),
     getDependencyPath: jest.fn(),
     getPdfjs: jest.fn(),
@@ -87,25 +85,14 @@ describe('DeepSeek Vision preprocessing', () => {
     });
 
     test('only recognizes DeepSeek vision model identifiers', () => {
+        expect(isDeepSeekVisionModel('deepseek-flash')).toBe(true);
+        expect(isDeepSeekVisionModel('deepseek/deepseek-flash')).toBe(true);
         expect(isDeepSeekVisionModel('deepseek-v4-flash-vision-exp')).toBe(true);
         expect(isDeepSeekVisionModel('deepseek-v4-flash-vision-exp:free')).toBe(true);
         expect(isDeepSeekVisionModel('deepseek-chat')).toBe(false);
         expect(isDeepSeekVisionModel('gpt-5-vision')).toBe(false);
     });
 
-    test('calculates complete tiles under both pixel and long-edge limits', () => {
-        const grid = calculateDeepSeekTileGrid(1_600, 1_600);
-        const regions = buildDeepSeekTileRegions(1_600, 1_600, grid);
-
-        expect(grid).toEqual({ columns: 2, rows: 2 });
-        expect(regions).toHaveLength(4);
-        expect(regions.reduce((sum, region) => sum + region.width * region.height, 0))
-            .toBe(1_600 * 1_600);
-        for (const region of regions) {
-            expect(region.width * region.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_PIXELS);
-            expect(Math.max(region.width, region.height)).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_LONG_EDGE);
-        }
-    });
 
     test('does not transform a supported image within the DeepSeek budget', async () => {
         mockGetSharp.mockResolvedValue(null);
@@ -122,43 +109,30 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(result[0].parts[0]).toBe(originalPart);
     });
 
-    test('splits an oversized image into ordered loss-preserving output parts', async () => {
-        const sharp = createSharpMock(1_600, 1_600);
-        mockGetSharp.mockResolvedValue(sharp);
-        const history = [{ role: 'user' as const, parts: [imagePart(1_600, 1_600)] }];
-
-        const result = await prepareDeepSeekVisionHistory(
-            history,
-            'deepseek-v4-flash-vision-exp'
-        );
-
-        expect(result[0].parts).toHaveLength(4);
-        expect(result[0].parts.every(part => part.inlineData?.mimeType === 'image/png')).toBe(true);
-        expect(result[0].parts.map(part => part.inlineData?.name)).toEqual([
-            'diagram.png tile-1',
-            'diagram.png tile-2',
-            'diagram.png tile-3',
-            'diagram.png tile-4'
-        ]);
-        expect(sharp).toHaveBeenCalled();
-        expect(countHistoryImages(result)).toBe(4);
-        // The input history is a request source and must not be rewritten in place.
-        expect(history[0].parts).toHaveLength(1);
+    test('默认把大图缩小为完整的单张图片，不再空间拆分', async () => {
+        const sharp = createSharpMock(1600, 1600); mockGetSharp.mockResolvedValue(sharp);
+        const source = imagePart(1600, 1600);
+        const result = await prepareDeepSeekVisionHistory([{ role: 'user', deepSeekVisionTileSplit: true, parts: [source] }], 'deepseek-flash');
+        expect(result[0].parts).toHaveLength(1); expect(result[0].parts[0].inlineData?.name).toBe('diagram.png');
+        const calls = sharp.mock.results.map(item => item.value);
+        expect(calls.flatMap(item => item.extract.mock.calls)).toHaveLength(0);
+        expect(calls.flatMap(item => item.resize.mock.calls)[0].slice(0, 2)).toEqual([1300, 1300]);
+        expect(source.inlineData.data).toBe(Buffer.from('image').toString('base64'));
     });
 
     test('calculates aspect-preserving downscale sizes within the pixel budget', () => {
-        // 1600×1600 → 800×800（scale 0.5）
-        expect(calculateDeepSeekDownscaleSize(1_600, 1_600)).toEqual({ width: 800, height: 800 });
-        // 3200×800 → 1600×400（保持 4:1 宽高比）
-        expect(calculateDeepSeekDownscaleSize(3_200, 800)).toEqual({ width: 1_600, height: 400 });
-        // 1920×1080 → 1066×600（1024×640 预算等比例取整）
+        // 1600×1600 → 1300×1300（保持整图）
+        expect(calculateDeepSeekDownscaleSize(1_600, 1_600)).toEqual({ width: 1300, height: 1300 });
+        // 3200×800 → 2600×650（保持 4:1 宽高比）
+        expect(calculateDeepSeekDownscaleSize(3_200, 800)).toEqual({ width: 2600, height: 650 });
+        // 1920×1080 按 169 万像素预算等比例取整
         const sized = calculateDeepSeekDownscaleSize(1_920, 1_080);
-        expect(sized.width * sized.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_PIXELS);
+        expect(sized.width * sized.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_IMAGE_PIXELS);
         expect(sized.width / sized.height).toBeCloseTo(1_920 / 1_080, 2);
         // 极端超宽全景图：总像素预算之外还要压到 4096 长边限制内
         const panorama = calculateDeepSeekDownscaleSize(40_960, 200);
-        expect(Math.max(panorama.width, panorama.height)).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_LONG_EDGE);
-        expect(panorama.width * panorama.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_PIXELS);
+        expect(Math.max(panorama.width, panorama.height)).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_IMAGE_LONG_EDGE);
+        expect(panorama.width * panorama.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_IMAGE_PIXELS);
         // 已达标图片原样返回，不触发无谓重编码
         expect(calculateDeepSeekDownscaleSize(800, 800)).toEqual({ width: 800, height: 800 });
         expect(calculateDeepSeekDownscaleSize(400, 300)).toEqual({ width: 400, height: 300 });
@@ -176,24 +150,22 @@ describe('DeepSeek Vision preprocessing', () => {
         const result = await prepareDeepSeekVisionHistory(
             history,
             'deepseek-v4-flash-vision-exp',
-            true,
-            undefined,
-            false
+            true
         );
 
         // 不拆分：只输出 1 张，文件名不带 tile- 后缀
         expect(result[0].parts).toHaveLength(1);
         expect(result[0].parts[0].inlineData?.name).toBe('diagram.png');
         expect(countHistoryImages(result)).toBe(1);
-        // resize 被调用且目标尺寸为 800×800（预算内），extract（分块）不被调用。
+        // resize 被调用且目标尺寸为 1300×1300（预算内），extract（分块）不被调用。
         // 注意：每次 sharp(buffer) 调用都会返回新 chain，resize 发生在最后一次
         // pipeline 构造的 chain 上（rotate 之后），因此遍历全部结果链查找。
         const factory = sharp as jest.Mock;
         const chains = factory.mock.results.map(r => r.value) as any[];
         const resizeCalls = chains.flatMap(chain => (chain?.resize?.mock?.calls ?? []) as [number, number][]);
         expect(resizeCalls).toHaveLength(1);
-        expect(resizeCalls[0][0]).toBe(800);
-        expect(resizeCalls[0][1]).toBe(800);
+        expect(resizeCalls[0][0]).toBe(1300);
+        expect(resizeCalls[0][1]).toBe(1300);
         expect(chains.flatMap(chain => (chain?.extract?.mock?.calls ?? []) as unknown[])).toHaveLength(0);
         // 输入不被改写
         expect(history[0].parts).toHaveLength(1);
@@ -207,9 +179,7 @@ describe('DeepSeek Vision preprocessing', () => {
         const result = await prepareDeepSeekVisionHistory(
             history,
             'deepseek-v4-flash-vision-exp',
-            true,
-            undefined,
-            false
+            true
         );
 
         expect(result[0].parts).toHaveLength(1);
@@ -220,40 +190,14 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(chains.flatMap(chain => (chain?.extract?.mock?.calls ?? []) as unknown[])).toHaveLength(0);
     });
 
-    test('does not mix tile and downscale cache entries for the same image bytes', async () => {
-        const sharp = createSharpMock(1_600, 1_600);
-        mockGetSharp.mockResolvedValue(sharp);
-        const history = [{ role: 'user' as const, parts: [imagePart(1_600, 1_600)] }];
-
-        // 先 downscale：缓存一份压缩结果
-        const downscaled = await prepareDeepSeekVisionHistory(
-            history,
-            'deepseek-v4-flash-vision-exp',
-            true,
-            undefined,
-            false
-        );
-        expect(downscaled[0].parts).toHaveLength(1);
-
-        // 再 tile：命中模式隔离后的分块缓存（不是 1 张，而是 4 张）
-        const tiled = await prepareDeepSeekVisionHistory(
-            history,
-            'deepseek-v4-flash-vision-exp',
-            true,
-            undefined,
-            true
-        );
-        expect(tiled[0].parts).toHaveLength(4);
-
-        // 再次 downscale：仍然只有 1 张
-        const downscaledAgain = await prepareDeepSeekVisionHistory(
-            history,
-            'deepseek-v4-flash-vision-exp',
-            true,
-            undefined,
-            false
-        );
-        expect(downscaledAgain[0].parts).toHaveLength(1);
+    test('800 到 1300 之间的图片保留原字节，旧拆图标记不能重新启用切块', async () => {
+        const sharp = createSharpMock(1200, 1200); mockGetSharp.mockResolvedValue(sharp);
+        const source = imagePart(1200, 1200);
+        const result = await prepareDeepSeekVisionHistory([{ role: 'user', deepSeekVisionTileSplit: true, parts: [source] }], 'deepseek-flash');
+        expect(result[0].parts[0]).toBe(source);
+        const calls = sharp.mock.results.map(item => item.value);
+        expect(calls.flatMap(item => item.resize.mock.calls)).toHaveLength(0);
+        expect(calls.flatMap(item => item.extract.mock.calls)).toHaveLength(0);
     });
 
     test('renders every PDF page as an image while preserving page order', async () => {
@@ -309,9 +253,9 @@ describe('DeepSeek Vision preprocessing', () => {
 
         expect(result[0].parts.map(part => part.text || part.inlineData?.name)).toEqual([
             '[PDF page 1/2: report.pdf]',
-            'report.pdf page-1-tile-1',
+            'report.pdf page-1',
             '[PDF page 2/2: report.pdf]',
-            'report.pdf page-2-tile-1'
+            'report.pdf page-2'
         ]);
         expect(result[0].parts.filter(part => part.inlineData)).toHaveLength(2);
         expect(document.getPage).toHaveBeenCalledWith(1);
@@ -382,13 +326,13 @@ describe('DeepSeek Vision preprocessing', () => {
 
         expect(result[0].parts.map(part => part.text || part.inlineData?.name)).toEqual([
             '[GIF frame 1/6 (0.0s-0.1s): anim.gif]',
-            'anim.gif frame-1-tile-1',
+            'anim.gif frame-1',
             '[GIF frame 3/6 (0.2s-0.3s): anim.gif]',
-            'anim.gif frame-3-tile-1',
+            'anim.gif frame-3',
             '[GIF frame 5/6 (0.4s-0.5s): anim.gif]',
-            'anim.gif frame-5-tile-1',
+            'anim.gif frame-5',
             '[GIF frame 6/6 (0.5s-0.6s): anim.gif]',
-            'anim.gif frame-6-tile-1'
+            'anim.gif frame-6'
         ]);
         expect(result[0].parts.filter(part => part.inlineData)).toHaveLength(4);
         expect(countHistoryImages(result)).toBe(4);
@@ -437,11 +381,11 @@ describe('DeepSeek Vision preprocessing', () => {
         // 4 帧 × 100ms：采样 t=0/200(帧3) + 尾部帧4。
         expect(result[0].parts.map(part => part.text || part.inlineData?.name)).toEqual([
             '[GIF frame 1/4 (0.0s-0.1s): anim.gif]',
-            'anim.gif frame-1-tile-1',
+            'anim.gif frame-1',
             '[GIF frame 3/4 (0.2s-0.3s): anim.gif]',
-            'anim.gif frame-3-tile-1',
+            'anim.gif frame-3',
             '[GIF frame 4/4 (0.3s-0.4s): anim.gif]',
-            'anim.gif frame-4-tile-1'
+            'anim.gif frame-4'
         ]);
     });
 
@@ -548,7 +492,7 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(second).toEqual(first);
     });
 
-    test('reuses cached image tiling for identical bytes', async () => {
+    test('reuses cached whole-image resize for identical bytes', async () => {
         const sharp = createSharpMock(1_600, 1_600);
         mockGetSharp.mockResolvedValue(sharp);
         const history = [{ role: 'user' as const, parts: [imagePart(1_600, 1_600)] }];
@@ -637,8 +581,6 @@ describe('DeepSeek Vision preprocessing', () => {
         const result = await prepareDeepSeekVisionHistory(
             history,
             'deepseek-v4-flash-vision-exp',
-            true,
-            undefined,
             true
         );
 
@@ -672,7 +614,7 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(nested.filter(part => part.inlineData)).toHaveLength(1);
     });
 
-    test('PDF 分块达到 600 图上限后立即停止，不继续渲染剩余页面', async () => {
+    test('PDF 逐页转换达到 600 图上限后立即停止，不继续渲染剩余页面', async () => {
         const sharp = createSharpMock(1_600, 1_600);
         mockGetSharp.mockResolvedValue(sharp);
         mockGetDependencyPath.mockReturnValue(tempPdfjsDir);
@@ -702,7 +644,7 @@ describe('DeepSeek Vision preprocessing', () => {
 
         const history = [{
             role: 'user' as const,
-            parts: [{ inlineData: { mimeType: 'application/pdf', data: Buffer.from('%PDF-early-stop').toString('base64') } }]
+            parts: [...Array.from({ length: 450 }, () => imagePart()), { inlineData: { mimeType: 'application/pdf', data: Buffer.from('%PDF-early-stop').toString('base64') } }]
         }];
 
         await expect(prepareDeepSeekVisionHistory(
@@ -710,7 +652,7 @@ describe('DeepSeek Vision preprocessing', () => {
             'deepseek-v4-flash-vision-exp'
         )).rejects.toThrow(/more than 600 images/);
 
-        // 每页 4 块：150 页恰好 600，第 151 页即中止，余下 49 页不渲染。
+        // 已有 450 张图片；再处理 150 页恰好 600，第 151 页即停止。
         expect(document.getPage).toHaveBeenCalledTimes(151);
         expect(document.destroy).toHaveBeenCalled();
     });

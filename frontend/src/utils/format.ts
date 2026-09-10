@@ -40,9 +40,12 @@ export function escapeRegExp(str: string): string {
 }
 
 // 复制到剪贴板
-// 优先 navigator.clipboard（secure context 可用时）；VSCode Webview（vscode-webview://
-// 非 secure context）中 clipboard API 可能缺失/被拒，回退 textarea + execCommand('copy')。
+// 桌面优先使用宿主剪贴板；网页和旧扩展保留浏览器复制及选区回退。
 export async function copyToClipboard(text: string): Promise<boolean> {
+  if (window.__GRAYCODE_HOST?.writeClipboardText) {
+    try { await window.__GRAYCODE_HOST.writeClipboardText(text); return true; }
+    catch (error) { console.warn('桌面剪贴板复制失败:', error); }
+  }
   // 1) 现代剪贴板 API（用户手势下通常可用）
   try {
     if (navigator.clipboard?.writeText) {

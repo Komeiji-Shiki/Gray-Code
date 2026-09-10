@@ -136,7 +136,8 @@ export class AnthropicFormatter extends BaseFormatter {
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory);
+        // Anthropic 不接受中途的 system 消息，保留预设指定的位置并转换为 user。
+        processedHistory = this.cleanInternalFields(processedHistory).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
         
         // 转换历史消息为 Anthropic 格式
         const messages = this.convertToAnthropicMessages(processedHistory, toolMode);

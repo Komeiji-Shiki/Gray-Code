@@ -1,0 +1,21 @@
+{
+  "name": "@graycode/core",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.cjs",
+  "types": "dist/types/core/src/index.d.ts",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "dependencies": {
+    "@graycode/contracts": "0.1.0",
+    "@msgpack/msgpack": "3.1.3",
+    "ajv": "8.20.0",
+    "better-sqlite3": "13.0.3",
+    "stream-json": "3.6.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.1"
+  }
+}

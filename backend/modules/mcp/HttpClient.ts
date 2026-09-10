@@ -6,9 +6,9 @@
 
 import { EventEmitter } from 'events';
 import { collectMcpList, createServerRequestReply, isJsonRpcResponse } from './protocol';
-import type { McpRawToolResult } from './types';
+import type { McpRawToolResult, McpPromptMessage } from './types';
 import { t } from '../../i18n';
-import { createGrayCodeMcpClientInfo, PRODUCT_USER_AGENT } from '../../core/productMetadata';
+import { createGrayCodeMcpClientInfo, PRODUCT_USER_AGENT } from '../../core/productIdentity';
 
 /**
  * SSE 读流缓冲上限（字符数）：无换行的超长尾行跨 chunk 累积时 bufferParts 永续增长，
@@ -374,7 +374,7 @@ export class HttpMcpClient extends EventEmitter {
      * @param signal 外部取消信号（可选）
      */
     async getPrompt(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<{
-        messages: Array<{ role: string; content: { type: string; text?: string } }>;
+        messages: McpPromptMessage[];
     }> {
         return await this.sendRequest('prompts/get', { name, arguments: args }, signal);
     }

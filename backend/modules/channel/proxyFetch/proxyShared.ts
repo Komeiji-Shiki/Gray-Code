@@ -85,7 +85,7 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
  * LimCode 仅是部分历史模块注释中的旧称，因此这里有意保持 GrayCode。
  * 值收敛在 core/productMetadata（PRODUCT_USER_AGENT），此处仅作别名导出保持既有引用兼容。
  */
-export { PRODUCT_USER_AGENT as USER_AGENT } from '../../../core/productMetadata';
+export { PRODUCT_USER_AGENT as USER_AGENT } from '../../../core/productIdentity';
 
 /**
  * 优雅关闭 socket：先发 FIN，等待 close 事件（5s 超时兜底防止定时器泄漏）。

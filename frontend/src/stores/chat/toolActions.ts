@@ -373,7 +373,7 @@ export async function cancelStreamAndRejectTools(
   // 切到其他会话后该会话合法终结 chunk 不会被误判为旧请求迟到（M-front）。
   const cancelledConvId = state.currentConversationId.value
   state._lastCancelledStreamId.value = state.isStreaming.value && currentStreamingId && cancelledConvId
-    ? { conversationId: cancelledConvId, messageId: currentStreamingId }
+    ? { conversationId: cancelledConvId, messageId: currentStreamingId, streamId: state.activeStreamId.value ?? undefined }
     : null
 
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
@@ -462,7 +462,7 @@ export async function cancelStream(
   // 标记带会话归属（conversationId + messageId）：stale 判定先比会话（M-front 跨标签页修复）。
   const cancelledConvId = state.currentConversationId.value
   state._lastCancelledStreamId.value = state.isStreaming.value && currentStreamingId && cancelledConvId
-    ? { conversationId: cancelledConvId, messageId: currentStreamingId }
+    ? { conversationId: cancelledConvId, messageId: currentStreamingId, streamId: state.activeStreamId.value ?? undefined }
     : null
 
   if (state.retryStatus.value) {

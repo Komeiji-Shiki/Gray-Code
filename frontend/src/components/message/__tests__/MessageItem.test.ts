@@ -78,6 +78,42 @@ function mountItem(message: Message) {
   })
 }
 
+describe('普通消息操作与只读限制', () => {
+  function mountMessage(role: Message['role'], restricted = false) {
+    return mount(MessageItem, {
+      props: {
+        message: { id: `actions-${role}`, role, content: '操作示例', parts: [{ text: '操作示例' }], timestamp: 1, backendIndex: 0 },
+        messageIndex: 0,
+        ...(restricted ? { allowEdit: false, allowRetry: false, allowBranch: false, allowDelete: false } : {})
+      },
+      global: { stubs: { ...GLOBAL_STUBS, MessageActions: false, BranchSwitcherBar: true } }
+    })
+  }
+
+  test('未显式限制的用户消息可打开编辑，模型消息可打开重新生成', async () => {
+    const user = mountMessage('user')
+    await user.get('.codicon-edit').trigger('click')
+    expect(user.getComponent({ name: 'EditDialog' }).props('modelValue')).toBe(true)
+    expect(user.find('.codicon-repo-forked').exists()).toBe(true)
+    expect(user.find('.codicon-trash').exists()).toBe(true)
+    user.unmount()
+
+    const assistant = mountMessage('assistant')
+    await assistant.get('.codicon-refresh').trigger('click')
+    expect(assistant.getComponent({ name: 'RetryDialog' }).props('modelValue')).toBe(true)
+    assistant.unmount()
+  })
+
+  test('监视器显式关闭的操作仍不可用', () => {
+    for (const role of ['user', 'assistant'] as const) {
+      const wrapper = mountMessage(role, true)
+      expect(wrapper.find('.codicon-edit,.codicon-refresh,.codicon-repo-forked,.codicon-trash').exists()).toBe(false)
+      expect(wrapper.find('.codicon-copy').exists()).toBe(true)
+      wrapper.unmount()
+    }
+  })
+})
+
 describe('后台任务三段式折叠态持久化', () => {
   beforeEach(() => {
     // 模块级 Map 在测试间隔离

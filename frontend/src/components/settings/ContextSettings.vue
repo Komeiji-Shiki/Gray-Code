@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, onMounted, onUnmounted, watch, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
@@ -287,6 +288,7 @@ function stopAutoRefresh() {
   }
 }
 
+useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </script>
 
 <template>

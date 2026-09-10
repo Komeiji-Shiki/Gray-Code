@@ -40,11 +40,14 @@ import { createChatState, getMessagesStructuralVersion, rebuildMessageIndexById,
 import { clearVisibleChatMessagesCache } from './chat/windowUtils'
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
+import { synchronizeRemoteConversation } from './chat/remoteReconnect'
 import { formatTime } from './chat/utils'
 
 import {
   createNewConversation as createNewConvAction,
   loadConversations as loadConvsAction,
+  ensureConversationSummary,
+  resumeDesktopConversation,
   loadMoreConversations as loadMoreConvsAction,
   loadHistory,
   loadOlderMessagesPage as loadOlderMessagesPageAction,
@@ -103,7 +106,8 @@ import {
   editAndRetry as editAndRetryFn,
   deleteMessage as deleteMessageFn,
   deleteSingleMessage as deleteSingleMessageFn,
-  restoreSummarizedMessages as restoreSummarizedMessagesFn
+  restoreSummarizedMessages as restoreSummarizedMessagesFn,
+  editSummaryMessage as editSummaryMessageFn
 } from './chat/messageActions'
 
 import type { CancelStreamOptions } from './chat/toolActions'
@@ -464,6 +468,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const loadConversations = () => loadConvsAction(state)
+  const refreshConversationSummary = (id: string) => ensureConversationSummary(state, id, true)
   const loadMoreConversations = () => loadMoreConvsAction(state)
   const loadOlderMessagesPage = (options?: { pageSize?: number }) => loadOlderMessagesPageAction(state, options)
 
@@ -474,6 +479,7 @@ export const useChatStore = defineStore('chat', () => {
    * 否则在当前标签页中加载该对话
    */
   const switchConversation = async (id: string) => {
+    if (window.__GRAYCODE_HOST) return openConversationInTab(id)
     // 检查对话是否已在某个标签页中打开
     const existingTab = findTabByConversationId(state, id)
     if (existingTab) {
@@ -652,6 +658,7 @@ export const useChatStore = defineStore('chat', () => {
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
   const restoreSummarizedMessages = (summaryMessageId: string) => restoreSummarizedMessagesFn(state, summaryMessageId)
+  const editSummaryMessage = (summaryMessageId: string, text: string, expectedText: string) => editSummaryMessageFn(state, summaryMessageId, text, expectedText)
 
   // ============ 流式处理 ============
 
@@ -670,11 +677,21 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // ============ 标签页操作 ============
+  function getConversationViews() {
+    return state.openTabs.value.map(tab => {
+      const active = tab.id === state.activeTabId.value
+      const snapshot = active ? null : state.sessionSnapshots.value.get(tab.id)
+      return { ...tab, active, hasDraft: active ? !!state.inputValue.value.trim() || state.editorNodes.value.some(node => node.type === 'context' || !!node.text.trim()) || !!state.attachments.value.length
+        : !!snapshot?.inputValue.trim() || !!snapshot?.editorNodes.some(node => node.type === 'context' || !!node.text.trim()) || !!snapshot?.attachments.length }
+    })
+  }
 
   /**
    * 创建新标签页
    */
   function createNewTab(): string | null {
+    if (window.__GRAYCODE_HOST && !state.currentConversationId.value && !state.allMessages.value.length && !state.inputValue.value.trim()
+      && state.editorNodes.value.every(node => node.type === 'text' && !node.text.trim()) && !state.attachments.value.length && !state.isWaitingForResponse.value) return state.activeTabId.value
     const tabId = createTabAction(state, { title: t('components.tabs.newChat') })
     if (tabId) {
       switchTabWrapped(tabId)
@@ -691,7 +708,7 @@ export const useChatStore = defineStore('chat', () => {
       tabId,
       cancelStreamAndRejectTools,
       streamHandlerCtx,
-      async (conversationId) => {
+      window.__GRAYCODE_HOST ? undefined : async (conversationId) => {
         try {
           await sendToExtension(MESSAGE_NAMES.cancelStream, { conversationId })
         } catch (error) {
@@ -704,31 +721,74 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 切换标签页
    */
+  const staleRemoteViews = new Set<string>()
+  const remoteRefreshes = new Map<string, Promise<void>>()
+  function restoreRemoteView(conversationId: string): Promise<void> {
+    const existing = remoteRefreshes.get(conversationId)
+    if (existing) return existing
+    const operation = synchronizeRemoteConversation(state, conversationId).then(restored => {
+      if (restored) staleRemoteViews.delete(conversationId)
+    }).catch(error => {
+      if (state.currentConversationId.value === conversationId) state.error.value = { code: 'RESYNC_ERROR', message: (error as Error).message }
+    }).finally(() => { if (remoteRefreshes.get(conversationId) === operation) remoteRefreshes.delete(conversationId) })
+    remoteRefreshes.set(conversationId, operation); return operation
+  }
+  async function synchronizeRemote(authenticatedAgain = false): Promise<void> {
+    for (const tab of state.openTabs.value) if (tab.conversationId) staleRemoteViews.add(tab.conversationId)
+    // 重新登录也重试曾因 401 失败的初始化读取，幂等初始化会保留已有标签和输入。
+    if (authenticatedAgain) await initialize()
+    if (state.currentConversationId.value) await restoreRemoteView(state.currentConversationId.value)
+  }
   function switchTabWrapped(tabId: string): void {
+    if (state.activeTabId.value === tabId) {
+      if (state.currentConversationId.value && staleRemoteViews.has(state.currentConversationId.value)) void restoreRemoteView(state.currentConversationId.value)
+      return
+    }
+    const hasSnapshot = state.sessionSnapshots.value.has(tabId)
     switchTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx)
     void loadCurrentConfig(state)
+    const conversationId = state.currentConversationId.value
+    if (window.__GRAYCODE_HOST && conversationId && staleRemoteViews.has(conversationId)) { void restoreRemoteView(conversationId); return }
+    if (window.__GRAYCODE_HOST && hasSnapshot && conversationId && !state.isStreaming.value && !state.isWaitingForResponse.value) {
+      state.isLoading.value = true
+      void (async () => {
+        try { await loadHistory(state); await resumeDesktopConversation(state, conversationId) }
+        catch (error) { if (state.currentConversationId.value === conversationId) state.error.value = { code: 'RESUME_ERROR', message: (error as Error).message } }
+        finally { if (state.currentConversationId.value === conversationId) state.isLoading.value = false }
+      })()
+    }
   }
 
   /**
    * 从历史打开对话（在新标签页或当前空白标签页中）
    */
+  let navigationEpoch = 0
   async function openConversationInTab(conversationId: string): Promise<void> {
+    const epoch = ++navigationEpoch
+    await ensureConversationSummary(state, conversationId)
+    if (epoch !== navigationEpoch) return
     // 如果已在某个标签页中打开，直接切换
     const existingTab = findTabByConversationId(state, conversationId)
     if (existingTab) {
       switchTabWrapped(existingTab.id)
       return
     }
-
-    // 如果当前标签页是空白的，在当前标签页中加载
-    if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
-      await switchConversation(conversationId)
-      return
+    if (window.__GRAYCODE_HOST && state.openTabs.value.length >= 100) {
+      const unused = state.openTabs.value.find(tab => {
+        const snapshot = state.sessionSnapshots.value.get(tab.id)
+        return tab.id !== state.activeTabId.value && !tab.isStreaming && snapshot && !snapshot.isWaitingForResponse && !snapshot.isLoading
+          && !snapshot.inputValue.trim() && snapshot.editorNodes.every(node => node.type === 'text' && !node.text.trim()) && !snapshot.attachments.length && !snapshot.messageQueue.length
+      })
+      if (unused) closeTabWrapped(unused.id)
+      else throw new Error('打开的对话较多，请先关闭一个不用的对话视图。输入草稿和运行中的对话会保留。')
     }
 
-    // 创建新标签页并在其中加载对话
+    // 如果当前标签页是空白的，在当前标签页中加载
+    // 只有完全空白的输入可以复用；已有文本或附件的草稿继续保留在原对话。
     const conv = state.conversations.value.find(c => c.id === conversationId)
-    const tabId = createTabAction(state, {
+    const reusable = !state.currentConversationId.value && !state.allMessages.value.length && !state.inputValue.value.trim()
+      && state.editorNodes.value.every(node => node.type === 'text' && !node.text.trim()) && !state.attachments.value.length && !state.isWaitingForResponse.value
+    const tabId = reusable && state.activeTabId.value ? state.activeTabId.value : createTabAction(state, {
       conversationId,
       title: conv?.title || t('components.tabs.chat')
     })
@@ -737,6 +797,8 @@ export const useChatStore = defineStore('chat', () => {
       // 切换后需要从后端加载历史
       await switchConvAction(state, conversationId, cancelStreamAndRejectTools)
       void loadBranchGraphAction(state)
+      if (state.activeTabId.value !== tabId || epoch !== navigationEpoch) return
+      updateTabConversationId(state, tabId, conversationId)
       if (conv) {
         updateTabTitle(state, tabId, conv.title)
       }
@@ -886,6 +948,7 @@ export const useChatStore = defineStore('chat', () => {
     // 对话管理
     createNewConversation,
     loadConversations,
+    refreshConversationSummary,
     loadMoreConversations,
     switchConversation,
     deleteConversation,
@@ -893,7 +956,7 @@ export const useChatStore = defineStore('chat', () => {
     isDeletingConversation: (id: string) => isDeletingConversation(state, id),
     
     // 消息管理
-    loadHistory: () => loadHistory(state),
+    loadHistory: (options: { preserveWindow?: boolean } = {}) => loadHistory(state, false, options),
     loadOlderMessagesPage,
     sendMessage,
     retryLastMessage,
@@ -993,6 +1056,7 @@ export const useChatStore = defineStore('chat', () => {
     summarizeContext,
     cancelSummarizeRequest,
     restoreSummarizedMessages,
+    editSummaryMessage,
 
     // 标签页
     openTabs: state.openTabs,
@@ -1002,6 +1066,8 @@ export const useChatStore = defineStore('chat', () => {
     closeTab: closeTabWrapped,
     switchTab: switchTabWrapped,
     openConversationInTab,
+    synchronizeRemote,
+    getConversationViews,
     reorderTab: (fromIndex: number, toIndex: number) => reorderTabAction(state, fromIndex, toIndex),
     
     // 初始化

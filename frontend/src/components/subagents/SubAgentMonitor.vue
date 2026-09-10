@@ -6,6 +6,7 @@ import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
 import SubAgentContextCompactionNotice from './SubAgentContextCompactionNotice.vue'
+import SubAgentRequests from './SubAgentRequests.vue'
 import {
   buildContextCompactionTimeline,
   latestContextBoundaryCompaction,
@@ -80,6 +81,9 @@ interface SubAgentRunManifest {
   eventSequence?: number
   preview?: string
   lastMessageRole?: Content['role']
+  canRetry?: boolean
+  legacy?: boolean
+  continuedFromRunId?: string
 }
 
 type SubAgentRunContentWindow = SubAgentRunContentWindowState
@@ -139,6 +143,8 @@ const activeRunIds = ref<Set<string>>(new Set())
 // 修改方式：记录用户是否已经在 Monitor 内主动选中过 run，实时 event 只在用户未选择前应用后端焦点。
 // 修改目的：从主窗口打开详情仍能自动定位，但 Monitor 内部切换不会被后续事件拉回旧 run。
 const hasUserSelectedRun = ref(false)
+const canRetryRun = ref(true)
+const isPlatformMonitor = Boolean(window.__GRAYCODE_HOST)
 let disposeMessageListener: (() => void) | undefined
 
 // 修改原因：llm_delta 是高频流式事件（流式输出时每秒可达数十个），若每个事件都立即触发
@@ -269,6 +275,7 @@ function handleMonitorRunSoundEvent(event: SubAgentRunEvent): void {
 }
 
 function applyManifestPayload(data: any) {
+  canRetryRun.value = data?.capabilities?.retry !== false
   // 修改原因：monitorReady/subagentMonitor.manifest 的协议已从 snapshots 切换为 manifests，前端不能再把全量 contents 放入首屏 state。
   // 修改方式：只接收 manifests，并同步焦点与 activeRunIds；窗口内容保留已有按需缓存。
   // 修改目的：重新打开已有面板时也不会因一次全量替换触发 Markdown 大渲染。
@@ -988,7 +995,7 @@ async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
   // 修改原因：Monitor 顶部按钮要控制当前活跃 run，而不是改前端本地状态。
   // 修改方式：把 pause/resume/exit 意图发送给后端 runController handler，等待事件总线回推新状态。
   // 修改目的：保持后端为控制语义的 source of truth，避免主工具 Promise 与 UI 状态不一致。
-  const response = await sendToExtension<{ success?: boolean; active?: boolean; status?: RunStatus }>(type, {
+  const response = await sendToExtension<{ success?: boolean; active?: boolean; status?: RunStatus; pending?: boolean }>(type, {
     runId: run.runId,
     reason: action === 'exit' ? '用户主动终止 SubAgent 执行' : undefined
   })
@@ -1004,6 +1011,7 @@ async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
   if (response?.success === false) {
     showControlNotice(t('components.subagents.monitor.controlUnavailable'))
   }
+  if (response?.pending) showControlNotice('暂停请求已收到，将在当前模型请求或工具结束后暂停。')
 }
 
 function pauseFocusedRun() {
@@ -1051,7 +1059,9 @@ async function mutateRunMessage(messageId: string, messageType: 'delete' | 'retr
   }>(type, {
     runId: run.runId,
     contentIndex,
-    conversationId: run.conversationId
+    conversationId: run.conversationId,
+    messageId,
+    expectedRevision: focusedWindow.value?.contentRevision
   })
   if (response?.manifest) upsertManifest(response.manifest)
   const returnedWindow = response?.window || response?.contentWindow
@@ -1060,6 +1070,11 @@ async function mutateRunMessage(messageId: string, messageType: 'delete' | 'retr
     // 修改方式：用后端返回的权威窗口替换当前 run 缓存；窗口内 Content[] 仍交给 MessageItem 渲染。
     // 修改目的：用户操作后校准当前 run，但大 run 不会因单次 mutation 全量进入前端。
     upsertWindow(returnedWindow)
+  }
+  // 旧记录首次接续会返回对应的新任务，原记录仍可切回查看。
+  if (response?.manifest && response.manifest.runId !== run.runId) {
+    focusedRunId.value = response.manifest.runId
+    hasUserSelectedRun.value = true
   }
   if (response?.snapshot) {
     // 修改原因：保留旧协议兼容只用于防御旧扩展/测试夹层，新增后端不应再走这里。
@@ -1295,7 +1310,7 @@ onBeforeUnmount(() => {
             </span>
             <span v-if="focusedRun && !focusedRunIsActive" class="run-readonly-badge">
               <span class="codicon codicon-history"></span>
-              {{ t('components.subagents.monitor.readOnly') }}
+              {{ focusedManifest?.legacy ? '旧记录 · 可从选中回复重新开始' : focusedManifest?.canRetry ? '历史运行 · 可以重试' : t('components.subagents.monitor.readOnly') }}
             </span>
             <div v-if="focusedRunIsActive" class="run-control-buttons">
             <!--
@@ -1338,6 +1353,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
+        <SubAgentRequests v-if="isPlatformMonitor && focusedRun" :key="focusedRun.runId" :run-id="focusedRun.runId" />
         <template v-for="(entry, index) in renderTimeline" :key="entry.key">
           <SubAgentContextCompactionNotice
             v-if="entry.kind === 'compaction'"
@@ -1348,6 +1364,10 @@ onBeforeUnmount(() => {
             v-else
             :message="entry.message"
             :message-index="entry.message.backendIndex ?? index"
+            :allow-edit="false"
+            :allow-branch="false"
+            :allow-retry="canRetryRun && focusedManifest?.canRetry !== false"
+            :allow-delete="!entry.message.id.startsWith('invocation-') && (!isPlatformMonitor || !focusedRunIsActive || focusedRun?.status === 'awaiting_monitor_action')"
             @edit="noop"
             @restore-and-edit="noop"
             @delete="handleDelete"

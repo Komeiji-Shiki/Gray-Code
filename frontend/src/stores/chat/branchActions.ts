@@ -367,6 +367,7 @@ export async function switchBranchCandidate(
     const result = await sendToExtension<{
       success?: boolean
       dirtyFiles?: string[]
+      error?: string
     }>(MESSAGE_NAMES['conversation.switchBranchCandidate'], {
       conversationId,
       nodeId,
@@ -378,8 +379,8 @@ export async function switchBranchCandidate(
 
     // BCP-05（决策 11）：chat-and-workspace 后端拦截到未保存文件 → 登记待确认动作，
     // 不写错误条（确认框由 DirtyFilesConfirm.vue 弹出），本次切换未执行。
-    // （已确认（confirmedDiscardDirty=true）时后端不会返回 dirtyFiles，此处再防御一次）
-    if (options?.confirmedDiscardDirty !== true && result?.dirtyFiles && result.dirtyFiles.length > 0) {
+    // 已确认后新增未保存文件也需重新确认，不能把后端的拒绝当成切换成功。
+    if (result?.success === false && result?.dirtyFiles && result.dirtyFiles.length > 0) {
       // BCP-05：登记待确认动作并记录发起会话归属（切走该会话时清空，见 dirtyConfirmState）
       setPendingDirtyConfirm(conversationId, {
         kind: 'switch',
@@ -388,6 +389,8 @@ export async function switchBranchCandidate(
       })
       return false
     }
+
+    if (result?.success === false) throw new Error(result.error || '分支未切换，请刷新后重试。')
 
     // 1) 清理错误条 / 流式残留（切换本身已由后端保证与流式互斥）
     state.error.value = null

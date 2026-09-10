@@ -1,9 +1,6 @@
 /**
- * DeepSeek Vision 专用输入预处理。
- *
- * DeepSeek Vision 会把较大的图片按约 800×800 的总像素数缩小。这里在请求
- * 发出前把图片切成不超过该像素预算的完整分块，并把 PDF 栅格化为逐页图片，
- * 使模型看到的是原始分辨率的多个局部，而不是服务端缩小后的整张图。
+ * DeepSeek 图片预处理：按约 1300×1300 总像素预算等比例缩小整图，保留 PDF 逐页转换。
+ * 普通图片不再拆块，历史中的旧拆图偏好不改变新的处理规则。
  */
 
 import * as path from 'path';
@@ -17,19 +14,19 @@ import {
     getDependencyPath,
     getPdfjs,
     getSharp
-} from '../dependencies';
+} from '../dependencies/runtime';
 
-/** DeepSeek 官方 Vision 实验模型 ID。 */
-export const DEEPSEEK_VISION_MODEL = 'deepseek-v4-flash-vision-exp';
+/** DeepSeek 官方具备视觉能力的当前模型 ID。 */
+export const DEEPSEEK_VISION_MODEL = 'deepseek-flash';
 
 /** DeepSeek 对较大图片的近似总像素预算。 */
-export const DEEPSEEK_VISION_MAX_TILE_PIXELS = 800 * 800;
+export const DEEPSEEK_VISION_MAX_IMAGE_PIXELS = 1300 * 1300;
 
 /**
  * 对包含较多图片的请求使用更严格的长边上限。
  * 统一使用 4096，避免图片数量增加到 15 张后触发 DeepSeek 的另一档限制。
  */
-export const DEEPSEEK_VISION_MAX_TILE_LONG_EDGE = 4096;
+export const DEEPSEEK_VISION_MAX_IMAGE_LONG_EDGE = 4096;
 
 /** DeepSeek Vision 单次请求最多接收的图片数。 */
 export const DEEPSEEK_VISION_MAX_IMAGES = 600;
@@ -60,9 +57,9 @@ const PDF_CACHE_MAX_ENTRIES = 8;
 const PDF_CACHE_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 /** PDF 渲染结果缓存：单个文档超过 64 MiB 不缓存（防止一条巨无霸挤占预算）。 */
 const PDF_CACHE_MAX_ENTRY_BYTES = 64 * 1024 * 1024;
-/** 图片分块结果缓存：最多 64 个条目。 */
+/** 图片缩放结果缓存：最多 64 个条目。 */
 const RASTER_CACHE_MAX_ENTRIES = 64;
-/** 图片分块结果缓存：总字节预算 64 MiB（按 base64 编码后长度计）。 */
+/** 图片缩放结果缓存：总字节预算 64 MiB（按 base64 编码后长度计）。 */
 const RASTER_CACHE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 /** GIF 帧 PNG 缓存：最多 128 帧。 */
 const GIF_FRAME_CACHE_MAX_ENTRIES = 128;
@@ -78,18 +75,6 @@ const DEEPSEEK_IMAGE_MIME_TYPES = new Set([
 
 const ORIENTATION_SWAP_VALUES = new Set([5, 6, 7, 8]);
 
-export interface DeepSeekTileGrid {
-    columns: number;
-    rows: number;
-}
-
-export interface DeepSeekTileRegion {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-}
-
 /**
  * DeepSeek Vision 只对明确的视觉模型启用图片预处理。
  *
@@ -98,28 +83,18 @@ export interface DeepSeekTileRegion {
  */
 export function isDeepSeekVisionModel(model?: string): boolean {
     const normalized = model?.trim().toLowerCase() ?? '';
-    return normalized.includes('deepseek') && normalized.includes('vision');
+    return /(?:^|\/)deepseek-flash(?:$|:)/.test(normalized) || normalized.includes('deepseek') && normalized.includes('vision');
 }
 
-/**
- * 计算把图片等比例缩放至 DeepSeek 像素预算（约 800×800 总像素）内的目标尺寸。
- *
- * 与 calculateDeepSeekTileGrid 不同，这里不拆分图片，而是主动把整张图缩小到
- * 预算以内（保持宽高比），让 DeepSeek 无法触发服务端压缩；原图已满足预算时
- * 原样返回，避免无谓的重编码损失。
- *
- * 同时约束长边不超过 DEEPSEEK_VISION_MAX_TILE_LONG_EDGE：极端超宽/超高的
- * 全景图虽然总像素不高，但单边长可能触发 DeepSeek 的另一档服务端限制
- * （与 tile 网格的长边约束同口径）。
- */
+/** 按约 169 万总像素和多图请求的长边上限缩小图片；不放大已经达标的图片。 */
 export function calculateDeepSeekDownscaleSize(width: number, height: number): { width: number; height: number } {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
         throw new DeepSeekVisionPreprocessingError('Image dimensions must be positive integers.');
     }
 
     const scale = Math.min(
-        Math.sqrt(DEEPSEEK_VISION_MAX_TILE_PIXELS / (width * height)),
-        DEEPSEEK_VISION_MAX_TILE_LONG_EDGE / Math.max(width, height)
+        Math.sqrt(DEEPSEEK_VISION_MAX_IMAGE_PIXELS / (width * height)),
+        DEEPSEEK_VISION_MAX_IMAGE_LONG_EDGE / Math.max(width, height)
     );
     if (scale >= 1) {
         return { width, height };
@@ -128,110 +103,6 @@ export function calculateDeepSeekDownscaleSize(width: number, height: number): {
         width: Math.max(1, Math.floor(width * scale)),
         height: Math.max(1, Math.floor(height * scale))
     };
-}
-
-/**
- * 根据原图尺寸计算分块网格。
- *
- * 网格中的每个实际分块都满足：
- * - 总像素数不超过 DEEPSEEK_VISION_MAX_TILE_PIXELS；
- * - 长边不超过 DEEPSEEK_VISION_MAX_TILE_LONG_EDGE。
- *
- * 在分块数相同时，优先选择更接近原图宽高比的分块形状，减少不必要的分块。
- */
-export function calculateDeepSeekTileGrid(width: number, height: number): DeepSeekTileGrid {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
-        throw new DeepSeekVisionPreprocessingError('Image dimensions must be positive integers.');
-    }
-
-    const minimumColumns = Math.max(1, Math.ceil(width / DEEPSEEK_VISION_MAX_TILE_LONG_EDGE));
-    const idealColumns = Math.max(
-        minimumColumns,
-        Math.ceil(Math.sqrt((width * height) / DEEPSEEK_VISION_MAX_TILE_PIXELS))
-    );
-
-    // 只在实际可能的列数附近搜索；极端超宽图片仍由 minimumColumns 覆盖。
-    const maximumColumns = Math.min(
-        width,
-        Math.max(minimumColumns, Math.min(16_384, idealColumns + 256))
-    );
-
-    let best: {
-        grid: DeepSeekTileGrid;
-        count: number;
-        aspectDistance: number;
-    } | undefined;
-
-    for (let columns = minimumColumns; columns <= maximumColumns; columns++) {
-        const tileWidth = Math.ceil(width / columns);
-        const heightPerTileByPixels = Math.floor(DEEPSEEK_VISION_MAX_TILE_PIXELS / tileWidth);
-        if (heightPerTileByPixels <= 0) continue;
-
-        let rows = Math.max(
-            1,
-            Math.ceil(height / DEEPSEEK_VISION_MAX_TILE_LONG_EDGE),
-            Math.ceil(height / heightPerTileByPixels)
-        );
-
-        // 由于 ceil(width / columns) 与最后一行的实际尺寸可能不同，最终复核。
-        while (
-            tileWidth * Math.ceil(height / rows) > DEEPSEEK_VISION_MAX_TILE_PIXELS
-            || Math.ceil(height / rows) > DEEPSEEK_VISION_MAX_TILE_LONG_EDGE
-        ) {
-            rows++;
-        }
-
-        const tileHeight = Math.ceil(height / rows);
-        const count = columns * rows;
-        const originalAspect = width / height;
-        const tileAspect = tileWidth / tileHeight;
-        const aspectDistance = Math.abs(Math.log(tileAspect / originalAspect));
-
-        if (
-            !best
-            || count < best.count
-            || (count === best.count && aspectDistance < best.aspectDistance)
-        ) {
-            best = {
-                grid: { columns, rows },
-                count,
-                aspectDistance
-            };
-        }
-    }
-
-    // 正常尺寸一定会在 minimumColumns 处得到候选；保留明确错误而不是返回非法网格。
-    if (!best) {
-        throw new DeepSeekVisionPreprocessingError('Unable to calculate a safe image tile grid.');
-    }
-
-    return best.grid;
-}
-
-/** 根据网格生成无重叠、无空洞的行优先分块区域。 */
-export function buildDeepSeekTileRegions(
-    width: number,
-    height: number,
-    grid: DeepSeekTileGrid = calculateDeepSeekTileGrid(width, height)
-): DeepSeekTileRegion[] {
-    const regions: DeepSeekTileRegion[] = [];
-
-    for (let row = 0; row < grid.rows; row++) {
-        const top = Math.floor((row * height) / grid.rows);
-        const bottom = Math.floor(((row + 1) * height) / grid.rows);
-        for (let column = 0; column < grid.columns; column++) {
-            const left = Math.floor((column * width) / grid.columns);
-            const right = Math.floor(((column + 1) * width) / grid.columns);
-            regions.push({
-                left,
-                top,
-                width: right - left,
-                height: bottom - top
-            });
-        }
-    }
-
-    return regions;
 }
 
 export class DeepSeekVisionPreprocessingError extends Error {
@@ -377,7 +248,7 @@ class DeepSeekVisionProcessor {
 
     constructor(private readonly abortSignal?: AbortSignal) {}
 
-    async transformHistory(history: Content[], fallbackTileSplit: boolean = true): Promise<Content[]> {
+    async transformHistory(history: Content[]): Promise<Content[]> {
         const transformed: Content[] = [];
         this.imageCount = countHistoryImages(history);
         if (this.imageCount > DEEPSEEK_VISION_MAX_IMAGES) {
@@ -386,9 +257,7 @@ class DeepSeekVisionProcessor {
             );
         }
 
-        // 没有显式模式的 functionResponse 等 user 消息继承最近真实用户回合；
-        // 每条真实用户消息自己的模式只作用于该消息及其后续工具结果，不会被新轮次改写。
-        let inheritedTileSplit = fallbackTileSplit;
+        // 旧模式字段保留在原历史中，但不再触发空间拆图。
         for (const content of history) {
             this.throwIfAborted();
 
@@ -397,26 +266,23 @@ class DeepSeekVisionProcessor {
                 continue;
             }
 
-            if (typeof content.deepSeekVisionTileSplit === 'boolean') {
-                inheritedTileSplit = content.deepSeekVisionTileSplit;
-            }
-            const parts = await this.transformParts(content.parts, inheritedTileSplit);
+            const parts = await this.transformParts(content.parts);
             transformed.push({ ...content, parts });
         }
 
         return transformed;
     }
 
-    private async transformParts(parts: ContentPart[], tileSplit: boolean): Promise<ContentPart[]> {
+    private async transformParts(parts: ContentPart[]): Promise<ContentPart[]> {
         const result: ContentPart[] = [];
 
         for (const part of parts) {
             this.throwIfAborted();
 
             // Gemini function response 可以在 parts 中嵌套多媒体。递归处理，
-            // 使 Responses formatter 的工具输出路径也能获得相同的 PDF/分块能力。
+            // 使 Responses formatter 的工具输出路径也能获得相同的 PDF/缩放能力。
             if (part.functionResponse?.parts) {
-                const nestedParts = await this.transformParts(part.functionResponse.parts, tileSplit);
+                const nestedParts = await this.transformParts(part.functionResponse.parts);
                 result.push({
                     ...part,
                     functionResponse: {
@@ -432,14 +298,14 @@ class DeepSeekVisionProcessor {
                 continue;
             }
 
-            const transformedInlineParts = await this.transformInlineData(part, tileSplit);
+            const transformedInlineParts = await this.transformInlineData(part);
             result.push(...transformedInlineParts);
         }
 
         return result;
     }
 
-    private async transformInlineData(part: ContentPart, tileSplit: boolean): Promise<ContentPart[]> {
+    private async transformInlineData(part: ContentPart): Promise<ContentPart[]> {
         const inlineData = part.inlineData!;
         const mimeType = inlineData.mimeType.trim().toLowerCase();
         const buffer = Buffer.from(inlineData.data, 'base64');
@@ -449,20 +315,20 @@ class DeepSeekVisionProcessor {
             const displayName = inlineData.name || 'attachment.pdf';
 
             // 逐页渲染并立即转换：达到最终图片上限时当场停止，不再先把整份 PDF
-            // 全量栅格化进内存后才发现分块结果超限。
+            // 全量栅格化进内存后才发现缩放结果超限。
             await this.renderPdfPages(buffer, async page => {
                 this.throwIfAborted();
-                const pageImages = await this.transformRasterImage(page.data, 'image/png', tileSplit);
+                const pageImages = await this.transformRasterImage(page.data, 'image/png');
                 this.reserveProducedImages(pageImages.length);
                 result.push({
                     text: `[PDF page ${page.pageNumber}/${page.pageCount}: ${displayName}]`
                 });
-                result.push(...pageImages.map((image, index) => ({
+                result.push(...pageImages.map(image => ({
                     inlineData: {
                         mimeType: image.mimeType,
                         data: image.data,
                         id: inlineData.id,
-                        name: `${displayName} page-${page.pageNumber}-tile-${index + 1}`
+                        name: `${displayName} page-${page.pageNumber}`
                     }
                 })));
             });
@@ -473,7 +339,7 @@ class DeepSeekVisionProcessor {
         if (mimeType === 'image/gif') {
             // 原 GIF 在初始图片计数中占 1；拆帧前先移除，再逐个登记实际输出。
             this.imageCount -= 1;
-            return this.transformGif(buffer, inlineData.name || 'attachment.gif', inlineData.id, tileSplit);
+            return this.transformGif(buffer, inlineData.name || 'attachment.gif', inlineData.id);
         }
 
         if (!mimeType.startsWith('image/')) {
@@ -488,7 +354,7 @@ class DeepSeekVisionProcessor {
                 throw this.sharpRequiredError(mimeType);
             }
             // 官方支持格式可以继续沿用原始数据；没有 sharp 时至少不破坏
-            // 已经可发送的图片，图片分块能力则由可选依赖提供。
+            // 已经可发送的图片，图片缩放能力则由可选依赖提供。
             return [part];
         }
 
@@ -514,103 +380,33 @@ class DeepSeekVisionProcessor {
 
         const rawBytes = buffer.length;
         const needsTransform = !DEEPSEEK_IMAGE_MIME_TYPES.has(mimeType)
-            || dimensions.width * dimensions.height > DEEPSEEK_VISION_MAX_TILE_PIXELS
-            || Math.max(dimensions.width, dimensions.height) > DEEPSEEK_VISION_MAX_TILE_LONG_EDGE
+            || dimensions.width * dimensions.height > DEEPSEEK_VISION_MAX_IMAGE_PIXELS
+            || Math.max(dimensions.width, dimensions.height) > DEEPSEEK_VISION_MAX_IMAGE_LONG_EDGE
             || rawBytes > DEEPSEEK_VISION_MAX_IMAGE_BYTES;
 
         if (!needsTransform) {
             return [part];
         }
 
-        const images = await this.transformRasterImage(buffer, mimeType, tileSplit);
+        const images = await this.transformRasterImage(buffer, mimeType);
         this.replaceInputImageWithOutputs(images.length);
         const { inlineData: _inlineData, ...partMetadata } = part;
-        return images.map((image, index) => ({
+        return images.map(image => ({
             ...partMetadata,
             inlineData: {
                 mimeType: image.mimeType,
                 data: image.data,
                 id: inlineData.id,
                 name: inlineData.name
-                    ? (images.length > 1 ? `${inlineData.name} tile-${index + 1}` : inlineData.name)
-                    : undefined
             }
         }));
     }
 
-    private async transformRasterImage(buffer: Buffer, inputMimeType: string, tileSplit: boolean = true): Promise<EncodedImage[]> {
-        // 缓存命中：同一图片字节（含 PDF 页 PNG、GIF 帧 PNG）的处理结果复用。
-        // 缓存键必须包含处理模式：分块与压缩是两种不同输出，混用会把压缩图送去分块
-        // （或把分块图送去压缩）导致请求内容漂移。
-        const mode = tileSplit ? 'tile' : 'downscale';
-        const cacheKey = `${contentHash(buffer)}|${inputMimeType}|${mode}`;
+    private async transformRasterImage(buffer: Buffer, inputMimeType: string): Promise<EncodedImage[]> {
+        // 稳定的内容与尺寸规则对应同一份缓存，后续回合不重复处理相同图片。
+        const cacheKey = `${contentHash(buffer)}|${inputMimeType}|resize-1300`;
         const cached = rasterImageCache.get(cacheKey);
-        if (cached) {
-            return cached;
-        }
-
-        if (!tileSplit) {
-            return this.downscaleRasterImage(buffer, inputMimeType, cacheKey);
-        }
-
-        const sharp = await this.getSharpFactory();
-        if (!sharp) {
-            throw this.sharpRequiredError(inputMimeType);
-        }
-
-        let metadata: any;
-        try {
-            metadata = await sharp(buffer).metadata();
-        } catch (error) {
-            throw new DeepSeekVisionPreprocessingError(
-                `Unable to read image metadata: ${this.errorMessage(error)}`
-            );
-        }
-
-        const dimensions = this.getOrientedDimensions(metadata);
-        if (!dimensions) {
-            throw new DeepSeekVisionPreprocessingError('Unable to determine image dimensions.');
-        }
-
-        const grid = calculateDeepSeekTileGrid(dimensions.width, dimensions.height);
-        const regions = buildDeepSeekTileRegions(dimensions.width, dimensions.height, grid);
-        const outputMimeType = this.chooseOutputMimeType(inputMimeType);
-        const encoded: EncodedImage[] = [];
-
-        for (const region of regions) {
-            this.throwIfAborted();
-
-            // rotate() without arguments applies EXIF orientation before extract,
-            // so a portrait JPEG with orientation metadata is tiled in visual order.
-            let pipeline = sharp(buffer).rotate();
-            const isWholeImage = regions.length === 1
-                && region.left === 0
-                && region.top === 0
-                && region.width === dimensions.width
-                && region.height === dimensions.height;
-
-            if (!isWholeImage) {
-                pipeline = pipeline.extract(region);
-            }
-
-            const output = await this.encodeImage(pipeline, outputMimeType);
-            if (output.length > DEEPSEEK_VISION_MAX_IMAGE_BYTES) {
-                throw new DeepSeekVisionPreprocessingError(
-                    `A processed DeepSeek image is still larger than ${DEEPSEEK_VISION_MAX_IMAGE_BYTES} bytes.`
-                );
-            }
-
-            encoded.push({
-                mimeType: outputMimeType,
-                data: output.toString('base64'),
-                width: region.width,
-                height: region.height
-            });
-        }
-
-        const totalBytes = encoded.reduce((sum, image) => sum + image.data.length, 0);
-        rasterImageCache.set(cacheKey, encoded, totalBytes);
-        return encoded;
+        return cached ?? this.downscaleRasterImage(buffer, inputMimeType, cacheKey);
     }
 
     private async downscaleRasterImage(buffer: Buffer, inputMimeType: string, cacheKey: string): Promise<EncodedImage[]> {
@@ -636,8 +432,7 @@ class DeepSeekVisionProcessor {
         const target = calculateDeepSeekDownscaleSize(dimensions.width, dimensions.height);
         const outputMimeType = this.chooseOutputMimeType(inputMimeType);
 
-        // rotate() without arguments applies EXIF orientation before resize,
-        // so a portrait JPEG with orientation metadata is downscaled in visual order.
+        // 先按 EXIF 方向旋转，再按正确的显示尺寸缩放。
         let pipeline = sharp(buffer).rotate();
         if (target.width !== dimensions.width || target.height !== dimensions.height) {
             pipeline = pipeline.resize(target.width, target.height, { fit: 'fill' });
@@ -663,9 +458,7 @@ class DeepSeekVisionProcessor {
     private chooseOutputMimeType(inputMimeType: string): string {
         switch (inputMimeType) {
             case 'image/jpeg':
-                // Preserve JPEG without the additional chroma loss caused by a
-                // default-quality re-encode; DeepSeek is the component doing the
-                // requested vision resize, not this preprocessing stage.
+                // 整图缩小后保留 JPEG 和完整色度，减少再次编码对截图文字的损伤。
                 return 'image/jpeg';
             case 'image/webp':
                 return 'image/webp';
@@ -708,12 +501,11 @@ class DeepSeekVisionProcessor {
     /**
      * 把 GIF 动画按时间轴采样拆帧后逐帧发送。
      *
-     * 背景：DeepSeek 对 GIF 只取第一帧。这里读取动画元数据（帧数 + 每帧延迟），
-     * 按每秒最多 GIF_MAX_FPS 帧（GIF_FRAME_INTERVAL_MS 间隔）在时间轴上采样，
-     * 把选中的帧渲染为 PNG 并复用 transformRasterImage 做大小分块，
+     * 沿用动画的时间轴采样：读取帧数和每帧延迟，按每秒最多 GIF_MAX_FPS 帧采样，
+     * 把选中的帧渲染为 PNG 并复用 transformRasterImage 做等比例缩放，
      * 确保模型能看到动画的完整演进而不只是首帧。
      */
-    private async transformGif(buffer: Buffer, displayName: string, id?: string, tileSplit: boolean = true): Promise<ContentPart[]> {
+    private async transformGif(buffer: Buffer, displayName: string, id?: string): Promise<ContentPart[]> {
         const sharp = await this.getSharpFactory();
         if (!sharp) {
             throw this.sharpRequiredError('image/gif');
@@ -775,7 +567,7 @@ class DeepSeekVisionProcessor {
         const result: ContentPart[] = [];
         const selectedIndexes = [...selectedFrames].sort((a, b) => a - b);
         // 帧提取+PNG 编码是 GIF 链路中的大头，按（GIF 哈希#帧号）缓存；
-        // 帧的分块结果由 rasterImageCache 兜底。
+        // 帧的缩放结果由 rasterImageCache 兜底。
         const gifHash = contentHash(buffer);
         for (const frameIndex of selectedIndexes) {
             this.throwIfAborted();
@@ -785,19 +577,19 @@ class DeepSeekVisionProcessor {
                 frameBuffer = await this.renderGifFrame(sharp, buffer, frameIndex);
                 gifFrameCache.set(frameCacheKey, frameBuffer, frameBuffer.length);
             }
-            const frameImages = await this.transformRasterImage(frameBuffer, 'image/png', tileSplit);
+            const frameImages = await this.transformRasterImage(frameBuffer, 'image/png');
             this.reserveProducedImages(frameImages.length);
             const startSeconds = (frameStarts[frameIndex] / 1000).toFixed(1);
             const endSeconds = ((frameStarts[frameIndex] + delays[frameIndex]) / 1000).toFixed(1);
             result.push({
                 text: `[GIF frame ${frameIndex + 1}/${frameCount} (${startSeconds}s-${endSeconds}s): ${displayName}]`
             });
-            result.push(...frameImages.map((image, index) => ({
+            result.push(...frameImages.map(image => ({
                 inlineData: {
                     mimeType: image.mimeType,
                     data: image.data,
                     id,
-                    name: `${displayName} frame-${frameIndex + 1}-tile-${index + 1}`
+                    name: `${displayName} frame-${frameIndex + 1}`
                 }
             })));
         }
@@ -812,7 +604,7 @@ class DeepSeekVisionProcessor {
      * 垂直堆叠的 "toilet roll"（metadata.height = pages × pageHeight）。只给 page 而
      * 不给 pages 时，输出是从该帧到结尾的全部剩余帧的垂直卷——本地实测 62 帧 GIF
      * 的 frame 0 输出 240×15128（62 帧叠图），模型看到的是一张超长拼图而不是单帧。
-     * pages: 1 让输出精确回到单帧，供后续分块/压缩链路正常处理。
+     * pages: 1 让输出精确回到单帧，供后续缩放/压缩链路正常处理。
      */
     private async renderGifFrame(sharp: any, buffer: Buffer, frameIndex: number): Promise<Buffer> {
         return await sharp(buffer, { page: frameIndex, pages: 1, animated: true })
@@ -1032,15 +824,14 @@ export async function prepareDeepSeekVisionHistory(
     history: Content[],
     model?: string,
     enabled: boolean = true,
-    abortSignal?: AbortSignal,
-    tileSplit: boolean = true
+    abortSignal?: AbortSignal
 ): Promise<Content[]> {
     if (!enabled || !isDeepSeekVisionModel(model)) {
         return history;
     }
 
     const processor = new DeepSeekVisionProcessor(abortSignal);
-    const transformed = await processor.transformHistory(history, tileSplit);
+    const transformed = await processor.transformHistory(history);
     const imageCount = countHistoryImages(transformed);
     if (imageCount > DEEPSEEK_VISION_MAX_IMAGES) {
         throw new DeepSeekVisionPreprocessingError(

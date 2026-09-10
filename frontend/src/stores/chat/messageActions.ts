@@ -39,7 +39,7 @@ export {
 export { deleteMessage, deleteSingleMessage } from './messageActions/deleteFlows'
 
 // ---- 上下文总结 ----
-export { summarizeContext, cancelSummarizeRequest, restoreSummarizedMessages } from './messageActions/summaryFlows'
+export { summarizeContext, cancelSummarizeRequest, restoreSummarizedMessages, editSummaryMessage } from './messageActions/summaryFlows'
 
 // ---- 忙时投递（U1）通知 ----
 export {

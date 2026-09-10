@@ -46,6 +46,7 @@ const props = defineProps<{
 
 // 从 store 读取等待状态
 const chatStore = useChatStore()
+const continuingBackground = computed(() => chatStore.allMessages.at(-1)?.source === 'background_task')
 
 /** 共享辅助：todo/build 两侧共用的工具结果合并（以参数注入两个 composable，不搞全局） */
 function getMergedToolResult(tool: any): Record<string, unknown> {
@@ -473,13 +474,13 @@ function handleContinue() {
             <i class="codicon codicon-debug-pause"></i>
           </div>
           <div class="continue-content">
-            <div class="continue-title">{{ t('components.message.continue.title') }}</div>
-            <div class="continue-text">{{ t('components.message.continue.description') }}</div>
+            <div class="continue-title">{{ continuingBackground ? '后台结果已收到' : t('components.message.continue.title') }}</div>
+            <div class="continue-text">{{ continuingBackground ? '后台结果会自动交给模型处理。若自动继续未完成，可选择模型后手动继续。' : t('components.message.continue.description') }}</div>
           </div>
           <div class="continue-actions">
             <button class="continue-btn" @click="handleContinue">
               <span class="codicon codicon-play"></span>
-              <span class="btn-text">{{ t('components.message.continue.button') }}</span>
+              <span class="btn-text">{{ continuingBackground ? '继续处理结果' : t('components.message.continue.button') }}</span>
             </button>
           </div>
         </div>

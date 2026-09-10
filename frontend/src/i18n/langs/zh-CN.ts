@@ -461,6 +461,53 @@ const zhCN = {
                 cannotGetFilePath: '无法获取文件路径，请从 VSCode 资源管理器或标签页拖拽',
                 fileNotMatchOrNotInWorkspace: '文件不在工作区内或文件名不匹配',
                 removeFailed: '移除失败: {error}'
+            },
+            contextDetail: {
+                open: '查看上下文统计',
+                title: '上下文统计',
+                close: '关闭',
+                refresh: '刷新',
+                loading: '加载中...',
+                noConversation: '暂无对话，无法查看上下文统计。',
+                desktopOnly: '该入口当前仅桌面版可用',
+                tokensTitle: 'Token 用量',
+                used: '已用',
+                limit: '上限',
+                usage: '使用率',
+                source: '口径',
+                sourcePrecise: '供应商精确计数',
+                sourceEstimate: '总结估算',
+                sourceNone: '暂无用量',
+                localEstimate: '本地估算',
+                preciseTokens: '精确计数',
+                preciseUnavailable: '精确计数不可用',
+                rangeTitle: '可见与已总结范围',
+                total: '全部消息',
+                visible: '可见消息',
+                summarized: '已总结覆盖',
+                summariesCount: '已保存总结',
+                lastSummary: '最后总结位置',
+                trimStart: '裁剪起点',
+                fallbackActive: '降级裁剪生效中',
+                fallbackInactive: '未降级',
+                policy: '上下文管理',
+                enabled: '已启用',
+                disabled: '未启用',
+                unknown: '未知',
+                summariesTitle: '已保存总结明细',
+                emptySummaries: '暂无已保存总结。',
+                viewDetail: '查看详情',
+                backToList: '返回列表',
+                detailTitle: '总结详情',
+                auto: '自动',
+                manual: '手动',
+                summarizedCount: '覆盖 {count} 条',
+                timeLabel: '时间',
+                indexLabel: '位置',
+                tokenBefore: '压缩前',
+                tokenAfter: '压缩后',
+                tokenSaved: '已节省',
+                noDetail: '暂无详情。'
             }
         },
 
@@ -1790,6 +1837,30 @@ const zhCN = {
                     message: '确定要删除服务器 "{name}" 吗？此操作不可恢复。',
                     confirm: '删除',
                     cancel: '取消'
+                },
+                browse: {
+                    title: '资源与提示模板浏览',
+                    description: '只读浏览已连接服务器的资源与提示模板，不修改任何配置。',
+                    serverLabel: '服务器',
+                    resourcesTab: '资源',
+                    promptsTab: '提示模板',
+                    refresh: '刷新',
+                    loading: '加载中...',
+                    noConnected: '暂无已连接的 MCP 服务器，请先连接后再浏览。',
+                    emptyResources: '该服务器暂无可用资源。',
+                    emptyPrompts: '该服务器暂无提示模板。',
+                    read: '查看',
+                    reading: '读取中...',
+                    preview: '预览',
+                    previewing: '预览中...',
+                    argsTitle: '参数',
+                    required: '必填',
+                    desktopOnly: '该入口当前仅桌面版可用',
+                    disconnectedHint: '服务器未连接，无法浏览。',
+                    contentEmpty: '内容为空。',
+                    resourceContentTitle: '资源内容',
+                    promptMessagesTitle: '返回的消息内容',
+                    closeDetail: '收起'
                 }
             },
             subagents: {
@@ -3029,7 +3100,7 @@ const zhCN = {
                 },
                 deepSeekVision: {
                     title: 'DeepSeek Vision 图像预处理',
-                    hint: '为 deepseek-v4-flash-vision-exp 启用 PDF 逐页图像化，并将超过约 800×800 总像素的图片切成多个分块，避免 DeepSeek 自动缩小；需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
+                    hint: '为 deepseek-flash 和旧版 Vision 模型启用 PDF 逐页图像化；超过约 1300×1300 总像素的图片保持长宽比缩小，整张发送。需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
                     toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
                 }
             },
@@ -3071,7 +3142,7 @@ const zhCN = {
                 },
                 deepSeekVision: {
                     title: 'DeepSeek Vision 图像预处理',
-                    hint: '为 deepseek-v4-flash-vision-exp 启用 PDF 逐页图像化，并将超过约 800×800 总像素的图片切成多个分块，避免 DeepSeek 自动缩小；需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
+                    hint: '为 deepseek-flash 和旧版 Vision 模型启用 PDF 逐页图像化；超过约 1300×1300 总像素的图片保持长宽比缩小，整张发送。需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
                     toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
                 },
                 pdfAttachment: {
@@ -3118,7 +3189,7 @@ const zhCN = {
             'openai-responses': {
                 deepSeekVision: {
                     title: 'DeepSeek Vision 图像预处理',
-                    hint: '为 deepseek-v4-flash-vision-exp 启用 PDF 逐页图像化，并将超过约 800×800 总像素的图片切成多个分块，避免 DeepSeek 自动缩小；需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
+                    hint: '为 deepseek-flash 和旧版 Vision 模型启用 PDF 逐页图像化；超过约 1300×1300 总像素的图片保持长宽比缩小，整张发送。需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
                     toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
                 },
                 promptCacheKey: {

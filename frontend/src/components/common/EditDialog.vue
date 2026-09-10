@@ -7,7 +7,7 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, nextTick } from 'vue'
-import type { CheckpointRecord, Attachment, ChannelConfig } from '../../types'
+import type { CheckpointRecord, Attachment } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
 import type { EditorNode } from '../../types/editorNode'
 import { getContexts, getPlainText, serializeNodes } from '../../types/editorNode'
@@ -22,9 +22,6 @@ import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { t } from '../../i18n'
 import { getFileType } from '../../utils/file'
 import { generateId } from '../../utils/format'
-import { isDeepSeekVisionModelName } from '../../utils/deepSeekVision'
-import { useChatStore } from '../../stores/chatStore'
-import * as configService from '../../services/config'
 import Modal from './Modal.vue'
 
 interface Props {
@@ -64,48 +61,9 @@ const visible = computed({
   set: (value: boolean) => emit('update:modelValue', value)
 })
 
-const chatStore = useChatStore()
-
-/**
- * 当前编辑时的渠道配置（打开对话框时按 chatStore.configId 拉取，用于判断
- * DeepSeek Vision 复选框可见性——与 InputArea 的 currentConfig 同来源）。
- */
-const visionConfig = ref<ChannelConfig | null>(null)
-
-/** 编辑中的本地选择；打开时优先继承原消息，修改时同步为输入区后续默认偏好。 */
-const visionSplitChecked = ref(true)
-watch(visionSplitChecked, value => {
-  if (visible.value) chatStore.setVisionSplitChecked?.(value)
-})
-
-/** 附件中是否包含图片。 */
-const hasImageAttachments = computed(() =>
-  allAttachments.value.some(att =>
-    (att.mimeType || '').toLowerCase().startsWith('image/') || att.type === 'image'
-  )
-)
-
-/** 复选框可见条件：有图片附件 + 渠道开启预处理 + 模型是 DeepSeek Vision（与 InputArea 同口径）。 */
-const visionSplitToggleVisible = computed(() => {
-  const model = chatStore.selectedModelId || visionConfig.value?.model || ''
-  return hasImageAttachments.value
-    && visionConfig.value?.deepSeekVisionEnabled === true
-    && isDeepSeekVisionModelName(model)
-})
-
-let visionConfigLoadGeneration = 0
-
-// 打开时初始化编辑状态；渠道配置响应仅允许写回同一次打开、同一个 configId。
+// 每次打开只初始化当前消息的编辑内容；图片处理由渠道统一完成。
 watch(visible, (newValue) => {
-  const generation = ++visionConfigLoadGeneration
-  if (!newValue) {
-    visionConfig.value = null
-    return
-  }
-
-  visionSplitChecked.value = props.originalDeepSeekVisionTileSplit
-    ?? chatStore.visionSplitChecked
-    ?? true
+  if (!newValue) return
 
   const parsed = parseMessageToNodes(props.originalContent)
   editorNodes.value = parsed.nodes
@@ -115,19 +73,6 @@ watch(visible, (newValue) => {
 
   clearAttachments() // 清除之前的新附件
   removedOriginalAttachmentIds.value = new Set() // 重置已删除的原有附件
-
-  // 在异步请求发出前清空旧配置，避免快速切换渠道后短暂显示上一渠道的复选框。
-  visionConfig.value = null
-  const configId = chatStore.configId
-  if (configId) {
-    configService.getConfig(configId).then((config) => {
-      if (generation !== visionConfigLoadGeneration || !visible.value || chatStore.configId !== configId) return
-      visionConfig.value = config
-    }).catch(() => {
-      if (generation !== visionConfigLoadGeneration || !visible.value || chatStore.configId !== configId) return
-      visionConfig.value = null
-    })
-  }
 
   nextTick(() => {
     inputBoxRef.value?.focus()
@@ -469,7 +414,7 @@ function handleEdit(mode: 'branch' | 'keep' = 'branch') {
   const finalContent = getFinalContent()
   if (finalContent || allAttachments.value.length > 0) {
     visible.value = false
-    emit('edit', finalContent, serializeAttachments(allAttachments.value), mode, visionSplitToggleVisible.value ? visionSplitChecked.value : undefined)
+    emit('edit', finalContent, serializeAttachments(allAttachments.value), mode)
     clearAttachments()
     editorNodes.value = []
   }
@@ -479,7 +424,7 @@ function handleRestoreAndEdit() {
   const finalContent = getFinalContent()
   if (latestCheckpoint.value && (finalContent || allAttachments.value.length > 0)) {
     visible.value = false
-    emit('restoreAndEdit', finalContent, serializeAttachments(allAttachments.value), latestCheckpoint.value.id, visionSplitToggleVisible.value ? visionSplitChecked.value : undefined)
+    emit('restoreAndEdit', finalContent, serializeAttachments(allAttachments.value), latestCheckpoint.value.id)
     clearAttachments()
     editorNodes.value = []
   }
@@ -594,14 +539,6 @@ function handleRemoveAttachment(id: string) {
         <span>{{ t('components.common.editDialog.rootMessageHint') }}</span>
       </p>
 
-      <label
-        v-if="visionSplitToggleVisible"
-        class="vision-split-toggle"
-        :title="t('components.input.visionSplitPreventionHint')"
-      >
-        <input v-model="visionSplitChecked" type="checkbox" />
-        <span>{{ t('components.input.visionSplitPrevention') }}</span>
-      </label>
     </div>
 
     <template #footer>
@@ -735,29 +672,6 @@ function handleRemoveAttachment(id: string) {
 .root-message-hint {
   background: var(--vscode-editorWarning-background, rgba(204, 122, 0, 0.12));
   color: var(--vscode-editorWarning-foreground, #cc7a00);
-}
-
-.vision-split-toggle {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 6px;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-  background: var(--vscode-input-background, rgba(127, 127, 127, 0.08));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
-  border-radius: 4px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.vision-split-toggle:hover {
-  border-color: var(--vscode-focusBorder);
-}
-
-.vision-split-toggle input {
-  margin: 0;
 }
 
 .dialog-btn {

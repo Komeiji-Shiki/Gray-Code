@@ -52,6 +52,7 @@ export interface SnapshotExcludedEntry {
 }
 
 export interface SnapshotBuildOptions {
+    signal?: AbortSignal;
     /** 参与快照的工作区根目录 */
     roots: readonly RuntimeWorkspaceRoot[];
     /** 用户自定义忽略模式（叠加到每个根目录的 .gitignore 上） */
@@ -139,14 +140,16 @@ export async function buildWorkspaceSnapshot(
     const rootStats: CheckpointSnapshotBuildResult['roots'] = [];
 
     for (const root of roots) {
+        // 嵌套工作区由更具体的根负责采集，避免同一个文件出现两份恢复记录。
+        const rootExclusions = [...excludeAbsolutePaths, ...roots.filter(candidate => candidate.id !== root.id && isPathWithin(root.fsPath, candidate.fsPath)).map(candidate => candidate.fsPath)];
         // 1. 收集该根目录下应被检查点系统看见的文件和空目录（四层排除模型，EX-01）
         const resolver = new CheckpointIgnoreResolver(root.fsPath, customIgnorePatterns ?? [], {
             // 缺省全部类别启用；`{}` 表示全部关闭
             enabledProfiles: options.enabledProfiles ?? DEFAULT_ENABLED_PROFILES,
             profilePatterns: options.profilePatterns,
-            excludeAbsolutePaths
+            excludeAbsolutePaths: rootExclusions
         });
-        const { files, dirs, excluded: resolverExcluded } = await resolver.collectEntries();
+        const { files, dirs, excluded: resolverExcluded } = await resolver.collectEntries(undefined, undefined, options.signal);
 
         // 1.5 记录 resolver 层排除（强制/默认类别/.gitignore/自定义），转换为 scoped 路径
         for (const entry of resolverExcluded) {
@@ -156,7 +159,7 @@ export async function buildWorkspaceSnapshot(
         // 2. 过滤强制排除路径 + 计算 scoped 路径
         const entries: { absolutePath: string; scopedPath: string }[] = [];
         for (const file of files) {
-            if (isExcludedAbsolutePath(file, excludeAbsolutePaths)) continue;
+            if (isExcludedAbsolutePath(file, rootExclusions)) continue;
             const relativePath = path.relative(root.fsPath, file).replace(/\\/g, '/');
             entries.push({
                 absolutePath: file,
@@ -166,7 +169,7 @@ export async function buildWorkspaceSnapshot(
 
         const scopedEmptyDirs: string[] = [];
         for (const dir of dirs) {
-            if (isExcludedAbsolutePath(dir, excludeAbsolutePaths)) continue;
+            if (isExcludedAbsolutePath(dir, rootExclusions)) continue;
             const relativePath = path.relative(root.fsPath, dir).replace(/\\/g, '/');
             scopedEmptyDirs.push(createWorkspaceScopedPath(root.id, relativePath));
         }
@@ -176,6 +179,7 @@ export async function buildWorkspaceSnapshot(
         // 3. 有界并发执行 stat + 哈希（statAndHashEntry 与部分快照分支共用同一逻辑）
         await runBounded(entries, concurrency, async entry => {
             await statAndHashEntry({
+                signal: options.signal,
                 absolutePath: entry.absolutePath,
                 scopedPath: entry.scopedPath,
                 maxSize,
@@ -220,6 +224,7 @@ export async function buildWorkspaceSnapshot(
 
 /** statAndHashEntry 入参（全量/部分快照分支共用） */
 interface StatAndHashEntryParams {
+    signal?: AbortSignal;
     absolutePath: string;
     scopedPath: string;
     maxSize?: number;
@@ -241,6 +246,7 @@ interface StatAndHashEntryParams {
  * 流式哈希；ENOENT/ENOTDIR 记为 absent，其余读取失败记为 unreadable。
  */
 async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
+    params.signal?.throwIfAborted();
     const {
         absolutePath,
         scopedPath,
@@ -293,10 +299,11 @@ async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
         }
 
         // 流式哈希
-        const hash = await hashFileStreaming(absolutePath);
+        const hash = await hashFileStreaming(absolutePath, params.signal);
         fileHashes[scopedPath] = hash;
         fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
     } catch (error) {
+        params.signal?.throwIfAborted();
         const code = (error as NodeJS.ErrnoException).code;
         if (code === 'ENOENT' || code === 'ENOTDIR') {
             absent.push(scopedPath);
@@ -357,7 +364,7 @@ async function buildAffectedPathsSnapshot(
 
     for (const absPath of options.affectedPaths ?? []) {
         // 匹配所属工作区根（大小写不敏感前缀 + 路径边界；不在任何根内 → 跳过）
-        const root = roots.find(candidate => isPathWithin(candidate.fsPath, absPath));
+        const root = roots.filter(candidate => isPathWithin(candidate.fsPath, absPath)).sort((a, b) => b.fsPath.length - a.fsPath.length)[0];
         if (!root) {
             continue;
         }
@@ -418,6 +425,7 @@ async function buildAffectedPathsSnapshot(
 
         fileCountByRoot.set(root.id, (fileCountByRoot.get(root.id) ?? 0) + 1);
         await statAndHashEntry({
+                signal: options.signal,
             absolutePath: absPath,
             scopedPath,
             maxSize,
@@ -482,6 +490,7 @@ interface PreviewExcludedEntry extends CheckpointExcludedEntry {
 }
 
 export interface ExclusionPreviewOptions {
+    signal?: AbortSignal;
     /** 参与扫描的工作区根目录 */
     roots: readonly RuntimeWorkspaceRoot[];
     /** 用户自定义忽略模式 */
@@ -526,7 +535,7 @@ export async function previewExclusions(
             profilePatterns,
             excludeAbsolutePaths
         });
-        const { files, excluded: resolverExcluded } = await resolver.collectEntries();
+        const { files, excluded: resolverExcluded } = await resolver.collectEntries(undefined, undefined, options.signal);
 
         // 1. resolver 层排除（强制/默认类别/.gitignore/自定义/不可读）：统计大小（目录有界遍历）
         for (const entry of resolverExcluded) {

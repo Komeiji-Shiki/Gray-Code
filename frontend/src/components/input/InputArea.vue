@@ -16,6 +16,7 @@ import SkillsWidget from './SkillsWidget.vue'
 import TpsBar from './TpsBar.vue'
 import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
+import ContextDetailDialog from './ContextDetailDialog.vue'
 import type { ChannelOption, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
@@ -33,7 +34,6 @@ import type { EditorNode } from '../../types/editorNode'
 import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
 import { isAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
-import { isDeepSeekVisionModelName } from '../../utils/deepSeekVision'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -105,39 +105,6 @@ const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.
 const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
 
-// ========== DeepSeek Vision 图像处理复选框 ==========
-
-/**
- * 大图是否拆分防压缩（偏好提升到 chatStore，InputArea 与 EditDialog 共享）。
- *
- * true=将超过 800×800 像素预算的图片切成完整分块（默认，避免 DeepSeek 服务端压缩）；
- * false=不拆分，主动等比例压缩至预算内。仅当附件含图片、渠道开启
- * deepSeekVisionEnabled 且模型名包含 deepseek+vision 时，复选框才会出现在输入框右下角。
- */
-const visionSplitChecked = computed<boolean>({
-  get: () => chatStore.visionSplitChecked ?? true,
-  set: (value: boolean) => chatStore.setVisionSplitChecked?.(value)
-})
-
-/** 附件中是否包含图片（GIF/HEIC 等也按 mimeType 前缀判定）。 */
-const hasImageAttachments = computed(() =>
-  (props.attachments || []).some(att =>
-    (att.mimeType || '').toLowerCase().startsWith('image/') || att.type === 'image'
-  )
-)
-
-/** 当前渠道是否开启了 DeepSeek Vision 图像预处理。 */
-const visionPreprocessingEnabled = computed(() => currentConfig.value?.deepSeekVisionEnabled === true)
-
-/** 当前渠道/模型是否启用 DeepSeek Vision 预处理。 */
-const visionProcessingActive = computed(() =>
-  visionPreprocessingEnabled.value && isDeepSeekVisionModelName(currentModel.value)
-)
-
-/** 复选框可见条件：有图片附件 + 当前渠道/模型启用预处理。 */
-const visionSplitToggleVisible = computed(() =>
-  hasImageAttachments.value && visionProcessingActive.value
-)
 async function loadConfigs() {
   isLoadingConfigs.value = true
   try {
@@ -226,19 +193,7 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
 
   const content = serializeNodes(editorNodes.value).trim()
   const currentAttachments = props.attachments || []
-  // DeepSeek Vision 渠道始终附带当前处理偏好，即使本轮只有文本：后续工具确认/工具图片
-  // 仍属于本回合，且历史中的旧附件会按各自消息上持久化的模式重放。
-  const sendOptions: { dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean } | undefined =
-    options?.dynamicContextStrategyOverride || visionProcessingActive.value
-      ? {
-          ...(options?.dynamicContextStrategyOverride
-            ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride }
-            : {}),
-          ...(visionProcessingActive.value
-            ? { deepSeekVisionTileSplit: visionSplitChecked.value }
-            : {})
-        }
-      : undefined
+  const sendOptions = options?.dynamicContextStrategyOverride ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride } : undefined
 
   // 备份本次发送的正文节点：直接发送是异步的（父组件 await sendMessage 后才回报结果），
   // 发送失败（忙时投递拒绝带附件消息 / IPC 异常）时用备份恢复输入，避免正文静默丢失。
@@ -632,6 +587,12 @@ const ringRadius = 8
 const ringCircumference = 2 * Math.PI * ringRadius
 const ringDashOffset = computed(() => ringCircumference * (1 - chatStore.tokenUsagePercent / 100))
 
+// ========== 上下文统计详情入口（只读，不触发总结） ==========
+const showContextDetail = ref(false)
+function openContextDetail() {
+  showContextDetail.value = true
+}
+
 // ========== lifecycle ==========
 
 onMounted(() => {
@@ -722,15 +683,6 @@ watch(() => settingsStore.promptModesVersion, () => {
         @at-picker-keydown="handleAtPickerKeydown"
       />
 
-      <!-- DeepSeek Vision 大图处理模式：有图片附件 + 预处理开启 + Vision 模型时在右下角显示 -->
-      <label
-        v-if="visionSplitToggleVisible"
-        class="vision-split-toggle"
-        :title="t('components.input.visionSplitPreventionHint')"
-      >
-        <input v-model="visionSplitChecked" type="checkbox" />
-        <span>{{ t('components.input.visionSplitPrevention') }}</span>
-      </label>
     </div>
 
     <div class="bottom-toolbar">
@@ -776,6 +728,18 @@ watch(() => settingsStore.promptModesVersion, () => {
             :loading="isSummarizing"
             class="summarize-button"
             @click="handleSummarize"
+          />
+        </Tooltip>
+
+        <!-- 上下文统计详情入口：用量区域旁，只读展示 describeConversation -->
+        <Tooltip :content="t('components.input.contextDetail.open')" placement="top">
+          <IconButton
+            icon="codicon-info"
+            size="small"
+            :aria-label="t('components.input.contextDetail.open')"
+            :disabled="!chatStore.currentConversationId"
+            class="context-detail-button"
+            @click="openContextDetail"
           />
         </Tooltip>
 
@@ -844,6 +808,14 @@ watch(() => settingsStore.promptModesVersion, () => {
       @channel-change="handleChannelChange"
       @model-change="handleModelChange"
     />
+
+    <ContextDetailDialog
+      v-model="showContextDetail"
+      :conversation-id="chatStore.currentConversationId"
+      :provider-id="chatStore.configId"
+      :model-override="chatStore.selectedModelId || undefined"
+      :fallback-max-tokens="chatStore.maxContextTokens"
+    />
   </div>
 </template>
 
@@ -875,39 +847,6 @@ watch(() => settingsStore.promptModesVersion, () => {
   background: transparent;
   border-color: transparent;
   border-radius: var(--gc-radius-sm);
-}
-
-/* DeepSeek Vision 大图处理复选框：悬浮于输入框右下角（重叠在文本上，背景衬底避免遮字不清） */
-.vision-split-toggle {
-  position: absolute;
-  right: var(--spacing-sm, 8px);
-  bottom: var(--spacing-xs, 4px);
-  z-index: 11;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  font-size: 10px;
-  line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
-  background: color-mix(in srgb, var(--vscode-editor-background) 85%, transparent);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--radius-sm, 2px);
-  cursor: pointer;
-  user-select: none;
-}
-
-.vision-split-toggle:hover {
-  border-color: var(--vscode-focusBorder);
-}
-
-.vision-split-toggle input {
-  margin: 0;
-  cursor: pointer;
-}
-
-.vision-split-toggle span {
-  white-space: nowrap;
 }
 
 .bottom-toolbar {
@@ -969,6 +908,10 @@ watch(() => settingsStore.promptModesVersion, () => {
 }
 
 .summarize-button :deep(i.codicon) {
+  font-size: 15px !important;
+}
+
+.context-detail-button :deep(i.codicon) {
   font-size: 15px !important;
 }
 

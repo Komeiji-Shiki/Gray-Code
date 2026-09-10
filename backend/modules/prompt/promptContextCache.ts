@@ -7,9 +7,10 @@
 
 import type { Content } from '../conversation';
 
-export type PromptContextCacheRole = 'user' | 'model';
+export type PromptContextCacheRole = 'user' | 'model' | 'system';
 
 export interface SerializedPromptContextMessage {
+    promptAnchor?: Content['promptAnchor'];
     role: PromptContextCacheRole;
     text: string;
     /**
@@ -102,7 +103,7 @@ function contentToText(message: Content): string {
 }
 
 function messageToSerialized(message: Content): SerializedPromptContextMessage | null {
-    if (message.role !== 'user' && message.role !== 'model') {
+    if (message.role !== 'user' && message.role !== 'model' && message.role !== 'system') {
         return null;
     }
 
@@ -124,13 +125,14 @@ function messageToSerialized(message: Content): SerializedPromptContextMessage |
 
     return {
         role: message.role,
+        ...(message.promptAnchor ? { promptAnchor: message.promptAnchor } : {}),
         text,
         ...(thoughtText ? { thoughtText } : {})
     };
 }
 
 function serializedToContent(message: SerializedPromptContextMessage): Content | null {
-    if (message.role !== 'user' && message.role !== 'model') {
+    if (message.role !== 'user' && message.role !== 'model' && message.role !== 'system') {
         return null;
     }
 
@@ -152,6 +154,7 @@ function serializedToContent(message: SerializedPromptContextMessage): Content |
     }
     return {
         role: message.role,
+        ...(message.promptAnchor ? { promptAnchor: message.promptAnchor } : {}),
         parts
     };
 }
@@ -169,12 +172,13 @@ function normalizeSerializedMessages(value: unknown): SerializedPromptContextMes
         const thoughtText = (item as any).thoughtText;
         const normalizedText = typeof text === 'string' ? text.trim() : '';
         const normalizedThoughtText = typeof thoughtText === 'string' ? thoughtText.trim() : '';
-        if ((role !== 'user' && role !== 'model') || (!normalizedText && !normalizedThoughtText)) {
+        if ((role !== 'user' && role !== 'model' && role !== 'system') || (!normalizedText && !normalizedThoughtText)) {
             continue;
         }
         messages.push({
             role,
             text: normalizedText,
+            ...((item as any).promptAnchor ? { promptAnchor: (item as any).promptAnchor } : {}),
             ...(normalizedThoughtText ? { thoughtText: normalizedThoughtText } : {})
         });
     }

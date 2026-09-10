@@ -148,7 +148,7 @@ export function resetConversationState(state: ChatStoreState): void {
   state.editorNodes.value = []
   state.attachments.value = []
   state.messageQueue.value = []
-  state.currentPromptModeId.value = 'code'
+  state.currentPromptModeId.value = window.__GRAYCODE_HOST?.getDefaultPromptModeId?.() ?? 'code'
   // TREE-12：新空白会话无分支图（等待 loadBranchGraph 拉取）
   state.branchGraph.value = null
   // TREE-07：会话重置同时复位分支切换 / 分支图加载锁，避免残留 true 永久锁死切换器

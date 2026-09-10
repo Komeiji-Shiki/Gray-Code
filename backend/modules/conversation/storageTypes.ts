@@ -93,6 +93,8 @@ export interface SubAgentTranscriptData {
 }
 
 export interface IStorageAdapter {
+    /** Atomically create metadata and empty history when the storage supports transactions. */
+    createConversation?(metadata: ConversationMetadata): Promise<void>;
     /**
      * 保存对话历史(Gemini 格式)
      * @param conversationId 对话 ID

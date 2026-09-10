@@ -96,7 +96,7 @@ function buildHistorySearchDescription(scope: string, isZh: boolean): string {
 
 // ─── 工具声明与处理器 ───────────────────────────────────
 
-export function createHistorySearchToolDeclaration(): ToolDeclaration {
+export function createHistorySearchToolDeclaration(config?: () => HistorySearchToolConfig): ToolDeclaration {
     // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
     const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     const declaration: ToolDeclaration = {
@@ -151,7 +151,7 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
 
     Object.defineProperty(declaration, 'description', {
         get() {
-            const scope = getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
+            const scope = config?.().searchScope ?? getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
             const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
             const cacheKey = `${isZh ? 'zh' : 'en'}|${scope}`;
             if (historySearchDescriptionCache && historySearchDescriptionCache.key === cacheKey) {
@@ -169,7 +169,8 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
 
 async function historySearchHandler(
     args: Record<string, unknown>,
-    context?: ToolContext
+    context?: ToolContext,
+    configuration?: HistorySearchToolConfig
 ): Promise<ToolResult> {
     if (!context) {
         return { success: false, error: t('tools.history.errors.contextRequired') };
@@ -206,7 +207,7 @@ async function historySearchHandler(
                 : undefined;
         const cfg: RuntimeConfig = {
             ...DEFAULT_HISTORY_SEARCH_CONFIG,
-            ...(userCfg || {})
+            ...(configuration ?? userCfg ?? {})
         };
 
         // 获取完整对话历史（判空：getHistory 可能返回 null/undefined，
@@ -280,10 +281,10 @@ async function historySearchHandler(
 
 // ─── 导出 ───────────────────────────────────────────────
 
-export function createHistorySearchTool(): Tool {
+export function createHistorySearchTool(config?: () => HistorySearchToolConfig): Tool {
     return {
-        declaration: createHistorySearchToolDeclaration(),
-        handler: historySearchHandler
+        declaration: createHistorySearchToolDeclaration(config),
+        handler: (args, context) => historySearchHandler(args, context, config?.())
     };
 }
 

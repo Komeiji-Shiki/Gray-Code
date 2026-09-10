@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ConfirmDialog, type SelectOption } from '../common'
@@ -608,7 +609,7 @@ function onChangeType(newType: string) {
 // 复用共享 useDeferredSave：每次 schedule 只保留最新一次提交，卸载时自动 flush（避免最后一次编辑丢失）。
 // 输入按字段累积为「聚合 pending patch」：同一防抖窗口内先输入的字段不会被后输入的字段覆盖，
 // 触发时用一次 updateConfigFields 合并提交（避免两个字段各自提交互相覆盖）。
-const { schedule: scheduleApiKeyUrlSave, flush: flushApiKeyUrlSave } = useDeferredSave({ delay: 300, flushOnUnmount: true })
+const { schedule: scheduleApiKeyUrlSave, flush: flushApiKeyUrlSave, cancel: cancelApiKeyUrlSave } = useDeferredSave({ delay: 300, flushOnUnmount: true })
 
 // 尚未提交的 url/apiKey 编辑补丁（按字段聚合；提交或渠道切换时清空）
 let pendingUrlApiKeyPatch: Partial<Pick<ChannelConfig, 'url' | 'apiKey'>> | null = null
@@ -867,6 +868,7 @@ onUnmounted(() => {
     unsubscribeConfigChanged = null
   }
 })
+useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => { cancelApiKeyUrlSave(); pendingUrlApiKeyPatch = null })
 </script>
 
 <template>

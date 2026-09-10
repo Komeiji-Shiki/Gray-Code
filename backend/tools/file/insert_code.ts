@@ -1,3 +1,5 @@
+import { insertAtLine, splitContentLines } from './lineMutations';
+import { createInsertCodeDeclaration } from './createInsertCodeDeclaration';
 /**
  * 插入代码工具
  *
@@ -56,32 +58,14 @@ interface InsertResult {
 /**
  * 在指定行前插入代码
  */
-function insertAtLine(lines: string[], line: number, content: string): string {
-    const insertLines = splitContentLines(content);
-    const idx = line - 1; // 转为 0-based
-    const newLines = [
-        ...lines.slice(0, idx),
-        ...insertLines,
-        ...lines.slice(idx)
-    ];
-    return newLines.join('\n');
-}
+
 
 /**
  * content 以 \n 结尾时 split('\n') 会多出尾部空串：
  * 插入后产生多余空行，且 insertedLineCount 多计 1 导致 CodeLens 高亮偏移。
  * 去掉尾部空串后，结尾换行由 join('\n') 在插入点自然还原，行数统计正确。
  */
-function splitContentLines(content: string): string[] {
-    if (content === '') {
-        return [];
-    }
-    const lines = content.split('\n');
-    if (content.length > 0 && lines[lines.length - 1] === '') {
-        lines.pop();
-    }
-    return lines;
-}
+
 
 /**
  * 执行单个文件的插入
@@ -244,70 +228,8 @@ async function insertSingleFile(
  * 创建 insert_code 工具
  */
 export function createInsertCodeTool(): Tool {
-    const workspaces = getAllWorkspaces();
-    const isMultiRoot = workspaces.length > 1;
-    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
-    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
-
-    const arrayFormatNote = isZh
-        ? '\n\n**重要**：`files` 参数必须是数组，即使只插入一个文件。示例：`{"files": [{"path": "file.ts", "line": 5, "content": "..."}]}`。'
-        : '\n\n**IMPORTANT**: The `files` parameter MUST be an array, even for a single file. Example: `{"files": [{"path": "file.ts", "line": 5, "content": "..."}]}`.';
-
-    let description = isZh
-        ? '在一个或多个文件的指定行前插入代码。使用 `line = last_line + 1` 在文件末尾追加。执行前会展示 Diff 预览并等待用户确认。' + arrayFormatNote
-        : 'Insert code before a specified line in one or more files. Use `line = last_line + 1` to append at the end. A Diff preview will be shown for user confirmation.' + arrayFormatNote;
-    let pathDescription = isZh
-        ? '文件路径（相对于工作区根目录）'
-        : 'File path (relative to workspace root)';
-
-    if (isMultiRoot) {
-        description += isZh
-            ? `\n\n多根工作区：必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`
-            : `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-        pathDescription = isZh
-            ? '文件路径，必须使用 "workspace_name/path" 格式'
-            : 'File path, must use "workspace_name/path" format';
-    }
-
-    return {
-        declaration: {
-            name: 'insert_code',
-            description,
-            category: 'file',
-            parameters: {
-                type: 'object',
-                properties: {
-                    files: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                path: {
-                                    type: 'string',
-                                    description: pathDescription
-                                },
-                                line: {
-                                    type: 'integer',
-                                    minimum: 1,
-                                    description: isZh
-                                        ? '要插入到的行号（1-based）。使用 last_line + 1 在文件末尾追加。'
-                                        : 'Line number (1-based) to insert before. Use last_line + 1 to append at end of file.'
-                                },
-                                content: {
-                                    type: 'string',
-                                    description: isZh ? '要插入的代码内容' : 'The code content to insert'
-                                }
-                            },
-                            required: ['path', 'line', 'content']
-                        },
-                        description: isZh
-                            ? '插入操作数组。每个元素指定一个文件、行号和要插入的内容。即使只插入一个文件也必须传数组。'
-                            : 'Array of insert operations. Each element specifies a file, line number, and content to insert. MUST be an array even for a single file.'
-                    }
-                },
-                required: ['files']
-            }
-        },
+return {
+        declaration: createInsertCodeDeclaration({language: resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN' ? 'zh-CN' : 'en', workspaces: getAllWorkspaces(), precreateEmptyFile: true}),
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const fileList = parseArgs<InsertCodeArgs>(args).files;
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {

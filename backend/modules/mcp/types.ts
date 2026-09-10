@@ -245,6 +245,8 @@ export interface McpResourceReadRequest {
  * MCP 资源内容
  */
 export interface McpResourceContent {
+    /** 保留 resources/read 返回的全部内容，聚合字段仍供现有调用者读取。 */
+    contents?: McpResourceContent[];
     /** 资源 URI */
     uri: string;
     /** MIME 类型 */
@@ -275,7 +277,9 @@ export interface McpPromptGetRequest {
 export interface McpPromptMessage {
     role: 'user' | 'assistant';
     content: {
-        type: 'text' | 'image' | 'resource';
+        type: string;
+        resource?: McpResourceContent;
+        [key: string]: unknown;
         text?: string;
         data?: string;
         mimeType?: string;

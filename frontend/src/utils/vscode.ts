@@ -7,13 +7,14 @@ import { handleSoundEvent } from '../services/soundEventController'
 import { routeExtensionMessage, type PendingRequestHandler } from './extensionMessageRouting'
 // B1：超时豁免名单迁入 shared/protocol.ts 单一来源（与 NON_BLOCKING_MESSAGE_TYPES 语义不同，勿合并）
 import { MESSAGE_NAMES, UNBOUNDED_REQUEST_TYPES } from '@shared/protocol'
+import { getHostTransport } from './hostTransport'
 
 // 获取 VSCode API（全局类型由 vite-env.d.ts 声明：acquireVsCodeApi(): VsCodeApi）
 let vscodeApi: VsCodeApi | null = null
 
 export function getVSCodeAPI(): VsCodeApi {
   if (!vscodeApi) {
-    vscodeApi = acquireVsCodeApi()
+    vscodeApi = getHostTransport()
   }
   return vscodeApi
 }
@@ -233,7 +234,9 @@ export function onMessageFromExtension(
 ): () => void {
   if (!dispatcherAttached) {
     dispatcherAttached = true
-    window.addEventListener('message', dispatchExtensionMessage)
+    const transport = getHostTransport()
+    if (transport.subscribe) transport.subscribe(data => dispatchExtensionMessage({ data } as MessageEvent))
+    else window.addEventListener('message', dispatchExtensionMessage)
   }
   pushMessageSubscribers.add(handler)
 

@@ -21,6 +21,9 @@ import type {
 } from '@/types'
 import McpServerList from './mcpSettings/McpServerList.vue'
 import McpServerEditForm from './mcpSettings/McpServerEditForm.vue'
+import McpJsonEditor from './mcpSettings/McpJsonEditor.vue'
+import McpBrowsePanel from './mcpSettings/McpBrowsePanel.vue'
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 
 const { t } = useI18n()
 
@@ -33,7 +36,7 @@ const servers = ref<McpServerInfo[]>([])
 const isLoading = ref(false)
 
 // 当前视图模式
-type ViewMode = 'list' | 'edit'
+type ViewMode = 'list' | 'edit' | 'json'
 const viewMode = ref<ViewMode>('list')
 
 // 正在编辑的服务器
@@ -140,6 +143,7 @@ async function loadServers() {
 
 // 尝试自动连接单个服务器
 async function tryAutoConnect(server: McpServerInfo) {
+  if (window.__GRAYCODE_HOST) return
   const serverId = server.config.id
 
   // 如果已经在连接中，跳过
@@ -513,6 +517,7 @@ async function toggleEnabled(server: McpServerInfo) {
 
 // 打开 JSON 配置文件（在 VSCode 编辑器中）
 async function openConfigFile() {
+  if (window.__GRAYCODE_HOST) { viewMode.value = 'json'; return }
   try {
     await sendToExtension(MESSAGE_NAMES.openMcpConfigFile, {})
   } catch (error) {
@@ -523,6 +528,10 @@ async function openConfigFile() {
 // 外部批量变更（设置导入等）后重拉列表：本组件自身的增删改已 await loadServers，
 // MCP 域没有单服务器粒度推送，收到通知即重拉（约定见 webview/utils/configChangeNotifier）。
 let unsubscribeMcpChanged: (() => void) | null = null
+useDesktopSettingsDraft(async () => {
+  await saveServer()
+  if (saveError.value) throw new Error(saveError.value)
+}, () => viewMode.value === 'edit' && !isSaving.value, resetIdValidation)
 
 // 初始化
 onMounted(() => {
@@ -544,6 +553,7 @@ onUnmounted(() => {
 
 <template>
   <div class="mcp-settings">
+    <McpJsonEditor v-if="viewMode === 'json'" @close="viewMode = 'list'" @applied="loadServers" />
     <!-- 列表视图 -->
     <McpServerList
       v-if="viewMode === 'list'"
@@ -560,6 +570,8 @@ onUnmounted(() => {
       @start-edit="startEdit"
       @show-delete="showDeleteDialog"
     />
+    <!-- 资源与提示模板只读浏览（已连接服务器下展开，不触碰增删改与连接逻辑） -->
+    <McpBrowsePanel v-if="viewMode === 'list'" :servers="servers" />
 
     <!-- 编辑视图 -->
     <McpServerEditForm

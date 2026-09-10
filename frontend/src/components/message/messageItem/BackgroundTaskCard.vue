@@ -3,7 +3,10 @@
  * BackgroundTaskCard - 后台任务/代理回流消息紧凑卡片（从 MessageItem.vue 抽出，F-07）。
  * 三段式视图模式读写模块级 Map（按 messageId 持久化），组件实例重建后恢复。
  */
+import { sendToExtension, showNotification } from '../../../utils/vscode'
+import { useChatStore } from '../../../stores/chatStore'
 import { computed } from 'vue'
+import type { AgentMessageCardInfo, BackgroundTaskInfo } from '../../../types'
 import { useI18n } from '../../../i18n'
 import {
   type BackgroundTaskViewMode,
@@ -12,12 +15,35 @@ import {
 } from '../messageViewModes'
 
 const { t } = useI18n()
+const chatStore = useChatStore()
 
 const props = defineProps<{
   messageId: string
   content: string
   isAgent: boolean
+  agentMessage?: AgentMessageCardInfo
+  task?: BackgroundTaskInfo
 }>()
+
+// 正文优先展示实际消息；线程编号仍随消息复制，避免占满折叠预览。
+const agentParticipants = computed(() => {
+  const message = props.agentMessage
+  if (!message) return ''
+  const from = message.fromRunId === '__main__' ? '主代理' : message.fromAgentName || message.fromRunId
+  const to = message.toRunId === '__main__' ? '主代理' : message.toAgentName || message.toRunId
+  return `${from} → ${to}`
+})
+const agentRunId = computed(() => {
+  if (props.task?.kind === 'subagent') return props.task.runId ?? props.task.taskId
+  const message = props.agentMessage
+  return message && [message.fromRunId, message.toRunId].find(id => id && id !== '__main__')
+})
+
+const taskLabel = computed(() => {
+  if (!props.task) return '后台任务结果'
+  const statuses: Record<string, string> = { completed: '已完成', error: '失败', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
+  return `${props.task.kind === 'terminal' ? '后台命令' : '子代理任务'} · ${statuses[props.task.status ?? ''] ?? props.task.status ?? '结果已收到'}`
+})
 
 // 后台任务回流消息的三段式视图：折叠（默认） / 中展开（滚动查看） / 完全展开
 // R3-#5: 读写模块级 Map（按 messageId 持久化），组件实例重建后恢复
@@ -37,13 +63,19 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
     backgroundTaskViewModeByMessageId.set(props.messageId, mode)
   }
 })
+async function openAgent() {
+  if (!agentRunId.value) return;
+  try { await sendToExtension('subagents.openMonitor', { runId: agentRunId.value, conversationId: props.task?.conversationId ?? chatStore.currentConversationId }); }
+  catch (error) { await showNotification((error as Error).message, 'warning'); }
+}
 </script>
 
 <template>
   <div class="background-task-card">
     <div class="bg-task-header">
       <i class="codicon codicon-hubot bg-task-icon"></i>
-      <span class="bg-task-label">{{ isAgent ? t('components.message.roles.agent') : t('components.backgroundTasks.completed') }}</span>
+      <button v-if="agentRunId" class="bg-task-label agent-link" title="查看子代理运行记录" @click="openAgent">{{ agentParticipants || task?.name || taskLabel }} ↗</button>
+      <span v-else class="bg-task-label">{{ agentParticipants || (isAgent ? t('components.message.roles.agent') : taskLabel) }}</span>
       <!-- 三段式视图切换：折叠 / 中展开（滚动） / 完全展开 -->
       <div class="bg-task-view-controls">
         <button
@@ -83,7 +115,7 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
 .background-task-card {
   border: 1px solid var(--vscode-panel-border);
   border-left: 3px solid var(--vscode-focusBorder);
-  border-radius: 6px;
+  border-radius: 0;
   padding: 8px 12px;
   margin: 4px 0;
   background: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-focusBorder) 5%);
@@ -95,6 +127,7 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+  min-width: 0;
 }
 
 .bg-task-icon {
@@ -108,6 +141,8 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .bg-task-content {
@@ -116,6 +151,7 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
   line-height: 1.4;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 /* 三段式视图：折叠（两行省略） / 中展开（约 15 行滚动） / 完全展开 */
@@ -124,6 +160,7 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .bg-task-view-btn {
@@ -137,7 +174,7 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 0;
 }
 
 .bg-task-view-btn:hover {
@@ -166,4 +203,8 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
   max-height: none;
   overflow: visible;
 }
+</style>
+
+<style scoped>
+.agent-link{border:0;background:transparent;color:var(--vscode-textLink-foreground);text-align:left;cursor:pointer;padding:5px 0}
 </style>

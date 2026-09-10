@@ -459,6 +459,53 @@ const en: LanguageMessages = {
                 cannotGetFilePath: 'Cannot get file path, please drag from VSCode Explorer or tab',
                 fileNotMatchOrNotInWorkspace: 'File is not in workspace or filename does not match',
                 removeFailed: 'Remove failed: {error}'
+            },
+            contextDetail: {
+                open: 'View context stats',
+                title: 'Context Stats',
+                close: 'Close',
+                refresh: 'Refresh',
+                loading: 'Loading...',
+                noConversation: 'No conversation selected.',
+                desktopOnly: 'Available on desktop only',
+                tokensTitle: 'Token Usage',
+                used: 'Used',
+                limit: 'Limit',
+                usage: 'Usage',
+                source: 'Source',
+                sourcePrecise: 'Provider usage',
+                sourceEstimate: 'Summary estimate',
+                sourceNone: 'No usage yet',
+                localEstimate: 'Local estimate',
+                preciseTokens: 'Precise count',
+                preciseUnavailable: 'Precise count unavailable',
+                rangeTitle: 'Visible & Summarized Range',
+                total: 'Total messages',
+                visible: 'Visible messages',
+                summarized: 'Summarized',
+                summariesCount: 'Saved summaries',
+                lastSummary: 'Last summary at',
+                trimStart: 'Trim start',
+                fallbackActive: 'Fallback trim active',
+                fallbackInactive: 'No fallback',
+                policy: 'Context management',
+                enabled: 'Enabled',
+                disabled: 'Disabled',
+                unknown: 'Unknown',
+                summariesTitle: 'Saved Summaries',
+                emptySummaries: 'No saved summaries.',
+                viewDetail: 'View detail',
+                backToList: 'Back to list',
+                detailTitle: 'Summary Detail',
+                auto: 'Auto',
+                manual: 'Manual',
+                summarizedCount: '{count} messages',
+                timeLabel: 'Time',
+                indexLabel: 'Index',
+                tokenBefore: 'Before',
+                tokenAfter: 'After',
+                tokenSaved: 'Saved',
+                noDetail: 'No detail.'
             }
         },
 
@@ -1788,6 +1835,30 @@ const en: LanguageMessages = {
                     message: 'Are you sure you want to delete server "{name}"? This action cannot be undone.',
                     confirm: 'Delete',
                     cancel: 'Cancel'
+                },
+                browse: {
+                    title: 'Resources & Prompts',
+                    description: 'Read-only browse of resources and prompt templates on connected servers. No configs are modified.',
+                    serverLabel: 'Server',
+                    resourcesTab: 'Resources',
+                    promptsTab: 'Prompts',
+                    refresh: 'Refresh',
+                    loading: 'Loading...',
+                    noConnected: 'No connected MCP servers. Connect a server first to browse.',
+                    emptyResources: 'No resources available on this server.',
+                    emptyPrompts: 'No prompt templates on this server.',
+                    read: 'View',
+                    reading: 'Loading...',
+                    preview: 'Preview',
+                    previewing: 'Previewing...',
+                    argsTitle: 'Arguments',
+                    required: 'Required',
+                    desktopOnly: 'Available on desktop only',
+                    disconnectedHint: 'Server is not connected.',
+                    contentEmpty: 'Empty content.',
+                    resourceContentTitle: 'Resource content',
+                    promptMessagesTitle: 'Returned messages',
+                    closeDetail: 'Collapse'
                 }
             },
             subagents: {
@@ -3027,7 +3098,7 @@ const en: LanguageMessages = {
                 },
                 deepSeekVision: {
                     title: 'DeepSeek Vision preprocessing',
-                    hint: 'Enable PDF page rendering and split images above approximately 800×800 total pixels for deepseek-v4-flash-vision-exp, avoiding DeepSeek downscaling. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
+                    hint: 'Render PDF pages and resize whole images proportionally to approximately 1300×1300 total pixels for deepseek-flash and legacy Vision model names. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
                     toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
                 }
             },
@@ -3069,7 +3140,7 @@ const en: LanguageMessages = {
                 },
                 deepSeekVision: {
                     title: 'DeepSeek Vision preprocessing',
-                    hint: 'Enable PDF page rendering and split images above approximately 800×800 total pixels for deepseek-v4-flash-vision-exp, avoiding DeepSeek downscaling. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
+                    hint: 'Render PDF pages and resize whole images proportionally to approximately 1300×1300 total pixels for deepseek-flash and legacy Vision model names. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
                     toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
                 },
                 pdfAttachment: {
@@ -3116,7 +3187,7 @@ const en: LanguageMessages = {
             'openai-responses': {
                 deepSeekVision: {
                     title: 'DeepSeek Vision preprocessing',
-                    hint: 'Enable PDF page rendering and split images above approximately 800×800 total pixels for deepseek-v4-flash-vision-exp, avoiding DeepSeek downscaling. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
+                    hint: 'Render PDF pages and resize whole images proportionally to approximately 1300×1300 total pixels for deepseek-flash and legacy Vision model names. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
                     toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
                 },
                 promptCacheKey: {

@@ -103,10 +103,10 @@ export class ConversationQueryService {
                     const {
                         turnDynamicContext,
                         turnDynamicContextStrategy,
-                        foregroundWorkTransition,
+                        foregroundWorkTransition, characterTurn,
                         ...rest
                     } = ensureBackgroundTaskSourceForDisplay(message);
-                    return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
+                    return { ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}), index } as Content;
                 })
             };
         }
@@ -148,11 +148,11 @@ export class ConversationQueryService {
             const {
                 turnDynamicContext,
                 turnDynamicContextStrategy,
-                foregroundWorkTransition,
+                foregroundWorkTransition, characterTurn,
                 ...rest
             } = ensureBackgroundTaskSourceForDisplay(message);
             return {
-                ...JSON.parse(JSON.stringify(rest)),
+                ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}),
                 index
             } as Content;
         });

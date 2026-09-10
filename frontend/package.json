@@ -1,6 +1,6 @@
 {
   "name": "graycode-frontend",
-  "version": "1.5.6",
+  "version": "2.0.0-pre",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,9 +11,11 @@
     "dev:local": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "typecheck": "vue-tsc --noEmit",
     "build": "vue-tsc --noEmit && vite build",
+    "build:platform": "vue-tsc --noEmit && vite build --config vite.platform.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:platform:trial": "vite build --config vite.platform.config.ts"
   },
   "dependencies": {
     "file-icons-js": "^1.1.0",

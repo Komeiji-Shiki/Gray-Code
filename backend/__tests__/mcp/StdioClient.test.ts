@@ -19,6 +19,17 @@ import { StdioMcpClient } from '../../modules/mcp/StdioClient';
 
 // 直接使用 require 拿到可写的 child_process 对象（import * as 的命名空间对象不可被 spyOn 改写）
 const childProcess = require('child_process') as typeof import('child_process');
+const mockProcesses = new Map<number, any>();
+jest.mock('tree-kill', () => {
+    const terminate = jest.requireActual('tree-kill');
+    return (pid: number, signal: string, callback?: (error?: Error) => void) => {
+        const fake = mockProcesses.get(pid);
+        if (!fake) return terminate(pid, signal, callback);
+        fake.exitCode = 0;
+        fake.emit('exit', 0);
+        callback?.();
+    };
+});
 
 function createFakeProcess(overrides: { stdinWrite?: () => void } = {}) {
     const proc: any = new EventEmitter();
@@ -31,6 +42,7 @@ function createFakeProcess(overrides: { stdinWrite?: () => void } = {}) {
     }
     proc.stdout = new PassThrough();
     proc.stderr = new PassThrough();
+    mockProcesses.set(proc.pid, proc);
     return proc;
 }
 
@@ -83,6 +95,7 @@ describe('StdioMcpClient', () => {
     let spawnSpy: jest.SpyInstance | undefined;
 
     afterEach(() => {
+        mockProcesses.clear();
         if (spawnSpy) {
             spawnSpy.mockRestore();
             spawnSpy = undefined;

@@ -182,7 +182,7 @@ function rangeToDays(range: NonNullable<ActivityStatsQuery['range']>): number {
  * @param now   当前时间（测试注入）
  */
 export async function getActivityStats(
-    store: ActivityStore,
+    store: Pick<ActivityStore, 'loadAllDays' | 'loadRecentDays'>,
     query: ActivityStatsQuery = {},
     now: number = Date.now()
 ): Promise<ActivityStatsResult> {

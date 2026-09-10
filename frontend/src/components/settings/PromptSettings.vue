@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { migratePromptPreset } from '@shared/promptPresetMigration'
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { ref, reactive, onMounted, computed } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -8,10 +10,6 @@ import { copyToClipboard } from '@/utils/format'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import PromptEntriesEditor from './PromptEntriesEditor.vue'
 import ModeSelectorBar from './prompt/ModeSelectorBar.vue'
-import AssemblyModeSelector from './prompt/AssemblyModeSelector.vue'
-import DynamicStrategyBlock from './prompt/DynamicStrategyBlock.vue'
-import StaticTemplateSection from './prompt/StaticTemplateSection.vue'
-import DynamicTemplateSection from './prompt/DynamicTemplateSection.vue'
 import ModulesReference from './prompt/ModulesReference.vue'
 import ToolPolicySection from './prompt/ToolPolicySection.vue'
 import TokenCountSection from './prompt/TokenCountSection.vue'
@@ -115,7 +113,7 @@ const config = reactive<{
   template: DEFAULT_TEMPLATE,
   dynamicTemplateEnabled: true,
   dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
-  dynamicContextStrategy: 'single'
+  dynamicContextStrategy: 'preserve'
 })
 
 // 原始配置（用于检测变化）
@@ -213,6 +211,7 @@ function clonePromptEntries(entries: PromptEntry[]): PromptEntry[] {
 }
 
 function clonePromptMode(mode: PromptMode): PromptMode {
+  mode = migratePromptPreset(mode)
   const cloned: PromptMode = {
     ...mode,
     promptAssemblyMode: normalizePromptAssemblyMode(mode.promptAssemblyMode),
@@ -261,7 +260,7 @@ function buildEditedModeSnapshot(sourceMode?: PromptMode): PromptMode {
     promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
-    dynamicContextStrategy: 'single'
+    dynamicContextStrategy: 'preserve'
   }
 
   const snapshot: PromptMode = {
@@ -304,7 +303,7 @@ function sanitizeImportedMode(raw: unknown, fallbackName: string): PromptMode {
     ? item.name.trim()
     : fallbackName
 
-  return {
+  return migratePromptPreset({
     id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : createModeId('imported_mode'),
     name,
     icon: typeof item.icon === 'string' && item.icon.trim() ? item.icon.trim() : 'symbol-method',
@@ -317,7 +316,7 @@ function sanitizeImportedMode(raw: unknown, fallbackName: string): PromptMode {
     toolPolicy: Array.isArray(item.toolPolicy)
       ? Array.from(new Set(item.toolPolicy.filter((tool): tool is string => typeof tool === 'string' && tool.trim().length > 0).map(tool => tool.trim())))
       : undefined
-  }
+  })
 }
 
 function parsePromptModeImportPayload(rawText: string): PromptMode[] {
@@ -589,12 +588,13 @@ async function loadConfig() {
 
 // 加载指定模式的配置
 function loadModeConfig(modeId: string) {
-  const mode = modes.value.find(m => m.id === modeId)
+  const source = modes.value.find(m => m.id === modeId)
+  const mode = source ? migratePromptPreset(source) : undefined
   if (mode) {
     config.template = typeof mode.template === 'string' ? mode.template : DEFAULT_TEMPLATE
     config.dynamicTemplateEnabled = mode.dynamicTemplateEnabled ?? true
     config.dynamicTemplate = typeof mode.dynamicTemplate === 'string' ? mode.dynamicTemplate : DEFAULT_DYNAMIC_TEMPLATE
-    config.dynamicContextStrategy = mode.dynamicContextStrategy || 'single'
+    config.dynamicContextStrategy = 'preserve'
     originalConfig.value = { ...config }
     promptAssemblyMode.value = normalizePromptAssemblyMode(mode.promptAssemblyMode)
     originalPromptAssemblyMode.value = promptAssemblyMode.value
@@ -659,7 +659,7 @@ async function saveConfig() {
       promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
       dynamicTemplateEnabled: true,
       dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
-      dynamicContextStrategy: 'single'
+      dynamicContextStrategy: 'preserve'
     }
 
     const nextToolPolicy = toolPolicyMode.value === 'custom'
@@ -719,13 +719,6 @@ async function saveConfig() {
 
 
 
-function handlePromptAssemblyModeChange(mode: PromptAssemblyMode) {
-  promptAssemblyMode.value = mode
-  if (mode === 'entries') {
-    promptEntries.value = normalizePromptEntries(promptEntries.value, 'entries')
-  }
-}
-
 // 重置静态模板为默认
 function resetStaticToDefault() {
   const modeDefaults: Record<string, string> = {
@@ -752,7 +745,7 @@ function insertStaticModule(moduleId: string) {
     return
   }
   const placeholder = `{{$${moduleId}}}`
-  config.template += placeholder
+  promptEntries.value.push({ id: createModeId('entry'), name: moduleId, role: 'system', enabled: true, content: placeholder, order: promptEntries.value.length })
 }
 
 // 插入变量到动态模板
@@ -762,51 +755,13 @@ function insertDynamicModule(moduleId: string) {
     return
   }
   const placeholder = `{{$${moduleId}}}`
-  config.dynamicTemplate += placeholder
+  promptEntries.value.push({ id: createModeId('entry'), name: moduleId, role: 'user', enabled: true, content: placeholder, order: promptEntries.value.length })
 }
 
-function convertLegacyTemplatesToEntries() {
-  const entries: PromptEntry[] = []
-  const cleanedTemplate = cleanupEmptyLines(config.template)
-  const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
-
-  if (cleanedTemplate) {
-    entries.push({
-      id: 'legacy-system-template',
-      name: '系统提示词',
-      enabled: true,
-      role: 'system',
-      content: cleanedTemplate,
-      order: 0
-    })
-  }
-
-  if (cleanedDynamicTemplate) {
-    entries.push({
-      id: 'legacy-dynamic-context',
-      name: '动态上下文',
-      enabled: config.dynamicTemplateEnabled,
-      role: 'user',
-      content: cleanedDynamicTemplate,
-      order: 100
-    })
-  }
-
-  entries.push({
-    ...createChatHistoryPromptEntry(50),
-    name: 'Chat History'
-  })
-
-  promptAssemblyMode.value = 'entries'
-  promptEntries.value = normalizePromptEntries(entries, 'entries')
-}
-
-// 切换模块展开
 function toggleModule(moduleId: string) {
   expandedModule.value = expandedModule.value === moduleId ? null : moduleId
 }
 
-// 生成变量ID显示字符串（使用 {{$xxx}} 格式）
 function formatModuleId(id: string): string {
   return `\{\{$${id}\}\}`
 }
@@ -827,7 +782,7 @@ async function confirmAddMode(name: string) {
     promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
-    dynamicContextStrategy: 'single'
+    dynamicContextStrategy: 'preserve'
   }
 
   try {
@@ -992,6 +947,7 @@ onMounted(async () => {
   await countTokens()
 })
 
+useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </script>
 
 <template>
@@ -1019,63 +975,11 @@ onMounted(async () => {
         @delete="openDeleteConfirm()"
       />
 
-      <!-- 提示词组装方式 -->
-      <AssemblyModeSelector
-        :model-value="promptAssemblyMode"
-        @update:model-value="handlePromptAssemblyModeChange"
-      />
-
-      <template v-if="promptAssemblyMode === 'entries'">
-        <!-- 预设提示词条目编辑区 -->
-        <div class="template-section entries-section" data-search-anchor="prompt-entries">
-          <div class="section-header">
-            <label class="section-label">
-              <i class="codicon codicon-list-tree"></i>
-              预设提示词条目
-              <span class="section-badge entries-badge">role / drag</span>
-            </label>
-          </div>
-          <p class="section-description">
-            按顺序编辑多条提示词。system 条目会合并进系统提示词，user / assistant 条目会作为本次请求的临时上下文插入；Chat History 条目表示真实聊天历史插入点。
-          </p>
-          <PromptEntriesEditor
-            v-model="promptEntries"
-            :static-modules="STATIC_PROMPT_MODULES"
-            :dynamic-modules="DYNAMIC_CONTEXT_MODULES"
-            @convert-legacy="convertLegacyTemplatesToEntries"
-          />
-        </div>
-
-        <!-- 动态上下文保留策略（预设条目模式） -->
-        <div class="template-section dynamic-strategy-section" data-search-anchor="prompt-dynamic-strategy">
-          <div class="section-header">
-            <label class="section-label">
-              <i class="codicon codicon-history"></i>
-              {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
-            </label>
-          </div>
-
-          <DynamicStrategyBlock
-            :model-value="config.dynamicContextStrategy"
-            :format-module-id="formatModuleId"
-            @update:model-value="config.dynamicContextStrategy = $event"
-          />
-        </div>
-      </template>
-
-      <template v-else>
-        <!-- 静态系统提示词编辑区 -->
-        <StaticTemplateSection v-model="config.template" @reset="showResetStaticConfirm = true" />
-
-        <!-- 动态上下文模板编辑区 -->
-        <DynamicTemplateSection
-          v-model="config.dynamicTemplate"
-          v-model:enabled="config.dynamicTemplateEnabled"
-          v-model:strategy="config.dynamicContextStrategy"
-          :format-module-id="formatModuleId"
-          @reset="showResetDynamicConfirm = true"
-        />
-      </template>
+      <div class="template-section entries-section" data-search-anchor="prompt-entries">
+        <div class="section-header"><label class="section-label"><i class="codicon codicon-list-tree"></i>预设提示词条目</label></div>
+        <p class="section-description">按条目顺序装配提示词。Chat History 表示历史记录插入点；它后面的条目位于当前用户消息之前。旧回合的动态上下文保留在原位置。</p>
+        <PromptEntriesEditor v-model="promptEntries" :static-modules="STATIC_PROMPT_MODULES" :dynamic-modules="DYNAMIC_CONTEXT_MODULES" />
+      </div>
 
       <!-- 可用变量参考（可收缩，默认收起） -->
       <ModulesReference

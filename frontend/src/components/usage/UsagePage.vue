@@ -308,6 +308,7 @@ const tabs = computed(() => ([
       <div v-else-if="loadError" class="state-hint is-error">
         <i class="codicon codicon-error"></i>
         <span>{{ t('components.usage.loadFailed') }}</span>
+        <span class="usage-error-detail">{{ loadError }}</span>
         <button class="retry-btn" @click="loadStats()">{{ t('components.usage.retry') }}</button>
       </div>
 
@@ -377,7 +378,7 @@ const tabs = computed(() => ([
             :title="item.conversationId"
           >
             <i class="codicon codicon-comment-discussion"></i>
-            <span class="skipped-title">{{ item.title }}</span>
+            <span class="skipped-title">{{ item.title }}<small v-if="stats.readErrors?.[item.conversationId]" class="usage-read-error">{{ stats.readErrors[item.conversationId] }}</small></span>
           </li>
         </ul>
 
@@ -463,8 +464,10 @@ const tabs = computed(() => ([
     </CustomScrollbar>
   </div>
 </template>
+<style scoped>.usage-error-detail{max-width:600px;padding:0 20px;font-size:12px;line-height:1.6;overflow-wrap:anywhere;white-space:pre-wrap}</style>
 
 <style scoped>
+.usage-read-error{display:block;white-space:normal;line-height:1.6;margin-top:4px;color:var(--vscode-errorForeground)}
 .usage-page {
   display: flex;
   flex-direction: column;

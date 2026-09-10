@@ -94,7 +94,10 @@ export function contentToPersistedMessage(content: Content, currentMessage: Mess
   const persistedId = typeof content.id === 'string' && content.id.trim()
     ? content.id
     : currentMessage.id
-  const persistedMessage = contentToMessage(content, persistedId)
+  // 含媒体的最终回复立即提取附件，首次输出与重新打开历史使用相同显示内容。
+  const persistedMessage = content.parts?.some(part => part.inlineData)
+    ? contentToMessageEnhanced(content, persistedId)
+    : contentToMessage(content, persistedId)
 
   if (persistedId !== currentMessage.id && state.streamingMessageId.value === currentMessage.id) {
     state.streamingMessageId.value = persistedId

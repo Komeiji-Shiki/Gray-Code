@@ -13,6 +13,7 @@ import { useDeferredNumberInput, getSettingsView } from '@/composables/useDeferr
 import type { ModelInfo, SummarizeConfig } from '@/types'
 
 const { t } = useI18n()
+const standaloneContext = !!window.__GRAYCODE_HOST
 
 // 渠道配置类型
 interface ChannelConfig {
@@ -30,6 +31,7 @@ const isLoadingChannels = ref(false)
 
 // 总结配置
 const summarizeConfig = reactive<SummarizeConfig>({
+  method: 'summary',
   // 手动总结提示词
   summarizePrompt: '请将以上对话内容进行总结，保留关键信息和上下文要点，去除冗余内容。',
   // 自动总结提示词
@@ -329,12 +331,20 @@ onUnmounted(() => {
     <div class="feature-description">
       <i class="codicon codicon-info"></i>
       <p>
-        {{ t('components.settings.summarizeSettings.description') }}
+        {{ standaloneContext ? '选择普通总结或笔记换窗口。原始消息和附件始终保留，可恢复、搜索和查看。自动触发阈值在模型渠道中设置。' : t('components.settings.summarizeSettings.description') }}
       </p>
     </div>
     
+    <div v-if="standaloneContext" class="section" data-search-anchor="context-method">
+      <h5 class="section-title">上下文管理方式</h5>
+      <CustomSelect :model-value="summarizeConfig.method ?? 'summary'" :options="[{ value: 'summary', label: '普通总结 · 复用完整前缀' }, { value: 'notes', label: '笔记换窗口 · 按需恢复历史' }]" @update:model-value="value => updateConfigField('method', value as 'summary' | 'notes')" />
+      <p v-if="summarizeConfig.method !== 'notes'" class="field-hint">沿用当前模型、系统提示词和工具定义，在完整上下文末尾追加总结指令。成功后仅保留首条用户消息与新摘要，后续消息继续追加。</p>
+      <p v-else class="field-hint">模型可以保存会话内工作笔记，接近阈值时收到换窗口提醒。新窗口保留首条用户消息与恢复提示，由模型按需读取笔记和原始历史；手动操作会直接换窗口，不额外生成整段摘要。</p>
+      <p class="field-hint">两种方式都使用当前会话模型。笔记方式提供会话内笔记、历史读取和换窗口工具。Bot 还可单独选择原有的时间总结。</p>
+    </div>
+
     <!-- 手动总结说明 -->
-    <div class="section" data-search-anchor="summarize-manual">
+    <div v-if="!standaloneContext" class="section" data-search-anchor="summarize-manual">
       <h5 class="section-title">
         <i class="codicon codicon-fold"></i>
         {{ t('components.settings.summarizeSettings.manualSection.title') }}
@@ -345,13 +355,13 @@ onUnmounted(() => {
     </div>
     
     <!-- 总结选项 -->
-    <div class="section" data-search-anchor="summarize-options">
+    <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="section" data-search-anchor="summarize-options">
       <h5 class="section-title">
         <i class="codicon codicon-settings"></i>
         {{ t('components.settings.summarizeSettings.optionsSection.title') }}
       </h5>
       
-      <div class="form-group">
+      <div v-if="!standaloneContext" class="form-group">
         <label>{{ t('components.settings.summarizeSettings.optionsSection.keepRounds') }}</label>
         <div class="rounds-input">
           <input
@@ -367,7 +377,7 @@ onUnmounted(() => {
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsMinNote') }}</p>
       </div>
 
-      <div class="form-group">
+      <div v-if="!standaloneContext" class="form-group">
         <label>{{ t('components.settings.summarizeSettings.optionsSection.keepTokens') }}</label>
         <div class="rounds-input">
           <input
@@ -380,7 +390,7 @@ onUnmounted(() => {
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepTokensHint') }}</p>
       </div>
 
-      <div class="form-group">
+      <div v-if="!standaloneContext" class="form-group">
         <label>{{ t('components.settings.summarizeSettings.optionsSection.maxAttempts') }}</label>
         <div class="rounds-input">
           <input
@@ -395,7 +405,7 @@ onUnmounted(() => {
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.maxAttemptsHint') }}</p>
       </div>
 
-      <div class="form-group">
+      <div v-if="!standaloneContext" class="form-group">
         <label>{{ t('components.settings.summarizeSettings.optionsSection.maxInputRatio') }}</label>
         <div class="rounds-input">
           <input
@@ -450,7 +460,7 @@ onUnmounted(() => {
     </div>
     
     <!-- 专用总结模型 -->
-    <div class="section" data-search-anchor="summarize-model">
+    <div v-if="!standaloneContext" class="section" data-search-anchor="summarize-model">
       <h5 class="section-title">
         <i class="codicon codicon-beaker"></i>
         {{ t('components.settings.summarizeSettings.modelSection.title') }}

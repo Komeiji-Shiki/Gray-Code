@@ -1,0 +1,75 @@
+/* Desktop host values for the existing semantic theme tokens. Component layout stays shared. */
+:root {
+  color-scheme: dark;
+  --vscode-font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --vscode-font-size: 14px;
+  --vscode-editor-font-family: "Cascadia Code", Consolas, monospace;
+  --vscode-editor-font-size: 14px;
+  --vscode-foreground: #dedee3;
+  --vscode-descriptionForeground: #969ba6;
+  --vscode-disabledForeground: #747a85;
+  --vscode-editor-background: #17191e;
+  --vscode-sideBar-background: #17191e;
+  --vscode-editorWidget-background: #22252c;
+  --vscode-input-background: #2a2e36;
+  --vscode-input-foreground: #ededf1;
+  --vscode-input-border: #3c424e;
+  --vscode-panel-border: #323742;
+  --vscode-widget-border: #434b59;
+  --vscode-focusBorder: #6ba6ff;
+  --vscode-button-background: #2674cd;
+  --vscode-button-hoverBackground: #3585df;
+  --vscode-button-foreground: #fff;
+  --vscode-textLink-foreground: #79afff;
+  --vscode-textLink-activeForeground: #a2c7ff;
+  --vscode-list-activeSelectionBackground: #163b69;
+  --vscode-list-activeSelectionForeground: #fff;
+  --vscode-list-hoverBackground: #252d39;
+  --vscode-toolbar-hoverBackground: #2c3340;
+  --vscode-toolbar-activeBackground: #364256;
+  --vscode-editor-inactiveSelectionBackground: #303c50;
+  --vscode-editor-selectionBackground: #27466d;
+  --vscode-errorForeground: #f08080;
+  --vscode-testing-iconPassed: #88c7a2;
+  --vscode-editorWarning-foreground: #e8bc72;
+  --vscode-charts-blue: #6ba6ff;
+  --vscode-charts-green: #88c7a2;
+  --vscode-charts-yellow: #e8bc72;
+  --vscode-scrollbarSlider-background: #5b63714d;
+  --vscode-scrollbarSlider-hoverBackground: #78839680;
+  --vscode-scrollbarSlider-activeBackground: #8d9bb4aa;
+}
+body { margin: 0; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); }
+html.platform-host { --gc-radius-xs: 0; --gc-radius-sm: 0; --gc-radius-md: 0; --gc-radius-lg: 0; }
+.mobile-settings-category{display:none}
+.platform-host body .settings-sidebar { width: 195px; padding: 16px 10px; overflow-y: auto; gap: 2px; }
+.platform-host body .settings-sidebar.collapsed { width: 56px; }
+.platform-host body .settings-tab { padding: 8px 10px; min-height: 35px; }
+.platform-host body .settings-main { width: 100%; box-sizing: border-box; max-width: 920px; margin: 0 auto; padding: 28px 30px 40px; }
+.platform-host body .settings-section > h4 { font-size: 24px; font-weight: 600; margin-bottom: 12px; }
+.platform-host body .settings-description { margin-bottom: 18px; }
+.platform-host body .settings-header { min-height: 66px; padding-inline: 24px; }
+.platform-host body .settings-header > h3 { font-size: 16px; font-weight: 500; }
+.platform-host body .settings-sidebar-toggle { margin-bottom: 12px; }
+.platform-host body .markdown-body { font-family: var(--platform-text-font, inherit); }
+.platform-host body .chat-view { position: relative; isolation: isolate; }
+.platform-host body .chat-view::before { content:''; position:absolute; inset:0; z-index:-1; pointer-events:none; background:var(--platform-background-image,none) center/cover no-repeat; opacity:var(--platform-background-opacity,.12); }
+.platform-host[data-density=compact] body .settings-tab { min-height:32px; padding-block:6px; }
+.platform-host body .settings-section .tool-item { padding:10px 14px; }
+.platform-host body .monitor-root { padding: 16px; min-height: 0; }
+.platform-host body .monitor-header { margin-bottom: 14px; }
+.platform-host body .monitor-header h1 { font-size: 20px; font-weight: 550; }
+.platform-host body .monitor-header p { font-size: 12px; line-height: 1.6; }
+.platform-host body .run-tabs { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 7px; max-height: 180px; overflow: auto; }
+.platform-host body .run-tab,.platform-host body .run-count,.platform-host body .control-btn { border-radius: 0; }
+.platform-host body .run-tab { padding: 9px 11px; text-align: left; }
+@media (max-width: 900px) {
+  .platform-host body .settings-sidebar { width: 165px; padding: 12px 6px; }
+  .platform-host body .settings-main { padding: 24px; }
+}
+
+/* 桌面标签保留足够的点击区域，避免沿用扩展窄侧栏尺寸。 */
+@media(max-width:600px){
+  .platform-host body .settings-content{flex-direction:column;min-width:0}.platform-host body .settings-sidebar{display:none}.platform-host body .mobile-settings-category{display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid var(--gc-border-subtle);flex-shrink:0;font-size:13px}.platform-host body .mobile-settings-category select{flex:1;min-width:0;padding:8px;font-size:16px;border:1px solid var(--gc-border-control);background:var(--vscode-input-background);color:var(--gc-text-primary);border-radius:0}.platform-host body .settings-main{padding:20px 14px 28px}.platform-host body .settings-header{padding-inline:14px;min-height:50px;gap:12px}.platform-host body .platform-settings-footer{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 14px}.platform-host body .platform-settings-footer>div{grid-column:1/-1;font-size:12px}.platform-host body .platform-settings-footer button{white-space:nowrap}.platform-host body .platform-close-backdrop{padding:12px}.platform-host body .platform-close-backdrop section{padding:20px;max-width:100%}.platform-host body .platform-close-backdrop section>div{flex-wrap:wrap}
+}
+.platform-host body .tabs-bar{height:42px;min-height:42px;flex-shrink:0}.platform-host body .tab-item{min-height:42px;min-width:125px;max-width:260px;padding:7px 12px;gap:10px}.platform-host body .tab-title{font-size:14px}.platform-host body .tab-close-btn{width:26px;height:26px}.platform-host body .tab-new-btn{width:42px;min-width:42px}.platform-host body .chat-header{min-height:44px}

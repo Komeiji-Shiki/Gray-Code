@@ -82,6 +82,10 @@ const thresholdHelp = computed(() => {
     }))
   }
 
+  if (window.__GRAYCODE_HOST) {
+    lines.push('达到阈值后按总结设置执行普通总结或提醒保存笔记并换窗口。普通总结只保留首条用户消息和摘要；笔记方式按需读取历史。')
+    return lines.join('\n')
+  }
   const keepRaw = props.summaryKeepRecentTokens ?? '50%'
   const keepText = String(keepRaw).trim()
   const keepPercentMatch = keepText.match(/^(\d+(?:\.\d+)?)%$/)

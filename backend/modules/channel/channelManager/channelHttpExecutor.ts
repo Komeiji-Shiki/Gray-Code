@@ -94,6 +94,7 @@ export class ChannelHttpExecutor {
         const onExternalAbort = () => controller.abort();
         if (externalSignal) {
             externalSignal.addEventListener('abort', onExternalAbort);
+            if (externalSignal.aborted) onExternalAbort();
         }
         
         try {
@@ -195,6 +196,7 @@ export class ChannelHttpExecutor {
         const onExternalAbort = () => controller.abort();
         if (externalSignal) {
             externalSignal.addEventListener('abort', onExternalAbort);
+            if (externalSignal.aborted) onExternalAbort();
         }
         
         try {

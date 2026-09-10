@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>一个面向 VS Code 的 AI 编程助手</strong>
+  <strong>本地优先的 AI 工作台与编程助手</strong>
 </p>
 
 <p align="center">
@@ -25,14 +25,16 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
 </p>
 
-GrayCode 把 AI 编程能力带进 VS Code：理解工作区、搜索和修改代码、执行命令、调用语言服务，并通过原生 Diff 让你在落盘前检查改动。它既适合快速问答与 Bug 定位，也支持从设计、计划、实现到审查的完整工程流程。
+GrayCode 2.0 提供独立桌面工作台：理解工作区、搜索和修改代码、执行命令、调用语言服务，并通过 Diff 审阅文件改动。它支持多模型对话、角色聊天、机器人入口和带共享任务的子代理协作。
+
+当前预览版为 **[2.0.0-pre](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)**，提供 Windows x64 便携程序。`main` 维护独立桌面版，1.x VS Code 扩展源码保留在 [`v1-extension`](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension) 分支，旧扩展仍可通过原渠道获取。
 
 所有核心数据保存在本地；你可以接入不同模型渠道，通过 MCP、Skills 和 Sub-Agents 扩展能力，并让永久记忆跨会话保存项目约定与关键决策。
 
 ## 快速开始
 
-1. 在 [VS Code 插件市场](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode) 搜索 **Gray Code** 并安装；也可以从 [Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 下载 VSIX。
-2. 点击活动栏中的 Gray Code 图标，进入右上角 **设置 → 渠道**，添加 Gemini、OpenAI Compatible、OpenAI Responses 或 Anthropic 渠道。
+1. 从 [2.0.0-pre 预发布](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre) 下载 Windows ZIP，完整解压后运行 `GrayCode.exe`，保留同目录下的 DLL 和 resources。使用新版前先从托盘退出旧版。
+2. 进入 **设置 → 渠道**，添加自己的 Gemini、OpenAI Compatible、OpenAI Responses 或 Anthropic 渠道。
 3. 回到聊天页，选择渠道、模型和 Code / Design / Plan / Ask / Review 模式，然后直接描述任务。
 
 第一次可以试试：
@@ -43,12 +45,12 @@ GrayCode 把 AI 编程能力带进 VS Code：理解工作区、搜索和修改�
 
 > 请定位这个异常的原因。先搜索相关代码并说明证据，确认方案后再修改和测试。
 
-[查看完整快速开始指南 →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started-zh-CN)
+[独立桌面运行与构建说明](apps/desktop/README.md) · [Web 入口](apps/server/WEB.md) · [1.x 扩展指南](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started-zh-CN)
 
 ## 核心亮点
 
 - **多模型渠道** —— 支持 Gemini、OpenAI Chat Completions 兼容接口、OpenAI Responses 与 Anthropic，每个渠道可独立配置模型、工具模式、思考、重试和 Token 计数。
-- **真实代码操作** —— 读取、搜索和修改文件，运行终端命令，调用 VS Code LSP，支持图片、PDF 等多模态上下文；写入可通过 Diff 审阅。
+- **真实代码操作** —— 读取、搜索和修改文件，运行终端命令，调用语言服务，支持图片、PDF 等多模态上下文；写入可通过 Diff 审阅。
 - **结构化工作流** —— 内置 Design、Plan、Progress、Review 与 TODO 工具，让复杂任务从方案到验证都有可追踪记录。
 - **可扩展代理能力** —— 连接 MCP Server，加载可复用 Skills，并通过前台或后台 Sub-Agents 并行处理专门任务。
 - **本地永久记忆** —— 全局与工作区记忆彼此隔离，跨会话保存约定、知识和决策，不依赖外部记忆服务。
@@ -81,7 +83,7 @@ GrayCode 针对 DeepSeek 视觉模型（如 `deepseek-v4-flash-vision-exp`）的
 
 ## 文档
 
-完整用户手册已迁移到 [GrayCode Wiki](https://github.com/Komeiji-Shiki/Gray-Code/wiki)：
+2.0 桌面版参见[桌面说明](apps/desktop/README.md)、[Web 入口](apps/server/WEB.md)和[团队协作](apps/server/src/teams/README.md)。以下 [GrayCode Wiki](https://github.com/Komeiji-Shiki/Gray-Code/wiki) 手册主要面向 1.x 扩展：
 
 | 指南 | 内容 |
 | --- | --- |
@@ -96,7 +98,7 @@ GrayCode 针对 DeepSeek 视觉模型（如 `deepseek-v4-flash-vision-exp`）的
 
 开发环境、项目结构和提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 安装与更新
+## 1.x 扩展安装与更新
 
 GrayCode 要求 VS Code `^1.84.0` 或更高版本。推荐从 [VS Code 插件市场](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode) 安装；也可以从 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 下载 `graycode-*.vsix`，在命令面板执行 `Extensions: Install from VSIX...`。
 
@@ -106,7 +108,6 @@ GrayCode 要求 VS Code `^1.84.0` 或更高版本。推荐从 [VS Code 插件市
 
 - 通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 报告问题或提出建议。
 - 欢迎提交 Pull Request；开始前请阅读 [贡献指南](CONTRIBUTING.md)。
-- 社区维护的 [GrayCode Desktop](https://github.com/czocelot/Gray-Code-Desktop) 提供独立 Electron 桌面版，支持 Windows、macOS 和 Linux；其发布节奏以对应仓库为准。
 
 ## 鸣谢
 

@@ -6,6 +6,7 @@
  */
 
 import type { Content } from '../../../../conversation/types';
+import type { ContextConversationStore } from './ports';
 import type { ConversationManager, GetHistoryOptions } from '../../../../conversation/ConversationManager';
 import type { DynamicContextStrategy } from '../../../../settings/types';
 import type { ContextTrimInfo } from '../../utils';
@@ -18,7 +19,7 @@ import { prependFirstUserMessage } from './historyAssembly';
 import { prependPreservedUserInputs } from './preservedUserInputs';
 
 export async function getNormalizedHistoryForStartIndex(
-    conversationManager: ConversationManager,
+    conversationManager: ContextConversationStore,
     conversationId: string,
     fullHistory: Content[],
     historyOptions: GetHistoryOptions,
@@ -59,7 +60,7 @@ export async function getNormalizedHistoryForStartIndex(
  *          调用方按下标逐条对齐，undefined 条目保持粗估/走本地估算
  */
 export async function countAndUpdateMessageTokens(
-    conversationManager: ConversationManager,
+    conversationManager: ContextConversationStore,
     tokenEstimationService: TokenEstimationService,
     conversationId: string,
     channelType: string,

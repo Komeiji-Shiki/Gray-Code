@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, onMounted, onUnmounted, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
@@ -181,6 +182,7 @@ onUnmounted(() => {
         saveMessageTimer = null
     }
 })
+useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </script>
 
 <template>

@@ -1,3 +1,4 @@
+import { CHARACTER_PROMPT_MODULES } from '../../../shared/characterPromptModules'
 /**
  * GrayCode - Prompt 模板占位符
  *
@@ -6,6 +7,8 @@
  */
 
 export const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
+    ...CHARACTER_PROMPT_MODULES.map(module => module.id),
+    'CURRENT_TIME',
     'TODO_LIST',
     'WORKSPACE_FILES',
     'OPEN_TABS',
@@ -23,6 +26,8 @@ export const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
 // $&/$`/$'/$$/$n 是特殊序列，值含这些字符（工作区路径/shell 脚本/自定义记忆提示词等）
 // 会被静默改写（04 批 MEDIUM），函数式替换器天然规避。
 export const PROMPT_PLACEHOLDER_KEYS = [
+    ...CHARACTER_PROMPT_MODULES.map(module => module.id),
+    'CURRENT_TIME',
     'ENVIRONMENT',
     'CONTEXT_BADGE_FORMAT',
     'TODO_LIST',

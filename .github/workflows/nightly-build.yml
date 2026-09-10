@@ -59,7 +59,11 @@ jobs:
       - name: Resolve whether to build
         id: should
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force }}" = "true" ]; then
+          # 旧扩展 nightly 不处理独立桌面版本，避免发布错误类型的资产。
+          if node -e "process.exit(Number(require('./package.json').version.split('.')[0]) >= 2 ? 0 : 1)"; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "2.x uses standalone desktop releases; skipping VSIX nightly."
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force }}" = "true" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=${{ steps.check.outputs.changed }}" >> "$GITHUB_OUTPUT"
@@ -74,7 +78,7 @@ jobs:
         if: steps.should.outputs.build == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # fast-tavern py 的 venv 缓存（E-11）：key 含 runner.os 与 python 版本，避免跨版本复用损坏的 venv。
@@ -285,7 +289,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

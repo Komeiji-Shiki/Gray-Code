@@ -26,7 +26,7 @@ import {
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter, SubAgentTranscriptData } from './storage';
-import { withMetadataWriteSerialized, withHangTimeout } from './storage';
+import { withMetadataWriteSerialized, withHangTimeout } from './storageWriteQueues';
 import { isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom, repairFunctionCallPairsAfterDelete, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange } from './TranscriptMutation';
@@ -100,7 +100,15 @@ export interface DeleteToMessageCapture {
  *   对话列表分页（每页 30 条）与用量统计/检查点查询的逐对话读取不再重复走磁盘
  */
 export class ConversationManager {
-    constructor(private storage: IStorageAdapter, private readonly usageIndexStore?: UsageIndexStore) {}
+    constructor(private storage: IStorageAdapter, private readonly usageIndexStore?: UsageIndexStore) {
+        this.query = new ConversationQueryService({
+            storage,
+            loadHistory: (conversationId, workspaceUri) => this.loadHistory(conversationId, workspaceUri),
+            ensureHistoryNodeIds: conversationId => this.ensureHistoryNodeIds(conversationId),
+            getTranscriptRepository: (conversationId, workspaceUri) => this.getTranscriptRepository(conversationId, workspaceUri),
+        });
+        this.toolCalls = new ConversationToolCallService(this);
+    }
 
     /** 会话元数据 LRU（容量上限：对话列表分页 + 打开标签页通常远小于此） */
     private static readonly META_CACHE_CAPACITY = 256;
@@ -369,15 +377,10 @@ export class ConversationManager {
 
 
     /** 只读查询委托：消息读取/分页/配对规范化（实现见 manager/query.ts） */
-    private readonly query = new ConversationQueryService({
-        storage: this.storage,
-        loadHistory: (conversationId, workspaceUri) => this.loadHistory(conversationId, workspaceUri),
-        ensureHistoryNodeIds: conversationId => this.ensureHistoryNodeIds(conversationId),
-        getTranscriptRepository: (conversationId, workspaceUri) => this.getTranscriptRepository(conversationId, workspaceUri),
-    });
+    private readonly query: ConversationQueryService;
 
     /** 工具调用拒绝/结算委托（实现见 manager/toolCalls.ts） */
-    private readonly toolCalls = new ConversationToolCallService(this);
+    private readonly toolCalls: ConversationToolCallService;
 
     /** 分支图→主历史重写的上下文绑定（实现见 manager/branchRewrite.ts） */
     private get branchRewriteContext(): BranchRewriteContext {
@@ -800,9 +803,15 @@ export class ConversationManager {
             custom: {}
         };
 
-        await this.storage.saveHistory(conversationId, []);
-        await this.updateUsageIndex(conversationId, []);
-        await this.persistMetadata(meta);
+        if (this.storage.createConversation) {
+            await this.storage.createConversation(meta);
+            this.cacheMetadata(meta.id, meta);
+            await this.updateUsageIndex(conversationId, []);
+        } else {
+            await this.storage.saveHistory(conversationId, []);
+            await this.updateUsageIndex(conversationId, []);
+            await this.persistMetadata(meta);
+        }
     }
 
 
@@ -1382,7 +1391,7 @@ export class ConversationManager {
                 // 跳过，避免无意义的整体落盘覆盖（mutateContents 契约：返回原引用=跳过写回）。
                 const target = history[messageIndex];
                 let patchChangesTarget = false;
-                for (const key of Object.keys(patch)) {
+                for (const key of Object.keys(patch) as Array<keyof Content>) {
                     if (target[key] !== patch[key]) {
                         patchChangesTarget = true;
                         break;

@@ -14,9 +14,17 @@ export type { CheckpointSummary, CheckpointSummaryWithSize, ContentPart, OpenAIR
  * 与后端 backend/modules/conversation/types.ts 的 Content 双维护（历史/流式契约）；
  * 统一迁入 shared/protocol.ts 需跨端同步，暂保持双维护。
  */
+export interface BackgroundTaskInfo { kind: 'terminal' | 'subagent'; taskId: string; status?: string; runId?: string; conversationId?: string; name?: string }
+
 export interface Content {
+  characterMode?: boolean
+  characterOriginalParts?: ContentPart[]
+  characterDisplayParts?: ContentPart[]
+  characterStages?: unknown
+  characterDisplayStages?: unknown
   role: 'user' | 'model'
   parts: ContentPart[]
+  userFeedback?: { kind?: string; taskId?: string; subagentId?: string; requestId: string; timedOut: boolean; questions: { title: string; options?: string[] }[]; answers: string[] }
   /** 后端持久化的稳定消息节点 ID；分支操作必须使用该值，不能使用前端流式占位 ID。 */
   id?: string
   /** 主历史中的父消息节点 ID（首条为 null）。 */
@@ -32,7 +40,9 @@ export interface Content {
   /** Token 使用统计（仅 model 消息有值） */
   usageMetadata?: UsageMetadata
   summaryTokenStats?: SummaryTokenStats
+  summaryEditedAt?: number
   /** 系统内部消息来源；后台任务和 agent 消息都不构成真实用户新回合。 */
+  backgroundTask?: BackgroundTaskInfo
   source?: 'user' | 'background_task' | 'agent_message'
   /** 本条用户消息持久化的 DeepSeek Vision 处理模式；工具结果继承最近用户回合。 */
   deepSeekVisionTileSplit?: boolean
@@ -46,6 +56,8 @@ export interface Content {
   isFunctionResponse?: boolean
   /** 是否为上下文总结消息 */
   isSummary?: boolean
+  contextMethod?: 'summary' | 'notes'
+  contextWindowId?: string
   /** 总结消息覆盖的消息数量 */
   summarizedMessageCount?: number
   /** 是否为自动触发的总结消息 */
@@ -140,6 +152,11 @@ export interface AgentMessageCardInfo {
  * 工具调用和响应通过 id 字段匹配，无需额外的索引映射
  */
 export interface Message {
+  characterMode?: boolean
+  characterOriginalParts?: ContentPart[]
+  characterDisplayParts?: ContentPart[]
+  characterStages?: unknown
+  characterDisplayStages?: unknown
   id: string
   role: 'user' | 'assistant' | 'tool'
   content: string
@@ -152,6 +169,7 @@ export interface Message {
   /**
    * 消息来源：'user' 为正常用户输入，其他值为系统内部回流
    */
+  backgroundTask?: BackgroundTaskInfo
   source?: 'user' | 'background_task' | 'agent_message'
   /** 用户消息所属回合的 DeepSeek Vision 处理模式。 */
   deepSeekVisionTileSplit?: boolean
@@ -192,12 +210,15 @@ export interface Message {
    * 总结消息以特殊样式显示，包含之前对话的压缩摘要
    */
   isSummary?: boolean
+  contextMethod?: 'summary' | 'notes'
+  contextWindowId?: string
   /**
    * 总结消息覆盖的消息数量
    */
   summarizedMessageCount?: number
   /** 主上下文压缩统计；与总结模型请求 usage 分离。 */
   summaryTokenStats?: SummaryTokenStats
+  summaryEditedAt?: number
   /** 是否为自动触发的总结消息 */
   isAutoSummary?: boolean
   /** 该消息已被上下文总结覆盖（逻辑截断）：原文保留、仍可显示/搜索，但不参与发送给 AI */
@@ -500,6 +521,11 @@ export interface PendingToolCall {
  * 前端接收的流式消息格式
  */
 export interface StreamChunk {
+  /** 核心服务自动启动的后台后续任务，客户端只订阅结果。 */
+  backgroundRun?: boolean
+  /** 重新接入现有任务时的当前输出快照，不创建新的模型请求。 */
+  resumeSnapshot?: boolean
+  previousStreamId?: string
   type:
     | 'chunk'
     | 'complete'
@@ -511,7 +537,8 @@ export interface StreamChunk {
     | 'toolsExecuting'
     | 'toolStatus'
     | 'autoSummaryStatus'
-    | 'autoSummary'
+      | 'autoSummary'
+      | 'userFeedback'
   conversationId: string
   /** 前端生成的流请求 ID，用于过滤迟到/过期 chunk */
   /** 事件创建时间戳（毫秒），用于声音提醒过期丢弃等场景 */
@@ -523,11 +550,16 @@ export interface StreamChunk {
   /** 是否为工具迭代（工具调用后还有后续消息） */
   toolIteration?: boolean
   /** 工具执行结果列表 */
-  toolResults?: ToolExecutionResult[]
+    toolResults?: ToolExecutionResult[]
+    /** 新宿主逐条保存的工具响应，保留真实消息 ID 和历史条数。 */
+    toolResultContents?: Content[]
+    feedbackContent?: Content
   /** 创建的检查点列表 */
   checkpoints?: CheckpointRecord[]
   /** 等待确认的工具调用列表（当 type 为 'awaitingConfirmation' 时） */
-  pendingToolCalls?: PendingToolCall[]
+    pendingToolCalls?: PendingToolCall[]
+    /** 独立任务服务在审批期间继续持有同一条运行事件流。 */
+    keepStreamOpen?: boolean
   /** 标记工具即将开始执行（用于在工具执行前先发送计时信息） */
   toolsExecuting?: boolean
 

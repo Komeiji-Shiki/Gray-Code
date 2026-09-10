@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 /**
  * MemorySettings - 永久记忆系统配置组件
  *
@@ -95,6 +96,9 @@ interface ScopeCache {
   configLoaded: boolean
 }
 const scopeCache = new Map<string, ScopeCache>()
+const scopeRevisions = ref<Record<string, number>>({})
+const undoSaving = ref(false)
+const canUndoMemory = computed(() => (scopeRevisions.value[scopeKey() ?? ''] ?? 0) > 0)
 
 /** 当前作用域的缓存键：全局为 'global'；工作区为 'ws:<uri>'；未选工作区返回 null */
 function scopeKey(): string | null {
@@ -112,10 +116,23 @@ function getOrCreateScopeCache(key: string): ScopeCache {
 }
 
 /** 当前作用域的 workspaceUri 参数（全局为空对象，工作区带上 uri） */
-function scopeParams(): { workspaceUri?: string } {
-  return memoryScope.value === 'workspace' && selectedWorkspaceUri.value
-    ? { workspaceUri: selectedWorkspaceUri.value }
-    : {}
+function scopeParams(): { workspaceUri?: string; expectedRevision?: number } {
+  const expectedRevision = scopeRevisions.value[scopeKey() ?? ''];
+  return { ...(memoryScope.value === 'workspace' && selectedWorkspaceUri.value ? { workspaceUri: selectedWorkspaceUri.value } : {}),
+    ...(expectedRevision !== undefined ? { expectedRevision } : {}) }
+}
+
+async function undoMemory() {
+  undoSaving.value = true
+  try {
+    await sendToExtension('memory.undo', scopeParams())
+    await loadEntries()
+    statusMessage.value = '已撤销最近一次记忆修改。'
+    statusError.value = false
+  } catch (error) {
+    statusMessage.value = error instanceof Error ? error.message : String(error)
+    statusError.value = true
+  } finally { undoSaving.value = false }
 }
 
 /**
@@ -408,6 +425,7 @@ async function loadEntries(showLoading = true) {
     // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域条目闪现/覆盖
     if (seq !== entryLoadSeq) return
     if (result?.entries) {
+      if (typeof result.revision === 'number') scopeRevisions.value[key] = result.revision
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
       entriesTruncated.value = !!result.truncated
@@ -551,6 +569,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
     refreshCurrentScope()
   }
 })
+useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </script>
 
 <template>
@@ -629,6 +648,10 @@ watch(selectedWorkspaceUri, (next, prev) => {
         @cancel-delete-selected="cancelDeleteSelected"
       />
 
+      <button v-if="canUndoMemory" class="memory-undo-button" :disabled="undoSaving || entriesLoading" @click="undoMemory">
+        {{ undoSaving ? '正在撤销…' : '撤销最近一次记忆修改' }}
+      </button>
+
       <!-- 提示 -->
       <div class="info-box">
         <i class="codicon codicon-info"></i>
@@ -642,6 +665,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
 </template>
 
 <style scoped>
+.memory-undo-button { border: 1px solid var(--vscode-panel-border); border-radius: 0; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); padding: 6px 10px; cursor: pointer; }
 .memory-settings {
   width: 100%;
 }

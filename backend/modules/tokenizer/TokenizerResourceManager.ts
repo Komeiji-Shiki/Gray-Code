@@ -74,6 +74,7 @@ const DOWNLOAD_RETRIES = 2;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 500;
 
 export class TokenizerResourceManager {
+    private imports: Promise<void> = Promise.resolve();
     private inflight = new Map<TokenizerResourceName, Promise<TokenizerResource>>();
 
     constructor(private readonly cacheDir: string) {}
@@ -82,11 +83,44 @@ export class TokenizerResourceManager {
     async ensureResource(name: TokenizerResourceName): Promise<TokenizerResource> {
         const existing = this.inflight.get(name);
         if (existing) return existing;
-        const task = this.loadOrDownload(name).finally(() => {
+        const task = this.imports.then(() => this.loadOrDownload(name)).finally(() => {
             this.inflight.delete(name);
         });
         this.inflight.set(name, task);
         return task;
+    }
+
+    /** 导入等待已发出的下载，后续请求等待导入，避免缓存目录同时写入。 */
+    async importDirectory(operation: () => Promise<void>): Promise<void> {
+        const existing = [...this.inflight.values()];
+        const task = this.imports.then(async () => { await Promise.allSettled(existing); await operation(); });
+        this.imports = task.catch(() => {});
+        return task;
+    }
+
+    /** 仅校验副本；旧来源中的坏词表不会被删除或触发下载。 */
+    async validateImportedDirectory(directory: string): Promise<void> {
+        for (const spec of Object.values(RESOURCES)) {
+            const file = path.join(directory, spec.ranksFile);
+            let info;
+            try { info = await fs.stat(file); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+            if (!info.isFile() || info.size < spec.minSize || info.size > MAX_DOWNLOAD_BYTES) throw new Error(`词表文件大小无效：${spec.ranksFile}`);
+            const ranks = await fs.readFile(file, 'utf8');
+            for (const line of ranks.split(/\r?\n/).filter(Boolean)) {
+                const [, rank, ...tokens] = line.split(' ');
+                if (!/^\d+$/.test(rank ?? '') || !Number.isSafeInteger(Number(rank)) || !tokens.length ||
+                    tokens.some(token => !/^[A-Za-z0-9+/]+={0,2}$/.test(token) || Buffer.from(token, 'base64').toString('base64') !== token))
+                    throw new Error(`词表内容格式无效：${spec.ranksFile}`);
+            }
+            if (spec.metaFile) {
+                const metadata = path.join(directory, spec.metaFile);
+                if ((await fs.stat(metadata)).size > 1024 * 1024) throw new Error('词表元数据超过 1 MiB。');
+                const meta = JSON.parse(await fs.readFile(metadata, 'utf8'));
+                if (typeof meta.patStr !== 'string' || !meta.specialTokens || typeof meta.specialTokens !== 'object' || Array.isArray(meta.specialTokens) ||
+                    Object.values(meta.specialTokens).some(value => !Number.isSafeInteger(value) || (value as number) < 0)) throw new Error('词表元数据格式无效。');
+                new RegExp(meta.patStr, 'ug');
+            }
+        }
     }
 
     private async loadOrDownload(name: TokenizerResourceName): Promise<TokenizerResource> {

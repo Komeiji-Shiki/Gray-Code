@@ -6,6 +6,7 @@
  * - 纯展示组件：显示状态与迁移中标志由父组件通过 props 注入（v-model 协议回写），
  *   取消/确认通过 emits 回传，迁移执行仍由父组件驱动。
  */
+const native = !!window.__GRAYCODE_HOST
 import { t } from '@/i18n'
 import { Modal } from '../../common'
 
@@ -28,7 +29,7 @@ defineEmits<{
     @update:model-value="$emit('update:show', $event)"
   >
     <div class="migrate-dialog-content">
-      <p>{{ t('components.settings.storageSettings.dialog.migrateMessage') }}</p>
+      <p>{{ native ? '数据将在下次完整重启时复制到新目录，旧数据会保留。请先结束任务并保存修改。' : t('components.settings.storageSettings.dialog.migrateMessage') }}</p>
       <p class="migrate-warning">
         <i class="codicon codicon-warning"></i>
         {{ t('components.settings.storageSettings.dialog.migrateWarning') }}

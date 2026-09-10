@@ -37,10 +37,8 @@ function getAttachmentIconClass(type: string): string {
 // 判断附件是否有预览
 function hasPreview(attachment: Attachment): boolean {
   if (!attachment.data) return false
-  if (attachment.type === 'image' && attachment.thumbnail) return true
-  if (attachment.type === 'video' && attachment.thumbnail) return true
-  if (attachment.type === 'audio') return true
-  return false
+  // 大图和无封面视频仍保留预览入口，不能把有无缩略图当成有无原文件。
+  return ['image', 'video', 'audio'].includes(attachment.type)
 }
 
 // 预览附件（在 VSCode 中打开）
@@ -98,6 +96,7 @@ function handleRemove(attachmentId: string) {
           class="codicon codicon-unmute media-center-icon"
           aria-hidden="true"
         ></i>
+        <i v-else-if="!attachment.thumbnail" :class="['codicon', getAttachmentIconClass(attachment.type), 'media-center-icon']" aria-hidden="true"></i>
       </button>
       <img
         v-else-if="attachment.type === 'image' && attachment.thumbnail"

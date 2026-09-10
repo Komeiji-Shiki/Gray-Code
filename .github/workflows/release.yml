@@ -1,6 +1,6 @@
 name: Release vsix
 
-# 打 v* tag 时自动构建 vsix 并发布到 GitHub Releases：
+# 1.x 扩展标签构建 VSIX；2.x 独立桌面预览通过对应的桌面发行包发布。
 #   git tag v1.4.5 && git push origin v1.4.5
 # 产物文件名 graycode-<tag>.vsix（如 graycode-v1.4.5.vsix），
 # 扩展内置的「自动更新」功能从 Releases 的 vsix 资产下载安装。
@@ -8,7 +8,7 @@ name: Release vsix
 on:
   push:
     tags:
-      - 'v*'
+      - 'v1.*'
 
 permissions:
   contents: write
@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # fast-tavern py 的 venv 缓存（E-11）：key 含 runner.os 与 python 版本，避免跨版本复用损坏的 venv。

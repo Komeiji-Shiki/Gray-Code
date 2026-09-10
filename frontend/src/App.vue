@@ -4,13 +4,15 @@
  * 使用Pinia store管理状态
  */
 
+import { characterPresentation } from './platform/characterPresentation'
 import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
-import { defineAsyncComponent, onMounted, onBeforeUnmount, ref } from 'vue'
+import { defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { InputArea } from './components/input'
 import BackgroundTaskBar from './components/backgroundTasks/BackgroundTaskBar.vue'
 import { WelcomePanel } from './components/home'
 import { ConversationTabs } from './components/tabs'
+import AsyncQuestions from './components/input/AsyncQuestions.vue'
 import { CustomScrollbar } from './components/common'
 import UpdateModal from './components/common/UpdateModal.vue'
 import Splash from './components/Splash.vue'
@@ -42,6 +44,7 @@ const { t } = useI18n()
 
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
 const isSubAgentMonitor = window.__GRAYCODE_VIEW_MODE === 'subagentMonitor'
+const isDesktopHost = Boolean(window.__GRAYCODE_HOST)
 
 // 扩展在生成 Webview HTML 时同步注入本次启动偏好；模块执行与 Vue 挂载无需等待 IPC。
 // 浏览器预览等非扩展环境没有注入值时，沿用后端默认的“开启”。
@@ -55,6 +58,22 @@ const splashDone = ref(false)
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
+
+if (window.__GRAYCODE_HOST) {
+  if (!isSubAgentMonitor) watch(() => chatStore.currentConversationId, conversationId => {
+    characterPresentation.conversationId = conversationId; characterPresentation.active = false
+    void sendToExtension<{ mode?: string }>('ui.conversation.focus', { conversationId }).then(result => {
+      if (characterPresentation.conversationId === conversationId) characterPresentation.active = result?.mode === 'character'
+    })
+  }, { immediate: true })
+  if (!isSubAgentMonitor) watch(() => settingsStore.currentView, view => {
+    void sendToExtension('ui.view.set', { view })
+    if (view === 'settings') void sendToExtension('ui.settings.begin', {})
+  }, { immediate: true })
+  if (!isSubAgentMonitor) watch(() => JSON.stringify(chatStore.getConversationViews()), views => {
+    void sendToExtension('ui.conversation.views', { views: JSON.parse(views) })
+  }, { immediate: true })
+}
 
 // 从 store 获取原始 Ref（Pinia 会自动解包 ref，storeToRefs 保持 Ref 不被解包）
 const { storeAttachments: storeAttachmentsRef } = storeToRefs(chatStore)
@@ -286,8 +305,46 @@ onMounted(async () => {
   // 注册必须早于 loadLanguageSettings() 的 await：语言设置加载的 IPC 往返窗口内，
   // 扩展下发的 command / taskEvent / streamChunk / retryStatus 消息不会因监听器未注册而丢失。
   disposeMessageListener = onMessageFromExtension((message: VSCodeMessage) => {
+    if (message.type === 'platformTransportResumed') {
+      void chatStore.synchronizeRemote(message.data?.authenticatedAgain === true).then(async () => {
+        const conversationId = chatStore.currentConversationId;
+        const result = await sendToExtension<{ mode?: string }>('ui.conversation.focus', { conversationId, resynchronized: true });
+        if (chatStore.currentConversationId === conversationId) { characterPresentation.conversationId = conversationId; characterPresentation.active = result?.mode === 'character'; }
+        await sendToExtension('ui.view.set', { view: settingsStore.currentView });
+        await sendToExtension('ui.conversation.views', { views: chatStore.getConversationViews() });
+      }).catch(error => {
+        chatStore.error = { code: 'RESYNC_ERROR', message: (error as Error).message }
+      })
+      return
+    }
+    if (message.type === 'platformConversationChanged') {
+      const change = message.data as { conversationId?: string; deleted?: boolean; metadataOnly?: boolean; preserveWindow?: boolean } | undefined;
+      const id = change?.conversationId;
+      if (id && change?.deleted) {
+        for (const tab of chatStore.openTabs.filter(tab => tab.conversationId === id)) chatStore.closeTab(tab.id);
+        chatStore.conversations = chatStore.conversations.filter(conversation => conversation.id !== id);
+      } else if (id) {
+        void chatStore.refreshConversationSummary(id).catch(error => { console.warn('对话摘要刷新失败', error); });
+        if (!change?.metadataOnly && id === chatStore.currentConversationId && !chatStore.isStreaming && !chatStore.isWaitingForResponse && !chatStore.isLoading)
+          void chatStore.loadHistory({ preserveWindow: change?.preserveWindow === true }).catch(error => { console.warn('消息更新失败', error); });
+      }
+      return;
+    }
     if (message.type === 'command') {
       switch (message.command) {
+        case 'platform.modeSelected':
+          if (message.data.promptModeId) void chatStore.setCurrentPromptModeId(message.data.promptModeId)
+          break
+        case 'platform.openModeConversation':
+          void chatStore.openConversationInTab(message.data.conversationId).then(() => settingsStore.showChat())
+            .catch(error => { chatStore.error = { code: 'OPEN_CONVERSATION_ERROR', message: (error as Error).message }; })
+          break
+        case 'platform.switchConversationView':
+          chatStore.switchTab(message.data.tabId); settingsStore.showChat()
+          break
+        case 'platform.closeConversationView':
+          chatStore.closeTab(message.data.tabId)
+          break
         case 'newChat':
           // initialize() 已在首个 await 前同步建立空白标签页，初始化期间可立即执行。
           // 不得挂起到 initialize 完成：BackendHost 尚未就绪时初始化可能长期等待，
@@ -419,8 +476,10 @@ onBeforeUnmount(() => {
     
     <!-- 聊天视图 - 使用 v-show 避免销毁组件，保持滚动位置 -->
     <div v-show="languageLoaded && settingsStore.currentView === 'chat'" class="chat-view">
+      <header v-if="isDesktopHost" class="conversation-heading"><span>{{ chatStore.currentConversation?.title || '新对话' }}</span></header>
       <!-- 多对话标签页栏 -->
       <ConversationTabs
+        v-if="!isDesktopHost"
         :tabs="chatStore.openTabs"
         :active-tab-id="chatStore.activeTabId"
         @switch-tab="chatStore.switchTab"
@@ -515,6 +574,7 @@ onBeforeUnmount(() => {
       <BackgroundTaskBar />
 
       <!-- 输入区域：语言就绪后按需加载渠道；不等待完整聊天/历史初始化 -->
+      <AsyncQuestions v-if="isDesktopHost" :conversation-id="chatStore.currentConversationId" />
       <InputArea
         v-if="languageLoaded"
         :attachments="attachments"
@@ -580,6 +640,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
   position: relative;
 }
+.conversation-heading { min-height: 44px; display: flex; align-items: center; border-bottom: 1px solid var(--gc-border-subtle); padding: 10px 20px; font-size: 13px; font-weight: 500; flex-shrink: 0; }
+.conversation-heading span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 自动总结提示（显示在聊天区域底部） */
 .auto-summary-panel {

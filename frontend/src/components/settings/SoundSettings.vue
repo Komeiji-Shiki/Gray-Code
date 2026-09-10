@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
@@ -502,6 +503,7 @@ onBeforeUnmount(() => {
     testMessageTimer = null
   }
 })
+useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </script>
 
 <template>

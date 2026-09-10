@@ -1,3 +1,4 @@
+import { migrateLimCodeExport } from './legacyExport';
 /**
  * GrayCode - 设置导出/导入器
  *
@@ -183,41 +184,7 @@ export class SettingsExporter {
      * - 版本标记 limcodeVersion → graycodeVersion
      */
     private migrateFromLimCode(obj: Record<string, unknown>): void {
-        // 检测是否为旧 LimCode 格式
-        if (!obj.limcodeVersion || typeof obj.limcodeVersion !== 'string') {
-            return; // 不是旧格式，无需迁移
-        }
-
-        // 1. 迁移 VSCode 设置键名
-        if (obj.vscodeSettings && typeof obj.vscodeSettings === 'object') {
-            const settings = obj.vscodeSettings as Record<string, unknown>;
-            const migrated: Record<string, unknown> = {};
-            for (const [key, value] of Object.entries(settings)) {
-                if (key.startsWith('limcode.')) {
-                    migrated[key.replace('limcode.', 'graycode.')] = value;
-                } else {
-                    migrated[key] = value;
-                }
-            }
-            obj.vscodeSettings = migrated;
-        }
-
-        // 2. 迁移 Skills source 标记
-        if (Array.isArray(obj.skills)) {
-            for (const skill of obj.skills) {
-                if (skill && typeof skill === 'object') {
-                    if ((skill as any).source === 'user-limcode') {
-                        (skill as any).source = 'user-graycode';
-                    } else if ((skill as any).source === 'project-limcode') {
-                        (skill as any).source = 'project-graycode';
-                    }
-                }
-            }
-        }
-
-        // 3. 迁移版本标记
-        obj.graycodeVersion = obj.limcodeVersion;
-        delete obj.limcodeVersion;
+        migrateLimCodeExport(obj);
     }
 
     /**

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
@@ -6,6 +7,8 @@ import { useI18n } from '@/i18n'
 import { useSettingsStore } from '@/stores'
 import type { SmoothMode } from '@/utils/smoothStream'
 import { CustomSwitch } from '@/components/common'
+import PlatformAppearanceSettings from './PlatformAppearanceSettings.vue'
+const desktopHost = Boolean(window.__GRAYCODE_HOST)
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -126,10 +129,12 @@ async function resetToDefault() {
 onMounted(() => {
   loadConfig()
 })
+useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </script>
 
 <template>
   <div class="appearance-settings">
+    <PlatformAppearanceSettings v-if="desktopHost" />
     <div v-if="isLoading" class="loading">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
       <span>{{ t('common.loading') }}</span>

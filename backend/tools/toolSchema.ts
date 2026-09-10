@@ -39,8 +39,8 @@ export interface PropertySchema {
 /**
  * 工具参数根 schema（Gemini Function Calling 格式的 parameters 字段）。
  */
-export interface ToolParameterSchema {
+export type ToolParameterSchema = {
     type: 'object';
     properties: Record<string, PropertySchema>;
     required?: string[];
-}
+};

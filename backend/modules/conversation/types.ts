@@ -81,6 +81,14 @@ export interface ChannelTokenCounts {
  * Gemini API 的标准消息格式
  */
 export interface Content {
+    /** 预设中的临时消息位置，不作为模型接口字段发送。 */
+    promptAnchor?: { messageId?: string; edge: 'before' | 'after'; order: number };
+    characterTurn?: unknown;
+    characterMode?: boolean;
+    characterOriginalParts?: ContentPart[];
+    characterDisplayParts?: ContentPart[];
+    characterStages?: unknown;
+    characterDisplayStages?: unknown;
     /** 角色 */
     role: 'user' | 'model' | 'system';
     /** 内容片段列表 */
@@ -134,6 +142,8 @@ export interface Content {
 
     /** 仅总结消息存在；描述主上下文压缩效果，不是总结模型请求用量。 */
     summaryTokenStats?: SummaryTokenStats;
+    /** 摘要正文由用户编辑的时间，原生成时间和压缩范围仍保留。 */
+    summaryEditedAt?: number;
 
     /**
      * usageMetadata 是否来自未终结的流（被用户取消/网络中断时截断的半截数据）。
@@ -227,6 +237,13 @@ export interface Content {
      * - 可以展开查看完整总结
      */
     isSummary?: boolean;
+    /** 常规总结与笔记换窗口的边界；缺省为旧的部分历史总结。 */
+    contextMethod?: 'summary' | 'notes';
+    contextWindowId?: string;
+    /** 内部控制提醒不改变真实用户回合，也不代表一条摘要边界。 */
+    contextControl?: 'reminder' | 'summary_request';
+    /** 本边界实际覆盖的活跃消息，包含被替代的上一条摘要。 */
+    summarizedMessageIds?: string[];
     
     /**
      * 总结消息覆盖的消息数量

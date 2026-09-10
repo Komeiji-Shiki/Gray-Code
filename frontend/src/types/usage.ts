@@ -48,6 +48,7 @@ export interface DailyUsage extends UsageBucket {
 }
 
 export interface UsageStatsResult {
+  readErrors?: Record<string, string>
   totals: UsageBucket & {
     /** 参与统计的对话数 */
     conversations: number

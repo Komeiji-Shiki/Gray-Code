@@ -164,7 +164,8 @@ export async function deleteSingleMessage(
   try {
     const response = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES.deleteSingleMessage, {
       conversationId: originConvId,
-      targetIndex: backendIndex
+      targetIndex: backendIndex,
+      ...(window.__GRAYCODE_HOST ? { messageId: removedMessageId } : {})
     })
 
     // 再次校验归属

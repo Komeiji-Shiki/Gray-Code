@@ -1,3 +1,4 @@
+import { insertAnchoredPromptMessages } from '../../prompt/anchoredContext';
 /**
  * GrayCode - 格式转换器基类
  * 
@@ -181,17 +182,8 @@ export abstract class BaseFormatter {
      * @returns 清理后的历史消息
      */
     protected cleanInternalFields(history: Content[]): Content[] {
-        return history.map(content => {
-            const {
-                isUserInput,
-                source,
-                foregroundWorkTransition,
-                turnDynamicContext,
-                turnDynamicContextStrategy,
-                ...rest
-            } = content;
-            return rest;
-        });
+        // 原生请求只携带消息内容；耗时、用量、界面正文和上下文控制字段均属于宿主。
+        return history.map(content => ({ role: content.role, parts: content.parts }));
     }
 
     /**
@@ -250,6 +242,17 @@ export abstract class BaseFormatter {
     }
 
     protected injectPromptContextMessages(
+        history: Content[], promptContext?: RequestPromptContext, strategy: 'single' | 'preserve' = 'single', options?: PromptContextInjectionOptions
+    ): Content[] {
+        const anchors = [...promptContext?.beforeHistoryMessages ?? [], ...promptContext?.afterHistoryMessages ?? []].filter(message => message.promptAnchor);
+        const context = promptContext ? { ...promptContext,
+            beforeHistoryMessages: promptContext.beforeHistoryMessages.filter(message => !message.promptAnchor),
+            afterHistoryMessages: promptContext.afterHistoryMessages.filter(message => !message.promptAnchor),
+        } : undefined;
+        return insertAnchoredPromptMessages(this.injectUnanchoredPromptContextMessages(history, context, strategy, options), anchors);
+    }
+
+    private injectUnanchoredPromptContextMessages(
         history: Content[],
         promptContext?: RequestPromptContext,
         strategy: 'single' | 'preserve' = 'single',
@@ -288,6 +291,7 @@ export abstract class BaseFormatter {
 
     private injectPreservedDynamicSnapshots(history: Content[], stripThoughtParts: boolean): Content[] {
         const result: Content[] = [];
+        const anchors: Content[] = [];
         const currentTurnStartIndex = this.findCurrentTurnStartIndex(history);
         for (let i = 0; i < history.length; i++) {
             const message = history[i];
@@ -300,7 +304,9 @@ export abstract class BaseFormatter {
                 !!message.turnDynamicContext;
 
             if (isHistoricalPreservedTurn) {
-                const snapshotMessages = this.createDynamicContextMessagesFromCache(message.turnDynamicContext!);
+                const cached = this.createDynamicContextMessagesFromCache(message.turnDynamicContext!);
+                anchors.push(...cached.filter(item => item.promptAnchor));
+                const snapshotMessages = cached.filter(item => !item.promptAnchor);
                 // preserve 回插的快照与直发路径共用同一开关语义：未显式开启
                 // 「发送历史思考内容」时剥离 thought part，保证同一消息在
                 // 当前轮/历史轮字节一致，不重写提示词前缀缓存。
@@ -314,7 +320,7 @@ export abstract class BaseFormatter {
             result.push(message);
         }
 
-        return result;
+        return insertAnchoredPromptMessages(result, anchors);
     }
 
     /**
@@ -349,7 +355,7 @@ export abstract class BaseFormatter {
  * Gray-code 的工具 schema 是手写的，大部分没有此字段，
  * 所以在 formatter 层面统一注入，避免逐个修改工具文件。
  */
-export function ensureStrictSchema<T extends Record<string, any>>(schema: T): T {
+export function ensureStrictSchema<T extends Record<string, any>>(schema: T, requireAllProperties = false): T {
     if (!schema || typeof schema !== 'object') {
         return schema;
     }
@@ -357,24 +363,41 @@ export function ensureStrictSchema<T extends Record<string, any>>(schema: T): T 
     const result: any = { ...schema };
 
     // 当前层是 object 类型时，注入 additionalProperties: false
-    if (result.type === 'object' && result.properties) {
+    if (result.type === 'object' && (result.properties || requireAllProperties)) {
+        if (requireAllProperties && result.additionalProperties !== undefined && result.additionalProperties !== false) {
+            throw new Error('Strict mode cannot preserve a schema that accepts arbitrary object keys.');
+        }
         if (result.additionalProperties === undefined) {
+            if (requireAllProperties && !result.properties) {
+                throw new Error('Strict mode needs explicit object properties; arbitrary dictionaries cannot be preserved.');
+            }
             result.additionalProperties = false;
         }
+        if (requireAllProperties && !result.properties) { result.properties = {}; result.required = []; }
     }
 
     // 递归处理 properties 中的每个属性
     if (result.properties) {
         const newProps: Record<string, any> = {};
         for (const [key, prop] of Object.entries(result.properties)) {
-            newProps[key] = ensureStrictSchema(prop as Record<string, any>);
+            const next = ensureStrictSchema(prop as Record<string, any>, requireAllProperties);
+            newProps[key] = requireAllProperties && !(schema.required ?? []).includes(key)
+                ? { anyOf: [next, { type: 'null' }] } : next;
         }
         result.properties = newProps;
+        if (requireAllProperties) result.required = Object.keys(newProps);
     }
 
     // 递归处理 items（array 类型的元素定义）
     if (result.items && typeof result.items === 'object') {
-        result.items = ensureStrictSchema(result.items);
+        result.items = ensureStrictSchema(result.items, requireAllProperties);
+    }
+
+    for (const keyword of ['anyOf', 'oneOf', 'allOf']) {
+        if (Array.isArray(result[keyword])) result[keyword] = result[keyword].map(item => ensureStrictSchema(item, requireAllProperties));
+    }
+    for (const keyword of ['$defs', 'definitions']) {
+        if (result[keyword]) result[keyword] = Object.fromEntries(Object.entries(result[keyword]).map(([key, value]) => [key, ensureStrictSchema(value as Record<string, any>, requireAllProperties)]));
     }
 
     return result;

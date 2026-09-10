@@ -7,6 +7,7 @@ type CardStatus = 'pending' | 'running' | 'success' | 'error'
 
 const props = withDefaults(defineProps<{
   title: string
+  openable?: boolean
   subtitle?: string
   icon?: string // codicon class, e.g. "codicon-hubot"
   status?: CardStatus
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<{
   defaultExpanded: false
 })
 
+const emit = defineEmits<{ open: [] }>()
 const slots = useSlots()
 const expanded = ref(!!props.defaultExpanded)
 
@@ -67,9 +69,9 @@ const statusClass = computed(() => {
     <button
       class="card-header"
       type="button"
-      :disabled="!hasExpanded"
+      :disabled="!hasExpanded && !openable"
       :title="hasExpanded ? '' : undefined"
-      @click="hasExpanded && toggleExpanded()"
+      @click="openable ? emit('open') : hasExpanded && toggleExpanded()"
     >
       <div class="header-left">
         <i v-if="icon" :class="['codicon', icon, 'header-icon']"></i>

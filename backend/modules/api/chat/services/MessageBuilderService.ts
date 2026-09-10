@@ -10,7 +10,7 @@
 import type { ContentPart } from '../../../conversation/types';
 import type { GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
-import { getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
+import { getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/shared/multimodal';
 import type { AttachmentData } from '../types';
 
 /**

@@ -20,7 +20,7 @@ import * as path from 'path';
 import { ConversationBranchGraph, BranchRetentionConfig, isBranchGraphShape } from './types';
 import { BranchError } from './types';
 import { migrateBranchGraph } from './BranchMigration';
-import { withHangTimeout } from '../storage';
+import { withHangTimeout } from '../storageWriteQueues';
 
 /** 读取结果：损坏或不可读时 graph 为 null 并带 errorCode，由调用方降级线性模式 */
 export interface BranchGraphReadResult {

@@ -11,7 +11,8 @@
  */
 
 import { MESSAGE_NAMES, type CancelStreamResponse, type ForegroundWorkTransition } from '@shared/protocol'
-import type { Message, Attachment } from '../../../types'
+import { contentToMessageEnhanced } from '../parsers'
+import type { Content, Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
 import { generateId } from '../../../utils/format'
@@ -555,7 +556,7 @@ export async function sendMessage(
         }))
       : undefined
 
-    const streamResult = await sendToExtension<{ success?: boolean }>(MESSAGE_NAMES.chatStream, {
+    const streamResult = await sendToExtension<{ success?: boolean; userContent?: Content }>(MESSAGE_NAMES.chatStream, {
       conversationId: targetConvId,
       configId: effectiveConfigId,
       message: messageText,
@@ -596,6 +597,10 @@ export async function sendMessage(
       return targetTabStillOpen
     }
 
+    if (streamResult?.userContent && pendingUserMessageId) {
+      const index = state.allMessages.value.findIndex(message => message.id === pendingUserMessageId)
+      if (index >= 0) replaceMessageAt(state, index, { ...state.allMessages.value[index], ...contentToMessageEnhanced(streamResult.userContent) })
+    }
   } catch (err: any) {
     // 独立于 isStreaming 判断是否取消：取消瞬间 isStreaming 已被 cancelStream 清除，
     // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉。

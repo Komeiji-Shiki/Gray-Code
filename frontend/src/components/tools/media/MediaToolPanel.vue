@@ -240,7 +240,7 @@ async function saveImage(imageData: MultimodalData, path: string) {
   saveError.value = ''
 
   try {
-    const payload: Record<string, unknown> = { path }
+    const payload: Record<string, unknown> = { path, conversationId: chatStore.currentConversationId }
     payload.data = imageData.data
     payload.mimeType = imageData.mimeType
     const result = await sendToExtension(MESSAGE_NAMES.saveImageToPath, payload) as { success: boolean; error?: string }
@@ -265,7 +265,7 @@ async function saveImage(imageData: MultimodalData, path: string) {
 // 在 VSCode 中打开图片
 async function openImageInVSCode(path: string) {
   try {
-    await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path })
+    await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path, conversationId: chatStore.currentConversationId })
   } catch (err) {
     console.error('打开文件失败:', err)
     await showNotification(`${tk('openFileFailed')} ${path}`, 'error')
@@ -288,7 +288,7 @@ async function handleCancel() {
     if (toolId) {
       const channel = props.cancelChannel ?? 'task.cancel'
       const idField = props.cancelIdField ?? 'taskId'
-      const result = await sendToExtension(channel, { [idField]: toolId }) as {
+      const result = await sendToExtension(channel, { [idField]: toolId, conversationId: chatStore.currentConversationId }) as {
         success: boolean
         error?: string
       }

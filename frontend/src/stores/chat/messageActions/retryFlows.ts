@@ -23,7 +23,7 @@ import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { contentToMessageEnhanced } from '../parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage } from '../state'
+import { rebuildMessageIndexById, appendMessage, replaceMessageAt } from '../state'
 import { translate } from '../../../composables/useI18n'
 import { useSettingsStore } from '../../settingsStore'
 import {
@@ -46,6 +46,15 @@ export function isEmptyAssistantPlaceholder(msg: Message | undefined): boolean {
 
 export function isLocalOnlyAssistant(msg: Message | undefined): boolean {
   return !!msg && msg.role === 'assistant' && msg.localOnly === true
+}
+
+function applyEditedUserContent(state: ChatStoreState, conversationId: string, originalId: string, text: string, content?: Content): void {
+  if (!content || !validateSessionIdentity(state, conversationId)) return
+  const index = state.allMessages.value.findIndex(message => message.id === content.id || message.id === originalId && message.content === text)
+  if (index < 0) return
+  // 使用已保存的附件标识、角色显示内容和稳定节点 ID，保留当前窗口的后端索引。
+  const current = state.allMessages.value[index]
+  replaceMessageAt(state, index, { ...current, ...contentToMessageEnhanced(content), backendIndex: current.backendIndex })
 }
 
 /**
@@ -459,7 +468,7 @@ async function replayBranchStreamAfterError(
         deepSeekVisionTileSplit: context.deepSeekVisionTileSplit
       })
     } else {
-      await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
+      const result = await sendToExtension<{ userContent?: Content }>(MESSAGE_NAMES['chat.editBranchStream'], {
         conversationId: originConvId,
         // 流式失败后编辑候选仍在活跃路径；省略 ID 让后端选择当前活跃 user 尾节点。
         ...(isStreamLevelFailure ? {} : { userNodeId: context.userNodeId }),
@@ -474,6 +483,7 @@ async function replayBranchStreamAfterError(
         // 重放保持原请求的拆分/压缩选择
         deepSeekVisionTileSplit: context.deepSeekVisionTileSplit
       })
+      applyEditedUserContent(state, originConvId, context.userNodeId, context.newText, result?.userContent)
     }
   } catch (err: any) {
     const branchReplayContext = context
@@ -723,7 +733,7 @@ export async function editAndRetry(
     // TREE-03：主流程走 chat.editBranchStream——后端创建编辑候选（新 user 节点），
     // 原消息及其子树保留进分支图 sidecar（决策 7/10：不覆盖原消息、失败可切回）。
     // 附件随请求透传（后端 buildEditUserParts 重建 parts 的 inlineData；缺省时后端保留原消息附件）。
-    await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
+    const result = await sendToExtension<{ userContent?: Content }>(MESSAGE_NAMES['chat.editBranchStream'], {
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,
@@ -742,6 +752,7 @@ export async function editAndRetry(
       // 编辑对话框的拆分/压缩选择（undefined 时后端默认拆分）
       deepSeekVisionTileSplit
     })
+    applyEditedUserContent(state, originConvId, targetMessageId, newMessage, result?.userContent)
   } catch (err: any) {
     const branchReplayContext = replayContext
     if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {

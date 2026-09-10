@@ -55,6 +55,8 @@ const props = withDefaults(defineProps<{
   /** Enter 键行为：true=Enter 发送（Shift+Enter 换行）；false=Enter 换行 */
   submitOnEnter?: boolean
 }>(), {
+  minRows: 2,
+  maxRows: 8,
   submitOnEnter: true
 })
 
@@ -80,7 +82,7 @@ const emit = defineEmits<{
 }>()
 
 const editorRef = ref<HTMLDivElement>()
-const currentRows = ref(props.minRows || 4)
+const currentRows = ref(props.minRows)
 
 // 调整高度时的检测状态
 const cachedLineHeight = ref(0)
@@ -176,7 +178,7 @@ function getEditorHeightBounds(editor: HTMLElement) {
     cachedLineHeight.value = parseInt(getComputedStyle(editor).lineHeight) || 20
   }
 
-  const minRows = props.minRows || 4
+  const minRows = props.minRows
   const minHeight = minRows * cachedLineHeight.value
   const maxHeight = Math.max(minHeight, Math.floor(window.innerHeight * 0.72))
   return { minHeight, maxHeight }
@@ -186,8 +188,8 @@ function adjustHeight() {
   if (!editorRef.value) return
 
   const editor = editorRef.value
-  const minRows = props.minRows || 4
-  const maxRows = props.maxRows || 8
+  const minRows = props.minRows
+  const maxRows = props.maxRows
 
   if (!cachedLineHeight.value) {
     cachedLineHeight.value = parseInt(getComputedStyle(editor).lineHeight) || 20

@@ -75,7 +75,7 @@ export class McpManager {
     /** 连接/刷新抽离服务所共享的依赖（供 mcpConnection / mcpListRefresh 使用） */
     private readonly connectionDeps: McpConnectionDeps;
 
-    constructor(storageAdapter: McpStorageAdapter) {
+    constructor(storageAdapter: McpStorageAdapter, private readonly options: { connections?: boolean } = {}) {
         this.storageAdapter = storageAdapter;
 
         // 构建连接/刷新服务共享依赖：通过箭头函数绑定私有方法，避免把私有状态暴露给
@@ -130,6 +130,7 @@ export class McpManager {
      * 获取需要自动连接的服务器列表
      */
     getServersToAutoConnect(): string[] {
+        if (this.options.connections === false) return [];
         const serverIds: string[] = [];
         for (const [serverId, info] of this.servers) {
             if (info.config.enabled && info.config.autoConnect && info.status === 'disconnected') {
@@ -151,6 +152,8 @@ export class McpManager {
         for (const [serverId, info] of this.servers) {
             const newConfig = configMap.get(serverId);
             if (newConfig) {
+                if ((!newConfig.enabled || transportConfigChanged(info.config.transport, newConfig.transport)) &&
+                    (info.status === 'connected' || info.status === 'connecting')) await this.disconnect(serverId);
                 info.config = newConfig;
                 configMap.delete(serverId);
             } else {
@@ -179,6 +182,14 @@ export class McpManager {
                 config,
                 status: 'disconnected'
             });
+        }
+    }
+
+    /** Apply a committed settings snapshot; editing a draft never changes live connections. */
+    async synchronizeConfigs(): Promise<void> {
+        await this.reloadFromStorage();
+        for (const id of this.getServersToAutoConnect()) {
+            void this.connect(id).catch(error => console.warn(`[MCP] Auto-connect failed for ${id}:`, error));
         }
     }
 
@@ -263,7 +274,7 @@ export class McpManager {
             });
             
             // 如果启用了自动连接，立即尝试连接
-            if (config.enabled && config.autoConnect) {
+            if (this.options.connections !== false && config.enabled && config.autoConnect) {
                 // 异步连接，不阻塞创建流程；失败至少记录（serverId 与原因可观测）
                 this.connect(config.id).catch(e => {
                     console.warn(`[MCP] Auto-connect failed for ${config.id} after create:`, e);
@@ -462,6 +473,7 @@ export class McpManager {
      * - 每次连接分配递增代际号，旧连接的 catch/exit/error 回调不会影响新连接
      */
     async connect(serverId: string): Promise<void> {
+        if (this.options.connections === false) throw new Error('MCP settings drafts cannot start connections.');
         // 只读目标服务器配置（支持手动编辑配置文件的情况）：
         // 不再全量 reloadFromStorage（多服务器时避免每次连接都枚举全部配置）
         const storedConfig = await this.storageAdapter.getConfig(serverId);

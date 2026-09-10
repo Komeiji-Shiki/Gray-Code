@@ -11,10 +11,10 @@ import * as crypto from 'crypto';
 import { createReadStream } from 'fs';
 
 /** 流式计算文件 MD5（不整文件读入内存） */
-export async function hashFileStreaming(filePath: string): Promise<string> {
+export async function hashFileStreaming(filePath: string, signal?: AbortSignal): Promise<string> {
     const hash = crypto.createHash('md5');
     await new Promise<void>((resolve, reject) => {
-        const stream = createReadStream(filePath);
+        const stream = createReadStream(filePath, { signal });
         stream.on('error', reject);
         stream.on('data', chunk => hash.update(chunk));
         stream.on('end', () => resolve());

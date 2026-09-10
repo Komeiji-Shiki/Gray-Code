@@ -9,7 +9,7 @@ import { getCurrentInstance, type Component, type ComponentPublicInstance } from
 import type { ToolUsage } from '../../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../../utils/toolRegistry'
 import { useChatStore } from '../../../stores'
-import { showNotification } from '../../../utils/vscode'
+import { showNotification, sendToExtension } from '../../../utils/vscode'
 import { useI18n } from '../../../i18n'
 import DiffActionList from './DiffActionList.vue'
 import type { PendingDiffView } from './types'
@@ -17,7 +17,7 @@ import type { PendingDiffView } from './types'
 const { t } = useI18n()
 const chatStore = useChatStore()
 
-defineProps<{
+const props = defineProps<{
   tool: ToolUsage
   isExpanded: boolean
   isExpandable: boolean
@@ -40,6 +40,16 @@ const emit = defineEmits<{
 const instanceId = getCurrentInstance()?.uid ?? 0
 const contentId = `gc-tool-content-${instanceId}`
 const streamingPreviewId = `gc-tool-streaming-${instanceId}`
+
+async function activateTool() {
+  if (window.__GRAYCODE_HOST && props.tool.name === 'subagents') {
+    const result = props.tool.result as { data?: { runId?: string } } | undefined;
+    try { await sendToExtension('subagents.openMonitor', { runId: result?.data?.runId, toolId: props.tool.id, conversationId: chatStore.currentConversationId }); }
+    catch (error) { await showNotification((error as Error).message, 'warning'); }
+    return;
+  }
+  if (props.isExpandable) emit('toggle');
+}
 
 function getToolStatusLabel(tool: ToolUsage): string {
   if (tool.awaitingConfirmation || tool.status === 'awaiting_approval') {
@@ -231,7 +241,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
         :class="['tool-summary', { 'tool-summary-static': !isExpandable }]"
         :aria-expanded="isExpandable ? isExpanded : undefined"
         :aria-controls="isExpandable ? contentId : undefined"
-        @click="isExpandable && emit('toggle')"
+        @click="activateTool"
       >
         <div class="tool-info">
           <span
@@ -374,7 +384,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   display: flex;
   align-items: center;
   gap: var(--gc-space-2);
-  padding: var(--gc-space-2) var(--gc-space-3);
+  padding: var(--gc-space-1) var(--gc-space-2);
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
@@ -387,7 +397,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--gc-space-1);
+  gap: 2px;
   padding: 0;
   border: 0;
   color: inherit;

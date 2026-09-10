@@ -327,8 +327,10 @@ export class CheckpointIgnoreResolver {
      */
     async collectEntries(
         currentDir: string = this.rootDir,
-        result: CheckpointSnapshotEntries = { files: [], dirs: [], excluded: [] }
+        result: CheckpointSnapshotEntries = { files: [], dirs: [], excluded: [] },
+        signal?: AbortSignal
     ): Promise<CheckpointSnapshotEntries> {
+        signal?.throwIfAborted();
         const relativeDir = currentDir === this.rootDir
             ? ''
             : normalizeCheckpointPath(path.relative(this.rootDir, currentDir));
@@ -356,6 +358,7 @@ export class CheckpointIgnoreResolver {
             const subDirectories: Array<{ fullPath: string; idx: number }> = [];
 
             for (const entry of entries) {
+                signal?.throwIfAborted();
                 const fullPath = path.join(currentDir, entry.name);
                 const relativePath = normalizeCheckpointPath(path.relative(this.rootDir, fullPath));
                 const isDirectory = entry.isDirectory();
@@ -397,7 +400,7 @@ export class CheckpointIgnoreResolver {
             if (subDirectories.length > 0) {
                 const subResults: Array<CheckpointSnapshotEntries | undefined> = new Array(subDirectories.length);
                 await runBounded(subDirectories, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ fullPath, idx }) => {
-                    subResults[idx] = await this.collectEntries(fullPath, { files: [], dirs: [], excluded: [] });
+                    subResults[idx] = await this.collectEntries(fullPath, { files: [], dirs: [], excluded: [] }, signal);
                 });
                 for (const sub of subResults) {
                     if (!sub) continue;

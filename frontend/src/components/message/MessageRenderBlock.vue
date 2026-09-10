@@ -20,11 +20,13 @@ import { useI18n } from '../../i18n'
 import ToolMessage from './ToolMessage.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
 import { MarkdownRenderer } from '../common'
+import CharacterText from '../character/CharacterText.vue'
 import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
 const { t } = useI18n()
 
 const props = defineProps<{
+  characterMode?: boolean
   block: RenderBlock
   /** 消息 ID；仅活动思维 CharFlow 注册时需要 */
   messageId?: string
@@ -425,6 +427,7 @@ onUnmounted(releaseThoughtDisplay)
     :content="block.text || ''"
   />
 
+  <CharacterText v-else-if="block.type === 'text' && characterMode" :content="block.text || ''" :streaming="isStreaming" :user="messageRole === 'user'" />
   <!-- 文本块（Markdown 渲染） -->
   <MarkdownRenderer
     v-else-if="block.type === 'text'"

@@ -7,6 +7,9 @@
  */
 
 import type * as vscode from 'vscode';
+import { setProductVersionResolver } from './productIdentity';
+
+setProductVersionResolver(getProductVersion);
 
 export interface ProductMetadata {
     name: string;
@@ -24,7 +27,7 @@ const FALLBACK_METADATA: ProductMetadata = {
  * 对外部 HTTP API 请求默认携带的 User-Agent，向服务端标识请求来源为 GrayCode 扩展。
  * channel 代理请求（proxyFetch）与 MCP HTTP 客户端共用，避免各模块散落硬编码。
  */
-export const PRODUCT_USER_AGENT = 'GrayCode';
+export { PRODUCT_USER_AGENT } from './productIdentity';
 
 /** 兜底扩展 id：仅当 initializeProductMetadata 未执行（懒加载/测试路径）时使用 */
 const FALLBACK_EXTENSION_ID = 'Komeiji-Shiki.graycode';

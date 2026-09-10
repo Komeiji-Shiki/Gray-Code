@@ -255,6 +255,18 @@ export function restoreSummarizedRange(
         return { contents: cloned, restoredCount: 0 };
     }
 
+    // 新边界按实际覆盖的消息 ID 恢复，上一条被替换的摘要也恢复活跃。
+    const summary = cloned[summaryIndex];
+    if (summary.contextMethod && summary.summarizedMessageIds) {
+        const ids = new Set(summary.summarizedMessageIds);
+        let restoredCount = 0;
+        for (const message of cloned) if (ids.has(message.id!) && message.isSummarized) {
+            delete message.isSummarized;
+            restoredCount++;
+        }
+        return { contents: cloned, restoredCount };
+    }
+
     // 覆盖区间起点 = 该总结之前最近的总结消息之后（无更早总结则从 0 开始）
     let rangeStart = 0;
     for (let i = summaryIndex - 1; i >= 0; i--) {

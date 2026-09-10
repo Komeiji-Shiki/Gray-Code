@@ -242,6 +242,8 @@ export interface GlobalSettings {
              * - silky: 丝滑（lookahead 450ms）
              */
             smoothStreaming?: 'off' | 'smooth' | 'balanced' | 'silky';
+            /** 是否显示输入区的 TPS 状态条，未设置时沿用界面默认行为。 */
+            tpsBarEnabled?: boolean;
 
             /**
              * 兼容旧版：是否启用选中文本悬浮入口

@@ -32,6 +32,7 @@ import {
     BUILTIN_MODE_TOOL_POLICIES
 } from './types';
 import { SettingsCore } from './SettingsCore';
+import { migratePromptPreset } from '../../../shared/promptPresetMigration';
 
 /**
  * 系统提示词配置服务
@@ -55,112 +56,27 @@ export class PromptSettingsService {
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
         const config = this.core.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
 
-        // 情况1：没有 modes 字段（老版本）
-        if (!config.modes) {
-            // 返回前整体深拷贝：modes 内的内置模式对象（DESIGN_PROMPT_MODE 等）是模块级
-            // 常量活引用，浅展开会让调用方原地修改污染全局默认值（与情况 2 的 cloneConfig 约定一致）
-            return this.core.cloneConfig({
-                ...config,
-                currentModeId: DEFAULT_MODE_ID,
-                dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy),
-                modes: {
-                    [DEFAULT_MODE_ID]: {
-                        ...CODE_PROMPT_MODE,
-                        // 保留用户原有的模板配置
-                        template: config.template || CODE_PROMPT_MODE.template,
-                        dynamicTemplateEnabled: config.dynamicTemplateEnabled ?? CODE_PROMPT_MODE.dynamicTemplateEnabled,
-                        dynamicTemplate: config.dynamicTemplate || CODE_PROMPT_MODE.dynamicTemplate,
-                        dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy)
-                    },
-                    [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
-                    [PLAN_MODE_ID]: PLAN_PROMPT_MODE,
-                    [ASK_MODE_ID]: ASK_PROMPT_MODE,
-                    [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE
-                }
-            });
+        const modes = { ...(config.modes ?? {
+            [DEFAULT_MODE_ID]: { ...CODE_PROMPT_MODE, template: config.template ?? CODE_PROMPT_MODE.template,
+                dynamicTemplateEnabled: config.dynamicTemplateEnabled ?? true,
+                dynamicTemplate: config.dynamicTemplate ?? CODE_PROMPT_MODE.dynamicTemplate }
+        }) };
+        for (const builtin of [DESIGN_PROMPT_MODE, PLAN_PROMPT_MODE, ASK_PROMPT_MODE, REVIEW_PROMPT_MODE]) {
+            if (!modes[builtin.id]) modes[builtin.id] = builtin;
         }
-        
-        // 情况2：已有 modes，补齐缺失的内置模式，并同步内置模式的 toolPolicy
-        const modes = { ...config.modes };
-        let needsUpdate = false;
-        
-        // 补齐缺失的内置模式（不覆盖已有配置）
-        if (!modes[DESIGN_MODE_ID]) {
-            modes[DESIGN_MODE_ID] = DESIGN_PROMPT_MODE;
-            needsUpdate = true;
+        for (const [id, mode] of Object.entries(modes)) {
+            const migrated = migratePromptPreset(mode, config.dynamicTemplate);
+            modes[id] = { ...migrated, promptEntries: this.normalizePromptEntries(migrated.promptEntries, 'entries') };
         }
-        
-        if (!modes[PLAN_MODE_ID]) {
-            modes[PLAN_MODE_ID] = PLAN_PROMPT_MODE;
-            needsUpdate = true;
-        }
-        
-        if (!modes[ASK_MODE_ID]) {
-            modes[ASK_MODE_ID] = ASK_PROMPT_MODE;
-            needsUpdate = true;
-        }
-
-        if (!modes[REVIEW_MODE_ID]) {
-            modes[REVIEW_MODE_ID] = REVIEW_PROMPT_MODE;
-            needsUpdate = true;
-        }
-
-        // 内置模式的 toolPolicy 不再在 getter 中强制回滚。
-        // 迁移由 migratePromptModeToolPolicies() 显式处理，
-        // 运行时由 normalizePromptModeSnapshot() 按 toolPolicyCustomized 标记回退。
-
-        const dynamicContextStrategy = this.normalizeDynamicContextStrategy(config.dynamicContextStrategy);
-        for (const [modeId, mode] of Object.entries(modes)) {
-            const normalizedMode = this.normalizePromptModeSnapshot(mode);
-            if (
-                mode.promptAssemblyMode !== normalizedMode.promptAssemblyMode ||
-                !this.promptEntriesEqual(normalizedMode.promptEntries, Array.isArray(mode.promptEntries) ? mode.promptEntries : undefined)
-            ) {
-                modes[modeId] = {
-                    ...mode,
-                    promptAssemblyMode: normalizedMode.promptAssemblyMode,
-                    ...(normalizedMode.promptEntries ? { promptEntries: normalizedMode.promptEntries } : {})
-                };
-                if (!normalizedMode.promptEntries) delete (modes[modeId] as any).promptEntries;
-                needsUpdate = true;
-            }
-            if (mode.dynamicContextStrategy !== undefined) {
-                const normalizedModeStrategy = this.normalizeDynamicContextStrategy(mode.dynamicContextStrategy);
-                if (mode.dynamicContextStrategy !== normalizedModeStrategy) {
-                    modes[modeId] = {
-                        ...modes[modeId],
-                        dynamicContextStrategy: normalizedModeStrategy
-                    };
-                    needsUpdate = true;
-                }
-            }
-        }
-        
-        if (needsUpdate) {
-            // 与 needsUpdate=false 分支同一约定：返回前整体深拷贝。
-            // 注意 modes 只是 {...config.modes} 的浅拷贝，未发生归一化的 mode 仍是存储活引用，
-            // 不深拷贝的话调用方原地修改同样会污染未保存的设置状态。
-            return this.core.cloneConfig({
-                ...config,
-                modes,
-                dynamicContextStrategy
-            });
-        }
-
-        // 修改原因：浅展开返回的 modes 内 mode 对象仍是存储活引用
-        // （this.core.settings.toolsConfig 直接持有），调用方原地修改会污染未保存的设置状态。
-        // 修改方式：返回前整体深拷贝，返回结构不变（与 getSettings 的深拷贝约定一致）。
-        return this.core.cloneConfig({
-            ...config,
-            dynamicContextStrategy
-        });
+        return this.core.cloneConfig({ ...config, currentModeId: config.currentModeId || DEFAULT_MODE_ID,
+            modes, dynamicContextStrategy: 'preserve' });
     }
 
     /**
      * 规范化动态上下文策略
      */
     private normalizeDynamicContextStrategy(value: unknown): DynamicContextStrategy {
-        return value === 'preserve' ? 'preserve' : 'single';
+        return 'preserve';
     }
 
     /**
@@ -466,7 +382,8 @@ export class PromptSettingsService {
     }
 
     private normalizePromptModeSnapshot(mode: PromptMode): PromptMode {
-        const promptAssemblyMode = this.normalizePromptAssemblyMode(mode.promptAssemblyMode);
+        mode = migratePromptPreset(mode, this.core.settings.toolsConfig?.system_prompt?.dynamicTemplate);
+        const promptAssemblyMode: PromptAssemblyMode = 'entries';
         const promptEntries = this.normalizePromptEntries(mode.promptEntries, promptAssemblyMode);
 
         // 用户未定制 toolPolicy 的内置模式，运行时回退到内置默认值

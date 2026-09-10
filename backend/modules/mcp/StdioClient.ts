@@ -7,8 +7,8 @@
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
 import { collectMcpList, createServerRequestReply, isJsonRpcResponse } from './protocol';
-import type { McpRawToolResult } from './types';
-import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
+import type { McpRawToolResult, McpPromptMessage } from './types';
+import { createGrayCodeMcpClientInfo } from '../../core/productIdentity';
 
 // cross-spawn keeps argv boundaries on Windows while resolving PATHEXT commands
 // such as npx.cmd/npm.cmd. For .cmd/.bat launchers it invokes cmd.exe with each
@@ -474,7 +474,7 @@ export class StdioMcpClient extends EventEmitter {
      * @param signal 外部取消信号（可选）
      */
     async getPrompt(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<{
-        messages: Array<{ role: string; content: { type: string; text?: string } }>;
+        messages: McpPromptMessage[];
     }> {
         return await this.sendRequest('prompts/get', { name, arguments: args }, undefined, signal);
     }
@@ -782,4 +782,3 @@ export class StdioMcpClient extends EventEmitter {
         this.stderrTruncated = false;
     }
 }
-

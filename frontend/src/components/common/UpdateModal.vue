@@ -15,11 +15,13 @@ const visible = ref(false)
 const phase = ref<'prompt' | 'downloading' | 'installed' | 'failed'>('prompt')
 const update = ref<{ version: string; name: string; body: string; vsixAssetUrl?: string; channel?: string } | null>(null)
 const errorMsg = ref('')
+const manualInstall = ref(false)
 
 onMounted(async () => {
   try {
     const res = await sendToExtension<{ status: { state: string; update?: typeof update.value } }>(MESSAGE_NAMES.getUpdateStatus, {})
     if (res?.status?.state === 'updateAvailable' && res.status.update) {
+      manualInstall.value = !!(res as any).manualInstall
       update.value = res.status.update
       phase.value = 'prompt'
       visible.value = true
@@ -31,6 +33,7 @@ onMounted(async () => {
 
 async function install() {
   if (!update.value) return
+  if (manualInstall.value) { await openReleasePage(); close(); return }
   phase.value = 'downloading'
   try {
     await sendToExtension(MESSAGE_NAMES.installUpdate, { update: update.value })
@@ -122,7 +125,7 @@ const formattedBody = computed(() => {
           {{ t('components.update.later') }}
         </button>
         <button type="button" class="gc-button gc-button--primary" @click="install">
-          {{ t('components.update.install') }}
+          {{ manualInstall ? t('components.update.viewPage') : t('components.update.install') }}
         </button>
       </template>
       <template v-else-if="phase === 'failed'">

@@ -15,6 +15,11 @@ index.ts
 # GitHub 工作流 / 发布脚本（开发用，不打包）
 .github/**
 scripts/**
+apps/**
+packages/**
+jest.platform.config.cjs
+PLATFORM_MIGRATION_PLAN.md
+STORAGE_ARCHITECTURE_PLAN.md
 
 # 锁文件
 pnpm-lock.yaml

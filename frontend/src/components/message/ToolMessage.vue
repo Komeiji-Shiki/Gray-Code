@@ -575,6 +575,6 @@ const ToolContentHost = defineComponent({
 .tool-message {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm, 8px);
+  gap: var(--gc-space-1);
 }
 </style>

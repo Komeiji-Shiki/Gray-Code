@@ -103,6 +103,8 @@ export function prependPreservedUserInputs(
     fullHistory: Content[],
     beforeIndex: number
 ): Content[] {
+    // 完整替换方式由摘要或历史检索承接旧要求，不再注入重复的用户输入档案。
+    if (history.some(message => message.isSummary && message.contextMethod)) return history;
     const preserved = createPreservedUserInputsMessage(fullHistory, beforeIndex);
     return preserved ? [preserved, ...history] : history;
 }

@@ -405,7 +405,7 @@ export function handleAwaitingConfirmation(
   // 注意：不结束 streaming 状态的等待标志，因为需要等用户确认
   // 但 isStreaming 设为 false 允许用户操作
   state.isStreaming.value = false
-  state.activeStreamId.value = null
+  if (!chunk.keepStreamOpen) state.activeStreamId.value = null
   state._lastApprovalGatedStreamId.value = null
   // isWaitingForResponse 保持 true 或设为特殊状态
 }

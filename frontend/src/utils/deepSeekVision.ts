@@ -6,5 +6,5 @@
  */
 export function isDeepSeekVisionModelName(model?: string): boolean {
   const normalized = (model || '').trim().toLowerCase()
-  return normalized.includes('deepseek') && normalized.includes('vision')
+  return /(?:^|\/)deepseek-flash(?:$|:)/.test(normalized) || normalized.includes('deepseek') && normalized.includes('vision')
 }
