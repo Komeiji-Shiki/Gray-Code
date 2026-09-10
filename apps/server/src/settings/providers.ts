@@ -7,11 +7,14 @@ type Options = Record<string, any>;
 /** Basic fields belong to the provider document; preserve advanced legacy fields in its projection. */
 export function projectChannels(profiles: ProviderDefinition[], channels: ChannelConfig[], previous: ProviderDefinition[]): ChannelConfig[] {
   return profiles.map(profile => {
-    const old = channels.find(channel => channel.id === profile.id && channel.type === profile.protocol);
+    const priorChannel = channels.find(channel => channel.id === profile.id);
+    const old = priorChannel?.type === profile.protocol ? priorChannel : undefined;
     const before = previous.find(item => item.id === profile.id);
     const defaults = buildChannelConfig({ ...profile, generation: { ...profile.generation, reasoningEffort: undefined } },
       { conversationId: '', providerId: profile.id, systemPrompt: '', messages: [], tools: [], signal: new AbortController().signal }, '');
-    const channel = { ...defaults, ...old, id: profile.id, name: profile.name, type: profile.protocol,
+    const channel = { ...defaults, ...old,
+      ...(priorChannel?.autoSummarizeMethod !== undefined ? { autoSummarizeMethod: priorChannel.autoSummarizeMethod } : {}),
+      id: profile.id, name: profile.name, type: profile.protocol,
       url: profile.endpoint, model: profile.model, timeout: profile.timeoutMs, preferStream: profile.stream, apiKey: '',
       models: profile.models.map(model => ({ ...old?.models?.find(item => item.id === model.id), id: model.id, name: model.name ?? model.id })),
     } as ChannelConfig;

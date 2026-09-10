@@ -116,6 +116,8 @@ export class ProductConfiguration {
     const credentials = { ...draft.credentials };
     const profiles = new Map(next.providers.map(profile => [profile.id, profile]));
     next.providers = channels.map(channel => {
+      if (channel.autoSummarizeMethod !== undefined && !['summary', 'notes'].includes(channel.autoSummarizeMethod))
+        throw new Error('渠道自动总结方式必须是普通总结或笔记换窗口。');
       const previous = profiles.get(channel.id);
       let credentialRef = previous?.credentialRef;
       if (channel.apiKey !== secretPlaceholder) {

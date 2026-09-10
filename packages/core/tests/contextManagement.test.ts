@@ -57,15 +57,19 @@ describe('完整前缀总结与持久笔记换窗口', () => {
   });
 
   test('模型保存笔记并换窗口后，读取原笔记和精确历史消息，继续同一个任务', async () => {
-    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' });
-    await draft.configs.updateConfig(providerId, { contextManagementEnabled: true, multimodalToolsEnabled: true, toolMode: 'xml' }); await app.product.save(draft);
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'summary' });
+    await draft.configs.updateConfig(providerId, { contextManagementEnabled: true, autoSummarizeMethod: 'notes', multimodalToolsEnabled: true, toolMode: 'xml' }); await app.product.save(draft);
     await app.storage.appendHistory('compaction', [{ id: 'image-evidence', role: 'model', parts: [{ inlineData: { mimeType: 'image/png',
       data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=' } }] }]);
     generate = async () => {
-      if (seen.length === 1) return { role: 'model', parts: [
+      if (seen.length === 1) {
+        // 保存新设置不能改变已经开始的笔记回合及其工具目录。
+        const changed = await app.product.draft(); await changed.configs.updateConfig(providerId, { autoSummarizeMethod: 'summary' }); await app.product.save(changed);
+        return { role: 'model', parts: [
         { functionCall: { id: 'save-note', name: 'context_notes', args: { action: 'write', name: 'checkpoint', text: '目标：继续最新修改。证据消息 ID：evidence。用户要求 ID：latest。' } } },
         { functionCall: { id: 'switch-window', name: 'new_context', args: {} } },
-      ] };
+        ] };
+      }
       if (seen.length === 2) return { role: 'model', parts: [
         { functionCall: { id: 'read-note', name: 'context_notes', args: { action: 'read', name: 'checkpoint' } } },
         { functionCall: { id: 'read-history', name: 'context_history', args: { action: 'read', messageId: 'evidence', limit: 1200 } } },
@@ -75,6 +79,8 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     };
     const run = await start('latest'); expect(await app.runtime.wait(run.id)).toMatchObject({ status: 'completed' });
     expect(seen).toHaveLength(3); expect(seen.some(input => input.purpose === 'summary')).toBe(false);
+    expect(seen.every(input => input.turnContext?.contextManagementMethod === 'notes')).toBe(true);
+    expect(app.product.runtimeSettings().getSummarizeConfig().method).toBe('summary');
     expect(seen[0].messages.at(-1)?.contextControl).toBe('reminder');
     expect(seen[1].messages).toHaveLength(2);
     expect(seen[1].messages[0].id).toBe('first'); expect(seen[1].messages[1].contextMethod).toBe('notes');
@@ -88,6 +94,46 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect(await app.storage.getRecord('context-notes', keys[0])).toMatchObject({ text: expect.stringContaining('evidence') });
     expect((await app.storage.readFullHistory('compaction')).messages.find(message => message.id === 'evidence')?.parts[0].text).toContain('必须可恢复');
     expect((await app.storage.verify()).ok).toBe(true);
+  });
+
+  test('渠道自动普通总结不受手动笔记方式影响，手动换窗后仍能恢复历史', async () => {
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' });
+    await draft.configs.updateConfig(providerId, { contextManagementEnabled: true, autoSummarizeMethod: 'summary' }); await app.product.save(draft);
+    generate = async input => ({ role: 'model', parts: [{ text: input.purpose === 'summary' ? summaryText : '继续完成当前任务。' }] });
+    const run = await start('automatic-summary'); expect(await app.runtime.wait(run.id)).toMatchObject({ status: 'completed' });
+    expect(seen[0].purpose).toBe('summary'); expect(seen[0].providerId).toBe(providerId);
+    expect(seen[0].tools).toEqual(seen[1].tools);
+    expect((await app.storage.readFullHistory('compaction')).messages.find(message => message.isSummary)).toMatchObject({ contextMethod: 'summary', isAutoSummary: true });
+    const calls = seen.length;
+    expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
+    expect(seen).toHaveLength(calls);
+    expect((await app.storage.readFullHistory('compaction')).messages.at(-1)).toMatchObject({ contextMethod: 'notes', isAutoSummary: false });
+    const resumed = await start('after-manual-notes'); expect(await app.runtime.wait(resumed.id)).toMatchObject({ status: 'completed' });
+    expect(seen.at(-1)?.turnContext?.contextManagementMethod).toBe('summary');
+    expect(seen.at(-1)?.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['context_history', 'context_notes']));
+    expect(app.product.runtimeSettings().getSummarizeConfig().method).toBe('notes');
+  });
+
+  test('渠道方式独立保存，导入导出、类型切换和重启保留，非法方式不能提交', async () => {
+    const draft = await app.product.draft();
+    await draft.configs.updateConfig(providerId, { autoSummarizeMethod: 'notes' });
+    const other = await draft.configs.createConfig({ type: 'openai', name: '另一渠道', enabled: true, timeout: 1000, url: 'http://127.0.0.1:1/v1', model: 'fixture', apiKey: '', autoSummarizeMethod: 'summary' });
+    const exported = await draft.configs.exportConfig(providerId);
+    expect(exported.autoSummarizeMethod).toBe('notes');
+    // 脱敏导出不包含可用凭据，导入夹具继续使用匿名模型渠道。
+    const imported = await draft.configs.importConfig({ ...exported, id: 'method-import', apiKey: '' });
+    await draft.configs.updateConfig(providerId, { type: 'anthropic' });
+    await app.product.save(draft);
+    expect((await app.product.channel(providerId))?.autoSummarizeMethod).toBe('notes');
+    expect((await app.product.channel(other))?.autoSummarizeMethod).toBe('summary');
+    const invalid = await app.product.draft();
+    await invalid.configs.updateConfig(other, { autoSummarizeMethod: 'invalid' as any });
+    await expect(app.product.save(invalid)).rejects.toThrow('自动总结方式');
+    await app.close();
+    app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async () => ({ role: 'model', parts: [{ text: 'done' }] }) } });
+    expect((await app.product.channel(providerId))?.autoSummarizeMethod).toBe('notes');
+    expect((await app.product.channel(imported))?.autoSummarizeMethod).toBe('notes');
+    expect((await app.product.channel(other))?.autoSummarizeMethod).toBe('summary');
   });
 
   test('手动笔记换窗口不调用模型；旧窗口和笔记在应用重新打开后仍然保留', async () => {

@@ -24,13 +24,17 @@ export function captureModelPrefix(input: ModelInput): ModelPrefix {
     taskContext: input.taskContext, turnContext: input.turnContext });
 }
 
-export function conversationContextSettings(app: PlatformApplication, conversation: PlatformConversation): { method: ContextManagementMethod; bot?: BotAutoSummarySettings } {
+export function conversationContextSettings(app: PlatformApplication, conversation: PlatformConversation,
+  automaticChannel?: Pick<ChannelConfig, 'autoSummarizeMethod'>): { method: ContextManagementMethod; bot?: BotAutoSummarySettings } {
   const environment = (conversation.custom as Record<string, unknown> | undefined)?.botEnvironment as CapturedBotEnvironment | undefined;
   const channel = environment?.version === 1 ? environment.channel : undefined;
   const bot = channel && typeof channel.channelId === 'string' ? botProfile(app.settings.snapshot().settings,
     channel.platform === 'discord' ? 'discord' : 'onebot', { channelId: channel.channelId, direct: channel.direct === true }).autoSummary : undefined;
+  const automaticMethod = automaticChannel?.autoSummarizeMethod;
+  if (automaticMethod !== undefined && automaticMethod !== 'summary' && automaticMethod !== 'notes') throw new Error('当前渠道的自动总结方式无效，请重新选择。');
+  // 未传渠道时读取手动方式；Bot 的显式选择仍优先于渠道自动设置。
   return { method: bot?.method && bot.method !== 'time' ? bot.method
-    : app.product.runtimeSettings().getSummarizeConfig().method ?? DEFAULT_CONTEXT_MANAGEMENT_METHOD, bot };
+    : automaticMethod ?? app.product.runtimeSettings().getSummarizeConfig().method ?? DEFAULT_CONTEXT_MANAGEMENT_METHOD, bot };
 }
 
 /** 摘要边界以前仅保留首条真实用户消息，已经覆盖的历史仍在原存储中。 */

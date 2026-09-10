@@ -8,6 +8,7 @@
 import { CustomSelect, Tooltip, type SelectOption } from '../../common'
 import { computed } from 'vue'
 import { t } from '@/i18n'
+import type { ContextManagementMethod } from '@shared/contextManagement'
 
 interface ContextBudgetInfo {
   declaredContextTokens: number
@@ -27,6 +28,8 @@ const props = defineProps<{
   contextBudget: ContextBudgetInfo
   summaryKeepRecentTokens: string | number | undefined
   summaryKeepRecentRounds: number
+  autoSummarizeMethod?: ContextManagementMethod
+  autoMethodInherited?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -34,7 +37,18 @@ const emit = defineEmits<{
   (e: 'update:enabled', value: boolean): void
   (e: 'update:threshold', value: string): void
   (e: 'update:mode', value: string): void
+  (e: 'update:auto-method', value: ContextManagementMethod): void
 }>()
+
+const standaloneContext = !!window.__GRAYCODE_HOST
+const automaticMethodOptions: SelectOption[] = [
+  { value: 'summary', label: '普通总结 · 复用完整前缀' },
+  { value: 'notes', label: '笔记换窗口 · 按需恢复历史' }
+]
+function updateMode(value: string) {
+  if (!standaloneContext) emit('update:mode', value)
+  else if (value === 'summary' || value === 'notes') emit('update:auto-method', value)
+}
 
 function formatTokens(value: number): string {
   return Math.max(0, Math.floor(value)).toLocaleString()
@@ -82,8 +96,10 @@ const thresholdHelp = computed(() => {
     }))
   }
 
-  if (window.__GRAYCODE_HOST) {
-    lines.push('达到阈值后按总结设置执行普通总结或提醒保存笔记并换窗口。普通总结只保留首条用户消息和摘要；笔记方式按需读取历史。')
+  if (standaloneContext) {
+    lines.push(props.autoSummarizeMethod === 'notes'
+      ? '达到阈值后提醒模型保存笔记并换窗口，通过笔记和历史工具继续任务，不请求整段摘要。'
+      : '达到阈值后使用当前模型和完整请求前缀生成摘要，活跃上下文仅保留首条用户消息和新摘要，原文仍可恢复。')
     return lines.join('\n')
   }
   const keepRaw = props.summaryKeepRecentTokens ?? '50%'
@@ -135,18 +151,19 @@ const thresholdHelp = computed(() => {
         <!-- 模式选择 -->
         <div class="option-item option-with-toggle">
           <div class="option-header">
-            <label>{{ t('components.settings.channelSettings.form.contextManagement.mode.label') }}</label>
+            <label>{{ standaloneContext ? '自动总结方式' : t('components.settings.channelSettings.form.contextManagement.mode.label') }}</label>
           </div>
           <CustomSelect
-            :model-value="contextManagementMode"
-            :options="contextManagementModeOptions"
+            :model-value="standaloneContext ? (autoSummarizeMethod ?? 'summary') : contextManagementMode"
+            :options="standaloneContext ? automaticMethodOptions : contextManagementModeOptions"
             :disabled="!contextManagementEnabled"
             compact
-            @update:model-value="(v: string) => emit('update:mode', v)"
+            @update:model-value="updateMode"
           />
           <span class="option-hint">
-            {{ t('components.settings.channelSettings.form.contextManagement.mode.hint') }}
+            {{ standaloneContext ? '仅决定该渠道达到阈值后的自动处理方式，手动总结在“总结设置”中单独选择。保存后对新回合生效。' : t('components.settings.channelSettings.form.contextManagement.mode.hint') }}
           </span>
+          <span v-if="standaloneContext && autoMethodInherited" class="option-hint">此旧渠道尚未单独设置，当前沿用全局方式；选择一次后按该渠道独立保存。</span>
         </div>
 
         <!-- 阈值（两种模式共用） -->

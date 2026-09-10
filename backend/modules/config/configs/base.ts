@@ -375,6 +375,9 @@ export interface BaseChannelConfig {
      */
     contextManagementMode?: 'trim' | 'summarize';
 
+    /** 独立平台的渠道自动总结方式；旧配置未填写时沿用全局总结方式。 */
+    autoSummarizeMethod?: import('../../../../shared/contextManagement').ContextManagementMethod;
+
     /**
      * 是否启用上下文阈值检测
      *

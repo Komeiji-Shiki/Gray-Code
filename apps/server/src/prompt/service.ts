@@ -25,10 +25,15 @@ export class PlatformPromptService {
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string;
     settingsOverride?: ReturnType<PlatformApplication['product']['runtimeSettings']>; preview?: boolean }) {
     if (!('message' in input.request) && normalizePendingApprovalGate((input.conversation.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) throw new Error('请先确认当前设计、评审或计划文档。');
-    const contextManagementMethod = this.app.context.configuration(input.conversation).method;
+    const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
+    const contextManagementMethod = this.app.context.configuration(input.conversation, contextChannel ?? undefined).method;
     const useContextNotes = contextManagementMethod === 'notes';
+    // 手动换到笔记窗口后仍提供恢复工具，自动方式继续服从当前渠道，不强迫两者相同。
+    const contextRecovery = this.app.context.configuration(input.conversation).method === 'notes'
+      || input.history.findLast(message => message.isSummary && !message.isSummarized)?.contextMethod === 'notes';
+    const contextToolNames = useContextNotes ? [...CONTEXT_TOOL_NAMES] : contextRecovery ? ['context_history', 'context_notes'] : [];
     if (typeof (input.conversation.custom as Record<string, unknown> | undefined)?.platformSubagentId === 'string') return {
-      systemPrompt: input.agent.systemPrompt, toolNames: [...new Set([...input.agent.toolNames, ...(useContextNotes ? CONTEXT_TOOL_NAMES : [])])],
+      systemPrompt: input.agent.systemPrompt, toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
       turnContext: { contextManagementMethod },
       ...(useContextNotes ? { promptContext: { historyPlacement: 'entry' as const, beforeHistoryMessages: [{ role: 'user', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] }] as PlatformMessage[], afterHistoryMessages: [] as PlatformMessage[] } } : {}),
     };
@@ -119,7 +124,7 @@ export class PlatformPromptService {
       systemPrompt: assembler.getSystemPrompt(mode, false, context),
       ...(input.preview ? { previewDynamicText: assembler.getDynamicContextText(mode, context) } : {}),
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
-        ...(useContextNotes ? CONTEXT_TOOL_NAMES : []), ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
+        ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
       promptContext: { beforeHistoryMessages: (resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], afterHistoryMessages: (resumed ?? bundle).afterHistoryMessages as PlatformMessage[], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },
       messageParts: characterSource?.parts,

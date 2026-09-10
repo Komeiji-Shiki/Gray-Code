@@ -13,6 +13,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import ChannelSettings from '../ChannelSettings.vue'
 import ModelSelectionDialog from '../ModelSelectionDialog.vue'
+import ChannelContextManagement from '../channelSettings/ChannelContextManagement.vue'
 import { resetChannelConfigsCache, setChannelConfigsCache } from '@/services/channelConfigCache'
 
 const { chatStoreMock } = vi.hoisted(() => ({
@@ -233,5 +234,19 @@ describe('ChannelSettings url/apiKey 防抖保存', () => {
     expect(calls).toHaveLength(2)
     expect(calls[0][1].updates).toEqual({ url: 'https://a.example.com/v1', apiKey: 'key-1' })
     expect(calls[1][1].updates).toEqual({ apiKey: 'key-2' })
+  })
+
+  test('自动总结选择只写入当前渠道，不改手动全局设置', async () => {
+    setChannelConfigsCache([makeConfig('cfg-1'), { ...makeConfig('cfg-2'), autoSummarizeMethod: 'summary' }])
+    chatStoreMock.configId = 'cfg-1'
+    wrapper = mountSettings()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
+    const context = wrapper.findComponent(ChannelContextManagement)
+    context.vm.$emit('update:auto-method', 'notes')
+    await flushPromises()
+    expect(updateConfigCalls()).toEqual([['config.updateConfig', { configId: 'cfg-1', updates: { autoSummarizeMethod: 'notes' } }]])
+    expect(mockSend.mock.calls.some(call => call[0] === 'updateSummarizeConfig')).toBe(false)
+    expect(context.props('autoSummarizeMethod')).toBe('notes')
   })
 })

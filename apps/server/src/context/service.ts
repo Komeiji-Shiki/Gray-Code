@@ -35,7 +35,9 @@ export class PlatformContextService {
   private readonly summaries = new SummaryAlgorithms(this.localTokens);
   private readonly manual = new Map<string, { actorId: string; controller: AbortController; done: Promise<unknown> }>();
   constructor(private readonly app: PlatformApplication) {}
-  configuration(conversation: PlatformConversation) { return conversationContextSettings(this.app, conversation); }
+  configuration(conversation: PlatformConversation, automaticChannel?: Parameters<typeof conversationContextSettings>[2]) {
+    return conversationContextSettings(this.app, conversation, automaticChannel);
+  }
 
   private async event(runId: string, type: RunEvent['type'], payload: Record<string, unknown>): Promise<void> {
     const event = await this.app.storage.appendRunEvent({ runId, type, payload });
@@ -56,7 +58,7 @@ export class PlatformContextService {
     const { run, input } = context;
     let config = await this.app.product.channel(input.providerId);
     if (!config) return { history: context.history, messages: input.messages };
-    const management = this.configuration(context.history.metadata);
+    const management = this.configuration(context.history.metadata, config);
     // 工具目录和总结方式在回合开始时一同捕获，设置变更不破坏正在运行的前缀。
     const capturedMethod = input.turnContext?.contextManagementMethod;
     if (capturedMethod === 'summary' || capturedMethod === 'notes') management.method = capturedMethod;

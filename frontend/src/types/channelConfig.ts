@@ -194,6 +194,8 @@ export interface ChannelConfig {
   retryInterval?: number
   contextManagementEnabled?: boolean
   contextManagementMode?: 'trim' | 'summarize'
+  /** 只控制该渠道的自动触发；未填写的旧配置沿用全局方式。 */
+  autoSummarizeMethod?: import('../../../shared/contextManagement').ContextManagementMethod
   contextThresholdEnabled?: boolean
   contextThreshold?: number | string
   contextTrimExtraCut?: number | string

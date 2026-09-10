@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
+import type { ContextManagementMethod } from '@shared/contextManagement'
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ConfirmDialog, type SelectOption } from '../common'
 import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
@@ -295,6 +296,12 @@ const contextThreshold = computed(() => {
 
 const summaryKeepRecentTokensHint = ref<string | number>('50%')
 const summaryKeepRecentRoundsHint = ref(2)
+const summaryMethodHint = ref<ContextManagementMethod>('summary')
+const autoSummarizeMethod = computed(() => currentConfig.value?.autoSummarizeMethod ?? summaryMethodHint.value)
+
+async function updateAutoSummarizeMethod(method: ContextManagementMethod) {
+  await updateConfigField('autoSummarizeMethod', method)
+}
 
 interface ContextBudgetHint {
   declaredContextTokens: number
@@ -349,6 +356,7 @@ async function loadSummaryHintConfig() {
   try {
     const response = await sendToExtension<any>(MESSAGE_NAMES.getSummarizeConfig, {})
     if (!response) return
+    if (response.method === 'summary' || response.method === 'notes') summaryMethodHint.value = response.method
     if (typeof response.keepRecentTokens === 'string' || typeof response.keepRecentTokens === 'number') {
       summaryKeepRecentTokensHint.value = response.keepRecentTokens
     }
@@ -360,7 +368,7 @@ async function loadSummaryHintConfig() {
   }
 }
 
-// 上下文管理统一为“模型总结优先 + 失败时细粒度临时裁剪”。旧 trim 值只作为后端迁移输入。
+// 保留旧扩展的模式镜像；独立平台通过渠道 autoSummarizeMethod 选择两种方式。
 const contextManagementMode = computed(() => 'summarize')
 
 const contextManagementModeOptions = computed<SelectOption[]>(() => [
@@ -942,10 +950,13 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
         :context-budget="contextBudgetHint"
         :summary-keep-recent-tokens="summaryKeepRecentTokensHint"
         :summary-keep-recent-rounds="summaryKeepRecentRoundsHint"
+        :auto-summarize-method="autoSummarizeMethod"
+        :auto-method-inherited="currentConfig.autoSummarizeMethod === undefined"
         @update:show="showContextThreshold = $event"
         @update:enabled="updateContextManagementEnabled"
         @update:threshold="updateContextThreshold"
         @update:mode="updateContextManagementMode"
+        @update:auto-method="updateAutoSummarizeMethod"
       />
 
       <ChannelToolOptions

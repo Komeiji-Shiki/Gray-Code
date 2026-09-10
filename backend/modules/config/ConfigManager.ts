@@ -76,6 +76,7 @@ const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey' | 
     'retryInterval',
     'contextManagementEnabled',
     'contextManagementMode',
+    'autoSummarizeMethod',
     'contextThresholdEnabled',
     'contextThreshold',
     'contextTrimExtraCut',
@@ -785,6 +786,10 @@ export class ConfigManager {
     async validateConfig(config: ChannelConfig): Promise<ValidationResult> {
         const errors: string[] = [];
         const warnings: string[] = [];
+
+        if (config.autoSummarizeMethod !== undefined && !['summary', 'notes'].includes(config.autoSummarizeMethod)) {
+            errors.push('自动总结方式必须是普通总结或笔记换窗口。');
+        }
         
         // 基础字段验证
         // 非字符串 name（webview/导入来源）直接调用 .trim() 会抛 TypeError，先做类型校验
