@@ -23,7 +23,7 @@ export const ensureParentDirWithFs = ensureParentDir;
 export function isScopedPathAllowedWithMultiRoot(value: string, validator: (path: string) => boolean): boolean {
   if (validator(value)) return true;
   if (getAllWorkspaces().length <= 1) return false;
-  const normalized = value.replaceAll('\\', '/'); const separator = normalized.indexOf('/');
+  const normalized = value.replace(/\\/g, '/'); const separator = normalized.indexOf('/');
   if (separator <= 0) return false;
   const prefix = normalized.slice(0, separator);
   return prefix !== '.' && prefix !== '..' && !prefix.includes(':') && validator(normalized.slice(separator + 1));
