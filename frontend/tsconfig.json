@@ -3,7 +3,8 @@
     "target": "ES2020",
     "useDefineForClassFields": true,
     "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    /* 显式包含现有代码使用的 Array.at 等标准库，不依赖本机 Node 类型包补充声明。 */
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "vitest/globals", "node"],
     "skipLibCheck": true,
 
