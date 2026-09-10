@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { decodeMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import SearchableMultiSelect from '../common/SearchableMultiSelect.vue';
-const props = defineProps<{ modelValue?: string[]; tools: Array<{ name: string; description?: string; serverName?: string }> }>();
+const props = defineProps<{ modelValue?: string[]; tools: Array<{ name: string; description?: string; serverName?: string }>; expanded?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>();
 const choices = computed(() => {
   const values = new Map(props.tools.map(tool => [tool.name, tool]));
@@ -12,7 +12,7 @@ const choices = computed(() => {
 });
 </script>
 <template>
-  <details class="mcp-permissions" @change.stop>
+  <details class="mcp-permissions" :open="expanded" @change.stop>
     <summary>MCP 工具权限 <small>{{ modelValue === undefined ? '沿用原操作权限' : `已允许 ${modelValue.length} 项` }}</small></summary>
     <template v-if="modelValue === undefined"><p>此账号尚未逐项配置 MCP，仍使用原操作权限。改为逐项授权后，只有勾选的工具可以执行。</p><button type="button" @click="emit('update:modelValue', [])">改为逐项授权</button></template>
     <template v-else>
