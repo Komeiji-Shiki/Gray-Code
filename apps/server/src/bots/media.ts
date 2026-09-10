@@ -1,6 +1,7 @@
 import type { PlatformMessage } from '@graycode/contracts';
 import type { BotAttachment, BotInbound, BotReference } from './gateway';
 import type { BotDocument } from './documents';
+import { formatBotSourceHeader } from '../../../../shared/botMessagePresentation';
 
 function imageMime(bytes: Uint8Array): string | undefined {
   const buffer = Buffer.from(bytes);
@@ -54,7 +55,7 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
   };
   const references = async (values: BotReference[], depth: number) => {
     for (const ref of values.slice(0, 40)) {
-      parts.push({ text: `[${ref.kind === 'forward' ? '转发' : '引用'}消息 ${JSON.stringify({ id: ref.id, channelId: ref.channelId, authorId: ref.authorId, displayName: ref.authorName })}，以下是原来源内容]` });
+      parts.push({ text: formatBotSourceHeader(`${ref.kind === 'forward' ? '转发' : '引用'}消息`, { displayName: ref.authorName, timestamp: ref.timestamp }).slice(0, -1) + '，以下是原来源内容]' });
       if (ref.unavailable) parts.push({ text: `[未读取：${ref.unavailable}]` });
       else {
         if (ref.content) parts.push({ text: ref.content });
@@ -65,8 +66,8 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
     }
     if (values.length > 40) parts.push({ text: '[转发条目超过 40 条，后续未读取]' });
   };
-  parts.push({ text: `[${platform === 'discord' ? 'Discord' : message.network ?? 'QQ'} 发言 ${JSON.stringify({ id: message.id, authorId: message.authorId,
-    displayName: message.authorName, timestamp: message.timestamp })}]\n${message.content}` });
+  parts.push({ text: `${formatBotSourceHeader(`${platform === 'discord' ? 'Discord' : message.network ?? 'QQ'} 发言`, {
+    displayName: message.authorName, timestamp: message.timestamp })}\n${message.content}` });
   for (const attachment of message.attachments ?? []) parts.push(...await attachmentParts(attachment));
   await references(message.references ?? [], 0);
   return parts;

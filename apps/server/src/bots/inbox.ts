@@ -40,7 +40,7 @@ export class BotInbox {
         message: { id: `bot-message-${id}`, role: 'user', timestamp, parts, botPassive: !trigger,
           botLastTimestamp: timestamp, botAuthorId: context.authorId,
           source: { platform: context.platform, messageId: context.id, channelId: context.channelId, platformUserId: context.authorId,
-            displayName: context.authorName, timestamp }, botMessageIds: [context.id] } };
+            displayName: context.authorName, timestamp, ...(inbound.references?.length ? { references: inbound.references } : {}) }, botMessageIds: [context.id] } };
       const value: BotInboxState = { ...prior, context, sequence: item.sequence, lastActivityAt: receivedAt };
       await this.app.storage.commitRecords([{ namespace: pendingNamespace, id, ownerId: conversation.id, expectedRevision: null, value: item },
         { namespace: archiveNamespace, id, ownerId: conversation.id, expectedRevision: null, value: item },

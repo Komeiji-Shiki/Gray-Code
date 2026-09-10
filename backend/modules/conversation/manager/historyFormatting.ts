@@ -11,10 +11,11 @@ import type { Content, ContentPart, ConversationHistory } from '../types';
 import type { GetHistoryOptions } from './types';
 import { cleanFunctionResponseForAPI, ensureBackgroundTaskSourceForDisplay, isRealUserMessage } from '../helpers';
 import { createForegroundWorkTransitionPart } from '../foregroundWorkTransition';
+import { formatBotSourceMessages } from '../../../../shared/botMessagePresentation';
 
 /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、深拷贝 */
-export function toDisplayMessages(history: ConversationHistory): Content[] {
-    return history.map((message, index) => {
+export function toDisplayMessages(history: ConversationHistory, startIndex = 0): Content[] {
+    return formatBotSourceMessages(history).map((message, index) => {
         // 过滤后端内部字段；转后台提醒只进入模型历史，不污染用户可见原文。
         const {
             turnDynamicContext,
@@ -23,7 +24,7 @@ export function toDisplayMessages(history: ConversationHistory): Content[] {
             characterTurn,
             ...rest
         } = ensureBackgroundTaskSourceForDisplay(message);
-        return { ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}), index } as Content;
+        return { ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}), index: startIndex + index } as Content;
     });
 }
 
@@ -45,7 +46,7 @@ export function formatHistoryForAPI(
     rawContents: ReadonlyArray<Content>,
     options: GetHistoryOptions | boolean = false
 ): ConversationHistory {
-    let history = rawContents as ConversationHistory;
+    let history = formatBotSourceMessages(rawContents) as ConversationHistory;
     
     // 向后兼容：如果传入 boolean，视为 includeThoughts
     const opts: GetHistoryOptions = typeof options === 'boolean'

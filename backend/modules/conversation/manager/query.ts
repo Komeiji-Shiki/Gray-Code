@@ -11,7 +11,6 @@ import { t } from '../../../i18n';
 import type { Content, ContentPart, ConversationHistory, MessageFilter, MessagePosition } from '../types';
 import type { IStorageAdapter } from '../storage';
 import type { ITranscriptRepository } from '../TranscriptRepository';
-import { ensureBackgroundTaskSourceForDisplay } from '../helpers';
 import { ensureNodeId, needsNodeIdMigration } from './nodeId';
 import { findFunctionResponseInsertIndex, scanHistoryForInitialPage } from './utils';
 import { toDisplayMessages } from './historyFormatting';
@@ -98,16 +97,7 @@ export class ConversationQueryService {
         if (pagedHistory.value && pagedHistory.value.format === 'paged') {
             return {
                 total: pagedHistory.value.total,
-                messages: pagedHistory.value.messages.map((message, i) => {
-                    const index = pagedHistory.value!.startIndex + i;
-                    const {
-                        turnDynamicContext,
-                        turnDynamicContextStrategy,
-                        foregroundWorkTransition, characterTurn,
-                        ...rest
-                    } = ensureBackgroundTaskSourceForDisplay(message);
-                    return { ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}), index } as Content;
-                })
+                messages: toDisplayMessages(pagedHistory.value.messages, pagedHistory.value.startIndex)
             };
         }
 
@@ -142,20 +132,7 @@ export class ConversationQueryService {
         }
 
         const slice = history.slice(start, endExclusive);
-        const messages = slice.map((message, i) => {
-            const index = start + i;
-            // 深拷贝并过滤后端内部字段（前端只显示用户原文）。
-            const {
-                turnDynamicContext,
-                turnDynamicContextStrategy,
-                foregroundWorkTransition, characterTurn,
-                ...rest
-            } = ensureBackgroundTaskSourceForDisplay(message);
-            return {
-                ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}),
-                index
-            } as Content;
-        });
+        const messages = toDisplayMessages(slice, start);
 
         return { total, messages };
     }
