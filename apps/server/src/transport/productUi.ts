@@ -1,4 +1,5 @@
 import { PlatformPromptService } from '../prompt/service';
+import { previewPrompt } from '../prompt/preview';
 import { ArtifactApproval } from '../artifacts/approval';
 import { CheckpointUi } from '../workspace/checkpointUi';
 import { conversationUiHandlers } from '../conversations/ui';
@@ -133,6 +134,7 @@ export class ProductUi {
       case 'storagePath.reset':
       case 'storagePath.selectFolder': throw new Error('请在运行核心服务的桌面应用中迁移数据目录。');
       case 'countSystemPromptTokens': return new PlatformPromptService(this.app).count(client.actorId, ui.preferences, data, ui.workspaceId, client.clientId);
+      case 'prompt.preview': return previewPrompt(this.app, client, data, ui.preferences, ui.workspaceId, ui.mode);
       case 'previewAttachment': return this.app.previews.show(client, data, true);
       case 'showContextContent': return this.app.previews.show(client, data, false);
       case 'preview.get': return this.app.previews.get(client, data.id);

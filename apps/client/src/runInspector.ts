@@ -1,4 +1,5 @@
 import type { RunEvent, RunRecord } from '@graycode/contracts';
+export { requestGroups } from '../../../shared/promptPreview';
 
 export const eventLabels: Record<string, string> = {
   'run.created': '任务已排队', 'run.started': '任务开始', 'run.completed': '任务完成',
@@ -29,17 +30,3 @@ export function eventLane(type: string) {
   return '任务';
 }
 export interface RequestSnapshot { turnContext?: { characterTurn?: { resources: unknown; activation: unknown; config: unknown } }; runId: string; iteration: number; capturedAt: number; protocol: string; model: string; body: unknown }
-export function requestGroups(body: unknown): { title: string; value: unknown }[] {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return [{ title: '请求正文', value: body }];
-  const groups: { title: string; value: unknown }[] = [];
-  const options: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (['messages', 'contents', 'input'].includes(key) && Array.isArray(value)) {
-      value.forEach((message, index) => groups.push({ title: `${key} · ${index + 1} · ${message?.role ?? message?.type ?? '内容'}`, value: message }));
-    } else if (['system', 'systemInstruction', 'instructions', 'tools', 'toolConfig'].includes(key)) {
-      groups.push({ title: key, value });
-    } else options[key] = value;
-  }
-  if (Object.keys(options).length) groups.push({ title: '模型参数与其他字段', value: options });
-  return groups;
-}

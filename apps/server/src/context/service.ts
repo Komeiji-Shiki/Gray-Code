@@ -54,7 +54,7 @@ export class PlatformContextService {
     frame.dirty = false;
     this.app.productUi.conversations.clearMetadataCache();
   }
-  async prepare(context: ModelRequestContext) {
+  async prepare(context: ModelRequestContext, preview = false) {
     const { run, input } = context;
     let config = await this.app.product.channel(input.providerId);
     if (!config) return { history: context.history, messages: input.messages };
@@ -66,6 +66,9 @@ export class PlatformContextService {
       contextManagementEnabled: management.bot.enabled, contextManagementMode: 'summarize' };
     const settings = this.app.product.runtimeSettings();
     const frame = new CapturedContext(context.history);
+    const notices: string[] = [];
+    const commit = (snapshot = false) => preview ? Promise.resolve() : this.commit(frame, run.id, snapshot);
+    const event = (type: RunEvent['type'], payload: Record<string, unknown>) => preview ? Promise.resolve() : this.event(run.id, type, payload);
     const prefix = captureModelPrefix({ ...input, modelOverride: input.modelOverride ?? config.model });
     const custom = frame.state.metadata.custom as Record<string, unknown> | undefined;
     if (JSON.stringify(custom?.contextRequestPrefix) !== JSON.stringify(prefix)) await frame.store.setCustomMetadata(run.conversationId, 'contextRequestPrefix', prefix);
@@ -73,12 +76,13 @@ export class PlatformContextService {
     const switchRequested = pending?.runId === run.id && frame.state.history.messages.some(message => message.parts.some(part =>
       part.functionResponse && (part.functionResponse as { id?: string }).id === pending.toolCallId));
     if (switchRequested && management.method === 'notes') {
-      await this.event(run.id, 'context.summary.started', { method: 'notes' });
+      await event('context.summary.started', { method: 'notes' });
       const result = await notesWindowBoundary(this.app, frame, true, config.type);
-      await this.commit(frame, run.id, true);
-      await this.event(run.id, 'context.summary.completed', { ...result });
+      await commit(true);
+      await event('context.summary.completed', { ...result });
     }
-    const estimator = new TokenEstimationService(frame.store, new TokenCountService(settings.getEffectiveProxyUrl()), settings);
+    // 预览只在独立快照内估算，不发起远程 Token 计数或更新已保存的历史。
+    const estimator = new TokenEstimationService(frame.store, new TokenCountService(settings.getEffectiveProxyUrl()), preview ? undefined : settings);
     const options = this.builder.buildHistoryOptions(config);
     const promptText = [...input.promptContext?.beforeHistoryMessages ?? [], ...input.promptContext?.afterHistoryMessages ?? []]
       .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
@@ -103,10 +107,11 @@ export class PlatformContextService {
     if (management.method === 'notes' && shouldCompact && !switchRequested) {
       if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name))) throw new Error('笔记换窗口需要启用上下文笔记、历史读取和换窗口工具，请在启用工具后重试。');
       if (overflow) {
-        await this.event(run.id, 'context.summary.started', { method: 'notes' });
+        await event('context.summary.started', { method: 'notes' });
         const result = await notesWindowBoundary(this.app, frame, true, config.type);
-        await this.commit(frame, run.id, true);
-        await this.event(run.id, 'context.summary.completed', { ...result });
+        await commit(true);
+        await event('context.summary.completed', { ...result });
+        if (preview) notices.push('当前内容预计超过上下文容量，发送前将切换到笔记窗口；这里展示切换后的内容。');
       } else {
         const windowId = [...frame.state.history.messages].reverse().find(message => message.contextWindowId)?.contextWindowId ?? 'initial';
         if (custom?.contextReminderWindowId !== windowId) {
@@ -115,26 +120,28 @@ export class PlatformContextService {
           await frame.store.setCustomMetadata(run.conversationId, 'contextReminderWindowId', windowId);
         }
       }
-      await this.commit(frame, run.id);
-      return { history: frame.state, messages: active() };
+      await commit();
+      return { history: frame.state, messages: active(), notices };
     }
     const latestBoundary = frame.state.history.messages.findLastIndex(message => message.isSummary && !message.isSummarized);
     const hasNewModelHistory = frame.state.history.messages.slice(latestBoundary + 1).some(message => message.role === 'model' && !message.isSummarized);
     if (management.method === 'summary' && shouldCompact && hasNewModelHistory) {
+      if (preview) return { history: frame.state, messages: active(), notices: [
+        '当前内容预计触发自动总结。这里展示总结前的完整提示词；总结生成后，实际发送的历史会随之变化。'] };
       turn.summaryAttempts++;
       await frame.store.setCustomMetadata(run.conversationId, 'platformContext', turn);
-      await this.commit(frame, run.id);
-      await this.event(run.id, 'context.summary.started', { attempt: turn.summaryAttempts });
+      await commit();
+      await event('context.summary.started', { attempt: turn.summaryAttempts });
       try {
         const result = await summarizeFullContext(this.app, frame, prefix, input.signal, true);
-        await this.commit(frame, run.id, true);
+        await commit(true);
         turn.fallback = false; turn.fallbackStart = undefined;
-        await this.event(run.id, 'context.summary.completed', { ...result });
+        await event('context.summary.completed', { ...result });
         info = await evaluate(true);
       } catch (error) {
         input.signal.throwIfAborted();
         if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) throw error;
-        await this.event(run.id, 'context.summary.failed', { message: (error as Error).message });
+        await event('context.summary.failed', { message: (error as Error).message });
         throw error;
       }
     }
@@ -142,12 +149,12 @@ export class PlatformContextService {
       info = await getHistoryWithGranularFallback({ conversationManager: frame.store, tokenEstimationService: estimator, log: this.log },
         run.conversationId, config, options, input.modelOverride, 'preserve', turn.fallbackStart, fixedTokens);
       turn.fallback = true; turn.fallbackStart = info.trimStartIndex;
-      await this.event(run.id, 'context.fallback', { trimStartIndex: info.trimStartIndex });
+      await event('context.fallback', { trimStartIndex: info.trimStartIndex });
     }
     if (turn.summaryAttempts || turn.fallback) await frame.store.setCustomMetadata(run.conversationId, 'platformContext', turn);
-    await this.commit(frame, run.id);
+    await commit();
     input.signal.throwIfAborted();
-    return { history: frame.state, messages: policy.mode === 'trim' ? info.history as PlatformMessage[] : active() };
+    return { history: frame.state, messages: policy.mode === 'trim' ? info.history as PlatformMessage[] : active(), notices };
   }
 
   private async summarizeTimed(frame: CapturedContext, providerId: string, modelOverride: string | undefined, signal: AbortSignal, mode: 'auto' | 'manual', override?: BotAutoSummarySettings): Promise<SummaryResult> {

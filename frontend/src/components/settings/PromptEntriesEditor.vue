@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { getSettingsView } from '@/composables/useDeferredNumberInput'
 import { t } from '@/i18n'
 import type { PromptModule, PromptEntryRole, PromptEntry } from './prompt/types'
+import { CHARACTER_PROMPT_MODULES } from '../../../../shared/characterPromptModules'
 
 const CHAT_HISTORY_PROMPT_ENTRY_ID = 'chat-history'
 
@@ -73,6 +74,16 @@ watch(
 )
 
 const entries = computed(() => normalizeEntries(props.modelValue))
+const selectedCharacterModule = ref('')
+const selectedCharacterDescription = computed(() => CHARACTER_PROMPT_MODULES.find(module => module.id === selectedCharacterModule.value)?.description)
+
+function addCharacterEntry() {
+  const module = CHARACTER_PROMPT_MODULES.find(item => item.id === selectedCharacterModule.value)
+  if (!module) return
+  const entry = { ...createEntry(), name: module.name, content: formatPlaceholder(module.id) }
+  nameDrafts[entry.id] = entry.name
+  emitNormalized([...entries.value, entry])
+}
 
 function isChatHistoryEntry(entry: PromptEntry): boolean {
   return entry.type === 'chat_history' || entry.id === CHAT_HISTORY_PROMPT_ENTRY_ID
@@ -411,6 +422,15 @@ function handleDragEnd() {
       </div>
     </div>
 
+    <div class="character-entry-tools">
+      <label><span>角色卡与世界书</span><select v-model="selectedCharacterModule" aria-label="选择角色卡或世界书条目">
+        <option value="">选择要添加的资料</option>
+        <option v-for="module in CHARACTER_PROMPT_MODULES" :key="module.id" :value="module.id">{{ module.name }}</option>
+      </select></label>
+      <button type="button" class="small-btn" :disabled="!selectedCharacterModule" @click="addCharacterEntry">添加资料条目</button>
+      <p>{{ selectedCharacterDescription || '添加后可以调整角色和顺序，也可以在任意条目正文中直接插入这些变量。' }}<code v-if="selectedCharacterModule">{{ formatPlaceholder(selectedCharacterModule) }}</code></p>
+    </div>
+
     <div class="entries-list">
       <article
         v-for="(entry, index) in entries"
@@ -565,6 +585,11 @@ function handleDragEnd() {
 </template>
 
 <style scoped>
+.character-entry-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); }
+.character-entry-tools label { display: flex; flex: 1 1 210px; flex-direction: column; gap: 6px; font-size: 12px; min-width: 0; }
+.character-entry-tools select { min-width: 0; width: 100%; padding: 6px 8px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 0; }
+.character-entry-tools p { flex-basis: 100%; margin: 0; color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.6; }
+.character-entry-tools code { margin-left: 8px; overflow-wrap: anywhere; }
 .prompt-entries-editor {
   display: flex;
   flex-direction: column;

@@ -48,6 +48,18 @@ describe('real HTTP model adapter with existing provider codecs', () => {
   });
   afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
 
+  test('发送前预览与实际 HTTP 正文一致，预览本身不读凭据或请求网络', async () => {
+    profile.credentialRef = 'fixture-secret';
+    const credential = jest.fn(async () => 'fixture-only');
+    adapter = new ProviderModelAdapter({ profile: async () => profile, credential });
+    const request = input(); request.reasoningEffort = 'low';
+    const preview = await adapter.preview(request);
+    expect(credential).not.toHaveBeenCalled(); expect(requests).toEqual([]);
+    expect(Object.keys(preview).sort()).toEqual(['body', 'model', 'protocol']);
+    await adapter.generate(request);
+    expect(requests[0].body).toEqual(preview.body); expect(credential).toHaveBeenCalledTimes(1);
+  });
+
   test('centralizes token limits, strict schemas, reasoning and stable compatibility identities', async () => {
     const response = await adapter.generate(input());
     expect(response.responseDuration).toEqual(expect.any(Number));

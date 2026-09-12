@@ -17,6 +17,7 @@ import TpsBar from './TpsBar.vue'
 import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
 import ContextDetailDialog from './ContextDetailDialog.vue'
+import PromptPreviewDialog from './PromptPreviewDialog.vue'
 import type { ChannelOption, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
@@ -605,6 +606,16 @@ const ringDashOffset = computed(() => ringCircumference * (1 - chatStore.tokenUs
 
 // ========== 上下文统计详情入口（只读，不触发总结） ==========
 const showContextDetail = ref(false)
+const promptPreviewAvailable = !!window.__GRAYCODE_HOST
+const showPromptPreview = ref(false)
+const promptPreviewRequest = computed(() => ({
+  conversationId: chatStore.currentConversationId, configId: chatStore.configId,
+  message: serializeNodes(editorNodes.value).trim(), attachments: (props.attachments ?? []).map(attachment => ({
+    id: attachment.id, name: attachment.name, type: attachment.type, size: attachment.size,
+    mimeType: attachment.mimeType, data: attachment.data || '', thumbnail: attachment.thumbnail
+  })), modelOverride: chatStore.selectedModelId || undefined,
+  reasoningEffort: chatStore.selectedReasoningEffort || undefined, promptModeId: chatStore.currentPromptModeId
+}))
 function openContextDetail() {
   showContextDetail.value = true
 }
@@ -735,6 +746,10 @@ watch(() => settingsStore.promptModesVersion, () => {
       <TpsBar v-if="settingsStore.tpsBarEnabled" class="tps-slot" />
 
       <div class="toolbar-right">
+        <Tooltip v-if="promptPreviewAvailable" content="预览当前完整提示词" placement="top">
+          <IconButton icon="codicon-open-preview" size="small" aria-label="预览当前完整提示词" class="prompt-preview-button"
+            :disabled="!currentModel || props.uploading" @click="showPromptPreview = true" />
+        </Tooltip>
         <Tooltip :content="t('components.input.summarizeContext')" placement="top">
           <IconButton
             icon="codicon-fold"
@@ -835,6 +850,7 @@ watch(() => settingsStore.promptModesVersion, () => {
       :model-override="chatStore.selectedModelId || undefined"
       :fallback-max-tokens="chatStore.maxContextTokens"
     />
+    <PromptPreviewDialog v-if="promptPreviewAvailable" v-model="showPromptPreview" :request="promptPreviewRequest" :running="chatStore.isWaitingForResponse" />
   </div>
 </template>
 

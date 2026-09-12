@@ -1,7 +1,6 @@
 import { ArtifactApproval } from '../artifacts/approval';
-import { MessageBuilderService } from '../../../../backend/modules/api/chat/services/MessageBuilderService';
+import { chatRunInput, chatUserMessage } from './chatInput';
 import { StreamAccumulator } from '../../../../backend/modules/channel/StreamAccumulator';
-import { randomUUID } from 'node:crypto';
 import type { PlatformMessage, RunRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
@@ -25,7 +24,6 @@ interface ChatStream {
 /** Map core run events to the existing chat UI stream contract without owning execution. */
 export class ProductChat {
   private readonly streams = new Map<string, ChatStream>();
-  private readonly messageBuilder = new MessageBuilderService();
   constructor(private readonly app: PlatformApplication) {
     app.subscribe(notification => this.notification(notification as Record<string, any>));
   }
@@ -42,29 +40,19 @@ export class ProductChat {
       return { success: true, runId: existing.id };
     }
     const text = mode === 'edit' ? data.newText : data.message;
-    for (const attachment of data.attachments ?? []) {
-      if (typeof attachment.data !== 'string' || typeof attachment.mimeType !== 'string') throw new Error('附件内容无效。');
-    }
-    const parts = this.messageBuilder.buildUserMessageParts(text ? String(text) : '', data.attachments).map(part => ({ ...part }));
+    const userMessage = chatUserMessage(data, text);
+    const parts = userMessage.parts;
     const vision = typeof data.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: data.deepSeekVisionTileSplit } : {};
     if (mode === 'send' && !parts.length && !data.hiddenFunctionResponse) throw new Error('请输入消息或添加附件。');
     const stream = this.createStream(conversation.id);
     stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
-    const selection = (conversation.custom as Record<string, any> | undefined)?.inputModelConfig;
-    // 对话级选择同时用于发送、继续和重试；单次改用其他渠道或模型时不套用原选择。
-    const selectedEffort = selection && selection.configId === data.configId && (!data.modelOverride || selection.modelId === data.modelOverride)
-      && typeof selection.reasoningEffort === 'string' ? selection.reasoningEffort : undefined;
-    const input = { requestKey, actorId: client.actorId,
-      conversationId: conversation.id, workspaceId: conversation.workspaceId as string | undefined,
-      agentId: preferences.app.agents[0]?.id ?? 'default', providerId: data.configId, modelOverride: data.modelOverride,
-      reasoningEffort: data.reasoningEffort ?? selectedEffort,
-      promptModeId: data.promptModeId };
+    const input = chatRunInput(client, data, preferences, conversation, requestKey);
     let run: RunRecord;
     const scope = { clientId: client.clientId };
     if (mode === 'send' && data.hiddenFunctionResponse) {
       const change = await new ArtifactApproval(this.app).prepare(client.actorId, conversation.id, data.hiddenFunctionResponse);
       run = await this.app.runtime.continue({ ...input, expectedRevision: change.state.history.revision }, change, scope);
-    } else if (mode === 'send') run = await this.app.runtime.start({ ...input, message: { id: data.messageId || randomUUID(), role: 'user', parts, ...vision } }, undefined, scope);
+    } else if (mode === 'send') run = await this.app.runtime.start({ ...input, message: userMessage }, undefined, scope);
     else if (mode === 'continue') {
       const state = await this.app.conversations.read(client.actorId, conversation.id);
       run = await this.app.runtime.continue({ ...input, expectedRevision: state.history.revision }, undefined, scope);

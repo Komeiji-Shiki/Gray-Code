@@ -52,6 +52,14 @@ function emittedEntries(): PromptEntry[] {
 }
 
 describe('PromptEntriesEditor 条目名称草稿', () => {
+  test('角色和世界书可以作为独立条目添加，保留原预设与历史位置', async () => {
+    const w = await mountEditor()
+    await w.get('[aria-label="选择角色卡或世界书条目"]').setValue('WORLDBOOK_BEFORE_CHARACTER')
+    await w.findAll('button').find(button => button.text() === '添加资料条目')!.trigger('click')
+    const next = emittedEntries()
+    expect(next.slice(0, 2)).toMatchObject(makeEntries())
+    expect(next[2]).toMatchObject({ name: '角色前世界书', content: '{{$WORLDBOOK_BEFORE_CHARACTER}}', type: 'prompt', enabled: true })
+  })
   beforeEach(() => {
     setActivePinia(createPinia())
   })

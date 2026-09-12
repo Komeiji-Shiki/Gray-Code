@@ -34,11 +34,11 @@ export class ProviderModelAdapter implements ModelProvider {
   constructor(private readonly services: ModelAdapterServices) {
     this.http = new ChannelHttpExecutor(services.proxyUrl ?? (() => undefined));
   }
-  async generate(input: ModelInput): Promise<PlatformMessage> {
+  private async prepare(input: ModelInput, authenticate: boolean) {
     input.signal.throwIfAborted();
     const profile = await this.services.profile(input.providerId);
     if (!profile) throw new Error("Provider is not configured.");
-    const secret = profile.credentialRef
+    const secret = authenticate && profile.credentialRef
       ? await this.services.credential(profile.credentialRef)
       : "";
     if (secret === null)
@@ -105,6 +105,15 @@ export class ProviderModelAdapter implements ModelProvider {
       input,
       request,
     );
+    return { profile, config, formatter, options };
+  }
+  /** 使用真实协议格式器生成正文；预览不读取凭据，也不执行 HTTP 请求。 */
+  async preview(input: ModelInput) {
+    const { profile, config, options } = await this.prepare(input, false);
+    return { protocol: profile.protocol, model: config.model, body: options.body };
+  }
+  async generate(input: ModelInput): Promise<PlatformMessage> {
+    const { profile, config, formatter, options } = await this.prepare(input, true);
     input.signal.throwIfAborted();
     await input.onRequest?.({ protocol: profile.protocol, model: config.model, body: options.body });
     input.signal.throwIfAborted();

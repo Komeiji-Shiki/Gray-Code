@@ -125,6 +125,7 @@ export class PlatformApplication {
   readonly settings: SettingsService<ProductPreferences>;
   readonly runtime: PlatformRuntime;
   readonly models: ModelProvider;
+  readonly modelAdapter: ProviderModelAdapter;
   readonly discord: DiscordBotService;
   readonly botWorkspaces: BotWorkspaces;
   readonly conversationWorkspaces: ConversationWorkspaces;
@@ -220,9 +221,7 @@ export class PlatformApplication {
     for (const tool of this.memory.declarations()) this.tools.register(tool);
     setProductVersionResolver(() => packageMetadata.version);
     this.mcp = new PlatformMcpService(this);
-    const models =
-      options.models ??
-      new ProviderModelAdapter({
+    this.modelAdapter = new ProviderModelAdapter({
         profile: async (id) =>
           this.settings
             .snapshot()
@@ -233,6 +232,7 @@ export class PlatformApplication {
         prepareVision: (history, model, signal) => prepareDeepSeekVisionHistory(history, model, true, signal),
         proxyUrl: () => { const proxy = this.product.runtimeSettings().getProxySettings(); return proxy.enabled ? proxy.url : undefined; },
       });
+    const models = options.models ?? this.modelAdapter;
     this.models = { generate: input => withDependencyRuntime(this.dependencies, () => models.generate(input)) };
     this.runtime = new PlatformRuntime({
       storage,
@@ -246,6 +246,11 @@ export class PlatformApplication {
       preparePrompt: input => new PlatformPromptService(this).prepare(input),
       prepareModel: async input => {
         const prepared = await this.context.prepare(input);
+        prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
+        return prepared;
+      },
+      previewModel: async input => {
+        const prepared = await this.context.prepare(input, true);
         prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
         return prepared;
       },

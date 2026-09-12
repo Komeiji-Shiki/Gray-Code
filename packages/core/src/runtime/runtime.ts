@@ -27,6 +27,8 @@ export interface RuntimeServices {
   }>;
   transformOutput?: (input: { run: RunRecord; message: PlatformMessage; request: ModelInput }) => Promise<PlatformMessage>;
   prepareModel?: (context: ModelRequestContext) => Promise<{ history: ConversationState; messages: PlatformMessage[] }>;
+  /** 只读投影，不能调用模型、写入历史或执行运行前的任务副作用。 */
+  previewModel?: (context: ModelRequestContext) => Promise<{ history: ConversationState; messages: PlatformMessage[]; notices?: string[] }>;
   /** 可选宿主生命周期端口；授权检查仍由运行器负责。 */
   beforeRun?: (run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal) => Promise<void>;
   modelBoundary?: (run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal, phase: 'before' | 'after', iteration: number, message?: PlatformMessage) => Promise<void>;
@@ -112,7 +114,7 @@ export class PlatformRuntime {
   continue(input: ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
     return this.begin(structuredClone(input), change, scope ? structuredClone(scope) : undefined);
   }
-  private async begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
+  private async prepareRun(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope) {
     if (this.closing) throw new Error('Runtime is closing.');
     const actor = await this.services.actor(input.actorId, { conversationId: input.conversationId, workspaceId: input.workspaceId });
     const agent = await this.services.agent(input.agentId, actor ?? undefined, input.conversationId);
@@ -155,6 +157,27 @@ export class PlatformRuntime {
       ...(typeof source.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: source.deepSeekVisionTileSplit } : {}),
       role: 'user', parts: structuredClone(prepared?.messageParts ?? source.parts), id: source.id || randomUUID(),
       timestamp: now, parentId: history.at(-1)?.id ?? null, actorId: actor.id, isUserInput: true, runId: run.id, requestKey: run.requestKey } : undefined;
+    const selection = { ...modelSelection, promptContext: prepared?.promptContext, turnContext: prepared?.turnContext };
+    const configuredAgent = { ...agent, systemPrompt: prepared?.systemPrompt ?? agent.systemPrompt };
+    return { actor, workspace, state, catalog, modelSelection, prepared, run, message, selection, configuredAgent };
+  }
+  /** 预览与发送共用回合捕获和权限检查，但不创建任务与历史记录。 */
+  async preview(input: StartRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope) {
+    const turn = await this.prepareRun(structuredClone(input), change, scope ? structuredClone(scope) : undefined);
+    const { actor, workspace, catalog, run, message, selection, configuredAgent } = turn;
+    const state = structuredClone(turn.state);
+    state.metadata = structuredClone(change?.commit.metadata ?? state.metadata);
+    state.history.messages = structuredClone(change?.commit.messages ?? state.history.messages);
+    if (message) state.history.messages.push(message);
+    state.history.total = state.history.messages.length;
+    const request = this.modelInput(run, configuredAgent, workspace ?? undefined, actor, catalog, state.history.messages, selection, new AbortController().signal);
+    if (this.services.prepareModel && !this.services.previewModel) throw new Error('当前宿主尚未提供只读提示词预览。');
+    const prepared = await this.services.previewModel?.({ run, agent: configuredAgent, workspace: workspace ?? undefined, iteration: 1, input: request, history: state });
+    if (prepared) request.messages = prepared.messages;
+    return { input: request, notices: prepared?.notices ?? [] };
+  }
+  private async begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
+    const { workspace, state, catalog, modelSelection, prepared, run, message, selection, configuredAgent } = await this.prepareRun(input, change, scope);
     const committed = await this.services.storage.commitConversation({ conversationId: input.conversationId,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, ...change?.commit,
       records: [...(change?.commit.records ?? []), { namespace: 'run-configurations', id: run.id, ownerId: run.conversationId,
@@ -165,8 +188,6 @@ export class PlatformRuntime {
     if (!result.created) return result.run;
     const controller = new AbortController();
     // Defer work one microtask so cancellation sees the run even when it arrives immediately.
-    const selection = { ...modelSelection, promptContext: prepared?.promptContext, turnContext: prepared?.turnContext };
-    const configuredAgent = { ...agent, systemPrompt: prepared?.systemPrompt ?? agent.systemPrompt };
     const done = Promise.resolve().then(() => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection))
       .finally(() => { this.active.delete(run.id); this.questions.clear(run.id); });
     this.active.set(run.id, { controller, done });
@@ -174,6 +195,13 @@ export class PlatformRuntime {
     this.notify({ type: 'run.created', runId: run.id, run: structuredClone(run), ...(message ? { message: structuredClone(message) } : {}) });
     void done.catch(() => undefined);
     return run;
+  }
+
+  private modelInput(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, actor: ActorIdentity, catalog: ToolCatalog,
+    messages: PlatformMessage[], selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext'>, signal: AbortSignal): ModelInput {
+    return { conversationId: run.conversationId, ...selection, systemPrompt: agent.systemPrompt, messages,
+      taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace },
+      tools: structuredClone(catalog.declarations), signal };
   }
 
   async wait(runId: string): Promise<RunRecord | null> {
@@ -226,10 +254,7 @@ export class PlatformRuntime {
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
         let streamingEvent: Promise<void> | undefined;
-        const request: ModelInput = { conversationId: run.conversationId,
-          ...selection, systemPrompt: agent.systemPrompt, messages: state.history.messages,
-          taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace },
-          tools: structuredClone(catalog.declarations), signal,
+        const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
           onRequest: async captured => {
             const id = `${run.id}:${iteration}`;
             await this.services.storage.putRecord({ namespace: 'model-requests', id, ownerId: run.conversationId,

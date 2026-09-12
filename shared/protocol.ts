@@ -128,6 +128,7 @@ export const MESSAGE_NAMES = {
 
 // ---- 系统提示词 ----
   countSystemPromptTokens: 'countSystemPromptTokens',
+  'prompt.preview': 'prompt.preview',
 
   createMcpServer: 'createMcpServer',
   deleteMcpServer: 'deleteMcpServer',
