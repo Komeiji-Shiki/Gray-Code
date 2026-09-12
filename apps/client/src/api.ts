@@ -1,5 +1,5 @@
 export interface DesktopBridge {
-  kind?: 'web';
+  kind?: 'desktop' | 'web';
   call(method: string, params?: Record<string, unknown>): Promise<any>;
   subscribe(listener: (event: Record<string, any>) => void): () => void;
 }

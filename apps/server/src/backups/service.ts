@@ -33,6 +33,8 @@ export class ApplicationBackups {
   async close() { this.cancel(); await this.operation?.catch(() => {}); }
   private publish(value: BackupProgress) {
     const previous = this.progress; this.progress = value;
+    // 完成通知在临时文件清理和忙碌状态解除后发送，窗口关闭策略才能正确判断是否退出。
+    if (['ready', 'error', 'cancelled'].includes(value.phase)) return;
     if (previous?.phase === value.phase && value.processedBytes !== undefined && Date.now() - this.lastNotice < 100) return;
     this.lastNotice = Date.now(); this.options.notify(value);
   }
@@ -42,7 +44,10 @@ export class ApplicationBackups {
     const running = action(controller.signal).catch(error => {
       this.publish({ operation, phase: controller.signal.aborted ? 'cancelled' : 'error', message: String((error as Error).message ?? error) });
       throw error;
-    }).finally(() => { this.controller = undefined; this.operation = undefined; });
+    }).finally(() => {
+      this.controller = undefined; this.operation = undefined;
+      if (this.progress) this.options.notify(this.progress);
+    });
     this.operation = running; return running;
   }
   export(destination: string, password?: string) {

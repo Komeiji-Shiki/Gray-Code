@@ -42,7 +42,9 @@
 body { margin: 0; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); }
 html.platform-host { --gc-radius-xs: 0; --gc-radius-sm: 0; --gc-radius-md: 0; --gc-radius-lg: 0; }
 .mobile-settings-category{display:none}
-.platform-host body .settings-sidebar { width: 195px; padding: 16px 10px; overflow-y: auto; gap: 2px; }
+.platform-host body .settings-sidebar { width: 195px; padding: 16px 10px; overflow-y: auto; overflow-x: hidden; gap: 2px; }
+.platform-host body .settings-tab::after { display: none; }
+.platform-host body .settings-tab-label { min-width: 0; }
 .platform-host body .settings-sidebar.collapsed { width: 56px; }
 .platform-host body .settings-tab { padding: 8px 10px; min-height: 35px; }
 .platform-host body .settings-main { width: 100%; box-sizing: border-box; max-width: 920px; margin: 0 auto; padding: 28px 30px 40px; }

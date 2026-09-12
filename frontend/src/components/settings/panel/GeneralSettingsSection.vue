@@ -37,6 +37,7 @@ defineProps<{
     defaultPath: string
     customPath: string
     isCustom: boolean
+    externallyConfigured?: boolean
   }
   customPath: string
   isValidatingPath: boolean
@@ -237,6 +238,7 @@ function onCustomPathInput(event: Event) {
             <input
               type="text"
               :value="customPath"
+              :readonly="storageSettings.externallyConfigured"
               :placeholder="storageSettings.currentPath || t('components.settings.storageSettings.customPathPlaceholder')"
               class="path-input"
               :class="{
@@ -248,13 +250,13 @@ function onCustomPathInput(event: Event) {
             <button
               class="path-picker-btn"
               :title="t('components.settings.storageSettings.browse')"
-              :disabled="isMigrating"
+              :disabled="isMigrating || storageSettings.externallyConfigured"
               @click="emit('pickStoragePath')"
             >
               <i class="codicon codicon-folder-opened"></i>
             </button>
           </div>
-          <p class="field-hint">{{ isPlatform ? '留空使用独立应用的默认数据目录。路径变更在应用下次启动时处理，原目录保留。' : t('components.settings.storageSettings.customPathHint') }}</p>
+          <p class="field-hint">{{ storageSettings.externallyConfigured ? '当前数据目录由启动参数指定。更新启动参数后可改用其他目录。' : isPlatform ? '留空使用独立应用的默认数据目录。路径变更在应用下次启动时处理，原目录保留。' : t('components.settings.storageSettings.customPathHint') }}</p>
           <p class="current-path-note">
             {{ t('components.settings.storageSettings.currentPath') }}：
             <span class="path-note-value" :title="storageSettings.currentPath">{{ storageSettings.currentPath || '-' }}</span>
@@ -271,7 +273,7 @@ function onCustomPathInput(event: Event) {
           <button
             class="action-btn primary"
             @click="emit('applyStoragePath')"
-            :disabled="isMigrating || isValidatingPath || (customPath.trim() !== '' && !pathValidationResult?.valid)"
+            :disabled="isMigrating || storageSettings.externallyConfigured || isValidatingPath || (customPath.trim() !== '' && !pathValidationResult?.valid)"
           >
             <i class="codicon codicon-check"></i>
             {{ t('components.settings.storageSettings.apply') }}
@@ -279,7 +281,7 @@ function onCustomPathInput(event: Event) {
           <button
             class="action-btn"
             @click="emit('resetStoragePath')"
-            :disabled="isMigrating"
+            :disabled="isMigrating || storageSettings.externallyConfigured"
             :title="!storageSettings.isCustom ? t('components.settings.storageSettings.notifications.alreadyDefaultTitle') : ''"
           >
             <i class="codicon codicon-discard"></i>
@@ -403,6 +405,10 @@ function onCustomPathInput(event: Event) {
 .platform-general a.update-now-btn {
   text-decoration: none;
   border-radius: 0;
+}
+.platform-general .action-btn:not(.primary) {
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-input-background);
 }
 
 .form-group {
@@ -786,7 +792,7 @@ function onCustomPathInput(event: Event) {
   color: var(--vscode-descriptionForeground);
 }
 
-.storage-actions {
+.storage-actions, .import-export-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;

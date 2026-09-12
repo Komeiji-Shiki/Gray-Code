@@ -52,7 +52,7 @@ defineEmits<{
         dimmed: searchActive && !tabsWithMatches.has(tab.id)
       }]"
       :data-tooltip="tab.label"
-      :title="collapsed ? tab.label : undefined"
+      :title="tab.label"
       :aria-label="tab.label"
       :aria-current="activeTab === tab.id ? 'page' : undefined"
       @click="$emit('select', tab.id)"

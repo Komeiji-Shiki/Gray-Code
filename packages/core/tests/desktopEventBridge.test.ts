@@ -8,10 +8,12 @@ jest.mock('electron', () => {
 });
 
 const bridge = (contextBridge.exposeInMainWorld as jest.Mock).mock.calls[0][1] as {
+  kind: 'desktop';
   subscribe(listener: (event: Record<string, unknown>) => void): () => void;
 };
 
 test('多个编辑器订阅共用一个 IPC 监听，并各自收到一次事件', () => {
+  expect(bridge.kind).toBe('desktop');
   const listeners = Array.from({ length: 20 }, () => jest.fn());
   const cleanup = listeners.map(listener => bridge.subscribe(listener));
   try {

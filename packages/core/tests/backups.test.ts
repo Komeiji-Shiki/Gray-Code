@@ -101,13 +101,16 @@ describe('application data backup and restore', () => {
   test('cancelling a backup leaves an existing destination and the running database intact', async () => {
     await f.store.createConversation(metadata('alpha'));
     const destination = path.join(f.root, 'existing.graycode-backup'); await fs.writeFile(destination, 'previous backup');
+    const completedStates: boolean[] = [];
     const backups = new ApplicationBackups(f.store, { appVersion: '2.0.0-pre', secretCodec: codec('device'), notify(progress) {
       if (progress.phase === 'resources') backups.cancel();
+      if (progress.phase === 'cancelled') completedStates.push(backups.busy);
     } });
     await expect(backups.export(destination)).rejects.toThrow('已取消');
     expect(await fs.readFile(destination, 'utf8')).toBe('previous backup');
     expect(await f.store.getConversation('alpha')).not.toBeNull();
     expect((await fs.readdir(f.data)).some(name => name.startsWith('.backup-snapshot-'))).toBe(false);
     expect((await backups.status()).busy).toBe(false);
+    expect(completedStates).toEqual([false]);
   });
 });

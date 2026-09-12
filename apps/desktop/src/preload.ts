@@ -5,6 +5,7 @@ ipcRenderer.on('graycode:event', (_event: Electron.IpcRendererEvent, value: Reco
   for (const listener of [...eventListeners]) listener(value);
 });
 contextBridge.exposeInMainWorld("graycode", {
+  kind: 'desktop',
   call: async (method: string, params?: Record<string, unknown>) => {
     try { return await ipcRenderer.invoke('graycode:rpc', method, params); }
     catch (error) {

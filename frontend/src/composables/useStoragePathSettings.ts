@@ -20,7 +20,8 @@ export function useStoragePathSettings() {
     currentPath: '',
     defaultPath: '',
     customPath: '',
-    isCustom: false
+    isCustom: false,
+    externallyConfigured: false
   })
   const isValidatingPath = ref(false)
   const pathValidationResult = ref<{ valid: boolean; message?: string } | null>(null)
@@ -41,6 +42,10 @@ export function useStoragePathSettings() {
     try {
       const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.getConfig'], {})
       if (response) {
+        pathValidationRequestId++
+        pathValidationResult.value = null
+        isValidatingPath.value = false
+        storageSettings.externallyConfigured = response.externallyConfigured === true
         storageSettings.currentPath = response.effectivePath || ''
         storageSettings.defaultPath = response.defaultPath || ''
         storageSettings.customPath = response.config?.pendingMigration?.targetPath || response.config?.customDataPath || ''
@@ -82,7 +87,7 @@ export function useStoragePathSettings() {
     const normalizedPath = path.trim()
     const requestId = ++pathValidationRequestId
 
-    if (!normalizedPath) {
+    if (!normalizedPath || storageSettings.externallyConfigured || normalizedPath === storageSettings.currentPath.trim()) {
       pathValidationResult.value = null
       isValidatingPath.value = false
       return
@@ -116,8 +121,9 @@ export function useStoragePathSettings() {
   // 防抖验证
   function debouncedValidatePath(path: string) {
     pathValidationRequestId++
-    isValidatingPath.value = path.trim() !== ''
     pathValidationResult.value = null
+    isValidatingPath.value = !!path.trim() && !storageSettings.externallyConfigured && path.trim() !== storageSettings.currentPath.trim()
+    if (!isValidatingPath.value) { deferredValidate.cancel(); return }
     deferredValidate.schedule(() => {
       validateStoragePath(path)
     })
@@ -130,9 +136,10 @@ export function useStoragePathSettings() {
 
   // 应用存储路径（迁移数据到新路径）
   async function applyStoragePath() {
-    if (isMigrating.value) return
+    if (isMigrating.value || storageSettings.externallyConfigured) return
 
     const newPath = storageSettings.customPath.trim()
+    if (newPath === storageSettings.currentPath.trim()) return
 
     if (!newPath) {
       storageMessage.value = t('components.settings.storageSettings.notifications.applyEmptyHint')
@@ -153,7 +160,7 @@ export function useStoragePathSettings() {
 
   // 重置为默认路径
   async function resetStoragePath() {
-    if (isMigrating.value) return
+    if (isMigrating.value || storageSettings.externallyConfigured) return
 
     if (!storageSettings.isCustom) {
       // 已经是默认路径，无需重置
@@ -242,7 +249,8 @@ export function useStoragePathSettings() {
     try {
       await sendToExtension(MESSAGE_NAMES.reloadWindow, {})
     } catch (error) {
-      console.error('Failed to reload window:', error)
+      storageMessage.value = error instanceof Error ? error.message : String(error)
+      storageMessageType.value = 'error'
     }
   }
 
