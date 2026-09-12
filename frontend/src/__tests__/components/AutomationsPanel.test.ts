@@ -15,7 +15,7 @@ beforeEach(() => {
   rows = []; rpc.mockReset()
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.open = true } })
   Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.open = false } })
-  rpc.mockImplementation(async (method, params) => {
+  rpc.mockImplementation(async method => {
     if (method === 'automations.list') return rows
     if (method === 'automations.options') return { agents: [{ id: 'default', name: 'GrayCode' }], providers: [{ id: 'provider', name: '测试渠道', model: 'model', models: [] }],
       workspaces: [], promptModes: [{ id: 'preset', name: '预设' }], current: { conversationId: 'current-chat', agentId: 'default', providerId: 'provider', modelId: 'model', promptModeId: 'preset' } }
