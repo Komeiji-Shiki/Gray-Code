@@ -22,7 +22,7 @@ export class ApplicationAutomations {
   constructor(private readonly app: PlatformApplication) {
     this.meter = new AutomationModelMeter({ read: id => this.read(id), add: (id, delta) => this.mutate(id, record => {
       for (const key of Object.keys(delta) as Array<keyof AutomationUsage>) record.usage[key] += delta[key];
-    }).then(() => {}), budgetReached: id => this.mutate(id, record => { record.status = 'paused'; record.pauseReason = 'budget'; }).then(() => {}) });
+    }).then(() => {}) });
     this.unsubscribe = app.subscribe(notification => {
       if (!this.ready || this.closing) return;
       if (notification.type === 'conversation.changed' && typeof notification.conversationId === 'string'
@@ -83,6 +83,9 @@ export class ApplicationAutomations {
       if (record.status === 'completed' && !record.currentRequestKey) continue;
       const previous = record.currentRequestKey ? await this.app.storage.getRunByRequestKey(record.currentRequestKey) : null;
       await this.mutate(record.id, current => {
+        // 旧预算不再生效，之前暂停的任务仍按重启规则等待手动继续。
+        delete (current as AutomationRecord & { tokenBudget?: number }).tokenBudget;
+        if ((current.pauseReason as string) === 'budget') current.pauseReason = 'restart';
         if (current.currentRequestKey) {
           current.lastRunId = previous?.id ?? current.lastRunId;
           if (previous?.status === 'completed') current.completedRuns++;
@@ -133,7 +136,6 @@ export class ApplicationAutomations {
   private async createRecord(actorId: string, input: AutomationCreate) {
     this.app.requireOwner(actorId);
     if (!['goal', 'schedule'].includes(input.kind) || typeof input.objective !== 'string' || !input.objective.trim()) throw new Error('请填写需要执行的目标或任务。');
-    this.validateBudget(input.tokenBudget);
     const channel = await this.app.product.channel(input.providerId);
     if (!channel?.enabled) throw new Error('请选择已启用的模型渠道。');
     const agent = this.app.settings.snapshot().settings.agents.find(agent => agent.id === input.agentId);
@@ -152,17 +154,14 @@ export class ApplicationAutomations {
       ?? agent.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
     const now = Date.now();
     const record: AutomationRecord = { version: 1, id: randomUUID(), kind: input.kind, name, objective: input.objective.trim(), conversationId: conversation.id,
-      actorId, agentId: input.agentId, status: 'active', createdAt: now, updatedAt: now, usage: emptyUsage(), completedRuns: 0, tokenBudget: input.tokenBudget,
+      actorId, agentId: input.agentId, status: 'active', createdAt: now, updatedAt: now, usage: emptyUsage(), completedRuns: 0,
       configuration: { providerId: input.providerId, modelOverride: input.modelOverride || channel.model, reasoningEffort: input.reasoningEffort,
         promptModeId, workspace: workspace ?? null }, nextRunAt: first, ...(schedule ? { schedule, missedRunPolicy: input.missedRunPolicy } : {}) };
     await this.app.storage.commitRecords([{ namespace: automationNamespace, id: record.id, ownerId: conversation.id, expectedRevision: null, value: record }]);
     this.changed(record); return record;
   }
-  private validateBudget(value: unknown) {
-    if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 1)) throw new Error('Token 预算必须是正整数，留空表示不设预算。');
-  }
   async update(actorId: string, id: string, input: AutomationCreate) {
-    this.app.requireOwner(actorId); this.validateBudget(input.tokenBudget);
+    this.app.requireOwner(actorId);
     if (typeof input.objective !== 'string' || !input.objective.trim()) throw new Error('请填写任务目标。');
     const channel = await this.app.product.channel(input.providerId);
     if (!channel?.enabled || !this.app.settings.snapshot().settings.agents.some(agent => agent.id === input.agentId)) throw new Error('请选择可用的智能体和模型渠道。');
@@ -173,7 +172,7 @@ export class ApplicationAutomations {
       if (record.kind !== input.kind) throw new Error('修改任务类型时请新建一个自动任务。');
       if (record.kind === 'goal' && input.objective.trim() !== record.objective) record.pendingObjectiveChange = true;
       record.name = input.name?.trim() || input.objective.trim().split('\n')[0].slice(0, 80);
-      record.objective = input.objective.trim(); record.agentId = input.agentId; record.tokenBudget = input.tokenBudget;
+      record.objective = input.objective.trim(); record.agentId = input.agentId;
       record.configuration = { ...record.configuration, providerId: input.providerId, modelOverride: input.modelOverride || channel.model,
         promptModeId: input.promptModeId || record.configuration.promptModeId, reasoningEffort: input.reasoningEffort || undefined };
       if (schedule) { record.schedule = schedule; record.missedRunPolicy = input.missedRunPolicy; record.nextRunAt = nextScheduledTime(schedule, Date.now()); }
@@ -190,13 +189,11 @@ export class ApplicationAutomations {
     }
     return record;
   }
-  async resume(actorId: string, id: string, tokenBudget?: number | null) {
-    this.app.requireOwner(actorId); this.validateBudget(tokenBudget === null ? undefined : tokenBudget);
+  async resume(actorId: string, id: string) {
+    this.app.requireOwner(actorId);
     return this.mutate(id, async record => {
       if (record.status === 'completed') throw new Error('任务已经完成，可以新建另一个目标。');
-      if (tokenBudget !== undefined) record.tokenBudget = tokenBudget ?? undefined;
-      if (record.tokenBudget !== undefined && record.usage.inputTokens + record.usage.outputTokens >= record.tokenBudget) throw new Error('已达到预算，请先增加或取消预算再继续。');
-      const continueInterrupted = !!record.lastRunId && (record.awaitingBackground || ['error', 'restart', 'budget', 'input'].includes(record.pauseReason ?? ''));
+      const continueInterrupted = !!record.lastRunId && (record.awaitingBackground || ['error', 'restart', 'input'].includes(record.pauseReason ?? ''));
       record.status = 'active'; delete record.pauseReason; delete record.error; delete record.finishRunId; delete record.finishStatus;
       record.awaitingBackground = false;
       record.nextRunAt = record.kind === 'goal' ? Date.now() : nextScheduledTime(record.schedule!, Date.now());
@@ -230,8 +227,6 @@ export class ApplicationAutomations {
         const state = await this.app.conversations.read(record.actorId, record.conversationId);
         if (normalizePendingApprovalGate((state.metadata.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) {
           record.status = 'paused'; record.pauseReason = 'input'; record.error = '当前对话中的文档正在等待确认，请确认后继续自动任务。';
-        } else if (record.tokenBudget !== undefined && record.usage.inputTokens + record.usage.outputTokens >= record.tokenBudget) {
-          record.status = 'paused'; record.pauseReason = 'budget';
         } else {
           const requestKey = `automation:${id}:${randomUUID()}`;
           const started = { ...record, currentRequestKey: requestKey, nextRunAt: undefined, followupPending: false, awaitingBackground: false, pendingObjectiveChange: false, updatedAt: Date.now() };
@@ -281,7 +276,6 @@ export class ApplicationAutomations {
       if (run.status === 'completed') current.completedRuns++;
       if (current.status !== 'active') return;
       if (run.status !== 'completed') { current.status = 'paused'; current.pauseReason = run.status === 'cancelled' ? 'user' : 'error'; current.error = run.error; return; }
-      if (current.tokenBudget !== undefined && current.usage.inputTokens + current.usage.outputTokens >= current.tokenBudget) { current.status = 'paused'; current.pauseReason = 'budget'; return; }
       if (await this.app.subagents.feedback.continuation.hasPending(current.conversationId)) {
         current.followupPending = true; current.awaitingBackground = false; current.nextRunAt = Date.now(); return;
       }
@@ -295,9 +289,8 @@ export class ApplicationAutomations {
   async preparePrompt<T extends { systemPrompt: string; toolNames: string[]; promptContext?: ModelInput['promptContext'] }>(id: string | undefined, conversationId: string, prepared: T): Promise<T> {
     if (!id) return prepared;
     const record = await this.read(id); if (!record || record.conversationId !== conversationId || record.kind !== 'goal') return prepared;
-    const used = record.usage.inputTokens + record.usage.outputTokens;
     return { ...prepared, toolNames: [...new Set([...prepared.toolNames, 'goal_update'])],
-      systemPrompt: [prepared.systemPrompt, `\n长期目标：${record.objective}\n${record.tokenBudget === undefined ? '用户未设置 Token 预算。' : `总 Token 预算 ${record.tokenBudget}，目前已使用 ${used}。`}`,
+      systemPrompt: [prepared.systemPrompt, `\n长期目标：${record.objective}`,
         '持续推进这个目标，保留重要进度。使用 goal_update 报告进展；只有目标已完成时才报告 complete，缺少必须由用户提供的信息时报告 needs_input。普通最终回复不会结束长期目标。',
         record.progress ? `最近进度：${record.progress}` : ''].filter(Boolean).join('\n') };
   }
@@ -317,7 +310,7 @@ export class ApplicationAutomations {
       current.progress = summary.trim();
       if (status !== 'progress') { current.finishRunId = run.id; current.finishStatus = status === 'complete' ? 'completed' : 'paused'; }
     });
-    return { success: true, data: { status, progress: updated.progress, usage: updated.usage, tokenBudget: updated.tokenBudget } };
+    return { success: true, data: { status, progress: updated.progress, usage: updated.usage } };
   }
   async afterTools(run: RunRecord): Promise<{ stop: boolean; reason?: string } | undefined> {
     if (!run.automationId) return;

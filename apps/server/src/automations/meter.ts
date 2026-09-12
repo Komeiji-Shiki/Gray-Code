@@ -7,7 +7,6 @@ export class AutomationModelMeter {
   constructor(private readonly host: {
     read(id: string): Promise<AutomationRecord | null>;
     add(id: string, usage: AutomationUsage): Promise<void>;
-    budgetReached(id: string): Promise<void>;
   }) {}
   currentId() { return this.scope.getStore(); }
   run(run: RunRecord, execute: () => Promise<void>) {
@@ -18,9 +17,6 @@ export class AutomationModelMeter {
     if (!id) return generate();
     const record = await this.host.read(id);
     if (!record || record.status === 'completed' || record.status === 'paused' && record.pauseReason !== 'user') throw new Error('自动任务已暂停，请在任务面板中继续。');
-    if (record.tokenBudget !== undefined && record.usage.inputTokens + record.usage.outputTokens >= record.tokenBudget) {
-      await this.host.budgetReached(id); throw new Error('自动任务已达到 Token 预算，未发起新的模型请求。');
-    }
     let response: PlatformMessage;
     try { response = await generate(); }
     catch (error) {

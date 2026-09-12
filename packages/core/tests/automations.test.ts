@@ -38,7 +38,7 @@ describe('持久目标和定时触发', () => {
 
   test('目标跨轮继续，完成工具结算后结束，并保留原目标消息与调用用量', async () => {
     generate = async () => calls.length === 1 ? answer() : complete();
-    const goal = await create({ tokenBudget: 100 }); await app.automations.tick(now);
+    const goal = await create(); await app.automations.tick(now);
     await until(goal.id, record => record.completedRuns === 1 && !record.currentRequestKey);
     now += 1100; await Promise.all([app.automations.tick(now), app.automations.tick(now)]);
     const done = await until(goal.id, record => record.status === 'completed' && !record.currentRequestKey);
@@ -53,27 +53,26 @@ describe('持久目标和定时触发', () => {
     now += 100000; await app.automations.tick(now); expect(calls).toHaveLength(2);
   });
 
-  test('总结和子任务都计入同一预算，达到预算后暂停并允许增加预算继续', async () => {
+  test('总结和子任务的用量归属同一目标，旧请求中的预算字段不限制持续执行', async () => {
     await app.createConversation('owner', '子任务测试', undefined, undefined, undefined, { id: 'child-chat' });
     let primary = 0;
     generate = async input => {
       if (input.conversationId === 'child-chat') return answer();
       if (input.purpose === 'summary') return answer(20, 5);
       if (++primary > 1) return complete();
-      const child = await app.runtime.start({ requestKey: 'budget-child', actorId: 'owner', agentId: 'default', conversationId: 'child-chat', providerId,
+      const child = await app.runtime.start({ requestKey: 'usage-child', actorId: 'owner', agentId: 'default', conversationId: 'child-chat', providerId,
         promptModeId: 'automation-test', message: { role: 'user', parts: [{ text: '完成子任务。' }] } });
       await app.runtime.wait(child.id);
       await app.models.generate({ ...input, purpose: 'summary', tools: [], messages: [{ role: 'user', parts: [{ text: '总结当前资料。' }] }] });
       return answer();
     };
     const goal = await create({ tokenBudget: 40 }); await app.automations.tick(now);
-    const paused = await until(goal.id, record => record.status === 'paused' && !record.currentRequestKey);
-    expect(paused.pauseReason).toBe('budget'); expect(paused.usage).toMatchObject({ requests: 3, inputTokens: 40, outputTokens: 15 });
-    expect((await app.storage.getRunByRequestKey('budget-child'))?.automationId).toBe(goal.id);
+    const running = await until(goal.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    expect(running.status).toBe('active'); expect(running).not.toHaveProperty('tokenBudget');
+    expect(running.usage).toMatchObject({ requests: 3, inputTokens: 40, outputTokens: 15 });
+    expect((await app.storage.getRunByRequestKey('usage-child'))?.automationId).toBe(goal.id);
     expect(calls.find(call => call.conversationId === 'child-chat')?.tools.some(tool => tool.name === 'goal_update')).toBe(false);
-    now += 100000; await app.automations.tick(now); expect(primary).toBe(1);
-    await expect(app.automations.resume('owner', goal.id)).rejects.toThrow('预算');
-    await app.automations.resume('owner', goal.id, 100); await app.automations.tick(now);
+    now += 1100; await app.automations.tick(now);
     await until(goal.id, record => record.status === 'completed' && !record.currentRequestKey); expect(primary).toBe(2);
   });
 
@@ -88,17 +87,20 @@ describe('持久目标和定时触发', () => {
     await until(goal.id, record => record.status === 'completed' && !record.currentRequestKey); expect(calls).toHaveLength(2);
   });
 
-  test('同一轮的预算用完后，保留已经完成的工具结果且不再请求模型', async () => {
-    generate = async () => ({ ...answer(), parts: [{ functionCall: { id: 'progress', name: 'goal_update', args: { status: 'progress', summary: '已经完成第一步。' } } }] });
-    const goal = await create({ tokenBudget: 10 }); await app.automations.tick(now);
-    const paused = await until(goal.id, record => record.status === 'paused' && !record.currentRequestKey);
-    expect(calls).toHaveLength(1); expect(paused.pauseReason).toBe('budget'); expect(paused.progress).toBe('已经完成第一步。');
-    expect((await app.storage.readFullHistory('auto-chat')).messages.at(-1)?.parts[0]).toHaveProperty('functionResponse');
+  test('旧记录的预算不会中断同一轮执行，工具结果和累计用量保持完整', async () => {
+    generate = async () => calls.length === 1 ? { ...answer(), parts: [{ functionCall: { id: 'progress', name: 'goal_update', args: { status: 'progress', summary: '已经完成第一步。' } } }] } : complete();
+    const goal = await create();
+    await app.storage.putRecord({ namespace: 'automations', id: goal.id, ownerId: 'auto-chat', value: { ...goal, tokenBudget: 1 } });
+    await app.automations.tick(now);
+    const done = await until(goal.id, record => record.status === 'completed' && !record.currentRequestKey);
+    expect(calls).toHaveLength(2); expect(done.completedRuns).toBe(1); expect(done.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 });
+    const history = await app.storage.readFullHistory('auto-chat');
+    expect(history.messages.flatMap(message => message.parts).filter(part => part.functionResponse)).toHaveLength(2);
   });
 
-  test('后台结果继续交给原目标处理，恢复运行保留预算归属', async () => {
+  test('后台结果继续交给原目标处理，恢复运行保留用量归属', async () => {
     generate = async () => calls.length === 1 ? answer() : complete();
-    const goal = await create({ tokenBudget: 100 }); await app.automations.tick(now);
+    const goal = await create(); await app.automations.tick(now);
     const first = await until(goal.id, record => record.completedRuns === 1 && !record.currentRequestKey);
     await app.storage.appendHistory('auto-chat', [{ id: 'background-result', role: 'user', userFeedback: true, isUserInput: false, parts: [{ text: '后台任务返回了验证结果。' }] }]);
     await app.storage.commitRecords([
@@ -125,8 +127,8 @@ describe('持久目标和定时触发', () => {
     const goal = await create(); await app.automations.tick(now);
     await until(goal.id, record => record.completedRuns === 1 && !record.currentRequestKey); await app.automations.pause('owner', goal.id);
     const updated = await app.automations.update('owner', goal.id, { kind: 'goal', name: '补充验证', objective: '完成原工作并补充最后检查。',
-      agentId: 'default', providerId, modelOverride: 'another-model', promptModeId: 'automation-test', tokenBudget: 500 });
-    expect(updated).toMatchObject({ status: 'paused', conversationId: 'auto-chat', completedRuns: 1, tokenBudget: 500, usage: { requests: 1 } });
+      agentId: 'default', providerId, modelOverride: 'another-model', promptModeId: 'automation-test' });
+    expect(updated).toMatchObject({ status: 'paused', conversationId: 'auto-chat', completedRuns: 1, usage: { requests: 1 } });
     expect(calls).toHaveLength(1); generate = async () => complete(); await app.automations.resume('owner', goal.id); await app.automations.tick(now);
     await until(goal.id, record => record.status === 'completed' && !record.currentRequestKey);
     expect(calls[1].modelOverride).toBe('another-model'); expect(calls[1].systemPrompt).toContain('补充最后检查');

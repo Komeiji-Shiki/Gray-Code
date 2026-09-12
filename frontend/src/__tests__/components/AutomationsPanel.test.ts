@@ -9,7 +9,7 @@ let rows: any[]
 const dialogMethods = ['showModal', 'close'] as const
 const dialogDescriptors = dialogMethods.map(name => Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name))
 const record = (extra = {}) => ({ id: 'goal', kind: 'goal', name: '当前目标', objective: '完成目标', conversationId: 'current-chat', status: 'paused', pauseReason: 'user',
-  completedRuns: 1, tokenBudget: 200, updatedAt: 1, configuration: { modelOverride: 'model' },
+  completedRuns: 1, updatedAt: 1, configuration: { modelOverride: 'model' },
   usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 30, requests: 1, estimatedRequests: 0, unknownRequests: 0 }, ...extra })
 beforeEach(() => {
   rows = []; rpc.mockReset()
@@ -19,8 +19,8 @@ beforeEach(() => {
     if (method === 'automations.list') return rows
     if (method === 'automations.options') return { agents: [{ id: 'default', name: 'GrayCode' }], providers: [{ id: 'provider', name: '测试渠道', model: 'model', models: [] }],
       workspaces: [], promptModes: [{ id: 'preset', name: '预设' }], current: { conversationId: 'current-chat', agentId: 'default', providerId: 'provider', modelId: 'model', promptModeId: 'preset' } }
-    if (method === 'automations.create') { const value = record({ status: 'active', tokenBudget: params.tokenBudget }); rows = [value]; return value }
-    if (method === 'automations.resume') { rows = [record({ status: 'active', tokenBudget: params.tokenBudget })]; return rows[0] }
+    if (method === 'automations.create') { const value = record({ status: 'active' }); rows = [value]; return value }
+    if (method === 'automations.resume') { rows = [record({ status: 'active' })]; return rows[0] }
   })
 })
 afterEach(() => {
@@ -31,21 +31,23 @@ afterEach(() => {
   })
 })
 
-describe('自动任务的实际数字输入', () => {
-  test('填写数字预算后可以创建目标，数字输入不会被当作字符串调用', async () => {
+describe('自动任务的创建与继续', () => {
+  test('创建目标保留当前对话和目标内容，无需填写 Token 上限', async () => {
     const wrapper = mount(AutomationsPanel, { props: { open: true } }); await flushPromises()
     await wrapper.get('[aria-label="自动任务目标"]').setValue('整理和验证项目资料')
-    await wrapper.get('[aria-label="自动任务 Token 预算"]').setValue('200')
+    expect(wrapper.find('[aria-label="自动任务 Token 预算"]').exists()).toBe(false)
     await wrapper.get('form').trigger('submit'); await flushPromises()
-    expect(rpc.mock.calls.find(call => call[0] === 'automations.create')?.[1]).toMatchObject({ tokenBudget: 200, conversationId: 'current-chat', objective: '整理和验证项目资料' })
+    const created = rpc.mock.calls.find(call => call[0] === 'automations.create')?.[1]
+    expect(created).toMatchObject({ conversationId: 'current-chat', objective: '整理和验证项目资料' })
+    expect(created).not.toHaveProperty('tokenBudget')
     expect(wrapper.find('[role=alert]').exists()).toBe(false); wrapper.unmount()
   })
-  test('暂停的目标可以通过数字输入增加预算继续', async () => {
+  test('暂停的目标可以直接继续，用量仍正常显示', async () => {
     rows = [record()]
     const wrapper = mount(AutomationsPanel, { props: { open: true } }); await flushPromises()
-    await wrapper.get('[aria-label="继续时的 Token 预算"]').setValue('500')
+    expect(wrapper.get('.automation-statistics').text()).toContain('120')
     await wrapper.findAll('button').find(button => button.text() === '继续')!.trigger('click'); await flushPromises()
-    expect(rpc.mock.calls.find(call => call[0] === 'automations.resume')?.[1]).toEqual({ id: 'goal', tokenBudget: 500 })
+    expect(rpc.mock.calls.find(call => call[0] === 'automations.resume')?.[1]).toEqual({ id: 'goal' })
     expect(wrapper.find('[role=alert]').exists()).toBe(false); wrapper.unmount()
   })
 })

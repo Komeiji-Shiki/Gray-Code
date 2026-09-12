@@ -25,7 +25,7 @@ export class ApplicationRouter {
         case 'automations.create': return app.automations.create(session.actorId, params as unknown as import('@graycode/contracts').AutomationCreate);
         case 'automations.update': return app.automations.update(session.actorId, params.id, params as unknown as import('@graycode/contracts').AutomationCreate);
         case 'automations.pause': return app.automations.pause(session.actorId, params.id, params.stopCurrent === true);
-        case 'automations.resume': return app.automations.resume(session.actorId, params.id, params.tokenBudget);
+        case 'automations.resume': return app.automations.resume(session.actorId, params.id);
         case 'automations.remove': await app.automations.remove(session.actorId, params.id); return { success: true };
         default: throw new Error('未知自动任务操作。');
       }

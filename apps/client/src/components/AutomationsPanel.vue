@@ -16,13 +16,12 @@ const editingId = ref('');
 const busy = ref(false);
 const error = ref('');
 const filter = ref<'all' | 'goal' | 'schedule'>('all');
-const budgetDraft = ref<string | number>('');
 const confirmRemove = ref(false);
 let refreshEpoch = 0;
 let formEpoch = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 const form = reactive({ kind: 'goal' as AutomationCreate['kind'], name: '', objective: '', target: 'new', agentId: '', providerId: '', modelId: '', promptModeId: '',
-  reasoningEffort: '', workspaceId: '', tokenBudget: '' as string | number, cadence: 'once', at: '', everyMinutes: '', time: '', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  reasoningEffort: '', workspaceId: '', cadence: 'once', at: '', everyMinutes: '', time: '', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   weekDays: [] as number[], missedRunPolicy: '' });
 const selected = computed(() => rows.value.find(row => row.id === selectedId.value));
 const visibleRows = computed(() => rows.value.filter(row => filter.value === 'all' || row.kind === filter.value));
@@ -39,7 +38,7 @@ function status(row: AutomationView) {
   if (row.runStatus === 'awaiting_approval') return '等待确认';
   if (runActive(row)) return row.status === 'paused' ? '本轮结束后暂停' : '正在执行';
   if (row.status === 'completed') return '已完成';
-  if (row.status === 'paused') return ({ restart: '重启后等待继续', budget: '已达到预算', error: '发生错误', input: '需要补充信息', user: '已暂停', usage_unavailable: '用量待确认' })[row.pauseReason ?? 'user'];
+  if (row.status === 'paused') return ({ restart: '重启后等待继续', error: '发生错误', input: '需要补充信息', user: '已暂停' })[row.pauseReason ?? 'user'];
   return row.awaitingBackground ? '等待子任务结果' : row.kind === 'goal' ? '准备继续' : '等待触发';
 }
 async function refresh() {
@@ -51,7 +50,7 @@ async function refresh() {
     if (!selectedId.value || !result.some(row => row.id === selectedId.value)) select(result[0]);
   } catch (cause) { if (epoch === refreshEpoch) error.value = (cause as Error).message; }
 }
-function select(row?: AutomationView) { selectedId.value = row?.id ?? ''; budgetDraft.value = row?.tokenBudget?.toString() ?? ''; confirmRemove.value = false; }
+function select(row?: AutomationView) { selectedId.value = row?.id ?? ''; confirmRemove.value = false; }
 async function newTask() {
   if (editingId.value) { form.objective = ''; form.name = ''; }
   editingId.value = '';
@@ -76,7 +75,7 @@ async function editTask(row: AutomationView) {
   const localTime = at ? new Date(at - new Date(at).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '';
   Object.assign(form, { kind: row.kind, name: row.name, objective: row.objective, target: 'current', agentId: row.agentId,
     providerId: row.configuration.providerId, modelId: row.configuration.modelOverride ?? '', promptModeId: row.configuration.promptModeId ?? '',
-    reasoningEffort: row.configuration.reasoningEffort ?? '', tokenBudget: row.tokenBudget ?? '',
+    reasoningEffort: row.configuration.reasoningEffort ?? '',
     cadence: source?.type === 'daily' && source.weekDays ? 'weekly' : source?.type ?? 'once', at: localTime,
     everyMinutes: source?.type === 'interval' ? String(source.everyMinutes) : '', time: source?.type === 'daily' ? source.time : '',
     timeZone: source?.type === 'daily' ? source.timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -115,7 +114,7 @@ async function create() {
   const created = await call<AutomationView>(editingId.value ? 'automations.update' : 'automations.create', { ...(editingId.value ? { id: editingId.value } : {}), kind: form.kind, name: form.name, objective: form.objective, agentId: form.agentId,
     providerId: form.providerId, modelOverride: form.modelId, promptModeId: form.promptModeId || undefined, reasoningEffort: form.reasoningEffort || undefined,
     conversationId: form.target === 'current' ? options.value?.current.conversationId : undefined,
-    workspaceId: form.target === 'new' ? form.workspaceId || undefined : undefined, tokenBudget: form.tokenBudget === '' ? undefined : Number(form.tokenBudget),
+    workspaceId: form.target === 'new' ? form.workspaceId || undefined : undefined,
     schedule: schedule(), missedRunPolicy: form.kind === 'schedule' ? form.missedRunPolicy : undefined });
   creating.value = false; editingId.value = ''; form.objective = ''; form.name = ''; select(created);
 }
@@ -149,8 +148,6 @@ function providerChanged() { form.modelId = profile.value?.model ?? ''; form.rea
           <div class="automation-fields"><label>模型渠道<select v-model="form.providerId" required @change="providerChanged"><option value="" disabled>请选择渠道</option><option v-for="provider in options.providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
             <label>模型<input v-model="form.modelId" list="automation-models" required placeholder="选择或输入模型 ID" /><datalist id="automation-models"><option v-for="model in modelChoices" :key="model" :value="model"></option></datalist></label></div>
           <label v-if="reasoningLevels.length">思考强度<select v-model="form.reasoningEffort"><option value="">沿用渠道设置</option><option v-for="level in reasoningLevels" :key="level" :value="level">{{ level }}</option></select></label>
-          <label>Token 总预算（可选）<input v-model="form.tokenBudget" type="number" min="1" step="1" placeholder="留空不设预算" aria-label="自动任务 Token 预算" /></label>
-          <p class="muted">累计输入与输出包含总结和子任务。达到预算后不再发起新模型请求，进行中的请求可能使总量超过预算。</p>
           <template v-if="form.kind === 'schedule'">
             <h4>触发时间</h4>
             <label>重复方式<select v-model="form.cadence"><option value="once">只执行一次</option><option value="interval">按分钟间隔</option><option value="daily">每天</option><option value="weekly">指定星期</option></select></label>
@@ -166,20 +163,19 @@ function providerChanged() { form.modelId = profile.value?.model ?? ''; form.rea
         <section v-else-if="selected" class="automation-summary">
           <div class="automation-title"><h3>{{ selected.name }}</h3><span :class="['automation-status', selected.status]">{{ status(selected) }}</span></div>
           <p class="automation-objective">{{ selected.objective }}</p>
-          <div class="automation-statistics"><div><small>累计 Token</small><strong>{{ used(selected).toLocaleString() }}<span v-if="selected.tokenBudget"> / {{ selected.tokenBudget.toLocaleString() }}</span></strong></div><div><small>已完成轮次</small><strong>{{ selected.completedRuns }}</strong></div><div><small>模型调用</small><strong>{{ selected.usage.requests }}</strong></div></div>
+          <div class="automation-statistics"><div><small>累计 Token</small><strong>{{ used(selected).toLocaleString() }}</strong></div><div><small>已完成轮次</small><strong>{{ selected.completedRuns }}</strong></div><div><small>模型调用</small><strong>{{ selected.usage.requests }}</strong></div></div>
           <p class="muted">输入 {{ selected.usage.inputTokens.toLocaleString() }} · 输出 {{ selected.usage.outputTokens.toLocaleString() }} · 缓存命中 {{ selected.usage.cachedInputTokens.toLocaleString() }}（已包含在输入中）</p>
           <p v-if="selected.usage.estimatedRequests" class="muted">其中 {{ selected.usage.estimatedRequests }} 次调用包含本地估算<span v-if="selected.usage.unknownRequests">，{{ selected.usage.unknownRequests }} 次失败请求无法确认上游最终用量</span>。</p>
           <p v-if="selected.status === 'active' && selected.nextRunAt" class="muted">下次执行：{{ when(selected.nextRunAt) }}</p>
           <p class="muted">模型：{{ selected.configuration.modelOverride || selected.configuration.providerId }} · 工作区：{{ selected.configuration.workspace?.name || '无' }}</p>
           <h4>最近进度</h4><p class="automation-progress">{{ selected.progress || '任务结果会保留在关联对话中。' }}</p>
           <p v-if="selected.error" role="alert" class="automations-error">{{ selected.error }}</p>
-          <label v-if="selected.status === 'paused'">继续时的总预算<input v-model="budgetDraft" type="number" min="1" step="1" placeholder="留空表示不设预算" aria-label="继续时的 Token 预算" /></label>
           <footer class="automation-actions">
             <button @click="action(() => openConversation(selected!.conversationId))">打开对话</button>
             <button v-if="selected.status === 'paused' && !runActive(selected) && !selected.awaitingBackground" :disabled="busy" @click="action(() => editTask(selected!))">编辑任务</button>
             <button v-if="selected.status === 'active'" :disabled="busy" @click="action(() => call('automations.pause', { id: selected!.id }))">暂停后续执行</button>
             <button v-if="runActive(selected) || selected.awaitingBackground" :disabled="busy" @click="action(() => call('automations.pause', { id: selected!.id, stopCurrent: true }))">停止当前执行</button>
-            <button v-if="selected.status === 'paused' && !runActive(selected)" class="primary" :disabled="busy" @click="action(() => call('automations.resume', { id: selected!.id, tokenBudget: budgetDraft === '' ? null : Number(budgetDraft) }))">继续</button>
+            <button v-if="selected.status === 'paused' && !runActive(selected)" class="primary" :disabled="busy" @click="action(() => call('automations.resume', { id: selected!.id }))">继续</button>
           </footer>
           <div class="automation-remove"><button v-if="!confirmRemove" :disabled="busy" @click="confirmRemove = true">移除自动任务</button><template v-else><p>将停止相关运行并移除自动任务，对话和历史保留。</p><button :disabled="busy" @click="action(() => call('automations.remove', { id: selected!.id }))">确认移除</button><button @click="confirmRemove = false">取消</button></template></div>
         </section>

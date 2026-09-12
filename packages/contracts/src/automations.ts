@@ -16,7 +16,7 @@ export interface AutomationUsage {
 }
 
 export type AutomationStatus = 'active' | 'paused' | 'completed';
-export type AutomationPauseReason = 'user' | 'restart' | 'budget' | 'usage_unavailable' | 'error' | 'input';
+export type AutomationPauseReason = 'user' | 'restart' | 'error' | 'input';
 
 export interface AutomationRecord {
   version: 1;
@@ -31,7 +31,6 @@ export interface AutomationRecord {
   status: AutomationStatus;
   createdAt: number;
   updatedAt: number;
-  tokenBudget?: number;
   usage: AutomationUsage;
   schedule?: AutomationSchedule;
   missedRunPolicy?: 'skip' | 'once';
@@ -64,7 +63,6 @@ export interface AutomationCreate {
   modelOverride?: string;
   reasoningEffort?: string;
   promptModeId?: string;
-  tokenBudget?: number;
   schedule?: AutomationSchedule;
   missedRunPolicy?: 'skip' | 'once';
 }
