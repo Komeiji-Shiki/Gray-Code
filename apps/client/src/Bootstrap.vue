@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue';
 import { closeWebBridge, installWebBridge, webRequest } from './webBridge';
-import WebDialogs from './components/WebDialogs.vue';
 import projectLogo from '../../../resources/icon.png';
 import WorkspaceLoading from './components/WorkspaceLoading.vue';
 const App = defineAsyncComponent({ loader: () => import('./App.vue'), loadingComponent: WorkspaceLoading, errorComponent: WorkspaceLoading, delay: 150 });
@@ -26,7 +25,7 @@ onMounted(async () => {
 onBeforeUnmount(() => { window.removeEventListener('graycode:session-expired', expired); if (!native) closeWebBridge(); });
 </script>
 <template>
-  <App v-if="mounted" v-show="authenticated" /><WebDialogs v-if="!native && authenticated" />
+  <App v-if="mounted" v-show="authenticated" />
   <main v-if="!authenticated" class="web-login"><section>
     <div class="web-wordmark"><img :src="projectLogo" alt="GrayCode" /><span>GRAY<span>CODE</span></span></div><p class="web-kicker">远程工作台</p>
     <h1>继续你的工作。</h1><p>连接部署电脑上的对话、文件与工具任务。</p>

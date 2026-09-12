@@ -3,9 +3,10 @@ import type { DesktopBridge } from './api';
 
 interface Directory { name: string; path: string }
 export const webUi = reactive({ chooserOpen: false, directory: '', parent: '', directories: [] as Directory[],
-  directoryDevice: '', directoryRoots: [] as Directory[],
+  directoryDevice: '', directoryRoots: [] as Directory[], directoryBreadcrumbs: [] as Directory[],
   directoryError: '', directoryBusy: false, previewUrl: '', connection: 'connecting' as 'connecting' | 'connected' | 'disconnected' });
 let chooseResult: ((value: { directory: string; name: string } | null) => void) | undefined;
+let directoryRequestId = 0;
 let dirtySettings = false;
 let dirtyDocuments = false;
 let pendingFileUploads = 0;
@@ -29,17 +30,21 @@ export async function webRequest(url: string, body?: unknown) {
 }
 async function rpc(method: string, params: Record<string, unknown> = {}) { return (await webRequest('/rpc', { method, params })).result; }
 export async function browseDirectory(directory = '') {
+  const requestId = ++directoryRequestId;
   webUi.directoryBusy = true; webUi.directoryError = '';
   try {
     const result = await rpc('host.directories', { path: directory });
+    if (requestId !== directoryRequestId) return;
     webUi.directory = result.directory; webUi.parent = result.parent; webUi.directories = result.directories;
     webUi.directoryDevice = result.device.name; webUi.directoryRoots = result.roots;
-  } catch (error) { webUi.directoryError = (error as Error).message; }
-  finally { webUi.directoryBusy = false; }
+    webUi.directoryBreadcrumbs = result.breadcrumbs;
+  } catch (error) { if (requestId === directoryRequestId) webUi.directoryError = (error as Error).message; }
+  finally { if (requestId === directoryRequestId) webUi.directoryBusy = false; }
 }
 export function finishDirectory(accepted: boolean) {
-  if (accepted && webUi.directoryBusy) return;
+  if (accepted && (webUi.directoryBusy || webUi.directoryError || !webUi.directory)) return;
   const value = accepted ? { directory: webUi.directory, name: webUi.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? webUi.directory } : null;
+  directoryRequestId++; webUi.directoryBusy = false;
   webUi.chooserOpen = false; chooseResult?.(value); chooseResult = undefined;
 }
 function chooseDirectory(): Promise<{ directory: string; name: string } | null> {

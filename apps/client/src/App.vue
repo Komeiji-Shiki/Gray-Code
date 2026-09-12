@@ -10,6 +10,7 @@ import ResourceLibrary from './components/ResourceLibrary.vue';
 import CharacterSetup from './components/CharacterSetup.vue';
 import ConversationSidebar from './components/ConversationSidebar.vue';
 import WorkspaceSelector from './components/WorkspaceSelector.vue';
+import WebDialogs from './components/WebDialogs.vue';
 import NavigationIcon from './components/navigation/NavigationIcon.vue';
 const characterSetup = ref<{ characterId?: string } | null>(null);
 const libraryOpen = ref(false);
@@ -41,11 +42,16 @@ let unsubscribeHost: (() => void) | undefined;
 const split = ref(Number(localStorage.getItem('graycode.chatWidth')) || 48);
 const resizing = ref(false);
 const container = ref<HTMLElement>();
+const choosingWorkspace = ref(false);
 async function addWorkspace() {
-  const selected = await call<{ directory: string; name: string } | null>('desktop.chooseWorkspace');
-  if (!selected) return;
-  const workspace = await call<{ id: string }>('workspaces.add', selected);
-  await loadSettings(); state.workspaceId = workspace.id;
+  if (choosingWorkspace.value) return;
+  choosingWorkspace.value = true;
+  try {
+    const selected = await call<{ directory: string; name: string } | null>('desktop.chooseWorkspace');
+    if (!selected) return;
+    const workspace = await call<{ id: string }>('workspaces.add', selected);
+    await loadSettings(); state.workspaceId = workspace.id;
+  } finally { choosingWorkspace.value = false; }
 }
 const modeMenuOpen = ref(false);
 const modes = [{ id: 'chat', name: '对话', detail: '自由交流与日常任务' }, { id: 'code', name: '代码', detail: '编辑项目与执行开发任务' }, { id: 'character', name: '角色', detail: '角色资料与故事对话' }] as const;
@@ -120,18 +126,19 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
       </div>
       <nav v-if="!isWeb && !compactViewport" class="app-menu" aria-label="应用菜单"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></nav>
       <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center"><span class="subtle">工作区</span>
-        <WorkspaceSelector v-model="state.workspaceId" :workspaces="state.snapshot?.settings.workspaces ?? []" />
-        <button class="quiet-button workspace-add" title="添加工作区" aria-label="添加工作区" @click="guard(addWorkspace)">＋</button>
+        <WorkspaceSelector v-model="state.workspaceId" :workspaces="state.snapshot?.settings.workspaces ?? []" @browse="guard(addWorkspace)" />
+        <button class="quiet-button workspace-add" :disabled="choosingWorkspace" :title="isWeb ? '选择电脑文件夹' : '添加工作区'" :aria-label="isWeb ? '选择电脑文件夹' : '添加工作区'" @click="guard(addWorkspace)">＋</button>
       </div>
       <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? '工作台' : '返回对话') : (state.chatFocused ? '打开侧边面板' : '隐藏侧边面板') }}</button>
       <button v-if="!compactViewport" class="quiet-button" @click="libraryOpen = true">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
-      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
+      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
     <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
     <ResourceLibrary v-if="libraryOpen" @close="libraryOpen = false" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
     <ContentPreview />
+    <WebDialogs v-if="isWeb" />
     <RunInspector v-if="state.ready && !state.settingsOpen" />
     <div v-if="!state.ready" class="loading-state">正在连接本地核心…</div>
     <div v-else class="application-body" :class="{ resizing: sidebarResizing }">
