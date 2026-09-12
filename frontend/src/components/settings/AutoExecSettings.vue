@@ -13,7 +13,7 @@ import { ref, computed, onMounted } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
-import { decodeMcpToolName } from '@/utils/tools/mcp/mcpToolNameCodec'
+import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
 
 // 工具信息接口
@@ -136,30 +136,6 @@ async function disableAllAutoExec() {
   }
 }
 
-// 获取工具显示名称（优先 i18n，fallback 机械转换）
-function getToolDisplayName(tool: ToolInfo): string {
-  // 如果是 MCP 工具，提取原始工具名（codec 解码，serverId/toolName 含下划线也能正确解析）
-  if (isMcpTool(tool)) {
-    const decoded = decodeMcpToolName(tool.name)
-    if (decoded) {
-      return decoded.toolName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-    }
-  }
-  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${tool.name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return tool.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
-
-// 获取工具描述（优先 i18n，fallback 后端原文）
-function getToolDescription(tool: ToolInfo): string {
-  if (tool.category === 'mcp') return tool.description
-  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${tool.name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return tool.description
-}
-
 // 检查工具是否是危险工具（默认需要确认）
 function isDangerousTool(toolName: string): boolean {
   const dangerousTools = ['delete_file', 'execute_command', 'create_plan']
@@ -246,7 +222,7 @@ onMounted(() => {
           >
             <div class="tool-info">
               <div class="tool-name-row">
-                <span class="tool-name">{{ getToolDisplayName(tool) }}</span>
+                <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
                 <span v-if="isDangerousTool(tool.name)" class="danger-badge">
                   <i class="codicon codicon-warning"></i>
                   {{ t('components.settings.autoExec.badges.dangerous') }}
@@ -256,7 +232,7 @@ onMounted(() => {
                   {{ tool.serverName }}
                 </span>
               </div>
-              <div class="tool-description">{{ getToolDescription(tool) }}</div>
+              <div class="tool-description">{{ getToolDescription(tool.name, tool.description) }}</div>
             </div>
             
             <!-- Diff 审阅类工具：显示真实生效状态而非误导性勾选框 -->

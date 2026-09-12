@@ -8,12 +8,28 @@
  */
 import { describe, expect } from 'vitest'
 import { getToolDisplayName, getToolDescription } from '../toolLocalization'
+import { messages } from '../../i18n'
 
 describe('getToolDisplayName', () => {
   test('有 i18n 条目的内置工具返回本地化名称', () => {
     expect(getToolDisplayName('read_file')).toBe('读取文件')
     expect(getToolDisplayName('apply_diff')).toBe('应用差异')
     expect(getToolDisplayName('get_activity_stats')).toBe('获取活动统计')
+  })
+
+  test('平台新增工具在三种语言中都有显示名和说明', () => {
+    const names = ['browser_tabs', 'browser_read', 'browser_action', 'browser_files', 'workspace_files',
+      'search_files', 'run_command', 'process_session', 'context_notes', 'context_history', 'new_context',
+      'bot_read_attachment', 'team_tasks', 'team_wait', 'ask_user'] as const
+    for (const locale of ['zh-CN', 'en', 'ja']) {
+      const settings = messages[locale].components.settings.toolsSettings
+      for (const name of names) {
+        expect(settings.toolDisplayNames[name], `${locale}: ${name}`).toEqual(expect.any(String))
+        expect(settings.toolDescriptions[name], `${locale}: ${name}`).toEqual(expect.any(String))
+      }
+    }
+    expect(getToolDisplayName('context_notes')).toBe('任务笔记')
+    expect(getToolDescription('run_command', 'fallback')).toContain('在选定工作区启动程序')
   })
 
   test('无 i18n 条目的工具回退为机械转换（snake_case → Title Case）', () => {

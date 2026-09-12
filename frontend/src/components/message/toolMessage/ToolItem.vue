@@ -8,6 +8,7 @@
 import { getCurrentInstance, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage } from '../../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../../utils/toolRegistry'
+import { getToolDisplayName, getToolDescription as localizeToolDescription } from '../../../utils/toolLocalization'
 import { useChatStore } from '../../../stores'
 import { showNotification, sendToExtension } from '../../../utils/vscode'
 import { useI18n } from '../../../i18n'
@@ -79,7 +80,7 @@ function getToolLabel(tool: ToolUsage): string {
   if (config?.labelFormatter) {
     return config.labelFormatter(tool.args)
   }
-  return config?.label || tool.name
+  return config?.label || getToolDisplayName(tool.name)
 }
 
 // 获取工具图标
@@ -113,9 +114,9 @@ function getToolDescription(tool: ToolUsage): string {
       // formatter 崩溃时降级到默认描述
     }
   }
-  // 默认描述：显示参数数量
+  // 没有专用渲染器的新工具仍使用统一说明；外部工具保留参数数量提示。
   const argCount = Object.keys(tool.args || {}).length
-  return t('components.message.tool.paramCount', { count: argCount })
+  return localizeToolDescription(tool.name, t('components.message.tool.paramCount', { count: argCount }))
 }
 
 // 获取状态图标
