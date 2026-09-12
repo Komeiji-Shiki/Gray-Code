@@ -1,30 +1,32 @@
 import { workspaceFilePath, workspaceRoots } from '../workspace/paths';
 import type { ToolContext } from '@graycode/core';
 import { stopDevelopmentProcess } from './process';
-import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import spawn from 'cross-spawn';
 import { randomUUID } from 'node:crypto';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter, CancellationTokenSource, type MessageConnection } from 'vscode-jsonrpc/node';
 import type { ServerCapabilities, PublishDiagnosticsParams, InitializeResult, WorkspaceEdit, ApplyWorkspaceEditResult } from 'vscode-languageserver-protocol';
-import type { DocumentState, LanguageServerDefinition, LanguageSessionInfo, WorkspaceDefinition } from '@graycode/contracts';
+import type { DocumentState, LanguageSessionInfo, WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { languageMethodSupported } from '../../../../shared/languageSupport';
+import { documentLanguageId } from '../../../../shared/documentLanguages';
+import { LanguageServerCatalog, type RuntimeLanguageServer } from './languageCatalog';
+import { languageCommandSource, languageResultSource, mergeLanguageCapabilities, mergeLanguageResults } from './languageComposition';
 
 interface Session {
-  info: LanguageSessionInfo; client: ClientSession; workspace: WorkspaceDefinition; definition: LanguageServerDefinition;
+  info: LanguageSessionInfo; client: ClientSession; workspace: WorkspaceDefinition; definition: RuntimeLanguageServer;
   child: ChildProcessWithoutNullStreams; connection: MessageConnection; capabilities: ServerCapabilities;
   documents: Map<string, number>; diagnostics: Map<string, PublishDiagnosticsParams & { receivedAtDocumentVersion: number }>;
   changes: Promise<void>; ready: Promise<void>; stderr: string;
   commands: Promise<unknown>; commandRequestId?: string;
+  companion?: Session; stopping?: Promise<void>;
 }
-const languageIds: Record<string, string> = { '.ts': 'typescript', '.tsx': 'typescriptreact', '.js': 'javascript', '.jsx': 'javascriptreact',
-  '.mts': 'typescript', '.cts': 'typescript', '.mjs': 'javascript', '.cjs': 'javascript', '.py': 'python', '.rs': 'rust', '.go': 'go', '.vue': 'vue', '.json': 'json', '.css': 'css', '.html': 'html' };
 const methods = new Set(['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/definition',
   'textDocument/references', 'textDocument/documentSymbol', 'textDocument/rename', 'textDocument/prepareRename', 'textDocument/formatting',
   'textDocument/signatureHelp', 'textDocument/codeAction', 'codeAction/resolve']);
-export const documentLanguage = (file: string) => languageIds[path.extname(file).toLowerCase()] ?? 'plaintext';
+export const documentLanguage = documentLanguageId;
 
 // 语言服务可能编码盘符冒号或改变盘符大小写，统一成同一个文档标识。
 function documentUri(value: string): string {
@@ -40,21 +42,55 @@ export class LanguageServices {
   private readonly sessions = new Map<string, Session>();
   private readonly requests = new Map<string, CancellationTokenSource>();
   private readonly editorEdits = new Map<string, { clientId: string; requestId: string; resolve(value: ApplyWorkspaceEditResult): void }>();
+  private readonly catalog = new LanguageServerCatalog();
+  private readonly sessionStarts = new Map<string, Promise<Session>>();
+  private closing = false;
+  private configurationSnapshot?: string;
   constructor(private readonly app: PlatformApplication) {}
-  definitions(): LanguageServerDefinition[] {
+  definitions(): RuntimeLanguageServer[] {
     const custom = this.app.settings.snapshot().settings.development?.languageServers ?? [];
-    return [...custom, { id: 'typescript', name: 'TypeScript / JavaScript', languages: ['typescript', 'typescriptreact', 'javascript', 'javascriptreact'],
-      command: process.execPath, args: [require.resolve('typescript-language-server/lib/cli.mjs'), '--stdio'],
-      initializationOptions: { hostInfo: 'GrayCode', disableAutomaticTypingAcquisition: true,
-        // 初次语义请求等待完整项目解析，不使用只掌握当前文件的临时语法结果。
-        tsserver: { path: require.resolve('typescript/lib/tsserver.js'), useSyntaxServer: 'never' } } }];
+    return this.catalog.all(custom).filter(entry => entry.info.available).map(entry => entry.definition);
   }
-  list(client: ClientSession) {
+  services(client: ClientSession, custom = this.app.settings.snapshot().settings.development?.languageServers ?? [], refresh = false) {
     this.app.requireOwner(client.actorId);
-    return { definitions: this.definitions().map(({ id, name, languages }) => ({ id, name, languages })),
-      sessions: [...this.sessions.values()].filter(session => session.client.clientId === client.clientId).map(session => session.info) };
+    return this.catalog.all(custom, refresh).filter(entry => !entry.definition.internal).map(entry => entry.info);
+  }
+  list(client: ClientSession, refresh = false) {
+    return { definitions: this.services(client, undefined, refresh),
+      sessions: [...this.sessions.values()].filter(session => session.client.clientId === client.clientId && !session.definition.internal).map(session => session.info) };
   }
   private key(client: ClientSession, workspaceId: string, serverId: string) { return JSON.stringify([client.clientId, workspaceId, serverId]); }
+  private accepts(session: Session, file: string) {
+    return (session.definition.synchronizedLanguages ?? session.definition.languages).includes(documentLanguage(file));
+  }
+  /** 同一客户端的并发首次请求共用启动过程；Vue 的辅助服务也遵守同一工作区边界。 */
+  private sessionFor(client: ClientSession, workspace: WorkspaceDefinition, definition: RuntimeLanguageServer): Promise<Session> {
+    if (this.closing) return Promise.reject(new Error('语言服务正在退出。'));
+    const key = this.key(client, workspace.id, definition.id);
+    const pending = this.sessionStarts.get(key);
+    if (pending) return pending;
+    const starting = (async () => {
+      let session = this.sessions.get(key);
+      if (session?.stopping) await session.stopping;
+      if (session?.info.status === 'failed' && session.child.exitCode === null && session.child.signalCode === null) await this.stopSession(session);
+      if (session && (JSON.stringify(session.definition) !== JSON.stringify(definition) ||
+        JSON.stringify(session.workspace) !== JSON.stringify(workspace))) await this.stopSession(session);
+      let companion: Session | undefined;
+      if (definition.companionId) {
+        const paired = this.definitions().find(value => value.id === definition.companionId);
+        if (!paired) throw new Error('语言服务缺少辅助运行程序：' + definition.companionId);
+        companion = await this.sessionFor(client, workspace, paired);
+      }
+      if (session && session.companion !== companion) await this.stopSession(session);
+      if (!session || ['stopped', 'failed'].includes(session.info.status)) {
+        session = this.create(client, workspace, definition, companion); this.sessions.set(key, session);
+      }
+      await session.ready;
+      return session;
+    })();
+    this.sessionStarts.set(key, starting);
+    return starting.finally(() => { this.sessionStarts.delete(key); });
+  }
   async ensure(client: ClientSession, workspaceId: string, file: string) {
     this.app.requireOwner(client.actorId);
     const workspace = this.app.workspace(client.actorId, workspaceId, ['workspace_read']);
@@ -63,29 +99,30 @@ export class LanguageServices {
     const languageId = documentLanguage(file);
     const disabled = this.app.settings.snapshot().settings.development?.disabledLanguageServers ?? [];
     const definition = this.definitions().find(item => item.languages.includes(languageId) && !disabled.includes(item.id));
-    if (!definition) return { languageId, uri, session: null };
-    const key = this.key(client, workspaceId, definition.id);
-    let session = this.sessions.get(key);
-    let hydrate = false;
-    if (session && (JSON.stringify(session.definition) !== JSON.stringify(definition) || JSON.stringify(session.workspace) !== JSON.stringify(workspace))) await this.stopSession(session);
-    if (!session || ['stopped', 'failed'].includes(session.info.status)) {
-      session = this.create(client, workspace, definition); this.sessions.set(key, session); hydrate = true;
+    if (!definition) {
+      const service = this.services(client).find(item => item.languages.includes(languageId));
+      const reason = service ? disabled.includes(service.id) ? 'disabled' : 'unavailable' : 'unconfigured';
+      return { languageId, uri, session: null, service, reason };
     }
-    await session.ready;
-    if (hydrate || !session.documents.has(uri))
-      for (const doc of this.app.files.clientDocuments(client.clientId, workspaceId)) if (definition.languages.includes(documentLanguage(doc.path))) await this.sync(session, doc);
-    return { languageId, uri, session: session.info, capabilities: session.capabilities };
+    const session = await this.sessionFor(client, workspace, definition);
+    for (const target of session.companion ? [session.companion, session] : [session]) {
+      if (!target.documents.has(uri)) for (const doc of this.app.files.clientDocuments(client.clientId, workspaceId))
+        if (this.accepts(target, doc.path)) await this.sync(target, doc);
+    }
+    return { languageId, uri, session: session.info, capabilities: mergeLanguageCapabilities(session.capabilities, session.companion?.capabilities) };
   }
-  private create(client: ClientSession, workspace: WorkspaceDefinition, definition: LanguageServerDefinition): Session {
+  private create(client: ClientSession, workspace: WorkspaceDefinition, definition: RuntimeLanguageServer, companion?: Session): Session {
     const child = spawn(definition.command, definition.args, { cwd: workspace.directory, shell: false, windowsHide: true,
-      env: { ...process.env, ...(definition.command === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: 'pipe' });
+      env: { ...process.env, ...(definition.command === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: 'pipe' }) as ChildProcessWithoutNullStreams;
     const connection = createMessageConnection(new StreamMessageReader(child.stdout), new StreamMessageWriter(child.stdin));
     const session: Session = { info: { id: randomUUID(), serverId: definition.id, name: definition.name, workspaceId: workspace.id, status: 'starting' },
-      client, workspace, definition, child, connection, capabilities: {}, documents: new Map(), diagnostics: new Map(), changes: Promise.resolve(), commands: Promise.resolve(), ready: Promise.resolve(), stderr: '' };
+      client, workspace, definition, companion, child, connection, capabilities: {}, documents: new Map(), diagnostics: new Map(), changes: Promise.resolve(), commands: Promise.resolve(), ready: Promise.resolve(), stderr: '' };
     const fail = (error: unknown) => {
       if (session.info.status === 'stopped') return;
       session.info.status = 'failed'; session.info.error = `${String(error)}${session.stderr ? `\n${session.stderr}` : ''}`;
-      connection.dispose(); void stopDevelopmentProcess(child); this.changed(session);
+      connection.dispose();
+      void stopDevelopmentProcess(child).catch(stopError => { session.info.error += '\n停止进程失败：' + String(stopError); this.changed(session); });
+      this.changed(session);
     };
     child.once('error', fail);
     child.once('exit', (code, signal) => fail(`语言服务已退出：${code ?? signal}`));
@@ -96,8 +133,16 @@ export class LanguageServices {
       const version = session.documents.get(uri);
       if (version === undefined || params.version !== undefined && params.version !== version) return;
       session.diagnostics.set(uri, { ...params, uri, receivedAtDocumentVersion: version });
-      this.app.publish({ type: 'language.diagnostics', clientId: client.clientId, workspaceId: workspace.id, sessionId: session.info.id,
-        ...params, uri, path: workspaceFilePath(workspace, fileURLToPath(uri)), receivedAtDocumentVersion: version });
+      this.publishDiagnostics(session, uri);
+    });
+    if (companion) connection.onNotification('tsserver/request', async ([id, command, args]: [number, string, unknown]) => {
+      try {
+        await companion.ready; await companion.changes;
+        const result = await this.timed<{ body?: unknown }>(companion, 'workspace/executeCommand', {
+          command: 'typescript.tsserverRequest', arguments: [command, args, { executionTarget: 0, expectsResult: true }],
+        });
+        await connection.sendNotification('tsserver/response', [id, result?.body]);
+      } catch (error) { fail(error); }
     });
     connection.onRequest('workspace/configuration', (params: { items: { section?: string }[] }) => params.items.map(item => {
       let value: unknown = definition.settings ?? {};
@@ -144,22 +189,26 @@ export class LanguageServices {
         await connection.sendNotification('initialized', {});
         if (definition.settings) await connection.sendNotification('workspace/didChangeConfiguration', { settings: definition.settings });
         session.info.status = 'running'; this.changed(session);
-      } catch (error) { fail(error); await stopDevelopmentProcess(child); throw error; }
+      } catch (error) { fail(error); await stopDevelopmentProcess(child); throw new Error(session.info.error ?? String(error), { cause: error }); }
     })();
     return session;
   }
-  private changed(session: Session) { this.app.publish({ type: 'language.status', clientId: session.client.clientId, session: session.info }); }
-  private async timed<T>(session: Session, method: string, params: unknown, cancellation = new CancellationTokenSource(), timeout = 30_000): Promise<T> {
+  private changed(session: Session) {
+    if (!session.definition.internal) this.app.publish({ type: 'language.status', clientId: session.client.clientId, session: session.info });
+  }
+  private async timed<T>(session: Session, method: string, params: unknown, cancellation?: CancellationTokenSource, timeout = 30_000): Promise<T> {
+    const source = cancellation ?? new CancellationTokenSource();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([session.connection.sendRequest<T>(method, params, cancellation.token), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { cancellation.cancel(); reject(new Error(`语言服务请求超时：${method}`)); }, timeout);
+      return await Promise.race([session.connection.sendRequest<T>(method, params, source.token), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { source.cancel(); reject(new Error(`语言服务请求超时：${method}`)); }, timeout);
       })]);
-    } finally { clearTimeout(timer); cancellation.dispose(); }
+    } finally { clearTimeout(timer); if (!cancellation) source.dispose(); }
   }
   private sync(session: Session, doc: DocumentState, saved = false): Promise<void> {
     const next = session.changes.catch(() => {}).then(async () => {
       await session.ready;
+      await session.companion?.changes;
       const uri = documentUri(pathToFileURL(await this.app.files.resolve(session.workspace, doc.path)).toString());
       const previous = session.documents.get(uri);
       if (previous === undefined) {
@@ -175,7 +224,7 @@ export class LanguageServices {
   }
   documentChanged(doc: DocumentState, saved = false): void {
     for (const session of this.sessions.values()) if (session.client.clientId === doc.clientId && session.workspace.id === doc.workspaceId &&
-      session.definition.languages.includes(documentLanguage(doc.path)) && !['failed', 'stopped'].includes(session.info.status))
+      this.accepts(session, doc.path) && !['failed', 'stopped'].includes(session.info.status))
       void this.sync(session, doc, saved).catch(error => { session.info.error = String(error); this.changed(session); });
   }
   async documentClosed(client: ClientSession, workspaceId: string, file: string): Promise<void> {
@@ -192,7 +241,6 @@ export class LanguageServices {
     const ready = await this.ensure(client, input.workspaceId, input.path);
     if (!ready.session) return null;
     const session = [...this.sessions.values()].find(item => item.info.id === ready.session!.id)!;
-    if (!languageMethodSupported(session.capabilities, input.method)) return null;
     if (this.app.files.documentVersion(client.clientId, input.workspaceId, input.path) !== input.version) throw new Error('编辑草稿已变化，请重新请求。');
     await session.changes;
     const requestKey = JSON.stringify([client.clientId, input.requestId]);
@@ -200,24 +248,50 @@ export class LanguageServices {
     const cancellation = new CancellationTokenSource(); this.requests.set(requestKey, cancellation);
     try {
       const params = ['completionItem/resolve', 'codeAction/resolve'].includes(input.method) ? input.params : { ...input.params, textDocument: { uri: ready.uri } };
-      return await this.timed(session, input.method, params, cancellation);
-    } finally { this.requests.delete(requestKey); }
+      return await this.invoke(session, input.method, params, cancellation);
+    } finally { cancellation.dispose(); this.requests.delete(requestKey); }
+  }
+  private async invoke(session: Session, method: string, params: Record<string, unknown> | undefined, cancellation: CancellationTokenSource): Promise<unknown> {
+    const members = session.companion ? [session, session.companion] : [session];
+    const routed = ['completionItem/resolve', 'codeAction/resolve'].includes(method) ? languageResultSource(params) : { params: params ?? {}, source: undefined };
+    const targets = routed.source ? members.filter(member => member.info.id === routed.source) : members.filter(member => languageMethodSupported(member.capabilities, method));
+    if (routed.source && !targets.length) throw new Error('语言服务已重启，请重新选择补全或修复。');
+    if (!targets.length) return null;
+    const execute = async (target: Session) => {
+      await target.changes;
+      return { source: target.info.id, value: languageMethodSupported(target.capabilities, method)
+        ? await this.timed<unknown>(target, method, routed.params, cancellation) : routed.params };
+    };
+    if (!session.companion) return (await execute(targets[0])).value;
+    const combined = ['textDocument/completion', 'textDocument/codeAction', 'textDocument/definition', 'textDocument/references', 'textDocument/hover'];
+    if (combined.includes(method)) return mergeLanguageResults(method, await Promise.all(targets.map(execute)));
+    for (const target of targets) {
+      const value = mergeLanguageResults(method, [await execute(target)]);
+      if (value !== null) return value;
+    }
+    return null;
   }
   cancel(client: ClientSession, requestId: string) { this.requests.get(JSON.stringify([client.clientId, requestId]))?.cancel(); }
   async executeCommand(client: ClientSession, input: { workspaceId: string; path: string; version: number; requestId: string; command: string; arguments?: unknown[] }) {
     const ready = await this.ensure(client, input.workspaceId, input.path);
     if (!ready.session) throw new Error('当前文件没有可用的语言服务。');
     const session = [...this.sessions.values()].find(item => item.info.id === ready.session!.id)!;
+    const members = session.companion ? [session, session.companion] : [session];
+    const routed = languageCommandSource(input.command);
+    const target = routed.source ? members.find(member => member.info.id === routed.source)
+      : members.find(member => member.capabilities.executeCommandProvider?.commands.includes(routed.command)) ?? session;
+    if (!target) throw new Error('语言服务已重启，请重新选择修复。');
     const operation = session.commands.catch(() => {}).then(async () => {
-      await session.changes;
+      await Promise.all(members.map(member => member.changes));
       if (this.app.files.documentVersion(client.clientId, input.workspaceId, input.path) !== input.version) throw new Error('编辑草稿已变化，请重新选择修复。');
       const requestKey = JSON.stringify([client.clientId, input.requestId]);
       if (this.requests.has(requestKey)) throw new Error('语言服务请求标识重复。');
       const cancellation = new CancellationTokenSource(); this.requests.set(requestKey, cancellation);
-      session.commandRequestId = input.requestId;
-      try { return await this.timed(session, 'workspace/executeCommand', { command: input.command, arguments: input.arguments }, cancellation) }
+      for (const member of members) member.commandRequestId = input.requestId;
+      try { return await this.timed(target, 'workspace/executeCommand', { command: routed.command, arguments: input.arguments }, cancellation) }
       finally {
-        session.commandRequestId = undefined; this.requests.delete(requestKey);
+        for (const member of members) member.commandRequestId = undefined;
+        cancellation.dispose(); this.requests.delete(requestKey);
         for (const [id, pending] of this.editorEdits) if (pending.clientId === client.clientId && pending.requestId === input.requestId) {
           this.editorEdits.delete(id); pending.resolve({ applied: false, failureReason: '编辑操作已结束或取消。' });
         }
@@ -240,23 +314,22 @@ export class LanguageServices {
     const disabled = this.app.settings.snapshot().settings.development?.disabledLanguageServers ?? [];
     const definition = this.definitions().find(item => item.languages.includes(languageId) && !disabled.includes(item.id));
     if (!definition) throw new Error(`没有为 ${languageId} 配置语言服务。`);
-    const key = this.key(client, workspace.id, definition.id);
-    let session = this.sessions.get(key);
-    if (!session || ['failed', 'stopped'].includes(session.info.status)) { session = this.create(client, workspace, definition); this.sessions.set(key, session); }
-    await session.ready; context.signal.throwIfAborted();
-    const current = session;
+    const session = await this.sessionFor(client, workspace, definition);
+    context.signal.throwIfAborted();
     const uri = documentUri(pathToFileURL(absolute).toString());
-    const synchronized = current.changes.catch(() => {}).then(async () => {
-      const version = current.documents.get(uri);
-      if (version === undefined) await current.connection.sendNotification('textDocument/didOpen', { textDocument: { uri, languageId, version: 1, text } });
-      else await current.connection.sendNotification('textDocument/didChange', { textDocument: { uri, version: version + 1 }, contentChanges: [{ text }] });
-      current.documents.set(uri, (version ?? 0) + 1);
-    });
-    current.changes = synchronized; await synchronized;
+    for (const current of session.companion ? [session.companion, session] : [session]) {
+      const synchronized = current.changes.catch(() => {}).then(async () => {
+        const version = current.documents.get(uri);
+        if (version === undefined) await current.connection.sendNotification('textDocument/didOpen', { textDocument: { uri, languageId, version: 1, text } });
+        else await current.connection.sendNotification('textDocument/didChange', { textDocument: { uri, version: version + 1 }, contentChanges: [{ text }] });
+        current.documents.set(uri, (version ?? 0) + 1);
+      });
+      current.changes = synchronized; await synchronized;
+    }
     const cancellation = new CancellationTokenSource(); const cancel = () => cancellation.cancel();
     context.signal.addEventListener('abort', cancel, { once: true });
-    try { context.signal.throwIfAborted(); return await this.timed<unknown>(current, method, { ...params, textDocument: { uri } }, cancellation, 20_000); }
-    finally { context.signal.removeEventListener('abort', cancel); }
+    try { context.signal.throwIfAborted(); return await this.invoke(session, method, { ...params, textDocument: { uri } }, cancellation); }
+    finally { cancellation.dispose(); context.signal.removeEventListener('abort', cancel); }
   }
   async finishToolRun(runId: string) {
     const clientId = `language-tool:${runId}`;
@@ -270,14 +343,28 @@ export class LanguageServices {
   }
   diagnostics(client: ClientSession, workspaceId: string) {
     this.app.requireOwner(client.actorId);
-    return [...this.sessions.values()].filter(session => session.client.clientId === client.clientId && session.workspace.id === workspaceId)
-      .flatMap(session => [...session.diagnostics.values()].map(item => ({ sessionId: session.info.id, ...item,
-        path: workspaceFilePath(session.workspace, fileURLToPath(item.uri)) })));
+    return [...this.sessions.values()].filter(session => session.client.clientId === client.clientId && session.workspace.id === workspaceId && !session.definition.internal)
+      .flatMap(session => [...session.documents.keys()].filter(uri => session.diagnostics.has(uri) || session.companion?.diagnostics.has(uri))
+        .map(uri => this.diagnosticSnapshot(session, uri)));
+  }
+  private diagnosticSnapshot(session: Session, uri: string, version = session.documents.get(uri)) {
+    const members = session.companion ? [session, session.companion] : [session];
+    const diagnostics = version === undefined ? [] : members.flatMap(member => {
+      const value = member.diagnostics.get(uri);
+      return value?.receivedAtDocumentVersion === version ? value.diagnostics : [];
+    });
+    return { sessionId: session.info.id, uri, version, receivedAtDocumentVersion: version,
+      path: workspaceFilePath(session.workspace, fileURLToPath(uri)),
+      diagnostics: [...new Map(diagnostics.map(value => [JSON.stringify(value), value])).values()] };
+  }
+  private publishDiagnostics(session: Session, uri: string, version?: number) {
+    const targets = session.definition.internal ? [...this.sessions.values()].filter(value => value.companion === session && value.documents.has(uri)) : [session];
+    for (const target of targets) this.app.publish({ type: 'language.diagnostics', clientId: target.client.clientId, workspaceId: target.workspace.id,
+      ...this.diagnosticSnapshot(target, uri, version) });
   }
   private clearDiagnostics(session: Session, uri: string, version?: number) {
     session.diagnostics.delete(uri);
-    this.app.publish({ type: 'language.diagnostics', clientId: session.client.clientId, workspaceId: session.workspace.id,
-      sessionId: session.info.id, uri, path: workspaceFilePath(session.workspace, fileURLToPath(uri)), version, diagnostics: [] });
+    this.publishDiagnostics(session, uri, version);
   }
   async stop(client: ClientSession, id: string) {
     this.app.requireOwner(client.actorId);
@@ -292,20 +379,38 @@ export class LanguageServices {
     const doc = this.app.files.clientDocuments(client.clientId, session.workspace.id).find(item => session.definition.languages.includes(documentLanguage(item.path)));
     return doc ? this.ensure(client, doc.workspaceId, doc.path) : null;
   }
-  private async stopSession(session: Session): Promise<void> {
+  private stopSession(session: Session): Promise<void> {
+    if (session.stopping) return session.stopping;
     session.info.status = 'stopped';
-    try { await this.timed(session, 'shutdown', null, undefined, 3000); await session.connection.sendNotification('exit'); } catch { /* 已退出的语言服务直接释放。 */ }
-    session.connection.dispose(); await stopDevelopmentProcess(session.child);
-    for (const uri of session.documents.keys()) this.clearDiagnostics(session, uri);
-    session.diagnostics.clear(); this.changed(session);
+    session.stopping = (async () => {
+      // 完成协议关闭后，在父进程仍存活时结束进程树，避免 exit 提前退出后留下后台分析子进程。
+      try { await this.timed(session, 'shutdown', null, undefined, 3000); } catch { /* 已退出的语言服务直接释放。 */ }
+      session.connection.dispose(); await stopDevelopmentProcess(session.child);
+      if (session.companion) await this.stopSession(session.companion);
+      for (const uri of [...session.documents.keys()]) { session.documents.delete(uri); this.clearDiagnostics(session, uri); }
+      session.diagnostics.clear(); this.changed(session);
+    })().catch(error => { session.stopping = undefined; session.info.status = 'failed'; session.info.error = String(error); this.changed(session); throw error; });
+    return session.stopping;
   }
   async configure(): Promise<void> {
-    if (!this.sessions.size) return;
-    const settings = this.app.settings.snapshot().settings.development;
+    const snapshot = this.app.settings.snapshot().settings;
+    const settings = snapshot.development;
+    const key = JSON.stringify({ servers: settings?.languageServers, disabled: settings?.disabledLanguageServers, workspaces: snapshot.workspaces });
+    if (key === this.configurationSnapshot) return;
     const definitions = this.definitions();
-    await Promise.allSettled([...this.sessions.values()].filter(session => settings?.disabledLanguageServers?.includes(session.definition.id) ||
+    const selected = (file: string) => definitions.find(value => value.languages.includes(documentLanguage(file)) && !settings?.disabledLanguageServers?.includes(value.id));
+    const results = await Promise.allSettled([...this.sessions.values()].filter(session => settings?.disabledLanguageServers?.includes(session.definition.id) ||
       JSON.stringify(definitions.find(item => item.id === session.definition.id)) !== JSON.stringify(session.definition) ||
-      !session.client.clientId.startsWith('language-tool:') && JSON.stringify(this.app.settings.snapshot().settings.workspaces.find(item => item.id === session.workspace.id)) !== JSON.stringify(session.workspace)).map(session => this.stopSession(session)));
+      !session.definition.internal && session.documents.size > 0 && ![...session.documents.keys()].some(uri => selected(fileURLToPath(uri))?.id === session.definition.id) ||
+      !session.client.clientId.startsWith('language-tool:') && JSON.stringify(snapshot.workspaces.find(item => item.id === session.workspace.id)) !== JSON.stringify(session.workspace)).map(session => this.stopSession(session)));
+    this.app.publish({ type: 'language.configuration' });
+    const failed = results.filter((value): value is PromiseRejectedResult => value.status === 'rejected');
+    if (failed.length) throw new AggregateError(failed.map(value => value.reason), '部分语言服务未能应用设置，请检查进程状态后重试。');
+    this.configurationSnapshot = key;
   }
-  async close(): Promise<void> { await Promise.allSettled([...this.sessions.values()].map(session => this.stopSession(session))); }
+  async close(): Promise<void> {
+    this.closing = true;
+    await Promise.allSettled([...this.sessionStarts.values()]);
+    await Promise.allSettled([...this.sessions.values()].map(session => this.stopSession(session)));
+  }
 }

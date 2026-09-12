@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
-import { completionItems } from '../../../apps/client/src/completionItems';
+import { completionItems } from '../../../shared/completionItems';
 
 test('内置语言服务使用受控运行程序，首次跨文件定位和文档诊断保持完整、可清除', async () => {
   const f = await fixture(); await f.store.close();
@@ -70,22 +71,26 @@ test('真实 TypeScript 服务提供自动导入、参数提示和错误修复�
     const ready = await call('language.ensure', { workspaceId: 'project', path: 'main.ts' });
     let requestId = 0;
     const appliedEdits: unknown[] = [];
+    const applyEdit = async (edit: any) => {
+      const changes = [...edit.documentChanges ?? [], ...Object.entries(edit.changes ?? {}).map(([uri, edits]) => ({ textDocument: { uri }, edits }))];
+      for (const change of changes) {
+        const file = await call('language.path', { workspaceId: 'project', uri: change.textDocument.uri });
+        const current = await call('documents.open', { workspaceId: 'project', path: file });
+        let text = current.text;
+        const offset = (position: { line: number; character: number }) => current.text.split('\n').slice(0, position.line).reduce((sum: number, line: string) => sum + line.length + 1, 0) + position.character;
+        for (const value of [...change.edits].sort((a, b) => offset(b.range.start) - offset(a.range.start))) text = text.slice(0, offset(value.range.start)) + value.newText + text.slice(offset(value.range.end));
+        const updated = await call('documents.update', { workspaceId: 'project', path: file, version: current.version, text });
+        if (file === 'main.ts') doc = updated;
+      }
+      appliedEdits.push(edit);
+    };
     app.subscribe(event => {
       if (event.type !== 'language.applyEdit') return;
       void (async () => {
         const edit = event.edit as any;
         try {
           await expect(router.call({ actorId: 'owner', clientId: 'another-editor' }, 'language.applyEditResult', { id: event.id, result: { applied: true } })).rejects.toThrow('当前客户端');
-          for (const change of edit.documentChanges) {
-            const file = await call('language.path', { workspaceId: 'project', uri: change.textDocument.uri });
-            const current = await call('documents.open', { workspaceId: 'project', path: file });
-            let text = current.text;
-            const offset = (position: { line: number; character: number }) => current.text.split('\n').slice(0, position.line).reduce((sum: number, line: string) => sum + line.length + 1, 0) + position.character;
-            for (const value of [...change.edits].sort((a, b) => offset(b.range.start) - offset(a.range.start))) text = text.slice(0, offset(value.range.start)) + value.newText + text.slice(offset(value.range.end));
-            const updated = await call('documents.update', { workspaceId: 'project', path: file, version: current.version, text });
-            if (file === 'main.ts') doc = updated;
-          }
-          appliedEdits.push(edit);
+          await applyEdit(edit);
           await call('language.applyEditResult', { id: event.id, result: { applied: true } });
         } catch (error) { await call('language.applyEditResult', { id: event.id, result: { applied: false, failureReason: String(error) } }); }
       })();
@@ -108,11 +113,19 @@ test('真实 TypeScript 服务提供自动导入、参数提示和错误修复�
     }
     expect(diagnostic).toBeDefined();
     const actions = await request('textDocument/codeAction', { range: diagnostic.range, context: { diagnostics: [diagnostic], only: ['quickfix'], triggerKind: 1 } });
-    const fix = actions.find((action: any) => JSON.stringify(action.command).includes('./math'));
+    const fix = actions.find((action: any) => JSON.stringify(action.edit).includes('./math'));
     expect(fix).toBeDefined();
+    // 当前服务按 LSP 直接返回 edit；编辑器先应用文本编辑，再执行附带命令。
+    await applyEdit(fix.edit);
     await call('language.executeCommand', { workspaceId: 'project', path: 'main.ts', version: doc.version, requestId: 'apply-import', ...fix.command });
     expect(appliedEdits).toHaveLength(1);
     expect(doc.text).toContain('./math');
+    doc = await call('documents.update', { workspaceId: 'project', path: 'main.ts', version: doc.version,
+      text: "import { addNumbers as unused } from './math';\n" + doc.text });
+    await call('language.executeCommand', { workspaceId: 'project', path: 'main.ts', version: doc.version, requestId: 'organize-imports',
+      command: '_typescript.organizeImports', arguments: [fileURLToPath(ready.uri)] });
+    expect(appliedEdits).toHaveLength(2);
+    expect(doc.text).not.toContain('unused');
     await call('documents.open', { workspaceId: 'project', path: 'math.ts' });
     await call('documents.close', { workspaceId: 'project', path: 'main.ts', discard: true });
     expect(events.at(-1)).toMatchObject({ uri: ready.uri, diagnostics: [] });

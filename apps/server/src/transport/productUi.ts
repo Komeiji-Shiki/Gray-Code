@@ -311,6 +311,7 @@ export class ProductUi {
         return { id: preset.id, name: preset.name };
       }
       case 'platform.development.get': return ui.preferences.app.development ?? {};
+      case 'platform.development.list': return this.app.languages.services(client, [], data.refresh === true);
       case 'platform.development.update': {
         validateDevelopmentSettings(data.settings);
         ui.preferences.app.development = structuredClone(data.settings); ui.preferences.dirty = true;

@@ -24,7 +24,8 @@ if (process.platform === 'win32') {
  * 桌面运行时真正的生产依赖（main.cjs bundle 的 external + 其传递闭包）。
  * electron 由运行库自身提供，不进包。
  */
-const RUNTIME_ROOTS = ['jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'];
+const RUNTIME_ROOTS = ['jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server',
+  'pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server', '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server'];
 /** 工作区包只需 package.json（定位）+ dist（bundle 外部引用的编译产物）。 */
 const WORKSPACE_SLIM = new Set(['@graycode/core', '@graycode/contracts', '@graycode/desktop', '@graycode/server', '@graycode/client']);
 

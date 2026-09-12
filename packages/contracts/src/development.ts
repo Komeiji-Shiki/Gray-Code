@@ -25,6 +25,24 @@ export interface LanguageSessionInfo {
   status: 'starting' | 'running' | 'stopped' | 'failed';
   error?: string;
 }
+export interface LanguageServiceInfo {
+  id: string;
+  name: string;
+  languages: string[];
+  source: 'bundled' | 'system' | 'custom';
+  available: boolean;
+  command?: string;
+  requirement?: string;
+  documentationUrl?: string;
+  configurationTemplate?: LanguageServerDefinition;
+}
+export interface LanguageDocumentStatus {
+  languageId: string;
+  session?: LanguageSessionInfo | null;
+  service?: LanguageServiceInfo;
+  reason?: 'disabled' | 'unavailable' | 'unconfigured';
+  error?: string;
+}
 export interface SourcePosition { line: number; character: number }
 export interface SourceRange { start: SourcePosition; end: SourcePosition }
 export interface LanguageDiagnostic {

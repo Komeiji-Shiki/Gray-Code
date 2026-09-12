@@ -325,7 +325,7 @@ export class ApplicationRouter {
           ]),
           params.path,
         );
-      case 'language.list': return app.languages.list(session);
+      case 'language.list': return app.languages.list(session, params.refresh === true);
       case 'language.ensure': return app.languages.ensure(session, params.workspaceId, params.path);
       case 'language.request': return app.languages.request(session, params as any);
       case 'language.executeCommand': return app.languages.executeCommand(session, params as any);

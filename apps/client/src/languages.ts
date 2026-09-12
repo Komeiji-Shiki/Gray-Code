@@ -1,8 +1,9 @@
 import * as monaco from 'monaco-editor';
-import type { SourceRange, LanguageDiagnostic, LanguageSessionInfo } from '@graycode/contracts';
+import type { SourceRange, LanguageDiagnostic, LanguageSessionInfo, LanguageDocumentStatus } from '@graycode/contracts';
 import type { ServerCapabilities, CompletionItem as LspCompletion, CompletionList, SignatureHelp, CodeAction, Command, WorkspaceEdit } from 'vscode-languageserver-protocol';
 import { languageMethodSupported } from '../../../shared/languageSupport';
-import { completionItems } from './completionItems';
+import { documentLanguageId } from '../../../shared/documentLanguages';
+import { completionItems } from '../../../shared/completionItems';
 import { call, subscribe } from './api';
 import { report } from './state';
 
@@ -12,6 +13,11 @@ for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.
     references: false, documentSymbols: false, rename: false, documentRangeFormattingEdits: false, diagnostics: false, signatureHelp: false, codeActions: false });
   defaults.setDiagnosticsOptions({ ...defaults.getDiagnosticsOptions(), noSyntaxValidation: true, noSemanticValidation: true, noSuggestionDiagnostics: true });
 }
+for (const defaults of [monaco.css.cssDefaults, monaco.css.scssDefaults, monaco.css.lessDefaults, monaco.html.htmlDefaults, monaco.json.jsonDefaults]) {
+  defaults.setModeConfiguration({ ...defaults.modeConfiguration, completionItems: false, hovers: false, documentSymbols: false,
+    documentFormattingEdits: false, documentRangeFormattingEdits: false, diagnostics: false,
+    ...('definitions' in defaults.modeConfiguration ? { definitions: false, references: false, rename: false } : {}) });
+}
 
 interface Binding {
   model: monaco.editor.ITextModel; workspaceId: string; path: string; uri?: string;
@@ -20,7 +26,7 @@ interface Binding {
   ready?: Promise<unknown>;
   capabilities?: ServerCapabilities;
   diagnostics?: LanguageDiagnostic[];
-  status?(state: { languageId: string; session?: LanguageSessionInfo | null; error?: string }): void;
+  status?(state: LanguageDocumentStatus): void;
 }
 interface LspEdit { range: SourceRange; newText: string }
 const bindings = new Map<string, Binding>();
@@ -300,29 +306,30 @@ export function bindLanguageDocument(input: Binding) {
   bindings.set(input.model.uri.toString(), input);
   const refresh = () => {
     const currentGeneration = ++generation;
-    input.status?.({ languageId: input.model.getLanguageId() });
+    input.status?.({ languageId: documentLanguageId(input.path) });
     input.ready = call<any>('language.ensure', { workspaceId: input.workspaceId, path: input.path }).then(async ready => {
       if (disposed || currentGeneration !== generation) return;
       session = ready.session; input.uri = ready.uri; input.capabilities = ready.capabilities;
-      input.status?.({ languageId: ready.languageId, session });
+      input.status?.({ languageId: ready.languageId, session, service: ready.service, reason: ready.reason });
       if (!session) { clearMarkers(); return }
       register(input.model.getLanguageId()); registerSuggestions(input.model.getLanguageId(), ready.capabilities);
       const revision = diagnosticsRevision;
       const current = await call<any[]>('language.diagnostics', { workspaceId: input.workspaceId });
       if (disposed || currentGeneration !== generation || revision !== diagnosticsRevision) return;
       latest = current.find(value => value.uri === ready.uri && value.sessionId === session?.id); void updateMarkers();
-    }).catch(error => { if (!disposed && currentGeneration === generation) { clearMarkers(); input.status?.({ languageId: input.model.getLanguageId(), session, error: String(error) }); } });
+    }).catch(error => { if (!disposed && currentGeneration === generation) { clearMarkers(); input.status?.({ languageId: documentLanguageId(input.path), session, error: String(error) }); } });
     return input.ready;
   };
   void refresh();
   const unsubscribe = subscribe(event => {
-    if (event.type === 'language.diagnostics' && event.workspaceId === input.workspaceId && event.uri === input.uri &&
+    if (event.type === 'language.configuration') { void refresh(); }
+    else if (event.type === 'language.diagnostics' && event.workspaceId === input.workspaceId && event.uri === input.uri &&
       (!event.sessionId || event.sessionId === session?.id) && Array.isArray(event.diagnostics)) {
       diagnosticsRevision++;
       latest = { diagnostics: event.diagnostics, version: event.version, receivedAtDocumentVersion: event.receivedAtDocumentVersion }; void updateMarkers();
     } else if (event.type === 'language.status' && event.session.workspaceId === input.workspaceId && event.session.serverId === session?.serverId) {
       if (event.session.status === 'running') void refresh();
-      else { session = event.session; clearMarkers(); input.status?.({ languageId: input.model.getLanguageId(), session }); }
+      else { session = event.session; clearMarkers(); input.status?.({ languageId: documentLanguageId(input.path), session }); }
     }
   });
   return { updateMarkers, refresh, clearMarkers, dispose() { disposed = true; generation++; unsubscribe(); bindings.delete(input.model.uri.toString()); clearMarkers(); } };

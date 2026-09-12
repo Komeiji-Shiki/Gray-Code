@@ -240,6 +240,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     keywords: ['最大工具调用次数', 'max iterations', '工具调用', 'iteration', '反復', '无限制', '循环'],
     anchor: '[data-search-anchor="max-tool-iterations"]'
   },
+  ...(isDesktopHost ? [{
+    key: 'tools-language-services', tab: 'tools' as const, label: '代码补全与语言服务',
+    labelKey: 'components.settings.settingsPanel.sections.tools.title',
+    keywords: ['语言服务', '代码补全', 'LSP', 'language server', 'completion', '言語サーバー', 'TypeScript', 'JavaScript', 'Vue', 'Svelte', 'Python', 'HTML', 'CSS', 'JSON', 'YAML', 'Shell', 'Go', 'Rust', 'C++', 'Java', 'C#', 'PHP', 'Lua', 'PowerShell', 'SQL', 'Markdown'],
+    anchor: '[data-search-anchor="language-services"]'
+  }] : []),
   {
     key: 'tools-list', tab: 'tools',
     labelKey: 'components.settings.settingsPanel.sections.tools.title',
