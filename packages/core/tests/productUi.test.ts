@@ -34,10 +34,18 @@ test('the existing UI protocol uses original settings services and streams core 
     expect((await app.runtime.wait(result.runId))?.status).toBe('completed');
     const history = await call('conversation.getMessagesPaged', { conversationId: 'original-chat', limit: 120 });
     expect(history.messages[0].id).toBe('stable-user-id');
-    const chunks = notifications.filter(event => event.message.type === 'streamChunk').map(event => event.message.data);
+    // 应用同时发布原始客户端帧与供其他入口使用的后台帧，分别验证投递对象。
+    const chunks = notifications.filter(event => event.message.type === 'streamChunk' && event.clientId === owner.clientId).map(event => event.message.data);
     expect(chunks.map(chunk => chunk.type)).toEqual(expect.arrayContaining(['toolsExecuting', 'toolIteration', 'complete']));
     expect(chunks.every(chunk => chunk.streamId === 'stream-one')).toBe(true);
     expect(chunks.at(-1).content.parts[0].text).toBe('Restored interface works.');
+    const mirrors = notifications.filter(event => event.message.type === 'streamChunk' && event.excludeClientIds?.includes(owner.clientId));
+    expect(mirrors.length).toBeGreaterThan(0);
+    for (const event of mirrors) {
+      expect(await router.mayReceive(owner, event)).toBe(false);
+      expect(await router.mayReceive({ actorId: 'owner', clientId: 'another-ui' }, event)).toBe(true);
+      expect(event.message.data.streamId).toBe(`background:${result.runId}`);
+    }
     await expect(router.call({ actorId: 'nobody', clientId: 'bad' }, 'ui.request', { type: 'getSettings' })).rejects.toThrow();
   } finally { await app.close(); await f.cleanup(); }
 });

@@ -69,7 +69,8 @@ describe('application composition and local clients', () => {
     await symlink(outside, path.join(f.source, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
     const workspace = app.workspace('owner', 'project', []);
     await expect(app.files.read(workspace, '../outside/private.txt')).rejects.toThrow('outside');
-    await expect(app.files.write(workspace, 'escape/new/file.txt', 'blocked', null)).rejects.toThrow('outside');
+    await expect(app.files.write(workspace, 'escape/new/file.txt', 'blocked', null)).rejects.toThrow('路径不在本次批准的写入范围内');
+    await expect(readFile(path.join(outside, 'new/file.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   test('atomically saves a whole settings draft and encrypted secrets without returning secret values', async () => {
