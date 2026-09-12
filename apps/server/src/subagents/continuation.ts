@@ -81,6 +81,8 @@ export class BackgroundContinuation {
       if (!origin && !source.parentConfiguration) throw new Error('原任务配置不可用，结果已保留，请在对话中选择模型后继续。');
       const configuration = source.parentConfiguration?.configuration ?? await this.app.storage.getRecord('run-configurations', origin!.id) as SavedRunConfiguration | null;
       if (!configuration) throw new Error('旧任务未保存模型选择，结果已保留，请在对话中选择模型后继续。');
+      const automationId = origin?.automationId ?? configuration.automationId;
+      if (automationId) { await this.app.automations.wake(automationId); return; }
       const { workspace: capturedWorkspace, ...selection } = configuration;
       const scope = Object.hasOwn(configuration, 'workspace') ? { workspace: capturedWorkspace ?? undefined } : undefined;
       await this.app.conversation(source.actorId, conversationId);
@@ -105,5 +107,6 @@ export class BackgroundContinuation {
     }
   }
   hasPendingWork(): boolean { return this.queues.size > 0; }
+  async hasPending(conversationId: string): Promise<boolean> { return (await this.app.storage.listRecords(pendingNamespace, conversationId)).length > 0; }
   async close(): Promise<void> { this.closing = true; await Promise.allSettled(this.queues.values()); }
 }

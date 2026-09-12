@@ -11,6 +11,7 @@ export * from './remote';
 export * from './teams';
 export * from './files';
 export * from './backups';
+export * from './automations';
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PlatformMessage {

@@ -52,6 +52,8 @@ export interface AgentDefinition {
 }
 export type RunStatus = 'queued' | 'running' | 'awaiting_approval' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export interface RunRecord {
+  /** 由宿主捕获的自动任务归属，公开运行请求不能指定。 */
+  automationId?: string;
   id: string;
   requestKey: string;
   conversationId: string;
@@ -67,6 +69,7 @@ export interface RunRecord {
   continuationOf?: string;
 }
 export interface SavedRunConfiguration {
+  automationId?: string;
   providerId: string; modelOverride?: string; reasoningEffort?: string; promptModeId?: string;
   /** 自动继续沿用原目录；null 表示原任务没有工作区，缺省只用于旧记录。 */
   workspace?: WorkspaceDefinition | null;

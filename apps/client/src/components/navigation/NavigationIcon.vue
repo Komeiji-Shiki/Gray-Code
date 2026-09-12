@@ -1,6 +1,7 @@
 <script setup lang="ts">
-defineProps<{ name: 'panel' | 'plus' | 'search' | 'folder' | 'pin' | 'more' | 'settings' | 'history' | 'chart' | 'chevron' | 'close' | 'chat' | 'bot' | 'file' | 'browser' | 'terminal' | 'git' | 'review' | 'warning' | 'expand' | 'restore' | 'save' | 'copy' }>();
+defineProps<{ name: 'panel' | 'plus' | 'search' | 'folder' | 'pin' | 'more' | 'settings' | 'history' | 'chart' | 'chevron' | 'close' | 'chat' | 'bot' | 'file' | 'browser' | 'terminal' | 'git' | 'review' | 'warning' | 'expand' | 'restore' | 'save' | 'copy' | 'calendar' }>();
 const paths = {
+  calendar: 'M3 5h18v16H3z M3 10h18 M7 2v6 M17 2v6 M7 14h3 M14 14h3 M7 18h3',
   panel: 'M3 4h18v16H3z M8 4v16', plus: 'M12 4v16 M4 12h16', search: 'M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15 M16 16l5 5',
   folder: 'M3 6h7l2 3h9v11H3z', pin: 'M9 3h6l-1 6 4 4v2H6v-2l4-4z M12 15v6', more: 'M5 12h.01 M12 12h.01 M19 12h.01',
   settings: 'M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8',

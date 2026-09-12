@@ -388,7 +388,9 @@ export class SubagentExecutionService {
         await this.limiter.acquire(record.id, signal, Number(this.config().queueTimeoutSeconds) * 1000); live.hasSlot = true;
         const input = { requestKey: `subagent:${record.id}:${randomUUID()}`, actorId: record.actorId, agentId: record.profile.id, conversationId: record.conversationId,
           workspaceId: (await this.app.storage.getConversation(record.conversationId))?.workspaceId as string | undefined };
-        const scope = { ...(Object.hasOwn(record, 'workspace') ? { workspace: record.workspace ?? undefined } : {}), modelSelection: record.selection };
+        const parent = record.parentRunId ? await this.app.storage.getRun(record.parentRunId) : null;
+        const scope = { ...(Object.hasOwn(record, 'workspace') ? { workspace: record.workspace ?? undefined } : {}), modelSelection: record.selection,
+          automationId: parent?.automationId ?? record.parentConfiguration?.configuration.automationId };
         const run = message ? await this.app.runtime.start({ ...input, message }, undefined, scope)
           : await this.app.runtime.continue({ ...input, expectedRevision: (await this.app.storage.historyInfo(record.conversationId)).revision }, undefined, scope);
         message = undefined; live.coreRunId = run.id; record.coreRunIds.push(run.id); this.byCoreRun.set(run.id, record);

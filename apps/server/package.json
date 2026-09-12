@@ -6,6 +6,7 @@
   "dependencies": {
     "@graycode/contracts": "0.1.0",
     "@graycode/core": "0.1.0",
+    "cron-parser": "5.10.0",
     "cross-spawn": "7.0.6",
     "discord.js": "14.27.0",
     "node-pty": "1.1.0",

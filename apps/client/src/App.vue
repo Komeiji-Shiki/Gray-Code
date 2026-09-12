@@ -8,12 +8,14 @@ import ContentPreview from './components/ContentPreview.vue';
 import RunInspector from './components/RunInspector.vue';
 import ResourceLibrary from './components/ResourceLibrary.vue';
 import CharacterSetup from './components/CharacterSetup.vue';
+import AutomationsPanel from './components/AutomationsPanel.vue';
 import ConversationSidebar from './components/ConversationSidebar.vue';
 import WorkspaceSelector from './components/WorkspaceSelector.vue';
 import WebDialogs from './components/WebDialogs.vue';
 import NavigationIcon from './components/navigation/NavigationIcon.vue';
 const characterSetup = ref<{ characterId?: string } | null>(null);
 const libraryOpen = ref(false);
+const automationsOpen = ref(false);
 const chatReady = ref(false);
 import { webUi } from './webBridge';
 const isWeb = window.graycode?.kind === 'web';
@@ -60,7 +62,7 @@ async function selectMode(mode: 'chat' | 'code' | 'character') {
   if (mode === 'code' && result.workspaceId) state.workspaceId = result.workspaceId;
   state.mode = mode; modeMenuOpen.value = false;
 }
-watch([libraryOpen, characterSetup, () => state.navigationDialogOpen, () => state.fileDialogOpen, () => state.panelMenuOpen], () => { state.panelObscured = libraryOpen.value || !!characterSetup.value || state.navigationDialogOpen || state.fileDialogOpen || state.panelMenuOpen; });
+watch([libraryOpen, automationsOpen, characterSetup, () => state.navigationDialogOpen, () => state.fileDialogOpen, () => state.panelMenuOpen], () => { state.panelObscured = libraryOpen.value || automationsOpen.value || !!characterSetup.value || state.navigationDialogOpen || state.fileDialogOpen || state.panelMenuOpen; });
 function dragSplit(event: PointerEvent) {
   const target = event.currentTarget as HTMLElement;
   target.setPointerCapture(event.pointerId); resizing.value = true; state.panelResizing = true;
@@ -132,19 +134,21 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
       <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? '工作台' : '返回对话') : (state.chatFocused ? '打开侧边面板' : '隐藏侧边面板') }}</button>
       <button v-if="!compactViewport" class="quiet-button" @click="libraryOpen = true">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
-      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
+      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
     <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
+    <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">关闭</button></div>
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
     <ResourceLibrary v-if="libraryOpen" @close="libraryOpen = false" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
     <ContentPreview />
     <WebDialogs v-if="isWeb" />
+    <AutomationsPanel :open="automationsOpen" @close="automationsOpen = false" />
     <RunInspector v-if="state.ready && !state.settingsOpen" />
     <div v-if="!state.ready" class="loading-state">正在连接本地核心…</div>
     <div v-else class="application-body" :class="{ resizing: sidebarResizing }">
       <button v-if="compactViewport && mobileNavigationOpen && !state.settingsOpen" class="navigation-backdrop" aria-label="收起对话列表" @click="mobileNavigationOpen = false"></button>
       <div ref="navigation" v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)" class="conversation-navigation" :style="{ '--sidebar-width': visibleSidebarWidth + 'px' }" :inert="!chatReady" :aria-busy="!chatReady">
-        <ConversationSidebar v-model:collapsed="navigationCollapsed" @navigate="finishNavigation" @add-workspace="guard(async () => { finishNavigation(); await addWorkspace(); })" />
+        <ConversationSidebar v-model:collapsed="navigationCollapsed" @automations="finishNavigation(); automationsOpen = true" @navigate="finishNavigation" @add-workspace="guard(async () => { finishNavigation(); await addWorkspace(); })" />
         <div v-if="!compactViewport && !navigationCollapsed" class="navigation-resize" role="separator" aria-label="调整对话列表宽度" aria-orientation="vertical" :aria-valuemin="200" :aria-valuemax="sidebarMaximum" :aria-valuenow="Math.round(visibleSidebarWidth)" tabindex="0" @pointerdown.prevent="dragSidebar" @pointermove="moveSidebar" @pointerup="endSidebar" @pointercancel="endSidebar" @lostpointercapture="endSidebar" @keydown.left.prevent="resizeSidebarBy(-10)" @keydown.right.prevent="resizeSidebarBy(10)" @dblclick="sidebarWidth = 250; endSidebar()"></div>
       </div>
     <div ref="container" class="desktop-workspace" :class="{ 'chat-focused': state.chatFocused || state.settingsOpen, 'workbench-expanded': state.workbenchExpanded && !state.chatFocused && !state.settingsOpen, 'mobile-workbench': compactViewport && !state.chatFocused && !state.settingsOpen, resizing }" :style="{ '--chat-width': split + '%' }">

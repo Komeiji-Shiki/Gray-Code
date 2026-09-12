@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ConversationState, PlatformConversation } from '@graycode/contracts';
-import { MessageTokenEstimator } from '../../../../backend/modules/api/chat/services/MessageTokenEstimator';
-import type { Content } from '../../../../backend/modules/conversation/types';
+import { estimateModelInputTokens } from '../model/usage';
 import { withDependencyRuntime } from '../../../../backend/modules/dependencies/runtime';
 import type { CharacterTurn } from '../characters/pipeline';
 import type { PlatformApplication } from '../application';
@@ -23,11 +22,7 @@ export async function previewPrompt(app: PlatformApplication, client: ClientSess
   const prepared = await app.runtime.preview(request, state ? { state, commit: {} } : undefined, { clientId: client.clientId });
   const projected = await withDependencyRuntime(app.dependencies, () => app.modelAdapter.preview(prepared.input));
   const turn = prepared.input.turnContext?.characterTurn as CharacterTurn | undefined;
-  const estimator = new MessageTokenEstimator();
-  const input = prepared.input;
-  const fixed = [input.systemPrompt, JSON.stringify(input.tools), input.promptContext?.taskContextEmbedded ? '' : JSON.stringify(input.taskContext)].filter(Boolean).join('\n');
-  const textTokens = [...input.messages, ...input.promptContext?.beforeHistoryMessages ?? [], ...input.promptContext?.afterHistoryMessages ?? [],
-    { role: 'user', parts: [{ text: fixed }] }].reduce((sum, message) => sum + estimator.estimateMessageTokens(message as Content), 0);
+  const textTokens = estimateModelInputTokens(prepared.input);
   const notices = [...prepared.notices];
   if (!data.conversationId && !workspaceId) notices.push('当前还没有保存对话，发送时自动创建的会话目录会补充到工作区信息中。');
   if (turn) notices.push('角色和世界书按当前输入重新激活；含概率或时效条件的条目，在正式发送时可能变化。');

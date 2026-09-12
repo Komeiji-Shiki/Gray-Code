@@ -18,6 +18,18 @@ export class ApplicationRouter {
   ): Promise<unknown> {
     const app = this.application;
     if (!app.actor(session.actorId)) throw new Error("Account is unavailable.");
+    if (method.startsWith('automations.')) {
+      switch (method) {
+        case 'automations.options': return app.automations.options(session.actorId, params.conversationId);
+        case 'automations.list': return app.automations.list(session.actorId);
+        case 'automations.create': return app.automations.create(session.actorId, params as unknown as import('@graycode/contracts').AutomationCreate);
+        case 'automations.update': return app.automations.update(session.actorId, params.id, params as unknown as import('@graycode/contracts').AutomationCreate);
+        case 'automations.pause': return app.automations.pause(session.actorId, params.id, params.stopCurrent === true);
+        case 'automations.resume': return app.automations.resume(session.actorId, params.id, params.tokenBudget);
+        case 'automations.remove': await app.automations.remove(session.actorId, params.id); return { success: true };
+        default: throw new Error('未知自动任务操作。');
+      }
+    }
     if (method.startsWith('remote.')) {
       app.requireOwner(session.actorId);
       if (!app.remoteAccess) throw new Error('当前启动方式未提供远程连接管理。');

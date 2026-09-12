@@ -23,6 +23,7 @@ import { PlatformUsage } from './conversations/usage';
 import { LanguageServices } from './development/languages';
 import { CharacterPipeline, type CharacterTurn } from './characters/pipeline';
 import { CharacterResources } from './characters/resources';
+import { ApplicationAutomations } from './automations/service';
 import { prepareExternalWrite } from './workspace/writeAccess';
 import { PlatformMemory } from './memory/service';
 import { PlatformSkills } from './skills/service';
@@ -125,6 +126,7 @@ export class PlatformApplication {
   readonly settings: SettingsService<ProductPreferences>;
   readonly runtime: PlatformRuntime;
   readonly models: ModelProvider;
+  readonly automations: ApplicationAutomations;
   readonly modelAdapter: ProviderModelAdapter;
   readonly discord: DiscordBotService;
   readonly botWorkspaces: BotWorkspaces;
@@ -233,7 +235,7 @@ export class PlatformApplication {
         proxyUrl: () => { const proxy = this.product.runtimeSettings().getProxySettings(); return proxy.enabled ? proxy.url : undefined; },
       });
     const models = options.models ?? this.modelAdapter;
-    this.models = { generate: input => withDependencyRuntime(this.dependencies, () => models.generate(input)) };
+    this.models = { generate: input => this.automations.meter.generate(input, () => withDependencyRuntime(this.dependencies, () => models.generate(input))) };
     this.runtime = new PlatformRuntime({
       storage,
       tools: this.tools,
@@ -241,9 +243,13 @@ export class PlatformApplication {
       prepareTools: async (names, input, agent) => {
         const channel = await this.product.channel(input.providerId ?? agent.providerId);
         const media = this.media.tools(this.product.runtimeSettings(), channel?.toolOptions);
-        return this.tools.catalog(names, new Map(media.map(tool => [tool.declaration.name, tool])));
+        const overrides = new Map(media.map(tool => [tool.declaration.name, tool]));
+        if (names.includes('goal_update')) overrides.set('goal_update', this.automations.tool());
+        return this.tools.catalog(names, overrides);
       },
-      preparePrompt: input => new PlatformPromptService(this).prepare(input),
+      preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),
+      currentAutomationId: () => this.automations.meter.currentId(),
+      runInScope: (run, execute) => this.automations.meter.run(run, execute),
       prepareModel: async input => {
         const prepared = await this.context.prepare(input);
         prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
@@ -268,7 +274,8 @@ export class PlatformApplication {
       },
       afterTools: async (run, workspace, signal, message) => {
         await this.checkpointLifecycle.afterTools(run, workspace, signal, message);
-        return { stop: await this.artifacts.shouldStop(run.conversationId, message.parts.flatMap(part => part.functionCall ? [(part.functionCall as { id: string }).id] : [])) };
+        if (await this.artifacts.shouldStop(run.conversationId, message.parts.flatMap(part => part.functionCall ? [(part.functionCall as { id: string }).id] : []))) return { stop: true, reason: 'document_confirmation' };
+        return this.automations.afterTools(run);
       },
       deliverFeedback: async run => {
         const delivered = await this.subagents.feedback.flush(run.conversationId, run);
@@ -344,6 +351,7 @@ export class PlatformApplication {
     this.productUi = new ProductUi(this);
     this.conversations = new ConversationService(this);
     this.context = new PlatformContextService(this);
+    this.automations = new ApplicationAutomations(this);
   }
   static async open(options: ApplicationOptions): Promise<PlatformApplication> {
     const storage = await PlatformStorage.open(options.dataDirectory);
@@ -369,6 +377,7 @@ export class PlatformApplication {
       await application.subagents.initialize();
       await application.terminals.initialize();
       await application.subagents.feedback.initialize();
+      await application.automations.initialize();
       return application;
     } catch (error) {
       await storage.close();
@@ -480,6 +489,7 @@ export class PlatformApplication {
     return conversation;
   }
   async close(): Promise<void> {
+    await this.automations.close();
     await this.remoteAccess?.close();
     await this.discord.summaries.stop();
     await this.onebot.summaries.stop();

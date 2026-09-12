@@ -6,7 +6,7 @@ import { guard, state } from '../state';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import ConversationNavigationRow from './navigation/ConversationNavigationRow.vue';
 const props = defineProps<{ collapsed: boolean }>();
-const emit = defineEmits<{ 'update:collapsed': [value: boolean]; addWorkspace: []; navigate: [panel?: 'workbench'] }>();
+const emit = defineEmits<{ 'update:collapsed': [value: boolean]; addWorkspace: []; automations: []; navigate: [panel?: 'workbench'] }>();
 const navigation = ref<ConversationNavigationResult>({ items: [], pinned: [], workspaces: [], runs: [] });
 const query = ref('');
 const navigationScope = ref<'personal' | 'bots'>('personal');
@@ -195,7 +195,7 @@ onUnmounted(() => { ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsub
       <button v-if="navigation.nextCursor" class="navigation-load-more" :disabled="loadingMore" @click="refresh(false, true)">{{ loadingMore ? '正在读取…' : '显示更多对话' }}</button>
       <button v-if="navigationScope === 'personal'" class="navigation-add-project" @click="emit('addWorkspace')"><NavigationIcon name="folder" />添加项目</button>
     </div>
-    <div class="navigation-bottom"><button title="机器人会话" :aria-pressed="navigationScope === 'bots'" @click="navigationScope = navigationScope === 'bots' ? 'personal' : 'bots'"><NavigationIcon name="bot" /><span v-if="!collapsed">机器人会话</span></button><button title="全部对话历史" @click="guard(() => command('showHistory'))"><NavigationIcon name="history" /><span v-if="!collapsed">全部历史</span></button><button title="用量统计" @click="guard(() => command('showUsage'))"><NavigationIcon name="chart" /><span v-if="!collapsed">用量统计</span></button><button title="设置" @click="guard(() => command('showSettings'))"><NavigationIcon name="settings" /><span v-if="!collapsed">设置</span></button></div>
+    <div class="navigation-bottom"><button title="自动任务" @click="emit('automations')"><NavigationIcon name="calendar" /><span v-if="!collapsed">自动任务</span></button><button title="机器人会话" :aria-pressed="navigationScope === 'bots'" @click="navigationScope = navigationScope === 'bots' ? 'personal' : 'bots'"><NavigationIcon name="bot" /><span v-if="!collapsed">机器人会话</span></button><button title="全部对话历史" @click="guard(() => command('showHistory'))"><NavigationIcon name="history" /><span v-if="!collapsed">全部历史</span></button><button title="用量统计" @click="guard(() => command('showUsage'))"><NavigationIcon name="chart" /><span v-if="!collapsed">用量统计</span></button><button title="设置" @click="guard(() => command('showSettings'))"><NavigationIcon name="settings" /><span v-if="!collapsed">设置</span></button></div>
   </aside>
   <Teleport v-if="menu || dialog" to=".application">
     <template v-if="menu">

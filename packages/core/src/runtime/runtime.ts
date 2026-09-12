@@ -22,7 +22,7 @@ export interface RuntimeServices {
   canAccessConversation?: (actor: ActorIdentity, conversation: PlatformConversation) => Promise<boolean>;
   questionTimeoutMs?: number;
   preparePrompt?: (input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
-    history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string }) => Promise<{
+    history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; automationId?: string }) => Promise<{
     systemPrompt: string; toolNames: string[]; messageMetadata?: Record<string, unknown>; messageParts?: PlatformMessage['parts']; turnContext?: Record<string, unknown>; promptContext?: ModelInput['promptContext'];
   }>;
   transformOutput?: (input: { run: RunRecord; message: PlatformMessage; request: ModelInput }) => Promise<PlatformMessage>;
@@ -33,7 +33,10 @@ export interface RuntimeServices {
   beforeRun?: (run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal) => Promise<void>;
   modelBoundary?: (run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal, phase: 'before' | 'after', iteration: number, message?: PlatformMessage) => Promise<void>;
   beforeTool?: (context: ToolContext, name: string, args: Record<string, unknown>, effects: ToolEffect[]) => Promise<void>;
-  afterTools?: (run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal, message: PlatformMessage) => Promise<void | { stop: boolean }>;
+  afterTools?: (run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal, message: PlatformMessage) => Promise<void | { stop: boolean; reason?: string }>;
+  /** 自动任务的调用归属由宿主异步作用域提供，包含内部总结与子任务。 */
+  currentAutomationId?: () => string | undefined;
+  runInScope?: (run: RunRecord, execute: () => Promise<void>) => Promise<void>;
   /** 在模型边界接收已持久化的后台任务结果，返回是否追加了新消息。 */
   deliverFeedback?: (run: RunRecord) => Promise<boolean>;
   review?: (input: { agent: AgentDefinition; toolName: string; args: Record<string, unknown>; effects: ToolEffect[]; signal: AbortSignal }) => Promise<{ requireApproval: boolean; reason?: string }>;
@@ -64,6 +67,7 @@ export interface PreparedConversationChange {
 
 /** 可信宿主捕获的任务上下文；公开请求参数不能提供或覆盖此对象。 */
 export interface RuntimeRunScope {
+  automationId?: string;
   workspace?: WorkspaceDefinition;
   clientId?: string;
   modelSelection?: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>;
@@ -144,14 +148,15 @@ export class PlatformRuntime {
       throw new Error('不能继续其他成员发起的回合，请发送自己的新消息。');
     const modelSelection = scope?.modelSelection ?? { providerId: input.providerId ?? agent.providerId, modelOverride: input.modelOverride ?? agent.modelId, reasoningEffort: input.reasoningEffort };
     const configuredRequest = { ...input, ...modelSelection };
+    const automationId = scope?.automationId ?? this.services.currentAutomationId?.();
     const prepared = await this.services.preparePrompt?.({ request: configuredRequest, agent: structuredClone(agent), actor, workspace: workspace ?? undefined,
-      history, conversation: change?.commit.metadata ?? conversation, previousTurn, clientId: scope?.clientId });
+      history, conversation: change?.commit.metadata ?? conversation, previousTurn, clientId: scope?.clientId, automationId });
     const names = prepared?.toolNames ?? agent.toolNames;
     const catalog = this.services.prepareTools ? await this.services.prepareTools(names, configuredRequest, agent) : this.services.tools.catalog(names);
     const now = Date.now();
     const run: RunRecord = { id: randomUUID(), requestKey: input.requestKey, conversationId: input.conversationId,
       actorId: actor.id, agentId: agent.id, workspaceId: workspace?.id, status: 'queued', createdAt: now,
-      updatedAt: now, iteration: 0, catalogVersion: catalog.version,
+      updatedAt: now, iteration: 0, catalogVersion: catalog.version, ...(automationId ? { automationId } : {}),
       ...(!source && typeof history.at(-1)?.runId === 'string' ? { continuationOf: history.at(-1)!.runId as string } : {}) };
     const message: PlatformMessage | undefined = source ? { ...change?.messageMetadata, ...prepared?.messageMetadata,
       ...(typeof source.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: source.deepSeekVisionTileSplit } : {}),
@@ -181,14 +186,15 @@ export class PlatformRuntime {
     const committed = await this.services.storage.commitConversation({ conversationId: input.conversationId,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, ...change?.commit,
       records: [...(change?.commit.records ?? []), { namespace: 'run-configurations', id: run.id, ownerId: run.conversationId,
-        value: { ...modelSelection,
+        value: { ...modelSelection, ...(run.automationId ? { automationId: run.automationId } : {}),
           promptModeId: input.promptModeId ?? prepared?.messageMetadata?.promptModeId, workspace: workspace ?? null } }],
       startRun: { run, message } });
     const result = committed.run!;
     if (!result.created) return result.run;
     const controller = new AbortController();
     // Defer work one microtask so cancellation sees the run even when it arrives immediately.
-    const done = Promise.resolve().then(() => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection))
+    const execute = () => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection);
+    const done = Promise.resolve().then(() => this.services.runInScope ? this.services.runInScope(run, execute) : execute())
       .finally(() => { this.active.delete(run.id); this.questions.clear(run.id); });
     this.active.set(run.id, { controller, done });
     // 对话事务和取消句柄都已建立，界面才开始订阅这一轮任务。
@@ -308,7 +314,7 @@ export class PlatformRuntime {
         }
         const afterTools = await this.services.afterTools?.(run, workspace, signal, content);
         if (afterTools?.stop) {
-          await this.event(run.id, 'run.completed', { reason: 'document_confirmation' }, { status: 'completed' }); return;
+          await this.event(run.id, 'run.completed', { reason: afterTools.reason ?? 'document_confirmation' }, { status: 'completed' }); return;
         }
       }
       throw new Error(`The configured iteration limit (${agent.maxIterations}) was reached.`);

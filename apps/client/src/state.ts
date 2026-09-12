@@ -3,6 +3,7 @@ import type { ConversationViewInfo, SettingsSnapshot } from '@graycode/contracts
 import { call, subscribe } from './api';
 
 export const state = reactive({ panelResizing: false, panelObscured: false, panelMenuOpen: false, contentPreviewOpen: false, inspectorOpen: false, ready: false, error: '', settingsOpen: false, chatFocused: true, workbenchExpanded: false,
+  notice: null as { message: string; severity: 'info' | 'warning' } | null,
   conversationId: null as string | null, mode: 'chat' as 'chat' | 'code' | 'character',
   conversationViews: [] as ConversationViewInfo[],
   navigationDialogOpen: false, fileDialogOpen: false,
@@ -28,7 +29,10 @@ export async function initialize() {
       if (event.conversationId && !event.resynchronized) state.workspaceId = typeof event.workspaceId === 'string' ? event.workspaceId : '';
     }
     if (event.type === 'ui.conversation.views') state.conversationViews = event.views;
-    if (event.type === 'notification') state.error = event.message;
+    if (event.type === 'notification') {
+      if (event.severity === 'info' || event.severity === 'warning') state.notice = { message: event.message, severity: event.severity };
+      else state.error = event.message;
+    }
     if (event.type === 'ui.message' && event.message?.command === 'platform.appearance' && state.snapshot)
       state.snapshot.settings.appearance = event.message.data;
   });
