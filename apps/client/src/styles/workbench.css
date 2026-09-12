@@ -174,8 +174,8 @@ kbd {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #111215;
-  color: #e5e7eb;
+  background: var(--background);
+  color: var(--text);
 }
 .terminal-root {
   flex: 1;

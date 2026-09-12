@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import * as monaco from "monaco-editor";
 import { call, subscribe } from "../api";
 import { appearance } from '../state';
+import { resolvedTheme } from '../appearance';
 import { workbenchEditorTheme } from '../editorAppearance';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 
@@ -66,13 +67,14 @@ onMounted(() => {
   if (!editorRoot.value) return;
   diffEditor = monaco.editor.createDiffEditor(editorRoot.value, {
     automaticLayout: true, readOnly: true, originalEditable: false,
-    renderSideBySide: false, minimap: { enabled: false }, scrollBeyondLastLine: false, theme: workbenchEditorTheme(appearance.value?.theme),
+    renderSideBySide: false, minimap: { enabled: false }, scrollBeyondLastLine: false, theme: workbenchEditorTheme(resolvedTheme.value),
     fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize ?? 14,
     lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)),
     glyphMargin: false, lineNumbersMinChars: 4, padding: { top: 14, bottom: 16 },
   });
   showSelected();
 });
+watch(resolvedTheme, value => { if (diffEditor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
 const unsubscribe = subscribe((event) => {
   if (event.type === "workspace.diff.changed" && event.workspaceId === props.workspaceId) void load();
 });

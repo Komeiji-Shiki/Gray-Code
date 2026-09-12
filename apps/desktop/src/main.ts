@@ -28,6 +28,8 @@ import { migrateLegacySettings } from './legacySettings';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
 import { DesktopOpenFiles, desktopFileArguments, openDesktopPath } from './openFiles';
 import { DesktopEditorRegistration } from './editorRegistration';
+import { bindDesktopAppearance } from './appearance';
+import { resolveAppearancePalette } from '../../../shared/appearance';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: { buildCommit?: string; buildDirty?: boolean; buildTime: string };
@@ -167,6 +169,7 @@ async function createWindow(): Promise<void> {
     window.focus();
     return;
   }
+  const colors = resolveAppearancePalette(application.settings.snapshot().settings.appearance.theme);
   window = new BrowserWindow({
     width: 1560,
     height: 980,
@@ -174,9 +177,9 @@ async function createWindow(): Promise<void> {
     minHeight: 650,
     title: "GrayCode",
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#111215', symbolColor: '#d5d9e0', height: 38 },
+    titleBarOverlay: { color: colors.background, symbolColor: colors.text, height: 38 },
     autoHideMenuBar: true,
-    backgroundColor: "#111215",
+    backgroundColor: colors.background,
     show: process.env.GRAYCODE_DESKTOP_SMOKE !== "1",
     webPreferences: {
       preload,
@@ -187,6 +190,7 @@ async function createWindow(): Promise<void> {
       backgroundThrottling: process.env.GRAYCODE_DESKTOP_SMOKE !== "1",
     },
   });
+  bindDesktopAppearance(window, application);
   desktopFiles.suspend();
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) desktopFiles.suspend(); });
   trust(window);

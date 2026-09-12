@@ -31,7 +31,7 @@ button {
 }
 button:hover {
   background: var(--hover);
-  border-color: #555c68;
+  border-color: var(--muted);
 }
 button:disabled {
   opacity: 0.4;
@@ -110,14 +110,14 @@ details > summary {
   user-select: none;
 }
 .primary {
-  background: var(--accent);
-  color: #101b2a;
-  border-color: var(--accent);
+  background: var(--button);
+  color: var(--button-text);
+  border-color: var(--button);
   font-weight: 600;
 }
 .primary:hover {
-  background: #89b8ff;
-  border-color: #89b8ff;
+  background: var(--button-hover);
+  border-color: var(--button-hover);
 }
 .quiet-button,
 .icon-button {
@@ -149,6 +149,7 @@ details > summary {
   flex-wrap: wrap;
 }
 .application {
+  color-scheme: dark;
   --background: #111215;
   --panel: #181a1f;
   --text: #e5e7eb;
@@ -184,28 +185,7 @@ details > summary {
   pointer-events: none;
 }
 .application[data-theme="light"] {
-  --background: #f4f3ef;
-  --panel: #faf9f6;
-  --text: #242629;
-  --muted: #6b6d72;
-  --accent: #2464bd;
-  --border: #d2d2cd;
-  --input: #fff;
-  --hover: #e9e7e0;
   color-scheme: light;
-}
-@media (prefers-color-scheme: light) {
-  .application[data-theme="system"] {
-    --background: #f4f3ef;
-    --panel: #faf9f6;
-    --text: #242629;
-    --muted: #6b6d72;
-    --accent: #2464bd;
-    --border: #d2d2cd;
-    --input: #fff;
-    --hover: #e9e7e0;
-    color-scheme: light;
-  }
 }
 .application[data-density="compact"] {
   --font-size: 12px;

@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import * as monaco from "monaco-editor";
 import { appearance } from "../state";
+import { resolvedTheme } from '../appearance';
 import { workbenchEditorTheme } from "../editorAppearance";
 import { bindLanguageDocument, editorUri } from "../languages";
 const props = defineProps<{ workspaceId: string; path: string; value: string; version: number;
@@ -20,7 +21,7 @@ function options() {
       (appearance.value?.codeFontSize ?? 14) *
         (appearance.value?.lineHeight ?? 1.6),
     ),
-    theme: workbenchEditorTheme(appearance.value?.theme),
+    theme: workbenchEditorTheme(resolvedTheme.value),
   };
 }
 onMounted(() => {
@@ -60,6 +61,7 @@ watch(
 watch(() => props.version, () => language?.updateMarkers());
 watch(() => props.selection, selection => { if (selection && editor) { editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus(); } });
 watch(appearance, () => editor?.updateOptions(options()), { deep: true });
+watch(resolvedTheme, value => { if (editor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
 onUnmounted(() => {
   language?.dispose();
   const model = editor?.getModel();

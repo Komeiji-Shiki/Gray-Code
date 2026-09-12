@@ -1,23 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { AppSettings } from '../../../../packages/contracts/src/settings';
 import { sendToExtension } from '../../utils/vscode';
 import { useDesktopSettingsDraft } from '../../platform/settingsDraft';
 import BackgroundGallery from './BackgroundGallery.vue';
 import MarkdownRenderer from '../common/MarkdownRenderer.vue';
 import { resourceUrl } from '../../platform/resources';
+import { resolveAppearancePalette } from '../../../../shared/appearance';
 const settings = ref<AppSettings>();
 const fonts = ref<string[]>([]);
 const filter = ref('');
 const error = ref('');
 const galleryOpen = ref(false);
+const systemScheme = matchMedia('(prefers-color-scheme: light)');
+const systemLight = ref(systemScheme.matches);
+const updateSystemTheme = () => { systemLight.value = systemScheme.matches; };
+const appearanceColors = computed(() => resolveAppearancePalette(settings.value?.appearance.theme, settings.value?.appearance.colors, systemLight.value));
 const previewText = '### 从想法到实现\n\n这是统一正文预览，包含 **粗体**、*斜体*、~~删除线~~ 和 `行内代码`。\n\n> “把问题说明白，再把事情做好。”\n\n- 普通列表与 [链接](https://example.com)\n- [x] 已完成的事项\n- [ ] 接下来的工作\n\n```typescript\nconst greeting: string = "你好，主人";\nconsole.log(greeting);\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 正文排版 | 即时预览 |\n| 字体与配色 | 统一呈现 |\n\n行内公式 $E = mc^2$，以及分隔线：\n\n---\n';
 const previewStyle = computed(() => {
   const config = settings.value?.appearance; if (!config) return {};
   return { fontFamily: config.textFont === 'inherit' ? config.uiFont : config.textFont, fontSize: `${config.fontSize}px`, lineHeight: config.lineHeight,
-    color: config.colors.text, backgroundColor: config.colors.background,
+    color: appearanceColors.value.text, backgroundColor: appearanceColors.value.background,
     '--vscode-editor-font-family': config.codeFont, '--vscode-editor-font-size': `${config.codeFontSize}px`,
-    '--vscode-textLink-foreground': config.colors.accent, '--gc-accent': config.colors.accent };
+    '--vscode-textLink-foreground': appearanceColors.value.accent, '--gc-accent': appearanceColors.value.accent };
 });
 async function applyBackground(url: string, opacity: number) {
   if (!settings.value) return;
@@ -25,7 +30,8 @@ async function applyBackground(url: string, opacity: number) {
   await save();
 }
 const fontFields = [ { key: 'uiFont', name: '界面字体' }, { key: 'textFont', name: '正文字体' }, { key: 'codeFont', name: '代码字体' } ] as const;
-const colors = [{ key: 'background', name: '背景', value: '#17191e' }, { key: 'panel', name: '面板', value: '#22252c' }, { key: 'text', name: '文字', value: '#dedee3' }, { key: 'accent', name: '强调色', value: '#6ba6ff' }, { key: 'border', name: '边框', value: '#323742' }];
+const colors = computed(() => [{ key: 'background', name: '背景' }, { key: 'panel', name: '面板' }, { key: 'text', name: '文字' }, { key: 'accent', name: '强调色' }, { key: 'border', name: '边框' }]
+  .map(color => ({ ...color, value: appearanceColors.value[color.key] })));
 const fontValue = (family: string) => JSON.stringify(family);
 const isInstalledFont = (value: string) => fonts.value.some(font => fontValue(font) === value);
 async function save() {
@@ -37,13 +43,14 @@ async function loadFonts(refresh = false) {
   try { fonts.value = await sendToExtension('desktop.fonts', { refresh }); }
   catch (e) { error.value = (e as Error).message; }
 }
-onMounted(async () => { settings.value = await sendToExtension('platform.settings.get', {}); await loadFonts(); });
+onMounted(async () => { systemScheme.addEventListener('change', updateSystemTheme); settings.value = await sendToExtension('platform.settings.get', {}); await loadFonts(); });
+onBeforeUnmount(() => systemScheme.removeEventListener('change', updateSystemTheme));
 useDesktopSettingsDraft(save, () => !!settings.value);
 </script>
 <template>
   <section v-if="settings" class="platform-appearance" @change="save">
     <h3>桌面外观</h3>
-    <div class="appearance-row"><div><strong>主题</strong><p>默认使用暗色界面和蓝色强调色。</p></div><select v-model="settings.appearance.theme"><option value="dark">暗色</option><option value="light">浅色</option><option value="system">跟随系统</option></select></div>
+    <div class="appearance-row"><div><strong>主题</strong><p>切换聊天、设置、编辑器与终端的外观。</p></div><select v-model="settings.appearance.theme" aria-label="外观主题"><option value="dark">暗色</option><option value="light">亮色</option><option value="system">跟随系统</option></select></div>
     <div class="appearance-row"><div><strong>系统字体</strong><p>读取系统已安装的字体，包括当前用户安装的字体。</p></div><button @click="loadFonts(true)">刷新 {{ fonts.length }} 个字体</button></div>
     <input v-model="filter" placeholder="搜索系统字体…" aria-label="搜索系统字体" data-preference-transient @change.stop />
     <div v-for="field in fontFields" :key="field.key" class="appearance-row">

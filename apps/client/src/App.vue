@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { appearance, guard, initialize, loadSettings, state } from './state';
+import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import Workbench from './components/Workbench.vue';
 import ContentPreview from './components/ContentPreview.vue';
@@ -15,8 +16,9 @@ const libraryOpen = ref(false);
 const chatReady = ref(false);
 import { webUi } from './webBridge';
 const isWeb = window.graycode?.kind === 'web';
+const appMenus = ['编辑', '视图'];
 const compactQuery = window.matchMedia('(max-width: 850px)');
-const compactViewport = ref(isWeb && compactQuery.matches);
+const compactViewport = ref(compactQuery.matches);
 const viewportHeight = ref(window.visualViewport?.height ?? window.innerHeight);
 const viewportWidth = ref(window.innerWidth);
 const savedSidebarWidth = Number(localStorage.getItem('graycode.sidebarWidth'));
@@ -31,7 +33,7 @@ const navigationCollapsed = computed({ get: () => compactViewport.value ? !mobil
   set: value => { if (compactViewport.value) mobileNavigationOpen.value = !value; else sidebarCollapsed.value = value; } });
 watch(sidebarCollapsed, value => localStorage.setItem('graycode.sidebarCollapsed', String(value)));
 if (compactViewport.value) state.chatFocused = true;
-function updateViewport() { compactViewport.value = isWeb && compactQuery.matches; viewportHeight.value = window.visualViewport?.height ?? window.innerHeight; viewportWidth.value = window.innerWidth; }
+function updateViewport() { compactViewport.value = compactQuery.matches; viewportHeight.value = window.visualViewport?.height ?? window.innerHeight; viewportWidth.value = window.innerWidth; }
 function finishNavigation(panel?: 'workbench') { if (compactViewport.value) { mobileNavigationOpen.value = false; state.chatFocused = panel !== 'workbench'; } }
 watch(() => state.settingsOpen, value => { if (value) mobileNavigationOpen.value = false; });
 let unsubscribe: (() => void) | undefined;
@@ -85,8 +87,10 @@ const variables = computed(() => {
   if (!config) return {};
   return { '--ui-font': config.uiFont, '--code-font': config.codeFont, '--text-font': config.textFont,
     '--font-size': config.fontSize + 'px', '--line-height': String(config.lineHeight),
-    ...Object.fromEntries(Object.entries(config.colors).filter(([name, value]) => /^[a-z-]+$/.test(name) && CSS.supports('color', value)).map(([name, value]) => ['--' + name, value])) };
+    ...Object.fromEntries(Object.entries(appearancePalette.value).filter(([name, value]) => /^[a-zA-Z-]+$/.test(name) && CSS.supports('color', value))
+      .map(([name, value]) => ['--' + name.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase()), value])) };
 });
+useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
 onMounted(() => void guard(async () => {
   compactQuery.addEventListener('change', updateViewport);
@@ -105,7 +109,7 @@ onMounted(() => void guard(async () => {
 onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
 </script>
 <template>
-  <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="appearance?.theme" :data-density="appearance?.density">
+  <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="resolvedTheme" :data-density="appearance?.density">
     <header class="titlebar">
       <button v-if="!state.settingsOpen" class="sidebar-toggle" :title="navigationCollapsed ? '展开对话列表' : '收起对话列表'" :aria-expanded="!navigationCollapsed" aria-label="切换对话列表" @click="navigationCollapsed = !navigationCollapsed"><NavigationIcon name="panel" /></button>
       <div class="mode-switcher" @keydown.esc="modeMenuOpen = false" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) modeMenuOpen = false; }">
@@ -114,7 +118,7 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
           <button v-for="mode in modes" :key="mode.id" role="menuitemradio" :aria-checked="state.mode === mode.id" @click="guard(() => selectMode(mode.id))"><span><strong>{{ mode.name }}</strong><small>{{ mode.detail }}</small></span><span v-if="state.mode === mode.id">✓</span></button>
         </div>
       </div>
-      <nav v-if="!isWeb" class="app-menu" aria-label="应用菜单"><button v-for="menu in ['编辑', '视图']" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></nav>
+      <nav v-if="!isWeb && !compactViewport" class="app-menu" aria-label="应用菜单"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></nav>
       <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center"><span class="subtle">工作区</span>
         <WorkspaceSelector v-model="state.workspaceId" :workspaces="state.snapshot?.settings.workspaces ?? []" />
         <button class="quiet-button workspace-add" title="添加工作区" aria-label="添加工作区" @click="guard(addWorkspace)">＋</button>
@@ -122,7 +126,7 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
       <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? '工作台' : '返回对话') : (state.chatFocused ? '打开侧边面板' : '隐藏侧边面板') }}</button>
       <button v-if="!compactViewport" class="quiet-button" @click="libraryOpen = true">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
-      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button @click="guard(() => call('web.logout'))">退出登录</button></div></details>
+      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
     <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
@@ -179,3 +183,7 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
 </style>
 
 <style>.titlebar>.panel-toggle{margin-left:auto}.desktop-workspace.workbench-expanded{grid-template-columns:minmax(0,1fr)}.desktop-workspace.workbench-expanded>.product-chat,.desktop-workspace.workbench-expanded>.split-handle{display:none}.desktop-workspace.workbench-expanded>.workbench{grid-column:1}</style>
+
+<style>
+.compact-host:not(.web-host)>.titlebar{padding-right:148px}.compact-host .titlebar button,.compact-host .titlebar summary{white-space:nowrap;flex-shrink:0}
+</style>

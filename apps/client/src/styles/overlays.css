@@ -25,8 +25,8 @@
   font-size: 12px;
 }
 .error-banner {
-  background: #422425;
-  color: #ffcece;
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  color: var(--danger);
   padding: 10px 17px;
   display: flex;
   align-items: center;
@@ -37,7 +37,7 @@
 }
 .error-banner button {
   margin-left: auto;
-  border-color: #714546;
+  border-color: var(--danger);
   background: transparent;
   color: inherit;
   font-size: 11px;
@@ -45,9 +45,9 @@
 .inline-error {
   margin-top: 15px;
   padding: 12px;
-  border-left: 2px solid #c87878;
-  color: #e3a6a6;
-  background: #49262633;
+  border-left: 2px solid var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   font-size: 12px;
 }
 .loading-state {
@@ -56,7 +56,7 @@
   justify-content: center;
   align-items: center;
   flex-direction: column;
-  color: #9197a2;
+  color: var(--muted);
   font-size: 13px;
 }
 ::-webkit-scrollbar {
@@ -64,10 +64,10 @@
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #4c515b77;
+  background: var(--scrollbar, #4c515b77);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #71768099;
+  background: var(--scrollbar-hover, #71768099);
 }
 ::-webkit-scrollbar-corner {
   background: transparent;

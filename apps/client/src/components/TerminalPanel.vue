@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { call, subscribe } from '../api';
 import { appearance, guard, state } from '../state';
+import { appearancePalette } from '../appearance';
 import { useWorkspaceRoots } from '../workspaceRoots';
 const { roots, directory } = useWorkspaceRoots();
 const props = withDefaults(defineProps<{ compact?: boolean; visible?: boolean }>(), { compact: false, visible: true });
@@ -98,7 +99,8 @@ const unsubscribe = subscribe(event => {
 });
 onMounted(() => {
   terminal = new Terminal({ fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize ?? 14,
-    cursorBlink: true, theme: { background: '#111215', foreground: '#d6dae2', cursor: '#6ba6ff', selectionBackground: '#304766' } });
+    cursorBlink: true, theme: { background: appearancePalette.value.background, foreground: appearancePalette.value.text,
+      cursor: appearancePalette.value.accent, selectionBackground: appearancePalette.value.selection } });
   fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(root.value!);
   terminal.onData(data => { if (!replaying) void guard(() => send(data)); });
   observer = new ResizeObserver(() => {
@@ -109,6 +111,7 @@ onMounted(() => {
 });
 watch(() => props.visible, async value => { if (value) { await nextTick(); fitTerminal(); } });
 watch(appearance, value => { if (terminal && value) { terminal.options.fontFamily = value.codeFont; terminal.options.fontSize = value.codeFontSize; fitTerminal(); } }, { deep: true });
+watch(appearancePalette, value => { if (terminal) terminal.options.theme = { background: value.background, foreground: value.text, cursor: value.accent, selectionBackground: value.selection }; });
 onUnmounted(() => { ++attachEpoch; ++listEpoch; unsubscribe(); observer?.disconnect(); if (fitFrame !== undefined) cancelAnimationFrame(fitFrame); terminal?.dispose(); });
 </script>
 <template>
