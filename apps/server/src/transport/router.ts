@@ -316,6 +316,8 @@ export class ApplicationRouter {
       case 'language.list': return app.languages.list(session);
       case 'language.ensure': return app.languages.ensure(session, params.workspaceId, params.path);
       case 'language.request': return app.languages.request(session, params as any);
+      case 'language.executeCommand': return app.languages.executeCommand(session, params as any);
+      case 'language.applyEditResult': return app.languages.completeEditorEdit(session, params.id, params.result);
       case 'language.cancel': return app.languages.cancel(session, params.requestId);
       case 'language.path': return app.languages.relativePath(session, params.workspaceId, params.uri);
       case 'language.diagnostics': return app.languages.diagnostics(session, params.workspaceId);

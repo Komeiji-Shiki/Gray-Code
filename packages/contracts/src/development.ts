@@ -27,4 +27,8 @@ export interface LanguageSessionInfo {
 }
 export interface SourcePosition { line: number; character: number }
 export interface SourceRange { start: SourcePosition; end: SourcePosition }
-export interface LanguageDiagnostic { range: SourceRange; message: string; severity?: number; source?: string; code?: string | number; tags?: number[] }
+export interface LanguageDiagnostic {
+  range: SourceRange; message: string; severity?: number; source?: string; code?: string | number; tags?: number[];
+  relatedInformation?: Array<{ location: { uri: string; range: SourceRange }; message: string }>;
+  data?: unknown;
+}

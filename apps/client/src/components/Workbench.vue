@@ -264,7 +264,7 @@ onUnmounted(unsubscribe);
         <div class="editors">
           <template v-for="doc in documents" :key="key(doc)">
             <MobileCodeEditor v-if="compact" v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :value="doc.text" :selection="selections[key(doc)]" @change="text => change(doc, text)" @save="guard(() => save(doc))" />
-            <CodeEditor v-else v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :workspace-id="doc.workspaceId" :version="doc.version" :flush="() => flushDocument(doc)" :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)" :selection="selections[key(doc)]" :value="doc.text" @change="text => change(doc, text)" @save="guard(() => save(doc))" />
+            <CodeEditor v-else v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :workspace-id="doc.workspaceId" :version="doc.version" :flush="() => flushDocument(doc)" :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)" :selection="selections[key(doc)]" :value="doc.text" @change="text => change(doc, text)" @save="guard(() => save(doc))" @problems="activatePanel('problems')" />
           </template>
           <article v-if="active && markdownPreview && /\.md$/i.test(active.path)" class="markdown-preview" @click="markdownLink" v-html="renderedMarkdown"></article>
           <div v-if="!documents.length" class="editor-empty file-select-empty"><NavigationIcon name="file" /><h2>选择一个文件</h2><p>从文件列表打开文档，在这里查看和编辑。</p></div>
@@ -272,7 +272,7 @@ onUnmounted(unsubscribe);
       </div>
       <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
       <TerminalPanel v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused" /><GitPanel v-if="pane === 'git'" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
-      <ProblemsPanel v-if="pane === 'problems'" @open="(path, range) => guard(() => open(path, state.workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1, endLineNumber: range.end.line + 1, endColumn: range.end.character + 1 }))" />
+      <ProblemsPanel v-if="pane === 'problems'" :workspace-id="active?.workspaceId ?? state.workspaceId" @open="(path, range, workspaceId) => guard(() => open(path, workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1, endLineNumber: range.end.line + 1, endColumn: range.end.character + 1 }))" />
       <iframe v-if="pane === 'monitor'" class="monitor-frame" :src="'./chat/platform.html?' + (monitorQuery || 'view=subagents')" title="子 agent 运行监视器"></iframe>
     </div>
     <div v-if="closing" class="dialog-backdrop"><div class="dialog"><h2>文件还没有保存</h2><p>{{ closing.path }}</p><div class="button-row"><button @click="closing = null">继续编辑</button><button @click="guard(() => close(closing!, true))">放弃修改</button><button class="primary" @click="guard(async () => { const doc = closing!; await save(doc); await close(doc); })">保存并关闭</button></div></div></div>

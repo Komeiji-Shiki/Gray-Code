@@ -6,21 +6,24 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter, CancellationTokenSource, type MessageConnection } from 'vscode-jsonrpc/node';
-import type { ServerCapabilities, PublishDiagnosticsParams, InitializeResult } from 'vscode-languageserver-protocol';
+import type { ServerCapabilities, PublishDiagnosticsParams, InitializeResult, WorkspaceEdit, ApplyWorkspaceEditResult } from 'vscode-languageserver-protocol';
 import type { DocumentState, LanguageServerDefinition, LanguageSessionInfo, WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
+import { languageMethodSupported } from '../../../../shared/languageSupport';
 
 interface Session {
   info: LanguageSessionInfo; client: ClientSession; workspace: WorkspaceDefinition; definition: LanguageServerDefinition;
   child: ChildProcessWithoutNullStreams; connection: MessageConnection; capabilities: ServerCapabilities;
   documents: Map<string, number>; diagnostics: Map<string, PublishDiagnosticsParams & { receivedAtDocumentVersion: number }>;
   changes: Promise<void>; ready: Promise<void>; stderr: string;
+  commands: Promise<unknown>; commandRequestId?: string;
 }
 const languageIds: Record<string, string> = { '.ts': 'typescript', '.tsx': 'typescriptreact', '.js': 'javascript', '.jsx': 'javascriptreact',
   '.mts': 'typescript', '.cts': 'typescript', '.mjs': 'javascript', '.cjs': 'javascript', '.py': 'python', '.rs': 'rust', '.go': 'go', '.vue': 'vue', '.json': 'json', '.css': 'css', '.html': 'html' };
 const methods = new Set(['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/definition',
-  'textDocument/references', 'textDocument/documentSymbol', 'textDocument/rename', 'textDocument/prepareRename', 'textDocument/formatting']);
+  'textDocument/references', 'textDocument/documentSymbol', 'textDocument/rename', 'textDocument/prepareRename', 'textDocument/formatting',
+  'textDocument/signatureHelp', 'textDocument/codeAction', 'codeAction/resolve']);
 export const documentLanguage = (file: string) => languageIds[path.extname(file).toLowerCase()] ?? 'plaintext';
 
 // 语言服务可能编码盘符冒号或改变盘符大小写，统一成同一个文档标识。
@@ -36,6 +39,7 @@ function documentUri(value: string): string {
 export class LanguageServices {
   private readonly sessions = new Map<string, Session>();
   private readonly requests = new Map<string, CancellationTokenSource>();
+  private readonly editorEdits = new Map<string, { clientId: string; requestId: string; resolve(value: ApplyWorkspaceEditResult): void }>();
   constructor(private readonly app: PlatformApplication) {}
   definitions(): LanguageServerDefinition[] {
     const custom = this.app.settings.snapshot().settings.development?.languageServers ?? [];
@@ -77,7 +81,7 @@ export class LanguageServices {
       env: { ...process.env, ...(definition.command === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: 'pipe' });
     const connection = createMessageConnection(new StreamMessageReader(child.stdout), new StreamMessageWriter(child.stdin));
     const session: Session = { info: { id: randomUUID(), serverId: definition.id, name: definition.name, workspaceId: workspace.id, status: 'starting' },
-      client, workspace, definition, child, connection, capabilities: {}, documents: new Map(), diagnostics: new Map(), changes: Promise.resolve(), ready: Promise.resolve(), stderr: '' };
+      client, workspace, definition, child, connection, capabilities: {}, documents: new Map(), diagnostics: new Map(), changes: Promise.resolve(), commands: Promise.resolve(), ready: Promise.resolve(), stderr: '' };
     const fail = (error: unknown) => {
       if (session.info.status === 'stopped') return;
       session.info.status = 'failed'; session.info.error = `${String(error)}${session.stderr ? `\n${session.stderr}` : ''}`;
@@ -92,7 +96,8 @@ export class LanguageServices {
       const version = session.documents.get(uri);
       if (version === undefined || params.version !== undefined && params.version !== version) return;
       session.diagnostics.set(uri, { ...params, uri, receivedAtDocumentVersion: version });
-      this.app.publish({ type: 'language.diagnostics', clientId: client.clientId, workspaceId: workspace.id, sessionId: session.info.id, ...params, uri });
+      this.app.publish({ type: 'language.diagnostics', clientId: client.clientId, workspaceId: workspace.id, sessionId: session.info.id,
+        ...params, uri, path: workspaceFilePath(workspace, fileURLToPath(uri)), receivedAtDocumentVersion: version });
     });
     connection.onRequest('workspace/configuration', (params: { items: { section?: string }[] }) => params.items.map(item => {
       let value: unknown = definition.settings ?? {};
@@ -100,7 +105,15 @@ export class LanguageServices {
       return value ?? null;
     }));
     connection.onRequest('workspace/workspaceFolders', () => workspaceRoots(workspace).map(root => ({ uri: pathToFileURL(root.directory).toString(), name: root.name })));
-    connection.onRequest('workspace/applyEdit', () => ({ applied: false, failureReason: '请通过编辑器操作修改草稿。' }));
+    connection.onRequest('workspace/applyEdit', (params: { edit: WorkspaceEdit; label?: string }) => {
+      const requestId = session.commandRequestId;
+      if (!requestId) return { applied: false, failureReason: '请从编辑器选择要执行的修复或重构。' };
+      const id = randomUUID();
+      return new Promise<ApplyWorkspaceEditResult>(resolve => {
+        this.editorEdits.set(id, { clientId: client.clientId, requestId, resolve });
+        this.app.publish({ type: 'language.applyEdit', clientId: client.clientId, workspaceId: workspace.id, requestId, id, ...params });
+      });
+    });
     connection.onRequest('window/workDoneProgress/create', () => null);
     connection.onRequest('window/showMessageRequest', () => null);
     connection.onNotification('window/showMessage', (params: { message: string; type: number }) => {
@@ -113,12 +126,19 @@ export class LanguageServices {
         const result = await this.timed<InitializeResult>(session, 'initialize', { processId: process.pid,
           clientInfo: { name: 'GrayCode', version: '0.1.0' }, rootUri: pathToFileURL(workspace.directory).toString(),
           workspaceFolders: workspaceRoots(workspace).map(root => ({ uri: pathToFileURL(root.directory).toString(), name: root.name })),
-          capabilities: { workspace: { configuration: true, workspaceFolders: true, applyEdit: false },
+          capabilities: { workspace: { configuration: true, workspaceFolders: true, applyEdit: true, workspaceEdit: { documentChanges: true } },
             textDocument: { synchronization: { dynamicRegistration: false, didSave: true },
-              completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'], resolveSupport: { properties: ['documentation', 'detail', 'additionalTextEdits'] } } },
+              completion: { contextSupport: true, completionItem: { snippetSupport: true, insertReplaceSupport: true, labelDetailsSupport: true,
+                commitCharactersSupport: true, tagSupport: { valueSet: [1] }, documentationFormat: ['markdown', 'plaintext'],
+                resolveSupport: { properties: ['documentation', 'detail', 'additionalTextEdits'] } },
+                completionList: { itemDefaults: ['commitCharacters', 'editRange', 'insertTextFormat', 'data'] } },
+              signatureHelp: { contextSupport: true, signatureInformation: { documentationFormat: ['markdown', 'plaintext'],
+                parameterInformation: { labelOffsetSupport: true }, activeParameterSupport: true } },
+              codeAction: { codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports'] } },
+                isPreferredSupport: true, disabledSupport: true, dataSupport: true, resolveSupport: { properties: ['edit'] } },
               hover: { contentFormat: ['markdown', 'plaintext'] }, definition: { linkSupport: true },
               documentSymbol: { hierarchicalDocumentSymbolSupport: true }, rename: { prepareSupport: true },
-              publishDiagnostics: { versionSupport: true, tagSupport: { valueSet: [1, 2] } } } },
+              publishDiagnostics: { versionSupport: true, relatedInformation: true, dataSupport: true, tagSupport: { valueSet: [1, 2] } } } },
           initializationOptions: definition.initializationOptions });
         session.capabilities = result.capabilities;
         await connection.sendNotification('initialized', {});
@@ -145,6 +165,7 @@ export class LanguageServices {
       if (previous === undefined) {
         await session.connection.sendNotification('textDocument/didOpen', { textDocument: { uri, languageId: documentLanguage(doc.path), version: doc.version, text: doc.text } });
       } else if (previous < doc.version) {
+        this.clearDiagnostics(session, uri, doc.version);
         await session.connection.sendNotification('textDocument/didChange', { textDocument: { uri, version: doc.version }, contentChanges: [{ text: doc.text }] });
       }
       if (previous === undefined || previous < doc.version) session.documents.set(uri, doc.version);
@@ -162,7 +183,7 @@ export class LanguageServices {
       await session.changes.catch(() => {});
       const uri = documentUri(pathToFileURL(await this.app.files.resolve(session.workspace, file)).toString());
       if (session.documents.delete(uri) && session.info.status === 'running') await session.connection.sendNotification('textDocument/didClose', { textDocument: { uri } });
-      session.diagnostics.delete(uri);
+      this.clearDiagnostics(session, uri);
       if (!session.documents.size) await this.stopSession(session);
     }
   }
@@ -171,17 +192,45 @@ export class LanguageServices {
     const ready = await this.ensure(client, input.workspaceId, input.path);
     if (!ready.session) return null;
     const session = [...this.sessions.values()].find(item => item.info.id === ready.session!.id)!;
+    if (!languageMethodSupported(session.capabilities, input.method)) return null;
     if (this.app.files.documentVersion(client.clientId, input.workspaceId, input.path) !== input.version) throw new Error('编辑草稿已变化，请重新请求。');
     await session.changes;
     const requestKey = JSON.stringify([client.clientId, input.requestId]);
     if (this.requests.has(requestKey)) throw new Error('语言服务请求标识重复。');
     const cancellation = new CancellationTokenSource(); this.requests.set(requestKey, cancellation);
     try {
-      const params = input.method === 'completionItem/resolve' ? input.params : { ...input.params, textDocument: { uri: ready.uri } };
+      const params = ['completionItem/resolve', 'codeAction/resolve'].includes(input.method) ? input.params : { ...input.params, textDocument: { uri: ready.uri } };
       return await this.timed(session, input.method, params, cancellation);
     } finally { this.requests.delete(requestKey); }
   }
   cancel(client: ClientSession, requestId: string) { this.requests.get(JSON.stringify([client.clientId, requestId]))?.cancel(); }
+  async executeCommand(client: ClientSession, input: { workspaceId: string; path: string; version: number; requestId: string; command: string; arguments?: unknown[] }) {
+    const ready = await this.ensure(client, input.workspaceId, input.path);
+    if (!ready.session) throw new Error('当前文件没有可用的语言服务。');
+    const session = [...this.sessions.values()].find(item => item.info.id === ready.session!.id)!;
+    const operation = session.commands.catch(() => {}).then(async () => {
+      await session.changes;
+      if (this.app.files.documentVersion(client.clientId, input.workspaceId, input.path) !== input.version) throw new Error('编辑草稿已变化，请重新选择修复。');
+      const requestKey = JSON.stringify([client.clientId, input.requestId]);
+      if (this.requests.has(requestKey)) throw new Error('语言服务请求标识重复。');
+      const cancellation = new CancellationTokenSource(); this.requests.set(requestKey, cancellation);
+      session.commandRequestId = input.requestId;
+      try { return await this.timed(session, 'workspace/executeCommand', { command: input.command, arguments: input.arguments }, cancellation) }
+      finally {
+        session.commandRequestId = undefined; this.requests.delete(requestKey);
+        for (const [id, pending] of this.editorEdits) if (pending.clientId === client.clientId && pending.requestId === input.requestId) {
+          this.editorEdits.delete(id); pending.resolve({ applied: false, failureReason: '编辑操作已结束或取消。' });
+        }
+      }
+    });
+    session.commands = operation; return operation;
+  }
+  completeEditorEdit(client: ClientSession, id: string, result: ApplyWorkspaceEditResult) {
+    const pending = this.editorEdits.get(id);
+    if (!pending || pending.clientId !== client.clientId) throw new Error('编辑请求不属于当前客户端或已经结束。');
+    this.editorEdits.delete(id); pending.resolve({ applied: result.applied === true, failureReason: result.failureReason });
+    return { success: true };
+  }
   /** 模型读取使用独立文档缓冲，文件正文已由工具的读取策略确认。 */
   async toolRequest(context: ToolContext, absolute: string, text: string, method: string, params: Record<string, unknown> = {}) {
     if (!context.workspace || !context.conversationId || !['textDocument/definition', 'textDocument/references', 'textDocument/documentSymbol'].includes(method)) throw new Error('代码导航请求无效。');
@@ -222,7 +271,13 @@ export class LanguageServices {
   diagnostics(client: ClientSession, workspaceId: string) {
     this.app.requireOwner(client.actorId);
     return [...this.sessions.values()].filter(session => session.client.clientId === client.clientId && session.workspace.id === workspaceId)
-      .flatMap(session => [...session.diagnostics.values()].map(item => ({ sessionId: session.info.id, ...item })));
+      .flatMap(session => [...session.diagnostics.values()].map(item => ({ sessionId: session.info.id, ...item,
+        path: workspaceFilePath(session.workspace, fileURLToPath(item.uri)) })));
+  }
+  private clearDiagnostics(session: Session, uri: string, version?: number) {
+    session.diagnostics.delete(uri);
+    this.app.publish({ type: 'language.diagnostics', clientId: session.client.clientId, workspaceId: session.workspace.id,
+      sessionId: session.info.id, uri, path: workspaceFilePath(session.workspace, fileURLToPath(uri)), version, diagnostics: [] });
   }
   async stop(client: ClientSession, id: string) {
     this.app.requireOwner(client.actorId);
@@ -241,7 +296,7 @@ export class LanguageServices {
     session.info.status = 'stopped';
     try { await this.timed(session, 'shutdown', null, undefined, 3000); await session.connection.sendNotification('exit'); } catch { /* 已退出的语言服务直接释放。 */ }
     session.connection.dispose(); await stopDevelopmentProcess(session.child);
-    for (const uri of session.documents.keys()) this.app.publish({ type: 'language.diagnostics', clientId: session.client.clientId, workspaceId: session.workspace.id, uri, diagnostics: [] });
+    for (const uri of session.documents.keys()) this.clearDiagnostics(session, uri);
     session.diagnostics.clear(); this.changed(session);
   }
   async configure(): Promise<void> {
