@@ -77,6 +77,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     autoSummaryStatus: ref(null),
     configId: ref('cfg_1'),
     selectedModelId: ref(''),
+    selectedReasoningEffort: ref(''),
     currentConfig: ref(null),
     currentPromptModeId: ref('code'),
     pendingModelOverride: ref<string | null>(null),

@@ -10,14 +10,15 @@ import type { Message } from '../../types'
 import { t } from '../../i18n'
 import BranchSwitcherBar from './BranchSwitcherBar.vue'
 
-defineProps<{
+// 保留未传值的 undefined，避免 Vue 将可选布尔值转成 false 而隐藏默认删除入口。
+withDefaults(defineProps<{
   message: Message
   canEdit?: boolean
   canRetry?: boolean
   canViewResponse?: boolean
   canBranch?: boolean
   canDelete?: boolean
-}>()
+}>(), { canDelete: undefined })
 
 const emit = defineEmits<{
   edit: []

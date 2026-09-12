@@ -1,5 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 const { sendToExtension, onExtensionCommand, commandHandlers } = vi.hoisted(() => {
   // 捕获组件注册的推送命令处理器，便于测试直接触发后端广播
@@ -61,6 +62,7 @@ describe('McpSettings stdio arguments', () => {
   let wrapper: VueWrapper
 
   beforeEach(() => {
+    setActivePinia(createPinia())
     sendToExtension.mockReset()
     sendToExtension.mockImplementation((command: string) => {
       if (command === 'getMcpServers') return Promise.resolve(serverResponse())
@@ -71,6 +73,7 @@ describe('McpSettings stdio arguments', () => {
 
   afterEach(() => {
     wrapper?.unmount()
+    setActivePinia(undefined)
   })
 
   test('loads and saves a lossless JSON argument array', async () => {

@@ -82,6 +82,12 @@ describe('MessageActions 按钮排列', () => {
     expect(wrapper.findAll('.icon-button')).toHaveLength(3)
   })
 
+  test('明确禁止删除时隐藏入口，未传入时保留原有删除按钮', () => {
+    const wrapper = mountActions({ canDelete: false })
+    expect(wrapper.find('.codicon-trash').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   test('复制后按钮切换为勾选图标并恢复', async () => {
     vi.useFakeTimers()
     try {
