@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import type { AppSettings, DiscordChannelSettings, DiscordOutputSettings, DiscordReplyProfile, DiscordTrigger } from '../../../../packages/contracts/src/settings';
 import type { CharacterResource } from '../../../../packages/contracts/src/characters';
 import type { BotChannel, BotGuild, BotStatus, BotUser } from '../../../../packages/contracts/src/bots';
-import { sendToExtension } from '../../utils/vscode';
+import { onExtensionCommand, sendToExtension } from '../../utils/vscode';
 import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
 import DiscordProfileFields from './discord/DiscordProfileFields.vue';
 import DiscordOutputFields from './discord/DiscordOutputFields.vue';
@@ -14,7 +14,10 @@ const section = ref('connection');
 const settings = ref<AppSettings>();
 const bot = computed(() => settings.value?.discord);
 const status = ref<BotStatus>({ status: 'stopped' });
-const statusLabels: Record<string, string> = { stopped: '已断开', connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', disconnected: '连接已断开', failed: '连接失败' };
+const statusLabels: Record<string, string> = { stopped: '已断开', connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', disconnected: '连接已断开', connection_error: '连接异常', failed: '连接失败' };
+onUnmounted(onExtensionCommand<{ platform: string; status: BotStatus }>('bot.connection.changed', value => {
+  if (value.platform === 'discord') status.value = value.status;
+}));
 const error = ref('');
 const busy = ref('');
 const credentials = ref<Record<string, string | null>>({});
@@ -134,11 +137,12 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
     <p v-if="status.needsReconnect" class="discord-notice">触发方式已经改变。请重新连接 Bot，使消息读取权限生效。</p>
     <template v-if="settings && bot">
       <section v-if="section === 'connection'">
-        <div class="discord-fields"><label><span>启动时自动连接<small>已启用的 Bot 在下次启动 GrayCode 时连接；关闭此项后可手动连接。</small></span><input type="checkbox" :checked="bot.autoConnect !== false" @change="bot.autoConnect = ($event.target as HTMLInputElement).checked" /></label></div>
+        <div class="discord-fields"><label><span>启动时自动连接<small>启动失败时会自动重试，点击“断开”可停止本次自动连接。</small></span><input type="checkbox" :checked="bot.autoConnect !== false" @change="bot.autoConnect = ($event.target as HTMLInputElement).checked" /></label></div>
         <div v-if="status.botId" class="discord-identity"><img v-if="status.avatarUrl" :src="status.avatarUrl" alt="Bot 头像" /><div><strong>{{ status.name }}</strong><small>{{ status.botId }}</small></div><span>{{ status.controlsReady ? '/gray 操作面板已注册' : '操作面板尚未就绪' }}</span></div>
         <div class="discord-fields"><label><span>启用 Bot</span><input v-model="bot.enabled" type="checkbox" /></label><label><span>Bot Token<small>填写新值可以替换原凭据，留空保留。</small></span><input type="password" autocomplete="new-password" :placeholder="bot.credentialRef ? '已配置 Bot Token' : '输入 Bot Token'" @input="setToken(($event.target as HTMLInputElement).value)" /></label></div>
         <div class="discord-actions"><button :disabled="!!busy" @click="action('连接 Bot', connect)">{{ busy === '连接 Bot' ? '正在连接…' : '连接 / 重连' }}</button><button :disabled="!!busy || status.status === 'stopped'" @click="action('断开 Bot', async () => { await sendToExtension('platform.discord.stop', {}); await refreshStatus(); guilds = []; channels = []; })">断开</button><button :disabled="!!busy" @click="action('刷新状态', refreshStatus)">刷新状态</button></div>
         <p v-if="status.error || status.warning" class="discord-error">{{ status.error || status.warning }}</p>
+        <p v-if="status.retryAt" class="discord-notice">将于 {{ new Date(status.retryAt).toLocaleTimeString() }} 自动重试连接。也可以立即点击“连接 / 重连”。</p>
         <div class="discord-note"><strong>开始使用</strong><p>保存 Token 并连接后，在“频道”中选择允许响应的频道，再到“身份绑定”关联主人的 Discord 账号。随后输入 /gray，即可管理本频道对话、选择模型与工作区、查看状态和停止任务。</p><p>Bot 邀请需要 bot 和 applications.commands 权限范围。记录群聊背景消息需要在 Discord 开发者后台打开 Message Content Intent，即使只在被 @ 时回复也需要。</p><a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">打开 Discord 开发者后台</a></div>
       </section>
       <section v-else-if="section === 'defaults'">

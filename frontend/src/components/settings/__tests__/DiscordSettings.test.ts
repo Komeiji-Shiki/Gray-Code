@@ -1,8 +1,8 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import DiscordSettings from '../DiscordSettings.vue';
-const mock = vi.hoisted(() => ({ send: vi.fn(), markDirty: vi.fn(), register: vi.fn() }));
-vi.mock('@/utils/vscode', () => ({ sendToExtension: mock.send }));
+const mock = vi.hoisted(() => ({ send: vi.fn(), markDirty: vi.fn(), register: vi.fn(), listen: vi.fn(), unsubscribe: vi.fn() }));
+vi.mock('@/utils/vscode', () => ({ sendToExtension: mock.send, onExtensionCommand: mock.listen }));
 vi.mock('@/platform/settingsDraft', () => ({ useDesktopSettingsDraft: mock.register, markDesktopSettingsDirty: mock.markDirty, desktopSettingsDraft: { dirty: false } }));
 const settings = () => ({ version: 1, appearance: {}, providers: [], agents: [{ id: 'default', name: 'GrayCode', providerId: '' }], workspaces: [],
   accounts: [{ id: 'owner', role: 'owner', displayName: '主人' }, { id: 'member', role: 'member', displayName: '群聊成员' }], bindings: [],
@@ -10,6 +10,7 @@ const settings = () => ({ version: 1, appearance: {}, providers: [], agents: [{ 
     channels: { '123': { name: '现有频道', profile: { idleMinutes: 90 } } }, defaultProfile: { character: { kind: 'character', userName: '主人', persona: '', scanDepth: 2, worldbookIds: [], regexIds: [], recursiveScan: true } } },
 });
 beforeEach(() => {
+  mock.listen.mockImplementation(() => mock.unsubscribe);
   vi.clearAllMocks(); mock.send.mockImplementation(async (type: string) => {
     if (type === 'platform.settings.get') return settings();
     if (type === 'platform.discord.status') return { status: 'stopped' };
@@ -21,6 +22,15 @@ beforeEach(() => {
 const button = (wrapper: ReturnType<typeof mount>, name: string) => wrapper.findAll('button').find(item => item.text() === name)!;
 
 describe('Discord 设置共享草稿', () => {
+  test('自动重试和恢复状态直接更新页面，关闭页面后取消监听', async () => {
+    const wrapper = mount(DiscordSettings); await flushPromises();
+    const changed = mock.listen.mock.calls.find(call => call[0] === 'bot.connection.changed')![1];
+    changed({ platform: 'discord', status: { status: 'failed', error: '暂时离线', retryAt: Date.now() + 5000 } }); await flushPromises();
+    expect(wrapper.text()).toContain('自动重试连接'); expect(wrapper.text()).toContain('暂时离线');
+    changed({ platform: 'discord', status: { status: 'connected' } }); await flushPromises();
+    expect(wrapper.get('.discord-status').text()).toBe('已连接'); expect(wrapper.text()).not.toContain('暂时离线');
+    wrapper.unmount(); expect(mock.unsubscribe).toHaveBeenCalledOnce();
+  });
   test('自动连接对旧配置默认勾选，关闭时写入共享草稿', async () => {
     const wrapper = mount(DiscordSettings); await flushPromises();
     const checkbox = wrapper.findAll('label').find(item => item.text().includes('启动时自动连接'))!.get('input');

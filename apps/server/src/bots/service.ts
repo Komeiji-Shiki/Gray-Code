@@ -20,6 +20,10 @@ export class BoundBotService {
   private connectedMessageContent?: boolean;
   private readonly unsubscribe: () => void;
   private starting?: Promise<BotStatus>;
+  private automatic = false;
+  private retryEpoch = 0;
+  private retryDelay = 5_000;
+  private retryTimer?: ReturnType<typeof setTimeout>;
   private events: Promise<unknown> = Promise.resolve();
   private readonly inbound = new Map<string, Promise<unknown>>();
   readonly sessions: BotSessions;
@@ -33,7 +37,10 @@ export class BoundBotService {
       ? { gateway: this.gateway, botId: this.current.botId } : undefined, route => this.admitted(route));
     this.streams = new BotStreams(app, platform, this.sessions, this.outbox);
     this.unsubscribe = app.subscribe(notification => {
-      if (notification.type === 'settings.changed' && !this.app.settings.snapshot().settings[this.platform]?.enabled) { void this.stop(); return; }
+      if (notification.type === 'settings.changed') {
+        if (!this.app.settings.snapshot().settings[this.platform]?.enabled) { void this.stop(); return; }
+        if (!this.autoConnectEnabled()) { this.cancelAutoRetry(); this.notifyConnectionChange(); }
+      }
       if (notification.type === 'model.delta') { this.streams.delta(String(notification.runId), notification.parts as Record<string, unknown>[]); return; }
       if (notification.type === 'message.persisted') { this.streams.saved(String(notification.runId), notification.content as PlatformMessage); return; }
       if (notification.type !== 'event') return;
@@ -45,20 +52,41 @@ export class BoundBotService {
     });
   }
   /** 已连接或正在连接的 Bot 是常驻服务，空闲等待消息时也需要核心继续运行。 */
-  get keepsAlive(): boolean { return !!this.gateway || !!this.starting; }
-  private notifyConnectionChange() { this.app.publish({ type: 'bot.connection.changed', platform: this.platform }); }
+  get keepsAlive(): boolean { return !!this.gateway || !!this.starting || this.automatic; }
+  private notifyConnectionChange() {
+    this.app.publish({ type: 'bot.connection.changed', platform: this.platform });
+    this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'bot.connection.changed',
+      data: { platform: this.platform, status: this.status() } } });
+  }
   status(): BotStatus {
     const needsReconnect = this.platform === 'discord' && this.current.status === 'connected'
       && this.connectedMessageContent !== discordNeedsMessageContent(this.app.settings.snapshot().settings.discord);
     return { ...this.current, ...this.outbox.status(), needsReconnect };
   }
   async autoConnect(): Promise<void> {
+    if (this.automatic || !this.autoConnectEnabled()) return;
+    this.cancelAutoRetry(); this.automatic = true;
+    await this.automaticAttempt(this.retryEpoch);
+  }
+  private autoConnectEnabled(): boolean {
     const settings = this.app.settings.snapshot().settings[this.platform];
-    if (!settings?.enabled || settings.autoConnect === false) return;
-    try { await this.start(); }
-    catch (error) {
-      this.current = { status: 'failed', error: error instanceof Error ? error.message : 'Bot 自动连接失败。' };
-      this.notifyConnectionChange();
+    return !!settings?.enabled && settings.autoConnect !== false;
+  }
+  private cancelAutoRetry() {
+    this.automatic = false; this.retryEpoch++; this.retryDelay = 5_000;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined; delete this.current.retryAt;
+  }
+  private async automaticAttempt(epoch: number): Promise<void> {
+    if (epoch !== this.retryEpoch || !this.autoConnectEnabled()) return;
+    try { await this.startAttempt(); this.retryDelay = 5_000; }
+    catch {
+      if (epoch !== this.retryEpoch || !this.autoConnectEnabled()) return;
+      // 只重试启动连接；已连接后的短线重连由各平台网关负责。
+      const delay = this.retryDelay; this.retryDelay = Math.min(60_000, delay * 2);
+      this.current.retryAt = Date.now() + delay;
+      this.retryTimer = setTimeout(() => { this.retryTimer = undefined; delete this.current.retryAt; void this.automaticAttempt(epoch); }, delay);
+      this.retryTimer.unref(); this.notifyConnectionChange();
     }
   }
   protected context(source: Pick<BotInbound, 'id' | 'authorId' | 'channelId' | 'direct' | 'network' | 'authorName'>): BotContext {
@@ -68,31 +96,42 @@ export class BoundBotService {
   }
   protected async interaction(input: BotInteraction): Promise<void> { await input.respond({ content: '当前接入没有操作面板。' }); }
   protected clearInteractions(): void {}
-  start(): Promise<BotStatus> { return this.starting ??= this.connect().finally(() => { this.starting = undefined; this.notifyConnectionChange(); }); }
+  start(): Promise<BotStatus> { this.cancelAutoRetry(); return this.startAttempt(); }
+  private startAttempt(): Promise<BotStatus> { return this.starting ??= this.connect().finally(() => { this.starting = undefined; this.notifyConnectionChange(); }); }
   private async connect(): Promise<BotStatus> {
-    await this.stop();
-    const settings = this.app.settings.snapshot().settings[this.platform];
-    if (!settings?.enabled || this.platform === 'discord' && !settings.credentialRef) throw new Error('请先保存已启用的 Bot 配置和凭据。');
-    const token = settings.credentialRef ? await this.app.settings.credential(settings.credentialRef) : '';
-    if (settings.credentialRef && !token) throw new Error('Bot 凭据不可用，请重新填写。');
-    this.current = { status: 'connecting' }; const epoch = this.connectionEpoch;
-    const gateway = this.gateway = this.factory();
-    gateway.setInteractionHandler?.(input => this.gateway === gateway && epoch === this.connectionEpoch
-      ? this.interaction(input) : input.respond({ content: '连接已经变化，请重新打开 /gray 面板。' }));
-    const allMessages = this.platform === 'discord' ? discordNeedsMessageContent(this.app.settings.snapshot().settings.discord) : !settings.mentionOnly;
+    const epoch = this.connectionEpoch + 1;
+    await this.disconnect();
+    if (epoch !== this.connectionEpoch) return this.status();
+    let gateway: BotGateway | undefined;
     try {
+      const settings = this.app.settings.snapshot().settings[this.platform];
+      if (!settings?.enabled || this.platform === 'discord' && !settings.credentialRef) throw new Error('请先保存已启用的 Bot 配置和凭据。');
+      const token = settings.credentialRef ? await this.app.settings.credential(settings.credentialRef) : '';
+      if (epoch !== this.connectionEpoch) return this.status();
+      if (settings.credentialRef && !token) throw new Error('Bot 凭据不可用，请重新填写。');
+      this.current = { status: 'connecting' }; this.notifyConnectionChange();
+      gateway = this.gateway = this.factory();
+      gateway.setInteractionHandler?.(input => this.gateway === gateway && epoch === this.connectionEpoch
+        ? this.interaction(input) : input.respond({ content: '连接已经变化，请重新打开 /gray 面板。' }));
+      const allMessages = this.platform === 'discord' ? discordNeedsMessageContent(this.app.settings.snapshot().settings.discord) : !settings.mentionOnly;
       const user = await gateway.connect(token ?? '', allMessages, message => { if (this.gateway === gateway && epoch === this.connectionEpoch) void this.receive(message); },
-        status => { if (this.gateway !== gateway || epoch !== this.connectionEpoch) return; this.current.status = status; if (status === 'connected') void this.outbox.flush(); });
+        status => { if (this.gateway !== gateway || epoch !== this.connectionEpoch) return; this.current.status = status; this.notifyConnectionChange(); if (status === 'connected') void this.outbox.flush(); });
       if (this.gateway !== gateway || epoch !== this.connectionEpoch) { await gateway.disconnect(); return this.status(); }
       this.connectedMessageContent = allMessages;
       this.current = { status: 'connected', botId: user.id, name: user.name, avatarUrl: user.avatarUrl, controlsReady: user.controlsReady, warning: user.warning };
       await this.streams.resume(); await this.outbox.flush(); await this.sessions.inbox.resume(this.platform); this.summaries.start(); return this.status();
     } catch (error) {
-      if (this.gateway !== gateway || epoch !== this.connectionEpoch) return this.status();
-      this.current = { status: 'failed', error: error instanceof Error ? error.message : 'Bot 连接失败。' }; this.gateway = undefined; throw error;
+      if (epoch !== this.connectionEpoch) return this.status();
+      this.gateway = undefined;
+      await Promise.allSettled([this.summaries.stop(), this.streams.pause(), gateway?.disconnect()]);
+      if (epoch !== this.connectionEpoch) return this.status();
+      this.current = { status: 'failed', error: error instanceof Error ? error.message : 'Bot 连接失败。' }; throw error;
     }
   }
   async stop(): Promise<void> {
+    this.cancelAutoRetry(); await this.disconnect();
+  }
+  private async disconnect(): Promise<void> {
     const epoch = ++this.connectionEpoch; const gateway = this.gateway; this.gateway = undefined;
     this.clearInteractions(); await this.summaries.stop(); await this.streams.pause(); await gateway?.disconnect();
     if (epoch === this.connectionEpoch) { this.current = { status: 'stopped' }; this.notifyConnectionChange(); }
@@ -186,6 +225,7 @@ export class BoundBotService {
   async channels(guildId: string) { if (!this.gateway?.listChannels) throw new Error('请先连接 Discord。'); return this.gateway.listChannels(guildId); }
   async user(userId: string) { if (!this.gateway?.getUser) throw new Error('请先连接 Discord。'); return this.gateway.getUser(userId); }
   async close(): Promise<void> {
-    this.unsubscribe(); await Promise.allSettled(this.inbound.values()); await this.events; await this.sessions.close(); await this.streams.close(); await this.stop(); await this.outbox.close();
+    this.unsubscribe(); this.cancelAutoRetry(); await Promise.allSettled(this.inbound.values()); await this.events;
+    await this.sessions.close(); await this.streams.close(); await this.stop(); await this.outbox.close();
   }
 }

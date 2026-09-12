@@ -3,5 +3,5 @@ export interface BotChannel { id: string; guildId?: string; name: string; catego
 export interface BotUser { id: string; name: string; displayName: string; avatarUrl?: string; bot: boolean }
 export interface BotStatus {
   status: string; botId?: string; name?: string; avatarUrl?: string; error?: string; pendingMessages?: number;
-  controlsReady?: boolean; warning?: string; needsReconnect?: boolean; deliveryError?: string;
+  controlsReady?: boolean; warning?: string; needsReconnect?: boolean; deliveryError?: string; retryAt?: number;
 }
