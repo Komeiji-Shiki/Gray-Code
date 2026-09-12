@@ -9,6 +9,7 @@ import { discordProfile } from '../../../apps/server/src/bots/config';
 import { inlineBotArguments, splitBotText } from '../../../apps/server/src/bots/text';
 import { fixture, metadata } from './fixtures';
 import { cleanBotPresentationReferences, stripDiscordPresentation } from '../../../apps/server/src/bots/presentation';
+import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
 
 describe('Bot 回复合并与发送恢复', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication; let outbox: BotOutbox;
@@ -175,6 +176,20 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(hidden.text).not.toContain('read_file'); expect(hidden.text).not.toContain('已进行思考');
     const partial = botTotalStats([rounds[0], { role: 'model', parts: [] }]);
     expect(partial).toContain('合计 ≥ 240 token'); expect(partial).toContain('统计不完整'); expect(partial).toContain('TPS —');
+  });
+
+  test('发送队列固定原消息引用，排队期间其他用户的更新不会替换目标', async () => {
+    connected = false;
+    await outbox.put('reply-origin', { ...route, replyToMessageId: 'original-message' }, [{ content: '正在处理' }], false);
+    await outbox.put('reply-origin', { ...route, platformUserId: 'other-user', replyToMessageId: 'other-message' }, [{ content: '最终内容' }]);
+    connected = true; await outbox.flush();
+    expect(sent).toEqual([{ content: '最终内容', replyToMessageId: 'original-message' }]);
+    const payloads: any[] = [];
+    const discord = new DiscordJsGateway();
+    (discord as any).client = { isReady: () => true, channels: { fetch: async () => ({ isSendable: () => true, send: async (payload: any) => { payloads.push(payload); return { id: 'receipt' }; } }) } };
+    await discord.sendReply('channel', sent[0], 'nonce');
+    expect(payloads[0]).toMatchObject({ content: '最终内容', reply: { messageReference: 'original-message', failIfNotExists: false },
+      allowedMentions: { parse: [], repliedUser: false }, nonce: 'nonce', enforceNonce: true });
   });
 
   test('思考与工具统计紧凑显示，参数使用行内代码，单轮不重复总计', () => {

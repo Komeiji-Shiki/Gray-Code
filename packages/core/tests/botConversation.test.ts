@@ -67,6 +67,8 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect((await app.storage.readFullHistory(id)).messages.flatMap(message => message.botMessageIds ?? [])).not.toContain('f');
       const ownerRun = (await app.storage.listRuns({ conversationId: id }))[0]; gate.resolve(); await app.runtime.wait(ownerRun.id); await second.promise;
       const memberRun = (await app.storage.listRuns({ conversationId: id }))[0]; await app.runtime.wait(memberRun.id);
+      expect((await app.discord.sessions.routeForRun('discord', ownerRun))?.replyToMessageId).toBe('e');
+      expect((await app.discord.sessions.routeForRun('discord', memberRun))?.replyToMessageId).toBe('g');
       expect(memberRun.actorId).toBe('member'); expect(memberRun.workspaceId).toBeUndefined(); expect(generated.map(input => input.taskContext?.actor.id)).toEqual(['owner', 'member']);
       expect(generated[1].messages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n')).toContain('原话 f');
       expect(generated[0].promptContext!.beforeHistoryMessages).toEqual(generated[1].promptContext!.beforeHistoryMessages);

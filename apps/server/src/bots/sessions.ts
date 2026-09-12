@@ -15,6 +15,7 @@ export type BotPlatform = 'discord' | 'onebot';
 export interface BotRoute {
   platform?: BotPlatform; botId: string; channelId: string; actorId: string; conversationId: string;
   platformUserId?: string; network?: string; direct?: boolean;
+  replyToMessageId?: string;
   output?: DiscordOutputSettings;
 }
 export interface BotContext extends Pick<BotInbound, 'id' | 'authorId' | 'channelId' | 'direct' | 'network' | 'authorName'> {
@@ -310,6 +311,7 @@ export class BotSessions {
         const requestKey = `${context.platform}:${context.id}`;
         const route: BotRoute = { platform: context.platform, botId: context.botId, channelId: context.channelId, actorId: loaded.actor.id,
           conversationId: conversation.id, platformUserId: context.authorId, network: context.network, direct: context.direct,
+          ...(context.platform === 'discord' && action.input ? { replyToMessageId: context.id } : {}),
           ...(context.platform === 'discord' ? { output: { ...discordOutput(this.app.settings.snapshot().settings.discord), ...loaded.profile.output } } : {}) };
         const state = await this.app.conversations.read(loaded.actor.id, conversation.id);
         const channelWorkspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === channelWorkspaceId);

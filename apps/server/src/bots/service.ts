@@ -178,14 +178,16 @@ export class BoundBotService {
       if (result.reply) {
         const snapshot = await this.sessions.snapshot(context);
         const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
-          conversationId: snapshot.conversation?.id ?? '', platformUserId: context.authorId, direct: context.direct, network: context.network };
+          conversationId: snapshot.conversation?.id ?? '', platformUserId: context.authorId, direct: context.direct, network: context.network,
+          ...(this.platform === 'discord' ? { replyToMessageId: message.id } : {}) };
         await this.outbox.put(`reply-${message.id}`, route, botFinalReplies(result.reply, route));
       }
     } catch (error) {
       this.current.error = error instanceof Error ? error.message : 'Bot 请求未完成。';
       if (!actorId || !triggered) return;
       const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
-        conversationId: '', platformUserId: context.authorId, direct: context.direct, network: context.network };
+        conversationId: '', platformUserId: context.authorId, direct: context.direct, network: context.network,
+        ...(this.platform === 'discord' ? { replyToMessageId: message.id } : {}) };
       await this.outbox.put(`error-${message.id}`, route, [{ content: `这条消息尚未完成处理：${this.current.error}` }]).catch(() => {});
     }
   }

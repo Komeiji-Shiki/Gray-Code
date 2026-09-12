@@ -16,25 +16,38 @@ export function formatBotSourceHeader(label: string, source: { displayName?: unk
   return `[${fields.join(' · ')}]`;
 }
 
-/** 只转换带平台来源标记的旧消息头，不修改历史原文或用户自己输入的 JSON。 */
+/** 合并消息只显示一次发言来源；原始历史和引用内部的来源保持独立。 */
 export function formatBotSourceMessages<T extends { role: string; parts: Array<{ text?: unknown }> }>(messages: readonly T[]): T[] {
   return messages.map(message => {
-    const source = (message as T & { source?: { platform?: string } }).source;
+    const bot = message as T & { source?: { platform?: string }; botMessageIds?: unknown };
+    const source = bot.source;
     if (message.role !== 'user' || !['discord', 'onebot'].includes(source?.platform ?? '')) return message;
+    const merged = Array.isArray(bot.botMessageIds) && bot.botMessageIds.length > 1;
     let changed = false;
+    let speechShown = false;
+    let referenceDepth = 0;
     const parts = message.parts.map(part => {
       if (typeof part.text !== 'string') return part;
+      let text = part.text;
       const speech = /^\[([^\n\[]+ 发言) (\{[^\n]*\})\](?=\r?\n|$)/.exec(part.text);
       const reference = /^\[(引用消息|转发消息) (\{[^\n]*\})，以下是原来源内容\]/.exec(part.text);
       const match = speech ?? reference;
-      if (!match) return part;
-      try {
+      if (match) try {
         const info = JSON.parse(match[2]);
         if (!info || typeof info.id !== 'string' || speech && typeof info.authorId !== 'string') return part;
         const header = formatBotSourceHeader(match[1], info);
-        changed = true;
-        return { ...part, text: (reference ? header.slice(0, -1) + '，以下是原来源内容]' : header) + part.text.slice(match[0].length) };
-      } catch { return part; }
+        text = (reference ? header.slice(0, -1) + '，以下是原来源内容]' : header) + text.slice(match[0].length);
+      } catch { /* 无法识别的旧消息保留原文。 */ }
+      if (/^\[(引用消息|转发消息)[^\r\n]*，以下是原来源内容\]/.test(text)) referenceDepth++;
+      const header = referenceDepth === 0 && /^\[[^\r\n\[]+ 发言(?: · [^\r\n]*)?\](?:\r?\n|$)/.exec(text);
+      if (merged && header) {
+        if (speechShown) text = '\n\n' + text.slice(header[0].length);
+        speechShown = true;
+      }
+      if (text === '[原来源内容结束]') referenceDepth = Math.max(0, referenceDepth - 1);
+      if (text === part.text) return part;
+      changed = true;
+      return { ...part, text };
     });
     return changed ? { ...message, parts } : message;
   });

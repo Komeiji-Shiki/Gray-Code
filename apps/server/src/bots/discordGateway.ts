@@ -109,6 +109,7 @@ export class DiscordJsGateway implements DiscordGateway {
     const channel = await this.ready().channels.fetch(channelId);
     if (!channel?.isSendable()) throw new Error('这个 Discord 频道目前无法接收消息。');
     const message = await channel.send({ content: reply.content, files: reply.files?.map(file => ({ name: file.name, attachment: Buffer.from(file.data) })),
+      ...(reply.replyToMessageId ? { reply: { messageReference: reply.replyToMessageId, failIfNotExists: false } } : {}),
       ...(nonce ? { nonce, enforceNonce: true } : {}), allowedMentions: { parse: [], repliedUser: false } });
     return { id: message.id };
   }

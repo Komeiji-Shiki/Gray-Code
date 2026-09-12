@@ -18,7 +18,7 @@ export interface BotButton { id: string; label: string; style?: 'primary' | 'sec
 export interface BotSelectOption { label: string; value: string; description?: string; selected?: boolean }
 export type BotPanelRow = { buttons: BotButton[] } | { select: { id: string; placeholder: string; options: BotSelectOption[] } };
 export interface BotPanel { content: string; rows?: BotPanelRow[]; files?: Array<{ name: string; data: Uint8Array }> }
-export interface BotReply { content?: string; files?: Array<{ name: string; data: Uint8Array }> }
+export interface BotReply { content?: string; files?: Array<{ name: string; data: Uint8Array }>; replyToMessageId?: string }
 export interface BotMessageReceipt { id: string }
 export interface BotModal { id: string; title: string; fields: Array<{ id: string; label: string; value?: string; placeholder?: string; required?: boolean }> }
 export interface BotInteraction {

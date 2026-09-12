@@ -88,7 +88,8 @@ export class BotOutbox {
             value.phase = 'sending'; await this.save(id, value);
             const nonce = createHash('sha256').update(`${id}:${index}`).digest('hex').slice(0, 24);
             if (current.gateway.sendReply) {
-              const receipt = await current.gateway.sendReply(value.route.channelId, message, nonce);
+              const reply = this.platform === 'discord' && value.route.replyToMessageId ? { ...message, replyToMessageId: value.route.replyToMessageId } : message;
+              const receipt = await current.gateway.sendReply(value.route.channelId, reply, nonce);
               value.messageIds[index] = receipt.id;
               value.next = index + 1;
               // nonce 可能返回先前已存在的流式消息，确认其内容也更新为当前最终回复。
