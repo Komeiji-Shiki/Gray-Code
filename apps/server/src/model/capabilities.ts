@@ -10,6 +10,7 @@ import type {
 } from "../../../../backend/modules/channel/types";
 import { applyOpenCodeSessionHeader } from "../../../../backend/modules/channel/opencodeSession";
 import { ensureStrictSchema } from "../../../../backend/modules/channel/formatters/base";
+import { reasoningLevelsForModel } from '../../../../shared/reasoningEffort';
 
 export function resolveCapabilities(
   profile: ProviderDefinition,
@@ -39,7 +40,7 @@ export function buildChannelConfig(
   const effort = input.reasoningEffort ?? profile.generation.reasoningEffort;
   if (
     effort &&
-    (!capability.reasoningLevels.includes(effort) ||
+    (!reasoningLevelsForModel(profile, model).includes(effort) ||
       capability.reasoningParameter === "disabled")
   )
     throw new Error(
@@ -102,6 +103,16 @@ export function buildChannelConfig(
     providerReasoningContentEnabled:
       capability.reasoningSignature === "deepseek",
   } as unknown as ChannelConfig;
+}
+
+/** 临时档位只覆盖对应协议的思考字段，保留摘要、预算和其他生成参数。 */
+export function overrideChannelReasoning(channel: ChannelConfig, effort: string): Pick<ChannelConfig, 'options' | 'optionsEnabled'> {
+  const options = channel.options as Record<string, any>;
+  const key = channel.type.startsWith('gemini') ? 'thinkingConfig' : channel.type === 'anthropic' ? 'thinking' : 'reasoning';
+  const thinking = key === 'thinkingConfig' ? { ...options?.thinkingConfig, mode: 'level', thinkingLevel: effort }
+    : key === 'thinking' ? { ...options?.thinking, type: options?.thinking?.type === 'enabled' ? 'enabled' : 'adaptive', effort }
+      : { ...options?.reasoning, effort };
+  return { options: { ...channel.options, [key]: thinking }, optionsEnabled: { ...channel.optionsEnabled, [key]: true } };
 }
 
 export function applyProviderCapabilities(

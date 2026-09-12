@@ -9,7 +9,14 @@ import {
 } from '../tabActions'
 import type { ChatStoreState, BranchGraphData, BranchNodeData } from '../types'
 
-/** Creates a minimal mock state with all fields used by tabActions */
+test('思考强度随当前对话快照恢复，新对话回到渠道设置', () => {
+  const state = mockState(); state.selectedReasoningEffort.value = 'high';
+  const snapshot = snapshotCurrentSession(state);
+  resetConversationState(state); expect(state.selectedReasoningEffort.value).toBe('');
+  restoreSessionFromSnapshot(state, snapshot); expect(state.selectedReasoningEffort.value).toBe('high');
+});
+
+/** 构造标签页操作所需的最小会话状态。 */
 function mockState(): ChatStoreState {
   return {
     allMessages: ref([]),
@@ -28,6 +35,7 @@ function mockState(): ChatStoreState {
     foldedMessageCount: ref(0),
     configId: ref(''),
     selectedModelId: ref(''),
+    selectedReasoningEffort: ref(''),
     currentConfig: ref(null),
     isLoading: ref(false),
     isStreaming: ref(false),

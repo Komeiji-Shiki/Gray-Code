@@ -41,6 +41,24 @@ describe('original UI history operations on the independent core', () => {
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
 
+  test('当前对话的思考强度贯穿发送、继续和重试，新对话不继承', async () => {
+    const providers = app.settings.snapshot().settings.providers;
+    const select = (reasoningEffort?: string) => call('conversation.setCustomMetadata', { conversationId: 'conversation', key: 'inputModelConfig', value: { configId: channelId, modelId: 'fixture', reasoningEffort } });
+    await select('high'); await run('chatStream', { streamId: 'effort-first', message: 'List files' });
+    expect(calls.every(input => input.reasoningEffort === 'high')).toBe(true);
+    await select('low'); await run('retryStream', { streamId: 'effort-continue' });
+    expect(calls.at(-1)?.reasoningEffort).toBe('low');
+    const reply = (await history()).messages.at(-1)!;
+    await run('chat.rerollStream', { streamId: 'effort-reroll', assistantNodeId: reply.id });
+    expect(calls.at(-1)?.reasoningEffort).toBe('low');
+    await call('conversation.createConversation', { conversationId: 'fresh' });
+    await run('chatStream', { conversationId: 'fresh', streamId: 'effort-fresh', message: 'List files' });
+    expect(calls.at(-1)?.reasoningEffort).toBeUndefined();
+    await select(); await run('retryStream', { streamId: 'effort-reset' });
+    expect(calls.at(-1)?.reasoningEffort).toBeUndefined();
+    expect(app.settings.snapshot().settings.providers).toEqual(providers);
+  });
+
   test('reroll preserves the original branch and tool identities, and continuation never replays previous tools', async () => {
     await run('chatStream', { streamId: 'first', messageId: 'user-one', message: 'List files' });
     const first = await history();

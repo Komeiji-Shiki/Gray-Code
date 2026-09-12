@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ChannelSelector from './ChannelSelector.vue'
 import ModelSelector from './ModelSelector.vue'
+import ReasoningSelector from './ReasoningSelector.vue'
 import ModeSelector from './ModeSelector.vue'
 import type { ChannelOption, PromptMode, ModelInfo } from './types'
 
@@ -19,6 +20,8 @@ const props = defineProps<{
   currentModelId: string
   modelOptions: ModelInfo[]
   modelDisabled: boolean
+  reasoningEffort?: string
+  reasoningLevels?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -26,6 +29,7 @@ const emit = defineEmits<{
   (e: 'open-mode-settings'): void
   (e: 'channel-change', channelId: string): void
   (e: 'model-change', modelId: string): void
+  (e: 'reasoning-change', effort: string): void
 }>()
 </script>
 
@@ -60,6 +64,8 @@ const emit = defineEmits<{
         :disabled="props.modelDisabled"
         @update:model-value="emit('model-change', $event)"
       />
+      <ReasoningSelector v-if="props.reasoningLevels?.length || props.reasoningEffort" :model-value="props.reasoningEffort ?? ''"
+        :levels="props.reasoningLevels ?? []" :disabled="props.modelDisabled" @update:model-value="emit('reasoning-change', $event)" />
     </div>
   </div>
 </template>
@@ -67,7 +73,7 @@ const emit = defineEmits<{
 <style scoped>
 .selector-bar {
   display: grid;
-  grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1fr) minmax(0, 2.2fr);
   align-items: center;
   gap: var(--gc-space-2);
   min-width: 0;
@@ -80,6 +86,8 @@ const emit = defineEmits<{
 .model-selector-wrapper {
   min-width: 0;
 }
+.model-selector-wrapper { display:flex;align-items:center;gap:8px; }
+.model-selector-wrapper :deep(.model-selector) { flex:1; }
 
 .mode-selector-wrapper :deep(.mode-selector),
 .channel-selector-wrapper :deep(.channel-selector),
@@ -121,7 +129,7 @@ const emit = defineEmits<{
   max-width: calc(100vw - var(--gc-space-8));
 }
 
-@media (max-width: 380px) {
+@media (max-width: 640px) {
   .selector-bar {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }

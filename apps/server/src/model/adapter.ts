@@ -17,6 +17,7 @@ import {
   applyProviderCapabilities,
   buildChannelConfig,
   resolveCapabilities,
+  overrideChannelReasoning,
 } from "./capabilities";
 
 export interface ModelAdapterServices {
@@ -46,8 +47,7 @@ export class ProviderModelAdapter implements ModelProvider {
     const overrides = buildChannelConfig(profile, input, secret);
     const config = channel ? { ...channel, apiKey: secret, model: input.modelOverride ?? channel.model,
       systemInstruction: input.systemPrompt,
-      ...(input.reasoningEffort ? { options: { ...(channel as any).options, ...(overrides as any).options },
-        optionsEnabled: { ...(channel as any).optionsEnabled, ...(overrides as any).optionsEnabled } } : {}),
+      ...(input.reasoningEffort ? overrideChannelReasoning(channel, input.reasoningEffort) : {}),
     } as ChannelConfig : overrides;
     if (!config.model?.trim()) throw new Error(`渠道「${profile.name || profile.id}」尚未选择模型，请在输入栏选择模型后发送。`);
     const capabilities = resolveCapabilities(profile, config.model);

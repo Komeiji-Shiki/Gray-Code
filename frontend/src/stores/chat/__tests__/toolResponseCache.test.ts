@@ -60,6 +60,7 @@ function mockState(messages: Message[] = []): ChatStoreState {
     foldedMessageCount: ref(0),
     configId: ref(''),
     selectedModelId: ref(''),
+    selectedReasoningEffort: ref(''),
     currentConfig: ref(null),
     isLoading: ref(false),
     isStreaming: ref(false),

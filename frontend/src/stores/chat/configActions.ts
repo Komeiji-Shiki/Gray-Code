@@ -16,6 +16,7 @@ const DEFAULT_PROMPT_MODE_ID = 'code'
 export interface ConversationModelConfig {
   configId?: string
   modelId?: string
+  reasoningEffort?: string
 }
 
 export interface ConversationPromptModeConfig {
@@ -70,7 +71,8 @@ export async function persistConversationModelConfig(state: ChatStoreState): Pro
 
   const payload: ConversationModelConfig = {
     configId: state.configId.value,
-    modelId: normalizeModelId(state.selectedModelId.value)
+    modelId: normalizeModelId(state.selectedModelId.value),
+    reasoningEffort: state.selectedReasoningEffort.value || undefined
   }
 
   try {
@@ -100,6 +102,7 @@ export async function applyConversationModelConfig(
 
     const storedConfigId = typeof stored?.configId === 'string' ? stored.configId.trim() : ''
     const storedModelId = typeof stored?.modelId === 'string' ? stored.modelId.trim() : ''
+    state.selectedReasoningEffort.value = typeof stored?.reasoningEffort === 'string' ? stored.reasoningEffort.trim() : ''
 
     if (storedConfigId) {
       state.configId.value = storedConfigId
@@ -113,6 +116,7 @@ export async function applyConversationModelConfig(
     state.selectedModelId.value = state.currentConfig.value?.model || ''
   } catch (error) {
     console.error('Failed to apply conversation model config:', error)
+    state.selectedReasoningEffort.value = ''
     // 兜底：确保 currentConfig / selectedModelId 不为空
     await loadCurrentConfig(state)
     state.selectedModelId.value = state.currentConfig.value?.model || ''
@@ -178,6 +182,11 @@ export async function applyConversationPromptMode(
  */
 export async function setSelectedModelId(state: ChatStoreState, modelId: string): Promise<void> {
   state.selectedModelId.value = normalizeModelId(modelId)
+  await persistConversationModelConfig(state)
+}
+
+export async function setSelectedReasoningEffort(state: ChatStoreState, effort: string): Promise<void> {
+  state.selectedReasoningEffort.value = effort.trim()
   await persistConversationModelConfig(state)
 }
 

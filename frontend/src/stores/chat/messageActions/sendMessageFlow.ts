@@ -416,6 +416,8 @@ export async function sendMessage(
   const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
   // 一次性渠道覆盖：仅本次请求生效，不改全局 configId/后端设置
   const effectiveConfigId = (options?.configIdOverride || '').trim() || state.configId.value
+  const effectiveReasoningEffort = effectiveConfigId === state.configId.value
+    && (!options?.modelOverride || effectiveModelOverride === state.selectedModelId.value) ? state.selectedReasoningEffort.value : undefined
   
   // 创建会话分支固化的 newId（创建期间用户可能切换标签页/会话，
   // currentConversationId 随后可能已被新会话接管，后续必须以 newId 为准）
@@ -564,6 +566,7 @@ export async function sendMessage(
       messageId: pendingUserMessageId,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
       modelOverride: effectiveModelOverride,
+      reasoningEffort: effectiveReasoningEffort,
       hiddenFunctionResponse,
       promptModeId: state.currentPromptModeId.value,
       dynamicContextStrategyOverride: options?.dynamicContextStrategyOverride,

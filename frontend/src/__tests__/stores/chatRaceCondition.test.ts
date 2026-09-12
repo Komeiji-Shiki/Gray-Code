@@ -265,6 +265,7 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
       windowStartIndex: 0,
       configId: 'test',
       selectedModelId: '',
+      selectedReasoningEffort: '',
       totalMessages: 0,
       isLoadingMoreMessages: false,
       isStreaming: false,

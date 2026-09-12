@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import type { ModelInput, ProviderDefinition } from '@graycode/contracts';
 import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
-import { applyProviderCapabilities, buildChannelConfig } from '../../../apps/server/src/model/capabilities';
+import { applyProviderCapabilities, buildChannelConfig, overrideChannelReasoning } from '../../../apps/server/src/model/capabilities';
 import { OpenAIResponsesFormatter } from '../../../backend/modules/channel/formatters/openai-responses';
 import { GeminiFormatter } from '../../../backend/modules/channel/formatters/gemini';
 import { botRoundText } from '../../../apps/server/src/bots/rounds';
@@ -77,6 +77,29 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(response.streamDuration).toBe(response.responseDuration);
     expect(Number(response.responseDuration)).toBeGreaterThanOrEqual(Number(response.ttft));
     expect(deltas.length).toBeGreaterThan(0);
+  });
+
+  test('临时思考档位进入实际 HTTP 请求，同时保留渠道的生成参数', async () => {
+    profile.generation = {}; profile.capabilities.reasoningParameter = 'protocol_default'; profile.capabilities.reasoningLevels = [];
+    const channel = buildChannelConfig(profile, input(), '');
+    channel.options = { temperature: 0.4, max_tokens: 77, reasoning: { effort: 'medium', summaryEnabled: true, summary: 'detailed' } } as any;
+    channel.optionsEnabled = { temperature: true, max_tokens: true, reasoning: true } as any;
+    adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => '', channel: async () => channel });
+    await adapter.generate({ ...input(), reasoningEffort: 'low' });
+    expect(requests[0].body).toMatchObject({ temperature: 0.4, max_tokens: 77, reasoning_effort: 'low' });
+    expect((channel.options as any).reasoning.effort).toBe('medium');
+    expect((overrideChannelReasoning(channel, 'high').options as any).reasoning).toMatchObject({ effort: 'high', summaryEnabled: true, summary: 'detailed' });
+    profile.models = [{ id: 'test-model', capabilities: { reasoningParameter: 'disabled' } }];
+    await expect(adapter.generate({ ...input(), reasoningEffort: 'low' })).rejects.toThrow('Reasoning effort is not enabled');
+    expect(requests).toHaveLength(1);
+  });
+
+  test('Gemini 和 Anthropic 的临时档位保留各自独立的思考开关与预算', () => {
+    const channel = buildChannelConfig(profile, input(), '');
+    channel.type = 'gemini'; channel.options = { thinkingConfig: { includeThoughts: false, mode: 'budget', thinkingBudget: 2048 } } as any;
+    expect((overrideChannelReasoning(channel, 'low').options as any).thinkingConfig).toEqual({ includeThoughts: false, mode: 'level', thinkingBudget: 2048, thinkingLevel: 'low' });
+    channel.type = 'anthropic'; channel.options = { thinking: { type: 'enabled', budget_tokens: 4096, display: 'omitted' } } as any;
+    expect((overrideChannelReasoning(channel, 'high').options as any).thinking).toEqual({ type: 'enabled', budget_tokens: 4096, display: 'omitted', effort: 'high' });
   });
 
   test('总结指令只追加到实际 HTTP 请求末尾，系统、工具、动态上下文和缓存标识不变', async () => {

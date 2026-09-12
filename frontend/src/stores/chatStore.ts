@@ -65,6 +65,8 @@ import {
   loadSavedConfigId,
   loadCheckpointConfig,
   setSelectedModelId as setSelectedModelIdAction,
+  setSelectedReasoningEffort as setSelectedReasoningEffortAction,
+  persistConversationModelConfig,
   setMergeUnchangedCheckpoints,
   setCurrentWorkspaceUri,
   setWorkspaceFilter as setWorkspaceFilterAction,
@@ -445,7 +447,8 @@ export const useChatStore = defineStore('chat', () => {
         editorNodes: state.editorNodes.value,
         inputValue: state.inputValue.value,
         currentPromptModeId: state.currentPromptModeId.value,
-        selectedModelId: state.selectedModelId.value
+        selectedModelId: state.selectedModelId.value,
+        selectedReasoningEffort: state.selectedReasoningEffort.value
       }
       await createNewConvAction(state, cancelStreamAndRejectTools)
       state.messageQueue.value = preserved.messageQueue
@@ -454,6 +457,8 @@ export const useChatStore = defineStore('chat', () => {
       state.inputValue.value = preserved.inputValue
       state.currentPromptModeId.value = preserved.currentPromptModeId
       state.selectedModelId.value = preserved.selectedModelId
+      state.selectedReasoningEffort.value = preserved.selectedReasoningEffort
+      await persistConversationModelConfig(state)
       void loadBranchGraphAction(state)
       return
     }
@@ -546,6 +551,7 @@ export const useChatStore = defineStore('chat', () => {
   
   const setConfigId = (newConfigId: string) => setConfigIdAction(state, newConfigId)
   const setSelectedModelId = (modelId: string) => setSelectedModelIdAction(state, modelId)
+  const setSelectedReasoningEffort = (effort: string) => setSelectedReasoningEffortAction(state, effort)
   const setWorkspaceFilter = (filter: 'current' | 'all') => setWorkspaceFilterAction(state, filter)
   const setInputValue = (value: string) => setInputValueAction(state, value)
 
@@ -915,6 +921,7 @@ export const useChatStore = defineStore('chat', () => {
     configId: state.configId,
     currentConfig: state.currentConfig,
     selectedModelId: state.selectedModelId,
+    selectedReasoningEffort: state.selectedReasoningEffort,
     isLoading: state.isLoading,
     isStreaming: state.isStreaming,
     isLoadingConversations: state.isLoadingConversations,
@@ -984,6 +991,7 @@ export const useChatStore = defineStore('chat', () => {
     setConfigId,
     loadCurrentConfig: () => loadCurrentConfig(state),
     setSelectedModelId,
+    setSelectedReasoningEffort,
     setCurrentPromptModeId,
     
     // 工具

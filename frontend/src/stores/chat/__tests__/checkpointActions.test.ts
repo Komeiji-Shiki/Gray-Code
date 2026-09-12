@@ -76,6 +76,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     autoSummaryStatus: ref(null),
     configId: ref('cfg_1'),
     selectedModelId: ref(''),
+    selectedReasoningEffort: ref(''),
     currentConfig: ref(null),
     currentPromptModeId: ref('code'),
     pendingModelOverride: ref<string | null>(null),
@@ -447,6 +448,7 @@ describe('summarizeContext（L-2：实现已迁至 messageActions，checkpointAc
     mockSend.mockResolvedValue({ success: true, summaryContent: '...', summarizedMessageCount: 5 })
     const state = createState({
       selectedModelId: ref('deepseek-v4-flash'),
+      selectedReasoningEffort: ref(''),
       currentConfig: ref({ model: '' } as any)
     })
 

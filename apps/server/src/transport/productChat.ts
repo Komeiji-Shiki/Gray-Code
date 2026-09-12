@@ -50,10 +50,14 @@ export class ProductChat {
     if (mode === 'send' && !parts.length && !data.hiddenFunctionResponse) throw new Error('请输入消息或添加附件。');
     const stream = this.createStream(conversation.id);
     stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
+    const selection = (conversation.custom as Record<string, any> | undefined)?.inputModelConfig;
+    // 对话级选择同时用于发送、继续和重试；单次改用其他渠道或模型时不套用原选择。
+    const selectedEffort = selection && selection.configId === data.configId && (!data.modelOverride || selection.modelId === data.modelOverride)
+      && typeof selection.reasoningEffort === 'string' ? selection.reasoningEffort : undefined;
     const input = { requestKey, actorId: client.actorId,
       conversationId: conversation.id, workspaceId: conversation.workspaceId as string | undefined,
       agentId: preferences.app.agents[0]?.id ?? 'default', providerId: data.configId, modelOverride: data.modelOverride,
-      reasoningEffort: data.reasoningEffort,
+      reasoningEffort: data.reasoningEffort ?? selectedEffort,
       promptModeId: data.promptModeId };
     let run: RunRecord;
     const scope = { clientId: client.clientId };

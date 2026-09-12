@@ -34,6 +34,8 @@ import type { EditorNode } from '../../types/editorNode'
 import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
 import { isAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
+import type { ProviderDefinition } from '../../../../packages/contracts/src/providers'
+import { reasoningLevelsForModel } from '../../../../shared/reasoningEffort'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -84,6 +86,7 @@ watch(() => chatStore.editorNodes, (nodes) => {
 // ========== Configs / Modes ==========
 
 const configs = ref<ChannelConfig[]>([])
+const reasoningProfiles = ref<ProviderDefinition[]>([])
 const isLoadingConfigs = ref(false)
 
 const promptModes = ref<PromptMode[]>([])
@@ -104,11 +107,19 @@ const modeOptions = computed<PromptMode[]>(() => promptModes.value)
 const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.configId))
 const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
+const currentReasoningLevels = computed(() => {
+  const profile = reasoningProfiles.value.find(item => item.id === chatStore.configId)
+  return profile ? reasoningLevelsForModel(profile, currentModel.value) : []
+})
 
 async function loadConfigs() {
   isLoadingConfigs.value = true
   try {
-    const ids = await configService.listConfigIds()
+    const [ids, platformSettings] = await Promise.all([
+      configService.listConfigIds(),
+      window.__GRAYCODE_HOST ? sendToExtension<{ providers: ProviderDefinition[] }>('platform.settings.get', {}) : Promise.resolve(undefined)
+    ])
+    reasoningProfiles.value = platformSettings?.providers ?? []
 
     // 并行拉取全部渠道配置（原为串行 N 次 IPC，渠道多时首屏线性变慢）；
     // 单条失败仅跳过该条并告警，不拖垮整批（保留单条失败容忍语义）
@@ -170,6 +181,11 @@ async function handleModelChange(modelId: string) {
     console.error('Failed to change model:', error)
     await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
   }
+}
+
+async function handleReasoningChange(effort: string) {
+  try { await chatStore.setSelectedReasoningEffort(effort) }
+  catch (error) { await showNotification(error instanceof Error ? error.message : t('common.error'), 'error') }
 }
 
 // ========== Send / Cancel ==========
@@ -803,10 +819,13 @@ watch(() => settingsStore.promptModesVersion, () => {
       :current-model-id="currentModel"
       :model-options="currentModels"
       :model-disabled="!chatStore.configId || isLoadingConfigs"
+      :reasoning-effort="chatStore.selectedReasoningEffort"
+      :reasoning-levels="currentReasoningLevels"
       @mode-change="handleModeChange"
       @open-mode-settings="openModeSettings"
       @channel-change="handleChannelChange"
       @model-change="handleModelChange"
+      @reasoning-change="handleReasoningChange"
     />
 
     <ContextDetailDialog

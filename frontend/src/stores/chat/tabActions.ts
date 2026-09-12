@@ -36,6 +36,7 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     totalMessages: state.totalMessages.value,
     configId: state.configId.value,
     selectedModelId: state.selectedModelId.value,
+    selectedReasoningEffort: state.selectedReasoningEffort.value,
     isLoadingMoreMessages: state.isLoadingMoreMessages.value,
     isStreaming: state.isStreaming.value,
     isLoading: state.isLoading.value,
@@ -81,6 +82,7 @@ export function restoreSessionFromSnapshot(
   state.totalMessages.value = snapshot.totalMessages
   state.configId.value = snapshot.configId
   state.selectedModelId.value = snapshot.selectedModelId
+  state.selectedReasoningEffort.value = snapshot.selectedReasoningEffort ?? ''
   state.isLoadingMoreMessages.value = snapshot.isLoadingMoreMessages
   state.isStreaming.value = snapshot.isStreaming
   state.isLoading.value = snapshot.isLoading
@@ -145,6 +147,7 @@ export function resetConversationState(state: ChatStoreState): void {
   state.pendingModelOverride.value = null
   state.pendingConfigIdOverride.value = null
   state.selectedModelId.value = state.currentConfig.value?.model || ''
+  state.selectedReasoningEffort.value = ''
   state.editorNodes.value = []
   state.attachments.value = []
   state.messageQueue.value = []

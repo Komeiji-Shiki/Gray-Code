@@ -228,6 +228,8 @@ export interface ChatStoreState {
   configId: Ref<string>
   /** 当前会话选择的模型 ID（对话级隔离，不直接改全局渠道配置） */
   selectedModelId: Ref<string>
+  /** 当前对话的思考强度，空字符串使用渠道设置。 */
+  selectedReasoningEffort: Ref<string>
   /** 当前配置详情 */
   currentConfig: Ref<ConfigInfo | null>
   /** 加载状态 */
@@ -423,6 +425,7 @@ export interface ConversationSessionSnapshot {
   configId: string
   /** 当前会话选择的模型 ID */
   selectedModelId: string
+  selectedReasoningEffort: string
   /** 总消息数 */
   totalMessages: number
   /** 是否正在加载更多消息 */

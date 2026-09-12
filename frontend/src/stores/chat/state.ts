@@ -372,6 +372,8 @@ export function createChatState(): ChatStoreState {
 
   /** 当前会话选择的模型 ID（对话级隔离） */
   const selectedModelId = ref('')
+  /** 空值表示跟随渠道设置，覆盖值仅属于当前对话。 */
+  const selectedReasoningEffort = ref('')
   
   /** 当前配置详情（包含模型名称） */
   const currentConfig = ref<ConfigInfo | null>(null)
@@ -534,6 +536,7 @@ export function createChatState(): ChatStoreState {
     foldedMessageCount,
     configId,
     selectedModelId,
+    selectedReasoningEffort,
     currentConfig,
     isLoading,
     isStreaming,

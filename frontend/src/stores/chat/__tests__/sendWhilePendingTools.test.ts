@@ -128,6 +128,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     autoSummaryStatus: ref(null),
     configId: ref('global_a'),
     selectedModelId: ref(''),
+    selectedReasoningEffort: ref(''),
     currentConfig: ref({ id: 'global_a', name: 'A', model: 'model-a', type: 'openai' }),
     currentPromptModeId: ref('code'),
     pendingModelOverride: ref<string | null>(null),
