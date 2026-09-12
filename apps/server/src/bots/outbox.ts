@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { BotDeliverySummary } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { BotGateway, BotReply } from './gateway';
 import type { BotPlatform, BotRoute } from './sessions';
@@ -138,7 +139,7 @@ export class BotOutbox {
       else if (failed) this.pendingCount++;
     });
   }
-  async list() {
+  async list(): Promise<BotDeliverySummary[]> {
     const values = await Promise.all((await this.app.storage.listRecords(this.namespace)).map(async id => {
       const value = await this.read(id);
       return value ? { id, phase: value.phase, channelId: value.route.channelId, conversationId: value.route.conversationId,

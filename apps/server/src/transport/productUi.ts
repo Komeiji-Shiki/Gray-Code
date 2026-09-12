@@ -69,7 +69,7 @@ export class ProductUi {
       if (type === 'platform.remote.revoke') { await this.app.remoteAccess.revoke(data.id); return { success: true }; }
       throw new Error('未知远程连接操作。');
     }
-    if (['platform.discord.guilds', 'platform.discord.channels', 'platform.discord.user', 'platform.discord.outbox', 'platform.discord.retryDelivery'].includes(type))
+    if (['platform.discord.guilds', 'platform.discord.channels', 'platform.discord.user', 'platform.discord.outbox', 'platform.discord.retryDelivery', 'platform.onebot.outbox', 'platform.onebot.retryDelivery'].includes(type))
       return this.invoke(client, type, data);
     if (['subagents.pauseRun', 'subagents.resumeRun', 'subagents.exitRun', 'subagents.resolveApproval', 'subagents.answerQuestion', 'subagents.monitor.requests'].includes(type))
       return this.invoke(client, type, data);
@@ -360,6 +360,8 @@ export class ProductUi {
       case 'platform.discord.outbox': return { messages: await this.app.discord.outbox.list() };
       case 'platform.discord.retryDelivery': return this.app.discord.outbox.retry(data.id, data.acknowledgeDuplicateRisk === true);
       case 'platform.onebot.status': return this.app.onebot.status();
+      case 'platform.onebot.outbox': return { messages: await this.app.onebot.outbox.list() };
+      case 'platform.onebot.retryDelivery': return this.app.onebot.outbox.retry(data.id, data.acknowledgeDuplicateRisk === true);
       case 'platform.onebot.start': return this.app.onebot.start();
       case 'platform.onebot.stop': await this.app.onebot.stop(); return { success: true };
       case 'platform.discord.start': return this.app.discord.start();

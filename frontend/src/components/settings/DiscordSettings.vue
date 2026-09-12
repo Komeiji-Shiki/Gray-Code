@@ -8,8 +8,8 @@ import { useBotConnectionStatus } from '../../composables/useBotConnectionStatus
 import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
 import DiscordProfileFields from './discord/DiscordProfileFields.vue';
 import DiscordOutputFields from './discord/DiscordOutputFields.vue';
+import BotOutboxPanel from './bots/BotOutboxPanel.vue';
 
-interface DeliveryView { id: string; phase: string; channelId: string; conversationId: string; createdAt: number; error?: string; preview: string; completedParts: number; totalParts: number }
 const sections = [{ id: 'connection', name: '连接' }, { id: 'defaults', name: '默认回复' }, { id: 'channels', name: '频道' }, { id: 'direct', name: '主人私聊' }, { id: 'bindings', name: '身份绑定' }, { id: 'outbox', name: '待发送' }];
 const section = ref('connection');
 const settings = ref<AppSettings>();
@@ -29,8 +29,6 @@ const query = ref('');
 const manualChannelId = ref('');
 const selectedChannelId = ref('');
 const bindingUsers = ref<Record<string, BotUser>>({});
-const deliveries = ref<DeliveryView[]>([]);
-const retryAcknowledged = ref<string[]>([]);
 const triggers: Array<{ id: DiscordTrigger; label: string }> = [
   { id: 'mention', label: '提及 Bot' }, { id: 'reply', label: '回复 Bot 的消息' }, { id: 'mention_or_reply', label: '提及或回复 Bot' },
   { id: 'keyword', label: '包含关键词' }, { id: 'all', label: '所有消息' }, { id: 'command', label: '仅 /gray 指令和操作面板' },
@@ -105,10 +103,8 @@ async function lookupUser(id: string) {
   if (!/^\d{1,20}$/.test(id)) throw new Error('请填写数字用户 ID。');
   const user = await sendToExtension<BotUser>('platform.discord.user', { userId: id }); bindingUsers.value[id] = user;
 }
-async function refreshOutbox() { deliveries.value = (await sendToExtension<{ messages: DeliveryView[] }>('platform.discord.outbox', {})).messages; await refreshStatus(); }
 function changeSection(id: string) {
   section.value = id;
-  if (id === 'outbox') void action('刷新待发送消息', refreshOutbox);
   if (id === 'channels' && status.value.status === 'connected' && !guilds.value.length) void action('读取服务器', refreshGuilds);
 }
 onMounted(async () => {
@@ -175,9 +171,7 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
         </div><button @click="addBinding">添加身份绑定</button>
       </section>
       <section v-else>
-        <div class="discord-heading"><h5>待发送消息</h5><button :disabled="!!busy" @click="action('刷新待发送消息', refreshOutbox)">刷新</button></div><p>任务记录保存在对话中。连接中断时，已取得回执的消息可以继续更新；没有确认送达的新消息需要人工检查。</p>
-        <p v-if="!deliveries.length" class="discord-empty">目前没有待发送消息。</p>
-        <article v-for="item in deliveries" :key="item.id" class="discord-delivery"><div class="discord-heading"><strong>{{ item.phase === 'unknown' || item.phase === 'sending' ? '发送结果尚未确认' : item.phase === 'editing' ? '正在更新回复' : '等待发送或更新' }}</strong><small>{{ item.createdAt ? new Date(item.createdAt).toLocaleString() : '旧版消息' }}</small></div><p>频道 {{ bot.channels?.[item.channelId]?.name || item.channelId }} · {{ item.completedParts }} / {{ item.totalParts }} 段</p><pre>{{ item.preview }}</pre><p v-if="item.error" class="discord-error">{{ item.error }}</p><label v-if="item.phase === 'unknown' || item.phase === 'sending'" class="discord-confirm" data-preference-transient><input v-model="retryAcknowledged" type="checkbox" :value="item.id" />已检查频道，允许重试并接受可能重复发送</label><button :disabled="!!busy || status.status !== 'connected' || (['unknown', 'sending'].includes(item.phase) && !retryAcknowledged.includes(item.id))" @click="action('重试发送', async () => { await sendToExtension('platform.discord.retryDelivery', { id: item.id, acknowledgeDuplicateRisk: retryAcknowledged.includes(item.id) }); await refreshOutbox(); })">重试发送</button></article>
+        <BotOutboxPanel platform="discord" :connected="status.status === 'connected'" :channels="bot.channels" @refresh-status="action('刷新状态', refreshStatus)" />
       </section>
     </template>
     <p v-else>正在读取 Discord 设置…</p>

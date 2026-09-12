@@ -5,3 +5,8 @@ export interface BotStatus {
   status: string; botId?: string; name?: string; avatarUrl?: string; error?: string; pendingMessages?: number;
   controlsReady?: boolean; warning?: string; needsReconnect?: boolean; deliveryError?: string; retryAt?: number;
 }
+
+export interface BotDeliverySummary {
+  id: string; phase: 'queued' | 'sending' | 'editing' | 'unknown'; channelId: string; conversationId: string;
+  createdAt: number; error?: string; preview: string; completedParts: number; totalParts: number;
+}

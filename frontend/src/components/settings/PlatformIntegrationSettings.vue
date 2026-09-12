@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import PlatformWorkspaceSettings from './PlatformWorkspaceSettings.vue';
 import BotConversationFields from './discord/BotConversationFields.vue';
+import BotOutboxPanel from './bots/BotOutboxPanel.vue';
 import PermissionAccountFields from './PermissionAccountFields.vue';
 import type { AppSettings, PlatformBinding } from '../../../../packages/contracts/src/settings';
 import type { ActorIdentity } from '../../../../packages/contracts/src/runtime';
@@ -16,6 +17,7 @@ const credentialChanges = ref<Record<string, string | null>>({});
 const { status, statusLabel, refreshStatus, startConnection } = useBotConnectionStatus(platform);
 const error = ref('');
 const busy = ref(false);
+const showOutbox = ref(false);
 const id = (prefix: string) => prefix + '_' + crypto.randomUUID().slice(0, 8);
 const pendingDeleteId = ref('');
 const accountBusy = ref('');
@@ -66,6 +68,10 @@ async function save() {
 async function action(run: () => Promise<unknown>) {
   try { error.value = ''; await run(); } catch (e) { error.value = (e as Error).message; }
 }
+function changed(event: Event) {
+  if (event.target instanceof Element && event.target.closest('[data-preference-transient]')) return;
+  void action(save);
+}
 async function connect() {
   if (desktopSettingsDraft.dirty || (await sendToExtension<{ dirty: boolean }>('ui.settings.status', {})).dirty) throw new Error('请先点击下方“保存全部”，再连接 Bot。');
   busy.value = true;
@@ -93,7 +99,7 @@ onMounted(async () => {
 useDesktopSettingsDraft(save, () => !!settings.value);
 </script>
 <template>
-  <div v-if="settings" class="platform-integrations" @change="action(save)">
+  <div v-if="settings" class="platform-integrations" @change="changed">
     <template v-if="(section === 'discord' || section === 'onebot') && bot">
       <header class="integration-header"><h4>{{ section === 'onebot' ? 'NapCat / OneBot' : 'Discord Bot' }}</h4><span class="integration-status" role="status" :class="{ connected: status.status === 'connected' }">{{ statusLabel }}</span></header>
       <p>Bot 与桌面共用会话、模型和权限。设置通过下方“保存全部”生效，连接按钮使用已保存的设置。</p>
@@ -112,6 +118,8 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <div class="connection-actions"><button :disabled="busy" @click="action(connect)">{{ busy && status.status === 'connecting' ? '正在连接…' : '连接 / 重连' }}</button><button :disabled="busy || status.status === 'stopped'" @click="action(disconnect)">断开</button><button :disabled="busy" @click="action(refreshStatus)">刷新状态</button></div>
       <p v-if="status.error || status.warning" class="integration-error" role="alert">{{ status.error || status.warning }}</p>
       <p v-if="status.retryAt">将于 {{ new Date(status.retryAt).toLocaleTimeString() }} 自动重试连接，也可以点击“连接 / 重连”。</p>
+      <button class="outbox-toggle" :aria-expanded="showOutbox" @click="showOutbox = !showOutbox">{{ showOutbox ? '收起待发送消息' : '查看待发送消息' }}{{ status.pendingMessages ? `（${status.pendingMessages}）` : '' }}</button>
+      <BotOutboxPanel v-if="showOutbox" :platform="platform" :connected="status.status === 'connected'" @refresh-status="action(refreshStatus)" />
       <h3>响应范围与会话</h3>
       <label>允许响应的会话<textarea :value="bot.allowedChannelIds.join('\n')" rows="3" :placeholder="section === 'onebot' ? '每行一个：group:群号 或 private:用户ID' : '每行一个频道 ID'" @input="bot.allowedChannelIds = ($event.target as HTMLTextAreaElement).value.split(/[\n,，]/).map(id => id.trim()).filter(Boolean)"></textarea></label>
       <p v-if="section === 'onebot' && settings.onebot?.protocolVersion === 12">v12 还支持 channel:群组ID:频道ID；ID 中的冒号等分隔符须作 URL 编码。</p>

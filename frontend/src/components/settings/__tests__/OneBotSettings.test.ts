@@ -24,6 +24,18 @@ const open = () => mount(PlatformIntegrationSettings, { props: { section: 'onebo
 const button = (wrapper: ReturnType<typeof open>, name: string) => wrapper.findAll('button').find(item => item.text() === name)!;
 
 describe('OneBot 连接反馈与草稿', () => {
+  test('待发送确认只影响重试，不写入设置草稿', async () => {
+    const fallback = mock.send.getMockImplementation()!;
+    mock.send.mockImplementation((type: string) => type === 'platform.onebot.outbox'
+      ? Promise.resolve({ messages: [{ id: 'pending', phase: 'unknown', channelId: 'group:30', preview: '待确认', completedParts: 0, totalParts: 1 }] }) : fallback(type));
+    const wrapper = open(); await flushPromises();
+    try {
+      await wrapper.get('.outbox-toggle').trigger('click'); await flushPromises();
+      await wrapper.get('.bot-outbox input[type=checkbox]').setValue(true); await flushPromises();
+      expect(mock.send.mock.calls.some(call => call[0] === 'platform.settings.update')).toBe(false);
+      expect(mock.markDirty).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
   test('断线重连通知更新身份和错误，迟到的初始化状态不能覆盖通知', async () => {
     let resolveStatus!: (value: unknown) => void;
     const fallback = mock.send.getMockImplementation()!;

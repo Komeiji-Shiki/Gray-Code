@@ -2,6 +2,28 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
 
+test('Bot 待发送接口按平台隔离，并保留主人授权与不确定消息重试确认', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const router = new ApplicationRouter(app);
+  const call = (platform: string, action: string, data = {}, actorId = 'owner') => router.call({ actorId, clientId: 'outbox-ui' }, 'ui.request', { type: `platform.${platform}.${action}`, data }) as Promise<any>;
+  try {
+    for (const platform of ['discord', 'onebot']) {
+      await app.storage.putRecord({ namespace: `${platform}-outbox`, id: `${platform}-pending`, value: {
+        route: { platform, botId: '900', channelId: 'group:30', actorId: 'owner', conversationId: 'conversation', platformUserId: '10' }, parts: [`${platform} 待确认回复`], next: 0,
+      } });
+    }
+    for (const platform of ['discord', 'onebot']) {
+      expect((await call(platform, 'outbox')).messages).toEqual([expect.objectContaining({ id: `${platform}-pending`, phase: 'unknown', preview: `${platform} 待确认回复` })]);
+      await expect(call(platform, 'outbox', {}, 'unbound')).rejects.toThrow();
+      await expect(call(platform, 'retryDelivery', { id: `${platform}-pending`, acknowledgeDuplicateRisk: true }, 'unbound')).rejects.toThrow();
+      await expect(call(platform, 'retryDelivery', { id: `${platform}-pending` })).rejects.toThrow('明确确认');
+      await call(platform, 'retryDelivery', { id: `${platform}-pending`, acknowledgeDuplicateRisk: true });
+      expect((await call(platform, 'outbox')).messages[0].phase).toBe('queued');
+    }
+  } finally { await app.close(); await f.cleanup(); }
+});
+
 test('the existing UI protocol uses original settings services and streams core tool tasks with stable message IDs', async () => {
   const f = await fixture(); await f.store.close();
   const notifications: Record<string, any>[] = [];
