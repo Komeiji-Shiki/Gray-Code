@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
+// 页面中的组件共用一个 IPC 监听，打开多个文件时不会触发监听数量警告。
+const eventListeners = new Set<(event: Record<string, unknown>) => void>();
+ipcRenderer.on('graycode:event', (_event: Electron.IpcRendererEvent, value: Record<string, unknown>) => {
+  for (const listener of [...eventListeners]) listener(value);
+});
 contextBridge.exposeInMainWorld("graycode", {
   call: async (method: string, params?: Record<string, unknown>) => {
     try { return await ipcRenderer.invoke('graycode:rpc', method, params); }
@@ -9,11 +14,8 @@ contextBridge.exposeInMainWorld("graycode", {
     }
   },
   subscribe: (listener: (event: Record<string, unknown>) => void) => {
-    const callback = (
-      _event: Electron.IpcRendererEvent,
-      value: Record<string, unknown>,
-    ) => listener(value);
-    ipcRenderer.on("graycode:event", callback);
-    return () => ipcRenderer.removeListener("graycode:event", callback);
+    const callback = (value: Record<string, unknown>) => listener(value);
+    eventListeners.add(callback);
+    return () => { eventListeners.delete(callback); };
   },
 });
