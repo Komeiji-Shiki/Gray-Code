@@ -328,7 +328,7 @@ onUnmounted(() => { unsubscribe(); window.removeEventListener('keydown', project
         </div>
       </div>
       <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
-      <TerminalPanel v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused" /><GitPanel v-if="pane === 'git'" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
+      <TerminalPanel v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused" /><GitPanel v-if="openedPanels.includes('git')" v-show="pane === 'git'" :visible="pane === 'git'" :save-all="saveAll" :flush="flushDocuments" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
       <SearchPanel v-if="openedPanels.includes('search')" v-show="pane === 'search'" :workspace-id="state.workspaceId" :flush="flushDocuments" :apply="replaceFiles" :save-all="saveAll" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <OutlinePanel v-if="pane === 'outline'" :document="active" :flush="flushDocuments" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <ProblemsPanel v-if="pane === 'problems'" :workspace-id="active?.workspaceId ?? state.workspaceId" @open="(path, range, workspaceId) => guard(() => open(path, workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1, endLineNumber: range.end.line + 1, endColumn: range.end.character + 1 }))" />

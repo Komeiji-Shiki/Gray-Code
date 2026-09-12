@@ -11,6 +11,7 @@ export * from './remote';
 export * from './teams';
 export * from './files';
 export * from './search';
+export * from './git';
 export * from './search';
 export * from './backups';
 export * from './automations';

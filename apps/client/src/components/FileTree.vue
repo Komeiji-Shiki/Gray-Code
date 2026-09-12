@@ -89,7 +89,7 @@ const unsubscribe = subscribe(event => {
       if (selected.value?.path === event.from) selected.value = undefined;
     }
     void guard(refresh);
-  } else if (event.type === 'file.changed' && event.workspaceId === state.workspaceId) void guard(refresh);
+  } else if (['file.changed', 'workspace.git.changed'].includes(event.type) && event.workspaceId === state.workspaceId) void guard(refresh);
 });
 onUnmounted(() => { ++treeEpoch; unsubscribe(); state.fileDialogOpen = false; });
 </script>

@@ -89,6 +89,33 @@ export class WorkspaceFiles {
   dirtyPaths(workspaceId: string): string[] {
     return [...new Set([...this.documents.values()].filter(document => document.workspaceId === workspaceId && document.dirty).map(document => document.path))];
   }
+  private documentInside(key: string, document: DocumentState, directory: string): boolean {
+    return inside(this.key(path.resolve(directory)), key.slice(document.clientId.length + 1));
+  }
+  dirtyPathsInDirectory(directory: string): string[] {
+    return [...new Set([...this.documents].filter(([key, document]) => document.dirty && this.documentInside(key, document, directory)).map(([, document]) => document.path))];
+  }
+  /** 同步 Git 或外部操作改动的干净文件，保持原有草稿版本协议。 */
+  async reloadCleanDocuments(directory: string): Promise<void> {
+    for (const [key, previous] of this.documents) {
+      if (previous.dirty || !this.documentInside(key, previous, directory)) continue;
+      const event: DocumentReset = { workspaceId: previous.workspaceId, path: previous.path, clientId: previous.clientId,
+        previousVersion: previous.version, previousText: previous.text };
+      const current = () => this.documents.get(key) === previous && !previous.dirty && previous.version === event.previousVersion;
+      try {
+        const value = await this.readAbsolute(key.slice(previous.clientId.length + 1));
+        // Git 刷新也会读取外部修改；读取期间输入发生变化时，保留新草稿。
+        if (!current()) continue;
+        if (value.hash === previous.baseHash) continue;
+        if (value.hash === null) { this.documents.delete(key); event.removed = true; }
+        else {
+          const document = { ...previous, text: value.text, baseHash: value.hash, version: previous.version + 1 };
+          this.documents.set(key, document); event.document = structuredClone(document);
+        }
+      } catch (error) { if (!current()) continue; this.documents.delete(key); event.error = `文件已经变化，无法继续以文本显示：${String(error)}`; }
+      this.documentReset(event);
+    }
+  }
   async resolveAbsolute(file: string, entryOnly = false): Promise<string> {
     const absolute = path.resolve(file);
     let ancestor = entryOnly ? path.dirname(absolute) : absolute;
@@ -113,12 +140,13 @@ export class WorkspaceFiles {
   /** 所有宿主写入和草稿更新共用写锁，恢复期间不会插入另一次保存。 */
   async transaction<T>(workspace: WorkspaceDefinition, operation: (transaction: FileTransaction) => Promise<T>, options: {
     clientId?: string; recovery?: boolean; writeGrants?: ToolContext['fileWriteGrants'];
-    rejectDirty?: boolean; discardDirtyFiles?: readonly string[];
+    rejectDirty?: boolean; discardDirtyFiles?: readonly string[]; dirtyDirectory?: string;
   } = {}): Promise<T> {
     return this.locked('workspace-mutations', async () => {
       if (this.recoveryError && !options.recovery) throw new Error(`WORKSPACE_RECOVERY_REQUIRED: ${this.recoveryError}`);
       const dirty = options.rejectDirty || options.discardDirtyFiles !== undefined
-        ? [...this.documents.entries()].filter(([, document]) => document.workspaceId === workspace.id && document.dirty) : [];
+        ? [...this.documents.entries()].filter(([key, document]) => document.dirty &&
+          (options.dirtyDirectory ? this.documentInside(key, document, options.dirtyDirectory) : document.workspaceId === workspace.id)) : [];
       const dirtyFiles = [...new Set(dirty.map(([, document]) => document.path))].sort();
       const confirmed = options.discardDirtyFiles !== undefined;
       if (confirmed && JSON.stringify([...new Set(options.discardDirtyFiles)].sort()) !== JSON.stringify(dirtyFiles)) {

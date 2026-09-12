@@ -1,4 +1,4 @@
-import { workspaceForRoot } from '../workspace/paths';
+import { gitRequest } from './git';
 import { workspaceDirectoryKey } from '../workspace/identity';
 import { ProjectNavigation } from '../conversations/projects';
 import type { PlatformApplication } from "../application";
@@ -18,6 +18,7 @@ export class ApplicationRouter {
   ): Promise<unknown> {
     const app = this.application;
     if (!app.actor(session.actorId)) throw new Error("Account is unavailable.");
+    if (method.startsWith('git.')) return gitRequest(app, session, method, params);
     if (method.startsWith('automations.')) {
       switch (method) {
         case 'automations.options': return app.automations.options(session.actorId, params.conversationId);
@@ -387,39 +388,6 @@ export class ApplicationRouter {
       case "storage.info":
         app.requireOwner(session.actorId);
         return app.storage.statistics();
-      case "git.status":
-        app.requireOwner(session.actorId);
-        return app.git.status(
-          workspaceForRoot(app.workspace(session.actorId, params.workspaceId, [
-            "workspace_read",
-          ]), params.directory),
-        );
-      case "git.diff":
-        app.requireOwner(session.actorId);
-        return app.git.diff(
-          workspaceForRoot(app.workspace(session.actorId, params.workspaceId, [
-            "workspace_read",
-          ]), params.directory),
-          params.path,
-          params.staged === true,
-        );
-      case "git.stage":
-        app.requireOwner(session.actorId);
-        return app.git.stage(
-          workspaceForRoot(app.workspace(session.actorId, params.workspaceId, [
-            "workspace_write",
-          ]), params.directory),
-          params.path,
-          params.staged === true,
-        );
-      case "git.commit":
-        app.requireOwner(session.actorId);
-        return app.git.commit(
-          workspaceForRoot(app.workspace(session.actorId, params.workspaceId, [
-            "workspace_write",
-          ]), params.directory),
-          params.message,
-        );
       default:
         throw new Error(`Unknown application method: ${method}`);
     }
