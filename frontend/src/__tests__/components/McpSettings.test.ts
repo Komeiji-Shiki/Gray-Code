@@ -76,6 +76,31 @@ describe('McpSettings stdio arguments', () => {
     setActivePinia(undefined)
   })
 
+  test('读取失败显示原因并可重试，不显示虚假的空列表', async () => {
+    let attempt = 0
+    sendToExtension.mockImplementation((command: string) => command === 'getMcpServers'
+      ? ++attempt === 1 ? Promise.resolve({ success: false, error: { message: '读取服务暂时中断' } }) : Promise.resolve(serverResponse())
+      : Promise.resolve({ success: true }))
+    wrapper = mount(McpSettings); await flushPromises()
+    expect(wrapper.get('[role=alert]').text()).toContain('读取服务暂时中断')
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
+    await wrapper.get('.load-error button').trigger('click'); await flushPromises()
+    expect(wrapper.find('.load-error').exists()).toBe(false)
+    expect(wrapper.get('.server-name').text()).toBe('Stdio Test')
+  })
+
+  test('配置通知触发的新列表不被迟到的旧查询覆盖', async () => {
+    let release!: (value: ReturnType<typeof serverResponse>) => void
+    let attempt = 0
+    sendToExtension.mockImplementation((command: string) => command === 'getMcpServers'
+      ? ++attempt === 1 ? new Promise(resolve => { release = resolve }) : Promise.resolve(serverResponse())
+      : Promise.resolve({ success: true }))
+    wrapper = mount(McpSettings); await flushPromises()
+    commandHandlers.get('mcp.configChanged')!({}); await flushPromises()
+    release({ success: true, servers: [] }); await flushPromises()
+    expect(wrapper.get('.server-name').text()).toBe('Stdio Test')
+  })
+
   test('loads and saves a lossless JSON argument array', async () => {
     wrapper = mount(McpSettings)
     await flushPromises()

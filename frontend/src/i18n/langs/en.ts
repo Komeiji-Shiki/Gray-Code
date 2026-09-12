@@ -1769,6 +1769,7 @@ const en: LanguageMessages = {
                 }
             },
             mcpSettings: {
+                loadFailed: 'Unable to load MCP servers',
                 toolbar: {
                     addServer: 'Add Server',
                     editJson: 'Edit JSON',

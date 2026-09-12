@@ -1769,6 +1769,7 @@ const ja: LanguageMessages = {
                 }
             },
             mcpSettings: {
+                loadFailed: 'MCP サーバーを読み込めません',
                 toolbar: {
                     addServer: 'サーバーを追加',
                     editJson: 'JSON を編集',

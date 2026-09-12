@@ -34,6 +34,8 @@ const servers = ref<McpServerInfo[]>([])
 
 // 是否正在加载
 const isLoading = ref(false)
+const loadError = ref('')
+let loadRequestSeq = 0
 
 // 当前视图模式
 type ViewMode = 'list' | 'edit' | 'json'
@@ -128,16 +130,18 @@ const hasServers = computed(() => servers.value.length > 0)
 
 // 加载服务器列表
 async function loadServers() {
+  const request = ++loadRequestSeq
   isLoading.value = true
+  loadError.value = ''
   try {
     const response = await sendToExtension<{ success: boolean; servers?: McpServerInfo[]; error?: any }>(MESSAGE_NAMES.getMcpServers, {})
-    if (response?.success && response.servers) {
-      servers.value = response.servers
-    }
+    if (request !== loadRequestSeq) return
+    if (!response?.success || !Array.isArray(response.servers)) throw new Error(response?.error?.message || t('components.settings.mcpSettings.loadFailed'))
+    servers.value = response.servers
   } catch (error) {
-    console.error('Failed to load MCP servers:', error)
+    if (request === loadRequestSeq) loadError.value = error instanceof Error ? error.message : t('components.settings.mcpSettings.loadFailed')
   } finally {
-    isLoading.value = false
+    if (request === loadRequestSeq) isLoading.value = false
   }
 }
 
@@ -542,6 +546,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  loadRequestSeq++
   // 清理在途的 ID 校验防抖计时器
   resetIdValidation()
   if (unsubscribeMcpChanged) {
@@ -560,6 +565,7 @@ onUnmounted(() => {
       :servers="servers"
       :is-loading="isLoading"
       :has-servers="hasServers"
+      :load-error="loadError"
       :connection-error="connectionError"
       :connecting-ids="connectingServers"
       @start-create="startCreate"

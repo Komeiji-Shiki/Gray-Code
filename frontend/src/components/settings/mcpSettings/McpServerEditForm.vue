@@ -61,13 +61,14 @@ const emit = defineEmits<{
         class="close-btn gc-icon-button"
         :title="t('common.close')"
         :aria-label="t('common.close')"
+        :disabled="isSaving"
         @click="emit('cancel')"
       >
         <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
 
-    <div class="edit-form">
+    <fieldset class="edit-form" :disabled="isSaving">
       <!-- 基本信息 -->
       <div class="form-section" data-search-anchor="mcp-basic-info">
         <!-- 自定义 ID（仅创建时显示） -->
@@ -77,6 +78,7 @@ const emit = defineEmits<{
             <input
               type="text"
               v-model="formData.customId"
+              :aria-label="t('components.settings.mcpSettings.form.serverId')"
               :placeholder="t('components.settings.mcpSettings.form.serverIdPlaceholder')"
               class="form-input"
               :class="{
@@ -110,6 +112,7 @@ const emit = defineEmits<{
           <input
             type="text"
             v-model="formData.name"
+            :aria-label="t('components.settings.mcpSettings.form.serverName')"
             :placeholder="t('components.settings.mcpSettings.form.serverNamePlaceholder')"
             class="form-input"
           />
@@ -120,6 +123,7 @@ const emit = defineEmits<{
           <input
             type="text"
             v-model="formData.description"
+            :aria-label="t('components.settings.mcpSettings.form.description')"
             :placeholder="t('components.settings.mcpSettings.form.descriptionPlaceholder')"
             class="form-input"
           />
@@ -161,6 +165,7 @@ const emit = defineEmits<{
           <input
             type="text"
             v-model="formData.command"
+            :aria-label="t('components.settings.mcpSettings.form.command')"
             :placeholder="t('components.settings.mcpSettings.form.commandPlaceholder')"
             class="form-input"
           />
@@ -171,6 +176,7 @@ const emit = defineEmits<{
           <input
             type="text"
             v-model="formData.args"
+            :aria-label="t('components.settings.mcpSettings.form.args')"
             :placeholder="t('components.settings.mcpSettings.form.argsPlaceholder')"
             class="form-input"
           />
@@ -180,6 +186,7 @@ const emit = defineEmits<{
           <label>{{ t('components.settings.mcpSettings.form.env') }}</label>
           <textarea
             v-model="formData.env"
+            :aria-label="t('components.settings.mcpSettings.form.env')"
             :placeholder="t('components.settings.mcpSettings.form.envPlaceholder')"
             class="form-textarea"
             rows="3"
@@ -194,6 +201,7 @@ const emit = defineEmits<{
           <input
             type="text"
             v-model="formData.url"
+            :aria-label="t('components.settings.mcpSettings.form.url')"
             :placeholder="formData.transportType === 'sse' ? t('components.settings.mcpSettings.form.urlPlaceholderSse') : t('components.settings.mcpSettings.form.urlPlaceholderHttp')"
             class="form-input"
           />
@@ -203,6 +211,7 @@ const emit = defineEmits<{
           <label>{{ t('components.settings.mcpSettings.form.headers') }}</label>
           <textarea
             v-model="formData.headers"
+            :aria-label="t('components.settings.mcpSettings.form.headers')"
             :placeholder="t('components.settings.mcpSettings.form.headersPlaceholder')"
             class="form-textarea"
             rows="3"
@@ -241,6 +250,7 @@ const emit = defineEmits<{
           <input
             type="number"
             v-model.number="formData.timeout"
+            :aria-label="t('components.settings.mcpSettings.form.timeout')"
             class="form-input"
             min="1000"
             max="300000"
@@ -249,7 +259,7 @@ const emit = defineEmits<{
       </div>
 
       <!-- 错误信息 -->
-      <div v-if="saveError" class="form-error">
+      <div v-if="saveError" class="form-error" role="alert">
         <i class="codicon codicon-error"></i>
         {{ saveError }}
       </div>
@@ -268,11 +278,12 @@ const emit = defineEmits<{
           <span v-else>{{ isCreating ? t('components.settings.mcpSettings.form.create') : t('components.settings.mcpSettings.form.save') }}</span>
         </button>
       </div>
-    </div>
+    </fieldset>
   </div>
 </template>
 
 <style scoped>
+fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
 /* 编辑视图 */
 .mcp-edit-view {
   display: flex;

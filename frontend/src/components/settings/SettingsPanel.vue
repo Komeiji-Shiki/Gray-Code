@@ -390,11 +390,12 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
           </div>
           
           <!-- MCP 设置 -->
-          <div v-if="settingsStore.activeTab === 'mcp'" class="settings-section">
+          <div v-show="settingsStore.activeTab === 'mcp'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.mcp.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.mcp.description') }}</p>
             
-            <McpSettings />
+            <!-- 不完整的新增表单也保留在统一草稿中，撤销全部会随父级 generation 清除。 -->
+            <KeepAlive><McpSettings v-if="settingsStore.activeTab === 'mcp'" /></KeepAlive>
           </div>
           
           <!-- 存档点设置 -->

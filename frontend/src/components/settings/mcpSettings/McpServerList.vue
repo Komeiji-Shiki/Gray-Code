@@ -17,6 +17,7 @@ const props = defineProps<{
   isLoading: boolean
   hasServers: boolean
   connectionError: string
+  loadError: string
   connectingIds: Set<string>
 }>()
 
@@ -75,7 +76,11 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
     </div>
 
     <!-- 连接/断开操作错误提示 -->
-    <div v-if="connectionError" class="form-error" style="margin-bottom: 8px;">
+    <div v-if="loadError" class="load-error" role="alert">
+      <div><strong>{{ t('components.settings.mcpSettings.loadFailed') }}</strong><p v-if="loadError !== t('components.settings.mcpSettings.loadFailed')">{{ loadError }}</p></div>
+      <button class="toolbar-btn" :disabled="isLoading" @click="emit('refresh')">{{ t('common.retry') }}</button>
+    </div>
+    <div v-if="connectionError" class="form-error" role="alert" style="margin-bottom: 8px;">
       <i class="codicon codicon-error"></i>
       {{ connectionError }}
     </div>
@@ -86,7 +91,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
       <span>{{ t('components.settings.mcpSettings.loading') }}</span>
     </div>
 
-    <div v-else-if="!hasServers" class="empty-state">
+    <div v-else-if="!hasServers && !loadError" class="empty-state">
       <div class="empty-icon">
         <i class="codicon codicon-plug"></i>
       </div>
@@ -94,7 +99,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
       <p>{{ t('components.settings.mcpSettings.empty.description') }}</p>
     </div>
 
-    <div v-else class="server-list" data-search-anchor="mcp-server-list">
+    <div v-else-if="hasServers" class="server-list" data-search-anchor="mcp-server-list">
       <div
         v-for="server in servers"
         :key="server.config.id"
@@ -175,6 +180,8 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 </template>
 
 <style scoped>
+.load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; padding: 14px; border: 1px solid var(--gc-danger); color: var(--gc-danger); overflow-wrap: anywhere; }
+.load-error p { margin: 6px 0 0; }
 /* 工具栏 */
 .mcp-toolbar {
   display: flex;

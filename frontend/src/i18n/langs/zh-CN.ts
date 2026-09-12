@@ -1771,6 +1771,7 @@ const zhCN = {
                 }
             },
             mcpSettings: {
+                loadFailed: '无法读取 MCP 服务器',
                 toolbar: {
                     addServer: '添加服务器',
                     editJson: '编辑 JSON',
