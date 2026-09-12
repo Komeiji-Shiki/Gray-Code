@@ -48,9 +48,11 @@ function isMediaTile(attachment: Attachment): boolean {
     >
       <!-- 媒体：缩略图块 -->
       <template v-if="isMediaTile(attachment)">
-        <div
+        <button
+          type="button"
           class="tile-media clickable"
           :title="t('components.message.attachment.clickToPreview')"
+          :aria-label="`${t('components.message.attachment.clickToPreview')}: ${attachment.name}`"
           @click="emit('preview', attachment)"
         >
           <img
@@ -66,7 +68,7 @@ function isMediaTile(attachment: Attachment): boolean {
             v-if="attachment.type === 'video'"
             class="codicon codicon-play tile-overlay"
           ></i>
-        </div>
+        </button>
         <IconButton
           class="tile-remove"
           icon="codicon-close"
@@ -118,11 +120,19 @@ function isMediaTile(attachment: Attachment): boolean {
 }
 
 .tile-media {
+  display: block;
   width: 100%;
   height: 100%;
-  border-radius: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
   background: var(--vscode-editor-background);
+}
+
+.tile-media:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
 }
 
 .tile-img {

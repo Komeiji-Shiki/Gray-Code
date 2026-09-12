@@ -71,6 +71,8 @@ describe('InputAttachments', () => {
   it('emits preview when clicking the media tile', async () => {
     const attachment = makeAttachment({ thumbnail: 'data:image/png;base64,x' })
     const wrapper = mountAttachments([attachment])
+    expect(wrapper.get('.tile-media').element.tagName).toBe('BUTTON')
+    expect(wrapper.get('.tile-media').attributes('aria-label')).toContain('a.png')
     await wrapper.get('.attachment-tile.is-media .tile-media').trigger('click')
     expect(wrapper.emitted('preview')).toHaveLength(1)
     expect(wrapper.emitted('preview')![0][0]).toEqual(attachment)

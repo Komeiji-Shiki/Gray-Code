@@ -1,13 +1,41 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { nextTick, onUnmounted, ref, watch } from 'vue';
 import { call, subscribe } from '../api';
 import { report, state } from '../state';
 interface Preview { id: string; title: string; content?: string; language?: string; data?: string; mimeType?: string }
 const value = ref<Preview>();
-watch(value, value => { state.contentPreviewOpen = !!value; }); const url = ref(''); let generation = 0;
+const dialog = ref<HTMLElement>();
+let previousFocus: HTMLElement | null = null;
+function currentFocus(): HTMLElement | null {
+  let element = document.activeElement as HTMLElement | null;
+  // 聊天在同源 iframe 中，保存真正的附件按钮，不能只保存外层 iframe。
+  while (element?.tagName === 'IFRAME') {
+    const nested = (element as HTMLIFrameElement).contentDocument?.activeElement as HTMLElement | null;
+    if (!nested) break;
+    element = nested;
+  }
+  return element;
+}
+watch(value, async value => {
+  state.contentPreviewOpen = !!value;
+  if (!value) return;
+  previousFocus ??= currentFocus();
+  await nextTick();
+  dialog.value?.querySelector<HTMLButtonElement>('header button')?.focus();
+});
+const url = ref(''); let generation = 0;
+function trapTab(event: KeyboardEvent) {
+  const controls = [...dialog.value?.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),audio[controls],video[controls],iframe') ?? []];
+  const target = event.shiftKey ? controls.at(-1) : controls[0];
+  const boundary = event.shiftKey ? controls[0] : controls.at(-1);
+  if (target && document.activeElement === boundary) { event.preventDefault(); target.focus(); }
+}
 function release() { if (url.value) URL.revokeObjectURL(url.value); url.value = ''; }
 async function close() {
   generation++; const previous = value.value; value.value = undefined; release();
+  const returnTo = previousFocus; previousFocus = null;
+  await nextTick();
+  if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
   if (previous) await call('ui.request', { type: 'preview.close', data: { id: previous.id } }).catch(() => {});
 }
 const unsubscribe = subscribe(event => {
@@ -27,7 +55,7 @@ const unsubscribe = subscribe(event => {
 onUnmounted(() => { unsubscribe(); void close(); });
 </script>
 <template>
-  <div v-if="value" class="content-preview-backdrop" @keydown.esc="close"><section class="content-preview" role="dialog" aria-modal="true" :aria-label="value.title">
+  <div v-if="value" class="content-preview-backdrop" @keydown.esc.stop.prevent="close" @keydown.tab="trapTab"><section ref="dialog" class="content-preview" role="dialog" aria-modal="true" :aria-label="value.title">
     <header><strong>{{ value.title }}</strong><a v-if="url" :href="url" :download="value.title">保存附件</a><button @click="close">关闭</button></header>
     <div class="content-preview-body">
       <pre v-if="value.content !== undefined"><code>{{ value.content }}</code></pre>
