@@ -44,6 +44,7 @@ onMounted(() => {
     value: props.value,
     model: undefined,
     automaticLayout: true,
+    fixedOverflowWidgets: true,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     padding: { top: 14 },
