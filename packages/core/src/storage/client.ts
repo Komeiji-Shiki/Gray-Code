@@ -101,6 +101,7 @@ export class PlatformStorage {
   verify() { return this.request('verify', undefined); }
   collectGarbage() { return this.request('collectGarbage', undefined); }
   checkpoint() { return this.request('checkpoint', undefined); }
+  backupSnapshot() { return this.request('backupSnapshot', undefined); }
 
   /** Migration operations are atomic per batch and hidden from normal conversation listings. */
   beginMigration(value: StorageOperations['migrationBegin']['input']) { return this.request('migrationBegin', value); }
@@ -121,7 +122,7 @@ export class PlatformStorage {
   private request<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): Promise<StorageOperations[M]['output']> {
     if (this.unavailable) return Promise.reject(this.unavailable);
     if (this.closing && method !== 'close') return Promise.reject(new PlatformStorageError('STORAGE_CLOSED', 'Storage is closing.'));
-    if (this.pending.size >= 64 && method !== 'close') return Promise.reject(new PlatformStorageError('STORAGE_BUSY', 'Storage queue is full; retry after pending operations finish.'));
+    // 备份暂时占用存储线程时，正常请求继续排队，不能按固定条数拒绝正在使用的会话。
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve: value => resolve(value as StorageOperations[M]['output']), reject });

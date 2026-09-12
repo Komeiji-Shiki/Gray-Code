@@ -1,5 +1,7 @@
 import { DesktopUpdates } from './updates';
 import { DesktopStorageLocation } from './storageLocation';
+import { ApplicationBackups } from '../../server/src/backups/service';
+import { BackupRestoreState } from '../../server/src/backups/restore';
 import { desktopNotifications } from './notifications';
 import {
   app,
@@ -65,6 +67,7 @@ let dataDirectory =
 const storageLocation = new DesktopStorageLocation(app.getPath('userData'), path.join(app.getPath('userData'), 'platform-data'), dataIndex >= 0 ? dataDirectory : undefined);
 let notifications: ReturnType<typeof desktopNotifications> | undefined;
 let application: PlatformApplication;
+let backups: ApplicationBackups | undefined;
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let browser: DesktopBrowser;
@@ -107,7 +110,7 @@ function trust(item: BrowserWindow): void {
 async function activeTasks(): Promise<boolean> {
   const hasRuns = (await application.storage.listRuns({ activeOnly: true, limit: 1 })).length > 0;
   // 在异步查询后读取连接状态，避免连接中的 Bot 被当作空闲程序退出。
-  return hasRuns || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
+  return hasRuns || backups?.busy === true || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
     || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
     || application.interactiveTerminals.hasRunning || !!application.subagents.backgroundTasks().length;
 }
@@ -117,6 +120,7 @@ async function quit(relaunch = false): Promise<void> {
   notifications?.dispose();
   tray?.destroy();
   browser?.close();
+  await backups?.close();
   await application?.close();
   if (relaunch) app.relaunch();
   app.quit();
@@ -221,6 +225,7 @@ async function createWindow(): Promise<void> {
 async function main(): Promise<void> {
   await app.whenReady();
   dataDirectory = await storageLocation.startup();
+  await new BackupRestoreState(dataDirectory).apply();
   session.defaultSession.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false),
   );
@@ -241,24 +246,24 @@ async function main(): Promise<void> {
       return new Response("Forbidden", { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
   });
+  const secretCodec = {
+    encrypt: async (value: string) => {
+      if (!safeStorage.isEncryptionAvailable() || process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
+        throw new Error('系统密钥服务不可用，无法加密保存密钥。');
+      return safeStorage.encryptString(value);
+    },
+    decrypt: async (value: Uint8Array) => safeStorage.decryptString(Buffer.from(value)),
+  };
   application = await PlatformApplication.open({
     dataDirectory,
     documentsDirectory: app.getPath('documents'),
     browser: application => browser = new DesktopBrowser(application, () => window, notify),
     remoteAccess: application => new RemoteAccessService(application, { clientDirectory }),
-    secretCodec: {
-      encrypt: async (value) => {
-        if (
-          !safeStorage.isEncryptionAvailable() ||
-          (process.platform === "linux" &&
-            safeStorage.getSelectedStorageBackend() === "basic_text")
-        )
-          throw new Error("系统密钥服务不可用，无法加密保存密钥。");
-        return safeStorage.encryptString(value);
-      },
-      decrypt: async (value) => safeStorage.decryptString(Buffer.from(value)),
-    },
+    secretCodec,
   });
+  backups = new ApplicationBackups(application.storage, { appVersion: app.getVersion(), secretCodec,
+    skillsDirectory: application.skills.directory(), notify: progress => application.publish({ type: 'ui.message',
+      message: { type: 'command', command: 'backup.progress', data: progress } }) });
   await migrateLegacySettings(application, app.getPath('appData')).catch(error => {
     console.error('旧配置自动导入未完成：', error instanceof Error ? error.message : String(error));
   });
@@ -278,7 +283,7 @@ async function main(): Promise<void> {
   if (application.remoteAccess!.status().address) console.log(`GrayCode Web: ${application.remoteAccess!.status().address}`);
   application.subscribe((event) => {
     notify(event);
-    if (closePending && (event.type === "file.activity" || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "background.followup.changed" || event.type === "ui.message" && (event.message as { command?: string })?.command === "taskEvent"))
+    if (closePending && (event.type === "file.activity" || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
       void activeTasks()
         .then((active) => {
           if (!active && closePending) return quit();
@@ -297,6 +302,9 @@ async function main(): Promise<void> {
       if (method === 'ui.request' && typeof params.type === 'string' && params.type.startsWith('desktop.editor.')) {
         method = params.type; params = params.data ?? {};
       }
+      if (method === 'ui.request' && typeof params.type === 'string' && params.type.startsWith('backup.')) {
+        method = params.type; params = params.data ?? {};
+      }
       if (method === 'desktop.editor.status') return editorRegistration.status();
       if (method === 'desktop.editor.register') return editorRegistration.register();
       if (method === 'desktop.editor.defaults') {
@@ -311,6 +319,34 @@ async function main(): Promise<void> {
       }
       if (exiting) throw new Error('应用正在关闭，请稍后重新打开。');
       application.requireOwner(client.actorId);
+      if (method === 'backup.status') return backups!.status();
+      if (method === 'backup.cancel') { backups!.cancel(); return { success: true }; }
+      if (method === 'backup.cancelRestore') { await backups!.restore.cancel(); return { success: true }; }
+      if (method === 'backup.export') {
+        const selected = await dialog.showSaveDialog(window!, { title: '备份程序数据',
+          defaultPath: `GrayCode-${new Date().toISOString().slice(0, 10)}.graycode-backup`,
+          filters: [{ name: 'GrayCode 程序数据备份', extensions: ['graycode-backup'] }] });
+        if (selected.canceled || !selected.filePath) return { cancelled: true };
+        return backups!.export(selected.filePath, params.password || undefined);
+      }
+      if (method === 'backup.restore') {
+        if (storageLocation.getConfig().config.pendingMigration) throw new Error('请先完成数据目录迁移，再恢复备份。');
+        const selected = await dialog.showOpenDialog(window!, { title: '选择程序数据备份', properties: ['openFile'],
+          filters: [{ name: 'GrayCode 程序数据备份', extensions: ['graycode-backup'] }] });
+        if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
+        return backups!.prepareRestore(selected.filePaths[0], params.password || undefined);
+      }
+      if (method === 'backup.restart') {
+        if (!(await backups!.status()).pending) throw new Error('没有等待应用的备份。');
+        if (dirtySettings || dirtyDocuments) throw new Error('请先保存或放弃编辑器与设置中的修改，再应用备份。');
+        const selected = await dialog.showMessageBox(window!, { type: 'question', title: '恢复程序数据',
+          message: '重启并应用已校验的备份？', detail: '当前任务和连接将停止，恢复前的数据目录会完整保留。项目源码不会被替换。',
+          buttons: ['重启并恢复', '继续工作'], defaultId: 1, cancelId: 1 });
+        if (selected.response !== 0) return { cancelled: true };
+        await backups!.restore.confirm();
+        setTimeout(() => { void quit(true).catch(error => dialog.showErrorBox('GrayCode 恢复失败', String(error))); }, 100);
+        return { success: true };
+      }
       if (method === 'getAppInfo') return { name: 'GrayCode', displayName: 'GrayCode', version: app.getVersion(), publisher: 'Komeiji-Shiki', runtime: 'desktop',
         ...__GRAYCODE_DESKTOP_BUILD__, executablePath: app.getPath('exe') };
       if (method === 'getUpdateStatus') return updates.get();
@@ -330,7 +366,10 @@ async function main(): Promise<void> {
       }
       if (method === 'storagePath.getConfig') return storageLocation.getConfig();
       if (method === 'storagePath.validate') return storageLocation.validate(params.path);
-      if (method === 'storagePath.migrate' || method === 'storagePath.reset') return storageLocation.schedule(method === 'storagePath.reset' ? storageLocation.defaultPath : params.path);
+      if (method === 'storagePath.migrate' || method === 'storagePath.reset') {
+        if ((await backups!.status()).pending) throw new Error('请先应用或取消备份恢复，再迁移数据目录。');
+        return storageLocation.schedule(method === 'storagePath.reset' ? storageLocation.defaultPath : params.path);
+      }
       if (method === 'storagePath.selectFolder') {
         const selected = await dialog.showOpenDialog(window!, { title: '选择数据目录', properties: ['openDirectory', 'createDirectory'] });
         return { path: selected.canceled ? null : selected.filePaths[0] };

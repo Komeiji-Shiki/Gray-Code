@@ -12,6 +12,8 @@
     "typescript": "5.9.3",
     "typescript-language-server": "4.3.4",
     "vscode-jsonrpc": "8.2.0",
-    "vscode-languageserver-protocol": "3.17.5"
+    "vscode-languageserver-protocol": "3.17.5",
+    "yauzl": "3.4.0",
+    "yazl": "2.5.1"
   }
 }

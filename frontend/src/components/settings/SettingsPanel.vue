@@ -736,6 +736,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     keywords: ['存储路径', 'storage', '保存先', '数据目录', '自定义路径', '迁移'],
     anchor: '[data-search-anchor="storage"]'
   },
+  ...(window.__GRAYCODE_HOST?.kind === 'desktop' ? [{
+    key: 'general-backup', tab: 'general' as const, label: '程序数据备份',
+    labelKey: 'components.settings.storageSettings.title',
+    keywords: ['备份', 'backup', '恢复', 'restore', '加密', '密码', '对话', '附件'],
+    anchor: '[data-search-anchor="backup"]'
+  }] : []),
   {
     key: 'general-importExport', tab: 'general',
     labelKey: 'components.settings.settingsPanel.exportImport.title',

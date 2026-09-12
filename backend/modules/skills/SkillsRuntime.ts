@@ -120,6 +120,7 @@ export class SkillsRuntime {
         });
 
         // 3. Legacy 目录 (原有插件存储目录)
+        dirs.push({ path: path.join(this.options.globalStoragePath, 'user-skills', 'graycode'), source: 'user-graycode' });
         dirs.push({ 
             path: this.legacySkillsDir, 
             source: 'legacy' 

@@ -6,6 +6,7 @@ import { openDatabase, SCHEMA_VERSION, type SqliteConnection } from './schema';
 import { ObjectStore } from './objects';
 import { HistoryStore } from './histories';
 import { MemoryRepository } from './memories';
+import { captureStorageSnapshot } from './backup';
 import { RunRepository } from './runs';
 import type { ConversationListOptions, ConversationList, StorageOperations, StorageMethod, MigrationState } from './protocol';
 
@@ -207,6 +208,7 @@ export class PlatformDatabase {
       collectGarbage: () => this.collectGarbage(),
       verify: () => this.verify(),
       checkpoint: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); },
+      backupSnapshot: () => ({ ...captureStorageSnapshot(this.db, this.databasePath, this.objectPath), statistics: this.statistics() }),
       close: () => { this.db.close(); },
     };
     if (!Object.hasOwn(operations, method)) invalid('Unknown storage operation.');

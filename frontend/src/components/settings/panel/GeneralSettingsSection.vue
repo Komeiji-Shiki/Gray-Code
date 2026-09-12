@@ -11,6 +11,7 @@
 import { computed } from 'vue'
 import { t, SUPPORTED_LANGUAGES } from '@/i18n'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../../common'
+import BackupSettings from './BackupSettings.vue'
 
 const isPlatform = !!window.__GRAYCODE_HOST
 const isWeb = window.__GRAYCODE_HOST?.kind === 'web'
@@ -313,6 +314,11 @@ function onCustomPathInput(event: Event) {
     </div>
 
     <div class="divider"></div>
+
+    <template v-if="isPlatform && !isWeb">
+      <BackupSettings />
+      <div class="divider"></div>
+    </template>
 
     <!-- 设置导入/导出 -->
     <div class="form-group" data-search-anchor="importExport">

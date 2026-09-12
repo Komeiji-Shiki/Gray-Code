@@ -156,6 +156,9 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       const key = (await app.storage.listRecords('bot-documents', id))[0];
       const document = await app.storage.getRecord('bot-documents', key) as { id: string; path: string };
       expect((await stat(document.path)).size).toBe(Buffer.byteLength(body));
+      // 目录迁移后保留的旧绝对路径不应阻止读取当前数据目录中的附件。
+      await app.storage.putRecord({ namespace: 'bot-documents', id: key, ownerId: id,
+        value: { ...document, path: path.join(f.root, 'previous-data', path.relative(app.storage.directory, document.path)) } });
       const firstPart = await tool.execute({ action: 'read', id: document.id, limit: 100 }, scope);
       expect(firstPart).toMatchObject({ text: body.slice(0, 100), nextOffset: 100, truncated: true });
       const nextPart = await tool.execute({ action: 'read', id: document.id, offset: 100, limit: 100 }, scope);

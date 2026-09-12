@@ -9,6 +9,12 @@ import type { BotAttachment } from './gateway';
 export interface BotDocument { id: string; name: string; path: string; sizeBytes: number; encoding: string }
 const recordKey = (conversationId: string, id: string) => JSON.stringify([conversationId, id]);
 
+/** 附件随程序数据目录移动，历史记录中的旧绝对路径只用于取回文件名。 */
+function currentDocument(app: PlatformApplication, conversationId: string, document: BotDocument): BotDocument {
+  const name = document.path.includes('\\') ? path.win32.basename(document.path) : path.basename(document.path);
+  return { ...document, path: path.join(app.storage.directory, 'bot-documents', createHash('sha256').update(conversationId).digest('hex'), name) };
+}
+
 function documentEncoding(bytes: Uint8Array): string {
   if (bytes[0] === 255 && bytes[1] === 254) return 'utf-16le';
   if (bytes[0] === 254 && bytes[1] === 255) return 'utf-16be';
@@ -21,7 +27,7 @@ export async function saveBotDocument(app: PlatformApplication, conversationId: 
   const id = createHash('sha256').update(attachment.name).update('\0').update(bytes).digest('hex');
   const key = recordKey(conversationId, id);
   const existing = await app.storage.getRecord('bot-documents', key) as BotDocument | null;
-  if (existing) return existing;
+  if (existing) return currentDocument(app, conversationId, existing);
   const directory = path.join(app.storage.directory, 'bot-documents', createHash('sha256').update(conversationId).digest('hex'));
   const name = attachment.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 120).replace(/[. ]+$/, '') || 'document.txt';
   const document: BotDocument = { id, name: attachment.name, path: path.join(directory, `${id.slice(0, 16)}-${name}`), sizeBytes: bytes.byteLength, encoding: documentEncoding(bytes) };
@@ -46,11 +52,13 @@ export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {
       context.signal.throwIfAborted();
       if (args.action === 'list') {
         const keys = await app.storage.listRecords('bot-documents', conversationId);
-        return { success: true, documents: await Promise.all(keys.map(key => app.storage.getRecord('bot-documents', key))) };
+        return { success: true, documents: await Promise.all(keys.map(async key => currentDocument(app, conversationId,
+          await app.storage.getRecord('bot-documents', key) as BotDocument))) };
       }
       if (typeof args.id !== 'string') throw new Error('请使用消息中提供的附件 ID。');
-      const document = await app.storage.getRecord('bot-documents', recordKey(conversationId, args.id)) as BotDocument | null;
-      if (!document) throw new Error('当前会话中没有这个附件。');
+      const saved = await app.storage.getRecord('bot-documents', recordKey(conversationId, args.id)) as BotDocument | null;
+      if (!saved) throw new Error('当前会话中没有这个附件。');
+      const document = currentDocument(app, conversationId, saved);
       const info = await stat(document.path);
       if (args.action === 'stat') return { success: true, ...document, sizeBytes: info.size };
       const offset = Number(args.offset ?? 0), limit = Number(args.limit ?? 4000);

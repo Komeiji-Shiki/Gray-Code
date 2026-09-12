@@ -71,6 +71,7 @@ export interface StorageOperations {
   collectGarbage: { input: undefined; output: { objectsRemoved: number; chunksRemoved: number; externalFilesRemoved: number } };
   verify: { input: undefined; output: { ok: boolean; issues: string[]; objectsChecked: number } };
   checkpoint: { input: undefined; output: void };
+  backupSnapshot: { input: undefined; output: { directory: string; createdAt: number; statistics: StorageStatistics } };
   close: { input: undefined; output: void };
 }
 
