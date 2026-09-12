@@ -21,42 +21,6 @@ import type {
 } from '../types';
 import { ChannelError, ErrorType } from '../types';
 
-function isImagePart(part: ContentPart): boolean {
-    const mimeType = part.inlineData?.mimeType || part.fileData?.mimeType;
-    return mimeType?.startsWith('image/') ?? false;
-}
-
-function limitTotalImageParts(contents: Content[], maxImages: number): Content[] {
-    let remainingImages = maxImages;
-
-    return contents
-        .slice()
-        .reverse()
-        .map(content => {
-            const parts = content.parts
-                .slice()
-                .reverse()
-                .filter(part => {
-                    if (!isImagePart(part)) {
-                        return true;
-                    }
-
-                    if (remainingImages <= 0) {
-                        return false;
-                    }
-
-                    remainingImages--;
-                    return true;
-                })
-                .reverse();
-
-            return {
-                ...content,
-                parts
-            };
-        })
-        .reverse();
-}
 
 /**
  * 归一化用户手填的模型 ID：剥除手填的 models/ 前缀，返回官方裸 model ID。
@@ -199,14 +163,8 @@ export class GeminiFormatter extends BaseFormatter {
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         // Gemini 不接受中途的 system 消息，保留预设指定的位置并转换为 user。
-        processedHistory = this.cleanInternalFields(processedHistory).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
+        processedHistory = this.cleanInternalFields(processedHistory, config).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
 
-        // 根据配置限制发送给 Gemini 的图片总数，优先保留越新的图片。
-        const maxImages = config.options?.maxImages;
-        const maxImagesEnabled = config.optionsEnabled?.maxImages !== false;
-        if (maxImagesEnabled && maxImages && maxImages > 0) {
-            processedHistory = limitTotalImageParts(processedHistory, maxImages);
-        }
 
         // 兜底：过滤所有 oneof data 未初始化的空壳 part（含 thought-only 空壳），
         // 并丢弃变空的 content，彻底避免 GenerateContentRequest 400

@@ -3134,6 +3134,7 @@ const ja: LanguageMessages = {
                     toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
                 }
             },
+            imageInput: {"label":"入力画像数の上限","placeholder":"0 = 制限なし","hint":"履歴と今回の画像を合算します。上限を超えると最新の N 枚のみを送信し、すべての文章と履歴の元画像を保持します。0 は制限なしです。"},
             gemini: {
                 maxImages: {
                     label: '上流リクエストの最大画像数',

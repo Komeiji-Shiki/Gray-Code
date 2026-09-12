@@ -69,6 +69,7 @@ const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey' | 
     'sendHistoryThoughtSignatures',
     'sendCurrentThoughtSignatures',
     'sendHistoryThoughts',
+    'maxInputImages',
     'historyThinkingRounds',
     'sendCurrentThoughts',
     'retryEnabled',
@@ -786,6 +787,10 @@ export class ConfigManager {
     async validateConfig(config: ChannelConfig): Promise<ValidationResult> {
         const errors: string[] = [];
         const warnings: string[] = [];
+
+        if (config.maxInputImages !== undefined && (!Number.isSafeInteger(config.maxInputImages) || config.maxInputImages < 0)) {
+            errors.push('输入图片数量上限必须是非负整数，0 表示不限制。');
+        }
 
         if (config.autoSummarizeMethod !== undefined && !['summary', 'notes'].includes(config.autoSummarizeMethod)) {
             errors.push('自动总结方式必须是普通总结或笔记换窗口。');

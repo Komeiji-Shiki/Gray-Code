@@ -28,7 +28,6 @@ const thinkingLevelOptions = computed<SelectOption[]>(() => [
 const DEFAULT_VALUES: Record<string, any> = {
   temperature: 1.0,
   maxOutputTokens: 65535,
-  maxImages: 0,
   thinkingConfig: {
     includeThoughts: true,
     mode: 'default',
@@ -106,12 +105,6 @@ const {
   touched: maxOutputTokensTouched
 } = useDeferredNumberInput(() => props.config?.options?.maxOutputTokens ?? 65535)
 const {
-  draft: maxImagesDraft,
-  handleInput: handleMaxImagesInput,
-  syncFromStored: syncMaxImagesFromStored,
-  touched: maxImagesTouched
-} = useDeferredNumberInput(() => props.config?.options?.maxImages ?? 0)
-const {
   draft: thinkingBudgetDraft,
   handleInput: handleThinkingBudgetInput,
   syncFromStored: syncThinkingBudgetFromStored,
@@ -133,7 +126,6 @@ watch(
   () => {
     if (!temperatureTouched.value) syncTemperatureFromStored()
     if (!maxOutputTokensTouched.value) syncMaxOutputTokensFromStored()
-    if (!maxImagesTouched.value) syncMaxImagesFromStored()
     if (!thinkingBudgetTouched.value) syncThinkingBudgetFromStored()
     if (!historyThinkingRoundsTouched.value) syncHistoryThinkingRoundsFromStored()
   }
@@ -192,31 +184,6 @@ watch(
       />
     </div>
 
-    <!-- 最大图片数量 -->
-    <div class="option-item option-with-toggle">
-      <div class="option-header">
-        <label>{{ t('components.channels.gemini.maxImages.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.gemini.maxImages.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('maxImages')"
-            @change="(e: any) => handleOptionEnabledChange('maxImages', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <input
-        type="number"
-        min="0"
-        :value="maxImagesDraft"
-        :placeholder="t('components.channels.gemini.maxImages.placeholder')"
-        :disabled="!isOptionEnabled('maxImages')"
-        :class="{ disabled: !isOptionEnabled('maxImages') }"
-        @input="(e: any) => handleMaxImagesInput(e.target.value, v => emit('update:option', 'maxImages', v))"
-      />
-      <span class="option-hint">{{ t('components.channels.gemini.maxImages.hint') }}</span>
-    </div>
-    
     <!-- 思考配置 -->
     <div class="option-section">
       <div class="option-section-header">

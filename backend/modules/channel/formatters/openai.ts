@@ -135,7 +135,7 @@ export class OpenAIFormatter extends BaseFormatter {
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory);
+        processedHistory = this.cleanInternalFields(processedHistory, config);
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
         const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode, !!config.pdfAttachmentEnabled);

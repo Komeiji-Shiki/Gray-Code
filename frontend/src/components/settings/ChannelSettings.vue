@@ -15,6 +15,7 @@ import ChannelConfigSelector from './channelSettings/ChannelConfigSelector.vue'
 import ChannelCreateDialog from './channelSettings/ChannelCreateDialog.vue'
 import ChannelBasicSettings from './channelSettings/ChannelBasicSettings.vue'
 import ChannelContextManagement from './channelSettings/ChannelContextManagement.vue'
+import ChannelImageInput from './channelSettings/ChannelImageInput.vue'
 import ChannelToolOptions from './channelSettings/ChannelToolOptions.vue'
 import ChannelTokenCountMethod from './channelSettings/ChannelTokenCountMethod.vue'
 import ChannelProviderOptions from './channelSettings/ChannelProviderOptions.vue'
@@ -939,6 +940,8 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
         @toggle-show-api-key="showApiKey = !showApiKey"
         @change-type="onChangeType"
       />
+
+      <ChannelImageInput :key="currentConfig.id" :config="currentConfig" @update:limit="value => updateConfigField('maxInputImages', value)" />
 
       <ChannelContextManagement
         :show="showContextThreshold"

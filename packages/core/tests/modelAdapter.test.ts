@@ -60,6 +60,24 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(requests[0].body).toEqual(preview.body); expect(credential).toHaveBeenCalledTimes(1);
   });
 
+  test('图片上限在视觉预处理前生效，最终 HTTP 和提示词预览保留相同的最近图片', async () => {
+    profile.capabilities.compatibility.deepSeekVision = true;
+    const request = input();
+    request.messages = [{ role: 'user', parts: [
+      { text: '全部文字保留', inlineData: { mimeType: 'image/png', data: 'OLD_IMAGE' } },
+      { inlineData: { mimeType: 'image/png', data: 'LATEST_IMAGE' } },
+    ] }];
+    const prepareVision = jest.fn(async (history: import('../../../backend/modules/conversation/types').Content[]) => history);
+    adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => '',
+      channel: async () => ({ ...buildChannelConfig(profile, request, ''), maxInputImages: 1 }), prepareVision });
+    const preview = await adapter.preview(request);
+    expect(JSON.stringify(prepareVision.mock.calls[0][0])).not.toContain('OLD_IMAGE');
+    expect(preview.maxInputImages).toBe(1); expect(JSON.stringify(preview.body)).toContain('LATEST_IMAGE');
+    expect(JSON.stringify(preview.body)).toContain('全部文字保留');
+    await adapter.generate(request); expect(requests[0].body).toEqual(preview.body);
+    expect(JSON.stringify(request.messages)).toContain('OLD_IMAGE');
+  });
+
   test('centralizes token limits, strict schemas, reasoning and stable compatibility identities', async () => {
     const response = await adapter.generate(input());
     expect(response.responseDuration).toEqual(expect.any(Number));

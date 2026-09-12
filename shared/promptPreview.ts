@@ -5,6 +5,7 @@ export interface PromptPreviewResult {
   createdAt: number;
   estimatedTokens: number;
   notices: string[];
+  maxInputImages?: number;
   character?: { resources: unknown; activation: unknown };
 }
 

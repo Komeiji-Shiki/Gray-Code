@@ -186,6 +186,7 @@ export interface ChannelConfig {
   sendCurrentThoughtSignatures?: boolean
   reasoningSignatureMode?: 'official' | 'codex'
   sendHistoryThoughts?: boolean
+  maxInputImages?: number
   historyThinkingRounds?: number
   sendCurrentThoughts?: boolean
   strictToolsEnabled?: boolean

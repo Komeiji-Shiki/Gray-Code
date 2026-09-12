@@ -3134,6 +3134,7 @@ const en: LanguageMessages = {
                     toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
                 }
             },
+            imageInput: {"label":"Input image limit","placeholder":"0 = Unlimited","hint":"Counts images from history and the current message. Sends only the latest N images while preserving all text and original images in history. Set 0 for no limit."},
             gemini: {
                 maxImages: {
                     label: 'Max Images Upstream',
