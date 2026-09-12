@@ -8,10 +8,10 @@
  * - GeneralSettingsSection：通用页签（代理/语言/更新/存储路径/导入导出/应用信息）
  * - UsageSummaryCard：用量统计 Token 摘要卡片
  * - StorageMigrateDialog：存储路径迁移确认对话框
- * 所有响应式状态仍由本组件持有，子组件仅通过 props/emits 通信。
+ * 设置表单状态仍由本组件持有，搜索状态由 useSettingsSearch 管理，子组件仅通过 props/emits 通信。
  * 注意：SEARCH_INDEX 必须留在本文件（settingsSearchAnchorConsistency.test.ts 直接解析本文件源码做 L-3 校验）。
  */
-import { defineAsyncComponent, ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+import { defineAsyncComponent, ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useSettingsStore, type SettingsTab } from '@/stores/settingsStore'
 import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
 import { CustomScrollbar } from '../common'
@@ -22,6 +22,7 @@ import SettingsSidebar from './panel/SettingsSidebar.vue'
 import SettingsSearchBox from './panel/SettingsSearchBox.vue'
 import StorageMigrateDialog from './panel/StorageMigrateDialog.vue'
 import type { TabItem, SearchIndexEntry } from './panel/types'
+import { useSettingsSearch } from './panel/useSettingsSearch'
 import { useStoragePathSettings } from '@/composables/useStoragePathSettings'
 import { useUpdateSettings } from '@/composables/useUpdateSettings'
 import { useSettingsImportExport } from '@/composables/useSettingsImportExport'
@@ -760,112 +761,11 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   }
 ]
 
-const searchQuery = ref('')
-const searchFocused = ref(false)
-const activeSearchIndex = ref(0)
 const scrollbarRef = ref<InstanceType<typeof CustomScrollbar>>()
-
-// 关键词变化后重置选中项，避免旧索引落到不存在的条目上
-watch(searchQuery, () => {
-  activeSearchIndex.value = 0
-})
-
-// 归一化：小写 + 去掉所有空白（'token 用量' 与 'token用量' 可互相匹配）
-const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase().replace(/\s+/g, ''))
-
-/** 搜索是否生效（决定侧边栏高亮/置灰） */
-const searchActive = computed(() => normalizedQuery.value.length > 0)
-
-/** 匹配的搜索结果（按页签顺序排序） */
-const searchResults = computed(() => {
-  const q = normalizedQuery.value
-  if (!q) return []
-  const tabOrder = new Map(tabs.value.map((tab, i) => [tab.id, i]))
-  return SEARCH_INDEX
-    .filter((entry) => {
-      const label = t(entry.labelKey).toLowerCase().replace(/\s+/g, '')
-      return label.includes(q) || entry.keywords.some((k) => k.toLowerCase().replace(/\s+/g, '').includes(q))
-    })
-    .sort((a, b) => (tabOrder.get(a.tab) ?? 99) - (tabOrder.get(b.tab) ?? 99))
-})
-
-/** 含匹配项结果的页签集合（侧边栏高亮用） */
-const tabsWithMatches = computed(() => {
-  const set = new Set<SettingsTab>()
-  for (const entry of searchResults.value) set.add(entry.tab)
-  return set
-})
-
-function tabIcon(tabId: SettingsTab): string {
-  return tabs.value.find((tab) => tab.id === tabId)?.icon || 'codicon-settings-gear'
-}
-
-function moveSearchSelection(delta: number) {
-  const count = searchResults.value.length
-  if (count === 0) return
-  activeSearchIndex.value = (activeSearchIndex.value + delta + count) % count
-}
-
-/** 跳转到搜索结果：切换页签 → 清空搜索 → 等待渲染 → 滚动定位并闪烁高亮 */
-function openSearchResult(entry: SearchIndexEntry) {
-  searchFocused.value = false
-  // L-2：跳转完成即清空搜索词，侧边栏恢复常态高亮（避免跳转后仍整页置灰/高亮）
-  searchQuery.value = ''
-  activeSearchIndex.value = 0
-  settingsStore.setActiveTab(entry.tab)
-  nextTick(() => {
-    // 卸载守卫（仿 CustomScrollbar.vue）：组件可能在 nextTick 待执行期间已卸载（onUnmounted
-    // 已跑完），此时直接跳过——不再新建 rAF / searchFlashTimer，否则没有清理时机（残留 1.6s 定时器）
-    if (isUnmounted) return
-    const section = document.querySelector('.settings-section')
-    if (!section) return
-    let target: HTMLElement | null = null
-    // 回退链：精确锚点 → h4 → h3 → 页内第一个锚点元素 → 节容器本身
-    if (entry.anchor) {
-      target = section.querySelector<HTMLElement>(entry.anchor)
-    }
-    if (!target) {
-      target = section.querySelector<HTMLElement>('h4')
-    }
-    if (!target) {
-      target = section.querySelector<HTMLElement>('h3')
-    }
-    if (!target) {
-      target = section.querySelector<HTMLElement>('[data-search-anchor]')
-    }
-    if (!target) {
-      target = section as HTMLElement
-    }
-    const scrollContainer = scrollbarRef.value?.getContainer()
-    // 等 v-if 渲染的节内容布局完成再滚动，避免滚动位置偏移
-    requestAnimationFrame(() => {
-      // 卸载守卫：rAF 回调可能在组件卸载后才执行，此时直接跳过（不再触碰 DOM / 新建定时器）
-      if (isUnmounted) return
-      if (scrollContainer) {
-        // L-1：直接按目标元素相对滚动容器的偏移计算目标位置（含 12px 顶部间距），
-        // 避免「scrollIntoView smooth 未推进时同步读 rect」的时序冲突，也不打断动画
-        const containerRect = scrollContainer.getBoundingClientRect()
-        const targetRect = target!.getBoundingClientRect()
-        const targetTop = scrollContainer.scrollTop + (targetRect.top - containerRect.top) - 12
-        scrollContainer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
-      } else {
-        target!.scrollIntoView({ block: 'start', behavior: 'smooth' })
-      }
-    })
-    target!.classList.add('search-flash')
-    searchFlashTimer = setTimeout(() => target!.classList.remove('search-flash'), 1600)
-  })
-}
-
-onUnmounted(() => {
-  // 先置卸载标记：nextTick 回调若在卸载后执行，直接跳过（不再新建 rAF / searchFlashTimer）
-  isUnmounted = true
-  // 仅清理仍由本组件持有的搜索结果闪烁定时器；
-  // 存储/更新/导入导出/用量区块的定时器由各自 composable（useOneShotTimer / useDeferredSave）在卸载时自行清理。
-  if (searchFlashTimer) {
-    clearTimeout(searchFlashTimer)
-    searchFlashTimer = null
-  }
+const { searchQuery, searchFocused, activeSearchIndex, searchActive, searchResults, tabsWithMatches,
+  tabIcon, moveSearchSelection, openSearchResult } = useSettingsSearch({
+  index: SEARCH_INDEX, tabs, activeTab: () => settingsStore.activeTab,
+  selectTab: tab => settingsStore.setActiveTab(tab), container: () => scrollbarRef.value?.getContainer(),
 })
 
 // 代理设置
@@ -886,11 +786,6 @@ const saveMessageType = ref<'success' | 'error'>('success')
 
 // 保存消息自动消失定时器（组件卸载时由 useOneShotTimer 统一清理）
 const proxySaveMessageTimer = useOneShotTimer()
-// 搜索结果跳转闪烁高亮清除定时器（组件卸载时统一清理）
-let searchFlashTimer: ReturnType<typeof setTimeout> | null = null
-// 组件卸载标记（仿 CustomScrollbar.vue）：nextTick 回调在卸载后执行时据此跳过
-let isUnmounted = false
-
 // ========== 区块级 composable（状态与动作下放，本组件只保留编排） ==========
 const {
   storageSettings,

@@ -19,6 +19,8 @@ export interface SearchIndexEntry {
   tab: SettingsTab
   /** 结果行显示标签（i18n key） */
   labelKey: string
+  /** 运行时条目的显示名；已本地化，缺少翻译时可保留工具名称。 */
+  label?: string
   /** 搜索关键词（中/英/日混合，小写包含匹配） */
   keywords: string[]
   /** 目标元素选择器（相对 .settings-section）；缺省定位到节标题 h4 */

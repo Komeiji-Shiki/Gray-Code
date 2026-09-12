@@ -218,6 +218,7 @@ onMounted(() => {
             v-for="tool in categoryTools"
             :key="tool.name"
             class="tool-item"
+            :data-search-tool="encodeURIComponent(tool.name)"
             :class="{ dangerous: isDangerousTool(tool.name), 'mcp-tool': isMcpTool(tool) }"
           >
             <div class="tool-info">

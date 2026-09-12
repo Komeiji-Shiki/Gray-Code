@@ -150,7 +150,7 @@ onUnmounted(() => {
             @mouseenter="emit('update:activeIndex', index)"
           >
             <i :class="['codicon', tabIcon(result.tab)]" aria-hidden="true"></i>
-            <span class="settings-search-result-label">{{ t(result.labelKey) }}</span>
+            <span class="settings-search-result-label">{{ result.label ?? t(result.labelKey) }}</span>
             <span class="settings-search-result-tab">{{ t(`components.settings.tabs.${result.tab}`) }}</span>
           </div>
         </template>
