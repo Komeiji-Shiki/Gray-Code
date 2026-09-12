@@ -37,10 +37,12 @@ test.each([
   { file: 'style.css', text: '.sample { col', server: 'css', label: 'color' },
   { file: 'run.sh', text: '#!/usr/bin/env bash\nmy_variable=1\necho $my_', server: 'bash', label: 'my_variable' },
 ])('$server 的真实服务根据文件识别提供补全', async ({ file, text, server, label }) => {
-  await project({ [file]: text }, async ({ call }) => {
+  await project({ [file]: text }, async ({ call, diagnostics }) => {
     const doc = await call('documents.open', { workspaceId: 'project', path: file });
     const ready = await call('language.ensure', { workspaceId: 'project', path: file });
     expect(ready.session).toMatchObject({ serverId: server, status: 'running' });
+    // Bash 在 initialized 后异步获取配置，当前文档诊断表示语法树已经建立。
+    if (server === 'bash') await diagnostics(file, () => true);
     const lines = text.split('\n');
     const result = await call('language.request', { workspaceId: 'project', path: file, version: doc.version, requestId: 'completion',
       method: 'textDocument/completion', params: { position: { line: lines.length - 1, character: lines.at(-1)!.length }, context: { triggerKind: 1 } } });
