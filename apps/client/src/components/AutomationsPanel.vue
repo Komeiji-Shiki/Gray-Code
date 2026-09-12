@@ -139,7 +139,7 @@ function providerChanged() { form.modelId = profile.value?.model ?? ''; form.rea
       <main class="automation-detail">
         <form v-if="creating && options" class="automation-form" @submit.prevent="action(create)">
           <h3>{{ editingId ? '编辑自动任务' : '新建自动任务' }}</h3>
-          <label>执行方式<select v-model="form.kind" :disabled="!!editingId" aria-label="自动任务执行方式"><option value="goal">长期目标：持续推进，直到完成或暂停</option><option value="schedule">定时任务：到指定时间执行一次</option></select></label>
+          <label>执行方式<select v-model="form.kind" :disabled="!!editingId" aria-label="自动任务执行方式"><option value="goal">长期目标：持续推进，直到完成或暂停</option><option value="schedule">定时任务：按指定时间或周期执行</option></select></label>
           <label>名称<input v-model="form.name" placeholder="可选，留空时使用目标的第一行" /></label>
           <label>{{ form.kind === 'goal' ? '长期目标' : '每次执行的任务' }}<textarea v-model="form.objective" rows="5" required placeholder="写明要完成的工作、限制和完成标准" aria-label="自动任务目标"></textarea></label>
           <div class="automation-fields"><label>关联对话<select v-model="form.target" :disabled="!!editingId"><option value="current" :disabled="!options.current.conversationId || currentOccupied && !editingId">当前对话{{ currentOccupied && !editingId ? '（已有未完成的自动任务）' : '' }}</option><option value="new">创建一个新对话</option></select></label>

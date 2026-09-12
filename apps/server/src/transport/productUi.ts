@@ -1,4 +1,5 @@
 import { PlatformPromptService } from '../prompt/service';
+import packageMetadata from '../../../../package.json';
 import { previewPrompt } from '../prompt/preview';
 import { ArtifactApproval } from '../artifacts/approval';
 import { CheckpointUi } from '../workspace/checkpointUi';
@@ -387,9 +388,9 @@ export class ProductUi {
         return { success: true };
       }
       case 'webviewReady': this.app.publish({ type: 'ui.ready', clientId: client.clientId }); return { success: true };
-      case 'checkAnnouncement': return { shouldShow: false, version: '1.5.6', changelog: '' };
+      case 'checkAnnouncement': return { shouldShow: false, version: packageMetadata.version, changelog: '' };
       case 'getUpdateStatus':
-      case 'checkUpdateNow': return { status: { state: 'unavailable', message: '请在桌面应用中检查独立版更新。' }, currentVersion: '1.5.6', runtime: 'server' };
+      case 'checkUpdateNow': return { status: { state: 'unavailable', message: '请在桌面应用中检查独立版更新。' }, currentVersion: packageMetadata.version, runtime: 'server' };
       case 'markAnnouncementRead': await this.app.storage.putRecord({ namespace: 'ui-announcements', id: client.actorId, value: { version: data.version, readAt: Date.now() } }); return { success: true };
       case 'task.getAll': return { tasks: [...this.app.media.list(), ...this.app.terminals.list(), ...this.app.subagents.backgroundTasks(), ...(await this.app.storage.listRuns({ activeOnly: true })).map(run => ({ id: run.id,
         type: 'agent', startTime: run.createdAt, metadata: { conversationId: run.conversationId, status: run.status } }))] };
@@ -439,7 +440,7 @@ export class ProductUi {
         return list.filter(Boolean);
       }
       case 'platform.questions.answer': await this.app.runtime.answerQuestion(data.id, client.actorId, data.answers); return { success: true };
-      case 'getAppInfo': return { name: 'GrayCode', displayName: 'GrayCode', version: '1.5.6', publisher: 'Graywill', extensionId: 'Graywill.graycode', runtime: 'desktop' };
+      case 'getAppInfo': return { name: 'GrayCode', displayName: 'GrayCode', version: packageMetadata.version, publisher: packageMetadata.publisher, runtime: 'server' };
       case 'showNotification': this.app.publish({ type: 'notification', message: String(data.message), severity: data.type }); return { success: true };
       case 'conversation.createConversation': {
         if (!await this.app.storage.getConversation(data.conversationId)) {

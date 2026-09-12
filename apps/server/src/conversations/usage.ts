@@ -68,7 +68,7 @@ export class PlatformUsage {
     let cursor: { updatedAt: number; id: string } | undefined;
     do {
       const page = await this.app.storage.listConversations({ limit: 1000, cursor });
-      // 存储队列最多容纳 64 个请求，分批读取并为聊天和后台任务保留容量。
+      // 分批读取用量索引，避免一次性把所有历史读取排在聊天请求之前。
       for (let offset = 0; offset < page.items.length; offset += 16) {
         await Promise.all(page.items.slice(offset, offset + 16).map(async item => {
           const value = await this.app.storage.getConversation(item.id);
