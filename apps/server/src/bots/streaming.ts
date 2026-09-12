@@ -15,7 +15,8 @@ interface StreamState {
   rounds: string[]; roundCount: number; savedMessageId?: string;
 }
 export function botFinalReplies(text: string, route: BotRoute, footer?: string): BotReply[] {
-  const suffix = footer ? `\n\n${footer}` : '';
+  // 逐轮统计和总计连续显示，正文或代码与统计之间仍保留原来的段落间距。
+  const suffix = footer ? `${text.trimEnd().split('\n').at(-1)?.startsWith('-# ') ? '\n' : '\n\n'}${footer}` : '';
   if (route.output?.longReplies === 'file' && text.length > 1900) return [{ content: `回复较长，全文保存在附件中。${suffix}`, files: [{ name: 'GrayCode 回复.md', data: Buffer.from(text + suffix) }] }];
   // 在分段和代码围栏闭合之后追加统计，保证 -# 位于最后一条消息的普通文本行。
   const replies = splitBotText(text, 1900 - suffix.length).map(content => ({ content }));

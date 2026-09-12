@@ -23,16 +23,16 @@ export function botRoundText(message: PlatformMessage, route: BotRoute, iteratio
   const body = parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
   const considered = route.output?.showThoughts && (parts.some(part => part.thought) || milliseconds(message.thinkingDuration) !== undefined);
   const tools = route.output?.showToolStatus ? message.parts.flatMap(part => {
-    const call = part.functionCall as { name?: string } | undefined;
-    return typeof call?.name === 'string' ? [call.name] : [];
+    const call = part.functionCall as { name?: string; args?: unknown } | undefined;
+    return typeof call?.name === 'string' ? [{ name: call.name, args: call.args }] : [];
   }) : [];
   // 模型可能在未闭合的代码块中结束，先补齐围栏再放逐轮统计。
   const formattedBody = body ? splitBotText(body, Math.max(1900, body.length + 100))[0] : '';
-  return [considered ? `**${thinkingComplete(message.thinkingDuration)}**` : '', formattedBody,
-    botRoundStats(message, iteration, tools)].filter(Boolean).join('\n\n');
+  const content = [considered ? `**${thinkingComplete(message.thinkingDuration)}**` : '', formattedBody].filter(Boolean).join('\n\n');
+  return (content ? content + (formattedBody ? '\n\n' : '\n') : '') + botRoundStats(message, iteration, tools);
 }
 export function botRunReply(messages: PlatformMessage[], route: BotRoute, conclusion?: string): { text: string; footer?: string } {
   const rounds = messages.map((message, index) => botRoundText(message, route, index + 1));
   if (conclusion) rounds.push(conclusion);
-  return { text: rounds.join('\n\n') || '任务已完成。', ...(messages.length ? { footer: botTotalStats(messages) } : {}) };
+  return { text: rounds.join('\n\n') || '任务已完成。', ...(messages.length > 1 ? { footer: botTotalStats(messages) } : {}) };
 }

@@ -4,6 +4,17 @@ export function clipBotText(value: string, length: number): string {
   return value.slice(0, end);
 }
 
+/** 参数只作简短展示；根据内容选择反引号长度，避免参数中的代码打断行内格式。 */
+export function inlineBotArguments(args: unknown): string {
+  if (args === undefined || args === null || typeof args === 'object' && !Object.keys(args).length) return '';
+  const json = JSON.stringify(args, (key, value) => /^(?:api[-_]?key|access[-_]?token|auth[-_]?token|refresh[-_]?token|token|secret|password|authorization|cookie)$/i.test(key) ? '[隐藏]' : value);
+  if (!json) return '';
+  const compact = json.replace(/\s+/g, ' ');
+  const text = compact.length > 160 ? clipBotText(compact, 159) + '…' : compact;
+  const marker = '`'.repeat(Math.max(1, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
+  return `${marker}${text.startsWith('`') || text.endsWith('`') ? ` ${text} ` : text}${marker}`;
+}
+
 /** 长回复按行优先分段，并在消息边界闭合、重开 Markdown 代码围栏。 */
 export function splitBotText(text: string, limit = 1900): string[] {
   const result: string[] = [];

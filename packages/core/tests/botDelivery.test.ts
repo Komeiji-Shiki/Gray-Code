@@ -6,7 +6,7 @@ import { botStatsFooter, botTotalStats } from '../../../apps/server/src/bots/mes
 import { botRunMessages, botRunReply } from '../../../apps/server/src/bots/rounds';
 import { BotSessions, type BotRoute } from '../../../apps/server/src/bots/sessions';
 import { discordProfile } from '../../../apps/server/src/bots/config';
-import { splitBotText } from '../../../apps/server/src/bots/text';
+import { inlineBotArguments, splitBotText } from '../../../apps/server/src/bots/text';
 import { fixture, metadata } from './fixtures';
 import { cleanBotPresentationReferences, stripDiscordPresentation } from '../../../apps/server/src/bots/presentation';
 
@@ -177,6 +177,31 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(partial).toContain('合计 ≥ 240 token'); expect(partial).toContain('统计不完整'); expect(partial).toContain('TPS —');
   });
 
+  test('思考与工具统计紧凑显示，参数使用行内代码，单轮不重复总计', () => {
+    const outputRoute: BotRoute = { ...route, output: { ...route.output!, showThoughts: true } };
+    const messages = [
+      { role: 'model', thinkingDuration: 300, parts: [{ text: '内部思考', thought: true }, { functionCall: { name: 'read_file', args: { path: 'README.md', start_line: 10 } } }] },
+      { role: 'model', parts: [{ text: '第一段。\n\n第二段。' }] },
+    ];
+    const reply = botRunReply(messages, outputRoute);
+    const rendered = botFinalReplies(reply.text, outputRoute, reply.footer)[0].content!;
+    expect(rendered).toContain('**已进行思考 0.3 秒**\n-# 第 1 轮 · 调用「read_file」 `{"path":"README.md","start_line":10}`');
+    expect(rendered).toContain('第一段。\n\n第二段。\n\n-# 第 2 轮');
+    expect(rendered).toMatch(/-# 第 2 轮[^\n]+\n-# 共 2 轮/);
+    const single = botRunReply([messages[1]], outputRoute);
+    expect(single.footer).toBeUndefined();
+    expect(botFinalReplies(single.text, outputRoute, single.footer)[0].content).toMatch(/第一段。\n\n第二段。\n\n-# 第 1 轮/);
+    expect(single.text).not.toContain('共 1 轮');
+  });
+
+  test('参数摘要保持简短，参数中的反引号不会结束行内代码', () => {
+    const args = { path: 'src/`draft`.ts', password: 'private-value' };
+    expect(inlineBotArguments(args)).toBe('``{"path":"src/`draft`.ts","password":"[隐藏]"}``');
+    expect(args.password).toBe('private-value');
+    expect(inlineBotArguments({ content: '文字'.repeat(300) }).length).toBeLessThan(170);
+    expect(inlineBotArguments({})).toBe('');
+  });
+
   test('下一轮开始仍保留前一轮工具与用量，工具返回不会被当成新一轮', async () => {
     jest.spyOn(f.store, 'getRun').mockResolvedValue({ id: 'round-stream', conversationId: 'conversation' } as any);
     const sessions = { routeForRun: async () => route, admitted: async () => true } as unknown as BotSessions;
@@ -185,7 +210,7 @@ describe('Bot 回复合并与发送恢复', () => {
     const timer = jest.spyOn(global, 'setTimeout').mockImplementation(((callback: () => void) => { timers.push(callback); return { unref() {} }; }) as any);
     try {
       streams.started('round-stream');
-      const firstMessage = { id: 'first-model', role: 'model', parts: [{ thought: true, text: '原始思考' }, { text: '工具调用之前的完整输出' }, { functionCall: { name: 'read_file' } }],
+      const firstMessage = { id: 'first-model', role: 'model', parts: [{ thought: true, text: '原始思考' }, { text: '工具调用之前的完整输出' }, { functionCall: { name: 'read_file', args: { path: 'README.md' } } }],
         thinkingDuration: 1200,
         usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 30, cacheReadTokenCount: 50 } };
       const original = structuredClone(firstMessage);
@@ -195,6 +220,7 @@ describe('Bot 回复合并与发送恢复', () => {
       await new Promise<void>(resolve => setImmediate(resolve)); timers.shift()!();
       await streams.finish('round-stream', route, '最终回复');
       expect(sent[0].content).toContain('第 1 轮 · 调用「read_file」'); expect(sent[0].content).toContain('输入 120');
+      expect(sent[0].content).toContain('`{"path":"README.md"}`');
       expect(sent[0].content).toContain('缓存 50'); expect(sent[0].content).toContain('第二轮正文');
       expect(sent[0].content).toContain('工具调用之前的完整输出');
       expect(sent[0].content!.indexOf('工具调用之前的完整输出')).toBeLessThan(sent[0].content!.indexOf('第 1 轮'));

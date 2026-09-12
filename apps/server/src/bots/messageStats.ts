@@ -1,5 +1,6 @@
 import type { PlatformMessage } from '@graycode/contracts';
 import { calculateTokenRate } from '../../../../shared/tokenRate';
+import { inlineBotArguments } from './text';
 
 export function milliseconds(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
@@ -37,9 +38,12 @@ function counts(message: PlatformMessage) {
     // 优先采用供应方总数；缓存是输入的一部分，思考也不能无条件再加到输出上。
     total: milliseconds(usage?.totalTokenCount) ?? (input !== undefined && output !== undefined ? input + output : undefined) };
 }
-export function botRoundStats(message: PlatformMessage, iteration: number, toolNames: string[]): string {
+export function botRoundStats(message: PlatformMessage, iteration: number, toolCalls: Array<{ name: string; args?: unknown }>): string {
   const value = counts(message);
-  const tools = toolNames.length ? ` · 调用${toolNames.map(name => `「${name.replace(/[\r\n]/g, ' ')}」`).join('、')}` : '';
+  const tools = toolCalls.length ? ` · 调用${toolCalls.map(call => {
+    const args = inlineBotArguments(call.args);
+    return `「${call.name.replace(/[\r\n]/g, ' ')}」${args ? ` ${args}` : ''}`;
+  }).join('、')}` : '';
   const stats = botStatsFooter(message).slice(3);
   const missing = [value.input === undefined ? '输入 —' : '', value.output === undefined ? '输出 —' : '', value.cache === undefined ? '缓存 —' : ''].filter(Boolean);
   return `-# 第 ${iteration} 轮${tools} · ${[stats, ...missing, ...(value.creation !== undefined ? [`缓存写入 ${value.creation}`] : []),
