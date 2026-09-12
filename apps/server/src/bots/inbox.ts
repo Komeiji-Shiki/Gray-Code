@@ -11,7 +11,7 @@ export interface BotInboxItem {
   id: string; conversationId: string; context: BotContext; sequence: number; receivedAt: number;
   trigger: boolean; mergeable: boolean; message: PlatformMessage;
 }
-export interface BotInboxState { sequence: number; context: BotContext; lastActivityAt: number; summaryAttemptAt?: number; summarySequence?: number; summaryError?: string; summarySignature?: string }
+export interface BotInboxState { sequence: number; context: BotContext; lastActivityAt: number; summaryAttemptAt?: number; summarySequence?: number; summaryError?: string; summarySignature?: string; summaryRetryAt?: number }
 export const botInboxStateNamespace = 'bot-inbox-state';
 const pendingNamespace = 'bot-inbox-pending';
 const archiveNamespace = 'bot-inbound-archive';

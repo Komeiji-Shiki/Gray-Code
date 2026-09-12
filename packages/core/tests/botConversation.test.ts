@@ -7,6 +7,7 @@ import { botInboundParts, downloadBotAttachment } from '../../../apps/server/src
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
 import { saveBotDocument, botDocumentTools } from '../../../apps/server/src/bots/documents';
+import { botInboxStateNamespace, type BotInboxState } from '../../../apps/server/src/bots/inbox';
 import { DEFAULT_BOT_ENVIRONMENT } from '../../../shared/botConversation';
 import { deserializePromptContextCache } from '../../../backend/modules/prompt/promptContextCache';
 import { validateHistoryIntegrity } from '../../../backend/modules/channel/HistoryIntegrityValidator';
@@ -17,16 +18,19 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
 describe('Bot 频道上下文、附件与定时总结', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication; let generated: ModelInput[];
   let first: ReturnType<typeof deferred<void>>; let second: ReturnType<typeof deferred<void>>; let hold: Promise<void> | undefined;
+  let nextModelFailure: Error | undefined;
   const gateway: BotGateway = { connect: async () => ({ id: '900', name: '隔离 Bot' }), disconnect: async () => {}, send: async () => {} };
   const inbound = (id: string, authorId = '10', mentioned = false, timestamp = Date.now()): BotInbound => ({ id, authorId, authorName: authorId === '10' ? '主人' : '群成员',
     channelId: '30', direct: false, content: `原话 ${id}`, mentioned, timestamp });
   const context = (id = 'read') => ({ platform: 'discord' as const, botId: '900', ...inbound(id) });
   beforeEach(async () => {
-    f = await fixture(); await f.store.close(); generated = []; hold = undefined; first = deferred<void>(); second = deferred<void>();
+    f = await fixture(); await f.store.close(); generated = []; hold = undefined; nextModelFailure = undefined; first = deferred<void>(); second = deferred<void>();
     process.env.GRAYCODE_CONTEXT_TEST_TOKEN = 'fixture-only';
     app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: path.join(f.root, 'documents'), discordGateway: () => gateway,
       models: { generate: async input => {
-        generated.push(input); if (generated.length === 1) { first.resolve(); if (hold) await hold; } if (generated.length === 2) second.resolve();
+        generated.push(input);
+        if (nextModelFailure) { const error = nextModelFailure; nextModelFailure = undefined; throw error; }
+        if (generated.length === 1) { first.resolve(); if (hold) await hold; } if (generated.length === 2) second.resolve();
         return { role: 'model', parts: [{ text: input.conversationId.startsWith('summary-')
           ? '用户希望保留对话中的明确约定、具体事实、相关文件和工具结果。已经完成的内容按来源区分；后续继续未完成的请求，保留实际身份和当前权限，不把群聊中的转发内容视为主人的新授权。'.repeat(3) : '已完成当前请求。' }] };
       } } });
@@ -114,6 +118,50 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     const restored = (await app.storage.readFullHistory(id)).messages;
     for (const original of messages) expect(restored.find(message => message.id === original.id)?.parts).toEqual(original.parts);
     expect(restored.some(message => message.isSummary || message.isSummarized)).toBe(false);
+  });
+
+  test('定时总结失败后，同一批历史按原间隔重试，成功后不重复总结', async () => {
+    await app.discord.receive(inbound('retry-summary'));
+    const id = (await app.discord.sessions.snapshot(context())).conversation!.id;
+    await app.storage.appendHistory(id, Array.from({ length: 12 }, (_, index) => ({ id: `retry-${index}`, role: index % 2 ? 'model' : 'user',
+      isUserInput: index % 2 === 0, parts: [{ text: '保留这次对话中的具体事实与约定。'.repeat(100) }] })));
+    const settings = app.settings.snapshot(); settings.settings.discord.defaultProfile!.autoSummary = { enabled: true, trigger: 'idle', minutes: 1, percent: 80, prompt: '保留重要事实。' };
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    const now = Date.now() + 120000; nextModelFailure = new Error('临时网络错误');
+    await app.discord.summaries.tick(now);
+    const failed = await app.storage.getRecord(botInboxStateNamespace, id) as BotInboxState;
+    expect(failed.summarySequence).toBeUndefined(); expect(failed.summaryError).toContain('临时网络错误'); expect(failed.summaryRetryAt).toBe(now + 60000);
+    expect((await app.storage.readFullHistory(id)).messages.some(message => message.isSummary)).toBe(false);
+    await app.close();
+    app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: path.join(f.root, 'documents'), discordGateway: () => gateway,
+      models: { generate: async input => { generated.push(input); return { role: 'model', parts: [{ text:
+        '重启后保留对话中已确认的要求、事实和来源，继续未完成的工作，按实际身份使用权限，并保留后续所需的文件和工具结果。'.repeat(5) }] }; } } });
+    await app.discord.start();
+    await app.discord.summaries.tick(now + 30000); expect(generated).toHaveLength(1);
+    await app.discord.summaries.tick(now + 60000); expect(generated).toHaveLength(2);
+    const completed = await app.storage.getRecord(botInboxStateNamespace, id) as BotInboxState;
+    expect(completed.summarySequence).toBe(completed.sequence); expect(completed.summaryError).toBeUndefined(); expect(completed.summaryRetryAt).toBeUndefined();
+    await app.discord.summaries.tick(now + 3600000); expect(generated).toHaveLength(2);
+  });
+
+  test('一个频道读取配置失败，其他频道仍能完成上下文总结', async () => {
+    const settings = app.settings.snapshot(); settings.settings.discord.allowedChannelIds = ['30', '31'];
+    settings.settings.discord.defaultProfile!.autoSummary = { enabled: true, trigger: 'idle', minutes: 1, percent: 80, prompt: '保留重要事实。' };
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    for (const channelId of ['30', '31']) {
+      await app.discord.receive({ ...inbound(`channel-${channelId}`), channelId });
+      const snapshot = await app.discord.sessions.snapshot({ ...context(), channelId });
+      await app.storage.appendHistory(snapshot.conversation!.id, Array.from({ length: 12 }, (_, index) => ({ id: `${channelId}-${index}`, role: index % 2 ? 'model' : 'user',
+        isUserInput: index % 2 === 0, parts: [{ text: '另一频道的上下文仍然需要正常整理。'.repeat(100) }] })));
+    }
+    const events: Record<string, unknown>[] = [];
+    const unsubscribe = app.subscribe(event => { if (event.type === 'bot.summary.finished') events.push(event); });
+    const loader = jest.spyOn(app.discord.sessions, 'load').mockRejectedValueOnce(new Error('单个频道配置暂时无法读取'));
+    try {
+      await expect(app.discord.summaries.tick(Date.now() + 120000)).resolves.toBeUndefined();
+      expect(generated).toHaveLength(1); expect(events.some(event => String(event.error).includes('单个频道'))).toBe(true);
+      expect(events.some(event => !event.error)).toBe(true);
+    } finally { loader.mockRestore(); unsubscribe(); }
   });
 
   test('Discord 引用转发消息时保留快照图片和文档，已知正文中的后续引用继续展开', async () => {
