@@ -23,7 +23,7 @@ jest.mock('../../../backend/tools/utils', () => ({
   resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args)
 }))
 
-jest.mock('../../../backend/tools/progress/autoSync', () => ({
+jest.mock('../../../backend/tools/progress/autoSyncRuntime', () => ({
   syncProgressFromReviewArtifact: (...args: any[]) => mockSyncProgressFromReviewArtifact(...args)
 }))
 

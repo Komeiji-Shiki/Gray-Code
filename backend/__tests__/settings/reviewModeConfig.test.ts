@@ -89,7 +89,14 @@ describe('review mode config', () => {
     await manager.initialize()
 
     const config = manager.getSystemPromptConfig()
-    // After migration, toolPolicyCustomized is set to false for built-in modes
-    expect(config.modes.review).toEqual({ ...REVIEW_PROMPT_MODE, toolPolicyCustomized: false })
+    // 内置模式迁移为提示条目，原规则同时保留在有效系统条目与旧配置备份中。
+    expect(config.modes.review).toMatchObject({
+      id: REVIEW_MODE_ID, name: REVIEW_PROMPT_MODE.name, icon: REVIEW_PROMPT_MODE.icon,
+      toolPolicy: REVIEW_MODE_TOOL_POLICY, toolPolicyCustomized: false, promptAssemblyMode: 'entries',
+      legacyPrompt: { template: REVIEW_MODE_TEMPLATE, dynamicTemplate: REVIEW_PROMPT_MODE.dynamicTemplate }
+    })
+    expect(config.modes.review.promptEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'legacy-system-template', role: 'system', enabled: true, content: REVIEW_MODE_TEMPLATE })
+    ]))
   })
 })

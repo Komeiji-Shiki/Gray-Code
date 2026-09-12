@@ -9,6 +9,7 @@ const mockSyncProgressFromDesignArtifact = jest.fn().mockResolvedValue([])
 jest.mock('vscode', () => ({
   workspace: {
     fs: {
+      createDirectory: mockMkdir,
       readFile: mockReadFile,
       writeFile: mockWriteFile
     }
@@ -18,26 +19,13 @@ jest.mock('vscode', () => ({
   }
 }))
 
-// ensureParentDir 现使用 fs.promises.mkdir（backend/tools/design/pathUtils.ts），
-// 将真实 fs 的 mkdir 替换为 mock：避免测试在真实文件系统创建目录，并用于断言父目录创建
-jest.mock('fs', () => {
-  const actual = jest.requireActual('fs')
-  return {
-    ...actual,
-    promises: {
-      ...actual.promises,
-      mkdir: mockMkdir
-    }
-  }
-})
-
 jest.mock('../../../backend/tools/utils', () => ({
   getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
   resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
   normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
 }))
 
-jest.mock('../../../backend/tools/progress/autoSync', () => ({
+jest.mock('../../../backend/tools/progress/autoSyncRuntime', () => ({
   syncProgressFromDesignArtifact: (...args: any[]) => mockSyncProgressFromDesignArtifact(...args)
 }))
 
@@ -67,7 +55,7 @@ describe('create_design tool', () => {
       content: '# API Design\n\n- scope'
     })
 
-    expect(mockMkdir).toHaveBeenCalledWith('D:/workspace/.graycode/design', { recursive: true })
+    expect(mockMkdir).toHaveBeenCalledWith({ fsPath: 'D:/workspace/.graycode/design' })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/api-design.md')
     expect(mockSyncProgressFromDesignArtifact).toHaveBeenCalledWith({

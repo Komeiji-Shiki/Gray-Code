@@ -8,12 +8,12 @@
 import * as vscode from 'vscode';
 import { createRemoveBackgroundTool } from '../../../tools/media/remove_background';
 import { createProxyFetch } from '../../../modules/channel/proxyFetch';
-import { getSharp } from '../../../modules/dependencies';
+import { getSharp } from '../../../modules/dependencies/runtime';
 
 jest.mock('../../../modules/channel/proxyFetch', () => ({
     createProxyFetch: jest.fn()
 }));
-jest.mock('../../../modules/dependencies', () => ({
+jest.mock('../../../modules/dependencies/runtime', () => ({
     getSharp: jest.fn()
 }));
 

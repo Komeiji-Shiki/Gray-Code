@@ -25,7 +25,7 @@ jest.mock('../../../backend/tools/utils', () => ({
   normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
 }))
 
-jest.mock('../../../backend/tools/progress/autoSync', () => ({
+jest.mock('../../../backend/tools/progress/autoSyncRuntime', () => ({
   syncProgressFromDesignArtifact: (...args: any[]) => mockSyncProgressFromDesignArtifact(...args)
 }))
 

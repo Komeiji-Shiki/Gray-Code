@@ -43,7 +43,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "threadId": {"type":"string"},
     },
     parametersDynamic: true,
-    source: "backend/tools/subagents/agentSendMessage.ts",
+    source: "backend/tools/subagents/createAgentMessageDeclaration.ts",
   },
   'apply_diff': {
     descriptionDynamic: true,
@@ -53,7 +53,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "patch": {"type":"string"},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/diff/declaration.ts",
+    source: "backend/tools/file/diff/createApplyDiffDeclaration.ts",
   },
   'compare_review_documents': {
     description: "Compare two review documents under .graycode/review/**.md without modifying them. Returns finding deltas, tracking changes, and snapshot statistics differences.",
@@ -62,7 +62,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "targetPath": {"type":"string","description":"Target review document path under .graycode/review/**.md","required":true},
       "includeUnchanged": {"type":"boolean","description":"Whether to include unchanged persisted findings in the result"},
     },
-    source: "backend/tools/review/compare_review_documents.ts",
+    source: "backend/tools/review/compare_review_documentsRuntime.ts",
   },
   'create_design': {
     description: "Create a design document (markdown) and write it under .graycode/design/**.md. This tool only creates the design; it does NOT create a plan or implement code.",
@@ -72,7 +72,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "design": {"type":"string","description":"Design content in markdown","required":true},
       "path": {"type":"string","description":"Optional output path. Must be under .graycode/design/**.md (or multi-root: workspace/.graycode/design/**.md)."},
     },
-    source: "backend/tools/design/create_design.ts",
+    source: "backend/tools/design/create_designRuntime.ts",
   },
   'create_directory': {
     descriptionDynamic: true,
@@ -80,7 +80,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "paths": {"type":"array","items":{"type":"string"},"required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/create_directory.ts",
+    source: "backend/tools/file/createDirectoryDeclaration.ts",
   },
   'create_plan': {
     description: "Create a plan document (markdown) and write it under .graycode/plans/**.md. This tool only creates the plan; it does NOT execute it.",
@@ -92,7 +92,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "sourceArtifact": {"type":"object","description":"Optional source artifact to track plan freshness against a confirmed design or review."},
       "path": {"type":"string","description":"Optional output path. Must be under .graycode/plans/**.md (or multi-root: workspace/.graycode/plans/**.md)."},
     },
-    source: "backend/tools/plan/create_plan.ts",
+    source: "backend/tools/plan/create_planRuntime.ts",
   },
   'create_progress': {
     description: "Create the project progress document at .graycode/progress.md. This initializes the project-level status ledger and returns a lightweight progress snapshot instead of the full markdown body.",
@@ -110,7 +110,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "todos": {"type":"array","items":{"type":"object"}},
       "risks": {"type":"array","items":{"type":"object"}},
     },
-    source: "backend/tools/progress/create_progress.ts",
+    source: "backend/tools/progress/create_progressRuntime.ts",
   },
   'create_review': {
     description: "Create a review document (markdown) and write it under .graycode/review/**.md. This tool is for Review mode and must not modify business code.",
@@ -120,7 +120,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "review": {"type":"string","description":"Initial review content in markdown","required":true},
       "path": {"type":"string","description":"Optional output path. Must be under .graycode/review/**.md (or multi-root: workspace/.graycode/review/**.md)."},
     },
-    source: "backend/tools/review/create_review.ts",
+    source: "backend/tools/review/create_reviewRuntime.ts",
   },
   'crop_image': {
     descriptionDynamic: true,
@@ -134,7 +134,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "y2": {"type":"integer"},
     },
     parametersDynamic: true,
-    source: "backend/tools/media/crop_image.ts",
+    source: "backend/tools/media/crop_imageRuntime.ts",
   },
   'delete_code': {
     descriptionDynamic: true,
@@ -142,7 +142,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "files": {"type":"array","items":{"type":"object"},"required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/delete_code.ts",
+    source: "backend/tools/file/createDeleteCodeDeclaration.ts",
   },
   'delete_file': {
     descriptionDynamic: true,
@@ -150,7 +150,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "paths": {"type":"array","items":{"type":"string"},"required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/delete_file.ts",
+    source: "backend/tools/file/createDeleteFileDeclaration.ts",
   },
   'execute_command': {
     descriptionDynamic: true,
@@ -162,7 +162,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "background": {"type":"boolean"},
     },
     parametersDynamic: true,
-    source: "backend/tools/terminal/processRunner.ts",
+    source: "backend/tools/terminal/processRunnerRuntime.ts",
   },
   'finalize_review': {
     description: "Finalize an existing review document under .graycode/review/**.md, normalize its structure, and update the final review summary.",
@@ -173,7 +173,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "recommendedNextAction": {"type":"string","description":"Optional recommended next action for the summary section"},
       "reviewedModules": {"type":"array","description":"Optional reviewed modules to merge into the summary section","items":{"type":"string"}},
     },
-    source: "backend/tools/review/finalize_review.ts",
+    source: "backend/tools/review/finalize_reviewRuntime.ts",
   },
   'find_files': {
     descriptionDynamic: true,
@@ -183,7 +183,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "maxResults": {"type":"number","default":500},
     },
     parametersDynamic: true,
-    source: "backend/tools/search/find_files.ts",
+    source: "backend/tools/search/findFilesRuntime.ts",
   },
   'find_references': {
     descriptionDynamic: true,
@@ -195,7 +195,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "context": {"type":"number"},
     },
     parametersDynamic: true,
-    source: "backend/tools/lsp/find_references.ts",
+    source: "backend/tools/lsp/declarations.ts",
   },
   'generate_image': {
     descriptionDynamic: true,
@@ -203,7 +203,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "images": {"type":"array","items":{"type":"object"}},
     },
     parametersDynamic: true,
-    source: "backend/tools/media/generate_image.ts",
+    source: "backend/tools/media/generate_imageRuntime.ts",
   },
   'get_activity_stats': {
     description: "Get the user's IDE usage time statistics: daily usage minutes, recent schedule (hourly heatmap of when the user is active), and how long the user has been continuously working. Use this to understand the user's work-rest rhythm, detect long continuous working sessions, or check whether the user is currently active. Data contains timestamps only, no user content. Returned times are in local time (HH:mm, YYYY-MM-DD).",
@@ -212,7 +212,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "includeHourly": {"type":"boolean","description":"Whether to include the hourly heatmap (24 slots per day, active minutes per hour, local time). Useful for analyzing the user's sleep/work schedule. Default: false."},
       "includeMonthly": {"type":"boolean","description":"Whether to include monthly aggregates (total minutes, active days, session count per month). Useful for long-term usage overview. Default: false."},
     },
-    source: "backend/tools/activity/activity_stats.ts",
+    source: "backend/tools/activity/activityRuntime.ts",
   },
   'get_symbols': {
     descriptionDynamic: true,
@@ -220,7 +220,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "paths": {"type":"array","items":{"type":"string"},"required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/lsp/get_symbols.ts",
+    source: "backend/tools/lsp/declarations.ts",
   },
   'goto_definition': {
     descriptionDynamic: true,
@@ -231,7 +231,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "symbol": {"type":"string"},
     },
     parametersDynamic: true,
-    source: "backend/tools/lsp/goto_definition.ts",
+    source: "backend/tools/lsp/declarations.ts",
   },
   'history_search': {
     descriptionDynamic: true,
@@ -251,7 +251,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "files": {"type":"array","items":{"type":"object"},"required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/insert_code.ts",
+    source: "backend/tools/file/createInsertCodeDeclaration.ts",
   },
   'list_files': {
     descriptionDynamic: true,
@@ -260,7 +260,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "recursive": {"type":"boolean","default":false},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/list_files.ts",
+    source: "backend/tools/file/listFilesRuntime.ts",
   },
   'memory_compress': {
     description: "执行待处理的记忆压缩合并。\n记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\n成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。\n参数：blockId（块 ID，如 \"0-1\"）；summary（压缩后的摘要文本，一行，长度受 entryChars 上限约束，默认 ≤280 字节）。\n不传参数时，返回下一个待压缩的提示。\n作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope=\"global\"。",
@@ -269,7 +269,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "summary": {"type":"string","description":"压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。"},
       "scope": {"type":"string","description":"记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 \"global\"，如需显式操作工作区记忆请传 \"workspace\"。","enum":["global","workspace"]},
     },
-    source: "backend/tools/memory/memory_compress.ts",
+    source: "backend/tools/memory/memory_compressRuntime.ts",
   },
   'memory_config': {
     description: "查看或修改永久记忆系统的配置参数。\n可配置项：\n- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n- entryChars: 单条记忆最大字节数（默认 280，上限 1000）\n- partChars: 输出分页最大字符数（默认 20000）\n- partLines: 输出分页最大行数（默认 500）\n不传参数时显示当前配置。传参数时修改对应项。\n修改只影响输出格式，不需要重新计算任何东西。",
@@ -279,7 +279,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "partChars": {"type":"number","description":"输出分页最大字符数。"},
       "partLines": {"type":"number","description":"输出分页最大行数。"},
     },
-    source: "backend/tools/memory/memory_config.ts",
+    source: "backend/tools/memory/memory_configRuntime.ts",
   },
   'memory_forget': {
     description: "丢弃错误的树摘要，或删除原始记忆。\n当 blockId 是范围（如 \"16-31\"，破折号）：仅丢弃树摘要及其上层摘要，原始记忆（LOG）不会被触碰。\n当 blockId 是单个数字（如 \"5\"）：删除这一条原始记忆（其后的记录 id 前移重编号）。\n当 blockId 是闭区间（如 \"1,3\"，逗号分隔）：删除 ID 1 到 3 的所有原始记忆（含端点）。\n参数：blockId（块 ID 如 \"16-31\"、单个 ID 如 \"5\"、或闭区间如 \"1,3\"）。\n作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope=\"global\"。",
@@ -287,21 +287,21 @@ export const toolMeta: Record<string, ToolMeta> = {
       "blockId": {"type":"string","description":"块 ID（如 \"16-31\"）丢弃树摘要；单个 ID（如 \"5\"）删除这一条记忆；闭区间（如 \"1,3\"）删除 1 到 3 的所有记忆。","required":true},
       "scope": {"type":"string","description":"记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 \"global\"，如需显式操作工作区记忆请传 \"workspace\"。","enum":["global","workspace"]},
     },
-    source: "backend/tools/memory/memory_forget.ts",
+    source: "backend/tools/memory/memory_forgetRuntime.ts",
   },
   'memory_note': {
     description: "记录一条对未来会话仍有价值的永久记忆。\n记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 1000）。\n不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩。",
     parameters: {
       "text": {"type":"string","description":"要记录的记忆文本。一行，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符）。","required":true},
     },
-    source: "backend/tools/memory/memory_note.ts",
+    source: "backend/tools/memory/memory_noteRuntime.ts",
   },
   'memory_recall': {
     description: "搜索全部永久记忆（逐字匹配）。支持正则表达式。\n搜索范围包括全局记忆与当前工作区记忆（按工作区隔离），命中结果以 --- Global memory --- / --- Workspace memory --- 标注来源。\n搜索范围包括已被压缩摘要的原始记忆——压缩不会丢失信息。\n结果限制在单次输出容量内，如果被截断会提示缩小正则范围。",
     parameters: {
       "regex": {"type":"string","description":"搜索正则表达式（大小写不敏感）。搜索范围包括 ID 和日期。","required":true},
     },
-    source: "backend/tools/memory/memory_recall.ts",
+    source: "backend/tools/memory/memory_recallRuntime.ts",
   },
   'memory_wake': {
     description: "唤醒永久记忆。在新的工作会话开始、且历史约定可能影响任务时调用；简单且与历史无关的无工具回复无需调用。\n输出包含两部分：全局记忆与当前工作区记忆（按工作区隔离），以 --- Global memory --- / --- Workspace memory --- 标注。\n它会输出你的记忆摘要：近期的记忆保持原文，远期的记忆被压缩为摘要。\n如果输出被分成多个部分，按顺序读取直到看到 \"You are awake.\" 为止。成功结果中的 pendingCompression 可延后，不要中断当前用户任务。\n参数：part（可选，部分号，1-based）；snapshotT（可选，记忆快照总数）。",
@@ -309,7 +309,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "part": {"type":"integer","description":"要读取的部分号（1-based）。不传则从第 1 部分开始。"},
       "snapshotT": {"type":"integer","description":"快照时的记忆总数。不传或首次调用传 0 时使用当前总数。用于跨多次 wake 调用保持一致性。"},
     },
-    source: "backend/tools/memory/memory_wake.ts",
+    source: "backend/tools/memory/memory_wakeRuntime.ts",
   },
   'memory_zoom': {
     description: "展开一个记忆树节点，查看它的两个半部分。\n记忆形成一棵二叉树：memory_wake 输出的每一行 #a-b 都是一个节点。\n用 memory_zoom 可以展开它，看到下一层的两个半部分，直到原始记忆本身。\n参数：blockId（块 ID，如 \"16-31\"）。\n作用域：有工作区时默认读取当前工作区记忆；如需读取全局记忆请传 scope=\"global\"。",
@@ -317,7 +317,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "blockId": {"type":"string","description":"要展开的块 ID（如 \"16-31\"）。从 wake 输出或上一次 zoom 的结果中复制。","required":true},
       "scope": {"type":"string","description":"记忆作用域。有工作区时默认读取当前工作区记忆；如需读取全局记忆请传 \"global\"，如需显式读取工作区记忆请传 \"workspace\"。","enum":["global","workspace"]},
     },
-    source: "backend/tools/memory/memory_zoom.ts",
+    source: "backend/tools/memory/memory_zoomRuntime.ts",
   },
   'read_file': {
     descriptionDynamic: true,
@@ -328,7 +328,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "endLine": {"type":"integer"},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/read_file.ts",
+    source: "backend/tools/file/readFileRuntime.ts",
   },
   'read_skill': {
     descriptionDynamic: true,
@@ -336,7 +336,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "name": {"type":"string","required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/skills/readSkill.ts",
+    source: "backend/tools/skills/readSkillRuntime.ts",
   },
   'record_progress_milestone': {
     description: "Record a project milestone into .graycode/progress.md and refresh the latest progress snapshot. This is for project-level progress nodes, not for full review findings or plan documents.",
@@ -355,7 +355,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "latestConclusion": {"type":"string"},
       "currentBlocker": {"type":"string"},
     },
-    source: "backend/tools/progress/record_progress_milestone.ts",
+    source: "backend/tools/progress/record_progress_milestoneRuntime.ts",
   },
   'record_review_milestone': {
     description: "Append a milestone to an existing review document under .graycode/review/**.md and update the structured summary sections.",
@@ -373,7 +373,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "reviewedModules": {"type":"array","description":"Optional reviewed modules to merge into the review summary section","items":{"type":"string"}},
       "recommendedNextAction": {"type":"string","description":"Optional recommended next action for the review summary section"},
     },
-    source: "backend/tools/review/record_review_milestone.ts",
+    source: "backend/tools/review/record_review_milestoneRuntime.ts",
   },
   'remove_background': {
     descriptionDynamic: true,
@@ -385,14 +385,14 @@ export const toolMeta: Record<string, ToolMeta> = {
       "mask_path": {"type":"string"},
     },
     parametersDynamic: true,
-    source: "backend/tools/media/remove_background.ts",
+    source: "backend/tools/media/remove_backgroundRuntime.ts",
   },
   'reopen_review': {
     description: "Reopen a finalized review document under .graycode/review/**.md so the same review run can continue recording milestones.",
     parameters: {
       "path": {"type":"string","description":"Target finalized review document path under .graycode/review/**.md","required":true},
     },
-    source: "backend/tools/review/reopen_review.ts",
+    source: "backend/tools/review/reopen_reviewRuntime.ts",
   },
   'resize_image': {
     descriptionDynamic: true,
@@ -404,7 +404,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "height": {"type":"integer"},
     },
     parametersDynamic: true,
-    source: "backend/tools/media/resize_image.ts",
+    source: "backend/tools/media/resize_imageRuntime.ts",
   },
   'rotate_image': {
     descriptionDynamic: true,
@@ -416,7 +416,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "format": {"type":"string"},
     },
     parametersDynamic: true,
-    source: "backend/tools/media/rotate_image.ts",
+    source: "backend/tools/media/rotate_imageRuntime.ts",
   },
   'search_in_files': {
     descriptionDynamic: true,
@@ -432,7 +432,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "maxFiles": {"type":"number","default":50},
     },
     parametersDynamic: true,
-    source: "backend/tools/search/declaration.ts",
+    source: "backend/tools/search/declarationRuntime.ts",
   },
   'show_windows_notification': {
     description: "Show a Windows system notification with a custom title and message. Use this when you need to notify the user outside the chat UI, for example when a long task finishes, user action is needed, or an important status changes. On non-Windows platforms the tool reports that notification is unsupported.",
@@ -442,7 +442,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "silent": {"type":"boolean","description":"Whether to suppress notification sound. Default: true."},
       "openChatOnClick": {"type":"boolean","description":"Whether clicking the notification should open the GrayCode chat view. Default: true."},
     },
-    source: "backend/tools/notification/show_windows_notification.ts",
+    source: "backend/tools/notification/showWindowsNotificationRuntime.ts",
   },
   'subagents': {
     descriptionDynamic: true,
@@ -454,7 +454,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "background": {"type":"boolean"},
     },
     parametersDynamic: true,
-    source: "backend/tools/subagents/subagents.ts",
+    source: "backend/tools/subagents/createDeclaration.ts",
   },
   'todo_update': {
     description: "Incrementally update the per-conversation TODO list stored in ConversationMetadata.custom[\"todoList\"]. Use this to update status/content without rewriting the entire list.",
@@ -479,7 +479,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "design": {"type":"string","description":"Updated design content in markdown.","required":true},
       "changeSummary": {"type":"string","description":"Optional short summary of what changed in this design revision."},
     },
-    source: "backend/tools/design/update_design.ts",
+    source: "backend/tools/design/update_designRuntime.ts",
   },
   'update_plan': {
     description: "Update an existing plan document (markdown) under .graycode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.",
@@ -493,7 +493,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "sourceArtifact": {"type":"object","description":"Optional source artifact to rebind the plan to the latest confirmed design or review. Allowed only in revision mode. Use this nested object only when the schema explicitly allows it. Do NOT send sibling carry-over fields such as sourceArtifactType, sourcePath, or sourceContent."},
       "changeSummary": {"type":"string","description":"Optional short summary of what changed in this plan revision."},
     },
-    source: "backend/tools/plan/update_plan.ts",
+    source: "backend/tools/plan/update_planRuntime.ts",
   },
   'update_progress': {
     description: "Update the project progress document at .graycode/progress.md. This refreshes summary fields, artifacts, TODO snapshot, risks, and recent log entries while returning a lightweight progress snapshot.",
@@ -510,21 +510,21 @@ export const toolMeta: Record<string, ToolMeta> = {
       "risks": {"type":"array","items":{"type":"object"}},
       "appendLog": {"type":"array","items":{"type":"object"}},
     },
-    source: "backend/tools/progress/update_progress.ts",
+    source: "backend/tools/progress/update_progressRuntime.ts",
   },
   'validate_progress_document': {
     description: "Validate the fixed progress document at .graycode/progress.md without modifying it. Reports metadata health, section ordering, and basic invariants.",
     parameters: {
       "path": {"type":"string","description":"Target progress document path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).","required":true},
     },
-    source: "backend/tools/progress/validate_progress_document.ts",
+    source: "backend/tools/progress/validate_progress_documentRuntime.ts",
   },
   'validate_review_document': {
     description: "Validate an existing review document under .graycode/review/**.md without modifying it. Reports format, metadata health, and invariant issues.",
     parameters: {
       "path": {"type":"string","description":"Target review document path under .graycode/review/**.md","required":true},
     },
-    source: "backend/tools/review/validate_review_document.ts",
+    source: "backend/tools/review/validate_review_documentRuntime.ts",
   },
   'write_file': {
     descriptionDynamic: true,
@@ -533,6 +533,6 @@ export const toolMeta: Record<string, ToolMeta> = {
       "content": {"type":"string","required":true},
     },
     parametersDynamic: true,
-    source: "backend/tools/file/write_file.ts",
+    source: "backend/tools/file/createWriteFileDeclaration.ts",
   },
 };
