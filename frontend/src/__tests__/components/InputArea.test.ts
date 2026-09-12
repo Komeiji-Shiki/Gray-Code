@@ -177,12 +177,52 @@ describe('InputArea 发送失败恢复', () => {
       showSettings: vi.fn()
     })
     vi.clearAllMocks()
+    runtime.config.listConfigIds.mockReset().mockResolvedValue([])
+    runtime.config.getConfig.mockReset().mockResolvedValue(null)
   })
 
   afterEach(() => {
     wrapper?.unmount()
     wrapper = undefined
     vi.restoreAllMocks()
+  })
+
+  test('空渠道给出配置入口，打开设置保留已输入的草稿', async () => {
+    runtime.chatStore.configId = ''
+    runtime.chatStore.selectedModelId = ''
+    runtime.chatStore.editorNodes = makeTextNodes('配置完成后继续发送这段话')
+    wrapper = mountWithParent(vi.fn())
+    await flushPromises()
+    expect(wrapper.find('.channel-setup-notice[data-status="empty"]').exists()).toBe(true)
+    await wrapper.find('.channel-setup-notice button').trigger('click')
+    expect(runtime.settingsStore.showSettings).toHaveBeenCalledWith('channel')
+    expect(runtime.chatStore.editorNodes).toEqual(makeTextNodes('配置完成后继续发送这段话'))
+  })
+
+  test('读取渠道失败显示具体原因，重试成功后恢复选择', async () => {
+    runtime.config.listConfigIds.mockRejectedValueOnce(new Error('配置服务暂时不可用'))
+      .mockResolvedValue(['cfg_1'])
+    runtime.config.getConfig.mockResolvedValue({ id: 'cfg_1', name: '本地模型', model: 'test-model', models: [] })
+    wrapper = mountWithParent(vi.fn())
+    await flushPromises()
+    expect(wrapper.find('.channel-setup-notice[data-status="error"]').text()).toContain('配置服务暂时不可用')
+    await wrapper.find('.channel-setup-notice button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.channel-setup-notice').exists()).toBe(false)
+  })
+
+  test('旧渠道加载失败不能覆盖后一次加载成功的结果', async () => {
+    let rejectPrevious!: (error: Error) => void
+    runtime.config.listConfigIds.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPrevious = reject }))
+      .mockResolvedValue(['cfg_1'])
+    runtime.config.getConfig.mockResolvedValue({ id: 'cfg_1', name: '本地模型', model: 'test-model', models: [] })
+    wrapper = mountWithParent(vi.fn())
+    await nextTick()
+    runtime.onExtensionCommand.mock.calls.find(([command]) => command === 'channels.configChanged')![1]({})
+    await flushPromises()
+    rejectPrevious(new Error('上一次请求已经过期'))
+    await flushPromises()
+    expect(wrapper.find('.channel-setup-notice').exists()).toBe(false)
   })
 
   test('直接发送失败：正文（editorNodes + inputValue）与附件均恢复', async () => {

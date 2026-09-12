@@ -16,6 +16,7 @@ import SkillsWidget from './SkillsWidget.vue'
 import TpsBar from './TpsBar.vue'
 import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
+import ChannelSetupNotice, { type ChannelSetupStatus } from './ChannelSetupNotice.vue'
 import ContextDetailDialog from './ContextDetailDialog.vue'
 import PromptPreviewDialog from './PromptPreviewDialog.vue'
 import type { ChannelOption, PromptMode } from './types'
@@ -88,7 +89,9 @@ watch(() => chatStore.editorNodes, (nodes) => {
 
 const configs = ref<ChannelConfig[]>([])
 const reasoningProfiles = ref<ProviderDefinition[]>([])
-const isLoadingConfigs = ref(false)
+const isLoadingConfigs = ref(true)
+const configsLoadError = ref('')
+let configLoadGeneration = 0
 
 const promptModes = ref<PromptMode[]>([])
 
@@ -112,32 +115,46 @@ const currentReasoningLevels = computed(() => {
   const profile = reasoningProfiles.value.find(item => item.id === chatStore.configId)
   return profile ? reasoningLevelsForModel(profile, currentModel.value) : []
 })
+const channelSetupStatus = computed<ChannelSetupStatus>(() => {
+  if (isLoadingConfigs.value && !configs.value.length) return 'loading'
+  if (configsLoadError.value) return 'error'
+  if (!configs.value.length) return 'empty'
+  if (!channelOptions.value.length) return 'disabled'
+  if (!currentConfig.value) return 'channel'
+  if (!currentModel.value) return currentModels.value.length ? 'model' : 'models'
+  return 'ready'
+})
 
 async function loadConfigs() {
+  const generation = ++configLoadGeneration
   isLoadingConfigs.value = true
+  configsLoadError.value = ''
   try {
     const [ids, platformSettings] = await Promise.all([
       configService.listConfigIds(),
       window.__GRAYCODE_HOST ? sendToExtension<{ providers: ProviderDefinition[] }>('platform.settings.get', {}) : Promise.resolve(undefined)
     ])
-    reasoningProfiles.value = platformSettings?.providers ?? []
-
     // 并行拉取全部渠道配置（原为串行 N 次 IPC，渠道多时首屏线性变慢）；
     // 单条失败仅跳过该条并告警，不拖垮整批（保留单条失败容忍语义）
+    let firstError = ''
     const results = await Promise.all(ids.map(async (id) => {
       try {
         return await configService.getConfig(id)
       } catch (error) {
         console.warn(`Failed to load config ${id}:`, error)
+        firstError ||= error instanceof Error ? error.message : String(error)
         return null
       }
     }))
-
+    if (generation !== configLoadGeneration) return
+    reasoningProfiles.value = platformSettings?.providers ?? []
     configs.value = results.filter((c): c is ChannelConfig => !!c)
+    configsLoadError.value = firstError
   } catch (error) {
     console.error('Failed to load configs:', error)
+    if (generation === configLoadGeneration) configsLoadError.value = error instanceof Error ? error.message : String(error)
   } finally {
-    isLoadingConfigs.value = false
+    if (generation === configLoadGeneration) isLoadingConfigs.value = false
   }
 }
 
@@ -649,6 +666,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  configLoadGeneration++
   if (unsubscribeAddContext) unsubscribeAddContext()
   if (unsubscribeConfigChanged) unsubscribeConfigChanged()
 })
@@ -824,6 +842,9 @@ watch(() => settingsStore.promptModesVersion, () => {
         />
       </div>
     </div>
+
+    <ChannelSetupNotice :status="channelSetupStatus" :error="configsLoadError"
+      @configure="settingsStore.showSettings('channel')" @retry="loadConfigs" />
 
     <InputSelectorBar
       :current-mode-id="chatStore.currentPromptModeId"

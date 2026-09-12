@@ -25,7 +25,8 @@ let historyCursor = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 const selected = computed(() => runs.value.find(run => run.id === selectedId.value));
 const activity = computed(() => window.graycode?.kind === 'web' && webUi.connection !== 'connected'
-  ? '正在重新连接，任务状态待同步' : runActivity(selected.value, events.value));
+  ? '正在重新连接，任务状态待同步' : !selected.value && state.snapshot?.settings.providers.length === 0
+    ? '请先配置模型服务' : runActivity(selected.value, events.value));
 const visibleEvents = computed(() => events.value.filter(event => lane.value === '全部' || eventLane(event.type) === lane.value));
 const groups = computed(() => requestGroups(request.value?.body));
 const requests = computed(() => events.value.filter(event => event.type === 'model.request'));

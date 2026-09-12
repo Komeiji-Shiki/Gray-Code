@@ -1070,7 +1070,7 @@ defineExpose({
       :contenteditable="disabled ? 'false' : 'true'"
       role="textbox"
       aria-multiline="true"
-      :aria-label="placeholderText"
+      :aria-label="props.placeholder || t('components.input.placeholder')"
       :aria-placeholder="placeholderText"
       :aria-disabled="disabled || undefined"
       :aria-haspopup="popupControls ? 'listbox' : undefined"
@@ -1078,6 +1078,7 @@ defineExpose({
       :aria-controls="popupControls"
       :tabindex="disabled ? -1 : 0"
       :data-placeholder="placeholderText"
+      :data-compact-placeholder="props.placeholder || t('components.input.placeholder')"
       @input="handleInput"
       @beforeinput="handleBeforeInput"
       @keydown="handleKeydown"
@@ -1335,6 +1336,10 @@ defineExpose({
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   pointer-events: none;
+}
+
+@media (max-width: 520px) {
+  .input-editor.is-empty::before { content: attr(data-compact-placeholder); }
 }
 
 @media (prefers-reduced-motion: reduce) {

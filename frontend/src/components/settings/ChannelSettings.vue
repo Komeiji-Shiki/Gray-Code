@@ -31,6 +31,7 @@ const chatStore = useChatStore()
 const configs = ref<ChannelConfig[]>([])
 const currentConfigId = ref<string>('')
 const isLoading = ref(false)
+const loadError = ref('')
 
 // 编辑模式
 const isEditing = ref(false)
@@ -46,6 +47,8 @@ const showNewDialog = ref(false)
 const newConfigName = ref('')
 const newConfigType = ref<ChannelType>('gemini')
 const newConfigNameError = ref(false)
+const createError = ref('')
+const isCreatingConfig = ref(false)
 
 // API Key 显示
 const showApiKey = ref(false)
@@ -430,31 +433,34 @@ async function updateContextManagementMode(_mode: string) {
 // 加载配置列表
 async function loadConfigs() {
   isLoading.value = true
+  loadError.value = ''
   try {
     // 重新加载期间使预加载缓存失效：失败时不残留旧缓存（下次进入渠道页会重新加载）。
     // 置于 await listConfigs 之前：避免等待期间（陈旧缓存窗口）预加载缓存仍返回旧列表
     setChannelConfigsCache(null)
     const ids = await sendToExtension<string[]>(MESSAGE_NAMES['config.listConfigs'], {})
-    configs.value = []
     // 非数组响应按失败处理（TypeError 进 catch，整批失败语义）：与预加载失败语义对齐，
     // 避免把非法响应当空列表展示
     if (!Array.isArray(ids)) {
       throw new TypeError('config.listConfigs returned non-array response')
     }
 
+    const loaded: ChannelConfig[] = []
     for (const id of ids) {
       const config = await sendToExtension(MESSAGE_NAMES['config.getConfig'], { configId: id })
       if (config) {
-        configs.value.push(config)
+        loaded.push(config)
       }
     }
 
+    configs.value = loaded
     // 成功后同步预加载缓存：切回渠道 tab / 再次打开设置页直接复用，不再重复请求
     setChannelConfigsCache(configs.value)
 
     // 不在这里自动选择配置，让 onMounted 统一处理
   } catch (error) {
     console.error('Failed to load configs:', error)
+    loadError.value = error instanceof Error ? error.message : String(error)
   } finally {
     isLoading.value = false
   }
@@ -462,11 +468,14 @@ async function loadConfigs() {
 
 // 创建新配置
 async function createConfig() {
+  if (isCreatingConfig.value) return
   if (!newConfigName.value.trim()) {
     newConfigNameError.value = true
     return
   }
 
+  isCreatingConfig.value = true
+  createError.value = ''
   try {
     // 只传递必要参数，其他由后端提供默认值
     const configId = await sendToExtension<string>(MESSAGE_NAMES['config.createConfig'], {
@@ -481,6 +490,9 @@ async function createConfig() {
     newConfigNameError.value = false
   } catch (error) {
     console.error('Failed to create config:', error)
+    createError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    isCreatingConfig.value = false
   }
 }
 
@@ -571,15 +583,18 @@ function cancelEditing() {
 
 // 取消新建
 function cancelNew() {
+  if (isCreatingConfig.value) return
   showNewDialog.value = false
   newConfigName.value = ''
   newConfigNameError.value = false
+  createError.value = ''
 }
 
 // 新建渠道名称输入：同步名称并清除必填错误
 function onNewConfigName(value: string) {
   newConfigName.value = value
   newConfigNameError.value = false
+  createError.value = ''
 }
 
 // 更改渠道类型（切换后类型特有参数会重置为新类型默认值，需整体重载配置）
@@ -915,12 +930,19 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
       :name="newConfigName"
       :type="newConfigType"
       :name-error="newConfigNameError"
+      :error="createError"
+      :creating="isCreatingConfig"
       :type-options="typeOptions"
       @update:name="onNewConfigName"
       @update:type="newConfigType = $event"
       @create="createConfig"
       @cancel="cancelNew"
     />
+
+    <div v-if="loadError" class="channel-load-error" role="alert">
+      <p>{{ t('components.input.channelSetup.error') }} {{ loadError }}</p>
+      <button type="button" class="btn primary" :disabled="isLoading" @click="loadConfigs().then(syncSelectedConfigId)">{{ t('common.retry') }}</button>
+    </div>
 
     <!-- 配置表单 -->
     <div v-if="currentConfig" class="config-form">
@@ -1024,7 +1046,7 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
     </div>
 
     <!-- 无渠道空态：首次打开无默认渠道，引导用户新建（加载中不渲染，避免误引导） -->
-    <div v-else-if="!isLoading" class="config-empty">
+    <div v-else-if="!isLoading && !loadError" class="config-empty">
       <i class="codicon codicon-plug channel-empty-icon"></i>
       <p class="config-empty-text">{{ t('components.settings.channelSettings.empty.title') }}</p>
       <p class="config-empty-hint">{{ t('components.settings.channelSettings.empty.hint') }}</p>
@@ -1042,6 +1064,8 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
   flex-direction: column;
   gap: 16px;
 }
+.channel-load-error { padding: 12px; border: 1px solid var(--vscode-inputValidation-errorBorder); color: var(--vscode-errorForeground); }
+.channel-load-error p { margin: 0 0 10px; overflow-wrap: anywhere; }
 
 /* 无渠道空态 */
 .config-empty {
@@ -1052,7 +1076,7 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
   padding: 48px 24px;
   text-align: center;
   border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .channel-empty-icon {

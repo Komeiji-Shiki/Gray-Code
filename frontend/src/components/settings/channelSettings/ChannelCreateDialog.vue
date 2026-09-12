@@ -12,6 +12,8 @@ defineProps<{
   name: string
   type: ChannelType
   nameError: boolean
+  error?: string
+  creating?: boolean
   typeOptions: SelectOption[]
 }>()
 
@@ -43,6 +45,7 @@ const emit = defineEmits<{
           :class="{ 'input-error': nameError }"
           :placeholder="t('components.settings.channelSettings.dialog.new.namePlaceholder')"
           :aria-invalid="nameError"
+          :disabled="creating"
           :aria-describedby="nameError ? 'channel-create-name-error' : undefined"
           @keyup.enter="emit('create')"
           @input="emit('update:name', ($event.target as HTMLInputElement).value)"
@@ -60,19 +63,21 @@ const emit = defineEmits<{
         <CustomSelect
           :model-value="type"
           :options="typeOptions"
+          :disabled="creating"
           :placeholder="t('components.settings.channelSettings.dialog.new.typePlaceholder')"
           :aria-label="t('components.settings.channelSettings.dialog.new.typeLabel')"
           @update:model-value="emit('update:type', $event as ChannelType)"
         />
       </div>
+      <p v-if="error" class="config-name-error" role="alert">{{ error }}</p>
     </div>
 
     <template #footer>
-      <button type="button" class="gc-button" @click="emit('cancel')">
+      <button type="button" class="gc-button" :disabled="creating" @click="emit('cancel')">
         {{ t('components.settings.channelSettings.dialog.new.cancel') }}
       </button>
-      <button type="button" class="gc-button gc-button--primary" @click="emit('create')">
-        {{ t('components.settings.channelSettings.dialog.new.create') }}
+      <button type="button" class="gc-button gc-button--primary" :disabled="creating" @click="emit('create')">
+        {{ creating ? t('common.loading') : t('components.settings.channelSettings.dialog.new.create') }}
       </button>
     </template>
   </Modal>

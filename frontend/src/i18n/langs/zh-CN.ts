@@ -336,7 +336,7 @@ const zhCN = {
         home: {
             welcome: '欢迎使用 GrayCode',
             welcomeMessage: 'AI 编程助手，帮助您更高效地编写代码',
-            welcomeHint: '在下方输入框中输入消息开始对话',
+            welcomeHint: '在下方选择渠道和模型后，输入消息开始对话',
             quickStart: '快速开始',
             recentChats: '最近对话',
             noRecentChats: '暂无对话历史',
@@ -382,6 +382,16 @@ const zhCN = {
                 manageMode: '管理模式',
                 search: '搜索模式...',
                 noResults: '没有匹配的模式'
+            },
+            channelSetup: {
+                loading: '正在读取渠道配置…',
+                error: '渠道配置未能完整加载。',
+                empty: '先连接一个模型服务。渠道用于保存服务地址、密钥和可用模型。',
+                disabled: '现有渠道已全部停用，请启用一个渠道后继续。',
+                channel: '在下方选择要使用的渠道。',
+                models: '这个渠道还没有模型，请获取模型列表或手动添加模型。',
+                model: '在下方选择本次对话使用的模型。',
+                configure: '配置模型服务'
             },
             channelSelector: {
                 placeholder: '选择配置',
@@ -1047,7 +1057,7 @@ const zhCN = {
                 },
                 empty: {
                     title: '尚未配置任何渠道',
-                    hint: '首次使用需要先新建一个渠道并填写 API Key，之后即可开始对话。',
+                    hint: '新建渠道后填写服务地址，再获取或手动添加模型。服务需要密钥时填写 API Key，保存后返回对话选择模型。',
                     create: '新建渠道'
                 },
                 dialog: {

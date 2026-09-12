@@ -334,7 +334,7 @@ const en: LanguageMessages = {
         home: {
             welcome: 'Welcome to GrayCode',
             welcomeMessage: 'AI coding assistant helping you write code more efficiently',
-            welcomeHint: 'Type a message in the input box below to start a conversation',
+            welcomeHint: 'Select a channel and model below, then type a message to start a conversation',
             quickStart: 'Quick Start',
             recentChats: 'Recent Chats',
             noRecentChats: 'No conversation history',
@@ -380,6 +380,16 @@ const en: LanguageMessages = {
                 manageMode: 'Manage Modes',
                 search: 'Search modes...',
                 noResults: 'No matching modes'
+            },
+            channelSetup: {
+                loading: 'Loading channel settings…',
+                error: 'Some channel settings could not be loaded.',
+                empty: 'Connect a model service first. A channel stores its address, credentials, and available models.',
+                disabled: 'All channels are disabled. Enable a channel to continue.',
+                channel: 'Select a channel below.',
+                models: 'This channel has no models yet. Fetch its model list or add a model manually.',
+                model: 'Select the model for this conversation below.',
+                configure: 'Configure model service'
             },
             channelSelector: {
                 placeholder: 'Select config',
@@ -1045,7 +1055,7 @@ const en: LanguageMessages = {
                 },
                 empty: {
                     title: 'No channel configured',
-                    hint: 'Create a channel and fill in your API Key to start chatting.',
+                    hint: 'Create a channel, enter the service address, then fetch or manually add models. Enter an API Key if required by the service. Save and return to the conversation to select a model.',
                     create: 'New Channel'
                 },
                 dialog: {

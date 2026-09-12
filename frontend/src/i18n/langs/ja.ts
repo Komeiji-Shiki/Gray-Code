@@ -334,7 +334,7 @@ const ja: LanguageMessages = {
         home: {
             welcome: 'GrayCode へようこそ',
             welcomeMessage: 'より効率的にコードを書くための AI コーディングアシスタント',
-            welcomeHint: '下の入力欄にメッセージを入力して会話を開始',
+            welcomeHint: '下でチャンネルとモデルを選択してから、メッセージを入力して会話を開始',
             quickStart: 'クイックスタート',
             recentChats: '最近の会話',
             noRecentChats: '会話履歴がありません',
@@ -380,6 +380,16 @@ const ja: LanguageMessages = {
                 manageMode: 'モードを管理',
                 search: 'モードを検索...',
                 noResults: '一致するモードがありません'
+            },
+            channelSetup: {
+                loading: 'チャンネル設定を読み込んでいます…',
+                error: 'チャンネル設定の一部を読み込めませんでした。',
+                empty: '最初にモデルサービスに接続してください。チャンネルには接続先、認証情報、利用可能なモデルを保存します。',
+                disabled: 'すべてのチャンネルが無効です。チャンネルを有効にして続行してください。',
+                channel: '下で使用するチャンネルを選択してください。',
+                models: 'このチャンネルにはモデルがありません。モデル一覧を取得するか、手動で追加してください。',
+                model: '下でこの会話に使用するモデルを選択してください。',
+                configure: 'モデルサービスを設定'
             },
             channelSelector: {
                 placeholder: '設定を選択',
@@ -1045,7 +1055,7 @@ const ja: LanguageMessages = {
                 },
                 empty: {
                     title: 'チャンネルが設定されていません',
-                    hint: 'チャンネルを作成して API Key を入力すると、会話を開始できます。',
+                    hint: 'チャンネルを作成して接続先を入力し、モデル一覧を取得するか手動で追加します。サービスが要求する場合は API Key を入力してください。保存後、会話に戻ってモデルを選択します。',
                     create: 'チャンネルを作成'
                 },
                 dialog: {
