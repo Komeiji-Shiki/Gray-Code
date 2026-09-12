@@ -3,6 +3,7 @@ import { computed, defineComponent, h, nextTick, ref, type Ref } from 'vue'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { setLanguage } from '../../../i18n'
 import { useSettingsSearch } from '../panel/useSettingsSearch'
+import { settingsSearchIndex } from '../panel/settingsSearchIndex'
 import type { SettingsTab } from '../../../stores/settingsStore'
 import type { SearchIndexEntry } from '../panel/types'
 
@@ -26,7 +27,7 @@ beforeEach(async () => {
   container.scrollTo = vi.fn()
   activeTab = ref<SettingsTab>('general')
   wrapper = mount(defineComponent({ setup() {
-    search = useSettingsSearch({ index: [],
+    search = useSettingsSearch({ index: settingsSearchIndex(true),
       tabs: computed(() => [{ id: 'tools', label: '工具', icon: 'codicon-tools' }, { id: 'autoExec', label: '自动执行', icon: 'codicon-shield' }]),
       activeTab: () => activeTab.value, selectTab: tab => { activeTab.value = tab }, container: () => container,
     })
@@ -53,6 +54,15 @@ test('等待异步出现的具体工具条目，不提前跳到页首', async ()
   container.querySelector('section')!.append(target)
   await vi.waitFor(() => expect(target.classList.contains('search-flash')).toBe(true))
   expect(container.scrollTo).toHaveBeenCalledOnce()
+})
+
+test('账号与 Bot 搜索进入对应分类，旧提示词关键词指向当前条目编辑器', () => {
+  search.searchQuery.value = '主人'
+  expect(search.searchResults.value.some(entry => entry.tab === 'accounts')).toBe(true)
+  search.searchQuery.value = 'QQ'
+  expect(search.searchResults.value.some(entry => entry.tab === 'onebot')).toBe(true)
+  search.searchQuery.value = '动态上下文'
+  expect(search.searchResults.value.find(entry => entry.tab === 'prompt')?.anchor).toBe('[data-search-anchor="prompt-entries"]')
 })
 
 test('用户切换页签后，取消仍在等待内容的旧搜索跳转', async () => {

@@ -10,6 +10,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect } from 'vitest'
+import { settingsSearchIndex } from '../panel/settingsSearchIndex'
 
 const SETTINGS_DIR = path.resolve(process.cwd(), 'src/components/settings')
 
@@ -34,13 +35,8 @@ describe('设置搜索 SEARCH_INDEX 锚点一致性', () => {
   const sources = readSettingsComponentSources()
 
   test('SEARCH_INDEX 中每个带 anchor 的条目，目标锚点都存在（跨组件反重构漂移）', () => {
-    const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
-    // 从 SettingsPanel.vue 提取 SEARCH_INDEX 条目中所有 anchor 选择器
-    // 形如：anchor: '[data-search-anchor="api-url"]'
-    const indexedAnchors = Array.from(
-      panelSource.matchAll(/anchor:\s*'\[data-search-anchor="([^"]+)"\]'/g),
-      m => m[1]
-    )
+    const indexedAnchors = settingsSearchIndex(true).flatMap(entry =>
+      entry.anchor?.match(/\[data-search-anchor="([^"]+)"\]/)?.[1] ?? [])
     expect(indexedAnchors.length).toBeGreaterThan(50)
 
     // 收集全部组件里出现的 data-search-anchor 值
@@ -57,11 +53,7 @@ describe('设置搜索 SEARCH_INDEX 锚点一致性', () => {
   })
 
   test('锚点值不重复（同一选择器只应在索引中出现一次）', () => {
-    const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
-    const indexedAnchors = Array.from(
-      panelSource.matchAll(/anchor:\s*'\[data-search-anchor="([^"]+)"\]'/g),
-      m => m[1]
-    )
+    const indexedAnchors = settingsSearchIndex(true).flatMap(entry => entry.anchor ?? [])
     const seen = new Set<string>()
     const duplicates = indexedAnchors.filter(anchor => {
       if (seen.has(anchor)) return true
@@ -69,5 +61,12 @@ describe('设置搜索 SEARCH_INDEX 锚点一致性', () => {
       return false
     })
     expect(duplicates).toEqual([])
+  })
+
+  test('开发搜索直接进入新分类，旧扩展宿主不显示不可用入口', () => {
+    const entries = settingsSearchIndex(true).filter(entry => entry.tab === 'development')
+    expect(entries.map(entry => entry.anchor)).toEqual(['[data-search-anchor="language-services"]', '[data-search-anchor="desktop-editor"]'])
+    expect(settingsSearchIndex(false).some(entry => entry.tab === 'development')).toBe(false)
+    expect(settingsSearchIndex(true, false).filter(entry => entry.tab === 'development').map(entry => entry.key)).toEqual(['development-language-services'])
   })
 })

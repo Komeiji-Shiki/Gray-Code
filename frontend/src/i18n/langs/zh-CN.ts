@@ -1028,6 +1028,7 @@ const zhCN = {
             title: '设置',
             tabs: {
                 channel: '渠道',
+                development: '开发工具',
                 tools: '工具',
                 autoExec: '自动执行',
                 mcp: 'MCP',

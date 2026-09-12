@@ -21,7 +21,7 @@ async function defaults() {
 onMounted(() => { if (desktop) void action(async () => { registration.value = await sendToExtension<Registration>('desktop.editor.status', {}); }); });
 </script>
 <template>
-  <section v-if="desktop" class="editor-registration">
+  <section v-if="desktop" class="editor-registration" data-search-anchor="desktop-editor">
     <h4>Windows 文件关联</h4>
     <p>将 GrayCode 注册为代码编辑器后，可在文件的“打开方式”中选择它。设为某种文件的默认应用后，双击该类型的文件会在 GrayCode 中打开。</p>
     <template v-if="registration?.supported">

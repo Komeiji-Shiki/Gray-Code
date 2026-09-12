@@ -1026,6 +1026,7 @@ const ja: LanguageMessages = {
             title: '設定',
             tabs: {
                 channel: 'チャンネル',
+                development: '開発ツール',
                 tools: 'ツール',
                 autoExec: '自動実行',
                 mcp: 'MCP',

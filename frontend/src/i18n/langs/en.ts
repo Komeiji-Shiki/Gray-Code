@@ -1026,6 +1026,7 @@ const en: LanguageMessages = {
             title: 'Settings',
             tabs: {
                 channel: 'Channel',
+                development: 'Development',
                 tools: 'Tools',
                 autoExec: 'Auto Execute',
                 mcp: 'MCP',
