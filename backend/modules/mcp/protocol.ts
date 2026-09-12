@@ -1,3 +1,13 @@
+/** 当前客户端实现握手式 MCP；无状态协议需要另一套连接与取消流程。 */
+export const MCP_HANDSHAKE_PROTOCOL_VERSION = '2025-11-25';
+
+export function requireHandshakeProtocolVersion(version: unknown): string {
+    if (typeof version !== 'string' || ![MCP_HANDSHAKE_PROTOCOL_VERSION, '2025-06-18', '2025-03-26', '2024-11-05'].includes(version)) {
+        throw new Error(`当前 MCP 客户端尚不支持协议版本 ${String(version)}。`);
+    }
+    return version;
+}
+
 /** Shared JSON-RPC boundaries for both MCP transports. */
 export interface JsonRpcReply {
     jsonrpc: '2.0';

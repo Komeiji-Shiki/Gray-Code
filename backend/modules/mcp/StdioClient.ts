@@ -6,7 +6,7 @@
 
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
-import { collectMcpList, createServerRequestReply, isJsonRpcResponse } from './protocol';
+import { collectMcpList, createServerRequestReply, isJsonRpcResponse, requireHandshakeProtocolVersion } from './protocol';
 import type { McpRawToolResult, McpPromptMessage } from './types';
 import { createGrayCodeMcpClientInfo } from '../../core/productIdentity';
 
@@ -234,7 +234,7 @@ export class StdioMcpClient extends EventEmitter {
             });
             
             this.serverInfo = initResult.serverInfo;
-            this.protocolVersion = initResult.protocolVersion;
+            this.protocolVersion = requireHandshakeProtocolVersion(initResult.protocolVersion);
             this.capabilities = initResult.capabilities;
             
             // 发送 initialized 通知
@@ -517,6 +517,11 @@ export class StdioMcpClient extends EventEmitter {
             }
             
             let resolved = false;
+            let requestIssued = false;
+            const notifyCancellation = (reason: string) => {
+                // 只取消已经发出的本请求，初始化请求不发送取消通知。
+                if (requestIssued && method !== 'initialize') this.sendNotification('notifications/cancelled', { requestId: id, reason });
+            };
 
             // 统一清理：清超时、摘 exit 监听、摘外部 abort 监听
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -537,6 +542,7 @@ export class StdioMcpClient extends EventEmitter {
                 timeoutId = setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
+                        notifyCancellation('请求超时');
                         cleanup();
                         this.pendingRequests.delete(id);
                         reject(new Error(`Request "${method}" timeout (${effectiveTimeout / 1000}s)${this.getStderrInfo()}`));
@@ -558,6 +564,7 @@ export class StdioMcpClient extends EventEmitter {
             const onAbort = () => {
                 if (!resolved) {
                     resolved = true;
+                    notifyCancellation('用户取消请求');
                     cleanup();
                     this.pendingRequests.delete(id);
                     reject(new Error('MCP tool call aborted'));
@@ -589,6 +596,7 @@ export class StdioMcpClient extends EventEmitter {
             // 如需严格背压可改为 await 一次 drain 事件后再 resolve
             try {
                 this.process.stdin.write(message);
+                requestIssued = true;
             } catch (error) {
                 // 流已销毁/关闭导致同步抛错（例如进程刚退出），立即拒绝请求
                 if (!resolved) {

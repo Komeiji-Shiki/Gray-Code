@@ -370,6 +370,8 @@ describe('StdioMcpClient', () => {
         const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
         const exitListenersBefore = fake.listenerCount('exit');
 
+        const wire: any[] = [];
+        fake.stdin.on('data', (data: Buffer) => wire.push(JSON.parse(data.toString())));
         const pending = client.callTool('t', { a: 1 }, controller.signal);
         await Promise.resolve();
         expect(fake.listenerCount('exit')).toBe(exitListenersBefore + 1);
@@ -377,6 +379,10 @@ describe('StdioMcpClient', () => {
         controller.abort();
 
         await expect(pending).rejects.toThrow(/aborted/i);
+        expect(wire).toEqual([
+            expect.objectContaining({ method: 'tools/call' }),
+            { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: wire[0].id, reason: '用户取消请求' } },
+        ]);
 
         // pending 已清理
         expect((client as any).pendingRequests.size).toBe(0);
@@ -384,6 +390,26 @@ describe('StdioMcpClient', () => {
         expect(fake.listenerCount('exit')).toBe(exitListenersBefore);
         // abort 监听已摘除
         expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+    });
+
+    test('超时通知工具请求取消，初始化超时不发送取消通知', async () => {
+        for (const initialize of [false, true]) {
+            const fake = initialize ? createFakeProcess() : createFakeProcessWithResponder(false);
+            spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
+            const wire: any[] = [];
+            fake.stdin.on('data', (data: Buffer) => wire.push(JSON.parse(data.toString())));
+            const client = new StdioMcpClient('node', [], undefined, undefined, 20);
+            client.on('error', () => {});
+            if (initialize) await expect(client.connect()).rejects.toThrow(/timeout/);
+            else {
+                await client.connect();
+                await expect(client.callTool('slow', {})).rejects.toThrow(/timeout/);
+                expect(wire.find(item => item.method === 'notifications/cancelled')?.params.requestId).toBe(wire.find(item => item.method === 'tools/call').id);
+                await client.disconnect();
+            }
+            if (initialize) expect(wire.some(item => item.method === 'notifications/cancelled')).toBe(false);
+            spawnSpy.mockRestore();
+        }
     });
 
     test('should reject immediately without writing to stdin when the signal is already aborted', async () => {

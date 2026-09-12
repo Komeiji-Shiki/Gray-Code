@@ -5,7 +5,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { collectMcpList, createServerRequestReply, isJsonRpcResponse } from './protocol';
+import { collectMcpList, createServerRequestReply, isJsonRpcResponse, MCP_HANDSHAKE_PROTOCOL_VERSION, requireHandshakeProtocolVersion } from './protocol';
 import type { McpRawToolResult, McpPromptMessage } from './types';
 import { t } from '../../i18n';
 import { createGrayCodeMcpClientInfo, PRODUCT_USER_AGENT } from '../../core/productIdentity';
@@ -169,13 +169,18 @@ export class HttpMcpClient extends EventEmitter {
         this.listFetchFailed = false;
         // 发送初始化请求
         const initResult = await this.sendRequest<InitializeResult>('initialize', {
-            protocolVersion: '2025-12-19',
+            protocolVersion: MCP_HANDSHAKE_PROTOCOL_VERSION,
             capabilities: {},
             clientInfo: createGrayCodeMcpClientInfo()
         });
         
         this.serverInfo = initResult.serverInfo;
-        this.protocolVersion = initResult.protocolVersion;
+        try {
+            this.protocolVersion = requireHandshakeProtocolVersion(initResult.protocolVersion);
+        } catch (error) {
+            await this.disconnect();
+            throw error;
+        }
         this.capabilities = initResult.capabilities;
         
         // 发送 initialized 通知
@@ -432,11 +437,23 @@ export class HttpMcpClient extends EventEmitter {
         this.activeControllers.add(controller);
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+        let requestIssued = false;
+        let cancellationSent = false;
+        const notifyCancellation = (reason: string) => {
+            if (!requestIssued || cancellationSent || method === 'initialize') return;
+            cancellationSent = true;
+            // 当前握手协议不能用关闭 HTTP 响应代替取消，通知独立于被中止的请求发送。
+            void this.sendNotification('notifications/cancelled', { requestId: id, reason }).catch(error => {
+                console.warn('[MCP] Failed to send cancellation notification:', error);
+            });
+        };
+
         // 外部中止标记：由外部 signal 的 abort listener 置位，
         // 用于区分「外部中止」与「内部超时」（两者都会触发 controller.abort()）
         let externalAborted = false;
         const onExternalAbort = () => {
             externalAborted = true;
+            notifyCancellation('用户取消请求');
             controller.abort();
         };
         signal?.addEventListener('abort', onExternalAbort);
@@ -447,12 +464,14 @@ export class HttpMcpClient extends EventEmitter {
             // 不调度超时定时器，请求完全依赖外部取消/disconnect 兜底。
             if (this.timeout > 0) {
                 timeoutId = setTimeout(() => {
+                    notifyCancellation('请求超时');
                     controller.abort();
                 }, this.timeout);
             }
             
             let response: Response;
             try {
+                requestIssued = true;
                 response = await fetch(this.url, {
                     method: 'POST',
                     headers,
@@ -499,7 +518,7 @@ export class HttpMcpClient extends EventEmitter {
             if (contentType.includes('text/event-stream')) {
                 if (timeoutId) clearTimeout(timeoutId);
                 timeoutId = null;
-                return await this.handleSseResponse<T>(response, id, signal, () => externalAborted);
+                return await this.handleSseResponse<T>(response, id, signal, () => externalAborted, () => notifyCancellation('请求超时'));
             }
             
             // JSON 响应（controller 保持到 json() 完成，body 读取同样受超时保护）
@@ -548,7 +567,8 @@ export class HttpMcpClient extends EventEmitter {
         response: Response,
         expectedId: number | string,
         signal?: AbortSignal,
-        isExternalAbort?: () => boolean
+        isExternalAbort?: () => boolean,
+        onTimeout?: () => void
     ): Promise<T> {
         const reader = response.body?.getReader();
         if (!reader) {
@@ -577,6 +597,7 @@ export class HttpMcpClient extends EventEmitter {
             if (this.timeout <= 0) return;
             idleTimer = setTimeout(() => {
                 timeoutTriggered = true;
+                if (!matched) onTimeout?.();
                 reader.cancel().catch(() => {});
             }, this.timeout);
         };
@@ -587,6 +608,7 @@ export class HttpMcpClient extends EventEmitter {
         if (this.timeout > 0) {
             absoluteDeadline = setTimeout(() => {
                 timeoutTriggered = true;
+                if (!matched) onTimeout?.();
                 reader.cancel().catch(() => {});
             }, Math.max(this.timeout * 3, 120_000));
         }

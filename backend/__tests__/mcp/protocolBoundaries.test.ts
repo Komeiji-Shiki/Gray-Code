@@ -3,6 +3,23 @@ import { StdioMcpClient } from '../../modules/mcp/StdioClient';
 import { collectMcpList, isJsonRpcResponse } from '../../modules/mcp/protocol';
 
 describe('MCP JSON-RPC and pagination boundaries', () => {
+    test.each(['2025-11-25', '2026-07-28'])('HTTP 使用正式握手版本并核对服务端返回的 %s', async version => {
+        const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+            const request = JSON.parse(init?.body as string);
+            return request.method === 'initialize'
+                ? new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: version, capabilities: {}, serverInfo: { name: 'Fixture', version: '1' } } }), { headers: { 'Content-Type': 'application/json' } })
+                : new Response(null, { status: 202 });
+        });
+        const client = new HttpMcpClient('https://example.test/mcp', 'streamable-http');
+        try {
+            if (version === '2025-11-25') await expect(client.connect()).resolves.toBeUndefined();
+            else await expect(client.connect()).rejects.toThrow('尚不支持协议版本');
+            const messages = fetchMock.mock.calls.map(call => JSON.parse(call[1]?.body as string));
+            expect(messages[0].params.protocolVersion).toBe('2025-11-25');
+            expect(messages.some(message => message.method === 'notifications/initialized')).toBe(version === '2025-11-25');
+            expect(messages.some(message => message.method === 'notifications/cancelled')).toBe(false);
+        } finally { await client.disconnect(); fetchMock.mockRestore(); }
+    });
     test('server requests do not resolve pending outbound requests with the same ID', () => {
         const client = new StdioMcpClient('unused', []) as any;
         const resolve = jest.fn();

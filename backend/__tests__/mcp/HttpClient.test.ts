@@ -39,11 +39,17 @@ function sseResponse(chunks: string[], keepOpen = false): Response {
 
 describe('HttpMcpClient', () => {
     let fetchMock: jest.Mock;
+    let cancellationMock: jest.Mock;
     const originalFetch = global.fetch;
 
     beforeEach(() => {
         fetchMock = jest.fn();
-        global.fetch = fetchMock as any;
+        cancellationMock = jest.fn().mockResolvedValue(new Response(null, { status: 202 }));
+        global.fetch = ((url: string, init: RequestInit) => {
+            // 取消通知是独立的 HTTP 请求，不应复用被测工具响应的挂起流。
+            if (typeof init?.body === 'string' && JSON.parse(init.body).method === 'notifications/cancelled') return cancellationMock(url, init);
+            return fetchMock(url, init);
+        }) as typeof fetch;
     });
 
     afterEach(() => {
@@ -152,6 +158,7 @@ describe('HttpMcpClient', () => {
         });
         const client = makeClient(100);
         await expect(client.callTool('t', {})).rejects.toThrow(/(请求超时|timeout)/i);
+        expect(JSON.parse(cancellationMock.mock.calls[0][1].body)).toMatchObject({ method: 'notifications/cancelled', params: { requestId: 1 } });
     });
 
     test('should time out sendNotification', async () => {
@@ -165,6 +172,28 @@ describe('HttpMcpClient', () => {
     });
 
     // ==================== disconnect 中止 ====================
+
+    test('取消只通知对应请求，保留会话协议头和其他工具调用', async () => {
+        fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+            const request = JSON.parse(init.body as string);
+            if (request.params.name === 'slow') return new Promise((_resolve, reject) => {
+                init.signal!.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+            });
+            return Promise.resolve(jsonResponse({ jsonrpc: '2.0', id: request.id, result: { ok: true } }));
+        });
+        const client = makeClient(30000);
+        (client as any).sessionId = 'fixture-session'; (client as any).protocolVersion = '2025-11-25';
+        const controller = new AbortController();
+        const pending = client.callTool('slow', {}, controller.signal);
+        await expect(client.callTool('other', {})).resolves.toEqual({ ok: true });
+        controller.abort(); controller.abort();
+        await expect(pending).rejects.toThrow(/aborted/i);
+        expect(cancellationMock).toHaveBeenCalledTimes(1);
+        const [, notification] = cancellationMock.mock.calls[0];
+        expect(JSON.parse(notification.body)).toEqual({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1, reason: '用户取消请求' } });
+        expect(notification.headers).toMatchObject({ 'Mcp-Session-Id': 'fixture-session', 'MCP-Protocol-Version': '2025-11-25' });
+        await expect(client.callTool('after-cancel', {})).resolves.toEqual({ ok: true });
+    });
 
     test('should abort an in-flight fetch on disconnect', async () => {
         let signal: AbortSignal | undefined;
