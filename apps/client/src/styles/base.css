@@ -65,6 +65,93 @@ textarea {
 select {
   cursor: pointer;
 }
+/* 展开后的选项也使用工作台主题，避免系统弹层混入白底和浅色文字。 */
+select option,
+select optgroup {
+  background: var(--panel);
+  color: var(--text);
+}
+select option:disabled {
+  color: var(--muted);
+}
+
+/* 原生选择器负责键盘、焦点和表单校验；可定制的弹层与页面共用视觉样式。 */
+@supports (appearance: base-select) {
+  select:not([multiple]):not([size]),
+  select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+  }
+  select:not([multiple]):not([size]) {
+    align-items: center;
+    gap: 12px;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  select:not([multiple]):not([size]):hover:not(:disabled) {
+    border-color: var(--muted);
+  }
+  select:not([multiple]):not([size]):open {
+    border-color: var(--accent);
+  }
+  select:not([multiple]):not([size])::picker-icon {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin: -3px 3px 0 auto;
+    border-right: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    rotate: 45deg;
+  }
+  select:not([multiple]):not([size]):open::picker-icon {
+    rotate: 225deg;
+    margin-top: 3px;
+  }
+  select:not([multiple]):not([size])::picker(select) {
+    inline-size: anchor-size(width);
+    max-inline-size: calc(100vw - 16px);
+    max-block-size: min(360px, 65vh);
+    overflow: auto;
+    margin-block: 5px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) var(--panel);
+  }
+  select:not([multiple]):not([size]) option {
+    min-height: 40px;
+    padding: 10px 12px;
+    gap: 16px;
+    border: 0;
+    border-radius: 0;
+    line-height: 1.5;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  select:not([multiple]):not([size]) option:checked {
+    background: var(--selection);
+    color: var(--text);
+  }
+  select:not([multiple]):not([size]) option:hover:not(:disabled),
+  select:not([multiple]):not([size]) option:focus-visible {
+    background: var(--hover);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+  select:not([multiple]):not([size]) option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--accent);
+  }
+  select:not([multiple]):not([size]) option:disabled {
+    cursor: default;
+    opacity: 0.65;
+  }
+}
 a {
   color: var(--accent);
 }
