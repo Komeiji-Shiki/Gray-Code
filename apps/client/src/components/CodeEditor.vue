@@ -4,13 +4,14 @@ import type { LanguageDocumentStatus } from '@graycode/contracts';
 import * as monaco from "monaco-editor";
 import { appearance } from "../state";
 import { resolvedTheme } from '../appearance';
-import { workbenchEditorTheme } from "../editorAppearance";
+import { installWorkbenchTheme, workbenchEditorTheme } from "../editorAppearance";
 import { bindLanguageDocument, editorUri } from "../languages";
+import { bindEditorUndo, workspaceEditorServices } from '../editorWorkspaceEdits';
 import { documentLanguageId, editorLanguageId } from '../../../../shared/documentLanguages';
 const props = defineProps<{ workspaceId: string; path: string; value: string; version: number;
   flush: () => Promise<unknown>; open: (path: string, range?: monaco.IRange, focus?: boolean) => Promise<void>;
   selection?: monaco.IRange }>();
-const emit = defineEmits<{ change: [value: string]; save: []; problems: [] }>();
+const emit = defineEmits<{ change: [value: string]; save: []; problems: []; outline: []; ready: [model: monaco.editor.ITextModel] }>();
 const root = ref<HTMLDivElement>();
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 let applying = false;
@@ -19,6 +20,7 @@ const languageState = ref<LanguageDocumentStatus>({ languageId: '' });
 const diagnosticCounts = ref({ errors: 0, warnings: 0 });
 const cursor = ref({ lineNumber: 1, column: 1 });
 let markerListener: monaco.IDisposable | undefined;
+let undoBinding: monaco.IDisposable | undefined;
 const languageLabel = computed(() => {
   const state = languageState.value;
   if (state.error || state.session?.status === 'failed') return '语言服务异常';
@@ -52,12 +54,16 @@ onMounted(() => {
     scrollBeyondLastLine: false,
     padding: { top: 14 },
     ...options(),
-  });
+    theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
+  }, workspaceEditorServices);
+  installWorkbenchTheme();
+  monaco.editor.setTheme(workbenchEditorTheme(resolvedTheme.value));
   const initial = editor.getModel();
   const uri = editorUri(props.workspaceId, props.path);
   const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(props.value, editorLanguageId(documentLanguageId(props.path)), uri);
   editor.setModel(model);
   initial?.dispose();
+  undoBinding = bindEditorUndo(editor);
   language = bindLanguageDocument({ model, workspaceId: props.workspaceId, path: props.path, version: () => props.version, flush: props.flush, open: props.open,
     status: value => { languageState.value = value; } });
   const updateCounts = () => {
@@ -70,18 +76,19 @@ onMounted(() => {
   if (props.selection) { editor.setSelection(props.selection); editor.revealRangeInCenter(props.selection); }
   editor.onDidChangeModelContent(() => {
     language?.clearMarkers();
-    if (!applying) emit("change", editor!.getValue());
+    if (!applying) emit("change", model.getValue(undefined, true));
   });
   editor.onDidChangeCursorPosition(event => { cursor.value = event.position; });
   editor.addAction({ id: 'graycode.showCompletions', label: '显示代码补全', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ], run: suggest });
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
     emit("save"),
   );
+  emit('ready', model);
 });
 watch(
   () => props.value,
   (value) => {
-    if (editor && editor.getValue() !== value) {
+    if (editor && editor.getModel()?.getValue(undefined, true) !== value) {
       applying = true;
       editor.setValue(value);
       applying = false;
@@ -93,6 +100,7 @@ watch(() => props.selection, selection => { if (selection && editor) { editor.se
 watch(appearance, () => editor?.updateOptions(options()), { deep: true });
 watch(resolvedTheme, value => { if (editor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
 onUnmounted(() => {
+  undoBinding?.dispose();
   markerListener?.dispose();
   language?.dispose();
   const model = editor?.getModel();
@@ -106,6 +114,8 @@ onUnmounted(() => {
     <footer class="editor-status">
       <button class="editor-diagnostics" :class="{ errors: diagnosticCounts.errors }" title="打开问题面板" @click="emit('problems')">错误 {{ diagnosticCounts.errors }} · 警告 {{ diagnosticCounts.warnings }}</button>
       <button title="显示代码补全（Ctrl+空格 / Ctrl+J）" @click="suggest">补全</button>
+      <button title="格式化当前文件（Shift+Alt+F）" @click="editor?.getAction('editor.action.formatDocument')?.run()">格式化</button>
+      <button title="查看当前文件大纲" @click="emit('outline')">大纲</button>
       <button v-if="diagnosticCounts.errors || diagnosticCounts.warnings" title="显示当前位置的快速修复（Ctrl+.）" @click="quickFix">修复</button>
       <span class="editor-language" :class="{ errors: languageState.error || languageState.session?.status === 'failed' }" :title="languageState.error ?? languageState.session?.error ?? languageState.service?.requirement ?? languageLabel">{{ languageLabel }}</span>
       <button v-if="languageState.error || ['failed', 'stopped'].includes(languageState.session?.status ?? '')" @click="language?.refresh()">重试</button>

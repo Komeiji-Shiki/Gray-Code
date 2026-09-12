@@ -54,6 +54,7 @@ import { WorkspaceFileActions } from './workspace/fileActions';
 import { WorkspaceProcesses } from "./workspace/processes";
 import { workspaceTools } from "./workspace/tools";
 import { WorkspaceGit } from "./workspace/git";
+import { WorkspaceSearch } from './workspace/search';
 import { WorkspaceChanges } from './workspace/changes';
 import { WorkspaceDiffs } from './workspace/diffs';
 import { WorkspaceCheckpoints } from './workspace/checkpoints';
@@ -117,6 +118,7 @@ export class PlatformApplication {
   readonly checkpoints: WorkspaceCheckpoints;
   readonly checkpointLifecycle: CheckpointLifecycle;
   readonly git: WorkspaceGit;
+  readonly workspaceSearch: WorkspaceSearch;
   readonly memory: PlatformMemory;
   readonly skills: PlatformSkills;
   readonly languages: LanguageServices;
@@ -181,6 +183,7 @@ export class PlatformApplication {
     );
     this.fileActions = new WorkspaceFileActions(this);
     this.git = new WorkspaceGit(this.files);
+    this.workspaceSearch = new WorkspaceSearch(this);
     this.changes = new WorkspaceChanges(storage, this.files);
     this.diffs = new WorkspaceDiffs(this);
     this.checkpoints = new WorkspaceCheckpoints(this);
@@ -489,6 +492,7 @@ export class PlatformApplication {
     return conversation;
   }
   async close(): Promise<void> {
+    this.workspaceSearch.close();
     await this.automations.close();
     await this.remoteAccess?.close();
     await this.discord.summaries.stop();

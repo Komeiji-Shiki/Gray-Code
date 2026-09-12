@@ -4,7 +4,8 @@ import * as monaco from "monaco-editor";
 import { call, subscribe } from "../api";
 import { appearance } from '../state';
 import { resolvedTheme } from '../appearance';
-import { workbenchEditorTheme } from '../editorAppearance';
+import { installWorkbenchTheme, workbenchEditorTheme } from '../editorAppearance';
+import { workspaceEditorServices } from '../editorWorkspaceEdits';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 
 type DiffStatus = "pending" | "accepted" | "rejected" | "cancelled";
@@ -67,11 +68,13 @@ onMounted(() => {
   if (!editorRoot.value) return;
   diffEditor = monaco.editor.createDiffEditor(editorRoot.value, {
     automaticLayout: true, readOnly: true, originalEditable: false,
-    renderSideBySide: false, minimap: { enabled: false }, scrollBeyondLastLine: false, theme: workbenchEditorTheme(resolvedTheme.value),
+    renderSideBySide: false, minimap: { enabled: false }, scrollBeyondLastLine: false, theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
     fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize ?? 14,
     lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)),
     glyphMargin: false, lineNumbersMinChars: 4, padding: { top: 14, bottom: 16 },
-  });
+  }, workspaceEditorServices);
+  installWorkbenchTheme();
+  monaco.editor.setTheme(workbenchEditorTheme(resolvedTheme.value));
   showSelected();
 });
 watch(resolvedTheme, value => { if (diffEditor) monaco.editor.setTheme(workbenchEditorTheme(value)); });

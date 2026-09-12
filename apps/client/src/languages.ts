@@ -6,6 +6,7 @@ import { documentLanguageId } from '../../../shared/documentLanguages';
 import { completionItems } from '../../../shared/completionItems';
 import { call, subscribe } from './api';
 import { report } from './state';
+import { applyWorkspaceTextEdits } from './editorWorkspaceEdits';
 
 // 在创建模型之前停用浏览器内的重复诊断，避免其异步结果覆盖真实工作区的语言服务。
 for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) {
@@ -170,16 +171,9 @@ subscribe(event => {
       if (!pending || pending.binding.workspaceId !== event.workspaceId) throw new Error('编辑操作已经取消。');
       const changes = await workspaceEdit(pending.binding, event.edit, pending.versions);
       if (!languageCommands.has(event.requestId)) throw new Error('编辑操作已经取消。');
-      const grouped = new Map<monaco.editor.ITextModel, monaco.editor.IIdentifiedSingleEditOperation[]>();
-      for (const change of changes.edits) {
-        if (!('textEdit' in change)) throw new Error('编辑操作没有提供文本内容。');
-        const model = monaco.editor.getModel(change.resource);
-        if (!model || change.versionId !== undefined && model.getVersionId() !== change.versionId) throw new Error('编辑内容已变化，请重新选择修复。');
-        grouped.set(model, [...grouped.get(model) ?? [], { range: monaco.Range.lift(change.textEdit.range), text: change.textEdit.text }]);
-      }
-      // 使用模型的编辑栈，批量检查版本后同步修改；语言服务不直接写磁盘。
-      for (const [model, edits] of grouped) { model.pushStackElement(); model.pushEditOperations([], edits, () => []); model.pushStackElement(); }
-      await Promise.all([...grouped.keys()].map(model => bindings.get(model.uri.toString())?.flush()));
+      applyWorkspaceTextEdits(changes);
+      await Promise.all([...new Set(changes.edits.flatMap(item => 'resource' in item ? [item.resource.toString()] : []))]
+        .map(uri => bindings.get(uri)?.flush()));
       pending.versions = documentVersions(pending.binding);
       await call('language.applyEditResult', { id: event.id, result: { applied: true } });
     } catch (error) {
@@ -272,6 +266,10 @@ function register(languageId: string) {
   });
 }
 
+let editorNavigationRegistered = false;
+function registerEditorNavigation() {
+if (editorNavigationRegistered) return;
+editorNavigationRegistered = true;
 monaco.editor.registerEditorOpener({ async openCodeEditor(source, resource, selection) {
   if (!['graycode', 'file'].includes(resource.scheme)) return false;
   const binding = bindings.get(source.getModel()?.uri.toString() ?? ''); if (!binding) return false;
@@ -279,8 +277,10 @@ monaco.editor.registerEditorOpener({ async openCodeEditor(source, resource, sele
   const file = resource.scheme === 'file' ? await call<string>('language.path', { workspaceId: binding.workspaceId, uri: resource.toString() }) : resource.path.slice(1);
   await binding.open(file, targetRange, true); return true;
 } });
+}
 
 export function bindLanguageDocument(input: Binding) {
+  registerEditorNavigation();
   let disposed = false;
   let session: LanguageSessionInfo | null | undefined;
   let generation = 0;

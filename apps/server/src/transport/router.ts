@@ -309,6 +309,9 @@ export class ApplicationRouter {
           session.actorId,
           params.answers,
         );
+      case 'files.search': return app.workspaceSearch.search(session, params.workspaceId, params.requestId, params.options);
+      case 'files.searchCancel': app.requireOwner(session.actorId); return app.workspaceSearch.cancel(session, params.requestId);
+      case 'files.replacePreview': return app.workspaceSearch.replace(session, params.workspaceId, params.options, params.replacement, params.files);
       case 'files.inspect': return app.fileActions.inspect(session.actorId, params.workspaceId, params.path);
       case 'files.downloadInfo': {
         const { absolute: _absolute, ...info } = await app.fileActions.download(session.actorId, params.workspaceId, params.path); return info;

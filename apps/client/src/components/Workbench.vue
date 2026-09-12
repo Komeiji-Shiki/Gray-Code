@@ -8,8 +8,9 @@ import {
   ref,
   watch,
 } from "vue";
-import type { IRange } from "monaco-editor";
-import type { DocumentState } from "@graycode/contracts";
+import type { IRange, editor as MonacoEditor } from "monaco-editor";
+import type { DocumentState, ProjectReplacement, SourceRange } from "@graycode/contracts";
+import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/editorBatchHistory';
 import { call, subscribe } from "../api";
 import { guard, report, state } from "../state";
 import MarkdownIt from 'markdown-it';
@@ -19,6 +20,8 @@ import TerminalPanel from "./TerminalPanel.vue";
 import GitPanel from "./GitPanel.vue";
 import DiffPanel from "./DiffPanel.vue";
 import ProblemsPanel from "./ProblemsPanel.vue";
+import SearchPanel from './SearchPanel.vue';
+import OutlinePanel from './OutlinePanel.vue';
 import MobileCodeEditor from './MobileCodeEditor.vue';
 import WorkbenchTabs from './WorkbenchTabs.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
@@ -72,6 +75,51 @@ const closing = ref<DocumentState | null>(null);
 const queues = new Map<string, Promise<unknown>>();
 const closingDocuments = new Set<string>();
 function flushDocument(doc: DocumentState) { return queues.get(key(doc)) ?? Promise.resolve(); }
+async function flushDocuments() { await Promise.all(documents.map(flushDocument)); }
+const editorModels = new Map<string, MonacoEditor.ITextModel>();
+const readyWaiters = new Map<string, (model: MonacoEditor.ITextModel) => void>();
+const mobileBatchHistory = new EditorBatchHistory();
+function editorReady(doc: DocumentState, model: MonacoEditor.ITextModel) {
+  const id = key(doc); editorModels.set(id, model); readyWaiters.get(id)?.(model); readyWaiters.delete(id);
+}
+async function readyModel(doc: DocumentState) {
+  const id = key(doc), existing = editorModels.get(id);
+  if (existing && !existing.isDisposed()) return existing;
+  return new Promise<MonacoEditor.ITextModel>((resolve, reject) => {
+    const timer = setTimeout(() => { readyWaiters.delete(id); reject(new Error('编辑器尚未完成加载，请重试替换。')); }, 10_000);
+    readyWaiters.set(id, model => { clearTimeout(timer); resolve(model); });
+  });
+}
+function openRange(path: string, range: SourceRange, workspaceId: string) {
+  return open(path, workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1,
+    endLineNumber: range.end.line + 1, endColumn: range.end.character + 1 });
+}
+async function saveAll() { await flushDocuments(); for (const doc of documents.filter(doc => doc.dirty)) await save(doc); }
+async function replaceFiles(workspaceId: string, edits: ProjectReplacement[]): Promise<EditBatchHandle> {
+  await Promise.all(edits.map(edit => open(edit.path, workspaceId, undefined, false)));
+  await flushDocuments();
+  const targets = edits.map(edit => ({ edit, doc: documents.find(doc => doc.workspaceId === workspaceId && doc.path === edit.path)! }));
+  let handle: EditBatchHandle;
+  if (props.compact) {
+    if (targets.some(({ edit, doc }) => !doc || doc.text.replace(/^\uFEFF/, '') !== edit.before)) throw new Error('编辑内容已变化，请重新搜索后替换。');
+    const entries = targets.map(({ edit, doc }) => {
+      const before = doc.text, after = (before.startsWith('\uFEFF') ? '\uFEFF' : '') + edit.after;
+      const target = { version: () => doc.text, disposed: () => !documents.includes(doc), undo: () => change(doc, before), redo: () => change(doc, after) };
+      change(doc, after); return { target, before, after };
+    });
+    handle = mobileBatchHistory.record(entries);
+  } else {
+    const models = await Promise.all(targets.map(({ doc }) => readyModel(doc)));
+    if (targets.some(({ edit }, index) => models[index].getValue() !== edit.before)) throw new Error('编辑内容已变化，请重新搜索后替换。');
+    const { applyWorkspaceTextEdits } = await import('../editorWorkspaceEdits');
+    // 获取模型后再次校验，加载模块期间也可能出现新输入。
+    if (targets.some(({ edit }, index) => models[index].getValue() !== edit.before)) throw new Error('编辑内容已变化，请重新搜索后替换。');
+    handle = applyWorkspaceTextEdits({ edits: targets.map(({ edit }, index) => ({ resource: models[index].uri,
+      versionId: models[index].getVersionId(), textEdit: { range: models[index].getFullModelRange(), text: edit.after } })) });
+  }
+  await flushDocuments();
+  return { undo: async () => { await handle.undo(); await flushDocuments(); }, redo: async () => { await handle.redo(); await flushDocuments(); } };
+}
 const key = (doc: Pick<DocumentState, "workspaceId" | "path">) =>
   `${doc.workspaceId}:${doc.path}`;
 const active = computed(() =>
@@ -182,6 +230,7 @@ async function close(doc: DocumentState, discard = false) {
   const index = documents.indexOf(doc);
   documents.splice(index, 1);
   queues.delete(key(doc));
+  editorModels.delete(key(doc));
   closing.value = null;
   if (current.value === key(doc))
     current.value = documents[index]
@@ -239,7 +288,13 @@ const unsubscribe = subscribe((event) => {
     if (!doc.dirty) Object.assign(doc, next);
   });
 });
-onUnmounted(unsubscribe);
+function projectSearchShortcut(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault(); activatePanel('search');
+  }
+}
+window.addEventListener('keydown', projectSearchShortcut);
+onUnmounted(() => { unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
 </script>
 <template>
   <section ref="panel" class="workbench side-panel" :class="{ 'tree-hidden': !showingTree || pane !== 'editor', 'tree-resizing': treeResizing, 'compact-workbench': compact }" :style="{ '--tree-width': treeWidth + 'px' }">
@@ -257,6 +312,8 @@ onUnmounted(unsubscribe);
         <div v-if="active" class="file-toolbar">
           <div class="file-breadcrumb" :title="documentWorkspace?.directory + '/' + active.path"><span class="breadcrumb-root">{{ documentWorkspace?.name }}</span><template v-for="(part, index) in breadcrumb" :key="index"><NavigationIcon name="chevron" /><span :class="{ 'breadcrumb-file': index === breadcrumb.length - 1 }">{{ part }}</span></template></div>
           <div class="file-toolbar-actions"><button title="复制相对路径" @click="guard(copyPath)"><NavigationIcon name="copy" /></button><button title="保存文件（Ctrl+S）" :class="{ 'has-changes': active.dirty }" @click="guard(() => save(active!))"><NavigationIcon name="save" /><span>保存</span></button>
+            <button title="搜索项目（Ctrl+Shift+F）" @click="activatePanel('search')"><NavigationIcon name="search" /></button>
+            <button v-if="documents.filter(doc => doc.dirty).length > 1" @click="guard(saveAll)">保存全部</button>
             <button v-if="/\.md$/i.test(active.path)" @click="markdownPreview = !markdownPreview">{{ markdownPreview ? '编辑' : '预览' }}</button>
             <button v-if="active.path.endsWith('.html')" @click="guard(() => call('browser.openFile', { workspaceId: active!.workspaceId, path: active!.path }))">预览</button>
           </div>
@@ -264,7 +321,7 @@ onUnmounted(unsubscribe);
         <div class="editors">
           <template v-for="doc in documents" :key="key(doc)">
             <MobileCodeEditor v-if="compact" v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :value="doc.text" :selection="selections[key(doc)]" @change="text => change(doc, text)" @save="guard(() => save(doc))" />
-            <CodeEditor v-else v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :workspace-id="doc.workspaceId" :version="doc.version" :flush="() => flushDocument(doc)" :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)" :selection="selections[key(doc)]" :value="doc.text" @change="text => change(doc, text)" @save="guard(() => save(doc))" @problems="activatePanel('problems')" />
+            <CodeEditor v-else v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :workspace-id="doc.workspaceId" :version="doc.version" :flush="() => flushDocument(doc)" :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)" :selection="selections[key(doc)]" :value="doc.text" @change="text => change(doc, text)" @save="guard(() => save(doc))" @problems="activatePanel('problems')" @outline="activatePanel('outline')" @ready="model => editorReady(doc, model)" />
           </template>
           <article v-if="active && markdownPreview && /\.md$/i.test(active.path)" class="markdown-preview" @click="markdownLink" v-html="renderedMarkdown"></article>
           <div v-if="!documents.length" class="editor-empty file-select-empty"><NavigationIcon name="file" /><h2>选择一个文件</h2><p>从文件列表打开文档，在这里查看和编辑。</p></div>
@@ -272,6 +329,8 @@ onUnmounted(unsubscribe);
       </div>
       <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
       <TerminalPanel v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused" /><GitPanel v-if="pane === 'git'" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
+      <SearchPanel v-if="openedPanels.includes('search')" v-show="pane === 'search'" :workspace-id="state.workspaceId" :flush="flushDocuments" :apply="replaceFiles" :save-all="saveAll" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
+      <OutlinePanel v-if="pane === 'outline'" :document="active" :flush="flushDocuments" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <ProblemsPanel v-if="pane === 'problems'" :workspace-id="active?.workspaceId ?? state.workspaceId" @open="(path, range, workspaceId) => guard(() => open(path, workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1, endLineNumber: range.end.line + 1, endColumn: range.end.character + 1 }))" />
       <iframe v-if="pane === 'monitor'" class="monitor-frame" :src="'./chat/platform.html?' + (monitorQuery || 'view=subagents')" title="子 agent 运行监视器"></iframe>
     </div>

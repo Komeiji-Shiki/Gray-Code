@@ -11,6 +11,11 @@ editorGlobal.MonacoEnvironment = { getWorker: (_id, label) => label === 'json' ?
   : ['css', 'scss', 'less'].includes(label) ? new CssWorker()
     : ['html', 'handlebars', 'razor'].includes(label) ? new HtmlWorker()
       : ['typescript', 'javascript'].includes(label) ? new TsWorker() : new EditorWorker() };
+let workbenchThemeRegistered = false;
+/** 必须在第一个编辑器注入宿主服务之后注册，避免主题 API 提前固定默认编辑服务。 */
+export function installWorkbenchTheme() {
+if (workbenchThemeRegistered) return;
+workbenchThemeRegistered = true;
 monaco.editor.defineTheme('graycode-workbench-dark', {
   base: 'vs-dark', inherit: true, rules: [], colors: {
     'editor.background': '#0d1117', 'editor.foreground': '#d1d9e0', 'editorGutter.background': '#0d1117',
@@ -22,4 +27,5 @@ monaco.editor.defineTheme('graycode-workbench-dark', {
     'diffEditor.diagonalFill': '#202630',
   },
 });
+}
 export function workbenchEditorTheme(theme?: string): string { return theme === 'light' ? 'vs' : 'graycode-workbench-dark'; }
