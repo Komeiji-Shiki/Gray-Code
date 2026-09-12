@@ -1,7 +1,14 @@
 import { app, shell } from 'electron';
 import type { PlatformApplication } from '../../server/src/application';
+import { compareVersions, extractNightlyVersionFromName, stripVersionPrefix } from '../../../shared/updateVersion';
 const releasesPage = 'https://github.com/Komeiji-Shiki/Gray-Code/releases';
 interface Release { tag_name: string; name: string; body: string; html_url: string; prerelease: boolean; draft: boolean; assets: Array<{ name: string }> }
+function releaseVersion(release: Release): string | null {
+  if (typeof release.tag_name !== 'string') return null;
+  const version = stripVersionPrefix(release.tag_name);
+  if (/^\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/i.test(version)) return version;
+  return /^nightly(?:-\d{8})?$/.test(version) ? extractNightlyVersionFromName(release.name) : null;
+}
 export class DesktopUpdates {
   private status: Record<string, any> = { state: 'idle' };
   constructor(private readonly application: PlatformApplication) {}
@@ -17,14 +24,20 @@ export class DesktopUpdates {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'GrayCode-Desktop' }, signal: AbortSignal.timeout(15000) });
       if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`);
       const releases = await response.json() as Release[];
-      const release = releases.find(item => !item.draft && (nightly || !item.prerelease) && Array.isArray(item.assets) &&
-        item.assets.some(asset => /graycode/i.test(asset.name) && /desktop|win32|windows|setup/i.test(asset.name) && /\.(zip|exe)$/i.test(asset.name)));
-      if (!release) this.status = { state: 'unavailable', message: '尚未找到独立桌面版发行包。当前试用版可继续使用。' };
+      // 发布时间不一定按版本号排列；只比较当前渠道中带桌面包的明确版本。
+      const candidates = releases.flatMap(release => {
+        const version = releaseVersion(release);
+        if (!version || release.draft || !nightly && (release.prerelease || version.split('+', 1)[0].includes('-'))) return [];
+        if (!Array.isArray(release.assets) || !release.assets.some(asset => /graycode/i.test(asset.name)
+          && /desktop|win32|windows|setup/i.test(asset.name) && /\.(zip|exe)$/i.test(asset.name))) return [];
+        return [{ release, version }];
+      }).sort((a, b) => compareVersions(b.version, a.version));
+      const latest = candidates[0];
+      if (!latest) this.status = { state: 'unavailable', message: '尚未找到当前渠道中版本号明确的独立桌面版发行包。' };
       else {
-        const current = app.getVersion().match(/(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
-        const version = release.tag_name.match(/(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
-        const newer = !!version && !!current && version.some((value, index) => value > current[index] && version.slice(0, index).every((prefix, offset) => prefix === current[offset]));
-        this.status = newer ? { state: 'updateAvailable', update: { version: release.tag_name, name: release.name, body: release.body, manualInstall: true } }
+        const { release, version } = latest;
+        this.status = compareVersions(version, app.getVersion()) > 0
+          ? { state: 'updateAvailable', update: { version, tagName: release.tag_name, name: release.name, body: release.body, manualInstall: true } }
           : { state: 'upToDate', message: '未发现版本号更高的独立桌面版发行包。' };
       }
     } catch (error) { this.status = { state: 'error', message: `桌面更新检查失败：${String(error)}` }; }
