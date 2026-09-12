@@ -1,9 +1,9 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import PlatformIntegrationSettings from '../PlatformIntegrationSettings.vue';
-const calls = vi.hoisted(() => ({ send: vi.fn(), register: vi.fn() }));
-vi.mock('@/utils/vscode', () => ({ sendToExtension: calls.send }));
-vi.mock('@/platform/settingsDraft', () => ({ useDesktopSettingsDraft: calls.register }));
+const calls = vi.hoisted(() => ({ send: vi.fn(), register: vi.fn(), markDirty: vi.fn() }));
+vi.mock('@/utils/vscode', () => ({ sendToExtension: calls.send, onExtensionCommand: () => () => {} }));
+vi.mock('@/platform/settingsDraft', () => ({ useDesktopSettingsDraft: calls.register, markDesktopSettingsDirty: calls.markDirty, desktopSettingsDraft: { dirty: false } }));
 const fixture = () => ({ version: 1, providers: [], agents: [], appearance: {}, discord: {}, bindings: [],
   workspaces: [{ id: 'project', name: '普通项目', directory: '/workspace/project' }, { id: 'workspace-bot_existing', name: '旧 Bot 目录', directory: '/workspace/bot' }],
   accounts: [{ id: 'owner', displayName: '主人', role: 'owner', effects: [], workspaceIds: '*' },
@@ -73,6 +73,7 @@ describe('默认访客及可视化多选权限', () => {
     const wrapper = mount(PlatformIntegrationSettings, { props: { section: 'accounts' } }); await flushPromises();
     try {
       await wrapper.findAll('button').find(button => button.text() === '添加用户规则')!.trigger('click');
+      expect(calls.markDirty).toHaveBeenCalledOnce();
       const rule = wrapper.get('.bot-user-rule'); await rule.get('input:not([type=checkbox])').setValue('1234567890');
       await rule.get('input[type=checkbox]').setValue(true); await flushPromises();
       expect(saved().bindings[0]).toMatchObject({ platformUserId: '1234567890', accountId: '', blocked: true });

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import type { AppSettings, DiscordChannelSettings, DiscordOutputSettings, DiscordReplyProfile, DiscordTrigger } from '../../../../packages/contracts/src/settings';
 import type { CharacterResource } from '../../../../packages/contracts/src/characters';
-import type { BotChannel, BotGuild, BotStatus, BotUser } from '../../../../packages/contracts/src/bots';
-import { onExtensionCommand, sendToExtension } from '../../utils/vscode';
+import type { BotChannel, BotGuild, BotUser } from '../../../../packages/contracts/src/bots';
+import { sendToExtension } from '../../utils/vscode';
+import { useBotConnectionStatus } from '../../composables/useBotConnectionStatus';
 import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
 import DiscordProfileFields from './discord/DiscordProfileFields.vue';
 import DiscordOutputFields from './discord/DiscordOutputFields.vue';
@@ -13,11 +14,7 @@ const sections = [{ id: 'connection', name: '连接' }, { id: 'defaults', name: 
 const section = ref('connection');
 const settings = ref<AppSettings>();
 const bot = computed(() => settings.value?.discord);
-const status = ref<BotStatus>({ status: 'stopped' });
-const statusLabels: Record<string, string> = { stopped: '已断开', connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', disconnected: '连接已断开', connection_error: '连接异常', failed: '连接失败' };
-onUnmounted(onExtensionCommand<{ platform: string; status: BotStatus }>('bot.connection.changed', value => {
-  if (value.platform === 'discord') status.value = value.status;
-}));
+const { status, statusLabel, refreshStatus, startConnection } = useBotConnectionStatus('discord');
 const error = ref('');
 const busy = ref('');
 const credentials = ref<Record<string, string | null>>({});
@@ -62,14 +59,13 @@ function changed(event: Event) {
   void stage().catch(cause => { error.value = (cause as Error).message; });
 }
 function changedByButton() { markDesktopSettingsDirty(); void stage().catch(cause => { error.value = (cause as Error).message; }); }
-async function refreshStatus() { status.value = await sendToExtension('platform.discord.status', {}); }
 async function refreshGuilds() {
   const result = await sendToExtension<{ guilds: BotGuild[] }>('platform.discord.guilds', {}); guilds.value = result.guilds;
   if (guildId.value && !guilds.value.some(item => item.id === guildId.value)) { guildId.value = ''; channels.value = []; }
 }
 async function connect() {
   if (desktopSettingsDraft.dirty || (await sendToExtension<{ dirty: boolean }>('ui.settings.status', {})).dirty) throw new Error('请先点击下方“保存全部”，再连接 Bot。');
-  status.value = await sendToExtension('platform.discord.start', {}); await refreshGuilds();
+  await startConnection(); await refreshGuilds();
 }
 async function refreshChannels() {
   channels.value = [];
@@ -131,7 +127,7 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
 
 <template>
   <div class="discord-settings" @change="changed">
-    <header class="discord-header"><div><h4>Discord Bot</h4><p>在 Discord 使用同一套对话、模型与任务。设置通过下方“保存全部”生效。</p></div><span class="discord-status" :class="{ connected: status.status === 'connected' }">{{ statusLabels[status.status] ?? status.status }}</span></header>
+    <header class="discord-header"><div><h4>Discord Bot</h4><p>在 Discord 使用同一套对话、模型与任务。设置通过下方“保存全部”生效。</p></div><span class="discord-status" role="status" :class="{ connected: status.status === 'connected' }">{{ statusLabel }}</span></header>
     <nav class="discord-tabs" aria-label="Discord 设置分类"><button v-for="item in sections" :key="item.id" :class="{ active: section === item.id }" @click="changeSection(item.id)">{{ item.name }}<span v-if="item.id === 'outbox' && status.pendingMessages"> {{ status.pendingMessages }}</span></button></nav>
     <p v-if="error" role="alert" class="discord-error">{{ error }}</p>
     <p v-if="status.needsReconnect" class="discord-notice">触发方式已经改变。请重新连接 Bot，使消息读取权限生效。</p>

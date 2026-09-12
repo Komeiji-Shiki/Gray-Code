@@ -6,13 +6,14 @@ import PermissionAccountFields from './PermissionAccountFields.vue';
 import type { AppSettings, PlatformBinding } from '../../../../packages/contracts/src/settings';
 import type { ActorIdentity } from '../../../../packages/contracts/src/runtime';
 import { sendToExtension } from '../../utils/vscode';
-import { useDesktopSettingsDraft } from '../../platform/settingsDraft';
+import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
+import { useBotConnectionStatus } from '../../composables/useBotConnectionStatus';
 const props = defineProps<{ section: 'discord' | 'onebot' | 'accounts' | 'workspaces' }>();
 const settings = ref<AppSettings>();
 const platform = computed(() => props.section === 'onebot' ? 'onebot' : 'discord');
 const bot = computed(() => settings.value?.[platform.value]);
 const credentialChanges = ref<Record<string, string | null>>({});
-const status = ref('未连接');
+const { status, statusLabel, refreshStatus, startConnection } = useBotConnectionStatus(platform);
 const error = ref('');
 const busy = ref(false);
 const id = (prefix: string) => prefix + '_' + crypto.randomUUID().slice(0, 8);
@@ -21,6 +22,15 @@ const accountBusy = ref('');
 const botChannel = ref('');
 const mcpPermissionTools = ref<Array<{ name: string; description?: string; serverName?: string }>>([]);
 const defaultPermissionAccount = computed(() => settings.value?.accounts.find(account => account.id === settings.value?.botGuestAccountId && account.role !== 'owner'));
+async function addBinding(bindingPlatform: 'discord' | 'onebot' = platform.value) {
+  if (!settings.value) return;
+  const binding: PlatformBinding = { id: id('binding'), platform: bindingPlatform, platformUserId: '', accountId: '',
+    ...(bindingPlatform === 'onebot' ? { network: settings.value.onebot?.protocolVersion === 12 ? settings.value.onebot.self?.platform : 'qq' } : {}) };
+  settings.value.bindings.push(binding);
+  markDesktopSettingsDirty();
+  await nextTick();
+  document.getElementById(`binding-user-${binding.id}`)?.focus();
+}
 async function createPermissionAccount(options: { binding?: PlatformBinding; defaultPermission?: boolean } = {}) {
   if (!settings.value) return;
   const { binding, defaultPermission } = options;
@@ -57,9 +67,14 @@ async function action(run: () => Promise<unknown>) {
   try { error.value = ''; await run(); } catch (e) { error.value = (e as Error).message; }
 }
 async function connect() {
-  if ((await sendToExtension<{ dirty: boolean }>('ui.settings.status', {})).dirty) throw new Error('请先保存全部设置，再连接 Bot。');
+  if (desktopSettingsDraft.dirty || (await sendToExtension<{ dirty: boolean }>('ui.settings.status', {})).dirty) throw new Error('请先点击下方“保存全部”，再连接 Bot。');
   busy.value = true;
-  try { status.value = '正在连接…'; const result = await sendToExtension<any>(`platform.${platform.value}.start`, {}); status.value = result.name ? `${result.name} · ${result.status}` : result.status; }
+  try { await startConnection(); }
+  finally { busy.value = false; }
+}
+async function disconnect() {
+  busy.value = true;
+  try { await sendToExtension(`platform.${platform.value}.stop`, {}); await refreshStatus(); }
   finally { busy.value = false; }
 }
 function setToken(value: string) {
@@ -73,14 +88,15 @@ onMounted(async () => {
       settings.value!.onebot ??= { endpoint: '', enabled: false, protocolVersion: 11, self: { platform: 'qq', userId: '' }, allowedChannelIds: [], agentId: settings.value!.agents[0]?.id ?? '', mentionOnly: true };
       settings.value!.onebot.self ??= { platform: 'qq', userId: '' };
     }
-    if (props.section === 'discord' || props.section === 'onebot') status.value = (await sendToExtension<any>(`platform.${platform.value}.status`, {})).status; });
+    if (props.section === 'discord' || props.section === 'onebot') await refreshStatus(); });
 });
 useDesktopSettingsDraft(save, () => !!settings.value);
 </script>
 <template>
   <div v-if="settings" class="platform-integrations" @change="action(save)">
     <template v-if="(section === 'discord' || section === 'onebot') && bot">
-      <h4>{{ section === 'onebot' ? 'NapCat / OneBot' : 'Discord Bot' }}</h4><p>Bot 与桌面共用会话、模型和权限。连接按钮使用已保存的设置。</p>
+      <header class="integration-header"><h4>{{ section === 'onebot' ? 'NapCat / OneBot' : 'Discord Bot' }}</h4><span class="integration-status" role="status" :class="{ connected: status.status === 'connected' }">{{ statusLabel }}</span></header>
+      <p>Bot 与桌面共用会话、模型和权限。设置通过下方“保存全部”生效，连接按钮使用已保存的设置。</p>
       <template v-if="section === 'onebot' && settings.onebot">
         <label>协议版本<select v-model.number="settings.onebot.protocolVersion"><option :value="11">OneBot 11（NapCat）</option><option :value="12">OneBot 12</option></select></label>
         <label>WebSocket 地址<input v-model="settings.onebot.endpoint" placeholder="ws://127.0.0.1:端口/" /></label>
@@ -92,6 +108,11 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <p>已启用的 Bot 在下次启动 GrayCode 时连接；关闭此项后可手动连接。</p>
       <label>{{ section === 'onebot' ? '访问令牌' : 'Bot Token' }}<input type="password" autocomplete="new-password" :placeholder="bot.credentialRef ? '已配置；留空保留原值' : '输入访问令牌'" @input="setToken(($event.target as HTMLInputElement).value)" /></label>
       <button v-if="section === 'onebot' && bot.credentialRef" @click="delete bot.credentialRef; delete credentialChanges.onebot; action(save)">取消使用访问令牌</button>
+      <div v-if="status.botId" class="integration-identity"><strong>{{ status.name || '机器人账号' }}</strong><span>{{ status.botId }}</span></div>
+      <div class="connection-actions"><button :disabled="busy" @click="action(connect)">{{ busy && status.status === 'connecting' ? '正在连接…' : '连接 / 重连' }}</button><button :disabled="busy || status.status === 'stopped'" @click="action(disconnect)">断开</button><button :disabled="busy" @click="action(refreshStatus)">刷新状态</button></div>
+      <p v-if="status.error || status.warning" class="integration-error" role="alert">{{ status.error || status.warning }}</p>
+      <p v-if="status.retryAt">将于 {{ new Date(status.retryAt).toLocaleTimeString() }} 自动重试连接，也可以点击“连接 / 重连”。</p>
+      <h3>响应范围与会话</h3>
       <label>允许响应的会话<textarea :value="bot.allowedChannelIds.join('\n')" rows="3" :placeholder="section === 'onebot' ? '每行一个：group:群号 或 private:用户ID' : '每行一个频道 ID'" @input="bot.allowedChannelIds = ($event.target as HTMLTextAreaElement).value.split(/[\n,，]/).map(id => id.trim()).filter(Boolean)"></textarea></label>
       <p v-if="section === 'onebot' && settings.onebot?.protocolVersion === 12">v12 还支持 channel:群组ID:频道ID；ID 中的冒号等分隔符须作 URL 编码。</p>
       <label>智能体<select v-model="bot.agentId"><option v-for="agent in settings.agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label>
@@ -108,13 +129,12 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <h3>平台身份绑定</h3>
       <div v-for="binding in settings.bindings.filter(item => item.platform === platform)" :key="binding.id" class="integration-entry">
         <label v-if="section === 'onebot'">平台标识<input v-model="binding.network" placeholder="qq" /></label>
-        <label>平台用户 ID<input v-model="binding.platformUserId" /></label>
+        <label>平台用户 ID<input :id="`binding-user-${binding.id}`" v-model="binding.platformUserId" /></label>
         <label>权限账号<select v-model="binding.accountId"><option value="">使用未绑定用户的默认权限</option><option v-for="account in settings.accounts" :key="account.id" :value="account.id">{{ account.displayName }} · {{ account.role }}</option></select></label>
         <label>拉黑此用户<input v-model="binding.blocked" type="checkbox" /></label>
         <button @click="settings.bindings = settings.bindings.filter(item => item.id !== binding.id); action(save)">移除绑定</button>
       </div>
-      <button @click="settings.bindings.push({ id: id('binding'), platform, platformUserId: '', accountId: '', ...(section === 'onebot' ? { network: settings.onebot?.protocolVersion === 12 ? settings.onebot.self?.platform : 'qq' } : {}) })">添加绑定</button>
-      <div class="connection-actions"><span>{{ status }}</span><button :disabled="busy" @click="action(connect)">连接 / 重连</button><button @click="action(async () => { await sendToExtension(`platform.${platform}.stop`, {}); status = '已断开'; })">断开</button></div>
+      <button @click="addBinding()">添加绑定</button>
     </template>
     <template v-else-if="section === 'accounts'">
       <h4>账号与授权</h4><p>可以配置统一的访客权限，也可以为每位用户指定不同权限。身份由真实平台用户 ID 确认。</p>
@@ -135,12 +155,12 @@ useDesktopSettingsDraft(save, () => !!settings.value);
         <div v-for="binding in settings.bindings" :key="binding.id" class="integration-entry bot-user-rule" :class="{ blocked: binding.blocked }">
           <label>平台<select v-model="binding.platform"><option value="discord">Discord</option><option value="onebot">QQ / OneBot</option></select></label>
           <label v-if="binding.platform === 'onebot'">平台标识<input v-model="binding.network" placeholder="qq" /></label>
-          <label>平台用户 ID<input v-model.trim="binding.platformUserId" :inputmode="binding.platform === 'discord' ? 'numeric' : 'text'" /></label>
+          <label>平台用户 ID<input :id="`binding-user-${binding.id}`" v-model.trim="binding.platformUserId" :inputmode="binding.platform === 'discord' ? 'numeric' : 'text'" /></label>
           <label>权限账号<select v-model="binding.accountId"><option value="">使用默认权限</option><option v-for="account in settings.accounts" :key="account.id" :value="account.id">{{ account.displayName }} · {{ account.role === 'owner' ? '主人，完全权限' : account.role === 'guest' ? '访客' : '授权成员' }}{{ account.revoked ? '（已撤销）' : '' }}</option></select></label>
           <label>拉黑此用户<input v-model="binding.blocked" type="checkbox" /></label>
           <div class="account-actions"><button :disabled="!binding.platformUserId" @click="action(() => createPermissionAccount({ binding }))">新建独立权限</button><button @click="settings.bindings = settings.bindings.filter(item => item.id !== binding.id); action(save)">移除用户规则</button></div>
         </div>
-        <button @click="settings.bindings.push({ id: id('binding'), platform: 'discord', platformUserId: '', accountId: '' })">添加用户规则</button>
+        <button @click="addBinding('discord')">添加用户规则</button>
       </section>
       <h3>权限账号</h3>
       <div v-for="account in settings.accounts" :id="`permission-${account.id}`" :key="account.id" class="integration-entry">
@@ -168,9 +188,20 @@ input,select,textarea { width: 58%; color: var(--gc-text-primary); background: v
 input[type=checkbox] { width: auto; } select[multiple] { height: 120px; }
 button { padding: 8px 14px; color: var(--gc-text-primary); background: var(--gc-surface-raised); border: 1px solid var(--gc-border-control); cursor: pointer; border-radius: 0; }
 .integration-entry { padding: 12px 0 24px; margin-bottom: 20px; border-bottom: 1px solid var(--gc-border-control); }
-.connection-actions { display: flex; gap: 12px; align-items: center; padding: 24px 0; }
-.connection-actions span { flex: 1; } .integration-error { color: var(--gc-danger); } .workspace-directory { overflow-wrap: anywhere; }
+.integration-header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
+.integration-header h4 { margin-bottom: 0; }
+.integration-status { padding: 6px 10px; border: 1px solid var(--gc-border-control); color: var(--gc-text-muted); font-size: 13px; }
+.integration-status.connected { color: var(--gc-success); }
+.integration-identity { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 18px; overflow-wrap: anywhere; }
+.integration-identity span { color: var(--gc-text-muted); }
+.connection-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 24px 0; }
+.integration-error { color: var(--gc-danger); overflow-wrap: anywhere; } .workspace-directory { overflow-wrap: anywhere; }
 .bot-access-settings{border:1px solid var(--gc-border-control);padding:18px;margin:24px 0}.bot-access-settings h3{font-size:17px;margin:0 0 12px}.bot-access-settings p{font-size:13px}.default-permission-editor{padding:18px 0;margin:8px 0 24px;border-bottom:1px solid var(--gc-border-control);scroll-margin-top:20px}.bot-user-rule{padding:12px;margin-top:14px;border:1px solid var(--gc-border-control)}.bot-user-rule.blocked{border-color:var(--gc-danger)}
+@media (max-width: 560px) {
+  label { flex-wrap: wrap; gap: 10px; }
+  input:not([type=checkbox]), select, textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+  .bot-access-settings { padding: 12px; }
+}
 </style>
 
 <style scoped>
