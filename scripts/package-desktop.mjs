@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectRuntimeDependencies } from './desktop-runtime-dependencies.mjs';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // 打包机直连官方 Electron 下载源不稳定，改走可达镜像；与 @electron/get 的 mirror 变量同口径。
@@ -29,35 +30,6 @@ const RUNTIME_ROOTS = ['jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js
 /** 工作区包只需 package.json（定位）+ dist（bundle 外部引用的编译产物）。 */
 const WORKSPACE_SLIM = new Set(['@graycode/core', '@graycode/contracts', '@graycode/desktop', '@graycode/server', '@graycode/client']);
 
-function realDir(pkg) {
-  return require('node:fs').realpathSync(path.join(root, 'node_modules', pkg));
-}
-
-function collectClosure() {
-  const fs = require('node:fs');
-  const seen = new Map(); // name -> { version, dir }
-  const queue = [...RUNTIME_ROOTS];
-  while (queue.length) {
-    const name = queue.pop();
-    if (seen.has(name)) continue;
-    let dir;
-    try { dir = realDir(name); }
-    catch {
-      throw new Error(`桌面运行时依赖未安装：${name}。请先执行 npm install。`);
-    }
-    let manifest;
-    try { manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); }
-    catch { console.log(`WARN: no manifest for ${name} at ${dir}`); continue; }
-    seen.set(name, { version: manifest.version ?? '0.0.0', dir });
-    const next = { ...(manifest.dependencies ?? {}) };
-    for (const [dep, optional] of Object.entries(manifest.optionalDependencies ?? {})) {
-      try { realDir(dep); next[dep] = optional; } catch { /* 缺失的可选依赖跳过 */ }
-    }
-    for (const dep of Object.keys(next)) if (!seen.has(dep)) queue.push(dep);
-  }
-  return seen;
-}
-
 function copyPackage(fs, name, dir, dest) {
   const slim = WORKSPACE_SLIM.has(name);
   fs.cpSync(dir, dest, {
@@ -71,6 +43,7 @@ function copyPackage(fs, name, dir, dest) {
         return false;
       }
       const base = path.basename(src);
+      if (base === 'node_modules') return false; // 嵌套生产依赖由收集结果逐个复制。
       if (base.endsWith('.pdb')) return false; // 调试符号不进包
       // 原生模块只留 win32-x64 预编译（本机即目标机）。
       if (src.includes(`${path.sep}prebuilds${path.sep}`)) {
@@ -109,23 +82,21 @@ const out = await packager({
     await fsp.mkdir(`${buildPath}/resources`, { recursive: true });
     await fsp.copyFile(path.join(root, 'resources', 'icon.png'), `${buildPath}/resources/icon.png`);
     // 3. 重建最小生产 node_modules（复制期已整体排除，见 ignore）。
-    const closure = collectClosure();
+    const closure = collectRuntimeDependencies(root, RUNTIME_ROOTS);
     let bytes = 0;
-    for (const [name, { dir }] of closure) {
-      const dest = path.join(buildPath, 'node_modules', ...name.split('/'));
+    for (const { name, dir, relative } of closure.values()) {
+      const dest = path.join(buildPath, relative);
       copyPackage(fs, name, dir, dest);
     }
-    for (const [name] of closure) {
-      const walk = (d) => {
-        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-          const full = path.join(d, e.name);
-          if (e.isDirectory()) walk(full);
-          else if (e.isFile()) bytes += fs.statSync(full).size;
-        }
-      };
-      walk(path.join(buildPath, 'node_modules', ...name.split('/')));
-    }
-    console.log(`Staged ${closure.size} runtime packages (${(bytes / 1048576).toFixed(1)} MiB): ${[...closure.keys()].join(', ')}`);
+    const walk = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile()) bytes += fs.statSync(full).size;
+      }
+    };
+    walk(path.join(buildPath, 'node_modules'));
+    console.log(`Staged ${closure.size} runtime packages (${(bytes / 1048576).toFixed(1)} MiB).`);
   })],
   derefSymlinks: false,
   // 发布包仅包含可执行产物；源码、个人配置和历史调试脚本不进入应用。

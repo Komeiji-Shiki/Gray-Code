@@ -16,8 +16,8 @@ const filenames: Record<string, string> = { dockerfile: 'dockerfile', containerf
   '.babelrc': 'jsonc', '.eslintrc': 'jsonc', '.prettierrc': 'jsonc', gemfile: 'ruby', rakefile: 'ruby' };
 
 export function documentLanguageId(file: string): string {
-  const name = file.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
-  return filenames[name] ?? extensions[name.split('.').at(-1) ?? ''] ?? 'plaintext';
+  const name = file.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
+  return filenames[name] ?? extensions[name.split('.').pop() ?? ''] ?? 'plaintext';
 }
 
 export function editorLanguageId(language: string): string {
