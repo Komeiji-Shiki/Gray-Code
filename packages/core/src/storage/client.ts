@@ -64,6 +64,21 @@ export class PlatformStorage {
   appendRunEvent(input: RunEventWrite) { return this.request('appendRunEvent', input); }
   readRunEvents(runId: string, after = 0, limit = 500) { return this.request('readRunEvents', { runId, after, limit }); }
   getConversation(id: string) { return this.request('getConversation', { id }); }
+  longMemoryScopes(actorId: string) { return this.request('longMemoryScopes', { actorId }); }
+  longMemoryState(scope: StorageOperations['longMemoryState']['input']) { return this.request('longMemoryState', scope); }
+  longMemoryWrite(input: StorageOperations['longMemoryWrite']['input']) { return this.request('longMemoryWrite', input); }
+  longMemoryRecall(input: StorageOperations['longMemoryRecall']['input']) { return this.request('longMemoryRecall', input); }
+  longMemoryTopics(input: StorageOperations['longMemoryTopics']['input']) { return this.request('longMemoryTopics', input); }
+  longMemoryRead(input: StorageOperations['longMemoryRead']['input']) { return this.request('longMemoryRead', input); }
+  longMemoryRevisions(input: StorageOperations['longMemoryRevisions']['input']) { return this.request('longMemoryRevisions', input); }
+  longMemoryImpact(input: StorageOperations['longMemoryImpact']['input']) { return this.request('longMemoryImpact', input); }
+  longMemoryVector(input: StorageOperations['longMemoryVector']['input']) { return this.request('longMemoryVector', input); }
+  longMemoryExport(scopes: StorageOperations['longMemoryExport']['input']['scopes']) { return this.request('longMemoryExport', { scopes }); }
+  longMemoryRestore(input: StorageOperations['longMemoryRestore']['input']) { return this.request('longMemoryRestore', input); }
+  longMemoryJobs(input: StorageOperations['longMemoryJobs']['input']) { return this.request('longMemoryJobs', input); }
+  longMemoryEnqueue(input: StorageOperations['longMemoryEnqueue']['input']) { return this.request('longMemoryEnqueue', input); }
+  longMemoryJobTransition(input: StorageOperations['longMemoryJobTransition']['input']) { return this.request('longMemoryJobTransition', input); }
+  longMemoryJobFinish(input: StorageOperations['longMemoryJobFinish']['input']) { return this.request('longMemoryJobFinish', input); }
   memoryImportBatch(input: MemoryImportBatch) { return this.request('memoryImportBatch', input); }
   memoryImportPublish(input: MemoryImportPublish) { return this.request('memoryImportPublish', input); }
   memoryScopes(actorId: string) { return this.request('memoryScopes', { actorId }); }

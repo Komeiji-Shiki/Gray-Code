@@ -8,6 +8,7 @@ import type {
 } from '@graycode/contracts';
 import type { MemoryScopeDefinition, MemoryScopeState, MemoryEntry, MemorySummary, MemoryWrite, MemoryWriteResult, MemoryRevision, MemoryImportPublish, MemoryImportBatch } from './memoryTypes';
 import type { RunEventWrite } from './runs';
+import type { LongMemoryScope, LongMemoryScopeState, LongMemoryWrite, LongMemoryWriteResult, LongMemoryQuery, LongMemoryRecall, LongMemoryRead, LongMemoryReadResult, LongMemoryTopic, LongMemoryRecord, LongMemoryVector, LongMemoryArchive, LongMemoryJob } from '@graycode/contracts';
 
 export interface HistoryWriteResult { revision: number; total: number }
 export interface ConversationListOptions {
@@ -23,6 +24,21 @@ export interface ConversationList {
 export interface MigrationState { nextIndex: number; complete: boolean }
 
 export interface StorageOperations {
+  longMemoryScopes: { input: { actorId: string }; output: LongMemoryScopeState[] };
+  longMemoryState: { input: LongMemoryScope; output: LongMemoryScopeState };
+  longMemoryWrite: { input: LongMemoryWrite; output: LongMemoryWriteResult };
+  longMemoryRecall: { input: LongMemoryQuery; output: LongMemoryRecall };
+  longMemoryTopics: { input: LongMemoryQuery; output: { topics: LongMemoryTopic[]; estimatedTokens: number; truncated: boolean } };
+  longMemoryRead: { input: LongMemoryRead; output: LongMemoryReadResult };
+  longMemoryRevisions: { input: { scope: LongMemoryScope; id: string }; output: LongMemoryRecord[] };
+  longMemoryImpact: { input: { scope: LongMemoryScope; kind: 'source'|'record'; id: string; action: 'delete'|'retract' }; output: Array<{ kind:'source'|'record';id:string }> };
+  longMemoryVector: { input: { scope: LongMemoryScope; id: string; version: number; vector: LongMemoryVector }; output: boolean };
+  longMemoryExport: { input: { scopes: LongMemoryScope[] }; output: LongMemoryArchive };
+  longMemoryRestore: { input: { actorId: string; archive: LongMemoryArchive }; output: { sources: number; records: number; skipped: number; tombstones: number } };
+  longMemoryJobs: { input: { scopes: LongMemoryScope[]; status?: LongMemoryJob['status'] }; output: LongMemoryJob[] };
+  longMemoryEnqueue: { input: { scope: LongMemoryScope; job: LongMemoryJob }; output: LongMemoryJob };
+  longMemoryJobTransition: { input: { scope: LongMemoryScope; id: string; action: 'start'|'retry'|'cancel'|'fail'; error?: string }; output: LongMemoryJob | null };
+  longMemoryJobFinish: { input: { scope: LongMemoryScope; id: string; write: LongMemoryWrite; usage?: LongMemoryJob['usage'] }; output: { applied: boolean; job: LongMemoryJob | null; result?: LongMemoryWriteResult } };
   memoryImportBatch: { input: MemoryImportBatch; output: MemoryScopeState };
   memoryImportPublish: { input: MemoryImportPublish; output: { skipped: boolean; configImported: boolean } };
   memoryScopes: { input: { actorId: string }; output: MemoryScopeState[] };

@@ -131,7 +131,11 @@ describe('independent SQLite storage worker', () => {
     await f.store.close();
     const database = new Database(path.join(f.data, 'platform.sqlite'));
     // 还原一代数据库时同时移除后续加入的记忆表，避免把新结构伪装成旧版本。
-    database.exec(`DROP TABLE memory_revision_summaries; DROP TABLE memory_revision_entries; DROP TABLE memory_revisions;
+    database.exec(`DROP TABLE long_memory_job_dependencies; DROP TABLE long_memory_jobs;
+      DROP TABLE long_memory_dependencies; DROP TABLE long_memory_supersedes; DROP TABLE long_memory_vectors;
+      DROP TABLE long_memory_terms; DROP TABLE long_memory_records; DROP TABLE long_memory_sources;
+      DROP TABLE long_memory_tombstones; DROP TABLE long_memory_scopes;
+      DROP TABLE memory_revision_summaries; DROP TABLE memory_revision_entries; DROP TABLE memory_revisions;
       DROP TABLE memory_summaries; DROP TABLE memory_entries; DROP TABLE memory_scopes;
       DROP TABLE run_events; DROP TABLE runs; ALTER TABLE records DROP COLUMN revision; PRAGMA user_version=1`);
     database.close();

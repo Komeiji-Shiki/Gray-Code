@@ -6,6 +6,7 @@ import { openDatabase, SCHEMA_VERSION, type SqliteConnection } from './schema';
 import { ObjectStore } from './objects';
 import { HistoryStore } from './histories';
 import { MemoryRepository } from './memories';
+import { LongMemoryRepository } from './longMemory/repository';
 import { captureStorageSnapshot } from './backup';
 import { RunRepository } from './runs';
 import type { ConversationListOptions, ConversationList, StorageOperations, StorageMethod, MigrationState } from './protocol';
@@ -26,6 +27,7 @@ export class PlatformDatabase {
   private readonly histories: HistoryStore;
   private readonly runs: RunRepository;
   private readonly memories: MemoryRepository;
+  private readonly longMemories: LongMemoryRepository;
   private readonly databasePath: string;
   private readonly objectPath: string;
 
@@ -40,11 +42,27 @@ export class PlatformDatabase {
     this.histories = new HistoryStore(this.db, this.objects);
     this.runs = new RunRepository(this.db, this.objects);
     this.memories = new MemoryRepository(this.db, this.objects);
+    this.longMemories = new LongMemoryRepository(this.db);
   }
 
   execute<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): StorageOperations[M]['output'] {
     // The dispatch table is explicit: RPC never indexes arbitrary database methods.
     const operations: { [K in StorageMethod]: (value: StorageOperations[K]['input']) => StorageOperations[K]['output'] } = {
+      longMemoryScopes: ({ actorId }) => this.longMemories.scopes(actorId),
+      longMemoryState: scope => this.longMemories.state(scope),
+      longMemoryWrite: input => this.longMemories.write(input),
+      longMemoryRecall: input => this.longMemories.query.recall(input),
+      longMemoryTopics: input => this.longMemories.query.topics(input),
+      longMemoryRead: input => this.longMemories.query.read(input),
+      longMemoryRevisions: ({ scope, id }) => this.longMemories.query.revisions(scope, id),
+      longMemoryImpact: ({ scope, kind, id, action }) => this.longMemories.impact(scope, kind, id, action),
+      longMemoryVector: ({ scope, id, version, vector }) => this.longMemories.putVector(scope, id, version, vector),
+      longMemoryExport: ({ scopes }) => this.longMemories.archive.export(scopes),
+      longMemoryRestore: ({ actorId, archive }) => this.longMemories.archive.restore(actorId, archive),
+      longMemoryJobs: ({ scopes, status }) => this.longMemories.jobs.list(scopes, status),
+      longMemoryEnqueue: ({ scope, job }) => this.longMemories.jobs.enqueue(scope, job),
+      longMemoryJobTransition: ({ scope, id, action, error }) => this.longMemories.jobs.transition(scope, id, action, error),
+      longMemoryJobFinish: ({ scope, id, write, usage }) => this.longMemories.jobs.finish(scope, id, write, usage),
       memoryImportBatch: input => this.memories.importBatch(input),
       memoryImportPublish: input => this.memories.publishImport(input),
       memoryScopes: ({ actorId }) => this.memories.scopes(actorId),

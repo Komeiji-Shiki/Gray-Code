@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { PlatformStorageError } from '../errors';
+import { LONG_MEMORY_SCHEMA } from './longMemory/schema';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 const APPLICATION_ID = 0x47524350;
 
 /** One connection owns writes and collection; callers access it through the storage worker. */
@@ -50,6 +51,7 @@ export function openDatabase(file: string): SqliteConnection {
         db.exec(RUNTIME_SCHEMA);
         db.exec(SETTINGS_SCHEMA);
         db.exec(MEMORY_SCHEMA);
+        db.exec(LONG_MEMORY_SCHEMA);
         db.pragma(`application_id = ${APPLICATION_ID}`);
         db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
@@ -60,6 +62,7 @@ export function openDatabase(file: string): SqliteConnection {
         if (version < 2) db.exec(RUNTIME_SCHEMA);
         if (version < 3) db.exec(SETTINGS_SCHEMA);
         if (version < 4) db.exec(MEMORY_SCHEMA);
+        if (version < 5) db.exec(LONG_MEMORY_SCHEMA);
         if (version < SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
     }
