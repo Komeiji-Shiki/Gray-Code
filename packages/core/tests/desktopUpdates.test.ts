@@ -52,6 +52,20 @@ describe('桌面版更新识别', () => {
     expect((await updates.check()).status).toMatchObject({ state: 'error', message: expect.stringContaining('503') });
   });
 
+  test('安装版仅从当前仓库的发行清单下载，保留明确的安装步骤', async () => {
+    const installer = { status: jest.fn(async () => ({ kind: 'installed' })), prepare: jest.fn(async () => ({ downloaded: true })) };
+    updates = new DesktopUpdates({ product: { runtimeSettings: () => ({ getSettings: () => ({ checkForUpdates: true, updateChannel }) }) } } as any, installer as any);
+    respond([release('v2.0.0', { assets: [{ name: 'GrayCode-win-x64-Setup.exe' },
+      { name: 'releases.win-x64.json', browser_download_url: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/v2.0.0/releases.win-x64.json' }] })]);
+    expect((await updates.check()).manualInstall).toBe(false);
+    await expect(updates.prepare()).resolves.toEqual({ downloaded: true });
+    expect(installer.prepare).toHaveBeenCalledWith('https://github.com/Komeiji-Shiki/Gray-Code/releases/download/v2.0.0/', '2.0.0');
+    respond([release('v2.0.0', { assets: [{ name: 'GrayCode-win-x64-Setup.exe' },
+      { name: 'releases.win-x64.json', browser_download_url: 'https://elsewhere.invalid/releases.win-x64.json' }] })]);
+    expect((await updates.check()).manualInstall).toBe(true);
+    expect(installer.prepare).toHaveBeenCalledTimes(1);
+  });
+
   test('打开发布页面继续使用手动下载流程', async () => {
     expect(await updates.open()).toMatchObject({ success: true, manual: true });
     expect(shell.openExternal).toHaveBeenCalledWith('https://github.com/Komeiji-Shiki/Gray-Code/releases');

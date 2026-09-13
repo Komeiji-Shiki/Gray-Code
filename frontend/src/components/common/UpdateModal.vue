@@ -12,7 +12,7 @@ import Modal from './Modal.vue'
 const { t } = useI18n()
 
 const visible = ref(false)
-const phase = ref<'prompt' | 'downloading' | 'installed' | 'failed'>('prompt')
+const phase = ref<'prompt' | 'downloading' | 'installed' | 'ready' | 'failed'>('prompt')
 const update = ref<{ version: string; name: string; body: string; vsixAssetUrl?: string; channel?: string } | null>(null)
 const errorMsg = ref('')
 const manualInstall = ref(false)
@@ -36,9 +36,20 @@ async function install() {
   if (manualInstall.value) { await openReleasePage(); close(); return }
   phase.value = 'downloading'
   try {
-    await sendToExtension(MESSAGE_NAMES.installUpdate, { update: update.value })
-    phase.value = 'installed'
+    const result = await sendToExtension<any>(MESSAGE_NAMES.installUpdate, { update: update.value })
+    phase.value = result?.downloaded ? 'ready' : 'installed'
   } catch (error: unknown) {
+    phase.value = 'failed'
+    errorMsg.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function applyDesktopUpdate() {
+  phase.value = 'downloading'
+  try {
+    const result = await sendToExtension<any>('desktop.updates.apply', {})
+    if (result?.cancelled) phase.value = 'ready'
+  } catch (error) {
     phase.value = 'failed'
     errorMsg.value = error instanceof Error ? error.message : String(error)
   }
@@ -97,6 +108,8 @@ const formattedBody = computed(() => {
       <span>{{ t('components.update.downloading') }}</span>
     </div>
 
+    <div v-else-if="phase === 'ready'" class="status-center" role="status">更新包已下载并校验。保存编辑后，可重启安装；安装前会备份当前数据。</div>
+
     <div v-else-if="phase === 'installed'" class="status-center success" role="status">
       <i class="codicon codicon-check" aria-hidden="true"></i>
       <span>{{ t('components.update.installed') }}</span>
@@ -127,6 +140,10 @@ const formattedBody = computed(() => {
         <button type="button" class="gc-button gc-button--primary" @click="install">
           {{ manualInstall ? t('components.update.viewPage') : t('components.update.install') }}
         </button>
+      </template>
+      <template v-else-if="phase === 'ready'">
+        <button type="button" class="gc-button" @click="close">稍后安装</button>
+        <button type="button" class="gc-button gc-button--primary" @click="applyDesktopUpdate">重启并安装</button>
       </template>
       <template v-else-if="phase === 'failed'">
         <button type="button" class="gc-button gc-button--primary" @click="openReleasePage">

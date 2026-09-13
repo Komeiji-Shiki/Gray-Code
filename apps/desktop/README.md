@@ -1,6 +1,6 @@
 # GrayCode 2.0 独立桌面预览
 
-当前版本为 `2.0.0-pre`，提供 Windows x64 便携程序。下载入口见 [GitHub 预发布](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)。Linux/macOS 的发行与运行验证尚未完成。
+已发布的预览版本为 `2.0.0-pre`，提供 Windows x64 便携程序。主线版本 `2.0.0-pre.1` 新增 Windows 安装器、应用内下载与安装、配套数据回退和独立程序修复入口。下载入口见 [GitHub 预发布](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)。Linux/macOS 的发行与运行验证尚未完成。
 
 本文介绍当前主线的功能。GitHub 预发布附件保持发布时的源码快照，主线新增功能可按下方说明从源码构建。
 
@@ -18,7 +18,21 @@
 
 编辑器支持语言服务提供的成员补全、自动导入、函数参数提示和快速修复。`Ctrl+空格` 或 `Ctrl+J` 打开补全，`Ctrl+Shift+空格` 查看参数提示；底部错误数量可打开问题面板，按文件、错误编号或文字搜索并跳转。选择修复后先修改草稿，可以撤销，再按 `Ctrl+S` 保存。内置服务支持 TypeScript/JavaScript，其他语言使用已配置的语言服务。
 
-桌面更新检查会在所选渠道中比较预发布标识与版本号，选择版本最高的桌面包。夜间构建沿用仓库的既有排序规则；下载和替换仍由用户从发布页面完成。
+桌面更新检查会在所选渠道中比较预发布标识与版本号，选择版本最高的桌面包。稳定渠道只接收正式版，预览与夜间渠道也接收预发布版本。便携版继续通过发行页面下载。
+
+安装版使用 `GrayCode-win-x64-Setup.exe`，默认安装到当前用户的 `%LOCALAPPDATA%\GrayCode`，开始菜单入口指向固定启动路径。应用数据仍保存在用户数据目录，与程序目录分开。指定安装位置可运行：
+
+```powershell
+.\GrayCode-win-x64-Setup.exe --installto "D:\Apps\GrayCode"
+```
+
+“设置 → 通用 → 桌面应用更新”提供下载、离线更新和重启安装。离线更新需将 `releases.win-x64.json` 与对应完整 `.nupkg` 包放在同一目录，再选择该清单。下载校验完成后仍需确认重启；文件和设置草稿必须先保存或放弃。应用会正常停止后台服务，再调用安装器切换程序目录。
+
+下载前保留当前完整程序包，安装前另存程序数据备份。更新后的“恢复上一版本与数据”会先保存当前数据，再恢复更新前的程序与数据；恢复前的数据目录也会保留，已删除记忆和已撤销设备继续受到恢复保护。恢复后的后台连接需要手动开启。
+
+若安装中断后程序无法启动，在用户配置目录下的 `desktop-updates` 中找到最近的 `recovery-*` 文件夹，运行 `Restore-GrayCode.cmd`。它核对旧包后重新安装程序文件，数据目录保持原样；需要先退出这一安装目录的应用。此入口也能修复缺少 `current` 程序目录的安装。可以提前用“打开恢复文件夹”查看位置，保留其中的程序包、数据备份和修复脚本。
+
+卸载会移除程序与安装器创建的快捷方式，保留位于安装目录之外的用户数据。
 
 “设置 → 通用 → 程序数据备份”导出会话、附件、分支与检查点、任务、配置、角色、记忆和本地技能，不复制项目源码。备份可在任务运行时进行；恢复先校验内容和数量，确认后重启切换，恢复前的数据目录完整保留。填写可选密码会加密备份，并将密钥转为可在目标电脑恢复的形式；不填密码时密钥继续受原电脑的系统加密保护。
 
@@ -44,6 +58,15 @@ npm run package:desktop
 ```
 
 默认输出为 `release/desktop/GrayCode-win32-x64`。`GRAYCODE_DESKTOP_OUT` 可指定新的发行目录，避免覆盖正在使用的程序。`package:desktop` 编译运行产物，常规开发构建 `build:desktop` 另包含类型检查。首次构建需要下载 Electron 运行时。
+
+生成安装器还需要 .NET 9 SDK，并使用仓库固定的 Velopack 工具版本：
+
+```powershell
+dotnet tool restore
+npm run package:installer
+```
+
+先完成 `package:desktop`，再运行 `package:installer`。安装器默认输出到 `release/desktop-installer`，`GRAYCODE_INSTALLER_OUT` 可指定其他目录。`desktop-release.json` 记录源码提交、构建时间、版本、工具版本及附件的 SHA-256；设置页也能查看实际构建信息。`.github/workflows/desktop.yml` 可手动创建 Windows 构建附件，不自动发布 GitHub Release。
 
 ## 主要能力
 

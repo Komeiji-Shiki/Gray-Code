@@ -1,4 +1,5 @@
 import { DesktopUpdates } from './updates';
+import { DesktopInstaller, confirmInstalledRecovery } from './installer';
 import { DesktopStorageLocation } from './storageLocation';
 import { ApplicationBackups } from '../../server/src/backups/service';
 import { BackupRestoreState } from '../../server/src/backups/restore';
@@ -117,7 +118,7 @@ async function activeTasks(): Promise<boolean> {
     || application.nodes.keepsAlive || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
     || application.interactiveTerminals.hasRunning || !!application.subagents.backgroundTasks().length;
 }
-async function quit(relaunch = false): Promise<void> {
+async function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
   if (exiting) return;
   exiting = true;
   notifications?.dispose();
@@ -126,6 +127,7 @@ async function quit(relaunch = false): Promise<void> {
   browser?.close();
   await backups?.close();
   await application?.close();
+  beforeExit?.();
   if (relaunch) app.relaunch();
   app.quit();
 }
@@ -231,6 +233,7 @@ async function createWindow(): Promise<void> {
 async function main(): Promise<void> {
   await app.whenReady();
   dataDirectory = await storageLocation.startup();
+  await confirmInstalledRecovery(app.getPath('userData'), process.execPath, app.getVersion(), dataDirectory);
   await new BackupRestoreState(dataDirectory).apply();
   session.defaultSession.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false),
@@ -275,7 +278,31 @@ async function main(): Promise<void> {
     console.error('旧配置自动导入未完成：', error instanceof Error ? error.message : String(error));
   });
   notifications = desktopNotifications(application, () => window, createWindow);
-  const updates = new DesktopUpdates(application);
+  const installer = new DesktopInstaller({ executable: process.execPath, userData: app.getPath('userData'), dataDirectory,
+    recoveryTemplate: path.resolve(__dirname, '../../../resources/installer/restore-program.ps1'),
+    currentVersion: app.getVersion(), restartArgs: process.argv.slice(app.isPackaged ? 1 : 2).filter(value => !value.startsWith('--veloapp-')),
+    backup: destination => backups!.export(destination),
+    assertCanRestart: async restoreId => {
+      if (exiting || dirtySettings || dirtyDocuments || await application.productUi.hasDirtyPreferences())
+        throw new Error('请先保存或放弃编辑器与设置中的修改，再安装或回退。');
+      const pendingRestore = (await backups!.status()).pending;
+      if (restoreId && pendingRestore?.id !== restoreId) throw new Error('本次回退的恢复准备已经改变，请重新操作。');
+      if (storageLocation.getConfig().config.pendingMigration || pendingRestore && pendingRestore.id !== restoreId || backups!.busy)
+        throw new Error('请先完成或取消数据目录迁移、备份和恢复，再安装或回退。');
+    },
+    restore: async archive => (await backups!.prepareRestore(archive)).pending.id,
+    cancelRestore: () => backups!.cancelRestore(),
+    confirm: async (message, detail) => (await dialog.showMessageBox(window!, { type: 'question', title: 'GrayCode 安装与恢复', message, detail,
+      buttons: ['确认并重启', '继续工作'], defaultId: 1, cancelId: 1 })).response === 0,
+    restart: async apply => {
+      setTimeout(() => { void quit(false, apply).catch(async error => {
+        await backups!.cancelRestore().catch(() => {});
+        dialog.showErrorBox('GrayCode 更新器未能启动', `当前程序包未被替换。请重新启动后重试。\n${String(error)}`);
+        app.exit(1);
+      }); }, 150);
+    },
+  });
+  const updates = new DesktopUpdates(application, installer);
   const router = new ApplicationRouter(application);
   petWindowController = new DesktopPetWindow(application, client, preload, trust);
   const webPortIndex = argumentsList.indexOf('--web-port');
@@ -322,7 +349,7 @@ async function main(): Promise<void> {
         await shell.openExternal('ms-settings:defaultapps?registeredAppUser=GrayCode'); return { success: true };
       }
       if (method === 'desktop.files.ready') { await desktopFiles.clientReady(); return { success: true }; }
-      if (method === 'ui.request' && ['getAppInfo', 'getUpdateStatus', 'checkUpdateNow', 'updateNow', 'installUpdate', 'openUpdatePage', 'notifications.agentStop', 'notifications.preview', 'exportPromptModes', 'conversation.revealInExplorer', 'storagePath.getConfig', 'storagePath.validate', 'storagePath.selectFolder', 'storagePath.openInExplorer', 'storagePath.migrate', 'storagePath.reset', 'reloadWindow', 'openDirectory', 'desktop.fonts', 'desktop.chooseWorkspace', 'desktop.dirtySettings', 'settings.import', 'settings.export'].includes(params.type)) {
+      if (method === 'ui.request' && (params.type?.startsWith('desktop.updates.') || ['getAppInfo', 'getUpdateStatus', 'checkUpdateNow', 'updateNow', 'installUpdate', 'openUpdatePage', 'notifications.agentStop', 'notifications.preview', 'exportPromptModes', 'conversation.revealInExplorer', 'storagePath.getConfig', 'storagePath.validate', 'storagePath.selectFolder', 'storagePath.openInExplorer', 'storagePath.migrate', 'storagePath.reset', 'reloadWindow', 'openDirectory', 'desktop.fonts', 'desktop.chooseWorkspace', 'desktop.dirtySettings', 'settings.import', 'settings.export'].includes(params.type))) {
         method = params.type;
         params = params.data ?? {};
       }
@@ -373,7 +400,25 @@ async function main(): Promise<void> {
         ...__GRAYCODE_DESKTOP_BUILD__, executablePath: app.getPath('exe') };
       if (method === 'getUpdateStatus') return updates.get();
       if (method === 'checkUpdateNow') return updates.check();
-      if (['updateNow', 'installUpdate', 'openUpdatePage'].includes(method)) return updates.open();
+      if (method === 'openUpdatePage') return updates.open();
+      if (method === 'updateNow' || method === 'installUpdate') return updates.prepare(method === 'updateNow');
+      if (method === 'desktop.updates.status') return installer.status();
+      if (method === 'desktop.updates.apply') return installer.apply();
+      if (method === 'desktop.updates.rollback') return installer.rollback();
+      if (method === 'desktop.updates.openRecovery') {
+        const recovery = (await installer.status()).recovery;
+        if (!recovery) throw new Error('当前没有保存的回退点。');
+        const error = await shell.openPath(path.dirname(recovery.backupPath));
+        if (error) throw new Error(error);
+        return { success: true };
+      }
+      if (method === 'desktop.updates.local') {
+        const selected = await dialog.showOpenDialog(window!, { title: '选择离线更新清单', properties: ['openFile'],
+          filters: [{ name: 'GrayCode 更新清单（releases.win-x64.json）', extensions: ['json'] }] });
+        if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
+        if (path.basename(selected.filePaths[0]) !== 'releases.win-x64.json') throw new Error('请选择发行包附带的 releases.win-x64.json，并将完整更新包放在同一目录。');
+        return installer.prepare(path.dirname(selected.filePaths[0]));
+      }
       if (method.startsWith('storagePath.') || ['reloadWindow', 'notifications.agentStop', 'notifications.preview', 'exportPromptModes', 'conversation.revealInExplorer'].includes(method)) application.requireOwner(client.actorId);
       if (method === 'notifications.agentStop' || method === 'notifications.preview') {
         if (!['error', 'awaiting_user_action', 'continue_required'].includes(params.reason) || method === 'notifications.agentStop' && typeof params.dedupeKey !== 'string') throw new Error('通知参数无效。');

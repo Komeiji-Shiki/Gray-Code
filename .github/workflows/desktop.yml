@@ -1,0 +1,38 @@
+name: Build Windows desktop
+
+# 仅创建可下载的构建附件；公开发行与签名凭据由维护者单独配置。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Install locked dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix frontend ci --no-audit --no-fund
+          dotnet tool restore
+      - name: Package Windows application and installer
+        run: |
+          npm run package:desktop
+          npm run package:installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GrayCode-Windows-${{ github.sha }}
+          path: |
+            release/desktop/GrayCode-win32-x64/**
+            release/desktop-installer/**
+          if-no-files-found: error
+          retention-days: 14

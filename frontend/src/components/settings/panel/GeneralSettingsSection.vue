@@ -12,6 +12,7 @@ import { computed } from 'vue'
 import { t, SUPPORTED_LANGUAGES } from '@/i18n'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../../common'
 import BackupSettings from './BackupSettings.vue'
+import DesktopUpdateSettings from './DesktopUpdateSettings.vue'
 
 const isPlatform = !!window.__GRAYCODE_HOST
 const isWeb = window.__GRAYCODE_HOST?.kind === 'web'
@@ -84,7 +85,7 @@ const languageOptions = computed<SelectOption[]>(() => SUPPORTED_LANGUAGES.map(l
 // 更新渠道选项（stable 正式版 / nightly 每日构建）
 const updateChannelOptions = computed<SelectOption[]>(() => [
   { value: 'stable', label: t('components.settings.settingsPanel.update.channelStable') },
-  { value: 'nightly', label: t('components.settings.settingsPanel.update.channelNightly') },
+  { value: 'nightly', label: isPlatform ? '预览与夜间版' : t('components.settings.settingsPanel.update.channelNightly') },
 ])
 
 // 验证代理 URL 格式
@@ -186,7 +187,7 @@ function onCustomPathInput(event: Event) {
         <i class="codicon codicon-cloud-download"></i>
         {{ isPlatform ? '桌面应用更新' : t('components.settings.settingsPanel.update.title') }}
       </label>
-      <p class="field-description">{{ isPlatform ? '检查独立桌面版发行包。下载后退出应用，再手动替换程序目录；Web 客户端随核心服务一起更新。' : t('components.settings.settingsPanel.update.description') }}</p>
+      <p class="field-description">{{ isWeb ? 'Web 客户端随核心服务一起更新。' : isPlatform ? '安装版可下载更新并在确认后重启安装，保留更新前程序和数据。便携版通过发行页面下载。' : t('components.settings.settingsPanel.update.description') }}</p>
 
       <div class="update-settings">
         <CustomCheckbox
@@ -202,10 +203,11 @@ function onCustomPathInput(event: Event) {
             :options="updateChannelOptions"
             @update:model-value="emit('update:updateChannel', $event)"
           />
-          <p class="field-hint">{{ t('components.settings.settingsPanel.update.channelDescription') }}</p>
+          <p class="field-hint">{{ isPlatform ? 'stable：正式版；nightly：预览与夜间版。检查所选渠道中版本号更高的桌面发行包。' : t('components.settings.settingsPanel.update.channelDescription') }}</p>
         </div>
 
-        <div class="update-check-row">
+        <DesktopUpdateSettings v-if="isPlatform && !isWeb" />
+        <div v-else class="update-check-row">
           <button class="save-btn" :disabled="isUpdateChecking || isUpdating" @click="emit('checkUpdateNow')">
             <i v-if="isUpdateChecking" class="codicon codicon-loading codicon-modifier-spin"></i>
             <span v-else>{{ t('components.settings.settingsPanel.update.checkNow') }}</span>

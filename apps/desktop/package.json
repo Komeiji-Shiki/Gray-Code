@@ -4,7 +4,8 @@
   "private": true,
   "main": "dist/main.cjs",
   "dependencies": {
-    "@graycode/core": "0.1.0"
+    "@graycode/core": "0.1.0",
+    "velopack": "1.2.0"
   },
   "devDependencies": {
     "electron": "44.2.0"
