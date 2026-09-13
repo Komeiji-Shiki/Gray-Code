@@ -130,7 +130,11 @@ export interface ToolOutcome {
   [key: string]: unknown;
 }
 
-export interface RunListOptions { conversationId?: string; actorId?: string; activeOnly?: boolean; limit?: number; beforeCreatedAt?: number }
+export interface RunListOptions {
+  conversationId?: string; actorId?: string; activeOnly?: boolean; limit?: number; beforeCreatedAt?: number;
+  /** 按完成时间、运行标识升序恢复事件，同一毫秒内的多次完成也可分页读取。 */
+  completedAfter?: { timestamp: number; runId: string };
+}
 export interface StartRunInput {
   promptModeId?: string;
   requestKey: string;

@@ -18,10 +18,33 @@ export interface AutomationUsage {
 export type AutomationStatus = 'active' | 'paused' | 'completed';
 export type AutomationPauseReason = 'user' | 'restart' | 'error' | 'input';
 
+export type AutomationEventTrigger =
+  | { type: 'run_completed'; conversationId: string }
+  | { type: 'file_changed'; workspaceId: string; path: string; debounceMs: number }
+  | { type: 'node_online'; peerId: string };
+
+export interface AutomationEventConfiguration {
+  trigger: AutomationEventTrigger;
+  busyPolicy: 'skip' | 'latest';
+  restartPolicy: 'pause' | 'resume';
+}
+
+export interface AutomationEventOccurrence {
+  key: string;
+  type: AutomationEventTrigger['type'];
+  observedAt: number;
+  summary: string;
+  ancestry: string[];
+  sourceRunId?: string;
+  runId?: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped';
+  reason?: string;
+}
+
 export interface AutomationRecord {
   version: 1;
   id: string;
-  kind: 'goal' | 'schedule';
+  kind: 'goal' | 'schedule' | 'event';
   name: string;
   objective: string;
   conversationId: string;
@@ -34,6 +57,11 @@ export interface AutomationRecord {
   usage: AutomationUsage;
   schedule?: AutomationSchedule;
   missedRunPolicy?: 'skip' | 'once';
+  event?: AutomationEventConfiguration;
+  eventSourceState?: string;
+  pendingEvent?: AutomationEventOccurrence;
+  currentEvent?: AutomationEventOccurrence;
+  recentEvents?: AutomationEventOccurrence[];
   nextRunAt?: number;
   currentRequestKey?: string;
   currentRunId?: string;
@@ -65,6 +93,7 @@ export interface AutomationCreate {
   promptModeId?: string;
   schedule?: AutomationSchedule;
   missedRunPolicy?: 'skip' | 'once';
+  event?: AutomationEventConfiguration;
 }
 
 export interface AutomationView extends AutomationRecord { runStatus?: RunStatus }
@@ -73,5 +102,7 @@ export interface AutomationOptions {
   providers: ProviderDefinition[];
   workspaces: WorkspaceDefinition[];
   promptModes: { id: string; name: string }[];
+  eventConversations?: { id: string; title: string }[];
+  eventPeers?: { id: string; name: string }[];
   current: { conversationId?: string; workspaceId?: string; agentId: string; providerId: string; modelId: string; promptModeId: string; reasoningEffort?: string };
 }

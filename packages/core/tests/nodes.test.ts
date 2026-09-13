@@ -82,6 +82,23 @@ describe('执行节点配对、运行与恢复', () => {
   });
   afterEach(async () => { await Promise.allSettled([a?.close(), b?.close()]); await fa.cleanup(); await fb.cleanup(); });
 
+  test('设备上线事件只响应实际重连，重复状态通知不重复执行，撤销后暂停规则', async () => {
+    const paired = await pair();
+    const draft = await a.product.draft(); const providerId = await draft.configs.createConfig({ name: '设备事件验证', type: 'openai', url: 'http://127.0.0.1:1/v1', model: 'fixture', apiKey: '', enabled: true, timeout: 1000, contextManagementEnabled: false }); await a.product.save(draft);
+    await a.createConversation('owner', '设备恢复任务', 'project', { platformMode: 'chat' }, undefined, { id: 'node-event-chat' });
+    const rule = await a.automations.create('owner', { kind: 'event', name: '恢复后检查', objective: '报告设备已恢复。', conversationId: 'node-event-chat', agentId: 'default', providerId,
+      event: { trigger: { type: 'node_online', peerId: paired.peerId }, busyPolicy: 'skip', restartPolicy: 'resume' } });
+    async function until(condition: (record: any) => boolean) { for (let i = 0; i < 150; i++) { const record = (await a.automations.list('owner')).find(row => row.id === rule.id); if (condition(record)) return record!; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('设备事件状态未达到预期'); }
+    expect(rule.recentEvents).toEqual([]); expect(callsA).toBe(0);
+    await callA('nodes.disconnect', { id: paired.peerId }); await until(row => row.eventSourceState === 'offline');
+    await callA('nodes.connect', { id: paired.peerId }); await until(row => !!row.pendingEvent);
+    for (let i = 0; i < 5; i++) a.publish({ type: 'nodes.changed' });
+    await a.automations.tick(); const done = await until(row => row.completedRuns === 1 && !row.currentRequestKey);
+    expect(done.recentEvents).toHaveLength(1); expect(callsA).toBe(1); expect(callsB).toBe(0);
+    await callA('nodes.revoke', { id: paired.peerId }); const stopped = await until(row => row.status === 'paused');
+    expect(stopped.error).toContain('撤销');
+  });
+
   test('真实 TLS 配对绑定账号和项目，重试与重启不会再次执行副作用', async () => {
     const paired = await pair(), statusA = a.nodes.status('owner'), statusB = b.nodes.status('owner');
     expect(statusA.nodeId).not.toBe(statusB.nodeId);

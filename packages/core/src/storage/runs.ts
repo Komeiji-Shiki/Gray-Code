@@ -81,7 +81,13 @@ export class RunRepository {
     if (options.conversationId) { clauses.push('conversation_id=?'); args.push(options.conversationId); }
     if (options.activeOnly) { clauses.push(`status IN (${ACTIVE.map(() => '?').join(',')})`); args.push(...ACTIVE); }
     if (options.beforeCreatedAt !== undefined) { clauses.push('created_at<?'); args.push(options.beforeCreatedAt); }
-    const rows = this.db.prepare(`SELECT value_hash FROM runs ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY created_at DESC,id LIMIT ?`).all(...args, limit) as RunRow[];
+    if (options.completedAfter) {
+      const { timestamp, runId } = options.completedAfter;
+      if (!Number.isFinite(timestamp) || typeof runId !== 'string') invalid('Invalid completed run cursor.');
+      clauses.push("status='completed'", '(updated_at>? OR (updated_at=? AND id>?))'); args.push(timestamp, timestamp, runId);
+    }
+    const order = options.completedAfter ? 'updated_at,id' : 'created_at DESC,id';
+    const rows = this.db.prepare(`SELECT value_hash FROM runs ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY ${order} LIMIT ?`).all(...args, limit) as RunRow[];
     return rows.map(row => this.objects.getValue<RunRecord>(row.value_hash));
   }
 

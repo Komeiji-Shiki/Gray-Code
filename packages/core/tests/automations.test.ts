@@ -1,3 +1,5 @@
+import { writeFile, rename } from 'node:fs/promises';
+import path from 'node:path';
 import type { AutomationRecord, ModelInput, PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { nextScheduledTime, validateSchedule } from '../../../apps/server/src/automations/schedule';
@@ -134,6 +136,74 @@ describe('持久目标和定时触发', () => {
     expect(calls[1].modelOverride).toBe('another-model'); expect(calls[1].systemPrompt).toContain('补充最后检查');
     const messages = (await app.storage.readFullHistory('auto-chat')).messages.filter(message => message.isUserInput);
     expect(messages).toHaveLength(2); expect(messages[1].parts).toEqual([{ text: '完成原工作并补充最后检查。' }]);
+  });
+
+  test('任务完成事件去重，两个任务之间传递来源并阻止循环，完成游标覆盖同毫秒分页', async () => {
+    await app.createConversation('owner', '来源对话', undefined, { platformMode: 'chat' }, undefined, { id: 'event-source' });
+    const event = { trigger: { type: 'run_completed', conversationId: 'event-source' }, busyPolicy: 'latest', restartPolicy: 'resume' };
+    const first = await create({ kind: 'event', event });
+    const source = await app.runtime.start({ actorId: 'owner', conversationId: 'event-source', agentId: 'default', providerId,
+      requestKey: 'event-source-seed', message: { role: 'user', parts: [{ text: '执行来源任务。' }] } });
+    await app.runtime.wait(source.id); await until(first.id, record => !!record.pendingEvent);
+    app.publish({ type: 'event', event: { type: 'run.completed', runId: source.id } });
+    const second = await create({ kind: 'event', conversationId: 'event-source', event: { ...event, trigger: { type: 'run_completed', conversationId: 'auto-chat' } } });
+    await app.automations.tick(now); await until(second.id, record => !!record.pendingEvent);
+    await app.automations.tick(now); const guarded = await until(first.id, record => !!record.recentEvents?.some(item => item.reason?.includes('循环')));
+    expect(guarded.completedRuns).toBe(1); expect(guarded.pendingEvent).toBeUndefined();
+    expect(guarded.recentEvents?.filter(item => item.sourceRunId === source.id)).toHaveLength(1);
+    expect(calls).toHaveLength(3);
+    let cursor = { timestamp: now, runId: '' }; const paged: string[] = [];
+    for (;;) { const rows = await app.storage.listRuns({ completedAfter: cursor, limit: 1 }); if (!rows.length) break; paged.push(rows[0].id); cursor = { timestamp: rows[0].updatedAt, runId: rows[0].id }; }
+    expect(new Set(paged).size).toBe(3);
+  });
+
+  test('真实文件合并、原子替换、同任务写入防循环，暂停取消和重启后继续监听', async () => {
+    const workspace = { id: 'event-files', name: '事件文件', directory: f.source, deviceId: 'local' };
+    const settings = app.settings.snapshot(); settings.settings.workspaces.push(workspace, { ...workspace, id: 'event-execution', name: '独立执行目录', directory: f.root }); await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    await app.createConversation('owner', '文件任务', 'event-execution', { platformMode: 'chat' }, undefined, { id: 'file-chat' });
+    const file = path.join(f.source, 'input.txt'); await writeFile(file, '初始内容');
+    const created = await create({ kind: 'event', conversationId: 'file-chat', event: { trigger: { type: 'file_changed', workspaceId: workspace.id, path: 'input.txt', debounceMs: 100 }, busyPolicy: 'latest', restartPolicy: 'resume' } });
+    expect(calls).toHaveLength(0);
+    await writeFile(file, '第一段'); await writeFile(file, '第二段');
+    await until(created.id, record => !!record.pendingEvent);
+    generate = async () => { await writeFile(file, '任务自己写入'); return answer(); };
+    await app.automations.tick(now);
+    const first = await until(created.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    expect(first.pendingEvent).toBeUndefined(); expect(first.recentEvents?.some(item => item.reason?.includes('循环'))).toBe(true);
+    generate = async () => answer();
+    const replacement = path.join(f.source, 'replacement.txt'); await writeFile(replacement, '替换之后'); await rename(replacement, file);
+    await until(created.id, record => !!record.pendingEvent);
+    await app.automations.pause('owner', created.id); await app.automations.tick(now);
+    expect(calls).toHaveLength(1); expect((await app.automations.list('owner')).find(row => row.id === created.id)?.recentEvents?.at(-1)?.status).toBe('cancelled');
+    await app.automations.resume('owner', created.id); await app.close();
+    await writeFile(file, '关闭期间的变化'); app = await open();
+    await until(created.id, record => !!record.pendingEvent); await app.automations.tick(now);
+    await until(created.id, record => record.completedRuns === 2 && !record.currentRequestKey);
+    await app.close(); app = await open(); await app.automations.tick(now); expect(calls).toHaveLength(2);
+  });
+
+  test('已接收事件重启只执行一次，忙碌时按设置合并且停止取消待执行事件', async () => {
+    await app.createConversation('owner', '连续来源', undefined, { platformMode: 'chat' }, undefined, { id: 'event-source' });
+    const created = await create({ kind: 'event', event: { trigger: { type: 'run_completed', conversationId: 'event-source' }, busyPolicy: 'latest', restartPolicy: 'resume' } });
+    async function source(key: string) { const run = await app.runtime.start({ actorId: 'owner', conversationId: 'event-source', agentId: 'default', providerId, requestKey: key,
+      message: { role: 'user', parts: [{ text: '来源事件' }] } }); await app.runtime.wait(run.id); return run; }
+    await source('event-1'); await until(created.id, record => !!record.pendingEvent);
+    await source('event-2'); await until(created.id, record => record.recentEvents?.length === 2);
+    await app.close(); app = await open();
+    expect((await app.automations.list('owner'))[0].recentEvents?.filter(item => item.status === 'pending')).toHaveLength(1);
+    await app.automations.tick(now); await until(created.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    expect(calls).toHaveLength(3);
+    await source('event-3'); await until(created.id, record => !!record.pendingEvent);
+    await app.automations.pause('owner', created.id, true); await app.close(); app = await open();
+    await app.automations.tick(now); expect(calls).toHaveLength(4);
+    const paused = (await app.automations.list('owner'))[0]; expect(paused.status).toBe('paused'); expect(paused.pendingEvent).toBeUndefined();
+  });
+
+  test('频繁读取状态不会推迟调度计时器，真实等待后按时执行', async () => {
+    const created = await create({ kind: 'schedule', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    now += 2000;
+    const done = await until(created.id, record => record.status === 'completed' && !record.currentRequestKey);
+    expect(done.completedRuns).toBe(1); expect(calls).toHaveLength(1);
   });
 
   test('一次定时任务并发触发只建立一个运行，关闭后的补跑策略按用户选择执行', async () => {
