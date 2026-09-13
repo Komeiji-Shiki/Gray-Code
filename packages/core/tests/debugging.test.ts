@@ -37,6 +37,14 @@ async function fixturePid(directory: string, file: string) {
   const pid = Number((await readFile(path.join(directory, file), 'utf8')).trim());
   expect(Number.isSafeInteger(pid) && pid > 0).toBe(true); return pid;
 }
+async function waitForRunningFixture(directory: string, pid: number) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try { if (Number(await readFile(path.join(directory, 'node.running'), 'utf8')) === pid) return; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error('测试程序尚未进入运行循环。');
+}
 
 async function setup() {
   const f = await fixture(); await f.store.close();
@@ -74,7 +82,7 @@ async function setup() {
 test('真实 Node 子会话命中断点、读取变量、执行单步并重启，停止后释放进程', async () => {
   const t = await setup();
   try {
-    await writeFile(path.join(t.f.root, '计算.js'), "require('node:fs').writeFileSync(__dirname + '/node.pid', String(process.pid)); function add(a, b) {\n  const result = a + b;\n  return result;\n}\nconst total = add(1, 2);\nconsole.log('结果', total);\nsetInterval(() => { globalThis.tick = (globalThis.tick || 0) + 1; }, 100);\n");
+    await writeFile(path.join(t.f.root, '计算.js'), "require('node:fs').writeFileSync(__dirname + '/node.pid', String(process.pid)); function add(a, b) {\n  const result = a + b;\n  return result;\n}\nconst total = add(1, 2);\nconsole.log('结果', total);\nsetInterval(() => { globalThis.tick = (globalThis.tick || 0) + 1; if (globalThis.tick === 1) require('node:fs').writeFileSync(__dirname + '/node.running', String(process.pid)); }, 100);\n");
     await t.rpc('debug.breakpoints.set', { expectedRevision: null, breakpoints: [{ id: 'return', path: '计算.js', line: 3, enabled: true }] });
     const configuration = { id: 'node-launch', name: 'Node 计算', adapterId: 'node', request: 'launch', program: '计算.js', env: { FIXTURE_VALUE: '中文值' } };
     await t.rpc('debug.configurations.save', { expectedRevision: null, configurations: [configuration] });
@@ -94,6 +102,8 @@ test('真实 Node 子会话命中断点、读取变量、执行单步并重启�
     await request('stepOut', { threadId: target.threadId }); await step;
     expect((await t.rpc('debug.snapshot', { id: target.id })).session.status).toBe('stopped');
     await request('continue', { threadId: target.threadId });
+    // continue 的响应只确认请求，目标真正进入循环后再验收运行中的暂停。
+    await waitForRunningFixture(t.f.root, firstPid);
     // Node 跳过内部代码后可能以 step 原因报告暂停，验证新的停止事件和实际调用栈。
     const paused = t.session(value => value.id === target.id && value.status === 'stopped');
     await request('pause', { threadId: target.threadId }); await paused;
