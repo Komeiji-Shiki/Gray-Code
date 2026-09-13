@@ -10,7 +10,7 @@ const pointerMode = ref<'click' | 'drag' | 'scroll'>('click'); const inputText =
 const error = ref(''); const notice = ref(''); const busy = ref(false); const frameBusy = ref(false); const pageVisible = ref(!document.hidden);
 const roundTripMs = ref(0); const receivedAt = ref(0);
 const gesture = ref<{ x: number; y: number; time: number; observationId: string }>();
-let timer: ReturnType<typeof setTimeout> | undefined; let epoch = 0; let disposed = false; let refreshingStatus: Promise<void> | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined; let epoch = 0; let disposed = false; let refreshingStatus: Promise<void> | undefined; let targetPending = false;
 const windowId = computed(() => target.value.startsWith('window:') ? target.value.slice(7) : '');
 const monitorId = computed(() => target.value.startsWith('display:') ? target.value.slice(8) : '');
 const image = computed<ComputerCapture | ComputerDisplayCapture | undefined>(() => displayFrame.value ?? observation.value?.screenshot);
@@ -26,6 +26,11 @@ function schedule() {
     timer = setTimeout(() => { void capture().catch(failed); }, 1000 / fps.value);
 }
 function failed(cause: unknown) { error.value = (cause as Error).message; viewing.value = false; gesture.value = undefined; clearTimer(); }
+async function readSelectedTarget() {
+  if (!targetPending || disposed || !enabled.value || busy.value || frameBusy.value) return;
+  targetPending = false; const selected = target.value;
+  await perform(async () => { await release(); if (selected === target.value) await capture(); });
+}
 async function refreshStatus() {
   if (refreshingStatus) return refreshingStatus;
   refreshingStatus = (async () => { status.value = await remote('computer.status'); if (!status.value?.active) controlling.value = false; })().finally(() => { refreshingStatus = undefined; });
@@ -49,7 +54,8 @@ async function capture(full = false) {
       if (current !== epoch || !enabled.value) return; displayFrame.value = result; observation.value = undefined;
     }
     roundTripMs.value = Math.round(performance.now() - started); receivedAt.value = Date.now(); error.value = '';
-  } finally { frameBusy.value = false; schedule(); }
+  } catch (cause) { if (current === epoch && enabled.value) throw cause; }
+  finally { frameBusy.value = false; if (targetPending) void readSelectedTarget(); else schedule(); }
 }
 async function release(stop = false) {
   controlling.value = false; gesture.value = undefined; epoch++; clearTimer();
@@ -58,11 +64,18 @@ async function release(stop = false) {
 }
 async function perform(action: () => Promise<void>) {
   if (busy.value) return; busy.value = true; error.value = ''; notice.value = ''; clearTimer();
-  try { await action(); } catch (cause) { failed(cause); } finally { busy.value = false; schedule(); }
+  try { await action(); } catch (cause) { failed(cause); } finally { busy.value = false; if (targetPending) void readSelectedTarget(); else schedule(); }
 }
 async function acquire() {
   if (!windowId.value) throw new Error('请先选择要操作的具体窗口。');
   status.value = await remote('computer.acquire', { windowIds: [windowId.value] }); controlling.value = true; await capture();
+}
+async function focusWindow() {
+  if (!controlling.value || !windowId.value) throw new Error('请先取得所选窗口的控制权。');
+  // 最小化或尚无截图的窗口，也能通过新鲜的窗口身份恢复并切换焦点。
+  const current = await remote<ComputerObservation>('computer.observe', { windowId: windowId.value, frameOnly: true });
+  await remote('computer.action', { action: 'focusWindow', observationId: current.id, operationId: crypto.randomUUID() });
+  await refreshStatus(); await capture();
 }
 async function action(args: Omit<ComputerAction, 'observationId'>, capturedId?: string) {
   const current = observation.value;
@@ -107,13 +120,13 @@ function keyboard(event: KeyboardEvent) {
   void perform(() => action({ action: 'key', key: combo }));
 }
 function visibility() { pageVisible.value = !document.hidden; }
-watch(target, () => { epoch++; observation.value = undefined; displayFrame.value = undefined; void perform(async () => { await release(); await capture(); }); });
+watch(target, () => { epoch++; observation.value = undefined; displayFrame.value = undefined; targetPending = true; void readSelectedTarget(); });
 watch([fps, width, format], () => { epoch++; schedule(); });
 watch(viewing, schedule);
 watch(enabled, value => {
   epoch++; clearTimer(); gesture.value = undefined;
-  if (value) void perform(load);
-  else { viewing.value = false; controlling.value = false; if (props.peer.state === 'online') void remote('computer.release').catch(() => {}); }
+  if (value) { targetPending = !!target.value; void perform(load); }
+  else { targetPending = false; viewing.value = false; controlling.value = false; if (props.peer.state === 'online') void remote('computer.release').catch(() => {}); }
 }, { immediate: true });
 const off = subscribe(event => { if (enabled.value && event.type === 'nodes.event' && event.peerId === props.peer.id && event.notification?.type === 'computer.changed') void refreshStatus().catch(failed); });
 document.addEventListener('visibilitychange', visibility);
@@ -130,7 +143,7 @@ onUnmounted(() => { disposed = true; epoch++; viewing.value = false; clearTimer(
       <div v-if="status?.pausedRunId" class="node-pending"><p>此设备发起的任务已暂停电脑操作，需要主人允许后才能重新取得控制权。</p><button v-if="peer.capabilities?.account.role==='owner'" :disabled="busy || !enabled" @click="perform(async()=>{await remote('computer.allowRun',{runId:status!.pausedRunId});await refreshStatus();notice='已允许任务重新观察并取得控制权。'})">允许该任务继续操作</button><p v-else class="node-hint">请由执行设备的主人账号允许任务继续。</p></div>
       <p v-if="monitorId" class="node-hint">显示器画面用于查看整体环境。需要输入时，请选择具体窗口并取得控制权。</p>
       <div v-if="image" class="node-screen-frame"><div class="node-frame-metadata"><span>{{ image.width }}×{{ image.height }} · {{ image.dpi }} DPI · {{ image.monitorId }}</span><span>请求往返 {{ roundTripMs }} ms · {{ Math.round(image.data.length * 0.75 / 1024) }} KB · {{ new Date(receivedAt).toLocaleTimeString() }}</span></div><img :src="imageUrl" :class="{controlling:canInput}" :style="{touchAction: controlling ? 'none' : 'auto'}" tabindex="0" alt="所选执行设备的实时画面" draggable="false" @pointerdown="pointerDown" @pointerup="pointerUp" @pointercancel="gesture=undefined;schedule()" @wheel="wheel" @keydown="keyboard" @contextmenu.prevent></div><p v-else class="node-empty">选择观看目标后采集画面。画面只传输到当前界面。</p>
-      <div v-if="windowId" class="node-screen-input"><div class="node-row"><label>触摸和鼠标<select v-model="pointerMode"><option value="click">点击</option><option value="drag">拖动</option><option value="scroll">滚动</option></select></label><button :disabled="!canInput" @click="perform(()=>action({action:'focusWindow'}))">切换到此窗口</button><button :disabled="!canInput" @click="perform(()=>action({action:'key',key:'Enter'}))">Enter</button><button :disabled="!canInput" @click="perform(()=>action({action:'key',key:'Escape'}))">Esc</button><button :disabled="!canInput" @click="perform(()=>action({action:'key',key:'Tab'}))">Tab</button></div><label>输入文字<textarea v-model="inputText" aria-label="远端输入文字" placeholder="手机和中文输入法可在这里编辑，再发送到远端焦点。"></textarea></label><button :disabled="!canInput || !inputText" @click="perform(async()=>{const text=inputText;await action({action:'type',text});if(inputText===text)inputText=''})">输入到远端焦点</button><div class="node-row"><input v-model="key" aria-label="远端按键组合" placeholder="Control+A"><button :disabled="!canInput || !key" @click="perform(()=>action({action:'key',key}))">发送按键</button></div><p class="node-hint">键盘组合在一次操作后释放。画面发生位移或尺寸变化时，重新采集后再操作。远端用户可移动鼠标、按键或使用 Ctrl+Alt+Esc 接管。</p></div>
+      <div v-if="windowId" class="node-screen-input"><div class="node-row"><label>触摸和鼠标<select v-model="pointerMode"><option value="click">点击</option><option value="drag">拖动</option><option value="scroll">滚动</option></select></label><button :disabled="busy || !enabled || !controlling" @click="perform(focusWindow)">切换到此窗口</button><button :disabled="!canInput" @click="perform(()=>action({action:'key',key:'Enter'}))">Enter</button><button :disabled="!canInput" @click="perform(()=>action({action:'key',key:'Escape'}))">Esc</button><button :disabled="!canInput" @click="perform(()=>action({action:'key',key:'Tab'}))">Tab</button></div><label>输入文字<textarea v-model="inputText" aria-label="远端输入文字" placeholder="手机和中文输入法可在这里编辑，再发送到远端焦点。"></textarea></label><button :disabled="!canInput || !inputText" @click="perform(async()=>{const text=inputText;await action({action:'type',text});if(inputText===text)inputText=''})">输入到远端焦点</button><div class="node-row"><input v-model="key" aria-label="远端按键组合" placeholder="Control+A"><button :disabled="!canInput || !key" @click="perform(()=>action({action:'key',key}))">发送按键</button></div><p class="node-hint">键盘组合在一次操作后释放。画面发生位移或尺寸变化时，重新采集后再操作。远端用户可移动鼠标、按键或使用 Ctrl+Alt+Esc 接管。</p></div>
     </template>
   </div>
 </template>
