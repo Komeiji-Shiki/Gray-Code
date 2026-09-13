@@ -695,6 +695,8 @@ const ja: LanguageMessages = {
                 markerPrefix: 'コンテキスト要約'
             },
             checkpoint: {
+                manual: '手動チェックポイント',
+                manualUnchanged: '手動チェックポイント · ファイル変更なし',
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',
                 userMessageAfter: 'ユーザーメッセージ後のチェックポイント',
                 assistantMessageBefore: 'アシスタントメッセージ前のチェックポイント',

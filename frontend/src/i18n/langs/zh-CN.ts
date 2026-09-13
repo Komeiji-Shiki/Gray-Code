@@ -697,6 +697,8 @@ const zhCN = {
                 markerPrefix: '上下文总结'
             },
             checkpoint: {
+                manual: '手动存档',
+                manualUnchanged: '手动存档 · 文件未变化',
                 userMessageBefore: '用户消息前存档',
                 userMessageAfter: '用户消息后存档',
                 assistantMessageBefore: '助手消息前存档',

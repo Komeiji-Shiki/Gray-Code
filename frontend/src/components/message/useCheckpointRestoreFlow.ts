@@ -343,6 +343,7 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
 
   // 获取检查点标签
   function getCheckpointLabel(cp: CheckpointRecord, phase: 'before' | 'after'): string {
+    if (cp.toolName === 'manual') return t('components.message.checkpoint.manual')
     if (cp.toolName === 'user_message') {
       return phase === 'before' ? t('components.message.checkpoint.userMessageBefore') : t('components.message.checkpoint.userMessageAfter')
     }
@@ -357,6 +358,7 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
 
   // 获取合并后的标签文案
   function getMergedLabel(cp: CheckpointRecord): string {
+    if (cp.toolName === 'manual') return t('components.message.checkpoint.manualUnchanged')
     if (cp.toolName === 'user_message') {
       return t('components.message.checkpoint.userMessageUnchanged')
     }

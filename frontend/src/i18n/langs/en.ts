@@ -695,6 +695,8 @@ const en: LanguageMessages = {
                 markerPrefix: 'Context Summary'
             },
             checkpoint: {
+                manual: 'Manual checkpoint',
+                manualUnchanged: 'Manual checkpoint · Files unchanged',
                 userMessageBefore: 'Before User Message',
                 userMessageAfter: 'After User Message',
                 assistantMessageBefore: 'Before Assistant Message',
