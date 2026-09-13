@@ -152,8 +152,9 @@ describe('BranchService', () => {
 
         test('多次 reroll：同一父节点下多个兄弟候选，尾指针指向最后激活的候选', async () => {
             const [, modelNodeId] = await seedConversation('c1');
-            const r1 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
-            const r2 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
+            // 明确创建时间，避免同一毫秒内按随机 ID 排序影响这个顺序断言。
+            const r1 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }], createdAt: 300 });
+            const r2 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }], createdAt: 400 });
 
             const graph = (await service.getBranchGraph('c1')).graph!;
             const children = childrenIndex(graph).get(modelNodeId)!;
