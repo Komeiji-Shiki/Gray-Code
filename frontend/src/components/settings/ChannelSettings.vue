@@ -882,7 +882,8 @@ onMounted(async () => {
     }
   )
 
-  // 标记初始化完成
+  // 先让初始选中项的监听完成，避免把页面初始化当成用户切换渠道。
+  await nextTick()
   isInitialized.value = true
 })
 

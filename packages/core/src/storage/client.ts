@@ -123,6 +123,8 @@ export class PlatformStorage {
   collectGarbage() { return this.request('collectGarbage', undefined); }
   checkpoint() { return this.request('checkpoint', undefined); }
   backupSnapshot() { return this.request('backupSnapshot', undefined); }
+  backupInventory() { return this.request('backupInventory', undefined); }
+  mergeBackupUnits(input: StorageOperations['mergeBackupUnits']['input']) { return this.request('mergeBackupUnits', input); }
 
   /** Migration operations are atomic per batch and hidden from normal conversation listings. */
   beginMigration(value: StorageOperations['migrationBegin']['input']) { return this.request('migrationBegin', value); }

@@ -48,6 +48,10 @@ export class ProductUi {
     if (!result) { result = this.app.product.draft().then(preferences => ({ preferences, editing: false })); this.clients.set(id, result); }
     return result;
   }
+  async hasDirtyPreferences(): Promise<boolean> {
+    const sessions = await Promise.allSettled(this.clients.values());
+    return sessions.some(session => session.status === 'fulfilled' && session.value.editing && session.value.preferences.dirty);
+  }
   async call(client: ClientSession, type: string, data: Record<string, any> = {}): Promise<unknown> {
     // 全局统计不依赖当前工作区，也不能占住此客户端的设置与交互队列。
     if (type === 'usage.getStats') return this.app.usage.stats(client.actorId, { startTime: data.startTime, endTime: data.endTime });

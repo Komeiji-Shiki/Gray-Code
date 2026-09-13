@@ -110,6 +110,15 @@ describe('ChannelSettings 无渠道空态', () => {
     expect(wrapper.find('.config-empty-text').text()).toBeTruthy()
   })
 
+  test('初始化选中首个渠道只供查看，不改写聊天渠道和设置草稿', async () => {
+    configs = [makeConfig('first')]
+    wrapper = mountSettings()
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.find('.config-form').exists()).toBe(true)
+    expect(chatStoreMock.setConfigId).not.toHaveBeenCalled()
+  })
+
   test('空态下点击「新建渠道」打开新建对话框', async () => {
     wrapper = mountSettings()
     await flushPromises()

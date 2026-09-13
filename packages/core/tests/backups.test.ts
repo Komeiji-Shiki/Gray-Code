@@ -2,6 +2,9 @@ import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import AdmZip from 'adm-zip';
+import sharp from 'sharp';
+import { PetResources } from '../../../apps/server/src/pets/resources';
+import { petAnimations } from '../../../shared/petFormat';
 import { PlatformStorage } from '@graycode/core';
 import { ApplicationBackups } from '../../../apps/server/src/backups/service';
 import { BackupRestoreState } from '../../../apps/server/src/backups/restore';
@@ -113,6 +116,75 @@ describe('application data backup and restore', () => {
     const archive=await f.store.longMemoryExport([scope]);expect(archive.records).toEqual([]);expect(archive.sources).toEqual([]);
     expect(archive.tombstones.find(item=>item.id==='backup-fact')?.at).toBe(before.tombstones.find(item=>item.id==='backup-fact')?.at);
     expect((await f.store.verify()).ok).toBe(true);
+  });
+
+  test('选择性恢复在实际切换时保留未选择会话的新修改和新建会话', async () => {
+    await f.store.createConversation(metadata('source-chat')); await f.store.appendHistory('source-chat', [message(0, '来源会话')]);
+    const backup = new ApplicationBackups(f.store, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });
+    const file = path.join(f.root, 'selective.graycode-backup'); await backup.export(file);
+    const targetPath = path.join(f.root, 'target'); let target = await PlatformStorage.open(targetPath);
+    try {
+      await target.createConversation(metadata('keep-chat')); await target.appendHistory('keep-chat', [message(0, '选择之前')]);
+      const importer = new ApplicationBackups(target, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });
+      const preview = await importer.prepareRestore(file, undefined, { previewOnly: true });
+      await expect(importer.restore.confirm()).rejects.toThrow('选择恢复范围');
+      await importer.selectRestore({ mode: 'selective', categories: [{ id: 'conversations', conflict: 'replace' }], expectedPreview: preview.pending.preview!.fingerprint });
+      await target.appendHistory('keep-chat', [message(1, '最终预览后的新消息')]);
+      await target.createConversation(metadata('new-after-preview'));
+      await importer.restore.confirm(); await target.close(); await importer.restore.apply();
+      target = await PlatformStorage.open(targetPath);
+      expect((await target.readHistory('source-chat')).messages[0].parts[0].text).toBe('来源会话');
+      expect((await target.readHistory('keep-chat')).messages.map(item => item.parts[0].text)).toEqual(['选择之前', '最终预览后的新消息']);
+      expect(await target.getConversation('new-after-preview')).not.toBeNull();
+      expect((await importer.restore.get()).pending).toBeUndefined();
+    } finally { await target.close(); }
+  });
+
+  test('最终预览后修改所选对象时不切换数据，保留原库并返回重新选择', async () => {
+    await f.store.createConversation(metadata('alpha')); await f.store.appendHistory('alpha', [message(0, '备份版本')]);
+    const backups = new ApplicationBackups(f.store, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });
+    const file = path.join(f.root, 'stale.graycode-backup'); await backups.export(file);
+    const prepared = await backups.prepareRestore(file, undefined, { previewOnly: true });
+    await backups.selectRestore({ mode: 'selective', categories: [{ id: 'conversations', conflict: 'replace' }], expectedPreview: prepared.pending.preview!.fingerprint });
+    await f.store.appendHistory('alpha', [message(1, '必须保留的新编辑')]);
+    await backups.restore.confirm(); await f.store.close(); const state = await backups.restore.apply();
+    expect(state.pending?.confirmed).toBe(false); expect(state.pending?.selection).toBeUndefined(); expect(state.pending?.error).toContain('发生了变化');
+    f.store = await PlatformStorage.open(f.data);
+    expect((await f.store.readHistory('alpha')).messages.at(-1)?.parts[0].text).toBe('必须保留的新编辑');
+    await backups.restore.cancel(); expect((await backups.restore.get()).pending).toBeUndefined();
+  });
+
+  test('不同保护器无法解密凭据时仍能选择恢复真实图集，旧清单迁移后保持资源校验', async () => {
+    const width = 1536, height = 2288, pixels = Buffer.alloc(width * height * 4);
+    for (let row = 0; row < 11; row++) for (let col = 0; col < 8; col++) {
+      if (row < 9 && col >= petAnimations[row].frames && !(row === 0 && col === 6)) continue;
+      pixels.set([140, 180, 220, 255], ((row * 208 + 70) * width + col * 192 + 80) * 4);
+    }
+    const png = await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
+    const resource = await new PetResources(f.store).import({ entry: 'pet.json', files: [
+      { path: 'pet.json', data: Buffer.from(JSON.stringify({ id: 'backup-fixture', displayName: '备份验证图集', spriteVersionNumber: 2, spritesheetPath: 'atlas.png' })).toString('base64') },
+      { path: 'atlas.png', data: png.toString('base64') },
+    ] });
+    await f.store.putRecord({ namespace: 'platform-secrets', id: 'protected', value: { encrypted: await codec('device-a').encrypt('fixture-secret') } });
+    await f.store.createConversation(metadata('not-selected'));
+    const backup = new ApplicationBackups(f.store, { appVersion: '2.0.0-pre', secretCodec: codec('device-a'), notify() {} });
+    const file = path.join(f.root, 'pet.graycode-backup'); const exported = await backup.export(file);
+    expect(exported.manifest.version).toBe(2); expect(exported.manifest.resources?.find(item => item.id === 'pets')?.count).toBe(1);
+    const zip = new AdmZip(file), manifest = JSON.parse(zip.readAsText('manifest.json')); manifest.version = 1; delete manifest.resources;
+    zip.updateFile('manifest.json', Buffer.from(JSON.stringify(manifest))); zip.writeZip(file);
+    const targetPath = path.join(f.root, 'other-device'); let target = await PlatformStorage.open(targetPath);
+    try {
+      await target.createConversation(metadata('keep-current'));
+      const importer = new ApplicationBackups(target, { appVersion: '2.0.0-pre', secretCodec: codec('device-b'), notify() {} });
+      const prepared = await importer.prepareRestore(file, undefined, { previewOnly: true });
+      expect(prepared.pending.preview?.unavailableCredentials).toEqual(['protected']); expect(prepared.pending.preview?.migrations[0]).toContain('旧版清单');
+      await expect(importer.selectRestore({ mode: 'complete', expectedPreview: prepared.pending.preview!.fingerprint })).rejects.toThrow('解密');
+      await importer.selectRestore({ mode: 'selective', categories: [{ id: 'pets', conflict: 'replace' }], expectedPreview: prepared.pending.preview!.fingerprint });
+      await importer.restore.confirm(); await target.close(); await importer.restore.apply(); target = await PlatformStorage.open(targetPath);
+      expect(Buffer.from((await new PetResources(target).file(resource.id, 'atlas.png')).bytes)).toEqual(png);
+      expect(await target.getRecord('platform-secrets', 'protected')).toBeNull(); expect(await target.getConversation('not-selected')).toBeNull(); expect(await target.getConversation('keep-current')).not.toBeNull();
+      expect((await target.verify()).ok).toBe(true);
+    } finally { await target.close(); }
   });
 
   test('cancelling a backup leaves an existing destination and the running database intact', async () => {

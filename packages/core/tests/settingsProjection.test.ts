@@ -26,6 +26,18 @@ describe('one settings transaction across legacy and platform entry points', () 
   beforeEach(async () => { f = await fixture(); await f.store.close(); app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: codec }); router = new ApplicationRouter(app); });
   afterEach(async () => { await app.close(); await f.cleanup(); });
 
+  test('恢复检查读取后台实际草稿状态，包含其他已打开的设置客户端', async () => {
+    await call('getSettings'); // 与桌面启动一致，先完成旧设置的初始化迁移。
+    expect(await app.productUi.hasDirtyPreferences()).toBe(false);
+    const other = { actorId: 'owner', clientId: 'other-settings-client' };
+    await router.call(other, 'ui.request', { type: 'ui.settings.begin', data: {} });
+    expect(await app.productUi.hasDirtyPreferences()).toBe(false);
+    await router.call(other, 'ui.request', { type: 'settings.setActiveChannelId', data: { channelId: 'fixture-channel' } });
+    expect(await app.productUi.hasDirtyPreferences()).toBe(true);
+    await router.call(other, 'ui.request', { type: 'ui.settings.discard', data: {} });
+    expect(await app.productUi.hasDirtyPreferences()).toBe(false);
+  });
+
   test('direct provider changes refresh idle UI, preserve advanced options and reject stale open drafts', async () => {
     await call('getSettings'); // An idle client existed before the API edit.
     let snapshot = app.settings.snapshot(); snapshot.settings.providers = [profile('first'), profile('removed')];

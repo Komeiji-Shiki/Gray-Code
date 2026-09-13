@@ -4,6 +4,7 @@ import type {
   PlatformConversation, PlatformMessage, StorageStatistics, StoredRecord, SnapshotMetadata, PlatformSnapshot,
   RunRecord, RunListOptions, RunEvent,
   VersionedRecord, RecordMutation,
+  BackupUnit, BackupMergeGroup, BackupMergeResult,
   ConversationState, ConversationCommit, ConversationCommitResult,
 } from '@graycode/contracts';
 import type { MemoryScopeDefinition, MemoryScopeState, MemoryEntry, MemorySummary, MemoryWrite, MemoryWriteResult, MemoryRevision, MemoryImportPublish, MemoryImportBatch } from './memoryTypes';
@@ -94,6 +95,8 @@ export interface StorageOperations {
   verify: { input: undefined; output: { ok: boolean; issues: string[]; objectsChecked: number } };
   checkpoint: { input: undefined; output: void };
   backupSnapshot: { input: undefined; output: { directory: string; createdAt: number; statistics: StorageStatistics } };
+  backupInventory: { input: undefined; output: BackupUnit[] };
+  mergeBackupUnits: { input: { sourceDirectory: string; groups: BackupMergeGroup[] }; output: BackupMergeResult };
   close: { input: undefined; output: void };
 }
 

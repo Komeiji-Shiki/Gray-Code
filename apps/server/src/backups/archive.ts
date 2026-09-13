@@ -167,7 +167,7 @@ export async function extractBackupArchive(options: {
       key = await deriveKey(options.password, salt);
     }
     const manifest = await readMetadata('manifest.json') as BackupManifest;
-    if (manifest?.format !== 'graycode-backup' || manifest.version !== 1 || !Array.isArray(manifest.files) ||
+    if (manifest?.format !== 'graycode-backup' || ![1, 2].includes(manifest.version) || !Array.isArray(manifest.files) ||
       !Number.isFinite(manifest.createdAt) || !Number.isSafeInteger(manifest.schemaVersion) || typeof manifest.sourceDirectory !== 'string' ||
       manifest.credentials !== (key ? 'password' : 'device')) throw new Error('备份清单格式无效或版本不受支持。');
     const expected = new Set(['manifest.json', ...(key ? ['encryption.json'] : [])]);

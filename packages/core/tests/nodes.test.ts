@@ -7,6 +7,7 @@ import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { nodeHash, parseInvitation } from '../../../apps/server/src/nodes/identity';
 import { openNodeSocket, postPair } from '../../../apps/server/src/nodes/transport';
 import type { ComputerNativePort, NativeComputerStatus } from '../../../apps/server/src/computer/port';
+import { ApplicationBackups } from '../../../apps/server/src/backups/service';
 import { preserveNodeRevocations } from '../../../apps/server/src/backups/nodeRevocations';
 import { fixture } from './fixtures';
 
@@ -137,6 +138,28 @@ describe('执行节点配对、运行与恢复', () => {
     const outcome = await callA('nodes.revoke', { id: paired.peerId }); expect(outcome.remoteConfirmed).toBe(true);
     expect(b.nodes.status('owner').peers[0].state).toBe('revoked');
     await expect(callA('nodes.connect', { id: paired.peerId })).rejects.toThrow('不可用'); expect(callsA).toBe(0); expect(callsB).toBe(1);
+  });
+
+  test('设备类别恢复重新保护凭据并保留配对身份，撤销后恢复同一旧备份也不能重新连接', async () => {
+    const paired = await pair(), originalNodeId = a.nodes.status('owner').nodeId;
+    const archive = path.join(fa.root, 'node-data.graycode-backup');
+    await new ApplicationBackups(a.storage, { appVersion: '2.0.0-pre', secretCodec: codecA, notify() {} }).export(archive, 'fixture-password');
+    await a.close(); const restoredCodec = encryption(), targetPath = path.join(fa.root, 'restored-controller');
+    const reopen = async () => { a = await PlatformApplication.open({ dataDirectory: targetPath, documentsDirectory: fa.root, secretCodec: restoredCodec,
+      models: { generate: async () => { callsA++; return { role: 'model', parts: [{ text: '恢复后的控制端' }] }; } } }); ra = new ApplicationRouter(a); await configure(a, fa.source); };
+    const restore = async () => {
+      const backups = new ApplicationBackups(a.storage, { appVersion: '2.0.0-pre', secretCodec: restoredCodec, notify() {} });
+      const preview = await backups.prepareRestore(archive, 'fixture-password', { previewOnly: true });
+      const selected = await backups.selectRestore({ mode: 'selective', categories: [{ id: 'devices', conflict: 'replace' }], expectedPreview: preview.pending.preview!.fingerprint });
+      expect(selected.pending.selection?.items?.some(item => item.dependency && item.category === 'settings')).toBe(true);
+      await backups.restore.confirm(); await a.close(); const applied = await backups.restore.apply(); expect(applied.pending).toBeUndefined(); await reopen();
+    };
+    await reopen(); expect(a.nodes.status('owner').nodeId).not.toBe(originalNodeId); await restore();
+    expect(a.nodes.status('owner').nodeId).toBe(originalNodeId); expect(a.nodes.status('owner').peers.find(peer => peer.id === paired.peerId)?.state).toBe('offline');
+    await callA('nodes.connect', { id: paired.peerId }); expect(a.nodes.status('owner').peers.find(peer => peer.id === paired.peerId)?.state).toBe('online');
+    await callA('nodes.revoke', { id: paired.peerId }); await restore();
+    expect(a.nodes.status('owner').peers.find(peer => peer.id === paired.peerId)?.state).toBe('revoked');
+    await expect(callA('nodes.connect', { id: paired.peerId })).rejects.toThrow('配对不可用'); expect(callsA).toBe(0); expect(callsB).toBe(0);
   });
 
   test('配对码单次消费、证书与设备身份校验、权限变化和运行归属检查', async () => {

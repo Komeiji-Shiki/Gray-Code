@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
-import type { BackupProgress, PendingBackupRestore } from '@graycode/contracts'
+import BackupRestorePreview from './BackupRestorePreview.vue'
+import type { BackupProgress, PendingBackupRestore, BackupRestoreSelection } from '@graycode/contracts'
 
 const password = ref('')
 const busy = ref(false)
@@ -19,10 +20,10 @@ async function refresh() {
   previousPath.value = value.lastRestore?.previousPath ?? ''
 }
 onMounted(() => { void refresh().catch(reason => { error.value = String(reason.message ?? reason) }) })
-async function perform(method: string) {
+async function perform(method: string, params: Record<string, unknown> = {}) {
   busy.value = true; error.value = ''
   try {
-    const result = await sendToExtension<any>(method, { password: password.value }, { timeoutMs: 0 })
+    const result = await sendToExtension<any>(method, { password: password.value, ...(method === 'backup.restore' ? { previewOnly: true } : {}), ...params }, { timeoutMs: 0 })
     if (!result?.cancelled) password.value = ''
   } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
   finally { busy.value = false; await refresh().catch(reason => { error.value = String(reason.message ?? reason) }) }
@@ -38,14 +39,14 @@ async function revealPrevious() {
 </script>
 
 <template>
-  <section class="backup-settings form-group" data-search-anchor="backup">
+  <section class="backup-settings form-group" data-search-anchor="backup" data-preference-transient>
     <label class="group-label"><i class="codicon codicon-database"></i>程序数据备份</label>
-    <p class="field-description">备份对话、附件、分支与检查点、任务记录、设置、角色、记忆和本地技能。项目源码保留在项目目录，不随备份复制。</p>
+    <p class="field-description">备份对话、附件、分支与检查点、任务记录、设置、角色、记忆、本地技能、设备配置和桌宠资源。项目源码保留在项目目录，不随备份复制。</p>
     <div class="backup-controls">
       <label for="backup-password">备份密码 <span>可选</span></label>
       <input id="backup-password" v-model="password" type="password" autocomplete="new-password" :disabled="busy"
         placeholder="设置密码可加密备份，并携带密钥跨设备恢复" />
-      <p class="field-hint">留空适合本机恢复，API 密钥仍受本机系统保护。恢复加密备份时，请输入导出时使用的密码。</p>
+      <p class="field-hint">留空适合在原应用配置下恢复，API 密钥受系统与原应用配置保护。恢复加密备份时，请输入导出时使用的密码。</p>
       <div class="backup-actions">
         <button class="action-btn primary" :disabled="busy" @click="perform('backup.export')"><i class="codicon codicon-cloud-download"></i>创建备份</button>
         <button class="action-btn" :disabled="busy || !!pending" @click="perform('backup.restore')"><i class="codicon codicon-history"></i>选择备份恢复</button>
@@ -57,15 +58,8 @@ async function revealPrevious() {
       <progress v-if="busy" :value="percentage" max="100" aria-label="备份进度"></progress>
       <code v-if="progress.filePath" :title="progress.filePath">{{ progress.filePath }}</code>
     </div>
-    <div v-if="pending" class="backup-pending">
-      <strong>备份已校验，等待确认恢复</strong>
-      <p>{{ new Date(pending.backupCreatedAt).toLocaleString() }} · {{ pending.conversations }} 个对话 · {{ pending.messages }} 条消息</p>
-      <p>恢复前的数据会保留为独立目录，可以随时找回。</p>
-      <div class="backup-actions">
-        <button class="action-btn primary" :disabled="busy" @click="perform('backup.restart')">重启并恢复</button>
-        <button class="action-btn" :disabled="busy" @click="perform('backup.cancelRestore')">取消恢复</button>
-      </div>
-    </div>
+    <BackupRestorePreview v-if="pending" :pending="pending" :busy="busy" @prepare="(selection: BackupRestoreSelection) => perform('backup.select', { selection })"
+      @refresh="perform('backup.preview')" @cancel="perform('backup.cancelRestore')" @restart="perform('backup.restart')" />
     <p v-if="previousPath" class="backup-previous">恢复前的数据：<code>{{ previousPath }}</code>
       <button class="action-btn" @click="revealPrevious">打开目录</button>
     </p>
@@ -73,7 +67,7 @@ async function revealPrevious() {
     <details class="backup-scope">
       <summary>备份范围与恢复说明</summary>
       <p>运行依赖、分词词表和浏览器缓存可重新下载；网站登录状态、共享 .agents / .limcode 技能、项目技能、未保存的草稿和运行中的进程不包含在此备份中。</p>
-      <p>可以在任务运行时备份。恢复会停止当前任务和连接，旧任务的文件事务不会自动重放，项目源码不会被回滚。已保存的渠道、Bot 和远程访问配置会随数据恢复。</p>
+      <p>可以在任务运行时备份。恢复会停止当前任务和连接，旧任务的文件事务不会自动重放，项目源码不会被回滚。已保存的渠道、Bot 和远程访问配置可随所选范围恢复；连接和未完成任务等待手动重新启用。</p>
     </details>
   </section>
 </template>

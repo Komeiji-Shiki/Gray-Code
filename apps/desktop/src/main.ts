@@ -339,7 +339,9 @@ async function main(): Promise<void> {
       application.requireOwner(client.actorId);
       if (method === 'backup.status') return backups!.status();
       if (method === 'backup.cancel') { backups!.cancel(); return { success: true }; }
-      if (method === 'backup.cancelRestore') { await backups!.restore.cancel(); return { success: true }; }
+      if (method === 'backup.cancelRestore') { await backups!.cancelRestore(); return { success: true }; }
+      if (method === 'backup.preview') return backups!.previewRestore();
+      if (method === 'backup.select') return backups!.selectRestore(params.selection);
       if (method === 'backup.export') {
         const selected = await dialog.showSaveDialog(window!, { title: '备份程序数据',
           defaultPath: `GrayCode-${new Date().toISOString().slice(0, 10)}.graycode-backup`,
@@ -352,13 +354,15 @@ async function main(): Promise<void> {
         const selected = await dialog.showOpenDialog(window!, { title: '选择程序数据备份', properties: ['openFile'],
           filters: [{ name: 'GrayCode 程序数据备份', extensions: ['graycode-backup'] }] });
         if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
-        return backups!.prepareRestore(selected.filePaths[0], params.password || undefined);
+        return backups!.prepareRestore(selected.filePaths[0], params.password || undefined, { previewOnly: params.previewOnly === true });
       }
       if (method === 'backup.restart') {
-        if (!(await backups!.status()).pending) throw new Error('没有等待应用的备份。');
-        if (dirtySettings || dirtyDocuments) throw new Error('请先保存或放弃编辑器与设置中的修改，再应用备份。');
+        const pending = (await backups!.status()).pending;
+        if (!pending) throw new Error('没有等待应用的备份。');
+        if (pending.requiresSelection && !pending.selection) throw new Error('请先选择恢复范围并查看最终预览。');
+        if (dirtySettings || dirtyDocuments || await application.productUi.hasDirtyPreferences()) throw new Error('请先保存或放弃编辑器与设置中的修改，再应用备份。');
         const selected = await dialog.showMessageBox(window!, { type: 'question', title: '恢复程序数据',
-          message: '重启并应用已校验的备份？', detail: '当前任务和连接将停止，恢复前的数据目录会完整保留。项目源码不会被替换。',
+          message: pending.selection?.mode === 'selective' ? '重启并恢复最终预览中的所选数据？' : '重启并应用完整备份？', detail: '当前任务和连接将停止，恢复前的数据目录会完整保留。项目源码不会被替换。',
           buttons: ['重启并恢复', '继续工作'], defaultId: 1, cancelId: 1 });
         if (selected.response !== 0) return { cancelled: true };
         await backups!.restore.confirm();

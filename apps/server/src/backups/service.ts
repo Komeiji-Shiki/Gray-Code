@@ -2,11 +2,13 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { PlatformStorage } from '@graycode/core';
-import type { BackupProgress, PendingBackupRestore } from '@graycode/contracts';
+import type { BackupProgress, PendingBackupRestore, BackupRestoreSelection } from '@graycode/contracts';
 import type { SecretCodec } from '../settings/service';
 import { captureDirectory } from '../migration/directoryCapture';
 import { writeBackupArchive, extractBackupArchive } from './archive';
 import { BackupRestoreState } from './restore';
+import { restoreCatalog, selectBackupRestore } from './catalog';
+import { validateBackupResources, pauseRestoredActivities } from './resources';
 
 interface BackupOptions {
   appVersion: string;
@@ -31,6 +33,7 @@ export class ApplicationBackups {
   async status() { return { busy: this.busy, progress: this.progress, ...await this.restore.get() }; }
   cancel() { this.controller?.abort(new Error('已取消备份操作。')); }
   async close() { this.cancel(); await this.operation?.catch(() => {}); }
+  async cancelRestore() { await this.close(); await this.restore.cancel(); }
   private publish(value: BackupProgress) {
     const previous = this.progress; this.progress = value;
     // 完成通知在临时文件清理和忙碌状态解除后发送，窗口关闭策略才能正确判断是否退出。
@@ -102,8 +105,14 @@ export class ApplicationBackups {
           await captureDirectory(this.options.skillsDirectory, target, signal);
         }
         signal.throwIfAborted();
+        const reviewed = await PlatformStorage.open(snapshot.directory);
+        let resources;
+        try {
+          await validateBackupResources(reviewed);
+          resources = (await restoreCatalog(reviewed, reviewed)).preview.categories.map(category => ({ id: category.id, version: 1 as const, count: category.count }));
+        } finally { await reviewed.close(); }
         const manifest = await writeBackupArchive({ directory: snapshot.directory, destination: temporary, password, credentials, signal,
-          manifest: { format: 'graycode-backup', version: 1, createdAt: snapshot.createdAt, appVersion: this.options.appVersion,
+          manifest: { format: 'graycode-backup', version: 2, resources, createdAt: snapshot.createdAt, appVersion: this.options.appVersion,
             schemaVersion: snapshot.statistics.schemaVersion, sourceDirectory: this.storage.directory, credentials: password ? 'password' : 'device',
             conversations: snapshot.statistics.conversations, messages: snapshot.statistics.messages,
             exclusions: ['项目源码与项目技能', '共享 .agents / .limcode 技能目录', '可重新下载的运行依赖与词表缓存', '浏览器网站登录状态与缓存', '未保存的编辑和设置、运行中的进程'] },
@@ -118,7 +127,32 @@ export class ApplicationBackups {
       }
     });
   }
-  prepareRestore(source: string, password?: string) {
+  previewRestore() {
+    return this.run('restore', async signal => {
+      const pending = await this.restore.preserveSource();
+      const source = await PlatformStorage.open(pending.importPath!);
+      try {
+        const catalog = await restoreCatalog(source, this.storage, pending.preview?.migrations, pending.unavailableCredentials);
+        signal.throwIfAborted(); pending.preview = catalog.preview; pending.selection = undefined; pending.error = undefined; pending.requiresSelection = true;
+        await this.restore.update(pending); return { success: true, pending };
+      } finally { await source.close(); }
+    });
+  }
+  selectRestore(selection: BackupRestoreSelection) {
+    return this.run('restore', async signal => {
+      const pending = await this.restore.preserveSource();
+      const source = await PlatformStorage.open(pending.importPath!);
+      try {
+        const catalog = await restoreCatalog(source, this.storage, pending.preview?.migrations, pending.unavailableCredentials);
+        const plan = selectBackupRestore(catalog, selection); signal.throwIfAborted();
+        pending.preview = catalog.preview; pending.selection = plan; pending.error = undefined; pending.requiresSelection = true;
+        await this.restore.update(pending);
+        this.publish({ operation: 'restore', phase: 'ready', message: '恢复范围已准备，请查看最终预览后确认重启。' });
+        return { success: true, pending };
+      } finally { await source.close(); }
+    });
+  }
+  prepareRestore(source: string, password?: string, options: { previewOnly?: boolean } = {}) {
     return this.run('restore', async signal => {
       let pending: PendingBackupRestore | undefined;
       let scheduled = false;
@@ -129,12 +163,20 @@ export class ApplicationBackups {
           progress: (processedBytes, totalBytes, filePath) => this.publish({ operation: 'restore', phase: 'verify', message: '正在校验备份文件…', processedBytes, totalBytes, filePath }) });
         signal.throwIfAborted();
         const restored = await PlatformStorage.open(pending.stagingPath);
+        const unavailableCredentials: string[] = [];
+        const migrations = result.manifest.version === 1 ? ['旧版清单已补全资源分类与版本信息。'] : [];
         try {
           const statistics = await restored.statistics();
           const checked = await restored.verify();
           if (!checked.ok) throw new Error(`备份数据库未通过校验：${checked.issues.slice(0, 3).join('；')}`);
           if (statistics.conversations !== result.manifest.conversations || statistics.messages !== result.manifest.messages)
             throw new Error('备份中的会话数量与清单不一致。');
+          await validateBackupResources(restored, result.manifest);
+          if (result.manifest.resources) {
+            const actual = (await restoreCatalog(restored, restored)).preview.categories;
+            if (result.manifest.resources.length !== actual.length || new Set(result.manifest.resources.map(item => item.id)).size !== actual.length
+              || result.manifest.resources.some(item => actual.find(category => category.id === item.id)?.count !== item.count)) throw new Error('备份资源数量与清单不一致。');
+          }
           for (const id of await restored.listRecords('platform-secrets')) {
             signal.throwIfAborted();
             const value = await restored.getRecord('platform-secrets', id) as { encrypted: Uint8Array };
@@ -142,7 +184,10 @@ export class ApplicationBackups {
               await restored.putRecord({ namespace: 'platform-secrets', id, value: { encrypted: await this.options.secretCodec.encrypt(result.credentials[id]) } });
             } else {
               try { await this.options.secretCodec.decrypt(value.encrypted); }
-              catch { throw new Error('此备份的密钥受原电脑保护。请在原电脑设置备份密码后重新导出，再跨设备恢复。'); }
+              catch {
+                if (!options.previewOnly) throw new Error('此备份的密钥受原电脑或原应用配置保护。请在原电脑设置备份密码后重新导出，再跨设备恢复。');
+                unavailableCredentials.push(id);
+              }
             }
           }
           for (const id of await restored.listRecords('bot-documents')) {
@@ -157,12 +202,16 @@ export class ApplicationBackups {
             await restored.commitRecords([{ namespace: 'backup-workspace-operations', id, ownerId: id, value: record },
               { namespace: 'workspace-operations', id, delete: true }]);
           }
+          await pauseRestoredActivities(restored);
+          migrations.push('从备份恢复的自动任务、Bot 自动连接和执行设备入口保持暂停；临时登录会话与未完成记忆整理不继续执行。');
+          const catalog = await restoreCatalog(restored, this.storage, migrations, unavailableCredentials);
+          pending.preview = catalog.preview; pending.requiresSelection = options.previewOnly === true; pending.unavailableCredentials = unavailableCredentials;
           await restored.checkpoint();
         } finally { await restored.close(); }
         signal.throwIfAborted();
         Object.assign(pending, { backupCreatedAt: result.manifest.createdAt, conversations: result.manifest.conversations, messages: result.manifest.messages });
         await this.restore.schedule(pending); scheduled = true;
-        this.publish({ operation: 'restore', phase: 'ready', message: '备份已校验。重启后应用，当前数据将完整保留。', filePath: source });
+        this.publish({ operation: 'restore', phase: 'ready', message: options.previewOnly ? '备份已校验，请选择恢复范围并查看最终预览。' : '备份已校验。重启后应用，当前数据将完整保留。', filePath: source });
         return { success: true, pending, manifest: result.manifest };
       } finally { if (pending && !scheduled) await fs.rm(pending.stagingPath, { recursive: true, force: true }); }
     });
