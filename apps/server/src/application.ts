@@ -20,6 +20,8 @@ import type { RemoteAccessHost } from './transport/remotePort';
 import { ExecutionNodes } from './nodes/service';
 import { PlatformNotifications } from './notifications';
 import { CompanionService } from './companions/service';
+import { PetService } from './pets/service';
+import { ScreenSenseService } from './pets/screenSense';
 import { PlatformArtifacts } from './artifacts/service';
 import { ContentPreviews } from './workspace/previews';
 import { PlatformMedia } from './media/service';
@@ -124,6 +126,8 @@ export class PlatformApplication {
   }));
   readonly notifications = new PlatformNotifications();
   readonly companion = new CompanionService(this);
+  readonly pets: PetService;
+  readonly screenSense: ScreenSenseService;
   readonly artifacts: PlatformArtifacts;
   readonly files: WorkspaceFiles;
   readonly fileActions: WorkspaceFileActions;
@@ -182,6 +186,8 @@ export class PlatformApplication {
         void this.languages.finishToolRun(event.runId).catch(error => this.publish({ type: 'notification', severity: 'warning', message: String(error) }));
     });
     this.characters = new CharacterResources(this);
+    this.pets = new PetService(this);
+    this.screenSense = new ScreenSenseService(this);
     this.characterPipeline = new CharacterPipeline(this);
     this.activity = new PlatformActivity(storage);
     this.images = new AppearanceImages(storage);
@@ -236,6 +242,7 @@ export class PlatformApplication {
     for (const tool of this.media.tools()) this.tools.register(tool);
     this.tools.register(createAskUserTool());
     this.tools.register(this.notifications.tool());
+    for (const tool of this.pets.tools()) this.tools.register(tool);
     this.settings = new SettingsService<ProductPreferences>(
       storage,
       this.tools,
@@ -404,6 +411,8 @@ export class PlatformApplication {
       await application.settings.initialize();
       await application.nodes.initialize();
       await application.product.initialize();
+      await application.pets.initialize();
+      await application.screenSense.initialize();
       await application.changes.recover();
       await application.diffs.initialize();
       await application.mcp.initialize();
@@ -536,6 +545,8 @@ export class PlatformApplication {
     return conversation;
   }
   async close(): Promise<void> {
+    this.screenSense.close();
+    this.pets.close();
     await this.nodes.close();
     await this.computer.close();
     this.workspaceSearch.close();

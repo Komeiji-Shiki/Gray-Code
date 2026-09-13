@@ -171,3 +171,5 @@ export * from './development';
 export * from './debugging';
 export * from './longMemory';
 export * from './companion';
+export * from './pets';
+export * from './screenSense';

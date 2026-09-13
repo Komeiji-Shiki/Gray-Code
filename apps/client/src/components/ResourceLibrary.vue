@@ -6,7 +6,7 @@ import WorldbookEditor from './WorldbookEditor.vue';
 import MemoryLibrary from './MemoryLibrary.vue';
 
 type ResourceRow = Omit<CharacterResource, 'raw' | 'source'> & { revision: number; resolvedReferences?: Record<string, string> };
-const emit = defineEmits<{ close: []; play: [id: string] }>();
+const emit = defineEmits<{ close: []; play: [id: string]; pets: [] }>();
 const props = defineProps<{ initialTab?: 'resources' | 'memory' }>();
 const dialog=ref<HTMLDialogElement>();
 const tab=ref<'resources'|'memory'>(props.initialTab ?? 'resources');
@@ -97,6 +97,7 @@ void perform(reload);
 <template>
   <dialog ref="dialog" class="resource-library" aria-label="资料库" @cancel.prevent="requestClose">
     <header><strong>资料库</strong><nav aria-label="资料类型"><button :aria-pressed="tab==='resources'" @click="tab='resources'">角色资料</button><button :aria-pressed="tab==='memory'" @click="tab='memory';memoryOpened=true">长期记忆</button></nav><span v-if="tab==='resources'">角色卡 · 世界书 · 正则</span><label v-if="tab==='resources'" class="import-resource" :class="{ disabled: busy }">导入 PNG / JSON<input type="file" accept=".png,.json" multiple :disabled="busy" @change="importFiles"></label><button class="resource-close" @click="requestClose">关闭</button></header>
+    <div class="pet-library-entry"><button @click="emit('pets')">桌宠与 Live2D</button></div>
     <MemoryLibrary v-if="memoryOpened" v-show="tab==='memory'" ref="memoryLibrary" @close="emit('close')" />
     <p v-if="tab==='resources'&&error" class="resource-error">{{ error }}</p>
     <div v-show="tab==='resources'" class="resource-columns"><aside><input v-model="filter" placeholder="搜索资料名称" aria-label="搜索资料"><p v-if="!items.length" class="resource-hint">导入一张角色卡，内嵌世界书与随卡正则会分别保存并保持绑定。</p>

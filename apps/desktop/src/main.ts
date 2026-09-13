@@ -26,6 +26,7 @@ import { PlatformApplication } from "../../server/src/application";
 import { ApplicationRouter } from "../../server/src/transport/router";
 import { DesktopBrowser } from "./browser";
 import { DesktopComputerCapture } from './computerCapture';
+import { DesktopPetWindow } from './petWindow';
 import { systemFonts } from "./fonts";
 import { migrateLegacySettings } from './legacySettings';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
@@ -67,6 +68,7 @@ let dataDirectory =
 // Separate storage keeps the existing VS Code application and legacy files untouched.
 const storageLocation = new DesktopStorageLocation(app.getPath('userData'), path.join(app.getPath('userData'), 'platform-data'), dataIndex >= 0 ? dataDirectory : undefined);
 let notifications: ReturnType<typeof desktopNotifications> | undefined;
+let petWindowController: DesktopPetWindow | undefined;
 let application: PlatformApplication;
 let backups: ApplicationBackups | undefined;
 let window: BrowserWindow | undefined;
@@ -111,7 +113,7 @@ function trust(item: BrowserWindow): void {
 async function activeTasks(): Promise<boolean> {
   const hasRuns = (await application.storage.listRuns({ activeOnly: true, limit: 1 })).length > 0;
   // 在异步查询后读取连接状态，避免连接中的 Bot 被当作空闲程序退出。
-  return hasRuns || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
+  return hasRuns || application.pets.keepsAlive || application.screenSense.keepsAlive || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
     || application.nodes.keepsAlive || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
     || application.interactiveTerminals.hasRunning || !!application.subagents.backgroundTasks().length;
 }
@@ -119,6 +121,7 @@ async function quit(relaunch = false): Promise<void> {
   if (exiting) return;
   exiting = true;
   notifications?.dispose();
+  petWindowController?.dispose();
   tray?.destroy();
   browser?.close();
   await backups?.close();
@@ -274,6 +277,7 @@ async function main(): Promise<void> {
   notifications = desktopNotifications(application, () => window, createWindow);
   const updates = new DesktopUpdates(application);
   const router = new ApplicationRouter(application);
+  petWindowController = new DesktopPetWindow(application, client, preload, trust);
   const webPortIndex = argumentsList.indexOf('--web-port');
   if (webPortIndex >= 0) {
     const port = Number(argumentsList[webPortIndex + 1]);
@@ -323,6 +327,15 @@ async function main(): Promise<void> {
         params = params.data ?? {};
       }
       if (exiting) throw new Error('应用正在关闭，请稍后重新打开。');
+      if (method === 'desktop.pet.expand') return petWindowController!.expand(params.expanded === true);
+      if (['desktop.pet.manage', 'desktop.pet.screenSense', 'desktop.pet.openConversation'].includes(method)) {
+        if (method === 'desktop.pet.openConversation') await application.conversation(client.actorId, params.conversationId);
+        if (!window || window.isDestroyed()) await createWindow(); else { window.show(); window.focus(); }
+        if (method === 'desktop.pet.manage') notify({ type: 'pets.open' });
+        else if (method === 'desktop.pet.screenSense') notify({ type: 'screenSense.open' });
+        else await router.call(client, 'ui.command', { command: 'platform.openModeConversation', data: { conversationId: params.conversationId } });
+        return { success: true };
+      }
       application.requireOwner(client.actorId);
       if (method === 'backup.status') return backups!.status();
       if (method === 'backup.cancel') { backups!.cancel(); return { success: true }; }

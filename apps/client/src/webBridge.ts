@@ -86,6 +86,7 @@ export function installWebBridge(): DesktopBridge {
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     call: async (method, input = {}) => {
       let params: Record<string, any> = input;
+      if (method === 'pets.import') return (await webRequest('/pet-resources/import', params)).result;
       if (method === 'files.upload') {
         pendingFileUploads++;
         try {

@@ -13,7 +13,7 @@ for (const name of ['main', 'preload']) {
   await build({ entryPoints: [`apps/desktop/src/${name}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
     bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true,
     define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo) },
-    external: ['jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
+    external: ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
 }
 // 原生终端放入独立宿主，进程退出时一并回收其读取线程。
 await build({ entryPoints: ['apps/server/src/workspace/terminalHost.ts'], outfile: 'apps/desktop/dist/terminalHost.cjs',

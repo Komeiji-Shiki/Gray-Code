@@ -16,6 +16,10 @@ export async function serveWebAsset(directory: string, pathname: string, respons
     if (!(await stat(file)).isFile()) return false;
   } catch { return false; }
   response.setHeader('Content-Type', contentTypes[path.extname(file)] ?? 'application/octet-stream');
+  if (pathname === '/pet-renderer.html') {
+    response.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; script-src 'self' blob: 'unsafe-eval'; style-src 'unsafe-inline'; img-src blob: data:; connect-src blob: data:; media-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+    response.end(await readFile(file)); return true;
+  }
   response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; media-src 'self' blob:; frame-ancestors 'self'; object-src 'none'; base-uri 'self'");
   response.end(await readFile(file));
   return true;

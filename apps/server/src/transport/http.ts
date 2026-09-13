@@ -118,6 +118,12 @@ export async function startHttpServer(application: PlatformApplication, options:
         const result = await application.characters.import(input as { name: string; data: string });
         response.end(JSON.stringify({ result })); return;
       }
+      if (url.pathname === '/pet-resources/import' && request.method === 'POST') {
+        application.requireOwner(auth.client.actorId);
+        const input = await readBody(request, 180 * 1024 * 1024);
+        const result = await router.call(auth.client, 'pets.import', input);
+        response.end(JSON.stringify({ result })); return;
+      }
       if (url.pathname === '/events' && request.method === 'GET') {
         response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
         response.write(': connected\n\n');

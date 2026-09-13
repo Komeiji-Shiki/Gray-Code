@@ -1,0 +1,17 @@
+{
+  "package": "pixi-live2d-display",
+  "version": "0.4.0",
+  "source": "https://github.com/guansss/pixi-live2d-display",
+  "reason": "原包把网站发布 CLI 放入运行时依赖；仅保留未经修改的 Cubism4 播放模块和类型。",
+  "files": {
+    "cubism4.js": "8d2ed8bbd95aac6b157fe5a3cffc0ea83fa804efba853d93e12bf94f53c293b7",
+    "cubism4.d.ts": "9fe89f85f941896677c56ba1a8ab404277557c5a7ab7f5f47bf426d90652509b",
+    "LICENSE": "8ccace668a041e78ed525d091b0b5daf8b623ff447f912616de535415e4f302f",
+    "CUBISM-LICENSE.md": "7ed849bff1e6499aa7cd882e47d246ddbbe06817c1e84cb974df949488302614"
+  },
+  "framework": {
+    "source": "https://github.com/guansss/CubismWebFramework",
+    "commit": "1f9cdfd140e87ba0ae68a356bb5ec339a0e65f99",
+    "licenseSource": "https://github.com/guansss/CubismWebFramework/blob/1f9cdfd140e87ba0ae68a356bb5ec339a0e65f99/LICENSE.md"
+  }
+}

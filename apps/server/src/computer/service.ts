@@ -71,19 +71,20 @@ export class ComputerService {
       throw new ComputerError('OBSERVATION_STALE', '观察记录不属于当前任务或已过期，请重新观察。');
     return saved.value;
   }
-  async observe(identity: Identity, params: { windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number; width?: number; height?: number; frameOnly?: boolean; format?: 'png' | 'jpeg'; quality?: number }) {
+  async observe(identity: Identity, params: { windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number; width?: number; height?: number; frameOnly?: boolean; windowOnly?: boolean; expectedProcess?: { processId: number; processStartedAt?: string | null; className: string }; format?: 'png' | 'jpeg'; quality?: number }) {
     return this.serialized(identity, async () => {
       const epoch = this.stopEpoch;
       const value = await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.frameOnly ? 1 : params.maxElements ?? 250,
         maxDepth: params.frameOnly ? 1 : params.maxDepth ?? 14, includeCommandLine: !params.frameOnly }, identity.signal);
+      if (params.expectedProcess && (value.window.processId !== params.expectedProcess.processId || value.window.processStartedAt !== params.expectedProcess.processStartedAt || value.window.className !== params.expectedProcess.className)) throw new ComputerError('WINDOW_CHANGED', '所选窗口已不属于原进程，请重新选择。');
       if (params.screenshot) {
         const size = { width: Math.max(320, Math.min(2560, params.width ?? 1600)), height: Math.max(240, Math.min(2160, params.height ?? 1200)), format: params.format, quality: params.quality };
         try {
           // 前台区域可直接采集，文件对话框也可用；后台窗口才需要系统窗口共享目录。
-          if (!this.screen || value.window.foreground) throw new ComputerError('CAPTURE_UNAVAILABLE', '使用本机可见窗口采集。');
+          if (!this.screen || !params.windowOnly && value.window.foreground) throw new ComputerError('CAPTURE_UNAVAILABLE', '使用本机可见窗口采集。');
           value.screenshot = await this.screen.capture(value, size);
         } catch (error) {
-          if ((error as ComputerError).code !== 'CAPTURE_UNAVAILABLE') throw error;
+          if (params.windowOnly || (error as ComputerError).code !== 'CAPTURE_UNAVAILABLE') throw error;
           value.screenshot = await this.native.request<ComputerCapture>('capture', { observationId: value.id, ...size }, identity.signal);
         }
         await this.native.request('validate', { observationId: value.id }, identity.signal);

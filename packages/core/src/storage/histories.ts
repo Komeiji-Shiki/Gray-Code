@@ -114,7 +114,7 @@ export class HistoryStore {
       FROM history_spans s JOIN segment_entries e ON e.segment_id=s.segment_id
       AND e.ordinal>=s.segment_offset AND e.ordinal<s.segment_offset+s.count
       WHERE s.history_id=? AND e.role='model' ORDER BY s.start_index,e.ordinal`).all(id) as EntryRow[];
-    const fields = ['modelVersion', 'usageMetadata', 'usageMetadataPartial', 'candidatesTokenCount', 'thoughtsTokenCount'];
+    const fields = ['runId', 'modelVersion', 'usageMetadata', 'usageMetadataPartial', 'candidatesTokenCount', 'thoughtsTokenCount'];
     const messages = rows.map(row => {
       const body = this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields, omitBinary: true });
       const parts = body.usageMetadataPartial
