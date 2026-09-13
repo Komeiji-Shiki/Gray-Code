@@ -9,8 +9,8 @@
  *     图状态不被改动；只读操作不受影响；
  *   · BranchService 写锁互斥（BR-07 runExclusive）：并发 reroll + 删除非活跃候选、
  *     并发 switch 两个候选——全部串行化、图 validate 通过、无丢失更新。
- * - TREE-14 迟到 chunk 隔离（R6 基础用例）：reroll 后旧流迟到的 chunk 追加主历史，
- *   分支图不变（节点集合 / 尾指针 / 候选摘要均保持），候选保留，后续分支操作可用。
+ * - TREE-14 迟到 chunk 隔离（R6 基础用例）：主历史追加与派生图同步分别验证；
+ *   同步前保留原图与新候选，切换被拒绝；同步后可以继续切换且消息仍可追溯。
  *
  * 存储组合：历史走 MemoryStorageAdapter，sidecar 走真实临时目录（注入 baseDir）。
  * 注：handler 层的 BRANCH_BUSY 矩阵单测在 backend/__tests__/webview/branchHandlers.test.ts；
@@ -63,10 +63,17 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
     let manager: ConversationManager;
     let service: BranchService;
 
+    /** 明确控制派生图同步时机，历史写入仍经过真实的仓储与会话锁。 */
+    async function appendBeforeGraphSync(conversationId: string, history: ConversationHistory): Promise<void> {
+        setGlobalBranchService(undefined);
+        try { await manager.addBatch(conversationId, history); }
+        finally { setGlobalBranchService(service); }
+    }
+
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
     async function seedConversation(conversationId: string): Promise<string[]> {
         await manager.createConversation(conversationId, 'T');
-        await manager.addBatch(conversationId, linearHistory());
+        await appendBeforeGraphSync(conversationId, linearHistory());
         return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
     }
 
@@ -244,8 +251,8 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
         });
     });
 
-    describe('迟到 chunk 不污染新分支（R6 基础用例）', () => {
-        test('reroll 后旧流迟到的 chunk 追加主历史：分支图不变、候选保留、后续操作可用', async () => {
+    describe('迟到消息与异步图同步（R6 基础用例）', () => {
+        test('历史追加尚未同步时保留新候选，同步完成后可以继续分支操作', async () => {
             const ids = await seedConversation('c1');
             const reroll = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'new-candidate' }] });
 
@@ -253,9 +260,8 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
             const beforeNodes = JSON.stringify(before.nodes);
             const beforeSummaries = JSON.stringify(before.candidateSummaries);
 
-            // 模拟旧流迟到的 chunk：直接往主历史追加一条 model 消息
-            // （等价于流式 append 路径——迟到 chunk 落在主历史，不经过 BranchService）
-            await manager.addBatch('c1', [{ role: 'model', parts: [{ text: 'late-chunk' }], timestamp: 300 }]);
+            // 暂不派发后台图同步，稳定检查历史已写入但图尚未更新的中间状态。
+            await appendBeforeGraphSync('c1', [{ role: 'model', parts: [{ text: 'late-chunk' }], timestamp: 300 }]);
 
             // ① 分支图不被污染：节点集合 / 尾指针 / 候选摘要全部保持不变
             const after = (await service.getBranchGraph('c1')).graph!;
@@ -274,14 +280,15 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
             // ③ reroll 候选内容完整保留（未被迟到 chunk 覆盖 / 截断）
             expect(after.nodes[reroll.nodeId]!.parts).toEqual([{ text: 'new-candidate' }]);
 
-            // ④ 迟到 chunk 后分支操作仍可用（图未被破坏）
+            // ④ 执行真实的增量同步后再继续操作，不依赖后台任务恰好先执行。
+            await service.appendHistoryToGraph('c1', [history[2]]);
             const r2 = await service.createRerollCandidate('c1', reroll.nodeId, { parts: [{ text: 'after-late' }] });
             const g2 = (await service.getBranchGraph('c1')).graph!;
             expect(g2.nodes[r2.nodeId]).toBeTruthy();
             expect(validate(g2).valid).toBe(true);
         });
 
-        test('流式结束后 reroll 生效期间迟到 chunk 到达：图一致性与新候选不受影响', async () => {
+        test('未同步的迟到消息阻止切换，同步后可以继续选择新候选', async () => {
             const ids = await seedConversation('c1');
             const abortManager = new StreamAbortManager();
 
@@ -291,17 +298,29 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
             const reroll = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a2' }] });
 
             // 迟到的旧流 chunk 到达（流式结束但网络层仍可能有残留 chunk）
-            await manager.addBatch('c1', [{ role: 'model', parts: [{ text: 'stale' }], timestamp: 301 }]);
+            await appendBeforeGraphSync('c1', [{ role: 'model', parts: [{ text: 'stale' }], timestamp: 301 }]);
 
             const graph = (await service.getBranchGraph('c1')).graph!;
             expect(validate(graph).valid).toBe(true);
             expect(graph.activeTailNodeId).toBe(reroll.nodeId);
-            // 新候选仍可通过 handler 正常操作（无 BRANCH_BUSY、无图损坏）
+            // 同步缺口存在时必须拒绝，不能为了切换候选而丢掉已写入的历史。
+            const history = await manager.getMessagesRaw('c1');
+            const beforeGraph = JSON.stringify(graph);
             const responses: Array<{ requestId: string; data: unknown }> = [];
             const ctx = makeCtx(abortManager, (requestId, data) => { responses.push({ requestId, data }); });
-            await switchBranchCandidate({ conversationId: 'c1', nodeId: reroll.nodeId }, 'req-late1', ctx);
+            await expect(switchBranchCandidate({ conversationId: 'c1', nodeId: reroll.nodeId }, 'req-late1', ctx))
+                .rejects.toThrow('BRANCH_OPERATION_CONFLICT');
+            expect(responses).toHaveLength(0);
+            expect(await manager.getMessagesRaw('c1')).toEqual(history);
+            expect(JSON.stringify((await service.getBranchGraph('c1')).graph)).toBe(beforeGraph);
+
+            await service.appendHistoryToGraph('c1', [history[2]]);
+            await switchBranchCandidate({ conversationId: 'c1', nodeId: reroll.nodeId }, 'req-after-sync', ctx);
             expect(responses).toHaveLength(1);
             expect((responses[0].data as { success?: boolean }).success).toBe(true);
+            const synced = (await service.getBranchGraph('c1')).graph!;
+            expect(synced.nodes[reroll.nodeId].parts).toEqual([{ text: 'a2' }]);
+            expect(synced.nodes[history[2].id!].parts).toEqual([{ text: 'stale' }]);
         });
     });
 });
