@@ -45,9 +45,12 @@ async function setup() {
   const snapshot = app.settings.snapshot(); snapshot.settings.workspaces.push({ id: 'debug-project', name: '调试项目', directory: f.root, deviceId: 'local' });
   await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
   const rpc = (method: string, params: Record<string, unknown> = {}, identity = client) => router.call(identity, method, { workspaceId: 'debug-project', ...params }) as Promise<any>;
-  const session = (predicate: (value: any) => boolean, timeout = 15_000): Promise<any> => new Promise((resolve, reject) => {
+  const waits = new Set<(error: Error) => void>();
+  const session = (predicate: (value: any) => boolean, timeout = 15_000): Promise<any> => {
+    const pending = new Promise((resolve, reject) => {
     const observed: any[] = [];
-    const cleanup = () => { clearTimeout(timer); off(); };
+    const cleanup = () => { clearTimeout(timer); off(); waits.delete(cancel); };
+    const cancel = (error: Error) => { cleanup(); reject(error); };
     const inspect = (value: any) => {
       observed.push({ id: value.id, status: value.status, reason: value.reason }); if (observed.length > 8) observed.shift();
       if (value.status === 'failed') { cleanup(); reject(new Error(value.error)); }
@@ -55,9 +58,16 @@ async function setup() {
     };
     const off = app.subscribe(event => { if (event.type === 'debug.session') inspect(event.session); });
     const timer = setTimeout(() => { cleanup(); reject(new Error('未收到预期调试状态：' + JSON.stringify(observed))); }, timeout);
+    waits.add(cancel);
     for (const value of app.debugging.list(client)) if (!['terminated', 'failed'].includes(value.status)) inspect(value);
-  });
-  const close = async () => { await app.close(); await f.cleanup(); };
+    });
+    // 启动或控制请求先失败时，等待者仍由用例清理，不能在下一个用例中产生未处理拒绝。
+    void pending.catch(() => {}); return pending;
+  };
+  const close = async () => {
+    for (const cancel of waits) cancel(new Error('调试验收已结束。'));
+    try { await app.close(); } finally { await f.cleanup(); }
+  };
   return { f, app, client, rpc, session, close };
 }
 
