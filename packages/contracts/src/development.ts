@@ -13,6 +13,7 @@ export interface DebugAdapterDefinition {
   command: string;
   args: string[];
   transport: 'stdio' | 'tcp';
+  host?: string;
   port?: number;
 }
 export interface DevelopmentSettings {

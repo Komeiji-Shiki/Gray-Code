@@ -4,6 +4,7 @@ import type { DevelopmentSettings, LanguageServerDefinition, LanguageServiceInfo
 import { sendToExtension } from '../../utils/vscode';
 import { markDesktopSettingsDirty, useDesktopSettingsDraft } from '../../platform/settingsDraft';
 import DesktopEditorSettings from './DesktopEditorSettings.vue';
+import DebugAdapterSettings from './DebugAdapterSettings.vue';
 interface ServerDraft extends LanguageServerDefinition { key: string; enabled: boolean; languageText: string; optionsText: string; settingsText: string }
 const settings = ref<DevelopmentSettings>({});
 const disabled = ref<string[]>([]);
@@ -122,6 +123,7 @@ onMounted(async () => {
       <details><summary>高级选项</summary><label>初始化选项（JSON 对象）<textarea v-model="server.optionsText" spellcheck="false" rows="4"></textarea></label><label>服务设置（JSON 对象）<textarea v-model="server.settingsText" spellcheck="false" rows="4"></textarea></label></details>
     </article>
     <p v-if="error" class="development-error" role="alert">{{ error }}</p>
+    <DebugAdapterSettings v-model="settings.debugAdapters" :disabled="loading || !ready" />
     <DesktopEditorSettings />
   </section>
 </template>

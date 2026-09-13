@@ -18,6 +18,7 @@ for (const [entry, output] of [
   ['apps/server/src/main.ts', 'apps/server/dist/main.cjs'],
   ['apps/server/src/application.ts', 'apps/server/dist/application.cjs'],
   ['apps/server/src/transport/router.ts', 'apps/server/dist/router.cjs'],
+  ['apps/server/src/workspace/terminalHost.ts', 'apps/server/dist/terminalHost.cjs'],
 ]) {
   const result = await build({
     ...common, entryPoints: [entry], outfile: output, metafile: true,

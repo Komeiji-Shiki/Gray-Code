@@ -14,6 +14,9 @@ for (const name of ['main', 'preload']) {
     define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo) },
     external: ['jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
 }
+// 原生终端放入独立宿主，进程退出时一并回收其读取线程。
+await build({ entryPoints: ['apps/server/src/workspace/terminalHost.ts'], outfile: 'apps/desktop/dist/terminalHost.cjs',
+  bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['node-pty'] });
 // 试用包仅编译可执行产物，不额外执行类型检查。
 if (!process.argv.includes('--package-only')) {
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'apps/desktop/tsconfig.json'], { stdio: 'inherit', windowsHide: true });

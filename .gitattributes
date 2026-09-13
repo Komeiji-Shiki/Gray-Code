@@ -20,3 +20,6 @@
 *.vue text eol=lf
 *.css text eol=lf
 *.html text eol=lf
+
+# 官方调试器发行文件逐字节保留，避免改写上游行尾与生成代码空白。
+resources/debuggers/js-debug/** -text -whitespace

@@ -90,6 +90,7 @@ async function sendLine() {
   finally { sending.value = false; }
 }
 const unsubscribe = subscribe(event => {
+  if (event.type === 'workspace.terminal.open') void guard(() => attach(event.id));
   if (event.type === 'terminal.data' && event.id === id.value) {
     const chunk = { data: event.data as string, offset: event.offset as number };
     if (attaching.value) pending.push(chunk); else renderData(chunk);

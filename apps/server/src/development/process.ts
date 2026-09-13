@@ -16,7 +16,7 @@ export function stopDevelopmentProcess(child: ChildProcess): Promise<void> {
   const closed = new Promise<void>((resolve, reject) => {
     onClose = resolve;
     child.once('close', onClose);
-    timer = setTimeout(() => reject(new Error('语言服务进程未能退出：' + pid)), 7000);
+    timer = setTimeout(() => reject(new Error('开发服务进程未能退出：' + pid)), 7000);
     if (exited() && child.stdio.every(stream => !stream || 'destroyed' in stream && stream.destroyed)) resolve();
   });
   const terminate = exited() ? Promise.resolve() : new Promise<void>((resolve, reject) => {

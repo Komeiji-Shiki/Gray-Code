@@ -22,7 +22,7 @@ beforeEach(() => {
     return { success: true };
   });
 });
-const render = () => mount(PlatformDevelopmentSettings, { global: { stubs: { DesktopEditorSettings: true } } });
+const render = () => mount(PlatformDevelopmentSettings, { global: { stubs: { DesktopEditorSettings: true, DebugAdapterSettings: true } } });
 
 test('重新检测不会覆盖待保存的开关或程序路径，保存保留空参数和调试器设置', async () => {
   const wrapper = render(); await flushPromises();

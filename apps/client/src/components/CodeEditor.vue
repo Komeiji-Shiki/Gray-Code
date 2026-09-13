@@ -7,6 +7,7 @@ import { resolvedTheme } from '../appearance';
 import { installWorkbenchTheme, workbenchEditorTheme } from "../editorAppearance";
 import { bindLanguageDocument, editorUri } from "../languages";
 import { bindEditorUndo, workspaceEditorServices } from '../editorWorkspaceEdits';
+import { bindEditorDebugging } from '../editorDebugging';
 import { documentLanguageId, editorLanguageId } from '../../../../shared/documentLanguages';
 const props = defineProps<{ workspaceId: string; path: string; value: string; version: number;
   flush: () => Promise<unknown>; open: (path: string, range?: monaco.IRange, focus?: boolean) => Promise<void>;
@@ -21,6 +22,7 @@ const diagnosticCounts = ref({ errors: 0, warnings: 0 });
 const cursor = ref({ lineNumber: 1, column: 1 });
 let markerListener: monaco.IDisposable | undefined;
 let undoBinding: monaco.IDisposable | undefined;
+let debugBinding: monaco.IDisposable | undefined;
 const languageLabel = computed(() => {
   const state = languageState.value;
   if (state.error || state.session?.status === 'failed') return '语言服务异常';
@@ -51,6 +53,7 @@ onMounted(() => {
     automaticLayout: true,
     fixedOverflowWidgets: true,
     minimap: { enabled: false },
+    glyphMargin: true,
     scrollBeyondLastLine: false,
     padding: { top: 14 },
     ...options(),
@@ -64,6 +67,7 @@ onMounted(() => {
   editor.setModel(model);
   initial?.dispose();
   undoBinding = bindEditorUndo(editor);
+  debugBinding = bindEditorDebugging(editor, props.workspaceId, props.path);
   language = bindLanguageDocument({ model, workspaceId: props.workspaceId, path: props.path, version: () => props.version, flush: props.flush, open: props.open,
     status: value => { languageState.value = value; } });
   const updateCounts = () => {
@@ -100,6 +104,7 @@ watch(() => props.selection, selection => { if (selection && editor) { editor.se
 watch(appearance, () => editor?.updateOptions(options()), { deep: true });
 watch(resolvedTheme, value => { if (editor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
 onUnmounted(() => {
+  debugBinding?.dispose();
   undoBinding?.dispose();
   markerListener?.dispose();
   language?.dispose();
@@ -125,6 +130,7 @@ onUnmounted(() => {
 </template>
 <style scoped>
 .code-editor-shell{height:100%;min-height:0;display:flex;flex-direction:column}.code-editor-canvas{flex:1;min-height:0}
+:deep(.debug-breakpoint),:deep(.debug-breakpoint-disabled),:deep(.debug-breakpoint-pending),:deep(.debug-logpoint){width:10px!important;height:10px!important;margin:6px 0 0 6px;background:#e56b6b;clip-path:circle(50%)}:deep(.debug-breakpoint-disabled){background:#777}:deep(.debug-breakpoint-pending){background:transparent;border:2px solid #e56b6b}:deep(.debug-logpoint){clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:#e7b864}:deep(.debug-execution-line){background:#dbc34f20}:deep(.debug-execution-arrow){background:#e1c250;clip-path:polygon(15% 15%,85% 50%,15% 85%);width:12px!important}
 .editor-status{display:flex;align-items:center;gap:10px;min-height:28px;padding:2px 9px;border-top:1px solid var(--border);background:var(--panel);color:var(--muted);font-size:11px;flex-shrink:0}
 .editor-status button{border:0;border-radius:0;background:transparent;color:inherit;padding:3px 0;font:inherit;cursor:pointer;white-space:nowrap}.editor-status button:hover{color:var(--text)}.editor-language{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.editor-cursor{white-space:nowrap}.editor-status .errors{color:var(--danger,#f08080)}
 @media(max-width:850px){.editor-status{flex-wrap:wrap;gap:3px 10px}.editor-language{min-width:100px}.editor-cursor{margin-left:auto}}

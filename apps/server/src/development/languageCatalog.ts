@@ -14,7 +14,7 @@ const bundledEntry = (file: string) => require.resolve(file);
 const typescriptLanguages = ['typescript', 'typescriptreact', 'javascript', 'javascriptreact'];
 
 /** 只查找已安装的程序；检测不会安装 SDK，也不会为不存在的服务创建失败进程。 */
-function executable(command: string): string | undefined {
+export function executable(command: string): string | undefined {
   const taskHome = os.homedir();
   const directories = [...(process.env.PATH ?? '').split(path.delimiter), process.env.GOBIN,
     path.join(process.env.GOPATH ?? path.join(taskHome, 'go'), 'bin'), path.join(process.env.CARGO_HOME ?? path.join(taskHome, '.cargo'), 'bin'),

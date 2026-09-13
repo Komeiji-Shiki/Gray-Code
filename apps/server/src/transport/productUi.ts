@@ -312,6 +312,7 @@ export class ProductUi {
       }
       case 'platform.development.get': return ui.preferences.app.development ?? {};
       case 'platform.development.list': return this.app.languages.services(client, [], data.refresh === true);
+      case 'platform.development.debuggers': return this.app.debugging.adapters(client, data.refresh === true);
       case 'platform.development.update': {
         validateDevelopmentSettings(data.settings);
         ui.preferences.app.development = structuredClone(data.settings); ui.preferences.dirty = true;

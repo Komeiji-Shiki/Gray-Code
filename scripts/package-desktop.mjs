@@ -11,7 +11,7 @@ const outputDirectory = process.env.GRAYCODE_DESKTOP_OUT
   ? path.resolve(root, process.env.GRAYCODE_DESKTOP_OUT)
   : path.join(root, 'release', 'desktop');
 // 客户端构建会清空 dist；聊天前端未构建成功时不能生成缺少设置与聊天页面的包。
-const entryFiles = ['apps/desktop/dist/main.cjs', 'apps/desktop/dist/preload.cjs',
+const entryFiles = ['apps/desktop/dist/main.cjs', 'apps/desktop/dist/preload.cjs', 'apps/desktop/dist/terminalHost.cjs',
   'apps/client/dist/index.html', 'apps/client/dist/browser.html', 'apps/client/dist/chat/platform.html'];
 const missingEntries = entryFiles.filter(file => !require('node:fs').existsSync(path.join(root, file)));
 if (missingEntries.length) throw new Error(`桌面构建尚未完成：${missingEntries.join(', ')}。请先完成 npm run build:desktop。`);
@@ -86,6 +86,8 @@ const out = await packager({
     // 2. 托盘图标：main.ts 按 __dirname 上溯到 resources/icon.png。
     await fsp.mkdir(`${buildPath}/resources`, { recursive: true });
     await fsp.copyFile(path.join(root, 'resources', 'icon.png'), `${buildPath}/resources/icon.png`);
+    // 独立 DAP 发行包包含工作进程、启动注入脚本与许可证，必须作为整体复制。
+    await fsp.cp(path.join(root, 'resources', 'debuggers'), `${buildPath}/resources/debuggers`, { recursive: true });
     // 3. 重建最小生产 node_modules（复制期已整体排除，见 ignore）。
     const closure = collectRuntimeDependencies(root, RUNTIME_ROOTS);
     let bytes = 0;
@@ -121,6 +123,9 @@ const requiredFiles = [
   'node_modules/@graycode/core/package.json',
   'node_modules/@graycode/core/dist/index.cjs',
   'node_modules/@graycode/contracts/dist/index.cjs',
+  'resources/debuggers/js-debug/src/dapDebugServer.js',
+  'resources/debuggers/js-debug/src/bootloader.js',
+  'resources/debuggers/js-debug/LICENSE',
 ];
 const missing = requiredFiles.filter(file => !require('node:fs').existsSync(path.join(packagedApp, ...file.split('/'))));
 if (missing.length) {

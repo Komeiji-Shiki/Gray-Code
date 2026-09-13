@@ -3,6 +3,7 @@ export interface WorkbenchTab { id: string; label: string; title?: string; icon:
 export const workbenchPanels: Array<{ id: string; label: string; icon: WorkbenchIcon; description: string }> = [
   { id: 'diff', label: '审查', icon: 'review', description: '查看与接受 AI 修改' },
   { id: 'terminal', label: '终端', icon: 'terminal', description: '运行命令与查看输出' },
+  { id: 'debug', label: '调试', icon: 'terminal', description: '启动与附加程序，查看断点、调用栈和变量' },
   { id: 'browser', label: '浏览器', icon: 'browser', description: '打开网页与预览内容' },
   { id: 'editor', label: '文件', icon: 'folder', description: '浏览工作区与编辑代码' },
   { id: 'search', label: '搜索', icon: 'search', description: '在项目中搜索与替换文本' },

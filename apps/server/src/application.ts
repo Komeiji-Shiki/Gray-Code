@@ -21,6 +21,7 @@ import { withDependencyRuntime } from '../../../backend/modules/dependencies/run
 import { TokenizerResourceManager } from '../../../backend/modules/tokenizer/TokenizerResourceManager';
 import { PlatformUsage } from './conversations/usage';
 import { LanguageServices } from './development/languages';
+import { DebugServices } from './development/debugging';
 import { CharacterPipeline, type CharacterTurn } from './characters/pipeline';
 import { CharacterResources } from './characters/resources';
 import { ApplicationAutomations } from './automations/service';
@@ -122,6 +123,7 @@ export class PlatformApplication {
   readonly memory: PlatformMemory;
   readonly skills: PlatformSkills;
   readonly languages: LanguageServices;
+  readonly debugging: DebugServices;
   readonly terminals: PlatformTerminals;
   readonly interactiveTerminals: InteractiveTerminals;
   readonly processes = new WorkspaceProcesses();
@@ -158,6 +160,7 @@ export class PlatformApplication {
     this.media = new PlatformMedia(this);
     this.usage = new PlatformUsage(this);
     this.languages = new LanguageServices(this);
+    this.debugging = new DebugServices(this);
     this.subscribe(notification => {
       const event = notification.event as { type?: string; runId?: string } | undefined;
       if (notification.type === 'event' && event?.runId && ['run.completed', 'run.failed', 'run.cancelled'].includes(event.type ?? ''))
@@ -509,7 +512,8 @@ export class PlatformApplication {
     await this.onebot.close();
     await this.mcp.close();
     await this.terminals.close();
-    this.interactiveTerminals.close();
+    await this.debugging.close();
+    await this.interactiveTerminals.close();
     await this.languages.close();
     await this.processes.close();
     await this.dependencies.close();
