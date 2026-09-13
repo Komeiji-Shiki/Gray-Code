@@ -112,7 +112,7 @@ async function activeTasks(): Promise<boolean> {
   const hasRuns = (await application.storage.listRuns({ activeOnly: true, limit: 1 })).length > 0;
   // 在异步查询后读取连接状态，避免连接中的 Bot 被当作空闲程序退出。
   return hasRuns || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
-    || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
+    || application.nodes.keepsAlive || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
     || application.interactiveTerminals.hasRunning || !!application.subagents.backgroundTasks().length;
 }
 async function quit(relaunch = false): Promise<void> {
@@ -199,8 +199,8 @@ async function createWindow(): Promise<void> {
   desktopFiles.suspend();
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) desktopFiles.suspend(); });
   trust(window);
-  window.webContents.on('render-process-gone', () => { void application.computer.clientClosed(client.clientId); });
-  window.on('closed', () => { void application.computer.clientClosed(client.clientId); });
+  window.webContents.on('render-process-gone', () => { void application.computer.clientClosed(client.clientId); void application.nodes.clientClosed(client.clientId); });
+  window.on('closed', () => { void application.computer.clientClosed(client.clientId); void application.nodes.clientClosed(client.clientId); });
   window.on("close", (event) => {
     if (exiting) return;
     event.preventDefault();
@@ -285,9 +285,10 @@ async function main(): Promise<void> {
     await application.remoteAccess!.initialize({ port, token, publicOrigin: originIndex >= 0 ? argumentsList[originIndex + 1] : undefined });
   } else await application.remoteAccess!.initialize();
   if (application.remoteAccess!.status().address) console.log(`GrayCode Web: ${application.remoteAccess!.status().address}`);
+  await application.nodes.activate();
   application.subscribe((event) => {
     notify(event);
-    if (closePending && (event.type === "file.activity" || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
+    if (closePending && (event.type === "file.activity" || event.type === 'nodes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
       void activeTasks()
         .then((active) => {
           if (!active && closePending) return quit();

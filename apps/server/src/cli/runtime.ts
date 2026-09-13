@@ -28,6 +28,7 @@ export async function runApplicationCommand(
         publicOrigin: typeof values['public-origin'] === 'string' ? values['public-origin'] : undefined,
       });
       const status = application.remoteAccess!.status();
+      await application.nodes.activate();
       process.stdout.write(
         `GrayCode is listening on ${status.localAddress}. Authentication is required.${values.web ? ` Web: ${status.address}/` : ''}\n`,
       );

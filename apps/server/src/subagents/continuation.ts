@@ -83,8 +83,9 @@ export class BackgroundContinuation {
       if (!configuration) throw new Error('旧任务未保存模型选择，结果已保留，请在对话中选择模型后继续。');
       const automationId = origin?.automationId ?? configuration.automationId;
       if (automationId) { await this.app.automations.wake(automationId); return; }
-      const { workspace: capturedWorkspace, ...selection } = configuration;
-      const scope = Object.hasOwn(configuration, 'workspace') ? { workspace: capturedWorkspace ?? undefined } : undefined;
+      const { workspace: capturedWorkspace, nodeOrigin, ...selection } = configuration;
+      const captured = Object.hasOwn(configuration, 'workspace');
+      const scope = { ...(captured ? { workspace: capturedWorkspace ?? undefined } : {}), nodeOrigin: origin?.nodeOrigin ?? nodeOrigin };
       await this.app.conversation(source.actorId, conversationId);
       const actor = this.app.actor(source.actorId);
       if (!actor || actor.revoked) throw new Error('原发起账号已撤销，未自动继续。');
@@ -93,7 +94,7 @@ export class BackgroundContinuation {
         expectedRevision: record.revision, value: { ...value, status: 'started', requestKey } }] as RecordMutation[]);
       // 模型选项继承发起任务；执行权限仍由核心按当前账号、Agent 和工作区重新校验。
       const run = await this.app.runtime.continue({ actorId: source.actorId, conversationId, agentId: source.parentConfiguration?.agentId ?? origin!.agentId,
-        workspaceId: scope ? capturedWorkspace?.id : origin?.workspaceId, ...(actor.role === 'owner' ? selection : {}), requestKey, expectedRevision: state.history.revision }, { state, commit: { records } }, scope);
+        workspaceId: captured ? capturedWorkspace?.id : origin?.workspaceId, ...(actor.role === 'owner' ? selection : {}), requestKey, expectedRevision: state.history.revision }, { state, commit: { records } }, scope);
       this.app.productUi.chat.followBackground(run);
       this.app.publish({ type: 'conversation.changed', runId: run.id, conversationId });
     } catch (error) {

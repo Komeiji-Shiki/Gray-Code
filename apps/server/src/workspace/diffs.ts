@@ -7,6 +7,7 @@ import { countDeletedLines } from '../../../../backend/core/services/diff/diffAl
 import { splitLines } from '../../../../backend/core/services/diff/lineId';
 
 export interface WorkspaceDiff {
+  runId?: string;
   id: string; conversationId: string; workspaceId: string; path: string; originalText: string; proposedText: string;
   baseHash: string | null; status: 'pending' | 'accepted' | 'rejected' | 'cancelled'; toolCallId: string; createdAt: number;
   operationId?: string; error?: string;
@@ -69,7 +70,7 @@ export class WorkspaceDiffs {
     if (!context.workspace || !context.conversationId || !context.toolCallId) throw new Error('Diff 缺少任务身份。');
     context.signal.throwIfAborted();
     const value: WorkspaceDiff = { id: randomUUID(), conversationId: context.conversationId, workspaceId: context.workspace.id,
-      path: file, originalText, proposedText, baseHash, encoding, status: 'pending', toolCallId: context.toolCallId, createdAt: Date.now() };
+      path: file, originalText, proposedText, baseHash, encoding, status: 'pending', runId: context.runId, toolCallId: context.toolCallId, createdAt: Date.now() };
     const config = this.app.product.runtimeSettings().getApplyDiffConfig();
     if (config.diffGuardEnabled) {
       const originalLines = splitLines(originalText);

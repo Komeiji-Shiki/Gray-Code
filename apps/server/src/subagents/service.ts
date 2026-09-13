@@ -390,6 +390,7 @@ export class SubagentExecutionService {
           workspaceId: (await this.app.storage.getConversation(record.conversationId))?.workspaceId as string | undefined };
         const parent = record.parentRunId ? await this.app.storage.getRun(record.parentRunId) : null;
         const scope = { ...(Object.hasOwn(record, 'workspace') ? { workspace: record.workspace ?? undefined } : {}), modelSelection: record.selection,
+          nodeOrigin: parent?.nodeOrigin ?? record.parentConfiguration?.configuration.nodeOrigin,
           automationId: parent?.automationId ?? record.parentConfiguration?.configuration.automationId };
         const run = message ? await this.app.runtime.start({ ...input, message }, undefined, scope)
           : await this.app.runtime.continue({ ...input, expectedRevision: (await this.app.storage.historyInfo(record.conversationId)).revision }, undefined, scope);

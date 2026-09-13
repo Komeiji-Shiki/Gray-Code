@@ -17,6 +17,7 @@ import { ComputerService } from './computer/service';
 import { computerTools } from './computer/tools';
 import type { ComputerScreenPort, ComputerNativePort } from './computer/port';
 import type { RemoteAccessHost } from './transport/remotePort';
+import { ExecutionNodes } from './nodes/service';
 import { PlatformNotifications } from './notifications';
 import { PlatformArtifacts } from './artifacts/service';
 import { ContentPreviews } from './workspace/previews';
@@ -106,6 +107,7 @@ export class PlatformApplication {
   readonly browser?: BrowserHost;
   readonly computer: ComputerService;
   readonly remoteAccess?: RemoteAccessHost;
+  readonly nodes: ExecutionNodes;
   readonly characterPipeline: CharacterPipeline;
   readonly characters: CharacterResources;
   readonly activity: PlatformActivity;
@@ -241,6 +243,7 @@ export class PlatformApplication {
     this.terminals = new PlatformTerminals(this);
     this.interactiveTerminals = new InteractiveTerminals(this);
     this.remoteAccess = options.remoteAccess?.(this);
+    this.nodes = new ExecutionNodes(this, options.secretCodec);
     this.tools.register(this.terminals.tool());
     this.skills = new PlatformSkills(this);
     this.tools.register(this.skills.tool());
@@ -265,6 +268,8 @@ export class PlatformApplication {
     const models = options.models ?? this.modelAdapter;
     this.models = { generate: input => this.automations.meter.generate(input, () => withDependencyRuntime(this.dependencies, () => models.generate(input))) };
     this.runtime = new PlatformRuntime({
+      executionNodeId: () => this.nodes.identity.id,
+      currentNodeOrigin: () => this.nodes.currentOrigin(),
       storage,
       tools: this.tools,
       models: this.models,
@@ -277,7 +282,7 @@ export class PlatformApplication {
       },
       preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),
       currentAutomationId: () => this.automations.meter.currentId(),
-      runInScope: (run, execute) => this.automations.meter.run(run, execute),
+      runInScope: (run, execute) => this.nodes.runInScope(run, () => this.automations.meter.run(run, execute)),
       prepareModel: async input => {
         const view=await this.longMemoryPrompt.history.prepare(input.run.actorId,input.run.conversationId,input.history.history.messages);
         const memory=await this.longMemoryPrompt.capture({...input,history:{...input.history,history:{...input.history.history,messages:view.messages}}});
@@ -295,13 +300,15 @@ export class PlatformApplication {
         return prepared;
       },
       transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),
-      beforeRun: async (run, workspace, signal) => { await this.artifacts.beforeRun(run); await this.checkpointLifecycle.beforeRun(run, workspace, signal); },
+      beforeRun: async (run, workspace, signal) => { await this.nodes.checkRun(run); await this.artifacts.beforeRun(run); await this.checkpointLifecycle.beforeRun(run, workspace, signal); },
       modelBoundary: async (run, workspace, signal, phase, iteration, message) => {
+        if (phase === 'before') await this.nodes.checkRun(run);
         if (phase === 'before') await this.subagents.boundary(run, signal);
         return this.checkpointLifecycle.modelBoundary(run, workspace, signal, phase, iteration, message);
       },
       beforeTool: async (context, name, args, effects) => {
         const run = await this.storage.getRun(context.runId);
+        if (run) await this.nodes.checkRun(run, effects);
         if (run) await this.subagents.boundary(run, context.signal);
         await prepareExternalWrite(this, context, name, args);
         return this.checkpointLifecycle.beforeTool(context, name, args, effects);
@@ -393,6 +400,7 @@ export class PlatformApplication {
     try {
       const application = new PlatformApplication(storage, options);
       await application.settings.initialize();
+      await application.nodes.initialize();
       await application.product.initialize();
       await application.changes.recover();
       await application.diffs.initialize();
@@ -525,6 +533,7 @@ export class PlatformApplication {
     return conversation;
   }
   async close(): Promise<void> {
+    await this.nodes.close();
     await this.computer.close();
     this.workspaceSearch.close();
     await this.automations.close();

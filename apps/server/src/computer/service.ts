@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { authorizeEffects, type ToolContext } from '@graycode/core';
-import type { ComputerAction, ComputerCapture, ComputerObservation, ComputerOperation, ComputerStatus, ComputerController, ComputerWindows, ToolOutcome } from '@graycode/contracts';
+import type { ComputerAction, ComputerCapture, ComputerDisplayCapture, ComputerObservation, ComputerOperation, ComputerStatus, ComputerController, ComputerWindows, ToolOutcome } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { WindowsComputerNative } from './native';
@@ -71,12 +71,13 @@ export class ComputerService {
       throw new ComputerError('OBSERVATION_STALE', '观察记录不属于当前任务或已过期，请重新观察。');
     return saved.value;
   }
-  async observe(identity: Identity, params: { windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number; width?: number; height?: number }) {
+  async observe(identity: Identity, params: { windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number; width?: number; height?: number; frameOnly?: boolean; format?: 'png' | 'jpeg'; quality?: number }) {
     return this.serialized(identity, async () => {
       const epoch = this.stopEpoch;
-      const value = await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.maxElements ?? 250, maxDepth: params.maxDepth ?? 14 }, identity.signal);
+      const value = await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.frameOnly ? 1 : params.maxElements ?? 250,
+        maxDepth: params.frameOnly ? 1 : params.maxDepth ?? 14, includeCommandLine: !params.frameOnly }, identity.signal);
       if (params.screenshot) {
-        const size = { width: Math.max(320, Math.min(2560, params.width ?? 1600)), height: Math.max(240, Math.min(2160, params.height ?? 1200)) };
+        const size = { width: Math.max(320, Math.min(2560, params.width ?? 1600)), height: Math.max(240, Math.min(2160, params.height ?? 1200)), format: params.format, quality: params.quality };
         try {
           // 前台区域可直接采集，文件对话框也可用；后台窗口才需要系统窗口共享目录。
           if (!this.screen || value.window.foreground) throw new ComputerError('CAPTURE_UNAVAILABLE', '使用本机可见窗口采集。');
@@ -111,11 +112,17 @@ export class ComputerService {
           await this.native.stop('control_changed'); throw new ComputerError('CONTROL_CHANGED', '取得控制权期间已经停止，请重新确认当前状态。');
         }
         this.state = result;
-        const abort = () => { void this.stop(identity.actorId, 'run_cancelled', identity); };
+        const abort = () => {
+          // 已取得控制权的归属由本服务核实；账号撤销后仍必须能释放输入。
+          if (this.controllerKey === key) void this.stopOwned('run_cancelled').catch(error => this.app.publish({ type: 'notification', message: String(error) }));
+        };
         identity.signal?.addEventListener('abort', abort, { once: true }); this.abortCleanup = () => identity.signal?.removeEventListener('abort', abort);
         this.changed(); return this.status(identity.actorId);
       } catch (error) { if (this.controllerKey === key) this.clearControl(); throw error; }
     });
+  }
+  async display(identity: Identity, params: { monitorId: string; width?: number; height?: number; format?: 'png' | 'jpeg'; quality?: number }) {
+    return this.serialized(identity, () => this.native.request<ComputerDisplayCapture>('displayCapture', params, identity.signal));
   }
   async stop(actorId: string, reason = 'requested', expected?: Identity) {
     this.authorize(actorId);
@@ -139,6 +146,12 @@ export class ComputerService {
   }
   async clientClosed(clientId: string) {
     if (this.controller?.clientId === clientId) await this.stopOwned('client_disconnected');
+  }
+  /** 执行节点断线只中止其电脑控制，普通任务仍由运行器持有。 */
+  async nodeDisconnected(peerId: string, runIds: string[], reason = 'node_disconnected') {
+    const affected = (key: string) => { const parts = JSON.parse(key) as string[]; return parts[1] === 'run' ? runIds.includes(parts[2]) : parts[2]?.startsWith(`node:${peerId}:`); };
+    for (const [id, value] of this.observations) if (affected(value.key)) this.observations.delete(id);
+    if (this.controllerKey && affected(this.controllerKey)) await this.stopOwned(reason);
   }
   private mapped(args: ComputerAction, observation: ComputerObservation): Record<string, unknown> {
     const mapped: Record<string, unknown> = { ...args };
@@ -177,7 +190,7 @@ export class ComputerService {
     }
     return { ...mapped, observationId: current.id, ...(selected ? { elementId: selected.id } : {}) };
   }
-  async action(identity: Identity, args: ComputerAction, operationId: string, manual = false) {
+  async action(identity: Identity, args: ComputerAction, operationId: string, manual = false, maximumFrameAge = 120_000) {
     return this.serialized(identity, async () => {
       if (!operationId || operationId.length > 240) throw new ComputerError('OPERATION_ID_REQUIRED', '操作需要唯一的请求标识。');
       const id = hash(keyOf(identity) + '\n' + operationId), fingerprint = hash(JSON.stringify(args));
@@ -188,6 +201,8 @@ export class ComputerService {
         throw new ComputerError(previous.code ?? 'OPERATION_UNKNOWN', previous.error ?? '这次操作已派发但没有确定结果，请重新观察，不能重复执行。');
       }
       const observation = this.remembered(identity, args.observationId);
+      if (Date.now() - (observation.screenshot?.capturedAt ?? observation.capturedAt) > maximumFrameAge)
+        throw new ComputerError('OBSERVATION_STALE', '画面已过期，请重新采集后操作。');
       if (!this.state.active || !this.state.leaseId || this.controllerKey !== keyOf(identity)) throw new ComputerError('CONTROL_REQUIRED', '请先为当前任务取得所选窗口的控制权。');
       const mapped = this.mapped(args, observation), leaseId = this.state.leaseId, epoch = this.stopEpoch;
       const operation: SavedOperation = { id, fingerprint, actorId: identity.actorId, runId: identity.runId, clientId: identity.clientId,

@@ -12,9 +12,10 @@ export interface ComputerElement {
 }
 export interface ComputerCapture {
   capturedAt: number; windowId: string; monitorId: string; dpi: number; bounds: ComputerRect;
-  width: number; height: number; mimeType: 'image/png'; data: string;
+  width: number; height: number; mimeType: 'image/png' | 'image/jpeg'; data: string;
   method?: 'window' | 'visible-screen-region';
 }
+export interface ComputerDisplayCapture extends Omit<ComputerCapture, 'windowId' | 'method'> { method: 'display' }
 export interface ComputerObservation {
   id: string; capturedAt: number; window: ComputerWindow; elements: ComputerElement[];
   focusedElementId?: string; truncated: boolean; accessibilityError?: string; screenshot?: ComputerCapture;

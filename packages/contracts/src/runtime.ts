@@ -52,6 +52,9 @@ export interface AgentDefinition {
 }
 export type RunStatus = 'queued' | 'running' | 'awaiting_approval' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export interface RunRecord {
+  /** 实际运行器的设备身份，以及由配对服务捕获的发起设备。旧记录没有这些字段。 */
+  executionNodeId?: string;
+  nodeOrigin?: { peerId: string; controllerNodeId: string };
   /** 由宿主捕获的自动任务归属，公开运行请求不能指定。 */
   automationId?: string;
   id: string;
@@ -69,6 +72,7 @@ export interface RunRecord {
   continuationOf?: string;
 }
 export interface SavedRunConfiguration {
+  nodeOrigin?: RunRecord['nodeOrigin'];
   automationId?: string;
   providerId: string; modelOverride?: string; reasoningEffort?: string; promptModeId?: string;
   /** 自动继续沿用原目录；null 表示原任务没有工作区，缺省只用于旧记录。 */

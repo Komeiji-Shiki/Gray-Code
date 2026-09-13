@@ -10,6 +10,8 @@ import { QuestionBroker } from './questions';
 import { normalizeToolArguments } from './toolArguments';
 
 export interface RuntimeServices {
+  executionNodeId?: () => string;
+  currentNodeOrigin?: () => RunRecord['nodeOrigin'];
   storage: PlatformStorage;
   models: ModelProvider;
   tools: RuntimeToolRegistry;
@@ -67,6 +69,7 @@ export interface PreparedConversationChange {
 
 /** 可信宿主捕获的任务上下文；公开请求参数不能提供或覆盖此对象。 */
 export interface RuntimeRunScope {
+  nodeOrigin?: RunRecord['nodeOrigin'];
   automationId?: string;
   workspace?: WorkspaceDefinition;
   clientId?: string;
@@ -155,6 +158,7 @@ export class PlatformRuntime {
     const catalog = this.services.prepareTools ? await this.services.prepareTools(names, configuredRequest, agent) : this.services.tools.catalog(names);
     const now = Date.now();
     const run: RunRecord = { id: randomUUID(), requestKey: input.requestKey, conversationId: input.conversationId,
+      executionNodeId: this.services.executionNodeId?.(), nodeOrigin: scope?.nodeOrigin ?? this.services.currentNodeOrigin?.(),
       actorId: actor.id, agentId: agent.id, workspaceId: workspace?.id, status: 'queued', createdAt: now,
       updatedAt: now, iteration: 0, catalogVersion: catalog.version, ...(automationId ? { automationId } : {}),
       ...(!source && typeof history.at(-1)?.runId === 'string' ? { continuationOf: history.at(-1)!.runId as string } : {}) };
@@ -186,7 +190,7 @@ export class PlatformRuntime {
     const committed = await this.services.storage.commitConversation({ conversationId: input.conversationId,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, ...change?.commit,
       records: [...(change?.commit.records ?? []), { namespace: 'run-configurations', id: run.id, ownerId: run.conversationId,
-        value: { ...modelSelection, ...(run.automationId ? { automationId: run.automationId } : {}),
+        value: { ...modelSelection, ...(run.automationId ? { automationId: run.automationId } : {}), ...(run.nodeOrigin ? { nodeOrigin: run.nodeOrigin } : {}),
           promptModeId: input.promptModeId ?? prepared?.messageMetadata?.promptModeId, workspace: workspace ?? null } }],
       startRun: { run, message } });
     const result = committed.run!;

@@ -141,8 +141,10 @@ export async function startHttpServer(application: PlatformApplication, options:
         const heartbeat = setInterval(() => { if (!writable(response, auth)) { response.end(); return; } response.write(': heartbeat\n\n'); }, 20_000);
         heartbeat.unref(); response.once('close', () => {
           clearInterval(heartbeat); streams.delete(response); options.onConnectionsChanged?.();
-          if (![...streams.values()].some(value => value.client.clientId === auth.client.clientId && value.valid()))
+          if (![...streams.values()].some(value => value.client.clientId === auth.client.clientId && value.valid())) {
             void application.computer.clientClosed(auth.client.clientId).catch(() => {});
+            void application.nodes.clientClosed(auth.client.clientId).catch(() => {});
+          }
         }); return;
       }
       if (url.pathname !== '/rpc' || request.method !== 'POST') { response.writeHead(404); response.end('{"error":"Not found."}'); return; }

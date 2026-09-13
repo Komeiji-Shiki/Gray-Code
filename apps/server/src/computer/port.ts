@@ -11,7 +11,7 @@ export interface ComputerNativePort {
 }
 /** 屏幕采集由设备宿主实现，服务层不导入 Electron。 */
 export interface ComputerScreenPort {
-  capture(observation: ComputerObservation, size: { width: number; height: number }): Promise<ComputerCapture>;
+  capture(observation: ComputerObservation, size: { width: number; height: number; format?: 'png' | 'jpeg'; quality?: number }): Promise<ComputerCapture>;
 }
 export class ComputerError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = 'ComputerError'; }

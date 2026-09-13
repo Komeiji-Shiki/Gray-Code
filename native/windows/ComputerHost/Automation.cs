@@ -34,7 +34,7 @@ namespace GrayCode.ComputerHost {
     internal static Observation Observe(Dictionary<string,object> args) {
       DesktopWindows.RequireInteractive();
       var window=DesktopWindows.Parse(Json.Text(args,"windowId"));
-      var result=new Observation {id=Guid.NewGuid().ToString("N"),capturedAt=Json.Now,window=DesktopWindows.Describe(window,true)};
+      var result=new Observation {id=Guid.NewGuid().ToString("N"),capturedAt=Json.Now,window=DesktopWindows.Describe(window,Json.Flag(args,"includeCommandLine",true))};
       var limit=Math.Max(1,Math.Min(1000,Json.Number(args,"maxElements",250)));
       var depth=Math.Max(1,Math.Min(30,Json.Number(args,"maxDepth",14)));
       try {

@@ -6,6 +6,7 @@ export const workbenchPanels: Array<{ id: string; label: string; icon: Workbench
   { id: 'debug', label: '调试', icon: 'terminal', description: '启动与附加程序，查看断点、调用栈和变量' },
   { id: 'browser', label: '浏览器', icon: 'browser', description: '打开网页与预览内容' },
   { id: 'computer', label: '电脑', icon: 'computer', description: '选择窗口、查看控件与画面，执行或停止电脑操作' },
+  { id: 'nodes', label: '设备', icon: 'computer', description: '配对执行设备、派发远端任务与观看操作画面' },
   { id: 'editor', label: '文件', icon: 'folder', description: '浏览工作区与编辑代码' },
   { id: 'search', label: '搜索', icon: 'search', description: '在项目中搜索与替换文本' },
   { id: 'outline', label: '大纲', icon: 'file', description: '查看当前文件的函数与符号' },
