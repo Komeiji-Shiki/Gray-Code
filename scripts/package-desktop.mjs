@@ -12,6 +12,7 @@ const outputDirectory = process.env.GRAYCODE_DESKTOP_OUT
   : path.join(root, 'release', 'desktop');
 // 客户端构建会清空 dist；聊天前端未构建成功时不能生成缺少设置与聊天页面的包。
 const entryFiles = ['apps/desktop/dist/main.cjs', 'apps/desktop/dist/preload.cjs', 'apps/desktop/dist/terminalHost.cjs',
+  'apps/desktop/dist/computer-host/GrayCode.ComputerHost.exe',
   'apps/client/dist/index.html', 'apps/client/dist/browser.html', 'apps/client/dist/chat/platform.html'];
 const missingEntries = entryFiles.filter(file => !require('node:fs').existsSync(path.join(root, file)));
 if (missingEntries.length) throw new Error(`桌面构建尚未完成：${missingEntries.join(', ')}。请先完成 npm run build:desktop。`);

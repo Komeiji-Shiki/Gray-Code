@@ -25,6 +25,7 @@ import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import { PlatformApplication } from "../../server/src/application";
 import { ApplicationRouter } from "../../server/src/transport/router";
 import { DesktopBrowser } from "./browser";
+import { DesktopComputerCapture } from './computerCapture';
 import { systemFonts } from "./fonts";
 import { migrateLegacySettings } from './legacySettings';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
@@ -198,6 +199,8 @@ async function createWindow(): Promise<void> {
   desktopFiles.suspend();
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) desktopFiles.suspend(); });
   trust(window);
+  window.webContents.on('render-process-gone', () => { void application.computer.clientClosed(client.clientId); });
+  window.on('closed', () => { void application.computer.clientClosed(client.clientId); });
   window.on("close", (event) => {
     if (exiting) return;
     event.preventDefault();
@@ -258,6 +261,7 @@ async function main(): Promise<void> {
     dataDirectory,
     documentsDirectory: app.getPath('documents'),
     browser: application => browser = new DesktopBrowser(application, () => window, notify),
+    computerCapture: new DesktopComputerCapture(),
     remoteAccess: application => new RemoteAccessService(application, { clientDirectory }),
     secretCodec,
   });

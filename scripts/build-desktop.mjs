@@ -1,6 +1,7 @@
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { buildComputerHost } from './build-computer-host.mjs';
 const require = createRequire(import.meta.url);
 const buildInfo = { buildTime: new Date().toISOString() };
 try {
@@ -21,4 +22,5 @@ await build({ entryPoints: ['apps/server/src/workspace/terminalHost.ts'], outfil
 if (!process.argv.includes('--package-only')) {
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'apps/desktop/tsconfig.json'], { stdio: 'inherit', windowsHide: true });
 }
+buildComputerHost('apps/desktop/dist/computer-host');
 console.log('Desktop main process and isolated preload built.');

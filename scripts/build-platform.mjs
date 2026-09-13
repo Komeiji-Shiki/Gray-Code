@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { buildComputerHost } from './build-computer-host.mjs';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,4 +43,5 @@ execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'ap
   cwd: root, stdio: 'inherit', windowsHide: true,
 });
 }
+buildComputerHost();
 console.log('Platform core, storage worker and CLI built without VS Code/Electron dependencies.');

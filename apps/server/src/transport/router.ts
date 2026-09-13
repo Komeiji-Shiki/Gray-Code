@@ -23,6 +23,7 @@ export class ApplicationRouter {
     if (method.startsWith('git.')) return gitRequest(app, session, method, params);
     if (method.startsWith('debug.')) return debugRequest(app, session, method, params);
     if (method.startsWith('memory.')) return longMemoryRequest(app, session, method, params);
+    if (method.startsWith('computer.')) return app.computer.call(session, method, params);
     if (method.startsWith('automations.')) {
       switch (method) {
         case 'automations.options': return app.automations.options(session.actorId, params.conversationId);

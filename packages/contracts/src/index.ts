@@ -15,6 +15,7 @@ export * from './git';
 export * from './search';
 export * from './backups';
 export * from './automations';
+export * from './computer';
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PlatformMessage {

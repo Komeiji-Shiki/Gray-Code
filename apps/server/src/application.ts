@@ -13,6 +13,9 @@ import { pathToFileURL } from 'node:url';
 import { languageTools } from './development/tools';
 import { browserTools } from './browser/tools';
 import type { BrowserHost } from './browser/port';
+import { ComputerService } from './computer/service';
+import { computerTools } from './computer/tools';
+import type { ComputerScreenPort, ComputerNativePort } from './computer/port';
 import type { RemoteAccessHost } from './transport/remotePort';
 import { PlatformNotifications } from './notifications';
 import { PlatformArtifacts } from './artifacts/service';
@@ -95,10 +98,13 @@ export interface ApplicationOptions {
   discordGateway?: () => DiscordGateway;
   onebotGateway?: () => BotGateway;
   browser?: (application: PlatformApplication) => BrowserHost;
+  computerCapture?: ComputerScreenPort;
+  computerNative?: ComputerNativePort;
   remoteAccess?: (application: PlatformApplication) => RemoteAccessHost;
 }
 export class PlatformApplication {
   readonly browser?: BrowserHost;
+  readonly computer: ComputerService;
   readonly remoteAccess?: RemoteAccessHost;
   readonly characterPipeline: CharacterPipeline;
   readonly characters: CharacterResources;
@@ -197,6 +203,14 @@ export class PlatformApplication {
     this.checkpoints = new WorkspaceCheckpoints(this);
     this.checkpointLifecycle = new CheckpointLifecycle(this);
     this.browser = options.browser?.(this);
+    this.computer = new ComputerService(this, options.computerCapture, options.computerNative);
+    for (const tool of computerTools(this.computer)) this.tools.register(tool);
+    this.subscribe(notification => {
+      if (notification.type === 'settings.changed') void this.computer.permissionsChanged().catch(error => this.publish({ type: 'notification', severity: 'warning', message: String(error) }));
+      const event = notification.event as { type?: string; runId?: string } | undefined;
+      if (notification.type === 'event' && event?.runId && ['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'].includes(event.type ?? ''))
+        void this.computer.finishRun(event.runId).catch(error => this.publish({ type: 'notification', severity: 'warning', message: String(error) }));
+    });
     for (const tool of browserTools(this.browser)) this.tools.register(tool);
     if (this.browser) {
       this.subscribe(notification => {
@@ -511,6 +525,7 @@ export class PlatformApplication {
     return conversation;
   }
   async close(): Promise<void> {
+    await this.computer.close();
     this.workspaceSearch.close();
     await this.automations.close();
     await this.remoteAccess?.close();

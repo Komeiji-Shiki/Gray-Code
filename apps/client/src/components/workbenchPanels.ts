@@ -1,10 +1,11 @@
-export type WorkbenchIcon = 'file' | 'folder' | 'browser' | 'terminal' | 'git' | 'review' | 'warning' | 'chat' | 'search';
+export type WorkbenchIcon = 'file' | 'folder' | 'browser' | 'terminal' | 'git' | 'review' | 'warning' | 'chat' | 'search' | 'computer';
 export interface WorkbenchTab { id: string; label: string; title?: string; icon: WorkbenchIcon; dirty?: boolean }
 export const workbenchPanels: Array<{ id: string; label: string; icon: WorkbenchIcon; description: string }> = [
   { id: 'diff', label: '审查', icon: 'review', description: '查看与接受 AI 修改' },
   { id: 'terminal', label: '终端', icon: 'terminal', description: '运行命令与查看输出' },
   { id: 'debug', label: '调试', icon: 'terminal', description: '启动与附加程序，查看断点、调用栈和变量' },
   { id: 'browser', label: '浏览器', icon: 'browser', description: '打开网页与预览内容' },
+  { id: 'computer', label: '电脑', icon: 'computer', description: '选择窗口、查看控件与画面，执行或停止电脑操作' },
   { id: 'editor', label: '文件', icon: 'folder', description: '浏览工作区与编辑代码' },
   { id: 'search', label: '搜索', icon: 'search', description: '在项目中搜索与替换文本' },
   { id: 'outline', label: '大纲', icon: 'file', description: '查看当前文件的函数与符号' },

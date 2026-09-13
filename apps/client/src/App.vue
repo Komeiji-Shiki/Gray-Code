@@ -13,6 +13,7 @@ import ConversationSidebar from './components/ConversationSidebar.vue';
 import WorkspaceSelector from './components/WorkspaceSelector.vue';
 import WebDialogs from './components/WebDialogs.vue';
 import NavigationIcon from './components/navigation/NavigationIcon.vue';
+import ComputerStatus from './components/ComputerStatus.vue';
 const characterSetup = ref<{ characterId?: string } | null>(null);
 const libraryOpen = ref(false);
 const automationsOpen = ref(false);
@@ -138,6 +139,7 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
     </header>
     <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
     <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">关闭</button></div>
+    <ComputerStatus v-if="state.ready" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
     <ResourceLibrary v-if="libraryOpen" @close="libraryOpen = false" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
     <ContentPreview />
