@@ -1,4 +1,5 @@
 import { parseToolArguments } from './toolArguments';
+import { parseOpenAIUsage } from './openaiUsage';
 import { resolveConfiguredStream } from '../../config/configs/base';
 /**
  * GrayCode - OpenAI 格式转换器
@@ -733,19 +734,7 @@ export class OpenAIFormatter extends BaseFormatter {
         
         // 存储完整的 usageMetadata（转换 OpenAI 格式到统一格式）
         if (response.usage) {
-            const usage = response.usage;
-            const completionTokens = usage.completion_tokens || 0;
-            const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
-            const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
-            
-            content.usageMetadata = {
-                promptTokenCount: usage.prompt_tokens,
-                // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出。
-                candidatesTokenCount: completionTokens > 0 ? completionTokens : undefined,
-                totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
-                ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
-            };
+            content.usageMetadata = parseOpenAIUsage(response.usage);
         }
         
         // 提取结束原因
@@ -887,19 +876,7 @@ export class OpenAIFormatter extends BaseFormatter {
         
         // 添加 token 统计信息（可能在 finish_reason chunk 或 usage chunk 中）
         if (hasUsage) {
-            const usage = chunk.usage;
-            const completionTokens = usage.completion_tokens || 0;
-            const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
-            const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
-            
-            streamChunk.usage = {
-                promptTokenCount: usage.prompt_tokens,
-                // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出。
-                candidatesTokenCount: completionTokens > 0 ? completionTokens : undefined,
-                totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
-                ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
-            };
+            streamChunk.usage = parseOpenAIUsage(chunk.usage);
         }
         
         // 添加 finish_reason（可能在内容 chunk 中）
