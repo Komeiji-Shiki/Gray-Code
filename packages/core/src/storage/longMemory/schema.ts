@@ -38,7 +38,7 @@ CREATE TABLE long_memory_vectors (
 CREATE VIRTUAL TABLE long_memory_terms USING fts5(tokens, tokenize='unicode61');
 CREATE TABLE long_memory_tombstones (
   scope_id TEXT NOT NULL REFERENCES long_memory_scopes(id), kind TEXT NOT NULL, id TEXT NOT NULL,
-  action TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(scope_id,kind,id)
+  action TEXT NOT NULL, created_at REAL NOT NULL, reference TEXT, PRIMARY KEY(scope_id,kind,id)
 ) WITHOUT ROWID;
 CREATE TABLE long_memory_jobs (
   scope_id TEXT NOT NULL REFERENCES long_memory_scopes(id), id TEXT NOT NULL,

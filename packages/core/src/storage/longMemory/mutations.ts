@@ -6,7 +6,7 @@ import { assertIdentifier, invalid, PlatformStorageError } from '../../errors';
 import type { SqliteConnection } from '../schema';
 import { memoryDigest, memoryTerms, memoryTopicKey } from './text';
 
-interface ScopeRow { id: string; actor_id: string; kind: LongMemoryScope['kind']; scope_key: string | null; realm: string; revision: number; invalidation: number }
+interface ScopeRow { id: string; actor_id: string; kind: LongMemoryScope['kind']; scope_key: string | null; realm: string; revision: number; invalidation: number; has_records:number }
 export interface RecordRow { row_id: number; scope_id: string; id: string; version: number; recorded_at: number; digest: string; payload: string }
 interface SourceRow { scope_id: string; id: string; version: number; recorded_at: number; digest: string; payload: string }
 const kinds = new Set(['fact', 'preference', 'experience', 'project', 'procedure', 'event', 'summary']);
@@ -38,22 +38,22 @@ export class MemoryMutationStore {
     if (!['personal', 'workspace', 'group'].includes(scope.kind)) invalid('记忆范围类型无效。');
     if (scope.kind === 'personal' ? scope.key !== undefined : !scope.key) invalid('记忆范围标识无效。');
     if (scope.key !== undefined) assertIdentifier(scope.key);
-    const row = this.db.prepare('SELECT * FROM long_memory_scopes WHERE id=?').get(scope.id) as ScopeRow | undefined;
+    const row = this.db.prepare('SELECT *,EXISTS(SELECT 1 FROM long_memory_records WHERE scope_id=long_memory_scopes.id) AS has_records FROM long_memory_scopes WHERE id=?').get(scope.id) as ScopeRow | undefined;
     if (row) {
       if (row.actor_id !== scope.actorId || row.kind !== scope.kind || row.scope_key !== (scope.key ?? null) || row.realm !== scope.realm)
         invalid('记忆范围的账号、工作区或剧情域不匹配。');
-      return { ...scope, revision: row.revision, invalidation: row.invalidation };
+      return { ...scope, revision: row.revision, invalidation: row.invalidation,hasRecords:!!row.has_records };
     }
     if (create) this.db.prepare('INSERT INTO long_memory_scopes(id,actor_id,kind,scope_key,realm) VALUES(?,?,?,?,?)')
       .run(scope.id, scope.actorId, scope.kind, scope.key ?? null, scope.realm);
-    return { ...scope, revision: 0, invalidation: 0 };
+    return { ...scope, revision: 0, invalidation: 0,hasRecords:false };
   }
 
   scopes(actorId: string): LongMemoryScopeState[] {
     assertIdentifier(actorId);
-    return (this.db.prepare('SELECT * FROM long_memory_scopes WHERE actor_id=? ORDER BY kind,scope_key,realm,id').all(actorId) as ScopeRow[])
+    return (this.db.prepare('SELECT *,EXISTS(SELECT 1 FROM long_memory_records WHERE scope_id=long_memory_scopes.id) AS has_records FROM long_memory_scopes WHERE actor_id=? ORDER BY kind,scope_key,realm,id').all(actorId) as ScopeRow[])
       .map(row => ({ id: row.id, actorId: row.actor_id, kind: row.kind, ...(row.scope_key ? { key: row.scope_key } : {}),
-        realm: row.realm, revision: row.revision, invalidation: row.invalidation }));
+        realm: row.realm, revision: row.revision, invalidation: row.invalidation,hasRecords:!!row.has_records }));
   }
 
   source(scopeId: string, id: string, version?: number): SourceRow | undefined {
@@ -98,9 +98,10 @@ export class MemoryMutationStore {
     if (input.origin === 'fiction' && scope.realm === 'real') invalid('角色剧情来源必须使用独立剧情域。');
     if (this.tombstoned(scope.id, 'source', input.id)) throw new PlatformStorageError('SOURCE_CHANGED', '这个来源已被删除，不能通过重试或恢复重新写入。');
     if (input.reference) for (const value of Object.values(input.reference)) if (value !== undefined) assertIdentifier(value, 'source reference');
+    if(input.upstream){assertIdentifier(input.upstream.id);if(!Number.isSafeInteger(input.upstream.version)||input.upstream.version<1)invalid('上游来源修订无效。');}
     const value: LongMemorySource = { id: input.id, scopeId: scope.id, version: input.expectedVersion + 1, origin: input.origin,
       text: input.text, recordedAt: input.recordedAt, ...(input.eventAt !== undefined ? { eventAt: input.eventAt } : {}),
-      ...(input.reference ? { reference: input.reference } : {}) };
+      ...(input.reference ? { reference: input.reference } : {}),...(input.upstream?{upstream:input.upstream}:{}) };
     const digest = memoryDigest(value), previous = this.source(scope.id, input.id);
     if (previous?.version === value.version && previous.digest === digest) return { value, changed: false, invalidated: false };
     if ((previous?.version ?? 0) !== input.expectedVersion) throw new PlatformStorageError('REVISION_CONFLICT', '记忆来源已改变，请刷新后重试。');
@@ -154,8 +155,8 @@ export class MemoryMutationStore {
 
   putVector(scope: LongMemoryScope, id: string, version: number, vector: LongMemoryVector): boolean {
     this.state(scope); validateMemoryVector(vector);
-    const row = this.record(scope.id, id);
-    if (!row || row.version !== version || this.tombstoned(scope.id, 'record', id)) return false;
+    const row = this.record(scope.id, id,version);
+    if (!row || this.tombstoned(scope.id, 'record', id)) return false;
     const values = new Float32Array(vector.values);
     this.db.prepare('INSERT OR REPLACE INTO long_memory_vectors VALUES(?,?,?,?)').run(row.row_id, vector.model, vector.dimensions, Buffer.from(values.buffer));
     return true;
@@ -171,15 +172,23 @@ export class MemoryMutationStore {
         WHERE r.scope_id=? AND r.kind<>'summary' AND d.parent_kind='source'
       UNION SELECT 'record',r.id,'record',s.original_id FROM long_memory_supersedes s JOIN long_memory_records r ON r.row_id=s.record_row
         WHERE r.scope_id=? AND ?='delete'
+      UNION SELECT 'source',s.id,'source',json_extract(s.payload,'$.upstream.id') FROM long_memory_sources s
+        WHERE s.scope_id=? AND json_extract(s.payload,'$.upstream.id') IS NOT NULL
     ), affected(kind,id) AS(SELECT ?,? UNION SELECT e.child_kind,e.child_id FROM edges e JOIN affected a ON e.parent_kind=a.kind AND e.parent_id=a.id)
-      SELECT DISTINCT kind,id FROM affected`).all(scope.id,scope.id,scope.id,action,kind,id) as Array<{kind:LongMemoryReference['kind'];id:string}>;
+      SELECT DISTINCT kind,id FROM affected`).all(scope.id,scope.id,scope.id,action,scope.id,kind,id) as Array<{kind:LongMemoryReference['kind'];id:string}>;
   }
 
   purge(scope: LongMemoryScope, kind: LongMemoryReference['kind'], id: string, action: 'delete' | 'retract', at = Date.now()): number {
     const affected=this.impact(scope,kind,id,action);
+    const references=new Map<string,LongMemorySource['reference']>();
+    for(const item of affected)if(item.kind==='source'){
+      const source=JSON.parse(this.source(scope.id,item.id)?.payload??'null') as LongMemorySource|null;
+      if(source?.reference){references.set(source.id,source.reference);if(source.upstream)references.set(source.upstream.id,source.reference);}
+    }
     let removed = 0;
     for (const target of affected) {
-      this.db.prepare('INSERT OR IGNORE INTO long_memory_tombstones VALUES(?,?,?,?,?)').run(scope.id, target.kind, target.id, action, at);
+      const reference=target.kind==='source'?references.get(target.id):undefined;
+      this.db.prepare('INSERT OR IGNORE INTO long_memory_tombstones VALUES(?,?,?,?,?,?)').run(scope.id, target.kind, target.id, action, at,reference?JSON.stringify(reference):null);
       const jobs = this.db.prepare(`SELECT j.payload FROM long_memory_jobs j JOIN long_memory_job_dependencies d
         ON j.scope_id=d.scope_id AND j.id=d.job_id WHERE d.scope_id=? AND d.parent_kind=? AND d.parent_id=?`).all(scope.id, target.kind, target.id) as Array<{ payload: string }>;
       for (const row of jobs) {

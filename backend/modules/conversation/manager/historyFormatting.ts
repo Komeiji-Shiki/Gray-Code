@@ -22,6 +22,10 @@ export function toDisplayMessages(history: ConversationHistory, startIndex = 0):
             turnDynamicContextStrategy,
             foregroundWorkTransition,
             characterTurn,
+            longMemoryInputIds,
+            longMemoryReferences,
+            memoryRedacted,
+            memoryContext,
             ...rest
         } = ensureBackgroundTaskSourceForDisplay(message);
         return { ...JSON.parse(JSON.stringify(rest)), ...(characterTurn ? { characterMode: true } : {}), index: startIndex + index } as Content;

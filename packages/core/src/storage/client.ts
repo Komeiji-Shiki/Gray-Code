@@ -71,11 +71,17 @@ export class PlatformStorage {
   longMemoryTopics(input: StorageOperations['longMemoryTopics']['input']) { return this.request('longMemoryTopics', input); }
   longMemoryRead(input: StorageOperations['longMemoryRead']['input']) { return this.request('longMemoryRead', input); }
   longMemoryRevisions(input: StorageOperations['longMemoryRevisions']['input']) { return this.request('longMemoryRevisions', input); }
+  longMemoryInspect(input: StorageOperations['longMemoryInspect']['input']) { return this.request('longMemoryInspect', input); }
+  longMemorySources(input: StorageOperations['longMemorySources']['input']) {return this.request('longMemorySources',input);}
+  longMemoryRecordVersions(input: StorageOperations['longMemoryRecordVersions']['input']) {return this.request('longMemoryRecordVersions',input);}
   longMemoryImpact(input: StorageOperations['longMemoryImpact']['input']) { return this.request('longMemoryImpact', input); }
+  longMemoryDeletedSources(scopes: StorageOperations['longMemoryDeletedSources']['input']['scopes']) { return this.request('longMemoryDeletedSources', {scopes}); }
+  longMemoryDeletionState(){return this.request('longMemoryDeletionState',undefined);}
   longMemoryVector(input: StorageOperations['longMemoryVector']['input']) { return this.request('longMemoryVector', input); }
   longMemoryExport(scopes: StorageOperations['longMemoryExport']['input']['scopes']) { return this.request('longMemoryExport', { scopes }); }
   longMemoryRestore(input: StorageOperations['longMemoryRestore']['input']) { return this.request('longMemoryRestore', input); }
   longMemoryJobs(input: StorageOperations['longMemoryJobs']['input']) { return this.request('longMemoryJobs', input); }
+  longMemoryJob(input: StorageOperations['longMemoryJob']['input']) {return this.request('longMemoryJob',input);}
   longMemoryEnqueue(input: StorageOperations['longMemoryEnqueue']['input']) { return this.request('longMemoryEnqueue', input); }
   longMemoryJobTransition(input: StorageOperations['longMemoryJobTransition']['input']) { return this.request('longMemoryJobTransition', input); }
   longMemoryJobFinish(input: StorageOperations['longMemoryJobFinish']['input']) { return this.request('longMemoryJobFinish', input); }

@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref,onMounted } from 'vue';
 import type { CharacterResource } from '@graycode/contracts';
 import { call } from '../api';
 import WorldbookEditor from './WorldbookEditor.vue';
+import MemoryLibrary from './MemoryLibrary.vue';
 
 type ResourceRow = Omit<CharacterResource, 'raw' | 'source'> & { revision: number; resolvedReferences?: Record<string, string> };
 const emit = defineEmits<{ close: []; play: [id: string] }>();
+const dialog=ref<HTMLDialogElement>();
+const tab=ref<'resources'|'memory'>('resources');
+const memoryOpened=ref(false);
+const memoryLibrary=ref<{requestClose():boolean}>();
+function requestClose(){if(memoryLibrary.value&&!memoryLibrary.value.requestClose()){tab.value='memory';return;}emit('close');}
+onMounted(()=>dialog.value?.showModal());
 const items = ref<ResourceRow[]>([]);
 const selected = ref<ResourceRow | null>(null);
 const raw = ref<unknown>();
@@ -87,10 +94,11 @@ async function archive() {
 void perform(reload);
 </script>
 <template>
-  <section class="resource-library" aria-label="角色资料库">
-    <header><strong>资料库</strong><span>角色卡 · 世界书 · 正则</span><label class="import-resource" :class="{ disabled: busy }">导入 PNG / JSON<input type="file" accept=".png,.json" multiple :disabled="busy" @change="importFiles"></label><button @click="emit('close')">关闭</button></header>
-    <p v-if="error" class="resource-error">{{ error }}</p>
-    <div class="resource-columns"><aside><input v-model="filter" placeholder="搜索资料名称" aria-label="搜索资料"><p v-if="!items.length" class="resource-hint">导入一张角色卡，内嵌世界书与随卡正则会分别保存并保持绑定。</p>
+  <dialog ref="dialog" class="resource-library" aria-label="资料库" @cancel.prevent="requestClose">
+    <header><strong>资料库</strong><nav aria-label="资料类型"><button :aria-pressed="tab==='resources'" @click="tab='resources'">角色资料</button><button :aria-pressed="tab==='memory'" @click="tab='memory';memoryOpened=true">长期记忆</button></nav><span v-if="tab==='resources'">角色卡 · 世界书 · 正则</span><label v-if="tab==='resources'" class="import-resource" :class="{ disabled: busy }">导入 PNG / JSON<input type="file" accept=".png,.json" multiple :disabled="busy" @change="importFiles"></label><button class="resource-close" @click="requestClose">关闭</button></header>
+    <MemoryLibrary v-if="memoryOpened" v-show="tab==='memory'" ref="memoryLibrary" @close="emit('close')" />
+    <p v-if="tab==='resources'&&error" class="resource-error">{{ error }}</p>
+    <div v-show="tab==='resources'" class="resource-columns"><aside><input v-model="filter" placeholder="搜索资料名称" aria-label="搜索资料"><p v-if="!items.length" class="resource-hint">导入一张角色卡，内嵌世界书与随卡正则会分别保存并保持绑定。</p>
       <button v-for="item in visible" :key="item.id" class="resource-row" :aria-pressed="selected?.id === item.id" :disabled="busy" @click="perform(() => choose(item.id))"><span>{{ kinds[item.kind] }}</span><strong>{{ item.name }}</strong><small v-if="item.bindings.missing.length">{{ item.bindings.missing.length }} 个外部引用待绑定</small></button>
     </aside><main v-if="selected"><div class="resource-heading"><span>{{ kinds[selected.kind] }}</span><code>{{ selected.id }}</code></div>
       <img v-if="previewImage" :src="previewImage" :alt="selected.name" class="character-image"><label>资料名称<input v-model="name"></label>
@@ -104,8 +112,9 @@ void perform(reload);
       <WorldbookEditor v-if="selected.kind === 'worldbook'" :key="selected.id" :raw="raw" :busy="busy" @save="value => perform(() => saveWorldbook(value))" />
       <details><summary>查看当前定义</summary><pre>{{ JSON.stringify(raw, null, 2) }}</pre></details>
     </main><main v-else class="resource-hint">选择资料以查看内容和绑定关系。</main></div>
-  </section>
+  </dialog>
 </template>
 <style scoped>
+.resource-library{margin:0;padding:0;width:auto;height:auto;max-width:none;max-height:none}.resource-library::backdrop{background:#0008}.resource-library>header>nav{display:flex;gap:5px}.resource-library>header>nav>button[aria-pressed="true"]{color:var(--accent);border-bottom:2px solid var(--accent)}.resource-close{margin-left:auto}.resource-library button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .character-image{max-width:200px;max-height:260px;object-fit:contain;display:block;margin-bottom:18px}.resource-library{position:fixed;inset:50px 18px 32px;z-index:60;background:var(--background,#15171b);color:var(--text);border:1px solid var(--border);display:flex;flex-direction:column;box-shadow:0 16px 60px #0008}.resource-library>header{display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--border);padding:14px 18px}.resource-library>header>span{color:var(--muted);font-size:12px}.import-resource{margin-left:auto;cursor:pointer;border:1px solid var(--border);padding:7px 12px}.import-resource input{display:none}.resource-library button,.resource-library input,.resource-library select{font:inherit;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:0;padding:7px 10px}.resource-library button{cursor:pointer}.resource-columns{display:grid;grid-template-columns:260px minmax(0,1fr);flex:1;min-height:0}.resource-columns>aside{border-right:1px solid var(--border)}.resource-columns>aside,.resource-columns>main{overflow:auto;padding:18px}.resource-columns>aside>input{width:100%;box-sizing:border-box;margin-bottom:14px}.resource-row{display:flex;flex-direction:column;gap:7px;width:100%;text-align:left;margin-bottom:8px}.resource-row[aria-pressed="true"]{border-left:3px solid var(--accent)}.resource-row span,.resource-row small{color:var(--muted);font-size:11px}.resource-heading{display:flex;gap:14px;margin-bottom:20px;color:var(--muted);font-size:12px;flex-wrap:wrap}.resource-columns>main>label,.resource-library fieldset>label{display:flex;flex-direction:column;gap:8px;margin:12px 0}.resource-library fieldset{border:1px solid var(--border);margin:22px 0;padding:12px 16px}.resource-library fieldset>label.resource-check{flex-direction:row;align-items:center}.resource-hint{font-size:12px;color:var(--muted);line-height:1.8}.resource-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.resource-library pre{font:12px/1.7 var(--code-font,monospace);white-space:pre-wrap;overflow-wrap:anywhere}.resource-library summary{cursor:pointer}.resource-error{color:#df7474;margin:8px 18px}.disabled{opacity:.5}@media(max-width:650px){.resource-library{inset:80px 4px 24px}.resource-columns{grid-template-columns:150px minmax(0,1fr)}.resource-columns>aside,.resource-columns>main{padding:10px}.resource-library>header{gap:8px;flex-wrap:wrap}.resource-library>header>span{display:none}}
 </style>

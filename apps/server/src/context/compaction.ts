@@ -59,6 +59,7 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
     summarizedMessageCount: full.filter(message => message !== first && !message.isSummary).length,
     summaryTokenStats: algorithms.buildSummaryTokenStats({ fullHistory: full.filter(message => !message.isSummarized),
       messagesToSummarize: covered, summaryText: text, channelType }), index: full.length };
+  if(method==='notes')(summary as PlatformMessage).longMemoryInputIds=[];
   const messages = structuredClone(full);
   for (const message of messages) if (ids.has(message.id!)) message.isSummarized = true;
   messages.push(summary);
@@ -109,7 +110,8 @@ export async function summarizeFullContext(app: PlatformApplication, frame: Capt
   const config = await app.product.channel(prefix.providerId);
   if (!config?.enabled) throw new Error('当前会话的模型渠道不存在或已禁用。');
   const settings = app.product.runtimeSettings().getSummarizeConfig();
-  const source = activeContextHistory(frame.state.history.messages, config);
+  const filtered = await app.longMemoryPrompt.history.prepare(prefix.taskContext?.actor.id??String(frame.state.metadata.actorId),frame.state.metadata.id,frame.state.history.messages);
+  const source = activeContextHistory(filtered.messages, config);
   if (!source.some(message => message.role === 'model' || message.parts.some(part => part.functionResponse))) throw new Error('当前没有可总结的助手回复或工具结果。');
   const prompt = [(automatic ? settings.autoSummarizePrompt : settings.summarizePrompt).trim(),
     '现在暂停处理任务，仅总结上面的完整对话。保留最新用户要求、所有仍生效的约束、关键事实、已经完成和未完成的工作，以及继续所需的准确路径和标识。',
@@ -120,5 +122,8 @@ export async function summarizeFullContext(app: PlatformApplication, frame: Capt
   signal.throwIfAborted();
   const text = response.parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('\n').trim();
   if (text.length < MIN_SUMMARY_LENGTH || response.parts.some(part => part.functionCall)) throw new Error('总结内容过短或包含工具调用，原上下文保持不变。');
-  return applyContextBoundary(frame, text, 'summary', automatic, config.type);
+  const result=await applyContextBoundary(frame, text, 'summary', automatic, config.type);
+  const summary=frame.state.history.messages.find(message=>message.id===result.summaryContent.id)!;
+  summary.longMemoryInputIds=source.filter(message=>!message.memoryRedacted).map(message=>message.id!);
+  return result;
 }

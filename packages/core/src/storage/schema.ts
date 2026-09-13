@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { PlatformStorageError } from '../errors';
 import { LONG_MEMORY_SCHEMA } from './longMemory/schema';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 const APPLICATION_ID = 0x47524350;
 
 /** One connection owns writes and collection; callers access it through the storage worker. */
@@ -63,6 +63,7 @@ export function openDatabase(file: string): SqliteConnection {
         if (version < 3) db.exec(SETTINGS_SCHEMA);
         if (version < 4) db.exec(MEMORY_SCHEMA);
         if (version < 5) db.exec(LONG_MEMORY_SCHEMA);
+        if (version === 5) db.exec('ALTER TABLE long_memory_tombstones ADD COLUMN reference TEXT;');
         if (version < SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
     }

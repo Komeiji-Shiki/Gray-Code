@@ -14,7 +14,9 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
     const run = await app.storage.getRun(context.runId);
     if (!run || run.conversationId !== id || run.actorId !== context.actorId) throw new Error('不能访问其他会话的上下文。');
     context.signal.throwIfAborted();
-    return { id, state: await app.storage.readConversationState(id) };
+    const state=await app.storage.readConversationState(id);
+    const view=await app.longMemoryPrompt.history.prepare(context.actorId,id,state.history.messages);
+    return { id,state,view };
   };
   const visible = (message: PlatformMessage) => message.parts.map(part => {
     if (typeof part.text === 'string') return part.text;
@@ -31,7 +33,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         parameters: schema({ action: { type: 'string', enum: ['list', 'read', 'write', 'append'] }, name: { type: 'string', minLength: 1, maxLength: 120 }, text: { type: 'string', maxLength: 100000 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20000 } }, ['action']) },
       effects: () => [],
       execute: async (args, context) => {
-        const { id, state } = await scope(context);
+        const { id, state,view } = await scope(context);
         if (args.action === 'list') {
           const keys = await app.storage.listRecords('context-notes', id);
           return { success: true, notes: keys.map(key => ({ name: JSON.parse(key)[1] as string })) };
@@ -40,13 +42,16 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         const key = noteKey(id, args.name);
         const previous = await app.storage.getVersionedRecord('context-notes', key);
         const note = previous.value as WorkingNote | null;
+        const invalidated=!!note?.sourceMessageId&&view.blockedIds.has(note.sourceMessageId);
         if (args.action === 'read') {
           if (!note) throw new Error('这份笔记不存在。');
+          if(invalidated)return {success:true,name:args.name,text:'这份笔记引用了已删除的记忆，请根据仍有效的来源重新整理。',invalidated:true};
           const offset = Number(args.offset ?? 0), limit = Number(args.limit ?? 12000);
           return { success: true, name: args.name, text: note.text.slice(offset, offset + limit), totalChars: note.text.length,
             truncated: offset + limit < note.text.length, updatedAt: note.updatedAt, sourceMessageId: note.sourceMessageId };
         }
         if (typeof args.text !== 'string' || !args.text.trim()) throw new Error('笔记内容不能为空。');
+        if(args.action==='append'&&invalidated)throw new Error('这份笔记已失效，请使用 write 从有效来源重新整理。');
         const text = args.action === 'append' ? (note?.text ?? '') + args.text : args.text;
         if (text.length > 100000) throw new Error('每份工作笔记最多十万字符，请拆成多份笔记。');
         context.signal.throwIfAborted();
@@ -60,9 +65,9 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         parameters: schema({ action: { type: 'string', enum: ['windows', 'list', 'search', 'read'] }, windowId: { type: 'string' }, messageId: { type: 'string' }, query: { type: 'string', minLength: 1, maxLength: 1000 }, beforeId: { type: 'string' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20000 }, includeAttachments: { type: 'boolean', description: 'For read only: return original image attachments when needed; omitted by default to keep context small.' } }, ['action']) },
       effects: () => [],
       execute: async (args, context) => {
-        const { state } = await scope(context);
+        const { state,view } = await scope(context);
         let windowId = 'initial';
-        const items = state.history.messages.map(message => {
+        const items = view.messages.map(message => {
           if (typeof message.contextWindowId === 'string') windowId = message.contextWindowId;
           return { message, windowId };
         });

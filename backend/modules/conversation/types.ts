@@ -81,6 +81,11 @@ export interface ChannelTokenCounts {
  * Gemini API 的标准消息格式
  */
 export interface Content {
+    /** 宿主内部的记忆来源追踪，不发送给界面或供应方。 */
+    longMemoryInputIds?: string[];
+    longMemoryReferences?: Array<{ scopeId: string; id: string; version: number }>;
+    memoryRedacted?: boolean;
+    memoryContext?: boolean;
     /** 预设中的临时消息位置，不作为模型接口字段发送。 */
     promptAnchor?: { messageId?: string; edge: 'before' | 'after'; order: number };
     characterTurn?: unknown;

@@ -4,6 +4,9 @@ import { configuredAgent } from './settings/agent';
 import { actorForBotRun, resolveBotGuestActor } from './bots/permissions';
 import { resolveBotAgent } from './bots/profiles';
 import { canReadBotConversation } from './bots/channelAccess';
+import { PlatformLongMemory } from './memory/longTerm/service';
+import { LongMemoryPrompt } from './memory/longTerm/prompt';
+import { longMemoryTools } from './memory/longTerm/tools';
 import { BotWorkspaces } from './bots/workspaces';
 import { ConversationWorkspaces } from './workspace/conversationWorkspaces';
 import { pathToFileURL } from 'node:url';
@@ -121,6 +124,8 @@ export class PlatformApplication {
   readonly git: WorkspaceGit;
   readonly workspaceSearch: WorkspaceSearch;
   readonly memory: PlatformMemory;
+  readonly longMemory: PlatformLongMemory;
+  readonly longMemoryPrompt: LongMemoryPrompt;
   readonly skills: PlatformSkills;
   readonly languages: LanguageServices;
   readonly debugging: DebugServices;
@@ -227,6 +232,9 @@ export class PlatformApplication {
     this.tools.register(this.skills.tool());
     this.memory = new PlatformMemory(this);
     for (const tool of this.memory.declarations()) this.tools.register(tool);
+    this.longMemory=new PlatformLongMemory(this);
+    this.longMemoryPrompt=new LongMemoryPrompt(this.longMemory);
+    for(const tool of longMemoryTools(this.longMemory))this.tools.register(tool);
     setProductVersionResolver(() => packageMetadata.version);
     this.mcp = new PlatformMcpService(this);
     this.modelAdapter = new ProviderModelAdapter({
@@ -257,16 +265,22 @@ export class PlatformApplication {
       currentAutomationId: () => this.automations.meter.currentId(),
       runInScope: (run, execute) => this.automations.meter.run(run, execute),
       prepareModel: async input => {
-        const prepared = await this.context.prepare(input);
+        const view=await this.longMemoryPrompt.history.prepare(input.run.actorId,input.run.conversationId,input.history.history.messages);
+        const memory=await this.longMemoryPrompt.capture({...input,history:{...input.history,history:{...input.history.history,messages:view.messages}}});
+        const prepared = await this.context.prepare(input,false,memory.text,view.filter);
         prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
+        prepared.messages=this.longMemoryPrompt.inject(view.filter(prepared.messages),memory,input.input,view.filter(prepared.history.history.messages));
         return prepared;
       },
       previewModel: async input => {
-        const prepared = await this.context.prepare(input, true);
+        const view=await this.longMemoryPrompt.history.prepare(input.run.actorId,input.run.conversationId,input.history.history.messages,input.history.metadata);
+        const memory=await this.longMemoryPrompt.capture({...input,history:{...input.history,history:{...input.history.history,messages:view.messages}}},true);
+        const prepared = await this.context.prepare(input, true,memory.text,view.filter);
         prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
+        prepared.messages=this.longMemoryPrompt.inject(view.filter(prepared.messages),memory,input.input,view.filter(prepared.history.history.messages));
         return prepared;
       },
-      transformOutput: input => this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),
+      transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),
       beforeRun: async (run, workspace, signal) => { await this.artifacts.beforeRun(run); await this.checkpointLifecycle.beforeRun(run, workspace, signal); },
       modelBoundary: async (run, workspace, signal, phase, iteration, message) => {
         if (phase === 'before') await this.subagents.boundary(run, signal);
@@ -347,6 +361,7 @@ export class PlatformApplication {
     this.runtime.subscribe((event) => {
       if (event.type === 'event') void storage.getRun(event.event.runId).then(run => run && this.activity.pulse(run.actorId)).catch(() => {});
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed'].includes(event.event.type)) this.checkpointLifecycle.clear(event.event.runId);
+      if(event.type==='event'&&event.event.type==='run.completed')this.longMemory.background.afterRun(event.event.runId);
       this.notify(event as unknown as Record<string, unknown>);
     });
     this.discord = new DiscordBotService(this, options.discordGateway);
@@ -384,6 +399,7 @@ export class PlatformApplication {
       await application.terminals.initialize();
       await application.subagents.feedback.initialize();
       await application.automations.initialize();
+      await application.longMemory.background.initialize();
       return application;
     } catch (error) {
       await storage.close();
@@ -505,6 +521,7 @@ export class PlatformApplication {
     await this.subagents.close();
     await this.context.close();
     await this.runtime.close();
+    await this.longMemory.close();
     await this.fileActions.close();
     this.browser?.close();
     await this.characterPipeline.close();

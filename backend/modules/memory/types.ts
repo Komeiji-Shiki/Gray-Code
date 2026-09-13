@@ -16,6 +16,7 @@ export const MEMORY_TOOL_NAMES = [
 ] as const;
 
 const MEMORY_TOOL_NAME_SET = new Set<string>(MEMORY_TOOL_NAMES);
+for(const name of ['memory_topics','memory_search','memory_read','memory_remember','memory_revise','memory_remove','memory_summarize'])MEMORY_TOOL_NAME_SET.add(name);
 
 export function isMemoryToolName(toolName: string): boolean {
     return MEMORY_TOOL_NAME_SET.has(toolName);
@@ -138,4 +139,3 @@ export const TREE_REC = 288;
 
 /** 最多直接从原始日志压缩的记忆条数 */
 export const RAW_MAX = 16;
-

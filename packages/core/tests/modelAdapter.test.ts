@@ -60,6 +60,13 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(requests[0].body).toEqual(preview.body); expect(credential).toHaveBeenCalledTimes(1);
   });
 
+  test('独立整理预算覆盖自定义正文，保持日常渠道原值',async()=>{
+    profile.customBody={max_completion_tokens:9999};
+    const request={...input(),purpose:'memory' as const,maxOutputTokens:256};
+    await adapter.generate(request);expect(requests[0].body.max_completion_tokens).toBe(256);
+    expect(profile.generation.maxOutputTokens).toBe(123);expect(profile.customBody.max_completion_tokens).toBe(9999);
+  });
+
   test('图片上限在视觉预处理前生效，最终 HTTP 和提示词预览保留相同的最近图片', async () => {
     profile.capabilities.compatibility.deepSeekVision = true;
     const request = input();

@@ -44,10 +44,18 @@ export class MemoryQueries {
         JOIN invalid_rows bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record'
     ), eligible AS (
       SELECT r.* FROM visible r WHERE NOT EXISTS(SELECT 1 FROM invalid_rows bad WHERE bad.row_id=r.row_id)
+    ), unconfirmed_rows(row_id) AS (
+      SELECT row_id FROM eligible WHERE kind<>'summary' AND confidence<>'confirmed'
+      UNION SELECT r.row_id FROM eligible r JOIN long_memory_dependencies d ON d.record_row=r.row_id
+        JOIN long_memory_sources s ON s.scope_id=r.scope_id AND s.id=d.parent_id AND s.version=d.parent_version
+        WHERE d.parent_kind='source' AND json_extract(s.payload,'$.origin') IN('model','import')
+      UNION SELECT d.record_row FROM long_memory_dependencies d JOIN eligible parent
+        ON parent.scope_id=d.scope_id AND parent.id=d.parent_id AND parent.version=d.parent_version
+        JOIN unconfirmed_rows bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record'
     )`;
     const parameters: Array<string | number> = [...query.scopes.map(scope => scope.id), query.knownAt, query.asOf, query.knownAt, query.asOf, query.asOf, query.knownAt, query.knownAt];
     const conditions: string[] = [], filters: Array<string | number> = [];
-    if (query.confirmedOnly) conditions.push("r.confidence='confirmed'");
+    if (query.confirmedOnly) conditions.push(query.includeSummaries?"(r.confidence='confirmed' OR (r.kind='summary' AND NOT EXISTS(SELECT 1 FROM unconfirmed_rows bad WHERE bad.row_id=r.row_id)))":"r.confidence='confirmed'");
     if (query.kinds?.length) { conditions.push(`r.kind IN(${query.kinds.map(() => '?').join(',')})`); filters.push(...query.kinds); }
     for (let i = 0; i < (query.topic?.length ?? 0); i++) { conditions.push(`json_extract(r.topic,'$[${i}]')=?`); filters.push(query.topic![i]); }
     return { cte, parameters, filter: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', filters };
@@ -56,7 +64,7 @@ export class MemoryQueries {
   recall(query: LongMemoryQuery): LongMemoryRecall {
     const { cte, parameters, filter, filters } = this.plan(query);
     const db = this.store.db, terms = [...new Set(memoryTerms(query.text ?? ''))].slice(0,64);
-    const candidateLimit = Math.max(40, query.limit);
+    const candidateLimit = Math.max(40, query.limit)+1;
     let lexical: Array<RecordRow & { score: number }> = [];
     if (terms.length) {
       const match = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
@@ -153,5 +161,29 @@ export class MemoryQueries {
     this.store.state(scope);
     return (this.store.db.prepare('SELECT payload FROM long_memory_records WHERE scope_id=? AND id=? ORDER BY version DESC LIMIT 100').all(scope.id,id) as Array<{payload:string}>)
       .map(row=>JSON.parse(row.payload) as LongMemoryRecord);
+  }
+  sources(scope:LongMemoryScope,references:Array<{id:string;version:number}>):LongMemorySource[]{
+    this.store.state(scope);if(!Array.isArray(references)||references.length>256)invalid('来源读取批次过大。');
+    return references.flatMap(ref=>{
+      const row=this.store.source(scope.id,ref.id);return row?.version===ref.version?[JSON.parse(row.payload) as LongMemorySource]:[];
+    });
+  }
+  recordVersions(scope:LongMemoryScope,references:Array<{id:string;version?:number}>):LongMemoryRecord[]{
+    this.store.state(scope);if(!Array.isArray(references)||references.length>256)invalid('记忆版本读取批次过大。');
+    return references.flatMap(ref=>{const row=this.store.record(scope.id,ref.id,ref.version);return row?[JSON.parse(row.payload) as LongMemoryRecord]:[];});
+  }
+  inspect(scope:LongMemoryScope,id:string):{revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number}{
+    const revisions=this.revisions(scope,id),sources=new Map<string,LongMemorySource>(),parents=new Map<string,LongMemoryRecord>();
+    for(const revision of revisions)for(const ref of revision.dependencies){
+      const key=JSON.stringify(ref);
+      if(ref.kind==='source'){
+        const row=this.store.source(scope.id,ref.id,ref.version);if(row)sources.set(key,JSON.parse(row.payload));
+      }else{
+        const row=this.store.record(scope.id,ref.id,ref.version);if(row)parents.set(key,JSON.parse(row.payload));
+      }
+    }
+    const now=Date.now(),{cte,parameters}=this.plan({scopes:[scope],asOf:now,knownAt:now,limit:1,tokenBudget:256});
+    const active=this.store.db.prepare(`${cte} SELECT version FROM eligible WHERE scope_id=? AND id=?`).get(...parameters,scope.id,id) as {version:number}|undefined;
+    return {revisions,sources:[...sources.values()],parents:[...parents.values()],activeVersion:active?.version};
   }
 }

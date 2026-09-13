@@ -98,6 +98,23 @@ describe('application data backup and restore', () => {
     expect((await fs.readdir(f.root)).some(name => name.startsWith('.graycode-restored-'))).toBe(false);
   });
 
+  test('旧整库备份不能复活已忘记内容，准备恢复之后的删除也会保留',async()=>{
+    const scope={id:'backup-memory-scope',actorId:'owner',kind:'personal' as const,realm:'real'},at=Date.now();
+    await f.store.longMemoryWrite({scope,sources:[{id:'backup-source',expectedVersion:0,origin:'user',text:'仅用于恢复验证的临时记忆。',recordedAt:at}],records:[{
+      id:'backup-fact',expectedVersion:0,kind:'fact',origin:'user',confidence:'confirmed',subject:'fixture',text:'仅用于恢复验证的临时记忆。',topic:['测试'],entities:[],recordedAt:at,validFrom:at,
+      dependencies:[{kind:'source',id:'backup-source',version:1}],supersedes:[]}]});
+    const backups=new ApplicationBackups(f.store,{appVersion:'2.0.0-pre',secretCodec:codec('device'),notify(){}});
+    const file=path.join(f.root,'memory.graycode-backup');await backups.export(file);
+    await backups.prepareRestore(file);
+    await f.store.longMemoryWrite({scope,remove:[{kind:'record',id:'backup-fact',expectedVersion:1,action:'delete'}]});
+    const before=await f.store.longMemoryDeletionState();
+    await backups.restore.confirm();await f.store.close();await new BackupRestoreState(f.data).apply();
+    f.store=await PlatformStorage.open(f.data);
+    const archive=await f.store.longMemoryExport([scope]);expect(archive.records).toEqual([]);expect(archive.sources).toEqual([]);
+    expect(archive.tombstones.find(item=>item.id==='backup-fact')?.at).toBe(before.tombstones.find(item=>item.id==='backup-fact')?.at);
+    expect((await f.store.verify()).ok).toBe(true);
+  });
+
   test('cancelling a backup leaves an existing destination and the running database intact', async () => {
     await f.store.createConversation(metadata('alpha'));
     const destination = path.join(f.root, 'existing.graycode-backup'); await fs.writeFile(destination, 'previous backup');

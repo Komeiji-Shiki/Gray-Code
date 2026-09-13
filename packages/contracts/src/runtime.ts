@@ -97,7 +97,7 @@ export interface ApprovalRequest {
 }
 export interface ModelInput {
   /** 仅标注内部请求用途，不改变渠道、模型、工具或缓存标识。 */
-  purpose?: 'summary';
+  purpose?: 'summary' | 'memory';
   /** 核心捕获的回合资料，供应方适配器不直接发送此对象。 */
   turnContext?: Record<string, unknown>;
   /** 在供应方格式化完成后捕获请求正文；不包含认证请求头。 */
@@ -107,6 +107,8 @@ export interface ModelInput {
   providerId: string;
   modelOverride?: string;
   reasoningEffort?: string;
+  /** 宿主内部任务的独立输出预算，不修改已保存的渠道设置。 */
+  maxOutputTokens?: number;
   taskContext?: { actor: Pick<ActorIdentity, 'id' | 'displayName' | 'role'>; workspace?: WorkspaceDefinition };
   systemPrompt: string;
   messages: PlatformMessage[];

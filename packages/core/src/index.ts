@@ -16,6 +16,7 @@ export type {
 } from '@graycode/contracts';
 
 export type * from './storage/memoryTypes';
+export {memoryTokens as estimateMemoryTokens} from './storage/longMemory/text';
 
 export { readCharacterFile, identifyCharacterResource, readCharacterDefinition, readRegexRules, readWorldbook } from './characters/import';
 

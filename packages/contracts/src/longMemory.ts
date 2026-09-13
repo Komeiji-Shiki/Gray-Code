@@ -6,12 +6,14 @@ export type LongMemoryConfidence = 'confirmed' | 'inferred' | 'disputed';
 export interface LongMemoryScope {
   id: string; actorId: string; kind: 'personal' | 'workspace' | 'group'; key?: string; realm: string;
 }
-export interface LongMemoryScopeState extends LongMemoryScope { revision: number; invalidation: number }
+export interface LongMemoryScopeState extends LongMemoryScope { revision: number; invalidation: number; hasRecords?:boolean }
 export interface LongMemoryReference { kind: 'source' | 'record'; id: string; version: number }
 export interface LongMemorySource {
   id: string; version: number; scopeId: string; origin: LongMemoryOrigin; text: string;
   recordedAt: number; eventAt?: number;
-  reference?: { conversationId?: string; messageId?: string; toolCallId?: string; resourceId?: string; label?: string };
+  /** 后台提取输入的稳定引用；摘录可独立删除，并阻止旧输入再次生成该内容。 */
+  upstream?:{id:string;version:number};
+  reference?: { conversationId?: string; messageId?: string; toolCallId?: string; resourceId?: string; speakerActorId?: string; label?: string };
 }
 export interface LongMemoryRecord {
   id: string; version: number; scopeId: string; kind: LongMemoryKind; origin: LongMemoryOrigin;
@@ -32,7 +34,7 @@ export interface LongMemoryWriteResult {
 }
 export interface LongMemoryQuery {
   scopes: LongMemoryScope[]; text?: string; topic?: string[]; kinds?: LongMemoryKind[];
-  asOf: number; knownAt: number; confirmedOnly?: boolean;
+  asOf: number; knownAt: number; confirmedOnly?: boolean; includeSummaries?:boolean;
   limit: number; tokenBudget: number; vector?: LongMemoryVector;
 }
 export interface LongMemoryHit {
@@ -55,6 +57,8 @@ export interface LongMemoryReadResult {
 }
 export interface LongMemoryTombstone {
   scopeId: string; kind: 'source' | 'record'; id: string; action: 'delete' | 'retract'; at: number;
+  /** 只保留原消息定位，不保留被删除摘录。用于阻止历史工具或摘要再次发送旧内容。 */
+  reference?: LongMemorySource['reference'];
 }
 export interface LongMemoryArchive {
   format: 'graycode-long-memory'; version: 1; createdAt: number; scopes: LongMemoryScopeState[];
@@ -64,11 +68,14 @@ export interface LongMemoryJob {
   id: string; scopeId: string; kind: 'extract' | 'summarize' | 'embed';
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   dependencies: LongMemoryReference[]; providerId: string; model?: string;
+  actorId?: string; conversationId?: string;
+  topic?:string[];targetId?:string;expectedVersion?:number;
   createdAt: number; updatedAt: number; attempts: number; error?: string;
-  usage?: { input?: number; output?: number; thoughts?: number; cacheRead?: number; total?: number };
+  usage?: { input?: number; output?: number; thoughts?: number; cacheRead?: number; total?: number;servedModel?:string;elapsedMs?:number };
 }
 export interface LongMemoryPolicy {
   enabled: boolean; automaticExtraction: boolean; providerId?: string; model?: string;
+  automaticScopes?: Array<LongMemoryScope['kind']>;
   recallTokens: number; recallLimit: number; extractionOutputTokens: number;
-  embedding?: { url: string; model: string; credentialRef?: string; dimensions?: number };
+  embedding?: { url: string; model: string; credentialRef?: string; dimensions?: number; queryPrefix?:string;documentPrefix?:string };
 }

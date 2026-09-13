@@ -37,8 +37,12 @@ export class ProviderModelAdapter implements ModelProvider {
   }
   private async prepare(input: ModelInput, authenticate: boolean) {
     input.signal.throwIfAborted();
-    const profile = await this.services.profile(input.providerId);
+    let profile = await this.services.profile(input.providerId);
     if (!profile) throw new Error("Provider is not configured.");
+    if(input.maxOutputTokens!==undefined){
+      if(!Number.isSafeInteger(input.maxOutputTokens)||input.maxOutputTokens<1)throw new Error('请求输出预算无效。');
+      profile={...profile,generation:{...profile.generation,maxOutputTokens:input.maxOutputTokens}};
+    }
     const secret = authenticate && profile.credentialRef
       ? await this.services.credential(profile.credentialRef)
       : "";
@@ -49,6 +53,8 @@ export class ProviderModelAdapter implements ModelProvider {
     const config = channel ? { ...channel, apiKey: secret, model: input.modelOverride ?? channel.model,
       systemInstruction: input.systemPrompt,
       ...(input.reasoningEffort ? overrideChannelReasoning(channel, input.reasoningEffort) : {}),
+      ...(input.maxOutputTokens!==undefined?{options:{...channel.options,max_tokens:input.maxOutputTokens,max_output_tokens:input.maxOutputTokens,maxOutputTokens:input.maxOutputTokens},
+        optionsEnabled:{...channel.optionsEnabled,max_tokens:true,max_output_tokens:true,maxOutputTokens:true}}:{}),
     } as ChannelConfig : overrides;
     if (!config.model?.trim()) throw new Error(`渠道「${profile.name || profile.id}」尚未选择模型，请在输入栏选择模型后发送。`);
     const capabilities = resolveCapabilities(profile, config.model);
@@ -106,6 +112,17 @@ export class ProviderModelAdapter implements ModelProvider {
       input,
       request,
     );
+    // 内部整理的预算最后应用，不能被渠道中的自定义正文悄悄放大。
+    if(input.maxOutputTokens!==undefined){
+      const body=options.body as Record<string,any>,limit=input.maxOutputTokens;
+      if(profile.protocol==='gemini')body.generationConfig={...body.generationConfig,maxOutputTokens:limit};
+      else if(profile.protocol==='gemini-interactions')body.generation_config={...body.generation_config,max_output_tokens:limit};
+      else{
+        const field=capabilities.outputTokenParameter!=='protocol_default'?capabilities.outputTokenParameter:profile.protocol==='openai-responses'?'max_output_tokens':'max_tokens';
+        for(const name of ['max_tokens','max_completion_tokens','max_output_tokens'])delete body[name];
+        body[field]=limit;
+      }
+    }
     return { profile, config, formatter, options };
   }
   /** 使用真实协议格式器生成正文；预览不读取凭据，也不执行 HTTP 请求。 */

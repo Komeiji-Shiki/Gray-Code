@@ -28,7 +28,7 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
       let changed = false;
       const requireId = (requested: string) => { if (requested !== id) throw new Error('不能访问其他对话。'); context.signal.throwIfAborted(); };
       const conversationStore: NonNullable<LegacyToolContext['conversationStore']> = {
-        getHistory: async requested => { requireId(requested); return structuredClone(state.history.messages); },
+        getHistory: async requested => { requireId(requested); return structuredClone((await app.longMemoryPrompt.history.prepare(context.actorId,id,state.history.messages)).messages); },
         getCustomMetadata: async (requested, key) => { requireId(requested); return structuredClone((state.metadata.custom as Record<string, unknown> | undefined)?.[key]); },
         setCustomMetadata: async (requested, key, value) => {
           requireId(requested);

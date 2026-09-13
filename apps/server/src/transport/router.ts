@@ -1,5 +1,6 @@
 import { gitRequest } from './git';
 import { debugRequest } from './debugging';
+import { longMemoryRequest } from './longMemory';
 import { workspaceDirectoryKey } from '../workspace/identity';
 import { ProjectNavigation } from '../conversations/projects';
 import type { PlatformApplication } from "../application";
@@ -21,6 +22,7 @@ export class ApplicationRouter {
     if (!app.actor(session.actorId)) throw new Error("Account is unavailable.");
     if (method.startsWith('git.')) return gitRequest(app, session, method, params);
     if (method.startsWith('debug.')) return debugRequest(app, session, method, params);
+    if (method.startsWith('memory.')) return longMemoryRequest(app, session, method, params);
     if (method.startsWith('automations.')) {
       switch (method) {
         case 'automations.options': return app.automations.options(session.actorId, params.conversationId);

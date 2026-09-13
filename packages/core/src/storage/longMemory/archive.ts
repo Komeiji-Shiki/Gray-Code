@@ -9,9 +9,12 @@ export class MemoryArchive {
     if(!scopes.length||scopes.some(scope=>scope.actorId!==scopes[0].actorId))invalid('只能导出同一账号的记忆。');
     const states=scopes.map(scope=>this.store.state(scope));
     const placeholders=scopes.map(()=>'?').join(','),ids=scopes.map(scope=>scope.id);
-    const sources=(this.store.db.prepare(`SELECT payload FROM long_memory_sources WHERE scope_id IN(${placeholders}) ORDER BY scope_id,id,version`).all(...ids) as Array<{payload:string}>).map(row=>JSON.parse(row.payload) as LongMemorySource);
+    const sources=(this.store.db.prepare(`SELECT s.payload FROM long_memory_sources s WHERE s.scope_id IN(${placeholders}) AND EXISTS(
+      SELECT 1 FROM long_memory_dependencies d WHERE d.scope_id=s.scope_id AND d.parent_kind='source' AND d.parent_id=s.id AND d.parent_version=s.version)
+      ORDER BY s.scope_id,s.id,s.version`).all(...ids) as Array<{payload:string}>).map(row=>JSON.parse(row.payload) as LongMemorySource);
     const records=(this.store.db.prepare(`SELECT payload FROM long_memory_records WHERE scope_id IN(${placeholders}) ORDER BY recorded_at,version,id`).all(...ids) as Array<{payload:string}>).map(row=>JSON.parse(row.payload) as LongMemoryRecord);
-    const tombstones=(this.store.db.prepare(`SELECT scope_id AS scopeId,kind,id,action,created_at AS at FROM long_memory_tombstones WHERE scope_id IN(${placeholders}) ORDER BY scope_id,kind,id`).all(...ids) as LongMemoryTombstone[]);
+    const tombstones=(this.store.db.prepare(`SELECT scope_id AS scopeId,kind,id,action,created_at AS at,reference FROM long_memory_tombstones WHERE scope_id IN(${placeholders}) ORDER BY scope_id,kind,id`).all(...ids) as Array<Omit<LongMemoryTombstone,'reference'>&{reference:string|null}>)
+      .map(({reference,...row})=>({...row,...reference?{reference:JSON.parse(reference)}:{}}));
     return {format:'graycode-long-memory',version:1,createdAt:Date.now(),scopes:states,sources,records,tombstones};
   }
   restore(actorId: string, archive: LongMemoryArchive): { sources: number; records: number; skipped: number; tombstones: number } {
@@ -28,6 +31,12 @@ export class MemoryArchive {
         const scope=scopeFor(tomb.scopeId);
         if(!['source','record'].includes(tomb.kind)||!['delete','retract'].includes(tomb.action)||!Number.isFinite(tomb.at))invalid('归档删除标记无效。');
         const written=this.store.write({scope,remove:[{kind:tomb.kind,id:tomb.id,action:tomb.action}]});
+        this.store.db.prepare('UPDATE long_memory_tombstones SET created_at=min(created_at,?) WHERE scope_id=? AND kind=? AND id=?').run(tomb.at,scope.id,tomb.kind,tomb.id);
+        if(tomb.reference){
+          for(const value of Object.values(tomb.reference))if(typeof value!=='string'||value.length>512)invalid('归档的删除来源定位无效。');
+          this.store.db.prepare('UPDATE long_memory_tombstones SET reference=coalesce(reference,?) WHERE scope_id=? AND kind=? AND id=?')
+            .run(JSON.stringify(tomb.reference),scope.id,tomb.kind,tomb.id);
+        }
         if(written.state.invalidation)result.tombstones++;
       }
       for(const source of [...archive.sources].sort((a,b)=>a.version-b.version)){

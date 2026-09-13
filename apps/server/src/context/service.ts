@@ -54,7 +54,7 @@ export class PlatformContextService {
     frame.dirty = false;
     this.app.productUi.conversations.clearMetadataCache();
   }
-  async prepare(context: ModelRequestContext, preview = false) {
+  async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     const { run, input } = context;
     let config = await this.app.product.channel(input.providerId);
     if (!config) return { history: context.history, messages: input.messages };
@@ -65,7 +65,7 @@ export class PlatformContextService {
     if (management.bot?.method && management.bot.method !== 'time') config = { ...config,
       contextManagementEnabled: management.bot.enabled, contextManagementMode: 'summarize' };
     const settings = this.app.product.runtimeSettings();
-    const frame = new CapturedContext(context.history);
+    const frame = new CapturedContext(context.history, filterHistory);
     const notices: string[] = [];
     const commit = (snapshot = false) => preview ? Promise.resolve() : this.commit(frame, run.id, snapshot);
     const event = (type: RunEvent['type'], payload: Record<string, unknown>) => preview ? Promise.resolve() : this.event(run.id, type, payload);
@@ -85,7 +85,7 @@ export class PlatformContextService {
     const estimator = new TokenEstimationService(frame.store, new TokenCountService(settings.getEffectiveProxyUrl()), preview ? undefined : settings);
     const options = this.builder.buildHistoryOptions(config);
     const promptText = [...input.promptContext?.beforeHistoryMessages ?? [], ...input.promptContext?.afterHistoryMessages ?? []]
-      .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
+      .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n') + additionalContextText;
     const fixedSystem = [input.systemPrompt, JSON.stringify(input.tools), JSON.stringify(input.taskContext ?? {})].join('\n');
     const evaluate = (advance: boolean) => getHistoryWithContextTrimInfo({ conversationManager: frame.store,
       promptManager: { getSystemPrompt: () => fixedSystem, getDynamicContextText: () => promptText },
@@ -100,7 +100,7 @@ export class PlatformContextService {
     if (!resolveContextManagementPolicy(config).enabled) { turn.fallback = false; turn.fallbackStart = undefined; }
     if (overflow && resolveContextManagementPolicy(config).enabled && context.iteration > 1) info = await evaluate(true);
     const policy = resolveContextManagementPolicy(config);
-    const active = () => activeContextHistory(frame.state.history.messages, config);
+    const active = () => activeContextHistory(filterHistory?.(frame.state.history.messages)??frame.state.history.messages, config);
     const activeTokens = active().reduce((total, message) => total + this.localTokens.estimateMessageTokens(message as Content), fixedTokens);
     const threshold = calculateContextThreshold(config.contextThreshold ?? '80%', resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens);
     const shouldCompact = policy.enabled && policy.mode === 'summarize' && (info.needsAutoSummarize || activeTokens > threshold);
@@ -160,7 +160,8 @@ export class PlatformContextService {
   private async summarizeTimed(frame: CapturedContext, providerId: string, modelOverride: string | undefined, signal: AbortSignal, mode: 'auto' | 'manual', override?: BotAutoSummarySettings): Promise<SummaryResult> {
     signal.throwIfAborted();
     const settings = this.app.product.runtimeSettings().getSummarizeConfig();
-    const full = frame.state.history.messages as Content[];
+    const filtered = await this.app.longMemoryPrompt.history.prepare(String(frame.state.metadata.actorId),frame.state.metadata.id,frame.state.history.messages);
+    const full = filtered.messages as Content[];
     const lastSummary = findLastSummaryIndex(full);
     const start = lastSummary + 1;
     const candidates = full.slice(start).filter(message => !message.isSummarized);
@@ -204,12 +205,13 @@ export class PlatformContextService {
       summarizedMessageCount: this.summaries.resolvePreviousSummarizedCount(full, lastSummary) + sourceIds.length,
       summaryTokenStats: this.summaries.buildSummaryTokenStats({ fullHistory: full, messagesToSummarize: fitted.messages,
         summaryText: text, channelType: config.type }), index: end };
-    const messages = structuredClone(full);
+    const messages = structuredClone(frame.state.history.messages) as Content[];
     for (let index = markStart; index < end; index++) messages[index].isSummarized = true;
     messages.splice(end, 0, summary);
     repairParentChainAfterInsert(messages, end, summary.parentId ?? null, summary.id!);
     frame.state.history.messages = messages.map((message, index) => ({ ...message, index })) as unknown as PlatformMessage[];
     (frame.state.history.messages[end] as PlatformMessage).summarizedMessageIds = sourceIds;
+    (frame.state.history.messages[end] as PlatformMessage).longMemoryInputIds = fitted.messages.filter(message=>!(message as PlatformMessage).memoryRedacted).map(message=>message.id!);
     frame.dirty = true;
     await frame.store.setCustomMetadata(frame.state.metadata.id, 'trimState', null);
     return { summaryContent: frame.state.history.messages[end] as Content, insertIndex: end, removedCount: sourceIds.length };

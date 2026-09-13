@@ -8,7 +8,7 @@ export class CapturedContext {
   readonly state: ConversationState;
   dirty = false;
   readonly store: ContextConversationStore;
-  constructor(state: ConversationState) {
+  constructor(state: ConversationState, filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     this.state = structuredClone(state);
     const updateMessage: ContextConversationStore['updateMessage'] = async (_id, index, updates) => {
       const message = this.state.history.messages[index];
@@ -21,7 +21,7 @@ export class CapturedContext {
       this.dirty = true;
     };
     this.store = {
-      getHistoryRef: async () => this.state.history.messages as Content[],
+      getHistoryRef: async () => (filterHistory?.(this.state.history.messages) ?? this.state.history.messages) as Content[],
       getHistoryForAPIFrom: formatHistoryForAPI,
       getCustomMetadata: async (_id, key) => (this.state.metadata.custom as Record<string, unknown> | undefined)?.[key],
       setCustomMetadata,

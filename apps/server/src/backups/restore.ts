@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import type { PendingBackupRestore } from '@graycode/contracts';
+import {preserveMemoryDeletions} from './memoryDeletion';
 
 interface RestoreState {
   version: 1;
@@ -77,6 +78,9 @@ export class BackupRestoreState {
     };
     if (!await marker(this.directory)) {
       if (!await marker(pending.stagingPath)) throw new Error('准备好的恢复数据不存在，当前数据未替换。');
+      const currentDirectory=await exists(this.directory)?this.directory:pending.previousPath;
+      if(!await exists(currentDirectory))throw new Error('恢复前的数据目录不存在，不能保留当前删除状态。');
+      await preserveMemoryDeletions(currentDirectory,pending.stagingPath);
       if (await exists(this.directory)) {
         if (await exists(pending.previousPath)) throw new Error('恢复前目录已存在，当前数据未覆盖。');
         await fs.rename(this.directory, pending.previousPath);

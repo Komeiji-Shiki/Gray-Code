@@ -17,6 +17,7 @@ import { formatOpenTabsSection, formatActiveEditorSection } from '../../../../ba
 import { captureEditorSnapshot, previousEditorSnapshot, type PromptEditorSnapshot } from './editorContext';
 import { botIdentityMessage, type CapturedBotEnvironment } from '../bots/prompt';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
+import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
 
 /** Capture each turn once. Tool iterations reuse the captured prompt; history retains prior snapshots. */
 export class PlatformPromptService {
@@ -89,7 +90,8 @@ export class PlatformPromptService {
         `Operating System: ${os.platform()} ${os.release()}`, `Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
         `User Language: ${locale}`, "Please respond using the user's language by default."].join('\n'),
       generateContextBadgeFormatSection,
-      generateMemorySection: () => generateMemorySection(settings),
+      generateMemorySection: () => settings.isMemoryEnabled() && input.agent.toolNames.some(name=>(LONG_MEMORY_TOOL_NAMES as readonly string[]).includes(name))
+        ? wrapPromptSection('长期记忆',LONG_MEMORY_GUIDANCE) : generateMemorySection(settings),
       generateFileTreeSection: (depth, ignores) => workspace ? workspaceRoots(workspace).map(root => (workspaceRoots(workspace).length > 1 ? '@' + root.name + '/\n' : '') + getSingleWorkspaceFileTree(root.directory, depth === -1 ? 100 : depth, ignores)).join('\n\n') : '',
       generateOpenTabsSection: (limit, ignores) => formatOpenTabsSection(editor?.openFiles ?? [], limit, ignores),
       generateActiveEditorSection: ignores => formatActiveEditorSection(editor?.activeFile, ignores),
