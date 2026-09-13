@@ -57,9 +57,9 @@ async function capture(full = false) {
   } catch (cause) { if (current === epoch && enabled.value) throw cause; }
   finally { frameBusy.value = false; if (targetPending) void readSelectedTarget(); else schedule(); }
 }
-async function release(stop = false) {
+async function release() {
   controlling.value = false; gesture.value = undefined; epoch++; clearTimer();
-  if (props.peer.state === 'online') await remote(stop ? 'computer.stop' : 'computer.release');
+  if (props.peer.state === 'online') await remote('computer.release');
   await refreshStatus(); schedule();
 }
 async function perform(action: () => Promise<void>) {
@@ -138,7 +138,7 @@ onUnmounted(() => { disposed = true; epoch++; viewing.value = false; clearTimer(
     <template v-else>
       <div class="node-screen-controls"><label>窗口筛选<input v-model="filter" placeholder="窗口标题或程序名" aria-label="远端窗口筛选"></label><label>观看目标<select v-model="target" aria-label="远端观看目标"><option value="">选择窗口或显示器</option><optgroup label="窗口"><option v-for="value in windows" :key="value.id" :value="`window:${value.id}`">{{ value.title }} · PID {{ value.processId }}</option></optgroup><optgroup label="显示器预览"><option v-for="value in inventory?.displays" :key="value.id" :value="`display:${value.id}`">{{ value.id }} · {{ value.bounds.width }}×{{ value.bounds.height }}</option></optgroup></select></label><button :disabled="busy || !enabled" @click="perform(load)">刷新窗口</button></div>
       <div class="node-screen-controls"><label class="node-check"><input v-model="viewing" type="checkbox" :disabled="!enabled || !target" aria-label="连续观看远端画面">连续观看</label><label>帧率<select v-model.number="fps" aria-label="远端画面帧率"><option :value="1">最多每秒 1 帧</option><option :value="2">最多每秒 2 帧</option><option :value="5">最多每秒 5 帧</option></select></label><label>画面宽度<select v-model.number="width"><option :value="960">960 像素</option><option :value="1280">1280 像素</option><option :value="1920">1920 像素</option></select></label><label>图像格式<select v-model="format"><option value="png">PNG 无损</option><option value="jpeg">JPEG</option></select></label><button :disabled="busy || frameBusy || !enabled || !target" @click="perform(()=>capture())">{{ frameBusy ? '采集中…' : '采集一帧' }}</button></div>
-      <div class="node-screen-controlbar"><strong>{{ controlling && status?.active ? `正在控制 ${peer.name}` : status?.active ? '远端已有任务取得控制权' : `正在查看 ${peer.name}` }}</strong><button :disabled="busy || !enabled || !windowId || controlling" @click="perform(acquire)">取得控制权</button><button :disabled="!controlling" @click="perform(()=>release())">释放</button><button class="danger" :disabled="!enabled" @click="release(true).catch(failed)">立即停止本设备操作</button></div>
+      <div class="node-screen-controlbar"><strong>{{ controlling && status?.active ? `正在控制 ${peer.name}` : status?.active ? '远端已有任务取得控制权' : `正在查看 ${peer.name}` }}</strong><button :disabled="busy || !enabled || !windowId || controlling" @click="perform(acquire)">取得控制权</button><button :disabled="!controlling" @click="perform(()=>release())">释放</button></div>
       <p v-if="error" class="node-error" role="alert">{{ error }}</p><p v-if="notice" class="node-notice" role="status">{{ notice }}</p>
       <div v-if="status?.pausedRunId" class="node-pending"><p>此设备发起的任务已暂停电脑操作，需要主人允许后才能重新取得控制权。</p><button v-if="peer.capabilities?.account.role==='owner'" :disabled="busy || !enabled" @click="perform(async()=>{await remote('computer.allowRun',{runId:status!.pausedRunId});await refreshStatus();notice='已允许任务重新观察并取得控制权。'})">允许该任务继续操作</button><p v-else class="node-hint">请由执行设备的主人账号允许任务继续。</p></div>
       <p v-if="monitorId" class="node-hint">显示器画面用于查看整体环境。需要输入时，请选择具体窗口并取得控制权。</p>

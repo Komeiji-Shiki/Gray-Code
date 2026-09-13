@@ -128,7 +128,7 @@ export class NodeExecutor {
       if (method === 'computer.windows') return this.app.computer.windows(identity);
       if (method === 'computer.acquire') { await this.app.computer.acquire(identity, params.windowIds ?? []); return this.computerStatus(peer); }
       if (method === 'computer.release') { await this.app.computer.stop(identity.actorId, 'released', identity); return this.computerStatus(peer); }
-      if (method === 'computer.stop') { await this.disconnected(peer.id, 'remote_stop'); return this.computerStatus(peer); }
+      if (method === 'computer.stop') { await this.app.computer.stop(identity.actorId, 'remote_stop'); return this.computerStatus(peer); }
       if (method === 'computer.status') return this.computerStatus(peer);
       if (method === 'computer.allowRun') { await this.ownRun(peer, params.runId); return this.app.computer.call(identity, method, params); }
     }

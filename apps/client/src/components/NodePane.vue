@@ -16,6 +16,7 @@ const selected = ref('');
 const pairCode = ref('');
 const invitation = ref<{ code: string; expiresAt: number }>();
 const error = ref(''); const notice = ref(''); const busy = ref(false); const editing = ref(false);
+const stopError = ref('');
 const address = ref('');
 const taskDrafts = reactive<Record<string, NodeTaskDraft>>({});
 let pending: Promise<void> | undefined; let again = false;
@@ -44,6 +45,11 @@ async function perform(action: () => Promise<void>) {
   finally { busy.value = false; }
 }
 async function save() { await call('nodes.configure', settings); editing.value = false; notice.value = '本机执行入口已保存。'; }
+async function stopComputer() {
+  const id = peer.value?.id; if (!id) return; stopError.value = '';
+  try { await call('nodes.request', { peerId: id, method: 'computer.stop' }); }
+  catch (cause) { stopError.value = (cause as Error).message; }
+}
 async function pair() {
   const result = await call<{ peerId: string }>('nodes.pair', { code: pairCode.value });
   pairCode.value = ''; selected.value = result.peerId; tab.value = 'tasks'; notice.value = '设备已配对，请选择远端项目。';
@@ -64,7 +70,7 @@ onUnmounted(off);
     <header class="node-header"><div><strong>执行设备</strong><p>把任务交给所选设备，在这里查看结果和操作画面。</p></div><button :disabled="busy" @click="perform(refresh)">刷新</button></header>
     <div class="node-tabs"><button :class="{active:tab==='tasks'}" @click="tab='tasks'">远端任务</button><button :class="{active:tab==='screen'}" @click="tab='screen'">画面与操作</button><button :class="{active:tab==='pair'}" @click="tab='pair'">配对与权限</button></div>
     <p v-if="error" class="node-error" role="alert">{{ error }}</p><p v-if="notice" class="node-notice" role="status">{{ notice }}</p>
-    <div v-if="tab!=='pair'" class="node-target"><label>执行设备<select v-model="selected" aria-label="选择执行设备"><option value="" disabled>请选择已配对设备</option><option v-for="value in peers" :key="value.id" :value="value.id">{{ value.name }} · {{ stateLabel[value.state] }}</option></select></label><span v-if="peer" :class="['node-connection',peer.state]">{{ stateLabel[peer.state] }}<small v-if="peer.capabilities">{{ peer.capabilities.account.displayName }} · {{ peer.capabilities.platform }}</small></span></div>
+    <div v-if="tab!=='pair'" class="node-target"><label>执行设备<select v-model="selected" aria-label="选择执行设备"><option value="" disabled>请选择已配对设备</option><option v-for="value in peers" :key="value.id" :value="value.id">{{ value.name }} · {{ stateLabel[value.state] }}</option></select></label><span v-if="peer" :class="['node-connection',peer.state]">{{ stateLabel[peer.state] }}<small v-if="peer.capabilities">{{ peer.capabilities.account.displayName }} · {{ peer.capabilities.platform }}</small></span><button v-if="tab==='screen' && peer?.capabilities?.computer" class="node-stop" :disabled="peer.state!=='online'" @click="stopComputer">立即停止电脑操作</button><p v-if="tab==='screen' && stopError" class="node-error">{{ stopError }}</p></div>
     <div v-if="tab!=='pair' && peer?.state!=='online' && peer" class="node-reconnect"><p>{{ peer.error || '执行设备尚未连接。任务会保留在原设备。' }}</p><label>设备地址<input v-model="address" aria-label="执行设备地址"></label><button :disabled="busy" @click="perform(async()=>{await call('nodes.connect',{id:peer!.id,address})})">重新连接</button></div>
     <p v-if="tab!=='pair' && !peer" class="node-empty">尚未选择执行设备。<button @click="tab='pair'">开始配对</button></p>
     <NodeTasks v-if="peer" v-show="tab==='tasks'" :key="peer.id" :peer="peer" :draft="draft(peer.id)" :visible="visible && tab==='tasks'" />

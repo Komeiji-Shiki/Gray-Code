@@ -188,6 +188,12 @@ describe('执行节点配对、运行与恢复', () => {
     await expect(control('computer.action', { ...args, operationId: 'new-input-with-old-frame' })).rejects.toThrow('观察');
     await control('computer.acquire', { windowIds: ['98'] });
     await a.nodes.clientClosed(owner.clientId); expect(b.computer.status('owner').active).toBe(false);
+    await b.computer.acquire({ actorId: 'owner', clientId: 'local-controller' }, ['98']);
+    await callA('nodes.disconnect', { id: paired.peerId });
+    await until(() => b.nodes.status('owner').peers[0].state === 'offline');
+    expect(b.computer.status('owner').controller?.clientId).toBe('local-controller');
+    await callA('nodes.connect', { id: paired.peerId });
+    await control('computer.stop'); expect(b.computer.status('owner').active).toBe(false);
   });
 
   test('远端模型暂停电脑操作后，由绑定的主人恢复授权再继续原任务', async () => {
