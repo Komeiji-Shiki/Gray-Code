@@ -12,6 +12,7 @@ import type {
   WindowsToastShowResult
 } from './types'
 import { Logger } from '../../core/logger'
+import { isNotificationQuiet } from '../../../shared/notificationPolicy'
 type FocusWindowFunction = (startPid?: number) => Promise<unknown>;
 
 const log = Logger.get('WindowsAgentStopNotification')
@@ -384,6 +385,10 @@ export class WindowsAgentStopNotificationService {
 
     const settings = this.getSettings()
     log.debug('resolved_notification_settings', { ...settings })
+
+    if (isNotificationQuiet(this.settingsManager.getSettings().ui?.sound?.quietHours)) {
+      return { shown: false, skipped: true, reason: 'do_not_disturb' }
+    }
 
     if (!settings.enabled) {
       log.debug('skip_notify_disabled')

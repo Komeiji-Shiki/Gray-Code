@@ -43,7 +43,11 @@ export interface WindowsAgentStopNotificationSettings {
     content?: WindowsAgentStopNotificationContentSettings;
 }
 
+import type { NotificationQuietHours } from '../../../../shared/notificationPolicy';
+
 export interface UISoundSettings {
+    /** 共用免打扰，未设置时沿用已有通知行为。 */
+    quietHours?: NotificationQuietHours;
     /** 总开关（默认关闭，避免打扰） */
     enabled?: boolean;
 

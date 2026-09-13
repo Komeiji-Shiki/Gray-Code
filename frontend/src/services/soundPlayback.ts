@@ -10,6 +10,7 @@
 
 import { getBuiltinSoundAsset, currentSettings } from './soundCueSettings'
 import type { SoundCue, SoundAgentRole } from './soundCueSettings'
+import { isNotificationQuiet } from '@shared/notificationPolicy'
 import {
   activeOscillators,
   getOrCreateAudioGraph,
@@ -140,6 +141,7 @@ export async function playCue(
 ): Promise<boolean> {
   try {
     if (options.abortSignal?.aborted) return false
+    if (isNotificationQuiet(currentSettings.quietHours)) return false
 
     if (!options.ignoreEnabled) {
       if (!currentSettings.enabled) return false
@@ -168,6 +170,7 @@ export async function playCue(
         }
       }
       if (options.abortSignal?.aborted) return false
+      if (isNotificationQuiet(currentSettings.quietHours)) return false
       if (ctx.state !== 'running') return false
 
       // 优先播放自定义音效
@@ -192,6 +195,7 @@ export async function playCue(
         }
       }
 
+      if (isNotificationQuiet(currentSettings.quietHours)) return false
       const pattern = getPatternForCue(cue)
       if (pattern.length === 0) return false
 

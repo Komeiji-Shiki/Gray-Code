@@ -9,6 +9,7 @@
 
 import { clampNumber, currentSettings, DEFAULT_UI_SOUND_SETTINGS } from './soundCueSettings'
 import type { NormalizedUISoundSettings, UISoundAsset, SoundCue } from './soundCueSettings'
+import { isNotificationQuiet } from '@shared/notificationPolicy'
 import { inFlightPlayByKey, lastPlayedAtByKey } from './soundPlayback'
 
 let audioContext: AudioContext | null = null
@@ -227,6 +228,7 @@ export async function playSoundAsset(ctx: AudioContext, asset: UISoundAsset, abo
 
     const buffer = await decodeAudioBuffer(ctx, asset)
     if (abortSignal?.aborted) return false
+    if (isNotificationQuiet(currentSettings.quietHours)) return false
 
     const source = ctx.createBufferSource()
     source.buffer = buffer
@@ -295,6 +297,7 @@ export async function playSoundUrl(ctx: AudioContext, url: string, abortSignal?:
 
     const buffer = await decodeAudioBufferFromUrl(ctx, url)
     if (abortSignal?.aborted) return false
+    if (isNotificationQuiet(currentSettings.quietHours)) return false
 
     const source = ctx.createBufferSource()
     source.buffer = buffer

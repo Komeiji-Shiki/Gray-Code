@@ -2825,6 +2825,12 @@ const ja: LanguageMessages = {
                 saveFailed: '保存に失敗しました'
             },
             soundSettings: {
+                quietHours: {
+                    title: '通知を一時停止', mode: '通知の停止方法', off: 'オフ', always: '解除するまで停止', schedule: '時間帯を指定',
+                    active: '通知停止中のため、通知音とシステム通知を停止しています。', previewShown: '通知を表示しました', previewUnavailable: '通知が表示されませんでした。システムの通知設定を確認してください。',
+                    start: '開始時刻', end: '終了時刻', zone: 'タイムゾーン', localZone: 'この端末のタイムゾーンを使用',
+                    description: '通知音、システム通知、コンパニオンの通知をまとめて停止します。タスクは続行し、記録と承認は確認できます。停止中の通知は後から表示しません。日をまたぐ時間帯にも対応します。保存後に適用されます。'
+                },
                 overview: {
                     title: 'このページについて',
                     description: 'このページでは、Webview のサウンド通知と Windows Agent 停止システム通知をまとめて管理します。下の設定は機能ごとに分けてあります。'

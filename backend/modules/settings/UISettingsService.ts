@@ -7,6 +7,7 @@
 
 import type { GlobalSettings } from './types';
 import { SettingsCore } from './SettingsCore';
+import { validateNotificationQuietHours } from '../../../shared/notificationPolicy';
 
 /**
  * UI 设置服务
@@ -34,6 +35,7 @@ export class UISettingsService {
      * 更新 UI 设置
      */
     async updateUISettings(uiSettings: Partial<NonNullable<GlobalSettings['ui']>>): Promise<void> {
+        if (uiSettings.sound?.quietHours) validateNotificationQuietHours(uiSettings.sound.quietHours);
         // 读-改-写-通知整体入队串行（与 SettingsCore 写队列共用）：并发调用基于同一
         // 旧 ui 快照合并后整体写回时后写覆盖先写；oldValue 读取必须在 mutator 内
         await this.core.serializeMutation(async () => {

@@ -11,10 +11,17 @@ import {
   DEFAULT_UI_SOUND_SETTINGS,
   normalizeUISoundSettings,
   configureSoundSettings,
-  isCueEnabled
+  isCueEnabled,
+  playCue
 } from '../../services/soundCues'
 
 describe('soundCues 子代理提示音设置', () => {
+  test('免打扰对主代理、子代理和试听共用同一声音出口', async () => {
+    configureSoundSettings({ enabled: true, quietHours: { mode: 'always' } })
+    expect(await playCue('taskComplete')).toBe(false)
+    expect(await playCue('warning', { role: 'subagent' })).toBe(false)
+    expect(await playCue('error', { ignoreEnabled: true, bypassCooldown: true })).toBe(false)
+  })
   beforeEach(() => {
     // 每个用例从默认设置出发，避免用例间状态泄漏
     configureSoundSettings(DEFAULT_UI_SOUND_SETTINGS)

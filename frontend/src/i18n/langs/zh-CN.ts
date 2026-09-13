@@ -2827,6 +2827,12 @@ const zhCN = {
                 saveFailed: '保存失败'
             },
             soundSettings: {
+                quietHours: {
+                    title: '免打扰', mode: '免打扰方式', off: '关闭', always: '持续免打扰', schedule: '指定时段',
+                    active: '当前已开启免打扰，声音和通知已暂停。', previewShown: '通知已显示', previewUnavailable: '通知未显示，请检查系统通知设置。',
+                    start: '开始时间', end: '结束时间', zone: '时区', localZone: '使用本机时区',
+                    description: '统一暂停提示音、系统通知与陪伴提示。任务继续运行，记录和审批仍可查看；结束后不补弹旧通知。指定时段可以跨过午夜，保存后生效。'
+                },
                 overview: {
                     title: '本页说明',
                     description: '本页同时管理 Webview 声音提示和 Windows Agent 停止系统通知。下方内容按功能分区，便于分别调整。'

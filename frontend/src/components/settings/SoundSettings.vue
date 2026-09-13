@@ -6,6 +6,8 @@ import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { CustomCheckbox } from '../common'
 import { formatFileSize } from '@/utils/file'
+import NotificationQuietHours from './NotificationQuietHours.vue'
+import { isNotificationQuiet, validateNotificationQuietHours } from '@shared/notificationPolicy'
 import {
   DEFAULT_UI_SOUND_SETTINGS,
   normalizeUISoundSettings,
@@ -41,6 +43,7 @@ const assetMessageType = ref<'success' | 'error'>('success')
 
 // ============ 表单状态 ============
 const enabled = ref(DEFAULT_UI_SOUND_SETTINGS.enabled)
+const quietHours = ref({ ...DEFAULT_UI_SOUND_SETTINGS.quietHours })
 const volume = ref(DEFAULT_UI_SOUND_SETTINGS.volume)
 const cooldownMs = ref(DEFAULT_UI_SOUND_SETTINGS.cooldownMs)
 
@@ -152,6 +155,7 @@ function buildCurrentSettings(): UISoundSettings {
 
   return {
     enabled: enabled.value,
+    quietHours: validateNotificationQuietHours({ ...quietHours.value }),
     volume: Math.min(100, Math.max(0, Number(volume.value) || 0)),
     cooldownMs: Math.min(60_000, Math.max(0, Number(cooldownMs.value) || 0)),
     cues: {
@@ -278,6 +282,7 @@ async function loadConfig() {
     const normalized = normalizeUISoundSettings(response?.settings?.ui?.sound)
 
     enabled.value = normalized.enabled
+    quietHours.value = { ...normalized.quietHours }
     volume.value = normalized.volume
     cooldownMs.value = normalized.cooldownMs
 
@@ -365,14 +370,16 @@ async function saveConfig() {
     }, 2000)
   } catch (error) {
     console.error('Failed to save sound settings:', error)
-    saveMessage.value = t('components.settings.soundSettings.saveFailed')
+    saveMessage.value = error instanceof Error ? error.message : t('components.settings.soundSettings.saveFailed')
     saveMessageType.value = 'error'
+    throw error
   } finally {
     isSaving.value = false
   }
 }
 
 async function resetToDefault() {
+  quietHours.value = { ...DEFAULT_UI_SOUND_SETTINGS.quietHours }
   enabled.value = DEFAULT_UI_SOUND_SETTINGS.enabled
   volume.value = DEFAULT_UI_SOUND_SETTINGS.volume
   cooldownMs.value = DEFAULT_UI_SOUND_SETTINGS.cooldownMs
@@ -418,7 +425,11 @@ async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreview
       content: buildWindowsAgentStopNotificationContentDraft()
     }
 
-    await sendToExtension(MESSAGE_NAMES['notifications.preview'], payload)
+    const result = await sendToExtension<{ shown?: boolean; reason?: string }>(MESSAGE_NAMES['notifications.preview'], payload)
+    testMessage.value = result?.reason === 'do_not_disturb'
+      ? t('components.settings.soundSettings.quietHours.active')
+      : result?.shown ? t('components.settings.soundSettings.quietHours.previewShown') : t('components.settings.soundSettings.quietHours.previewUnavailable')
+    testMessageType.value = result?.shown || result?.reason === 'do_not_disturb' ? 'success' : 'error'
   } catch (error) {
     console.error('Failed to trigger Windows notification preview:', error)
   }
@@ -426,6 +437,11 @@ async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreview
 
 async function testCue(cue: SoundCue) {
   testMessage.value = ''
+  if (isNotificationQuiet(getSoundSettings().quietHours)) {
+    testMessage.value = t('components.settings.soundSettings.quietHours.active')
+    testMessageType.value = 'success'
+    return
+  }
 
   // 试听应使用当前表单音量，但不应把“未保存”的 enabled/cues 等设置带到运行时。
   // 因此这里临时覆盖运行时音量，播放后再恢复。
@@ -518,6 +534,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
         <div class="section-title">{{ t('components.settings.soundSettings.overview.title') }}</div>
         <p class="section-description">{{ t('components.settings.soundSettings.overview.description') }}</p>
       </div>
+
+      <NotificationQuietHours v-model="quietHours" />
 
       <section class="settings-area">
         <div class="section-header">
@@ -816,12 +834,12 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
       </section>
 
       <div class="actions">
-        <button class="action-btn primary" @click="saveConfig" :disabled="isSaving">
+        <button class="action-btn primary" @click="saveConfig().catch(() => {})" :disabled="isSaving">
           <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
           <span v-else>{{ t('common.save') }}</span>
         </button>
 
-        <button class="action-btn" @click="resetToDefault" :disabled="isSaving">
+        <button class="action-btn" @click="resetToDefault().catch(() => {})" :disabled="isSaving">
           <i class="codicon codicon-discard"></i>
           {{ t('common.reset') }}
         </button>

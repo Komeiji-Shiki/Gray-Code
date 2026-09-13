@@ -12,6 +12,10 @@ class FakeToastAdapter implements WindowsToastAdapter {
 }
 
 describe('show_windows_notification tool', () => {
+  test('免打扰返回未显示且无需重试，不让模型将用户选择当作通知失败', async () => {
+    const tool = createShowWindowsNotificationTool(new FakeToastAdapter({ shown: false, skippedReason: 'do_not_disturb' }), 'win32')
+    expect(await tool.handler({ title: '休息提醒', message: '约好的休息时间到了' })).toMatchObject({ success: true, data: { shown: false, skippedReason: 'do_not_disturb' } })
+  })
   test('declares custom title and message as required parameters', () => {
     const declaration = createShowWindowsNotificationToolDeclaration()
 

@@ -8,7 +8,8 @@
  * - 任何播放失败都必须被吞掉（不能影响主流程）
  */
 
-import { updateMasterGain, pruneDecodedAudioCache } from './soundAudioEngine'
+import { updateMasterGain, pruneDecodedAudioCache, stopAllSounds } from './soundAudioEngine'
+import { isNotificationQuiet, type NotificationQuietHours } from '@shared/notificationPolicy'
 
 // 自定义音效大小上限（与设置页导入限制保持一致）
 const MAX_SOUND_ASSET_BYTES = 10 * 1024 * 1024
@@ -105,6 +106,7 @@ export interface WindowsAgentStopNotificationSettings {
 }
 
 export interface UISoundSettings {
+  quietHours?: NotificationQuietHours
   /** 总开关（默认关闭，避免打扰） */
   enabled?: boolean
 
@@ -151,6 +153,7 @@ export interface UISoundSettings {
 }
 
 export interface NormalizedUISoundSettings {
+  quietHours: NotificationQuietHours
   enabled: boolean
   volume: number
   cooldownMs: number
@@ -194,6 +197,7 @@ export interface NormalizedUISoundSettings {
 }
 
 export const DEFAULT_UI_SOUND_SETTINGS: NormalizedUISoundSettings = {
+  quietHours: { mode: 'off' },
   enabled: false,
   volume: 60,
   cooldownMs: 800,
@@ -323,12 +327,14 @@ export function normalizeUISoundSettings(input?: UISoundSettings | null): Normal
     cues,
     assets,
     theme,
-    windowsAgentStopNotification
+    windowsAgentStopNotification,
+    quietHours: { ...(input?.quietHours ?? DEFAULT_UI_SOUND_SETTINGS.quietHours) }
   }
 }
 
 export function configureSoundSettings(settings?: UISoundSettings | null): void {
   currentSettings = normalizeUISoundSettings(settings)
+  if (isNotificationQuiet(currentSettings.quietHours)) stopAllSounds()
   updateMasterGain()
   pruneDecodedAudioCache(currentSettings.assets)
 }

@@ -2825,6 +2825,12 @@ const en: LanguageMessages = {
                 saveFailed: 'Save failed'
             },
             soundSettings: {
+                quietHours: {
+                    title: 'Do Not Disturb', mode: 'Quiet mode', off: 'Off', always: 'Until turned off', schedule: 'Scheduled hours',
+                    active: 'Do Not Disturb is active. Sounds and notifications are paused.', previewShown: 'Notification shown', previewUnavailable: 'Notification was not shown. Check system notification settings.',
+                    start: 'Start time', end: 'End time', zone: 'Time zone', localZone: 'Use this device’s time zone',
+                    description: 'Pause sounds, system notifications, and companion prompts together. Tasks keep running and records and approvals remain available. Missed notifications are not replayed. Hours may cross midnight. Save to apply.'
+                },
                 overview: {
                     title: 'About This Page',
                     description: 'This page manages Webview sound cues and Windows Agent stop notifications together. The settings below are grouped by function for easier adjustment.'

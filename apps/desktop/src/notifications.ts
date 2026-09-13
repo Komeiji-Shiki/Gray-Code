@@ -2,9 +2,11 @@ import type { WindowsToastAdapter } from '../../../backend/modules/notifications
 import { app, Notification, type BrowserWindow } from 'electron';
 import type { PlatformApplication } from '../../server/src/application';
 import { WindowsAgentStopNotificationService } from '../../../backend/modules/notifications/AgentStopNotificationRuntime';
+import { isNotificationQuiet } from '../../../shared/notificationPolicy';
 
 export function desktopNotifications(application: PlatformApplication, getWindow: () => BrowserWindow | undefined, open: () => Promise<void>) {
   const adapter: WindowsToastAdapter = { show: async request => {
+      if (isNotificationQuiet(application.product.runtimeSettings().getSettings().ui?.sound?.quietHours)) return { shown: false, skippedReason: 'do_not_disturb' };
       if (!Notification.isSupported()) return { shown: false, skippedReason: 'unsupported_platform' };
       return new Promise(resolve => {
         const notification = new Notification({ title: request.title, body: request.message, silent: request.silent });

@@ -105,6 +105,10 @@ export function createShowWindowsNotificationTool(
         })
 
         if (!result.shown) {
+          if (result.skippedReason === 'do_not_disturb') {
+            return { success: true, data: { shown: false, skippedReason: 'do_not_disturb', title, message,
+              note: '用户已开启免打扰，通知未弹出；无需重试。' } }
+          }
           return {
             success: false,
             error: result.error || result.skippedReason || 'Notification was not shown',

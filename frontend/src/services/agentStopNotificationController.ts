@@ -2,6 +2,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { nextTick, watch, type WatchStopHandle } from 'vue'
 import type { ErrorInfo, Message, ToolUsage } from '../types'
 import { getSoundSettings, type NormalizedUISoundSettings } from './soundCues'
+import { isNotificationQuiet } from '@shared/notificationPolicy'
 import {
   resolvePendingAgentAction,
   type PendingAgentAction,
@@ -155,6 +156,7 @@ export class AgentStopNotificationController {
   }
 
   private shouldNotify(reason: AgentStopNotificationReason): boolean {
+    if (isNotificationQuiet(this.getRuntimeSoundSettings().quietHours)) return false
     const settings = this.getNotificationSettings()
 
     if (!settings.enabled) {
