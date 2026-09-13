@@ -19,6 +19,7 @@ import type { ComputerScreenPort, ComputerNativePort } from './computer/port';
 import type { RemoteAccessHost } from './transport/remotePort';
 import { ExecutionNodes } from './nodes/service';
 import { PlatformNotifications } from './notifications';
+import { CompanionService } from './companions/service';
 import { PlatformArtifacts } from './artifacts/service';
 import { ContentPreviews } from './workspace/previews';
 import { PlatformMedia } from './media/service';
@@ -122,6 +123,7 @@ export class PlatformApplication {
     execute: (args, context) => withDependencyRuntime(this.dependencies, () => tool.execute(args, context)),
   }));
   readonly notifications = new PlatformNotifications();
+  readonly companion = new CompanionService(this);
   readonly artifacts: PlatformArtifacts;
   readonly files: WorkspaceFiles;
   readonly fileActions: WorkspaceFileActions;
@@ -508,6 +510,7 @@ export class PlatformApplication {
   ): Promise<PlatformConversation> {
     if (!this.actor(actorId)) throw new Error("Account is unavailable.");
     const id = options.id ?? randomUUID(); const now = Date.now();
+    if (options.automaticWorkspace) custom = await this.companion.forNewConversation(actorId, custom);
     if (options.automaticWorkspace) {
       this.requireOwner(actorId);
       const selected = workspaceId ? this.workspace(actorId, workspaceId, []) : undefined;

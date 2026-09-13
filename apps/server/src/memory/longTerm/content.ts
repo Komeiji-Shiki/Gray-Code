@@ -12,6 +12,12 @@ export function sourceMessageText(message:PlatformMessage):string{
     return [];
   }).join('\n');
 }
+export function sourceMessageOrigin(message: PlatformMessage, history: PlatformMessage[]): 'user' | 'model' | 'tool' | 'fiction' {
+  const input = message.isUserInput ? message : history.slice(0, history.indexOf(message) + 1).findLast(item => item.isUserInput);
+  if (message.characterTurn || message.characterMode || message.characterGreeting || message.turnPlatformMode === 'character'
+    || input?.characterTurn || input?.characterMode || input?.turnPlatformMode === 'character') return 'fiction';
+  return message.role === 'model' ? 'model' : message.parts.some(part => part.functionResponse) ? 'tool' : 'user';
+}
 export function recallText(hits:LongMemoryHit[]):string {
   return hits.map(({record,conflicts})=>{
     const time=[`有效自 ${new Date(record.validFrom).toISOString()}`,record.validTo?`截至 ${new Date(record.validTo).toISOString()}`:'',record.eventAt?`事件时间 ${new Date(record.eventAt).toISOString()}`:''].filter(Boolean).join('；');

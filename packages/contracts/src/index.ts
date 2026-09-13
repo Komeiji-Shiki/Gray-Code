@@ -170,3 +170,4 @@ export * from './conversationState';
 export * from './development';
 export * from './debugging';
 export * from './longMemory';
+export * from './companion';

@@ -73,6 +73,8 @@ onBeforeUnmount(() => { requestEpoch++ })
             </details>
             <p v-if="!groups.length" class="preview-empty">没有匹配的内容。</p>
             <details v-if="preview.character" class="preview-group"><summary>角色卡与世界书激活结果</summary><pre>{{ JSON.stringify(preview.character, null, 2) }}</pre></details>
+            <details v-if="preview.companion" class="preview-group"><summary>本轮陪伴配置与角色来源</summary><pre>{{ JSON.stringify(preview.companion, null, 2) }}</pre></details>
+            <details v-if="preview.memory" class="preview-group"><summary>本轮长期记忆与来源</summary><pre>{{ JSON.stringify(preview.memory, null, 2) }}</pre></details>
           </template>
         </template>
       </div>

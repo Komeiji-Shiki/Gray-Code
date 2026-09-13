@@ -7,6 +7,8 @@ export interface PromptPreviewResult {
   notices: string[];
   maxInputImages?: number;
   character?: { resources: unknown; activation: unknown };
+  companion?: unknown;
+  memory?: unknown;
 }
 
 /** 已发送请求和发送前预览共用协议分组，顺序完全服从格式器正文。 */

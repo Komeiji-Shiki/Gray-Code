@@ -16,12 +16,14 @@ export async function previewPrompt(app: PlatformApplication, client: ClientSess
   const conversation: PlatformConversation = data.conversationId ? await app.conversation(client.actorId, data.conversationId)
     : { id: `prompt-preview-${randomUUID()}`, actorId: client.actorId, title: '', createdAt: now, updatedAt: now, workspaceId,
       custom: { platformMode: mode } };
+  if (!data.conversationId) conversation.custom = await app.companion.forNewConversation(client.actorId, conversation.custom as Record<string, unknown> | undefined);
   const state: ConversationState | undefined = data.conversationId ? undefined : { metadata: conversation, metadataToken: '', records: [],
     history: { conversationId: conversation.id, messages: [], total: 0, startIndex: 0, revision: 0 } };
   const request = { ...chatRunInput(client, data, preferences, conversation, `prompt-preview:${randomUUID()}`), message: chatUserMessage(data) };
   const prepared = await app.runtime.preview(request, state ? { state, commit: {} } : undefined, { clientId: client.clientId });
   const projected = await withDependencyRuntime(app.dependencies, () => app.modelAdapter.preview(prepared.input));
   const turn = prepared.input.turnContext?.characterTurn as CharacterTurn | undefined;
+  const companion = prepared.input.turnContext?.companionTurn;
   const textTokens = estimateModelInputTokens(prepared.input);
   const notices = [...prepared.notices];
   if (projected.maxInputImages) notices.push(`本次请求最多发送最近 ${projected.maxInputImages} 张图片，全部文字保留；聊天中的原图不受影响。`);
@@ -30,6 +32,6 @@ export async function previewPrompt(app: PlatformApplication, client: ClientSess
   const memory=prepared.input.turnContext?.longMemory as {references?:unknown[];estimatedTokens?:number;method?:string;embeddingError?:string}|undefined;
   if(memory?.embeddingError)notices.push(memory.embeddingError);
   return { ...projected, createdAt: now, estimatedTokens: textTokens, notices,
-    ...(memory?{memory}:{}),
+    ...(memory?{memory}:{}), ...(companion ? { companion } : {}),
     ...(turn ? { character: { resources: turn.resources, activation: turn.activation } } : {}) };
 }

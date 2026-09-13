@@ -1,7 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import type {LongMemoryJob,LongMemoryRecord,LongMemoryRecordInput,LongMemoryScope,LongMemorySourceInput,PlatformMessage} from '@graycode/contracts';
 import type {PlatformLongMemory} from './service';
-import {messageText,sourceMessageText} from './content';
+import {messageText,sourceMessageText,sourceMessageOrigin} from './content';
 import {MEMORY_EXTRACTION_PROMPT,extractedRecords,parseMemoryJson} from './extraction';
 
 /** 持久任务驱动后台整理，空队列不启动定时模型轮询。 */
@@ -62,10 +62,12 @@ export class MemoryBackground {
       &&(item.isUserInput||item.parts.some(part=>part.functionResponse&&!String((part.functionResponse as {name?:string}).name).startsWith('memory_'))));
     const sources:LongMemorySourceInput[]=[];let characters=0;
     for(const item of candidates){
+      const origin=sourceMessageOrigin(item,view.messages);
+      if(scope.realm==='real'&&origin==='fiction')continue;
       const text=sourceMessageText(item);if(!text.trim())continue;
       if(text.length>32000||characters+text.length>64000)throw new Error('最近回合的来源较长，请使用记忆工具选择有关摘录后整理。');
       characters+=text.length;const id=createHash('sha256').update(JSON.stringify(['extraction',conversationId,item.id,text])).digest('hex');
-      sources.push({id,expectedVersion:0,text,origin:scope.realm!=='real'?'fiction':item.parts.some(part=>part.functionResponse)?'tool':'user',
+      sources.push({id,expectedVersion:0,text,origin:scope.realm!=='real'?'fiction':origin,
         recordedAt:typeof item.timestamp==='number'?item.timestamp:access.conversation!.createdAt,reference:{conversationId,messageId:item.id,
           ...(typeof item.actorId==='string'?{speakerActorId:item.actorId}:{})}});
     }

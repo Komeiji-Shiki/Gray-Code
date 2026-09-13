@@ -78,6 +78,7 @@ export class PlatformPromptService {
     }
     const source = 'message' in input.request ? input.request.message : undefined;
     const characterTurn = await this.app.characterPipeline.capture(conversation, input.history, source, input.previousTurn);
+    const companionTurn = await this.app.companion.capture(input.actor.id, conversation, input.previousTurn);
     const characterSource = source && characterTurn ? await this.app.characterPipeline.transformParts(source.parts, characterTurn, 1, 'source') : undefined;
     const characterDisplay = characterSource && characterTurn ? await this.app.characterPipeline.transformParts(characterSource.parts, characterTurn, 1, 'display') : undefined;
     const language = settings.getUISettings().language;
@@ -123,15 +124,15 @@ export class PlatformPromptService {
     }
     const resumed = typeof input.previousTurn?.turnDynamicContext === 'string' ? deserializePromptContextCache(input.previousTurn.turnDynamicContext) : undefined;
     return {
-      systemPrompt: assembler.getSystemPrompt(mode, false, context),
+      systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
       ...(input.preview ? { previewDynamicText: assembler.getDynamicContextText(mode, context) } : {}),
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
       promptContext: { beforeHistoryMessages: (resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], afterHistoryMessages: (resumed ?? bundle).afterHistoryMessages as PlatformMessage[], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },
       messageParts: characterSource?.parts,
-      turnContext: { ...(characterTurn ? { characterTurn } : {}), contextManagementMethod },
-      messageMetadata: { ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterTurn, characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
+      turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod },
+      messageMetadata: { turnPlatformMode: input.previousTurn?.turnPlatformMode ?? conversationMode ?? 'chat', ...(companionTurn ? { companionTurn } : {}), ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterTurn, characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
         characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve', turnDynamicContext: serializePromptContextCache(bundle) },
     };
   }

@@ -6,7 +6,7 @@ import { actorForBotRun } from '../../bots/permissions';
 import { conversationMemoryScopes, longMemoryScope } from './scopes';
 import { MemoryPolicyStore } from './policy';
 import { MemoryEmbeddings } from './embeddings';
-import { sourceMessageText } from './content';
+import { sourceMessageText, sourceMessageOrigin } from './content';
 import {memoryReferences,type MemoryRecordReference} from './history';
 import { MemoryBackground } from './background';
 
@@ -86,7 +86,7 @@ export class PlatformLongMemory {
     const text=quote??full;
     if(!text.trim()||!full.includes(text))throw new Error('来源摘录必须逐字来自指定消息。');
     if(text.length>32000)throw new Error('来源过长，请提供本条记忆对应的较短原文摘录。');
-    const origin=original.role==='model'?'model':original.parts.some(part=>part.functionResponse)?'tool':'user';
+    const origin=sourceMessageOrigin(original,view.messages);
     return {id:createHash('sha256').update(JSON.stringify([access.conversation.id,original.id,text])).digest('hex'),expectedVersion:0,memoryReferences:memoryReferences(original),
       text,origin,recordedAt:typeof original.timestamp==='number'?original.timestamp:Date.now(),reference:{conversationId:access.conversation.id,messageId:original.id,
         ...(typeof original.actorId==='string'?{speakerActorId:original.actorId}:{})}};
@@ -97,6 +97,7 @@ export class PlatformLongMemory {
     const source:LongMemorySourceInput&{memoryReferences?:MemoryRecordReference[]}=context?await this.messageSource(access,context,input.sourceMessageId,input.quote):{id:randomUUID(),expectedVersion:0,origin:'user',text:String(input.text??''),recordedAt:Date.now(),reference:{label:'记忆管理页',speakerActorId:access.actor.id}};
     if(source.memoryReferences?.some(ref=>ref.scopeId!==scope.id))throw new Error('这段模型输出混用了其他范围的记忆，请引用同一范围的原始用户消息或工具结果。');
     if(scope.realm!=='real')source.origin='fiction';
+    else if(source.origin==='fiction')throw new Error('角色剧情中的来源不能保存为真实个人记忆。');
     const record:LongMemoryRecordInput={id:randomUUID(),expectedVersion:0,kind:input.kind??'fact',origin:source.origin,
       confidence:source.origin==='model'?'inferred':input.confidence??'confirmed',subject:input.subject?.trim()||`actor:${source.reference?.speakerActorId??access.actor.id}`,
       text:String(input.text??''),topic:input.topic??[],entities:input.entities??[],attribute:input.attribute??undefined,value:input.value??undefined,
@@ -112,6 +113,7 @@ export class PlatformLongMemory {
     const source:LongMemorySourceInput&{memoryReferences?:MemoryRecordReference[]}=context?await this.messageSource(access,context,input.sourceMessageId,input.quote):{id:randomUUID(),expectedVersion:0,origin:'user',text:String(input.text??previous.text),recordedAt:Date.now(),reference:{label:'用户修订',speakerActorId:access.actor.id}};
     if(source.memoryReferences?.some(ref=>ref.scopeId!==scope.id))throw new Error('修订需要同一范围的直接来源，不能复制其他范围的模型总结。');
     if(scope.realm!=='real')source.origin='fiction';
+    else if(source.origin==='fiction')throw new Error('角色剧情中的来源不能保存为真实个人记忆。');
     const record:LongMemoryRecordInput={...previous,...input,id:previous.id,expectedVersion:previous.version,origin:source.origin,
       text:input.text??previous.text,kind:input.kind??previous.kind,subject:input.subject??previous.subject,topic:input.topic??previous.topic,entities:input.entities??previous.entities,
       attribute:input.attribute===null?undefined:input.attribute??previous.attribute,value:input.value===null?undefined:input.value??previous.value,

@@ -7,9 +7,10 @@ import MemoryLibrary from './MemoryLibrary.vue';
 
 type ResourceRow = Omit<CharacterResource, 'raw' | 'source'> & { revision: number; resolvedReferences?: Record<string, string> };
 const emit = defineEmits<{ close: []; play: [id: string] }>();
+const props = defineProps<{ initialTab?: 'resources' | 'memory' }>();
 const dialog=ref<HTMLDialogElement>();
-const tab=ref<'resources'|'memory'>('resources');
-const memoryOpened=ref(false);
+const tab=ref<'resources'|'memory'>(props.initialTab ?? 'resources');
+const memoryOpened=ref(props.initialTab === 'memory');
 const memoryLibrary=ref<{requestClose():boolean}>();
 function requestClose(){if(memoryLibrary.value&&!memoryLibrary.value.requestClose()){tab.value='memory';return;}emit('close');}
 onMounted(()=>dialog.value?.showModal());

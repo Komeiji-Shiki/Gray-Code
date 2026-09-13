@@ -25,6 +25,7 @@ export class ApplicationRouter {
     if (method.startsWith('memory.')) return longMemoryRequest(app, session, method, params);
     if (method.startsWith('computer.')) return app.computer.call(session, method, params);
     if (method.startsWith('nodes.')) return app.nodes.call(session, method, params);
+    if (method.startsWith('companion.')) return app.companion.call(session, method, params);
     if (method.startsWith('automations.')) {
       switch (method) {
         case 'automations.options': return app.automations.options(session.actorId, params.conversationId);

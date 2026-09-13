@@ -14,6 +14,8 @@ import WorkspaceSelector from './components/WorkspaceSelector.vue';
 import WebDialogs from './components/WebDialogs.vue';
 import NavigationIcon from './components/navigation/NavigationIcon.vue';
 import ComputerStatus from './components/ComputerStatus.vue';
+import CompanionSetup from './components/CompanionSetup.vue';
+const companionOpen = ref(false);
 const characterSetup = ref<{ characterId?: string } | null>(null);
 const libraryOpen = ref(false);
 const automationsOpen = ref(false);
@@ -63,7 +65,7 @@ async function selectMode(mode: 'chat' | 'code' | 'character') {
   if (mode === 'code' && result.workspaceId) state.workspaceId = result.workspaceId;
   state.mode = mode; modeMenuOpen.value = false;
 }
-watch([libraryOpen, automationsOpen, characterSetup, () => state.navigationDialogOpen, () => state.fileDialogOpen, () => state.panelMenuOpen], () => { state.panelObscured = libraryOpen.value || automationsOpen.value || !!characterSetup.value || state.navigationDialogOpen || state.fileDialogOpen || state.panelMenuOpen; });
+watch([libraryOpen, automationsOpen, characterSetup, companionOpen, () => state.navigationDialogOpen, () => state.fileDialogOpen, () => state.panelMenuOpen], () => { state.panelObscured = libraryOpen.value || automationsOpen.value || !!characterSetup.value || companionOpen.value || state.navigationDialogOpen || state.fileDialogOpen || state.panelMenuOpen; });
 function dragSplit(event: PointerEvent) {
   const target = event.currentTarget as HTMLElement;
   target.setPointerCapture(event.pointerId); resizing.value = true; state.panelResizing = true;
@@ -134,14 +136,16 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
       </div>
       <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? '工作台' : '返回对话') : (state.chatFocused ? '打开侧边面板' : '隐藏侧边面板') }}</button>
       <button v-if="!compactViewport" class="quiet-button" @click="libraryOpen = true">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
+      <button v-if="!compactViewport && !state.settingsOpen && state.mode === 'chat'" class="quiet-button" @click="companionOpen = true">陪伴配置</button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
-      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
+      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'chat'" @click="companionOpen = true">陪伴配置</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
     <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
     <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">关闭</button></div>
     <ComputerStatus v-if="state.ready" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
-    <ResourceLibrary v-if="libraryOpen" @close="libraryOpen = false" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
+    <CompanionSetup v-if="companionOpen" :conversation-id="state.conversationId || undefined" @close="companionOpen = false" @memory="libraryOpen = true" @reminders="automationsOpen = true" @applied="id => { if (id !== state.conversationId) guard(() => call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: id } })); }" />
+    <ResourceLibrary v-if="libraryOpen" :initial-tab="companionOpen ? 'memory' : 'resources'" @close="libraryOpen = false" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
     <ContentPreview />
     <WebDialogs v-if="isWeb" />
     <AutomationsPanel :open="automationsOpen" @close="automationsOpen = false" />
