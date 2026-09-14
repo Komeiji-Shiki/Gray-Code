@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { BotGateway, BotInbound } from './gateway';
+import type { BotGateway, BotInbound, BotReply } from './gateway';
 import type { OneBotProtocol, OneBotAction } from './onebotProtocol';
 
 interface PendingCall { resolve(value: Record<string, any>): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
@@ -79,6 +79,11 @@ export class OneBotGateway implements BotGateway {
     });
   }
   async send(channelId: string, content: string): Promise<void> { await this.call(this.protocol.send(channelId, content)); }
+  async sendReply(channelId: string, reply: BotReply) {
+    if (reply.files?.length) throw new Error('当前 OneBot 接入不支持这个附件输出方式。');
+    const data = await this.call(this.protocol.send(channelId, reply.content ?? '', reply.replyToMessageId));
+    return this.protocol.receipt(data);
+  }
   async hydrate(message: BotInbound) { return this.protocol.hydrate(message, action => this.call(action)); }
   async disconnect(): Promise<void> {
     this.desired = false; if (this.reconnect) clearTimeout(this.reconnect); this.reconnect = undefined;

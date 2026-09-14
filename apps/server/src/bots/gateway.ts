@@ -3,6 +3,8 @@ export type { BotChannel, BotGuild, BotUser } from '@graycode/contracts';
 
 export interface BotInbound {
   id: string; authorId: string; channelId: string; content: string; mentioned: boolean; direct: boolean; network?: string;
+  /** 平台消息编号与传输事件编号分开保存，回复不得引用 OneBot 12 的事件 ID。 */
+  sourceMessageId?: string;
   authorName?: string; repliedToBot?: boolean; guildId?: string;
   automated?: boolean;
   timestamp?: number;

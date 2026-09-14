@@ -89,9 +89,10 @@ export class BoundBotService {
       this.retryTimer.unref(); this.notifyConnectionChange();
     }
   }
-  protected context(source: Pick<BotInbound, 'id' | 'authorId' | 'channelId' | 'direct' | 'network' | 'authorName'>): BotContext {
+  protected context(source: Pick<BotInbound, 'id' | 'authorId' | 'channelId' | 'direct' | 'network' | 'authorName' | 'sourceMessageId'>): BotContext {
     if (this.current.status !== 'connected' || !this.current.botId) throw new Error('Bot 尚未连接。');
-    return { id: source.id, authorId: source.authorId, channelId: source.channelId, direct: source.direct,
+    return { id: source.id, sourceMessageId: source.sourceMessageId ?? (this.platform === 'discord' ? source.id : undefined),
+      authorId: source.authorId, channelId: source.channelId, direct: source.direct,
       network: source.network, authorName: source.authorName, platform: this.platform, botId: this.current.botId };
   }
   protected async interaction(input: BotInteraction): Promise<void> { await input.respond({ content: '当前接入没有操作面板。' }); }
@@ -179,7 +180,7 @@ export class BoundBotService {
         const snapshot = await this.sessions.snapshot(context);
         const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
           conversationId: snapshot.conversation?.id ?? '', platformUserId: context.authorId, direct: context.direct, network: context.network,
-          ...(this.platform === 'discord' ? { replyToMessageId: message.id } : {}) };
+          ...(context.sourceMessageId ? { replyToMessageId: context.sourceMessageId } : {}) };
         await this.outbox.put(`reply-${message.id}`, route, botFinalReplies(result.reply, route));
       }
     } catch (error) {
@@ -187,7 +188,7 @@ export class BoundBotService {
       if (!actorId || !triggered) return;
       const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
         conversationId: '', platformUserId: context.authorId, direct: context.direct, network: context.network,
-        ...(this.platform === 'discord' ? { replyToMessageId: message.id } : {}) };
+        ...(context.sourceMessageId ? { replyToMessageId: context.sourceMessageId } : {}) };
       await this.outbox.put(`error-${message.id}`, route, [{ content: `这条消息尚未完成处理：${this.current.error}` }]).catch(() => {});
     }
   }

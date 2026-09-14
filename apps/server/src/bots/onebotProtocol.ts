@@ -1,18 +1,24 @@
 import type { OneBotSettings } from '@graycode/contracts';
-import type { BotInbound, BotAttachment, BotReference } from './gateway';
+import type { BotInbound, BotAttachment, BotReference, BotMessageReceipt } from './gateway';
 import { oneBotContent } from './onebotContent';
 export interface OneBotAction { action: string; params: Record<string, unknown>; self?: { platform: string; user_id: string } }
 export interface OneBotProtocol {
   login(): OneBotAction;
   identity(data: Record<string, any>): { id: string; name: string };
   inbound(value: Record<string, any>, botId: string): BotInbound | undefined;
-  send(channelId: string, text: string): OneBotAction;
+  send(channelId: string, text: string, replyToMessageId?: string): OneBotAction;
+  receipt(data: Record<string, any>): BotMessageReceipt;
   hydrate(message: BotInbound, call: (action: OneBotAction) => Promise<Record<string, any>>): Promise<BotInbound>;
 }
 const numericId = (value: unknown): string | undefined => typeof value === 'string' && /^\d+$/.test(value) ? value
   : typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : undefined;
 const textId = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-const plainMessage = (text: string) => [{ type: 'text', data: { text } }];
+const signedNumericId = (value: unknown): string | undefined => typeof value === 'number' && Number.isSafeInteger(value) ? String(value)
+  : typeof value === 'string' && /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? value : undefined;
+const messageSegments = (text: string, replyToMessageId: string | undefined, version: 11 | 12) => [
+  ...(replyToMessageId !== undefined ? [{ type: 'reply', data: { [version === 11 ? 'id' : 'message_id']: replyToMessageId } }] : []),
+  { type: 'text', data: { text } },
+];
 
 function v11(): OneBotProtocol {
   return {
@@ -26,16 +32,22 @@ function v11(): OneBotProtocol {
       const authorId = numericId(value.user_id); if (!authorId || authorId === botId) return;
       const direct = value.message_type === 'private';
       const channel = direct ? authorId : value.message_type === 'group' ? numericId(value.group_id) : undefined;
-      if (!channel || !['string', 'number'].includes(typeof value.message_id)) return;
+      const sourceMessageId = signedNumericId(value.message_id);
+      if (!channel || sourceMessageId === undefined) return;
       const channelId = `${direct ? 'private' : 'group'}:${channel}`;
-      return { id: `${botId}:${channelId}:${String(value.message_id)}`, authorId, channelId, network: 'qq', direct,
+      return { id: `${botId}:${channelId}:${sourceMessageId}`, sourceMessageId, authorId, channelId, network: 'qq', direct,
         authorName: value.sender?.card || value.sender?.nickname, timestamp: Number(value.time) ? Number(value.time) * 1000 : undefined,
         ...oneBotContent(value.message, botId, 11) };
     },
-    send: (channelId, text) => {
+    send: (channelId, text, replyToMessageId) => {
       const match = /^(group|private):(\d+)$/.exec(channelId); if (!match || !Number.isSafeInteger(Number(match[2]))) throw new Error('OneBot 11 目标格式无效。');
       return { action: match[1] === 'group' ? 'send_group_msg' : 'send_private_msg',
-        params: { [match[1] === 'group' ? 'group_id' : 'user_id']: Number(match[2]), message: plainMessage(text) } };
+        params: { [match[1] === 'group' ? 'group_id' : 'user_id']: Number(match[2]), message: messageSegments(text, replyToMessageId, 11) } };
+    },
+    receipt: data => {
+      const id = signedNumericId(data.message_id);
+      if (id === undefined) throw new Error('OneBot 11 未返回有效的发送回执。');
+      return { id };
     },
     hydrate: (message, call) => hydrateOneBot(message, 11, call),
   };
@@ -54,21 +66,25 @@ function v12(identity: NonNullable<OneBotSettings['self']>): OneBotProtocol {
     },
     inbound: (value, botId) => {
       if (botId !== key || value.type !== 'message' || value.self?.platform !== self.platform || value.self?.user_id !== self.user_id
-        || !textId(value.user_id) || value.user_id === self.user_id || !textId(value.id) || !Array.isArray(value.message)) return;
+        || !textId(value.user_id) || value.user_id === self.user_id || !textId(value.id) || !textId(value.message_id) || !Array.isArray(value.message)) return;
       let channelId: string;
       if (value.detail_type === 'private') channelId = `private:${encodeURIComponent(value.user_id)}`;
       else if (value.detail_type === 'group' && textId(value.group_id)) channelId = `group:${encodeURIComponent(value.group_id)}`;
       else if (value.detail_type === 'channel' && textId(value.guild_id) && textId(value.channel_id)) channelId = `channel:${encodeURIComponent(value.guild_id)}:${encodeURIComponent(value.channel_id)}`;
       else return;
-      return { id: `${key}:${value.id}`, authorId: value.user_id, network: self.platform, channelId,
+      return { id: `${key}:${value.id}`, sourceMessageId: value.message_id, authorId: value.user_id, network: self.platform, channelId,
         direct: value.detail_type === 'private', timestamp: Number(value.time) ? Number(value.time) * 1000 : undefined,
         ...oneBotContent(value.message, self.user_id, 12) };
     },
-    send: (channelId, text) => {
+    send: (channelId, text, replyToMessageId) => {
       const [detail_type, ...encoded] = channelId.split(':'); const ids = encoded.map(decodeURIComponent);
       if (!ids.every(Boolean) || !(['private', 'group'].includes(detail_type) && ids.length === 1 || detail_type === 'channel' && ids.length === 2)) throw new Error('OneBot 12 目标格式无效。');
-      return { action: 'send_message', self, params: { detail_type, message: plainMessage(text),
+      return { action: 'send_message', self, params: { detail_type, message: messageSegments(text, replyToMessageId, 12),
         ...(detail_type === 'private' ? { user_id: ids[0] } : detail_type === 'group' ? { group_id: ids[0] } : { guild_id: ids[0], channel_id: ids[1] }) } };
+    },
+    receipt: data => {
+      if (!textId(data.message_id)) throw new Error('OneBot 12 未返回有效的发送回执。');
+      return { id: data.message_id };
     },
     hydrate: (message, call) => hydrateOneBot(message, 12, action => call({ ...action, self })),
   };
