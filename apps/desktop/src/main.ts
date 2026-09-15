@@ -35,6 +35,7 @@ import { DesktopOpenFiles, desktopFileArguments, openDesktopPath } from './openF
 import { DesktopEditorRegistration } from './editorRegistration';
 import { bindDesktopAppearance } from './appearance';
 import { resolveAppearancePalette } from '../../../shared/appearance';
+import { isTrustedApplicationFrame } from './trustedFrame';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: { buildCommit?: string; buildDirty?: boolean; buildTime: string };
@@ -329,12 +330,10 @@ async function main(): Promise<void> {
   ipcMain.handle(
     "graycode:rpc",
     async (event, method: string, params: Record<string, any> = {}) => {
-      if (
-        !trustedWindows.has(event.sender.id) ||
-        event.senderFrame !== event.sender.mainFrame ||
-        !event.senderFrame.url.startsWith("graycode://app/")
-      )
+      const trustedContents = trustedWindows.has(event.sender.id);
+      if (!isTrustedApplicationFrame(trustedContents, event.senderFrame, event.sender.mainFrame)) {
         throw new Error("Untrusted application frame.");
+      }
       if (method === 'ui.request' && typeof params.type === 'string' && params.type.startsWith('desktop.editor.')) {
         method = params.type; params = params.data ?? {};
       }

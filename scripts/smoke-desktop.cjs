@@ -42,7 +42,7 @@ async function main() {
     let tool;
     if (!completed) tool = call('smoke-write', 'workspace_files', { action: 'write', path: 'generated.txt', content: 'Desktop model/tool integration verified.', expectedHash: null });
     else if (completed === 1) tool = call('smoke-question', 'ask_user', { questions: [{ title: '选择验证结果标签', options: ['已验证', '继续检查'] }] });
-    else if (answerReceived && completed === 2) tool = call('smoke-command', 'run_command', { command: 'powershell.exe', args: ['-NoProfile', '-Command', 'Write-Output should-not-run'] });
+    else if (answerReceived && completed === 2) tool = call('smoke-command', 'run_command', { command: 'powershell.exe', args: ['-NoProfile', '-Command', 'Remove-Item -LiteralPath generated.txt'] });
     const message = tool ? { role: 'assistant', content: null, tool_calls: [tool] } : { role: 'assistant', content: answerReceived ? '文件已生成，已收到回答，高危命令已按选择拒绝。' : '文件已经完成；可以补充验证标签。' };
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message, finish_reason: tool ? 'tool_calls' : 'stop' }] }));
   });
@@ -71,6 +71,9 @@ async function main() {
   window.webContents.reload();
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
+  await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
+  await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
+  await until(() => evaluate('Array.from(document.querySelectorAll(".tree-row")).some(node => node.textContent.includes("hello.ts"))'), 'workspace file tree');
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
   const terminal = await rpc('terminal.create', { workspaceId: 'smoke' });
@@ -101,6 +104,8 @@ async function main() {
   assert.notEqual(rerolled.messages.at(-1).id, oldReplyId);
   assert.equal(rerolled.messages.filter(message => message.isFunctionResponse).length, beforeReroll.messages.filter(message => message.isFunctionResponse).length);
   await chat('Array.from(document.querySelectorAll(".branch-switcher-bar .codicon-chevron-left")).at(-1).closest("button").click()');
+  await until(() => chat('!!document.querySelector("[role=dialog] .dialog-btn.confirm")'), 'branch workspace confirmation');
+  await chat('document.querySelector("[role=dialog] .dialog-btn.confirm").click()');
   await until(async () => (await rpc('conversations.history', { id: conversationId })).messages.at(-1)?.id === oldReplyId, 'switch original candidate');
   await until(() => chat('Array.from(document.querySelectorAll(".branch-switcher-position-text")).some(node => node.textContent.replace(/\\s/g, "") === "1/2")'), 'original candidate rendered');
   await sleep(300);
@@ -117,7 +122,7 @@ async function main() {
   await chat('const field=document.querySelector(".appearance-settings input.text-input"); field.value="正在认真处理…"; field.dispatchEvent(new Event("input",{bubbles:true}));');
   await chat('const select=document.querySelector("select[aria-label=界面字体]"); select.value=' + JSON.stringify(selectedFont) + '; select.dispatchEvent(new Event("change",{bubbles:true}));');
   await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.trim()==="Discord Bot").click()');
-  await until(() => chat('document.body.innerText.includes("平台身份绑定")'), 'Discord settings');
+  await until(() => chat('!!document.querySelector(".discord-settings .discord-header") && document.body.innerText.includes("Discord Bot")'), 'Discord settings');
   await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.includes("MCP")).click()');
   await until(() => chat('!!document.querySelector(".mcp-toolbar .codicon-json")'), 'MCP settings');
   await chat('document.querySelector(".mcp-toolbar .codicon-json").closest("button").click()');
