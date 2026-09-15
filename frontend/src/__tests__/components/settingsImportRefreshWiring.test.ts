@@ -56,10 +56,10 @@ describe('设置导入刷新命令的前端接线', () => {
     )
   })
 
-  test('设置面板订阅 settings.imported 并重新加载设置值', () => {
+  test('设置面板订阅 settings.imported，并重新加载设置值与提示词模式', () => {
     expect(SettingsPanelSource).toContain("PUSH_MESSAGE_NAMES['settings.imported']")
     expect(SettingsPanelSource).toMatch(
-      /onExtensionCommand\(PUSH_MESSAGE_NAMES\['settings\.imported'\], \(\) => \{\s*void loadSettings\(\)/
+      /onExtensionCommand\(PUSH_MESSAGE_NAMES\['settings\.imported'\], \(\) => \{\s*void loadSettings\(\)\s*settingsStore\.refreshPromptModes\(\)/
     )
   })
 

@@ -301,8 +301,10 @@ onMounted(() => {
   loadSettings()
   loadAppInfo()
   loadUsageStats()
+  // 完整设置导入可能替换提示词模式；输入区常驻，需要显式失效其模式列表缓存。
   unsubscribeSettingsImported = onExtensionCommand(PUSH_MESSAGE_NAMES['settings.imported'], () => {
     void loadSettings()
+    settingsStore.refreshPromptModes()
   })
 })
 

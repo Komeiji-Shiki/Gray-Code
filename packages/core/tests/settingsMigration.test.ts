@@ -75,6 +75,29 @@ describe('旧设置与附属资源迁移', () => {
     expect(await app.settings.credential('pending_secret')).toBeNull();
   });
 
+  test('旧设置导入保留提示词预设和原来的当前预设', async () => {
+    const original = app.product.runtimeSettings().getSystemPromptConfig();
+    const base = original.modes.code;
+    const legacyMode = { ...base, id: 'legacy-graywill', name: '灰魂旧预设' };
+    const toolsConfig = structuredClone(app.product.runtimeSettings().getSettings().toolsConfig)!;
+    toolsConfig.system_prompt = { ...original, currentModeId: 'code',
+      modes: { ...original.modes, [legacyMode.id]: legacyMode } };
+    const value = { version: '1.0', graycodeVersion: '1.5.6', exportedAt: 1000,
+      vscodeSettings: { toolsConfig }, channelConfigs: [], mcpServers: [], skills: [] };
+
+    await ui('ui.settings.begin');
+    expect(await ui('settings.importData', { value })).toMatchObject({ success: true, imported: { vscodeSettings: true } });
+    const staged = await ui('getPromptModes');
+    expect(staged.currentModeId).toBe('code');
+    expect(staged.modes).toEqual(expect.arrayContaining([expect.objectContaining({ id: legacyMode.id, name: legacyMode.name })]));
+    await ui('ui.settings.save'); await ui('ui.settings.end');
+
+    await app.close(); await open();
+    expect(app.product.runtimeSettings().getCurrentPromptModeId()).toBe('code');
+    expect(app.product.runtimeSettings().getAllPromptModes()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: legacyMode.id, name: legacyMode.name })]));
+  });
+
   test('实际旧目录迁移保留技能资源、LOG/TREE、活动和依赖，旧文件设置需保存后才完成', async () => {
     const project = path.join(f.root, 'project'); await mkdir(project);
     const settings = app.settings.snapshot();
