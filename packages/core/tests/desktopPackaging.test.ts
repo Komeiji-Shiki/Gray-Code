@@ -32,3 +32,17 @@ test('桌面包保留依赖方使用的嵌套版本、传递依赖和工作区�
     });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('安装器参数把含空格文本和路径绑定到对应选项', () => {
+  const module = pathToFileURL(path.resolve('scripts/desktop-installer-arguments.mjs')).href;
+  const script = `import { createDesktopInstallerArguments } from ${JSON.stringify(module)};
+    console.log(JSON.stringify(createDesktopInstallerArguments({ version: '2.0.0-pre.2', source: 'C:/Gray Code/app',
+      output: 'C:/Gray Code/release', icon: 'C:/Gray Code/icon.ico' })));`;
+  const args = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script],
+    { encoding: 'utf8', windowsHide: true }));
+  expect(args).toContain('--packAuthors=GrayCode contributors');
+  expect(args).toContain('--packDir=C:/Gray Code/app');
+  expect(args).toContain('--outputDir=C:/Gray Code/release');
+  expect(args).toContain('--icon=C:/Gray Code/icon.ico');
+  expect(args).not.toContain('GrayCode contributors');
+});
