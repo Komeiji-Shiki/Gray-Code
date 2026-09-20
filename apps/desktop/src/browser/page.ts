@@ -1,8 +1,9 @@
 import type { WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { compactSnapshot, type SnapshotNode } from './snapshot';
 
 interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string }
-interface PageLog { time: number; kind: 'console' | 'network' | 'error'; text: string }
+interface PageLog { cursor: number; time: number; kind: 'console' | 'network' | 'error'; text: string }
 interface AxNode { nodeId: string; parentId?: string; ignored?: boolean; role?: { value?: string }; name?: { value?: string }; value?: { value?: unknown }; backendDOMNodeId?: number; properties?: Array<{ name: string; value: { value?: unknown } }> }
 
 /** 只提供固定的页面操作。模型参数不能成为脚本、CDP 方法名或宿主接口。 */
@@ -12,6 +13,7 @@ export class BrowserPage {
   private readonly references = new Map<string, ElementReference>();
   private readonly sessions = new Map<string, { targetId: string; url: string }>();
   private readonly records: PageLog[] = [];
+  private logCursor = 0;
   private epoch = 0;
   private debuggerOwned = false;
   constructor(readonly contents: WebContents, private readonly changed: () => void) {
@@ -40,10 +42,15 @@ export class BrowserPage {
   }
   invalidate(): void { this.references.clear(); this.epoch++; }
   log(kind: PageLog['kind'], value: unknown): void {
-    this.records.push({ time: Date.now(), kind, text: String(value).slice(0, 3000) });
+    this.records.push({ cursor: ++this.logCursor, time: Date.now(), kind, text: String(value).slice(0, 3000) });
     if (this.records.length > 200) this.records.splice(0, this.records.length - 200);
   }
-  logs() { return { entries: [...this.records], capacity: 200 }; }
+  logs(options: { since?: number; maxEntries?: number } = {}) {
+    const entries = this.records.filter(record => options.since === undefined || record.cursor > options.since);
+    const maximum = options.maxEntries ?? 50;
+    return { entries: entries.slice(-maximum), nextCursor: this.logCursor, capacity: 200,
+      truncated: entries.length > maximum || options.since !== undefined && options.since < (this.records[0]?.cursor ?? 1) - 1 };
+  }
   private async enable(sessionId?: string): Promise<void> {
     for (const method of ['Page.enable', 'Runtime.enable', 'Network.enable', 'Accessibility.enable']) await this.contents.debugger.sendCommand(method, {}, sessionId);
     await this.contents.debugger.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, sessionId);
@@ -79,45 +86,73 @@ export class BrowserPage {
       signal.throwIfAborted(); return result;
     } finally { if (timer) clearTimeout(timer); if (abort) signal.removeEventListener('abort', abort); }
   }
-  async snapshot(signal: AbortSignal) {
+  async snapshot(signal: AbortSignal, options: { compact?: boolean; maxNodes?: number; ref?: string } = {}) {
     await this.connect(); signal.throwIfAborted();
+    const scope = options.ref ? this.reference(options.ref) : undefined;
     this.invalidate(); const epoch = this.epoch; const prefix = randomUUID().slice(0, 8);
     const references = new Map<string, ElementReference>();
-    const rows: Array<Record<string, unknown>> = []; const frames: Array<Record<string, unknown>> = [];
+    const rows: SnapshotNode[] = []; const frames: Array<Record<string, unknown>> = [];
+    const maximum = options.maxNodes ?? 250;
     let truncated = false;
     const read = async (frameId?: string, url?: string, sessionId?: string) => {
-      if (rows.length >= 1000) { truncated = true; return; }
+      if (rows.length >= maximum) { truncated = true; return; }
       const { nodes } = await this.command('Accessibility.getFullAXTree', { depth: 24, ...(frameId ? { frameId } : {}) }, signal, sessionId) as { nodes: AxNode[] };
       frames.push({ frameId: frameId ?? this.sessions.get(sessionId!)?.targetId, url });
+      const root = scope && nodes.find(node => node.backendDOMNodeId === scope.backendNodeId);
+      if (scope && !root) throw new Error('所选页面区域已经变化，请重新读取整个页面。');
+      const selected = new Set<string>();
+      const byId = new Map(nodes.map(node => [node.nodeId, node]));
+      const children = new Map<string, string[]>();
+      for (const node of nodes) if (node.parentId) {
+        const siblings = children.get(node.parentId) ?? [];
+        siblings.push(node.nodeId); children.set(node.parentId, siblings);
+      }
+      // 根据父子关系选择区域，不依赖调试协议返回节点的排列顺序。
+      const pending = root ? [root.nodeId] : [];
+      while (pending.length) {
+        const id = pending.pop()!; selected.add(id);
+        pending.push(...children.get(id) ?? []);
+      }
       const depths = new Map<string, number>();
+      const depthOf = (node: AxNode): number => {
+        if (depths.has(node.nodeId)) return depths.get(node.nodeId)!;
+        const parent = node.parentId ? byId.get(node.parentId) : undefined;
+        const depth = parent ? depthOf(parent) + 1 : 0; depths.set(node.nodeId, depth); return depth;
+      };
       for (const node of nodes) {
-        const depth = node.parentId ? (depths.get(node.parentId) ?? 0) + 1 : 0; depths.set(node.nodeId, depth);
+        if (scope && !selected.has(node.nodeId)) continue;
+        const depth = depthOf(node) - (root ? depthOf(root) : 0);
         if (node.ignored || node.role?.value === 'InlineTextBox' || !node.name?.value && ['generic', 'none'].includes(node.role?.value ?? '')) continue;
-        if (rows.length >= 1000) { truncated = true; break; }
+        if (rows.length >= maximum) { truncated = true; break; }
         const id = node.backendDOMNodeId ? `${prefix}-${references.size + 1}` : undefined;
         if (id) references.set(id, { backendNodeId: node.backendDOMNodeId!, sessionId, frameId });
         const properties = Object.fromEntries((node.properties ?? []).filter(value => ['checked', 'selected', 'disabled', 'expanded', 'required', 'readonly', 'level', 'multiline'].includes(value.name)).map(value => [value.name, value.value.value]));
-        rows.push({ ...(id ? { ref: id } : {}), frameId, depth, role: node.role?.value, name: node.name?.value?.slice(0, 1200),
+        rows.push({ ...(id ? { ref: id } : {}), frameId: frameId ?? this.sessions.get(sessionId!)?.targetId, depth, role: node.role?.value, name: node.name?.value?.slice(0, 1200),
           ...(node.value?.value !== undefined ? { value: String(node.value.value).slice(0, 1200) } : {}), ...properties });
       }
     };
-    const tree = await this.command('Page.getFrameTree', {}, signal);
     const visit = async (node: { frame: { id: string; url: string }; childFrames?: any[] }) => {
       try { await read(node.frame.id, node.frame.url); }
       catch (error) { signal.throwIfAborted(); frames.push({ frameId: node.frame.id, url: node.frame.url, unavailable: String(error) }); }
       for (const child of node.childFrames ?? []) await visit(child);
     };
-    await visit(tree.frameTree);
-    for (const [sessionId, target] of this.sessions) {
-      if (frames.some(frame => frame.frameId === target.targetId && !frame.unavailable)) continue;
-      try { await read(undefined, target.url, sessionId); }
-      catch (error) { signal.throwIfAborted(); frames.push({ frameId: target.targetId, url: target.url, unavailable: String(error) }); }
+    if (scope) {
+      await read(scope.frameId, scope.sessionId ? this.sessions.get(scope.sessionId)?.url : undefined, scope.sessionId);
+    } else {
+      const tree = await this.command('Page.getFrameTree', {}, signal);
+      await visit(tree.frameTree);
+      for (const [sessionId, target] of this.sessions) {
+        if (frames.some(frame => frame.frameId === target.targetId && !frame.unavailable)) continue;
+        try { await read(undefined, target.url, sessionId); }
+        catch (error) { signal.throwIfAborted(); frames.push({ frameId: target.targetId, url: target.url, unavailable: String(error) }); }
+      }
     }
     if (epoch !== this.epoch) throw new Error('页面在读取时发生导航，请重新读取。');
     for (const [id, reference] of references) this.references.set(id, reference);
-    return { url: this.contents.getURL(), title: this.contents.getTitle(), frames, nodes: rows, truncated };
+    return { url: this.contents.getURL(), title: this.contents.getTitle(), frames,
+      format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows), truncated };
   }
-  async screenshot(signal: AbortSignal) {
+  async screenshot(signal: AbortSignal, maxImageDimension = 1280) {
     signal.throwIfAborted(); const epoch = this.epoch;
     try {
       // 捕获不会显示或聚焦窗口；尚无原生绘制表面时明确返回状态，不销毁标签。
@@ -125,7 +160,10 @@ export class BrowserPage {
       signal.throwIfAborted();
       if (epoch !== this.epoch) throw new Error('页面在截图时发生导航，请重新截图。');
       if (picture.isEmpty()) throw new Error('Current display surface not available for capture');
-      return { mimeType: 'image/png', data: picture.toPNG().toString('base64'), name: 'browser.png' };
+      const original = picture.getSize();
+      const ratio = Math.min(1, maxImageDimension / Math.max(original.width, original.height));
+      const image = ratio < 1 ? picture.resize({ width: Math.max(1, Math.round(original.width * ratio)), height: Math.max(1, Math.round(original.height * ratio)), quality: 'best' }) : picture;
+      return { mimeType: 'image/png', data: image.toPNG().toString('base64'), name: 'browser.png', ...image.getSize() };
     } catch (error) {
       signal.throwIfAborted();
       if (/display surface.*not available|UnknownVizError/i.test(String(error))) throw Object.assign(new Error('网页尚无可捕获的画面。请先在工作台显示该标签；窗口隐藏时需要用户打开应用。可继续使用页面结构读取，不要重复尝试同一截图。'), { code: 'BROWSER_VIEW_REQUIRED' });

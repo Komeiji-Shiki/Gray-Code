@@ -4,6 +4,7 @@ import type { ComputerAction, ComputerCapture, ComputerDisplayCapture, ComputerO
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { WindowsComputerNative } from './native';
+import { observationForModel } from './observation';
 import { ComputerError, type ComputerNativePort, type ComputerScreenPort, type NativeComputerStatus } from './port';
 
 type Identity = { actorId: string; runId?: string; clientId?: string; signal?: AbortSignal };
@@ -232,8 +233,10 @@ export class ComputerService {
     try {
       if (name === 'computer_windows') return { success: true, data: await this.windows(identity) };
       if (name === 'computer_observe') {
-        const value = await this.observe(identity, args as any); const { screenshot, ...observation } = value;
-        return { success: true, data: { ...observation, ...(screenshot ? { screenshot: { ...screenshot, data: undefined } } : {}) },
+        const dimension = args.maxImageDimension ?? 1280;
+        const value = await this.observe(identity, { ...args, windowId: args.windowId, width: dimension, height: dimension });
+        const { screenshot } = value;
+        return { success: true, data: observationForModel(value, args.compact !== false),
           ...(screenshot ? { attachments: [{ mimeType: screenshot.mimeType, data: screenshot.data, name: '窗口截图.png' }] } : {}) };
       }
       if (name === 'computer_control') return { success: true, data: args.action === 'acquire' ? await this.acquire(identity, args.windowIds ?? [])

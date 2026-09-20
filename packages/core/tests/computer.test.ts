@@ -4,6 +4,7 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { ComputerError, type ComputerNativePort, type NativeComputerStatus } from '../../../apps/server/src/computer/port';
 import { fixture } from './fixtures';
+import { observationForModel } from '../../../apps/server/src/computer/observation';
 
 // 这里验证核心运行、身份和持久化边界；Windows 实机输入另有独立验收材料。
 class NativeFixture implements ComputerNativePort {
@@ -117,6 +118,34 @@ describe('电脑控制的核心运行与授权', () => {
     const uncertain={observationId:next.id,action:'type' as const,text:'只派发一次'};
     await expect(app.computer.action(client,uncertain,'unknown-input')).rejects.toMatchObject({code:'OPERATION_UNKNOWN'});
     await expect(app.computer.action(client,uncertain,'unknown-input')).rejects.toMatchObject({code:'OPERATION_UNKNOWN'});expect(native.actions).toHaveLength(1);
+  });
+
+  test('精简观察保留操作字段和坐标，完整观察按需读取且内部原文不变', async () => {
+    const value = await app.computer.observe(client, { windowId: '98', screenshot: true });
+    value.elements = Array.from({ length: 120 }, (_, index) => ({ ...value.elements[0], id: `${value.id}:${index}`,
+      runtimeId: `internal-runtime-${index}`, automationId: '', name: `按钮 ${index}`, value: undefined, focused: false, patterns: [] }));
+    value.elements[0].enabled = false; value.elements[1].offscreen = true; value.elements[2].password = true;
+    const before = structuredClone(value), compact = observationForModel(value), full = observationForModel(value, false);
+    expect(compact.elements[0]).toMatchObject({ id: value.elements[0].id, enabled: false, bounds: native.window.bounds });
+    expect(compact.elements[1]).toMatchObject({ offscreen: true }); expect(compact.elements[2]).toMatchObject({ password: true });
+    expect(compact.elements[3]).not.toHaveProperty('runtimeId'); expect(compact).toHaveProperty('elementDefaults.enabled', true);
+    expect(full.elements[3]).toHaveProperty('runtimeId', 'internal-runtime-3'); expect(full.screenshot).not.toHaveProperty('data', 'ZmFrZQ==');
+    expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(full).length * 0.7); expect(value).toEqual(before);
+  });
+
+  test('模型观察使用截图预算，返回的元素仍可操作并按实际图片映射坐标', async () => {
+    const request = jest.spyOn(native, 'request');
+    const context = { actorId: 'owner', runId: 'compact-observation', signal: new AbortController().signal } as any;
+    await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'] }, context);
+    const result = await app.computer.tool('computer_observe', { windowId: '98', screenshot: true }, context);
+    const data = result.data as any;
+    expect(request).toHaveBeenCalledWith('capture', expect.objectContaining({ width: 1280, height: 1280 }), context.signal);
+    expect(data.screenshot).toMatchObject({ width: 600, height: 400 }); expect(data.elements[0]).not.toHaveProperty('runtimeId');
+    expect(result.attachments).toEqual([expect.objectContaining({ data: 'ZmFrZQ==' })]);
+    const action = await app.computer.tool('computer_action', { observationId: data.id, action: 'click', coordinateSpace: 'image', x: 300, y: 200 }, { ...context, toolCallId: 'compact-click' });
+    expect(action).toMatchObject({ success: true, data: { performed: true, x: -1150, y: 400 } });
+    const detailed = await app.computer.tool('computer_observe', { windowId: '98', compact: false }, context);
+    expect((detailed.data as any).elements[0].runtimeId).toBe('fixture-field');
   });
 
   test('人工接管后模型不能自行恢复，取消和晚到的控制权响应不能继续操作', async () => {

@@ -274,9 +274,12 @@ export class DesktopBrowser implements BrowserHost {
           this.show(tab); return { success: true, data: { ...this.describe(tab), windowVisible: this.getWindow()?.isVisible() === true } };
         }
         if (name === 'browser_read') {
-          if (args.action === 'snapshot') return { success: true, data: await tab.page.snapshot(signal) };
-          if (args.action === 'screenshot') return { success: true, data: { tabId: tab.id, url: tab.view.webContents.getURL() }, attachments: [await tab.page.screenshot(signal)] };
-          if (args.action === 'logs') return { success: true, data: tab.page.logs() };
+          if (args.action === 'snapshot') return { success: true, data: await tab.page.snapshot(signal, args) };
+          if (args.action === 'screenshot') {
+            const { width, height, ...attachment } = await tab.page.screenshot(signal, args.maxImageDimension as number | undefined);
+            return { success: true, data: { tabId: tab.id, url: tab.view.webContents.getURL(), width, height }, attachments: [attachment] };
+          }
+          if (args.action === 'logs') return { success: true, data: tab.page.logs(args) };
         }
         if (name === 'browser_action') {
           if (args.action !== 'navigate' && args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化或未提供，请重新读取后确认操作目标。');
