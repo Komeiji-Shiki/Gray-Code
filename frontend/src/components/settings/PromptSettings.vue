@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n'
 import { useSettingsStore } from '@/stores'
 import { InputDialog, ConfirmDialog, type SelectOption } from '../common'
 import { copyToClipboard } from '@/utils/format'
+import { isPromptModeImportSource, promptModeImportSources } from '@/utils/promptModeImport'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import PromptEntriesEditor from './PromptEntriesEditor.vue'
 import ModeSelectorBar from './prompt/ModeSelectorBar.vue'
@@ -293,7 +294,7 @@ function getModeSnapshotForExport(mode: PromptMode): PromptMode {
 }
 
 function sanitizeImportedMode(raw: unknown, fallbackName: string): PromptMode {
-  if (!raw || typeof raw !== 'object') {
+  if (!isPromptModeImportSource(raw)) {
     throw new Error(t('components.settings.promptSettings.modes.importInvalid'))
   }
 
@@ -326,13 +327,7 @@ function parsePromptModeImportPayload(rawText: string): PromptMode[] {
   }
 
   const parsed = JSON.parse(trimmed)
-  const source = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.modes)
-      ? parsed.modes
-      : parsed?.mode
-        ? [parsed.mode]
-        : [parsed]
+  const source = promptModeImportSources(parsed)
 
   const imported = source.map((item: unknown, index: number) =>
     sanitizeImportedMode(item, `${t('components.settings.promptSettings.modes.importedModeDefault')} ${index + 1}`)

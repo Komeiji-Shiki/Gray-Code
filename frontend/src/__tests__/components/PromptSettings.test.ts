@@ -21,6 +21,8 @@ vi.mock('@/stores', () => ({
 }))
 
 import PromptSettings from '../../components/settings/PromptSettings.vue'
+import ModeSelectorBar from '../../components/settings/prompt/ModeSelectorBar.vue'
+import ImportModesDialog from '../../components/settings/prompt/ImportModesDialog.vue'
 
 /** 构造一个 entries 组装模式、含 assistant 伪造思考内容的系统提示词配置 */
 function makeConfig() {
@@ -83,6 +85,40 @@ describe('PromptSettings fakeThought 持久化', () => {
 
   afterEach(() => {
     wrapper?.unmount()
+  })
+
+  test.each(['map', 'array', 'legacy-settings', 'desktop-settings'])('导入 %s 保留旧预设正文并选中新增预设', async format => {
+    wrapper = mount(PromptSettings); await flushPromises()
+    const mode = { ...makeConfig().modes.code, id: 'legacy', name: '旧预设', promptEntries: [
+      { id: 'legacy-body', name: '正文', type: 'prompt', role: 'system', enabled: true, content: '来自旧预设的实际正文', order: 0 }
+    ] }
+    const prompt = { modes: { legacy: mode } }
+    const payload = format === 'map' ? prompt : format === 'array' ? { modes: [mode] }
+      : format === 'legacy-settings' ? { globalSettings: { language: 'zh-CN' }, vscodeSettings: { 'graycode.toolsConfig': { system_prompt: prompt } } }
+      : { format: 'graycode-platform', features: { toolsConfig: { system_prompt: prompt } } }
+    wrapper.findComponent(ModeSelectorBar).vm.$emit('import'); await flushPromises()
+    const dialog = wrapper.findComponent(ImportModesDialog)
+    dialog.vm.$emit('update:payloadText', JSON.stringify(payload)); await flushPromises()
+    dialog.vm.$emit('confirm'); await flushPromises()
+    const saved = sendToExtension.mock.calls.find(([name]) => name === 'savePromptMode')?.[1].mode
+    expect(saved).toMatchObject({ name: '旧预设', promptEntries: expect.arrayContaining([
+      expect.objectContaining({ content: '来自旧预设的实际正文' })
+    ]) })
+    expect(wrapper.findComponent(ModeSelectorBar).props('selectedModeId')).toBe(saved.id)
+    expect(wrapper.findComponent(ImportModesDialog).exists()).toBe(false)
+  })
+
+  test('不支持的 JSON 显示错误，不生成默认预设', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      wrapper = mount(PromptSettings); await flushPromises()
+      wrapper.findComponent(ModeSelectorBar).vm.$emit('import'); await flushPromises()
+      const dialog = wrapper.findComponent(ImportModesDialog)
+      dialog.vm.$emit('update:payloadText', JSON.stringify({ unrelated: 'not a preset' })); await flushPromises()
+      dialog.vm.$emit('confirm'); await flushPromises()
+      expect(sendToExtension.mock.calls.filter(([name]) => name === 'savePromptMode')).toEqual([])
+      expect(dialog.props('errorMessage')).toBe('components.settings.promptSettings.modes.importInvalid')
+    } finally { error.mockRestore() }
   })
 
   test('加载配置时把 fakeThought 回填到 assistant 条目的伪造思考输入框', async () => {
