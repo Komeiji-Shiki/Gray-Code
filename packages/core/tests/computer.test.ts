@@ -59,8 +59,14 @@ describe('电脑控制的核心运行与授权', () => {
     const providerId = await draft.configs.createConfig({ name: '电脑验收渠道', type: 'openai', url: 'http://127.0.0.1:1/v1', model: 'fixture', apiKey: '', enabled: true, contextManagementEnabled: false, timeout: 1000 });
     await app.product.save(draft);
     const settings = app.settings.snapshot(); const agent = settings.settings.agents.find(value => value.id === 'default')!;
-    agent.toolApproval = Object.fromEntries(['computer_windows','computer_control','computer_observe','computer_action'].map(name => [name,'auto'])); agent.reviewerToolNames = [];
+    // 旧设置没有电脑工具的独立键，仍应遵守自动执行页的勾选状态。
+    agent.approvalMode = 'all_mutations'; agent.reviewerToolNames = [];
     await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    const approvals: unknown[] = [];
+    app.subscribe(notification => {
+      const event = notification.event as any;
+      if (event?.type === 'approval.requested') { approvals.push(event.payload); void app.runtime.resolveApproval(event.payload.id, 'owner', false); }
+    });
     let iteration = 0;
     const result = (input: ModelInput, name: string): any => input.messages.flatMap(message => message.parts).findLast(part => (part.functionResponse as any)?.name === name)?.functionResponse;
     generate = async input => {
@@ -78,6 +84,7 @@ describe('电脑控制的核心运行与授权', () => {
     const run = await router.call(client,'runs.start',{conversationId:conversation.id,agentId:'default',providerId,requestKey:'computer-run',text:'在测试应用输入文字。',actorId:'forged'}) as {id:string};
     expect((await app.runtime.wait(run.id))?.status).toBe('completed');
     expect(native.actions).toHaveLength(1);expect(native.actions[0]).toMatchObject({action:'type',text:'来自工具的文字'});
+    expect(approvals).toEqual([]);
     expect(app.computer.status('owner').active).toBe(false);
     const history = await app.storage.readFullHistory(conversation.id);
     expect(history.messages.flatMap(message=>message.parts).filter(part=>part.functionResponse)).toHaveLength(4);
