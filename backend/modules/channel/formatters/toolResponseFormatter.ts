@@ -34,14 +34,15 @@ function hasTextContentFields(obj: Record<string, unknown>): boolean {
  * 格式化单个结果条目（data.results 数组中的元素）。
  * 把文本字段原样输出，剩余字段用 JSON 摘要。
  */
-function formatResultItem(result: Record<string, unknown>): string {
-    const textParts: string[] = [];
+function formatResultItem(result: unknown): string {
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) return JSON.stringify(result) ?? String(result);
+    const textParts: Array<{ key: string; value: string }> = [];
     const metaFields: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(result)) {
         if (TEXT_CONTENT_KEYS.has(key) && typeof value === 'string' && value.length > 0) {
-            textParts.push(value);
-        } else if (value !== undefined && value !== null) {
+            textParts.push({ key, value });
+        } else if (value !== undefined) {
             metaFields[key] = value;
         }
     }
@@ -85,7 +86,9 @@ function formatResultItem(result: Record<string, unknown>): string {
         lines.push(`[${header}]`);
     }
     for (const text of textParts) {
-        lines.push(text);
+        // 修改前后、搜索和替换同时返回时，字段名是判断操作含义的必要信息。
+        if (textParts.length > 1) lines.push(`${text.key}:`);
+        lines.push(text.value);
     }
     return lines.join('\n');
 }
@@ -115,6 +118,16 @@ function formatPartialResultsBlock(data: Record<string, unknown>): string {
     return `${header}\n\n${formatted.join('\n\n').trimEnd()}`;
 }
 
+function remainingFields(value: Record<string, unknown>, consumed: string[]): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(value).filter(([key, item]) => !consumed.includes(key) && item !== undefined));
+}
+
+function metadataLine(value: Record<string, unknown>): string {
+    return Object.keys(value).length ? `[${JSON.stringify(value)}]` : '';
+}
+
+const BATCH_COUNTS = ['successCount', 'failCount', 'totalCount'];
+
 /**
  * 将 ToolResult.response 序列化为适合发给 LLM 的纯文本字符串。
  *
@@ -140,6 +153,8 @@ export function serializeToolResultForLLM(
     }
 
     const data = response.data as Record<string, unknown> | undefined;
+    // success=true 已由正常返回表达，其余顶层状态不能在展开 data 时丢失。
+    const metadata = remainingFields(response, ['data', 'error', ...(response.success === true ? ['success'] : [])]);
 
     // 错误分支：错误信息始终保留在最前，同时继续序列化部分成功结果（F-02）。
     // 修改原因：批量工具部分失败时，以前这里直接返回顶层错误，
@@ -149,11 +164,16 @@ export function serializeToolResultForLLM(
         if (response.cancelled) {
             parts.push('[cancelled by user]');
         }
+        const errorMetadata = remainingFields(metadata, ['success', ...(response.cancelled ? ['cancelled'] : [])]);
+        const errorHeader = metadataLine(errorMetadata);
+        if (errorHeader) parts.push(errorHeader);
 
-        if (data && typeof data === 'object') {
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            const consumed: string[] = [];
             // 命令执行输出（execute_command 的 stderr/stdout），保持原有格式
             if (typeof data.output === 'string' && data.output.trim()) {
                 parts.push('', 'Output:', data.output.trimEnd());
+                consumed.push('output');
             }
 
             // 批量结果数组：只要存在文本项就逐项格式化，避免 JSON 二次转义
@@ -165,14 +185,15 @@ export function serializeToolResultForLLM(
                 if (hasAnyText) {
                     parts.push('', formatPartialResultsBlock(data));
                 } else {
-                    // 纯结构化数组（如 list_files 的文件列表）→ JSON
-                    parts.push('', JSON.stringify(data, null, 2));
+                    parts.push('', 'Partial results:', formatBatchSummary(data), JSON.stringify(results));
                 }
+                consumed.push('results', ...BATCH_COUNTS);
             }
 
             // 可读信息（删除/创建目录/补丁工具返回的 data.message）
             if (typeof data.message === 'string' && data.message.trim()) {
                 parts.push('', `Message: ${data.message.trim()}`);
+                consumed.push('message');
             }
 
             // 子代理工具使用信息（subagents 失败/部分响应路径）：
@@ -180,10 +201,17 @@ export function serializeToolResultForLLM(
             // 子代理是否调用过工具及调用了哪些（空数组 = 未调用任何工具）。
             if (typeof data.steps === 'number' || Array.isArray(data.toolsUsed)) {
                 parts.push('', `Progress: steps=${JSON.stringify(data.steps ?? 0)}, toolsUsed=${JSON.stringify(data.toolsUsed ?? [])}`);
+                consumed.push('steps', 'toolsUsed');
             }
             if (typeof data.partialResponse === 'string' && data.partialResponse.trim()) {
                 parts.push('', 'Partial response:', data.partialResponse.trimEnd());
+                consumed.push('partialResponse');
             }
+            // 保留退出码、游标、截断原因等未专门展示的字段，让模型知道怎样继续。
+            const remaining = metadataLine(remainingFields(data, consumed));
+            if (remaining) parts.push('', remaining);
+        } else if (data !== undefined) {
+            parts.push('', JSON.stringify(data));
         }
         return parts.join('\n');
     }
@@ -196,16 +224,16 @@ export function serializeToolResultForLLM(
         if (results.some(r => typeof r === 'object' && r !== null && hasTextContentFields(r as Record<string, unknown>))) {
             const formatted = results.map(r => formatResultItem(r as Record<string, unknown>));
             // 去掉末尾多余空行
-            return formatted.join('\n\n').trimEnd();
+            return [metadataLine(metadata), metadataLine(remainingFields(data, ['results'])), ...formatted].filter(Boolean).join('\n\n').trimEnd();
         }
 
         // 纯结构化数组（如 list_files 的文件列表）→ JSON（包含 data 中全部字段，而非仅 results）
-        return JSON.stringify(data, null, 2);
+        return JSON.stringify(Object.keys(metadata).length ? { ...metadata, data } : data);
     }
 
     // 检测顶层的 data 是否直接含文本字段
     if (data && typeof data === 'object' && hasTextContentFields(data as Record<string, unknown>)) {
-        return formatResultItem(data as Record<string, unknown>);
+        return [metadataLine(metadata), formatResultItem(data)].filter(Boolean).join('\n');
     }
 
     // 兜底：纯结构化数据，用 JSON

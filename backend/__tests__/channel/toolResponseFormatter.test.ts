@@ -176,7 +176,7 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
         expect(result).toContain('BBB');
     });
 
-    test('全结构化数组仍输出格式化 JSON', () => {
+    test('结构化数组使用紧凑 JSON，解析后的数据保持相同', () => {
         const result = serializeToolResultForLLM('list_files', {
             success: true,
             data: {
@@ -192,7 +192,7 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
                 { path: 'a.txt', type: 'file' },
                 { path: 'src', type: 'dir' }
             ]
-        }, null, 2));
+        }));
     });
 
     test('没有 data 的普通错误仍只输出错误信息', () => {
@@ -219,5 +219,53 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
         expect(result).toContain('ENOENT');
         // 不能整体 JSON.stringify（会把文本内容二次转义）
         expect(result).not.toContain('"content": "text content"');
+    });
+});
+
+describe('工具结果信息完整性与紧凑输出', () => {
+    test('失败保留错误码、退出码、恢复游标和空值', () => {
+        const result = serializeToolResultForLLM('run_command', {
+            success: false, error: '命令失败', code: 'PROCESS_FAILED', retryable: false,
+            data: { output: 'stderr 原文', exitCode: 2, nextCursor: 123, truncated: true, signal: null },
+        });
+        expect(result).toContain('"code":"PROCESS_FAILED"');
+        expect(result).toContain('"retryable":false');
+        expect(result).toContain('"exitCode":2');
+        expect(result).toContain('"nextCursor":123');
+        expect(result).toContain('"truncated":true');
+        expect(result).toContain('"signal":null');
+        expect(result.match(/stderr 原文/g)).toHaveLength(1);
+    });
+
+    test('文本批量结果保留分页与统计，不把截断误报成完整结果', () => {
+        const result = serializeToolResultForLLM('search_in_files', {
+            success: true, pending: true,
+            data: { results: [{ path: 'a.ts', content: '第一个匹配' }], totalCount: 50, truncated: true, nextCursor: 'page-2' },
+        });
+        expect(result).toContain('"pending":true');
+        expect(result).toContain('"totalCount":50');
+        expect(result).toContain('"truncated":true');
+        expect(result).toContain('"nextCursor":"page-2"');
+    });
+
+    test('修改前后的文本保留字段身份，单一文件正文仍原样输出', () => {
+        const result = serializeToolResultForLLM('patch', { success: true, data: { originalContent: '旧内容', newContent: '新内容' } });
+        expect(result).toContain('originalContent:\n旧内容');
+        expect(result).toContain('newContent:\n新内容');
+        expect(serializeToolResultForLLM('read_file', { success: true, data: { content: 'C:\\temp\\file\n下一行' } })).toBe('C:\\temp\\file\n下一行');
+    });
+
+    test('混合结果中的字符串、null 和数字不会导致整个序列化失败', () => {
+        const result = serializeToolResultForLLM('mixed', { success: true, data: { results: [{ content: '正文' }, null, 0, '其他结果'] } });
+        expect(result).toContain('正文\n\nnull\n\n0\n\n"其他结果"');
+    });
+
+    test('纯结构化失败结果和可读消息只输出一次', () => {
+        const result = serializeToolResultForLLM('delete_file', {
+            success: false, error: '部分失败', data: { results: [{ id: 'one', success: true }], message: '已删除一条', affected: ['one'] },
+        });
+        expect(result.match(/已删除一条/g)).toHaveLength(1);
+        expect(result).toContain('"affected":["one"]');
+        expect(result).toContain('"success":true');
     });
 });
