@@ -14,6 +14,8 @@ const UTF8_REFERENCE = 43;
 const UTF16_REFERENCE = 44;
 const DICTIONARY_VALUE = 45;
 const BINARY_REFERENCE = 46;
+const VALUE_REFERENCE = 47;
+const REQUEST_ARRAY_FIELDS = new Set(['messages', 'input', 'contents', 'tools']);
 const INVALID_UTF16 = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
 
 function digest(bytes: Uint8Array): Buffer {
@@ -78,9 +80,15 @@ export class ObjectStore {
   }
 
   /** Only objects referenced by the selected message are decoded; attachments remain lossless. */
-  putValue(value: unknown): Buffer {
+  putValue(value: unknown, deduplicateRequestArrays = false): Buffer {
     const children: Buffer[] = [];
     const ancestors = new Set<object>();
+    const edge = this.db.prepare('INSERT OR IGNORE INTO object_edges(parent_hash,child_hash) VALUES(?,?)');
+    const writeValue = (transformed: unknown, references: Buffer[]) => {
+      const hash = this.put(encode(transformed, { sortKeys: true }));
+      references.forEach(child => edge.run(hash, child));
+      return hash;
+    };
     const transform = (input: unknown, key: string, depth: number): unknown => {
       if (depth > 128) invalid('Stored value nesting exceeds 128 levels.');
       if (input === null || typeof input === 'boolean') return input;
@@ -113,7 +121,15 @@ export class ObjectStore {
       if (!Array.isArray(input) && proto !== Object.prototype && proto !== null) invalid('Stored values must use plain objects.');
       ancestors.add(input);
       try {
-        if (Array.isArray(input)) return input.map(item => transform(item === undefined ? null : item, '', depth + 1));
+        if (Array.isArray(input)) return input.map(item => {
+          const start = children.length;
+          const transformed = transform(item === undefined ? null : item, '', depth + 1);
+          if (!deduplicateRequestArrays || !REQUEST_ARRAY_FIELDS.has(key) || !item || typeof item !== 'object' || Array.isArray(item)) return transformed;
+          // 请求中的旧消息和工具定义按内容共享；每个引用保留自己的附件边，备份与回收沿原对象图处理。
+          const child = writeValue(transformed, children.splice(start));
+          children.push(child);
+          return new ExtData(VALUE_REFERENCE, child);
+        });
         const record = input as Record<string, unknown>;
         if (Object.keys(record).some(name => name === '__proto__' || INVALID_UTF16.test(name))) {
           // MessagePack's safe map decoder rejects __proto__; encode such dictionaries as entry data.
@@ -137,11 +153,7 @@ export class ObjectStore {
           .map(([name, item]) => [name, transform(item, name, depth + 1)]));
       } finally { ancestors.delete(input); }
     };
-    const packed = encode(transform(value, '', 0), { sortKeys: true });
-    const hash = this.put(packed);
-    const edge = this.db.prepare('INSERT OR IGNORE INTO object_edges(parent_hash,child_hash) VALUES(?,?)');
-    children.forEach(child => edge.run(hash, child));
-    return hash;
+    return writeValue(transform(value, '', 0), children);
   }
 
   getValue<T = unknown>(hash: Buffer, projection?: ValueProjection): T {
@@ -160,27 +172,28 @@ export class ObjectStore {
             return [[key, restore(pair[1], depth + 1)]];
           }));
         }
-        if (![ATTACHMENT_REFERENCE, UTF8_REFERENCE, UTF16_REFERENCE, BINARY_REFERENCE].includes(value.type) || typeof value.data === 'function' || value.data.length !== 32) {
+        if (![ATTACHMENT_REFERENCE, UTF8_REFERENCE, UTF16_REFERENCE, BINARY_REFERENCE, VALUE_REFERENCE].includes(value.type) || typeof value.data === 'function' || value.data.length !== 32) {
           throw new PlatformStorageError('CORRUPT_DATA', 'Unknown stored content reference.');
         }
         if (projection?.omitBinary && value.type === ATTACHMENT_REFERENCE) return '';
         if (projection?.omitBinary && value.type === BINARY_REFERENCE) return new Uint8Array();
         const content = this.get(Buffer.from(value.data));
+        if (value.type === VALUE_REFERENCE) return restore(unpack(content), depth);
         if (value.type === BINARY_REFERENCE) return new Uint8Array(content);
         return content.toString(value.type === ATTACHMENT_REFERENCE ? 'base64' : value.type === UTF16_REFERENCE ? 'utf16le' : 'utf8');
       }
-      if (value instanceof Uint8Array) return value;
       if (Array.isArray(value)) return value.map(item => restore(item, depth + 1));
       if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
         .filter(([key]) => depth !== 0 || !projection?.fields || projection.fields.includes(key))
         .map(([key, item]) => [key, restore(item, depth + 1)]));
       return value;
     };
-    try {
-      return restore(decode(this.get(hash), {
+    const unpack = (bytes: Uint8Array) => decode(bytes, {
         maxStrLength: MAX_VALUE_BYTES, maxBinLength: MAX_VALUE_BYTES,
         maxArrayLength: 1_000_000, maxMapLength: 1_000_000,
-      })) as T;
+      });
+    try {
+      return restore(unpack(this.get(hash))) as T;
     } catch (error) {
       if (error instanceof PlatformStorageError) throw error;
       throw new PlatformStorageError('CORRUPT_DATA', `Cannot decode stored content: ${error instanceof Error ? error.message : String(error)}`);

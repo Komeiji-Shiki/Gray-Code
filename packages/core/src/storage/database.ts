@@ -338,7 +338,7 @@ export class PlatformDatabase {
         const revision = (current?.revision ?? 0) + 1;
         this.db.prepare(`INSERT INTO records(namespace,id,owner_id,value_hash,revision) VALUES(?,?,?,?,?)
           ON CONFLICT(namespace,id) DO UPDATE SET owner_id=excluded.owner_id,value_hash=excluded.value_hash,revision=excluded.revision`)
-          .run(record.namespace, record.id, record.ownerId ?? null, this.objects.putValue(record.value), revision);
+          .run(record.namespace, record.id, record.ownerId ?? null, this.objects.putValue(record.value, record.namespace === 'model-requests'), revision);
         return { namespace: record.namespace, id: record.id, revision };
       });
     })();

@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import { PlatformStorageError } from '../errors';
 import { LONG_MEMORY_SCHEMA } from './longMemory/schema';
 
-export const SCHEMA_VERSION = 6;
+// 第 7 版增加请求消息的对象引用编码，旧客户端必须明确拒绝，避免误读新记录。
+export const SCHEMA_VERSION = 7;
 const APPLICATION_ID = 0x47524350;
 
 /** One connection owns writes and collection; callers access it through the storage worker. */
