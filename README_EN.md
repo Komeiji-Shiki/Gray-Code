@@ -1,116 +1,82 @@
 # GrayCode
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Komeiji-Shiki/GrayWill-ST/main/picture/2.png" alt="GrayCode" width="480" />
-</p>
+**A local-first AI workspace for conversations, coding, visual tools, and agent tasks.**
 
-<p align="center">
-  <strong>A local AI workspace and coding assistant</strong>
-</p>
+[简体中文](README.md) · [User guide](wiki/Home.md) · [Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) · [Contributing](CONTRIBUTING.md)
 
-<p align="center">
-  Multiple model providers · Coding tools · MCP · Skills · Sub-Agents · Persistent memory
-</p>
+GrayCode combines model conversations, files, an editor, terminals, Git review, and tool execution in a standalone desktop app. Connect your own model endpoints, operate a computer or the built-in browser from screenshots, and extend tasks through MCP, Skills, subagents, or external ACP coding agents. Conversations, attachments, task records, and memory are stored locally.
 
-<p align="center">
-  <a href="README.md">简体中文</a> ·
-  <a href="README_EN.md"><strong>English</strong></a>
-</p>
+![GrayCode workbench with a synthetic project and conversation](wiki/assets/workbench.png)
 
-<p align="center">
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github&label=Releases" alt="Latest Release" /></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
-</p>
+The source version is **2.0.0-pre.2**. Windows x64 is the build and validation target for this work. Release assets correspond to their published commits; unreleased changes require a source build. The 1.x VS Code extension is retained on [v1-extension](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension).
 
-GrayCode 2.0 provides a standalone desktop workspace for model conversations, coding, character chat, bot integrations, and subagents with shared tasks. It searches and edits files, runs commands, queries language services, and presents file changes for review.
+## Get started
 
-The current preview is **[2.0.0-pre](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)**, available as a portable Windows x64 application. `main` now maintains the standalone desktop edition. The 1.x VS Code extension source is preserved on [`v1-extension`](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension), and the extension remains available through its existing channels.
+1. Download a Windows package from [Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases). Extract the complete portable archive and run GrayCode.exe, or use the matching installer.
+2. Open Settings and add a channel with your endpoint, credential, and model. Supported formats include OpenAI Chat Completions, OpenAI Responses, Anthropic, and Gemini.
+3. Select a workspace and describe a task. Keep the conversation beside files, an editor, a terminal, a diff, or the browser. A project is optional for general conversations.
 
-Core data stays local. You can choose among multiple model providers, extend the assistant with MCP, Skills, and Sub-Agents, and retain project conventions and decisions across conversations with persistent memory.
+Settings sections share a draft committed by Save All. Switching modes keeps the current conversation; creating a new task is a separate action. See [Getting started](wiki/Getting-Started.md).
 
-## Quick Start
+## Features
 
-1. Download the Windows ZIP from the [2.0.0-pre prerelease](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre), extract the full archive, and run `GrayCode.exe`. Keep its DLLs and resources directory. Exit an older running version from the tray first.
-2. Go to **Settings → Channels** and configure your own Gemini, OpenAI Compatible, OpenAI Responses, or Anthropic channel.
-3. Return to chat, select a channel, model, and Code / Design / Plan / Ask / Review mode, then describe the task.
-
-Try one of these prompts:
-
-> Read this project's structure, explain the main modules, and suggest where to start.
-
-> Investigate this bug. Search the relevant code and explain the evidence before changing and testing it.
-
-[Desktop setup and builds](apps/desktop/README.md) · [Web access](apps/server/WEB.md) · [1.x extension guide](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started)
-
-## Highlights
-
-- **Multiple model providers** — Gemini, OpenAI Chat Completions-compatible APIs, OpenAI Responses, and Anthropic, each with independent model, tool, reasoning, retry, and token-counting settings.
-- **Real coding operations** — Read, search, and edit files; run terminal commands; query VS Code language services; attach multimodal context; and review writes through native diffs.
-- **Structured workflows** — Design, Plan, Progress, Review, and TODO tools keep complex work traceable from proposal through validation.
-- **Extensible agents** — Connect MCP servers, load reusable Skills, and delegate specialized work to foreground or background Sub-Agents.
-- **Local persistent memory** — Separate global and workspace memories retain conventions, knowledge, and decisions without an external memory service.
-- **Long-running work** — Message queues, automatic summarization, checkpoints, background result delivery, and usage statistics support extended tasks.
-- **Tree-branching conversations** — Retry and edit never overwrite old replies: every candidate branch can be switched to and grow independently, optionally restoring matching workspace checkpoints when switching, so alternative approaches can be explored without losing anything.
-
-[Explore all features →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features)
-
-## DeepSeek Vision Support
-
-GrayCode provides dedicated image preprocessing for DeepSeek vision models (e.g. `deepseek-v4-flash-vision-exp`), to work around their API limitations. Enable it with the **DeepSeek Vision preprocessing** switch in channel settings (available for OpenAI Chat Completions, OpenAI Responses, and Anthropic channels):
-
-- **PDF page rasterization** — Render every PDF page to an image before sending, avoiding the limitations of plain-text extraction; rendering uses optional `pdfjs-dist` and `@napi-rs/canvas`.
-- **Large-image tiling** — Split large images into tiles under an 800×800 total-pixel budget (each tile at most 4096 on the long edge), preventing DeepSeek from compressing or rejecting them.
-- **GIF frame extraction** — DeepSeek only reads the first GIF frame; GrayCode samples the timeline (up to 5 frames per second) and sends the frames as individual PNGs.
-- **Official format normalization** — `read_file` supports PNG/JPEG/JFIF/GIF/WebP/BMP/SVG/ICO/TIFF/HEIC/HEIF/AVIF; images are converted to DeepSeek's official format before sending (using optional `sharp`).
-- **Split / compress toggle** — The input box shows a checkbox (split by default): keep it checked to preserve tiling; uncheck it to scale images down into the 800×800 total-pixel budget, choosing between clarity and size per message.
-- **Pre-send validation** — Validates the 800×800 tiling, 4096 long edge, 600 images, 32 MiB per image, and 48 MiB request body limits.
-
-The related dependencies (`sharp` / `pdfjs-dist` / `@napi-rs/canvas`) can be installed or removed in one click from the DeepSeek Vision group of the extension's dependency manager.
-
-## Common Workflows
-
-| Goal | Recommended approach |
+| Area | Capabilities |
 | --- | --- |
-| Understand a codebase or investigate a bug | Use Ask / Code mode and have the assistant search, read, and cite evidence first |
-| Implement a complex feature | Design the solution → create a Plan → implement and test in Code mode |
-| Review existing changes | Use Review mode with the Git diff and produce a structured review |
-| Add specialized capabilities | Configure MCP, write a Skill, or delegate to a dedicated Sub-Agent |
+| Conversations | Multiple model channels, reasoning settings, streaming, editing, rerolling, branches, attachments, and long context |
+| Coding | File search, editor and language services, interactive terminals, Git diffs, and tasks created in selected worktrees |
+| Visual tools | Screenshot observation, image-coordinate clicking/dragging/typing, and browser operation with background rendering |
+| Extensions | Skills, legacy and current MCP protocols, native subagents and teams, and external ACP sessions |
+| Automation | Goal, schedule, and event tasks; pause/resume; background task feedback |
+| Multiple clients | Web workspace, Discord, OneBot, paired execution nodes, and remote computer views |
+| Local data | Durable history and memory, backup/restore, model request snapshots, image counts, and resource diagnostics |
 
-## Documentation
+### Screenshots and context
 
-The complete user guide lives in the [GrayCode Wiki](https://github.com/Komeiji-Shiki/Gray-Code/wiki):
+With multimodal input enabled on a capable channel, tool screenshots become image content in model requests. Computer tools primarily return an image and concise observation metadata; accessibility trees are available on demand. Browser tools support both image coordinates and existing DOM operations. Actions return a fresh observation when capture succeeds.
 
-| Guide | Covers |
-| --- | --- |
-| [Getting Started](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started) | Installation, channel setup, modes, diff confirmation, and updates |
-| [Feature Overview](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features) | Core capabilities, conversation UX, branches, checkpoints, and statistics |
-| [Models and Channels](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Models-and-Channels) | Provider types, tool modes, reasoning, and token counting |
-| [Tools and Workflows](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Tools-and-Workflows) | Built-in tools, auto-execution, diffs, and engineering workflows |
-| [Context and Prompts](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Context-and-Prompts) | Prompt modes, templates, dynamic context, and variables |
-| [MCP, Skills, Sub-Agents, and Memory](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Extensions-and-Memory) | Extensibility and local persistent memory |
-| [Settings, Storage, and Sync](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Settings-Storage-and-Sync) | Settings index, backups, migration, import/export, and sync |
-| [FAQ](https://github.com/Komeiji-Shiki/Gray-Code/wiki/FAQ) | Troubleshooting tools, context, diffs, notifications, and more |
+![Synthetic browser page used for screenshot and coordinate validation](wiki/assets/browser.png)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, repository structure, and contribution guidelines. See [CHANGELOG.md](CHANGELOG.md) for release history.
+Coordinates belong to a particular observation. Changes to window geometry, zoom, or control ownership require another observation. Action completion and a subsequent capture failure are recorded separately. Retrying an existing operation uses its receipt to avoid repeating an action.
 
-## 1.x Extension Installation and Updates
+**Adding images does not automatically discard earlier images.** The recent-N-images setting has been removed. Reference images and tool screenshots remain in history order. Stable instructions, tool declarations, and history prefixes support provider prompt caching; actual cache hits and pricing depend on the endpoint. Explicit context compaction remains a separate operation. See [Models and context](wiki/Models-and-Context.md).
 
-GrayCode requires VS Code `^1.84.0` or newer. Install it from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode), or download `graycode-*.vsix` from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) and run `Extensions: Install from VSIX...` from the Command Palette.
+### External coding agents
 
-The extension can check GitHub Releases automatically. You can also check or update manually under **Settings → General → Automatic Updates**. Source builds and VSIX packaging are documented in the [contribution guide](CONTRIBUTING.md).
+Configure an installed ACP program under Settings → Development. For Kimi Code, use kimi with the argument acp; other ACP adapters can be configured through the same command, argument, and environment fields. The external program manages its own login and models.
 
-## Community
+The stable coding_agent tool creates, prompts, restores, forks, configures, and closes sessions. Only new input is appended. Permission choices retain their original option IDs and meanings. Interrupted requests with unknown results are recorded and are not automatically replayed. See [Agents and MCP](wiki/Agents-and-MCP.md).
 
-- Use [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) for bug reports and proposals.
-- Pull Requests are welcome; read the [contribution guide](CONTRIBUTING.md) before starting.
+## Performance changes
 
-## Acknowledgements
+These are same-machine synthetic component measurements, not whole-application guarantees.
 
-Thanks to [1b0t3](https://github.com/1b0t3), [czocelot](https://github.com/czocelot), and [NebulaRaven](https://github.com/NebulaRaven) for model access, artwork, testing, issue investigation, fixes, and project collaboration.
+| Workload | Before | After |
+| --- | ---: | ---: |
+| Mount/layout of an 8,000-entry file tree | 787.5 ms median; 40,011 DOM elements | 21.8 ms; 204 DOM elements |
+| Unchanged active history with 8,000 messages | About 99 ms; about 5.36 MB | About 0.22 ms; 385 B incremental response |
+| Hybrid search over 8,000 × 768-dimensional vectors | 108.84 ms median | 66.17 ms |
+| Compressed objects for 100 growing model requests | 12.55 MB | 1.09 MB |
 
-## License
+The tree renders visible rows; history uses incremental reads; vector calculation runs off the storage thread. Text deltas are batched and independently eligible reads run with bounded concurrency. Request snapshots share identical messages and tool objects while reconstructing the complete original request. Full snapshot reads become somewhat slower. See [Performance and validation](wiki/Performance-and-Validation.md).
 
-GrayCode is available under the [MIT License](LICENSE).
+## Build
+
+Use Node.js **22.15 or newer**. The Windows computer host uses the system .NET Framework 4 compiler; a separate .NET SDK is normally unnecessary.
+
+~~~powershell
+npm ci
+npm --prefix frontend ci
+npm run build:desktop
+npm run desktop -- --data .tmp/desktop-local
+~~~
+
+~~~powershell
+npm run ci
+npm run package:desktop
+~~~
+
+The formal desktop package runs the full desktop build. Its default output is release/desktop/GrayCode-win32-x64; set GRAYCODE_DESKTOP_OUT for a separate output directory. build:desktop:trial is a faster compilation path. See [Contributing](CONTRIBUTING.md) and the [architecture map](PROJECT_STRUCTURE.md).
+
+## Documentation and license
+
+The repository [Wiki](wiki/Home.md) covers setup, model context, visual tools, worktrees, agents, automation, devices, data, and diagnostics. [CHANGELOG](CHANGELOG.md) describes source changes. GrayCode's own code is [MIT licensed](LICENSE); bundled components retain their respective [upstream licenses](resources/licenses/README.md).

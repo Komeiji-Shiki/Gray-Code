@@ -1,118 +1,104 @@
 # GrayCode
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Komeiji-Shiki/GrayWill-ST/main/picture/2.png" alt="GrayCode" width="480" />
-</p>
+**本地优先的 AI 工作台：对话、代码、截图操作与代理任务。**
 
-<p align="center">
-  <strong>本地优先的 AI 工作台与编程助手</strong>
-</p>
+[English](README_EN.md) · [使用手册](wiki/Home.md) · [下载发行版](https://github.com/Komeiji-Shiki/Gray-Code/releases) · [开发指南](CONTRIBUTING.md)
 
-<p align="center">
-  多模型渠道 · 代码工具 · MCP · Skills · Sub-Agents · 永久记忆
-</p>
+GrayCode 将模型对话、代码编辑、终端、Git 审阅和工具执行放在同一个独立桌面应用中。可以接入自己的模型渠道，让模型根据截图操作电脑或内置浏览器，也可以调用 MCP 工具、Skills、子代理和外部 ACP 编码代理。会话、附件、任务和记忆保存在本地，桌面、Web、Bot 与远程设备共用任务服务。
 
-<p align="center">
-  <a href="README.md"><strong>简体中文</strong></a> ·
-  <a href="README_EN.md">English</a>
-</p>
+![GrayCode 独立工作台，使用合成项目和对话](wiki/assets/workbench.png)
 
-<p align="center">
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github&label=Releases" alt="Latest Release" /></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
-</p>
+当前源码版本为 **2.0.0-pre.2**，Windows x64 是本次构建与验证的平台。发行页附件对应各自的发布提交，未发布的主线改进需要从源码构建。1.x VS Code 扩展保留在 [v1-extension](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension) 分支。
 
-GrayCode 2.0 提供独立桌面工作台：理解工作区、搜索和修改代码、执行命令、调用语言服务，并通过 Diff 审阅文件改动。它支持多模型对话、角色聊天、机器人入口和带共享任务的子代理协作。
+## 开始使用
 
-当前预览版为 **[2.0.0-pre](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)**，提供 Windows x64 便携程序。`main` 维护独立桌面版，1.x VS Code 扩展源码保留在 [`v1-extension`](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension) 分支，旧扩展仍可通过原渠道获取。
+1. 从[发行页面](https://github.com/Komeiji-Shiki/Gray-Code/releases)选择 Windows 包。便携版完整解压后运行 GrayCode.exe；安装版使用相应 Setup 程序。
+2. 打开应用唯一的设置入口，在“渠道”添加自己的接口地址、凭据和模型。支持 OpenAI Chat Completions、OpenAI Responses、Anthropic 与 Gemini 格式。
+3. 选择工作区，输入任务。工作台可以同时显示对话、文件、编辑器、终端、差异与浏览器；只聊天时也可以不绑定项目。
 
-所有核心数据保存在本地；你可以接入不同模型渠道，通过 MCP、Skills 和 Sub-Agents 扩展能力，并让永久记忆跨会话保存项目约定与关键决策。
+例如：“阅读这个项目，定位文件树卡顿的原因，修复后运行相关检查。”
 
-## 快速开始
+设置分类共用草稿，通过“保存全部”提交。模式切换保留当前会话；“新建任务”才创建另一段会话。[安装、配置与第一次任务](wiki/Getting-Started.md)介绍完整流程。
 
-1. 从 [2.0.0-pre 预发布](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre) 下载 Windows ZIP，完整解压后运行 `GrayCode.exe`，保留同目录下的 DLL 和 resources。使用新版前先从托盘退出旧版。
-2. 进入 **设置 → 渠道**，添加自己的 Gemini、OpenAI Compatible、OpenAI Responses 或 Anthropic 渠道。
-3. 回到聊天页，选择渠道、模型和 Code / Design / Plan / Ask / Review 模式，然后直接描述任务。
+## 能做什么
 
-第一次可以试试：
+| 工作 | 当前能力 | 详细说明 |
+| --- | --- | --- |
+| 模型对话 | 多渠道、思考设置、流式回复、编辑重试、重生成、候选分支、附件与长上下文 | [模型与上下文](wiki/Models-and-Context.md) |
+| 编码 | 文件搜索、代码编辑、语言服务、交互终端、Git 差异与工作树任务 | [编码与工作树](wiki/Coding-and-Worktrees.md) |
+| 视觉操作 | 电脑截图、图片坐标点击/拖动/输入，内置浏览器截图与后台操作 | [截图与坐标](wiki/Visual-Tools.md) |
+| 工具与代理 | Skills、新旧 MCP、原生子代理、团队任务、外部 ACP 会话 | [工具与代理](wiki/Agents-and-MCP.md) |
+| 自动执行 | 目标任务、定时与事件触发、暂停/继续、子任务结果回流 | [自动任务与多端](wiki/Automation-and-Devices.md) |
+| 多端协作 | Web 工作台、Discord、OneBot、配对设备任务与远程画面控制 | [自动任务与多端](wiki/Automation-and-Devices.md) |
+| 数据与诊断 | 本地历史、永久记忆、备份恢复、请求快照、图片计数与资源状态 | [存储与诊断](wiki/Data-and-Diagnostics.md) |
 
-> 请阅读这个项目的结构，解释主要模块，并给出上手建议。
+### 通过截图操作
 
-或者：
+启用所选渠道的多模态能力后，工具截图会作为图片内容进入模型请求。电脑默认返回截图和简要观察信息，完整控件树按需读取；浏览器同时支持截图坐标和现有 DOM/元素操作。一次动作完成后返回新画面，便于模型继续判断。
 
-> 请定位这个异常的原因。先搜索相关代码并说明证据，确认方案后再修改和测试。
+![浏览器截图与坐标操作验证页面](wiki/assets/browser.png)
 
-[独立桌面运行与构建说明](apps/desktop/README.md) · [Web 入口](apps/server/WEB.md) · [1.x 扩展指南](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started-zh-CN)
+坐标绑定产生它的那次观察。页面缩放、窗口位置或控制权改变时需要重新观察；动作已经完成但截图失败时，记录会分别说明两种结果。同一操作的重试使用原回执，避免重复点击。
 
-## 核心亮点
+**新增图片不会自动移除历史图片。** 历史中的参考图和工具截图继续按顺序发送，已经删除“最近 N 张图片”的设置。稳定的系统提示、工具声明和历史前缀有利于供应方的提示缓存；实际命中率和价格由模型端决定。详情见[图片与缓存](wiki/Models-and-Context.md#图片与请求前缀)。
 
-- **多模型渠道** —— 支持 Gemini、OpenAI Chat Completions 兼容接口、OpenAI Responses 与 Anthropic，每个渠道可独立配置模型、工具模式、思考、重试和 Token 计数。
-- **真实代码操作** —— 读取、搜索和修改文件，运行终端命令，调用语言服务，支持图片、PDF 等多模态上下文；写入可通过 Diff 审阅。
-- **结构化工作流** —— 内置 Design、Plan、Progress、Review 与 TODO 工具，让复杂任务从方案到验证都有可追踪记录。
-- **可扩展代理能力** —— 连接 MCP Server，加载可复用 Skills，并通过前台或后台 Sub-Agents 并行处理专门任务。
-- **本地永久记忆** —— 全局与工作区记忆彼此隔离，跨会话保存约定、知识和决策，不依赖外部记忆服务。
-- **长任务与长对话** —— 支持消息队列、自动总结、存档点、后台结果回流，以及 Token、成本和使用时间统计。
-- **树状分支对话** —— 重试与编辑不再覆盖旧回答：每个候选分支都可切换、独立继续发展，切换时可选联动工作区存档，让不同方案并行探索而不丢任何思路。
+### 使用外部编码代理
 
-[查看完整功能说明 →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features-zh-CN)
+在“设置 → 开发”添加支持 ACP 的本机程序。Kimi Code 可使用命令 kimi 和单个参数 acp，也可以配置已安装的其他 ACP 适配器。登录与模型由该程序管理。
 
-## DeepSeek 视觉模型支持
+模型通过稳定的 coding_agent 工具创建、继续、恢复、派生或关闭会话。每次只追加新的提示和附件；具体权限选项会显示在当前任务中。断线且无法确认结果时保留记录，不自动重放操作。详见[ACP 配置与会话](wiki/Agents-and-MCP.md#外部-acp-编码代理)。
 
-GrayCode 针对 DeepSeek 视觉模型（如 `deepseek-v4-flash-vision-exp`）的接口限制提供专用图像预处理，可在渠道设置的「DeepSeek Vision 预处理」开关中启用（OpenAI Chat Completions、OpenAI Responses 与 Anthropic 渠道均可用）：
+## 本次性能改进
 
-- **PDF 逐页栅格化** —— 将 PDF 每页渲染为图片后发送，规避纯文本抽取的局限；渲染使用可选的 `pdfjs-dist` 与 `@napi-rs/canvas`。
-- **大图分块** —— 对大图按 800×800 总像素预算切割成多块（单块长边不超过 4096），避免图片被 DeepSeek 压缩或拒收。
-- **GIF 动画拆帧** —— DeepSeek 只取 GIF 第一帧，GrayCode 按时间轴采样（每秒最多 5 帧）拆成逐帧 PNG 后发送。
-- **官方格式规范化** —— `read_file` 支持 PNG/JPEG/JFIF/GIF/WebP/BMP/SVG/ICO/TIFF/HEIC/HEIF/AVIF 等图片格式，发送前统一转为 DeepSeek 官方格式（使用可选的 `sharp`）。
-- **拆分 / 压缩切换** —— 输入框提供复选框（默认拆分）：勾选保持分块防压缩；取消勾选则把图片等比例压缩进 800×800 总像素预算，可逐次按清晰度与体积偏好选择。
-- **请求前校验** —— 发送前校验 800×800 分块、4096 长边、600 张图片、32 MiB 单图与 48 MiB 请求体等上限。
+下列结果来自同机合成夹具，说明对应模块的变化，不代表任意真实项目的整体性能。
 
-相关依赖（`sharp` / `pdfjs-dist` / `@napi-rs/canvas`）可在扩展的「依赖管理」面板 DeepSeek Vision 分组中一键安装或卸载。
+| 场景 | 改进前 | 改进后 |
+| --- | ---: | ---: |
+| 8,000 条文件树，挂载与布局中位数 | 787.5 ms，40,011 个 DOM 元素 | 21.8 ms，204 个 DOM 元素 |
+| 8,000 条消息，活跃历史未变化时读取 | 约 99 ms，完整历史约 5.36 MB | 约 0.22 ms，增量响应 385 B |
+| 8,000 × 768 维向量的混合检索中位数 | 108.84 ms | 66.17 ms |
+| 100 份逐渐增长的模型请求，压缩对象总量 | 12.55 MB | 1.09 MB |
 
-## 常用工作流
+文件树只渲染可见行，目录变更合并后局部刷新；历史增量读取和向量计算减少重复处理；流式文本合并推送，同批独立读取最多四个并行。请求快照共享相同消息和工具对象，重建时仍返回完整请求。完整读取大快照的延迟有所增加，具体条件和取舍见[性能与验证](wiki/Performance-and-Validation.md)。
 
-| 目标 | 推荐方式 |
-| --- | --- |
-| 理解陌生项目或定位 Bug | 使用 Ask / Code 模式，让 AI 先搜索、读取并给出证据 |
-| 实现复杂需求 | Design 明确方案 → Plan 拆分步骤 → Code 实现与测试 |
-| 检查已有改动 | Review 模式结合 Git Diff，生成结构化审查结论 |
-| 扩展专用能力 | 配置 MCP、编写 Skill，或派发专用 Sub-Agent |
+## 从源码运行
 
-## 文档
+准备 Node.js **22.15 或更高版本**。Windows 电脑宿主使用系统 .NET Framework 4 的编译器，通常无需另装 .NET SDK。
 
-2.0 桌面版参见[桌面说明](apps/desktop/README.md)、[Web 入口](apps/server/WEB.md)和[团队协作](apps/server/src/teams/README.md)。以下 [GrayCode Wiki](https://github.com/Komeiji-Shiki/Gray-Code/wiki) 手册主要面向 1.x 扩展：
+~~~powershell
+npm ci
+npm --prefix frontend ci
+npm run build:desktop
+npm run desktop -- --data .tmp/desktop-local
+~~~
 
-| 指南 | 内容 |
-| --- | --- |
-| [快速开始](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started-zh-CN) | 安装、渠道配置、模式选择、Diff 确认与更新 |
-| [功能概览](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features-zh-CN) | 核心能力、对话体验、分支、存档点与统计 |
-| [模型与渠道](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Models-and-Channels-zh-CN) | 四类渠道、工具模式、思考与 Token 计数 |
-| [工具与工作流](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Tools-and-Workflows-zh-CN) | 内置工具、自动执行、Diff 和工程工作流 |
-| [上下文与提示词](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Context-and-Prompts-zh-CN) | Prompt 模式、模板、动态上下文与变量 |
-| [MCP、Skills、Sub-Agents 与记忆](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Extensions-and-Memory-zh-CN) | 扩展能力与本地永久记忆 |
-| [设置、存储与同步](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Settings-Storage-and-Sync-zh-CN) | 设置索引、备份、迁移、导入导出与同步 |
-| [常见问题](https://github.com/Komeiji-Shiki/Gray-Code/wiki/FAQ-zh-CN) | 工具、上下文、Diff、通知等问题排查 |
+~~~powershell
+npm run ci
+npm run package:desktop
+~~~
 
-开发环境、项目结构和提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+build:desktop 包含平台、桌面和界面构建与相应类型检查；package:desktop 使用这一正式构建入口。默认便携输出为 release/desktop/GrayCode-win32-x64，可通过 GRAYCODE_DESKTOP_OUT 选择新的目录。build:desktop:trial 仅用于快速试用。
 
-## 1.x 扩展安装与更新
+共享 CLI 与 Web 服务可以独立运行：[命令行与 Web](wiki/Getting-Started.md#命令行与-web)。
 
-GrayCode 要求 VS Code `^1.84.0` 或更高版本。推荐从 [VS Code 插件市场](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode) 安装；也可以从 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 下载 `graycode-*.vsix`，在命令面板执行 `Extensions: Install from VSIX...`。
+## 架构与资料
 
-扩展支持自动检查 GitHub Releases，并可在 **设置 → 通用 → 自动更新** 中手动检查或一键更新。源码构建和 VSIX 打包步骤见 [贡献指南](CONTRIBUTING.md)。
+~~~mermaid
+flowchart LR
+  Desktop[桌面工作台] --> Server[应用服务 apps/server]
+  Web[Web / Bot / 远程设备] --> Server
+  Server --> Core[任务与存储 packages/core]
+  Server --> Models[模型渠道]
+  Server --> Tools[工作区 / MCP / ACP]
+  Desktop --> Host[Electron / Windows 宿主]
+  Host --> Visual[电脑与浏览器]
+~~~
 
-## 社区
+核心任务与存储不依赖 Electron 或 VS Code；桌面外壳和成熟聊天界面通过桥接共享服务。旧 backend/ 中仍被使用的模型格式器、提示词、设置和 MCP 模块继续承担公共业务职责。[架构导航](PROJECT_STRUCTURE.md)列出真实入口、边界与数据流。
 
-- 通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 报告问题或提出建议。
-- 欢迎提交 Pull Request；开始前请阅读 [贡献指南](CONTRIBUTING.md)。
+- [Wiki 目录](wiki/Home.md)：从首次配置到代理、远程设备、存储和排障。
+- [贡献与验证](CONTRIBUTING.md)：开发环境、检查入口、测试选择和打包。
+- [更新记录](CHANGELOG.md)：当前源码与历史版本变化。
+- [第三方来源](resources/licenses/README.md)：ACP、MCP、安装器与其他分发组件。
 
-## 鸣谢
-
-感谢 [1b0t3](https://github.com/1b0t3)、[czocelot](https://github.com/czocelot) 和 [NebulaRaven](https://github.com/NebulaRaven) 对模型资源、图标、测试、问题排查、修复与项目协作的帮助。
-
-## 许可证
-
-本项目采用 [MIT License](LICENSE)。
+GrayCode 自有代码采用 [MIT 许可](LICENSE)。各第三方组件按其原始许可分发。

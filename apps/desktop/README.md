@@ -1,93 +1,59 @@
-# GrayCode 2.0 独立桌面预览
+# GrayCode 独立桌面
 
-已发布的预览版本为 `2.0.0-pre`，提供 Windows x64 便携程序。主线版本 `2.0.0-pre.1` 新增 Windows 安装器、应用内下载与安装、配套数据回退和独立程序修复入口。下载入口见 [GitHub 预发布](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/v2.0.0-pre)。Linux/macOS 的发行与运行验证尚未完成。
+桌面主进程位于 apps/desktop，工作台外壳位于 apps/client，聊天与设置复用 frontend。应用服务和运行核心分别位于 apps/server、packages/core。
 
-本文介绍当前主线的功能。GitHub 预发布附件保持发布时的源码快照，主线新增功能可按下方说明从源码构建。
+[完整使用手册](../../wiki/Home.md) · [架构](../../PROJECT_STRUCTURE.md) · [开发与验证](../../CONTRIBUTING.md)
 
 ## 使用
 
-完整解压 Windows ZIP 后运行 `GrayCode.exe`，保留同目录中的 DLL 与 resources。更新时先从托盘退出旧版，再打开新目录中的程序。预览版更新不要求删除旧程序目录。
+从[发行页](https://github.com/Komeiji-Shiki/Gray-Code/releases)选择对应 Windows 包。便携版完整解压运行 GrayCode.exe，安装版使用 Setup。当前源码是 2.0.0-pre.2，发行附件对应其发布提交。
 
-在“设置 → 渠道”添加模型渠道，再选择模型和工作区。设置分类共用一份草稿，通过“保存全部”提交；连接机器人等即时操作使用已保存配置。数据默认保存在系统用户数据目录内的 `platform-data`，可以通过 `--data` 指定其他目录。
+在“设置 → 渠道”配置模型，选择工作区后开始任务。工作台可展开文件、编辑器、终端、Git、差异和浏览器。设置分类共享草稿；模式切换保持会话。
 
-模型名旁可以临时选择思考强度。选择保留在当前对话，可随时恢复“跟随渠道设置”，新对话不继承，也不会修改渠道的默认配置。可用选项取自渠道协议及该模型已配置的能力。
+电脑工具默认截图观察，浏览器支持坐标动作与后台截图。启用多模态后工具图片进入选定模型端点，已有图片不会因新增图片自动删除。[视觉工具](../../wiki/Visual-Tools.md)说明坐标与操作回执。
 
-“设置 → 外观”提供暗色、亮色和跟随系统，聊天、原生标题栏、编辑器与终端同步切换。窄窗口将导航收进左上角按钮，应用菜单和资料库可从“更多”打开。
+“设置 → 开发”可以配置 ACP 编码程序。Kimi Code 示例为命令 kimi、参数 acp。程序由具体任务启动，保存配置不会启动代理；[代理手册](../../wiki/Agents-and-MCP.md)说明恢复和权限选项。
 
-工具名称与说明随界面语言切换。设置顶部的搜索框支持工具名称、说明和原始工具 ID，可直接定位到“工具”或“自动执行”页中的对应条目。
+## 构建
 
-编辑器支持语言服务提供的成员补全、自动导入、函数参数提示和快速修复。`Ctrl+空格` 或 `Ctrl+J` 打开补全，`Ctrl+Shift+空格` 查看参数提示；底部错误数量可打开问题面板，按文件、错误编号或文字搜索并跳转。选择修复后先修改草稿，可以撤销，再按 `Ctrl+S` 保存。内置服务支持 TypeScript/JavaScript，其他语言使用已配置的语言服务。
-
-桌面更新检查会在所选渠道中比较预发布标识与版本号，选择版本最高的桌面包。稳定渠道只接收正式版，预览与夜间渠道也接收预发布版本。便携版继续通过发行页面下载。
-
-安装版使用 `GrayCode-win-x64-Setup.exe`，默认安装到当前用户的 `%LOCALAPPDATA%\GrayCode`，开始菜单入口指向固定启动路径。应用数据仍保存在用户数据目录，与程序目录分开。指定安装位置可运行：
-
-```powershell
-.\GrayCode-win-x64-Setup.exe --installto "D:\Apps\GrayCode"
-```
-
-“设置 → 通用 → 桌面应用更新”提供下载、离线更新和重启安装。离线更新需将 `releases.win-x64.json` 与对应完整 `.nupkg` 包放在同一目录，再选择该清单。下载校验完成后仍需确认重启；文件和设置草稿必须先保存或放弃。应用会正常停止后台服务，再调用安装器切换程序目录。
-
-下载前保留当前完整程序包，安装前另存程序数据备份。更新后的“恢复上一版本与数据”会先保存当前数据，再恢复更新前的程序与数据；恢复前的数据目录也会保留，已删除记忆和已撤销设备继续受到恢复保护。恢复后的后台连接需要手动开启。
-
-若安装中断后程序无法启动，在用户配置目录下的 `desktop-updates` 中找到最近的 `recovery-*` 文件夹，运行 `Restore-GrayCode.cmd`。它核对旧包后重新安装程序文件，数据目录保持原样；需要先退出这一安装目录的应用。此入口也能修复缺少 `current` 程序目录的安装。可以提前用“打开恢复文件夹”查看位置，保留其中的程序包、数据备份和修复脚本。
-
-卸载会移除程序与安装器创建的快捷方式，保留位于安装目录之外的用户数据。
-
-“设置 → 通用 → 程序数据备份”导出会话、附件、分支与检查点、任务、配置、角色、记忆和本地技能，不复制项目源码。备份可在任务运行时进行；恢复先校验内容和数量，确认后重启切换，恢复前的数据目录完整保留。填写可选密码会加密备份，并将密钥转为可在目标电脑恢复的形式；不填密码时密钥继续受原电脑的系统加密保护。
-
-备份不包含可重新下载的运行依赖与词表缓存、网站登录状态、共享 `.agents` / `.limcode` 技能目录、项目技能和未保存草稿。项目路径与配置保留，其他电脑上的项目需要另外复制或重新绑定。恢复程序数据不会重放旧文件事务或回滚当前项目源码。
-
-首次启动且尚无渠道配置时，程序可以从本机旧编辑器配置中只读复制可识别设置。会话、分支、附件和文件检查点通过“旧存档迁移”显式导入，迁移结果以界面报告为准，未处理或冲突的来源会保留。
-
-## 从源码构建
-
-使用 Node.js 22.15 或更新的 22.x 版本。首次安装和运行：
-
-```powershell
+~~~powershell
 npm ci
 npm --prefix frontend ci
 npm run build:desktop
 npm run desktop -- --data .tmp/desktop-local
-```
+~~~
 
-生成 Windows 便携包：
+要求 Node.js 22.15 或更新版本。Windows 电脑宿主使用系统 .NET Framework 4 编译器；脚本同时生成平台和桌面各自需要的原生产物。
 
-```powershell
+~~~powershell
+npm run ci
 npm run package:desktop
-```
+~~~
 
-默认输出为 `release/desktop/GrayCode-win32-x64`。`GRAYCODE_DESKTOP_OUT` 可指定新的发行目录，避免覆盖正在使用的程序。`package:desktop` 编译运行产物，常规开发构建 `build:desktop` 另包含类型检查。首次构建需要下载 Electron 运行时。
+package:desktop 先执行正式 build:desktop，再生成 release/desktop/GrayCode-win32-x64。设置 GRAYCODE_DESKTOP_OUT 可以指定另一个输出目录。目标程序仍运行或必要入口缺失时，打包会停止并报告原因。
 
-便携版首次启动会在 `GrayCode.exe` 旁创建 `portable-data`，将本机已有的用户配置保存为可携带副本。渠道及 API 密钥、提示词、MCP、用户技能和外观配置会在保存时同步；移动或复制程序时，一起保留整个 `portable-data` 目录。`settings.enc` 是加密配置，`profile.key` 是配套密钥，两者都需要携带，持有两者即可读取配置。
+build:desktop:trial 只编译快速试用产物。正式构建和最终验证记录对应提交；包内 apps/desktop/dist/build-info.json 保存构建信息。源码变更后不要直接复用不匹配的旧前端或原生宿主。
 
-聊天、检查点、工作区目录与账号授权仍保存在本机原数据目录，默认是 `%APPDATA%/GrayCode/platform-data`，不会跟随便携程序复制。同一台电脑移动程序后仍可读取原聊天；换到另一台电脑则使用那台电脑的本地工作区和聊天。安装版保持原存储方式；显式指定 `--data` 用于隔离运行时，也继续只使用指定目录。
+## 数据与便携配置
 
-已运行过的便携目录不能直接重新打包，也不能作为安装器输入，以免覆盖或发行个人配置。请指定新的 `GRAYCODE_DESKTOP_OUT` 生成干净发行包。
+默认任务数据位于 %APPDATA%/GrayCode/platform-data。--data 指定独立目录，开发和验证用它隔离应用数据。
 
-生成安装器还需要 .NET 9 SDK，并使用仓库固定的 Velopack 工具版本：
+便携版在程序旁维护 portable-data 配置副本，包含渠道、提示词、MCP、用户技能与外观等配置。settings.enc 和 profile.key 配套携带。聊天、检查点、项目目录与账号授权仍属于本机任务数据；换电脑迁移完整内容使用程序数据备份，并另行处理项目源码。
 
-```powershell
-dotnet tool restore
-npm run package:installer
-```
+外部 ACP 程序的会话文件由该程序保存，恢复 GrayCode 的会话 ID 后仍需要对应程序能恢复原会话。[数据手册](../../wiki/Data-and-Diagnostics.md)列出备份范围。
 
-先完成 `package:desktop`，再运行 `package:installer`。安装器默认输出到 `release/desktop-installer`，`GRAYCODE_INSTALLER_OUT` 可指定其他目录。`desktop-release.json` 记录源码提交、构建时间、版本、工具版本及附件的 SHA-256；设置页也能查看实际构建信息。`.github/workflows/desktop.yml` 可手动创建 Windows 构建附件，不自动发布 GitHub Release。
+## 安装更新与回退
 
-## 主要能力
+安装版默认位于 %LOCALAPPDATA%/GrayCode，也可给 Setup 传入 --installto。应用内更新设置提供下载、离线更新和确认重启。离线更新选择与完整 .nupkg 位于同一目录的 releases.win-x64.json。
 
-- Monaco 编辑器、文件审查、原生终端、Git、语言服务和内置浏览器。
-- 多模型渠道、MCP、Skills、长期记忆、角色卡与世界书。
-- [共享团队任务](../server/src/teams/README.md)：依赖关系、原子领取、执行所有权、事件等待与持久消息顺序。
-- [上下文管理](../server/src/context/README.md)：完整前缀总结或笔记换窗口，保留原历史及恢复工具。
-- Discord 与可选 OneBot 接入，以及复用同一应用实例的 [Web 入口](../server/WEB.md)。
+更新流程保留原程序包，并在切换前备份任务数据。恢复上一版本时配对恢复程序和数据，原目录保留。当前存储格式为 7，旧程序不能读取新版格式，因此降级不能只替换 exe。
 
-手机 Web 可从“更多 → 选择电脑文件夹”浏览部署电脑上的磁盘和目录，筛选文件夹并添加为工作区；工作区下拉菜单也提供目录选择入口。文件浏览、代码编辑和命令执行使用该电脑上的目录。
+安装中断的恢复入口位于用户配置目录 desktop-updates 下的 recovery-* 文件夹，Restore-GrayCode.cmd 用于核对旧包并修复程序。卸载保留安装目录之外的用户数据。
 
-机器人使用各自设置页中的凭据、频道范围和账号绑定；昵称或引用内容不能授予权限。Discord 的背景消息与图片读取受其 Message Content Intent 和频道权限约束。普通成员的能力由服务端检查。
+## 多端与交付范围
 
-## 预览范围
+Web 入口、Discord、OneBot 和配对设备共用平台服务。Web 部署参见 [WEB.md](../server/WEB.md)，功能流程见[自动任务与多端](../../wiki/Automation-and-Devices.md)。
 
-本版包括已有定向测试和 Windows 隔离桌面流程的验证，不代表全部模型供应方、机器人环境或历史数据组合都已覆盖。迁移和远程连接出现问题时，请附上可复现步骤与脱敏后的错误信息。不要在公开问题中上传令牌、真实会话或完整配置导出。
+Windows x64 是当前构建与本机验收平台。Linux/macOS 发行、真实手机、混合 DPI、多屏及具体外部模型和 Bot 部署需要各自验证。[性能与验证](../../wiki/Performance-and-Validation.md)区分合成测试和实际环境结果。
 
-`apps/server` 提供共享应用服务，`packages/core` 管理 SQLite 存储及任务运行；`apps/desktop` 提供原生宿主能力，`apps/client` 提供工作台外壳，聊天界面复用 `frontend/`。
+桌面包携带运行依赖、原生电脑宿主、调试器和[第三方原始许可](../../resources/licenses/README.md)，应保留整个程序目录。

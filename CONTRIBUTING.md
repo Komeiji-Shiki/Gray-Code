@@ -1,144 +1,81 @@
-# Contributing to GrayCode
+# 参与 GrayCode 开发
 
-[简体中文](#简体中文) · [English](#english)
+当前主线以 2.0 独立平台为中心。先阅读[架构导航](PROJECT_STRUCTURE.md)，确认修改属于运行核心、应用服务、宿主还是界面。保留的扩展构建和桌面构建是不同入口。
 
-`main` 维护 2.0 独立桌面版，开发与打包请先阅读[桌面说明](apps/desktop/README.md)。旧版扩展位于 `v1-extension` 分支；本文保留其开发流程作为参考。
+## 环境与首次启动
 
-`main` maintains the 2.0 standalone desktop edition; start with the [desktop guide](apps/desktop/README.md). The legacy extension is preserved on `v1-extension`, and its development workflow remains below for reference.
+需要 Node.js 22.15 或更新版本及 npm。Windows 原生电脑宿主使用系统 .NET Framework 4 的 csc.exe，构建脚本定位到 Windows/Microsoft.NET/Framework64/v4.0.30319。构建原生 npm 依赖时，若没有匹配的预编译产物，需按依赖要求准备编译工具。
 
-## 简体中文
-
-感谢你愿意参与 GrayCode。你可以通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 报告问题、提出建议，也可以直接提交 Pull Request。
-
-### 开发环境
-
-- VS Code `^1.84.0`
-- Node.js 22.15 或更新的 22.x 版本
-- npm（仓库提交并维护 `package-lock.json`）
-
-```bash
-git clone https://github.com/Komeiji-Shiki/Gray-Code.git
-cd Gray-Code
+~~~powershell
 npm ci
 npm --prefix frontend ci
-```
+npm run build:desktop
+npm run desktop -- --data .tmp/desktop-local
+~~~
 
-### 本地开发
+根目录包含 packages/* 与 apps/* 工作区；frontend 有独立锁文件。开发使用明确的数据目录，便于复现和清理自己的测试数据。CLI 帮助：
 
-推荐在 VS Code 的 Run and Debug 中选择 `Run Extension (Local Vite Dev)`。该配置会启动后端 esbuild watch 和前端 Vite Dev Server，并让开发模式下的 Webview 加载 `http://127.0.0.1:5173`；生产构建仍使用 `frontend/dist`。
+~~~powershell
+npm run build:platform
+npm run platform -- --help
+~~~
 
-也可以手动启动：
+## 修改边界
 
-```bash
-# 终端 A：后端 watch
-npm run watch
+- contracts 定义跨端数据与首批 RPC 契约；新增字段同步检查写入、读取、列表、备份恢复和旧数据读取。
+- core 不依赖 Electron、VS Code 或旧界面目录；实际宿主能力通过应用服务与端口注入。
+- 共享业务仍有调用者时保留职责，不为目录名称建立新的包装层。领域内部的重复协议实现优先交给已有正式依赖。
+- 模型请求保持既有消息与图片顺序；新增输入不删除旧图。改变工具目录、系统提示或压缩边界时明确其请求前缀影响。
+- 修改文件使用现有差异与版本流程；受管进程根据持有对象处理，先确认真实身份。
+- 前端修改前阅读所在目录 AGENTS.md 和本机 UI 参考。保持现有设置入口、模式切换和聊天编辑/重生成行为。
 
-# 终端 B：前端开发服务器
-npm run dev:frontend
-```
+新注释说明原因和边界，避免重复代码表面含义。中文提交按一个可独立说明的阶段组织；目录移动与行为修改尽量分开。
 
-随后使用 `Run Extension` 启动扩展宿主；如需加载本地前端，请设置：
+## 验证入口
 
-```text
-GRAYCODE_WEBVIEW_DEV_SERVER_URL=http://127.0.0.1:5173
-```
-
-### 常用命令
-
-| 命令 | 用途 |
+| 命令 | 范围 |
 | --- | --- |
-| `npm run compile` | 打包扩展后端 |
-| `npm run typecheck:all` | 检查后端、测试与前端 TypeScript 类型 |
-| `npm run watch` | 监听并重新打包扩展后端 |
-| `npm run dev:frontend` | 启动前端 Vite Dev Server |
-| `npm run build` | 构建后端与前端 |
-| `npm test -- --runInBand` | 运行后端 Jest 测试 |
-| `npm run test:frontend` | 运行前端 Vitest 测试 |
-| `npm run test:coverage` | 生成后端测试覆盖率 |
-| `npx @vscode/vsce package` | 打包 VSIX |
+| npm run typecheck:all | core、server、根共享代码、测试、desktop、client 与 frontend |
+| npm test | backend 的 Jest 回归 |
+| npm --prefix frontend test | 共享界面的 Vitest 回归 |
+| npm run test:platform | 先构建平台，再运行核心与服务端集成测试 |
+| npm run ci | 上述检查，加 TypeScript/Python 提示词引擎与国际化检查 |
+| npm run build:desktop | 正式平台、桌面和两个界面构建 |
+| npm run package:desktop | 正式桌面构建后生成便携包 |
+| npm run package:installer | 从对应便携输出生成安装与更新交付物 |
 
-### 项目结构
+开发中先做必要的快速检查，主要回归在修改完成后集中执行。相同条件已经通过时，无需不断重复整套测试。示例：
 
-```text
-Gray-Code/
-├── backend/                 # 扩展后端、模型渠道、会话、设置与工具
-│   ├── __tests__/           # 后端 Jest 回归测试
-│   ├── core/                # 核心服务
-│   ├── modules/             # 渠道、配置、会话、MCP、记忆等模块
-│   └── tools/               # 内置工具实现
-├── frontend/                # Vue 3 + Pinia + Vite Webview 前端
-├── webview/                 # VS Code Webview 路由与处理器
-├── shared/                  # 前后端共享协议与类型
-├── resources/               # 图标、字体、音效与随包资源
-├── scripts/                 # 构建、检查与发布脚本
-├── test/                    # 跨模块测试与基准测试
-├── extension.ts             # VS Code 扩展入口
-└── package.json             # 扩展清单、命令、配置与脚本
-```
+~~~powershell
+npx jest --config jest.platform.config.cjs --runInBand packages/core/tests/externalAgents.test.ts
+npm --prefix frontend test -- src/__tests__/components/StaticGuards.test.ts
+~~~
 
-### 提交前检查
+MCP 与 ACP 使用真实本机 stdio/HTTP 夹具；节点使用隔离数据和实际本机 TLS。测试只关闭自己启动并持有的子进程。Windows 的沙箱或权限限制可能阻止进程树清理，应在能管理这些测试子进程的环境运行。
 
-请按改动风险选择验证范围；提交 Pull Request 前至少建议运行：
+ACP 官方 SDK 使用 ESM，平台 Jest 仅转换该依赖的 JavaScript；生产 esbuild 继续正常打包，不为测试修改全局模块解析规则。
 
-```bash
-npm run typecheck:all
-npm run build
-npm test -- --runInBand
-npm run test:frontend
-```
+## UI 与桌面验证
 
-如果改动涉及前端交互，请同时在扩展开发宿主中验证对应流程。涉及 i18n、工具声明或生成文件时，请运行仓库已有的对应校验脚本，并确认生成内容已同步。
+类型和组件测试不能代替真实流程。受影响的桌面场景使用隔离应用数据与合成模型端点验证：启动、发送、编辑、重生成、确认、取消、设置、截图、工作树和退出。
 
-### 改动原则
+截图操作要确认实际目标、返回图片尺寸和动作结果。动作后截图失败与动作失败分别验证。后台浏览器同时检查可见/后台切换和同一页面身份。真实外部模型、Bot 或双设备结果单独记录来源。
 
-- 一个提交聚焦一个功能或修复，避免混入无关格式化。
-- Bug 修复应尽量增加能稳定复现问题的回归测试。
-- 保留用户已有改动，不使用破坏性 Git 操作覆盖工作区。
-- 用户手册放在 [Wiki](https://github.com/Komeiji-Shiki/Gray-Code/wiki)，README 只保留产品入口与快速开始；开发约定和代码结构保留在本文件中。
-- 中英文入口或用户可见文案发生变化时，保持对应内容同步。
+本批次性能数据与限制见[性能与验证](wiki/Performance-and-Validation.md)。临时测量放在忽略目录；需要长期防止回归的场景加入现有测试结构。
 
-### Pull Request
+## 打包与构建身份
 
-PR 描述建议包含：问题背景、实现方式、风险或兼容性影响、验证命令与结果。若改动较大，请按功能模块拆分提交，方便审查和回退。
+~~~powershell
+$env:GRAYCODE_DESKTOP_OUT = 'release/desktop-local'
+npm run package:desktop
+~~~
 
-## English
+默认输出是 release/desktop/GrayCode-win32-x64。打包前检查目标程序占用和必要产物，收集独立运行依赖、原生电脑宿主、调试器与许可证。build-info.json 记录提交、工作区是否有修改和构建时间；验收应记录实际包的构建身份。
 
-Thank you for contributing to GrayCode. Use [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) for bug reports and proposals, or open a Pull Request directly.
+build:desktop:trial 与各 package-only 参数用于快速编译，不是完整验证的替代品。根 build 仍是保留的扩展构建；独立桌面使用 build:desktop。
 
-### Requirements and setup
+## 文档与发行
 
-- VS Code `^1.84.0`
-- Node.js 20 or newer
-- npm (`package-lock.json` is committed and maintained)
+README 介绍当前产品入口，wiki/ 保存可随源码审阅的详细手册，PROJECT_STRUCTURE 描述真实依赖边界。可复现截图使用合成内容并放在 wiki/assets。新协议依赖同步保存原始许可，见[来源记录](resources/licenses/README.md)。
 
-```bash
-git clone https://github.com/Komeiji-Shiki/Gray-Code.git
-cd Gray-Code
-npm ci
-npm --prefix frontend ci
-```
-
-For the recommended development workflow, select `Run Extension (Local Vite Dev)` in VS Code. It starts the backend watcher and the frontend Vite server. For a manual setup, run `npm run watch` and `npm run dev:frontend` in separate terminals, then launch the extension host.
-
-### Validation
-
-Before opening a Pull Request, run the checks appropriate to the change. The usual full set is:
-
-```bash
-npm run typecheck:all
-npm run build
-npm test -- --runInBand
-npm run test:frontend
-```
-
-Verify frontend changes in an Extension Development Host. Run the repository's dedicated parity or generation checks when changing localization, tool declarations, or generated files.
-
-### Contribution guidelines
-
-- Keep each commit focused on one feature or fix.
-- Add a stable regression test for bug fixes whenever practical.
-- Avoid unrelated formatting and destructive Git operations.
-- Keep user documentation in the [Wiki](https://github.com/Komeiji-Shiki/Gray-Code/wiki); keep implementation and contributor guidance versioned in this file.
-- Keep Chinese and English entry points in sync when user-facing behavior changes.
-
-PR descriptions should explain the problem, implementation, compatibility or risk considerations, and validation results. Split larger changes into functional commits so they remain easy to review and revert.
+修改完成后记录问题、最终行为、相关验证、数据格式兼容性和剩余的实际环境限制。版本、tag、公开发布和默认分支推送按当次交付范围执行。功能分支提交保持可独立审阅。
