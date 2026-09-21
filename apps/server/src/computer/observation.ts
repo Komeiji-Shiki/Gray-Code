@@ -2,7 +2,8 @@ import type { ComputerObservation } from '@graycode/contracts';
 
 /** 只精简发给模型的副本；内部完整观察继续用于元素、进程和坐标校验。 */
 export function observationForModel(value: ComputerObservation, compact = true) {
-  const { screenshot, ...observation } = value;
+  const { screenshot, ...source } = value;
+  const observation = { ...source, ...(screenshot ? { coordinateSpace: 'image' as const } : {}) };
   const capture = screenshot ? { ...screenshot, data: undefined } : undefined;
   if (!compact) return { ...observation, ...(capture ? { screenshot: capture } : {}) };
   const { commandLine, captureBounds, ...window } = observation.window;

@@ -76,7 +76,7 @@ export class ComputerService {
     return this.serialized(identity, async () => {
       const epoch = this.stopEpoch;
       const value = await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.frameOnly ? 1 : params.maxElements ?? 250,
-        maxDepth: params.frameOnly ? 1 : params.maxDepth ?? 14, includeCommandLine: !params.frameOnly }, identity.signal);
+        maxDepth: params.frameOnly ? 1 : params.maxDepth ?? 14, includeCommandLine: !params.frameOnly, includeElements: !params.frameOnly }, identity.signal);
       if (params.expectedProcess && (value.window.processId !== params.expectedProcess.processId || value.window.processStartedAt !== params.expectedProcess.processStartedAt || value.window.className !== params.expectedProcess.className)) throw new ComputerError('WINDOW_CHANGED', '所选窗口已不属于原进程，请重新选择。');
       if (params.screenshot) {
         const size = { width: Math.max(320, Math.min(2560, params.width ?? 1600)), height: Math.max(240, Math.min(2160, params.height ?? 1200)), format: params.format, quality: params.quality };
@@ -199,7 +199,7 @@ export class ComputerService {
       const previous = await this.app.storage.getRecord(namespace, id) as SavedOperation | null;
       if (previous) {
         if (previous.fingerprint !== fingerprint) throw new ComputerError('OPERATION_CONFLICT', '同一个请求标识不能用于不同的操作。');
-        if (previous.status === 'completed') return { ...previous.result, repeated: true };
+        if (previous.status === 'completed') return { ...previous.result, operationId: id, windowId: previous.window.id, status: previous.status, repeated: true };
         throw new ComputerError(previous.code ?? 'OPERATION_UNKNOWN', previous.error ?? '这次操作已派发但没有确定结果，请重新观察，不能重复执行。');
       }
       const observation = this.remembered(identity, args.observationId);
@@ -218,7 +218,7 @@ export class ComputerService {
         if (epoch !== this.stopEpoch) throw new ComputerError('CONTROL_CHANGED', '派发前已停止电脑操作。');
         const prepared = manual ? await this.prepareManual(identity, observation, args, mapped, leaseId) : mapped;
         operation.result = await this.native.request('action', { ...prepared, leaseId }, identity.signal);
-        operation.status = 'completed'; return operation.result;
+        operation.status = 'completed'; return { ...operation.result, operationId: id, windowId: observation.window.id, status: operation.status };
       } catch (error) {
         operation.code = (error as ComputerError).code ?? 'OPERATION_FAILED'; operation.error = (error as Error).message;
         operation.status = ['OPERATION_UNKNOWN', 'HOST_DISCONNECTED'].includes(operation.code) ? 'unknown' : 'failed'; throw error;
@@ -234,14 +234,25 @@ export class ComputerService {
       if (name === 'computer_windows') return { success: true, data: await this.windows(identity) };
       if (name === 'computer_observe') {
         const dimension = args.maxImageDimension ?? 1280;
-        const value = await this.observe(identity, { ...args, windowId: args.windowId, width: dimension, height: dimension });
-        const { screenshot } = value;
+        const screenshot = args.screenshot !== false;
+        const value = await this.observe(identity, { ...args, windowId: args.windowId, screenshot,
+          frameOnly: screenshot && args.accessibility !== true, width: dimension, height: dimension });
+        const capture = value.screenshot;
         return { success: true, data: observationForModel(value, args.compact !== false),
-          ...(screenshot ? { attachments: [{ mimeType: screenshot.mimeType, data: screenshot.data, name: '窗口截图.png' }] } : {}) };
+          ...(capture ? { attachments: [{ mimeType: capture.mimeType, data: capture.data, name: '窗口截图.png' }] } : {}) };
       }
       if (name === 'computer_control') return { success: true, data: args.action === 'acquire' ? await this.acquire(identity, args.windowIds ?? [])
         : args.action === 'status' ? this.status(identity.actorId) : await this.stop(identity.actorId, 'released', identity) };
-      return { success: true, data: await this.action(identity, args as ComputerAction, `${context.iteration}:${context.toolCallId}`) };
+      const result = await this.action(identity, args as ComputerAction, `${context.iteration}:${context.toolCallId}`);
+      try {
+        const dimension = args.maxImageDimension ?? 1280;
+        const observation = await this.observe(identity, { windowId: result.windowId, screenshot: true, frameOnly: true, width: dimension, height: dimension });
+        const capture = observation.screenshot!;
+        return { success: true, data: { ...result, observation: observationForModel(observation) },
+          attachments: [{ mimeType: capture.mimeType, data: capture.data, name: '操作后窗口截图.png' }] };
+      } catch (error) {
+        return { success: true, data: { ...result, observationError: { code: (error as ComputerError).code ?? 'CAPTURE_FAILED', message: (error as Error).message } } };
+      }
     } catch (error) { return { success: false, code: (error as ComputerError).code ?? 'COMPUTER_FAILED', error: (error as Error).message }; }
   }
   async call(client: ClientSession, method: string, params: Record<string, any>) {

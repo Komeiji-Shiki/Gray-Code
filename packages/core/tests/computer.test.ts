@@ -14,6 +14,7 @@ class NativeFixture implements ComputerNativePort {
   listeners = new Set<(value: NativeComputerStatus) => void>();
   actions: Record<string, unknown>[] = [];
   failure?: ComputerError;
+  captureFailure?: ComputerError;
   acquisition?: () => Promise<void>;
   window: ComputerWindow = { id: '98', title: '验收编辑器', className: 'Fixture', processId: 4567, processStartedAt: '2026-09-13T00:00:00Z',
     executable: 'fixture-editor', monitorId: 'left-display', dpi: 144, minimized: false, foreground: true,
@@ -31,6 +32,7 @@ class NativeFixture implements ComputerNativePort {
       return { id, capturedAt: Date.now(), window: { ...this.window }, truncated: false, focusedElementId: id + ':0',
         elements: [{ id: id + ':0', runtimeId: 'fixture-field', type: 'Edit', name: '演示文字', automationId: 'editor', value: '原文', enabled: true, offscreen: false, password: false, focused: true, patterns: ['Value'], bounds: this.window.bounds }] } as T;
     }
+    if (method === 'capture' && this.captureFailure) throw this.captureFailure;
     if (method === 'capture') return { capturedAt: Date.now(), windowId: this.window.id, monitorId: this.window.monitorId, dpi: this.window.dpi,
       bounds: this.window.captureBounds, width: 600, height: 400, mimeType: 'image/png', data: 'ZmFrZQ==' } as T;
     if (method === 'validate') return { valid: true } as T;
@@ -118,6 +120,29 @@ describe('电脑控制的核心运行与授权', () => {
     const uncertain={observationId:next.id,action:'type' as const,text:'只派发一次'};
     await expect(app.computer.action(client,uncertain,'unknown-input')).rejects.toMatchObject({code:'OPERATION_UNKNOWN'});
     await expect(app.computer.action(client,uncertain,'unknown-input')).rejects.toMatchObject({code:'OPERATION_UNKNOWN'});expect(native.actions).toHaveLength(1);
+  });
+
+  test('默认截图观察使用轻量焦点读取，动作后返回新图，截图失败不会重做动作', async () => {
+    const context = { actorId: 'owner', runId: 'visual-loop', iteration: 0, toolCallId: 'click', signal: new AbortController().signal } as any;
+    const request = jest.spyOn(native, 'request');
+    await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'] }, context);
+    const observed = await app.computer.tool('computer_observe', { windowId: '98' }, context);
+    expect(request).toHaveBeenCalledWith('observe', expect.objectContaining({ includeElements: false }), context.signal);
+    expect(observed.attachments).toHaveLength(1);
+    const args = { observationId: (observed.data as any).id, action: 'click', coordinateSpace: 'image', x: 300, y: 200 };
+    const completed = await app.computer.tool('computer_action', args, context);
+    expect(completed).toMatchObject({ success: true, data: { status: 'completed' } });
+    expect(completed.attachments).toHaveLength(1);
+    expect((completed.data as any).observation.id).not.toBe(args.observationId);
+    native.captureFailure = new ComputerError('CAPTURE_FAILED', '夹具截图失败');
+    const next = { ...args, observationId: (completed.data as any).observation.id };
+    const nextContext = { ...context, toolCallId: 'next-click' };
+    const partial = await app.computer.tool('computer_action', next, nextContext);
+    expect(partial).toMatchObject({ success: true, data: { status: 'completed', observationError: { code: 'CAPTURE_FAILED' } } });
+    const count = native.actions.length;
+    const repeated = await app.computer.tool('computer_action', next, nextContext);
+    expect(repeated).toMatchObject({ success: true, data: { status: 'completed', repeated: true } });
+    expect(native.actions).toHaveLength(count);
   });
 
   test('精简观察保留操作字段和坐标，完整观察按需读取且内部原文不变', async () => {

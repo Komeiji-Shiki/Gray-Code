@@ -39,7 +39,7 @@ namespace GrayCode.ComputerHost {
       var depth=Math.Max(1,Math.Min(30,Json.Number(args,"maxDepth",14)));
       try {
         var root=AutomationElement.FromHandle(window);
-        ReadTree(root,null,0,depth,limit,result);
+        if(Json.Flag(args,"includeElements",true))ReadTree(root,null,0,depth,limit,result);
         // 旧式控件提供方可能把父控件焦点同时报告给滚动条，只采用系统实际焦点的运行标识。
         var focused=AutomationElement.FocusedElement;
         var focusedId=focused==null?null:Runtime(focused);

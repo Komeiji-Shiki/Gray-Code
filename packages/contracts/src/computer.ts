@@ -1,3 +1,5 @@
+import type { ScreenshotMetadata, VisualObservation, VisualActionResult } from './visual';
+
 export interface ComputerRect { x: number; y: number; width: number; height: number }
 export interface ComputerWindow {
   id: string; title: string; className: string; processId: number; executable?: string | null; commandLine?: string | null;
@@ -10,14 +12,14 @@ export interface ComputerElement {
   id: string; runtimeId: string; parentId?: string; name: string; type: string; automationId: string; value?: string;
   enabled: boolean; offscreen: boolean; password: boolean; focused: boolean; bounds: ComputerRect; patterns: string[];
 }
-export interface ComputerCapture {
+export interface ComputerCapture extends ScreenshotMetadata {
   capturedAt: number; windowId: string; monitorId: string; dpi: number; bounds: ComputerRect;
-  width: number; height: number; mimeType: 'image/png' | 'image/jpeg'; data: string;
+  data: string;
   method?: 'window' | 'visible-screen-region';
 }
 export interface ComputerDisplayCapture extends Omit<ComputerCapture, 'windowId' | 'method'> { method: 'display' }
-export interface ComputerObservation {
-  id: string; capturedAt: number; window: ComputerWindow; elements: ComputerElement[];
+export interface ComputerObservation extends VisualObservation {
+  window: ComputerWindow; elements: ComputerElement[];
   focusedElementId?: string; truncated: boolean; accessibilityError?: string; screenshot?: ComputerCapture;
 }
 export type ComputerActionName = 'focusWindow' | 'focusElement' | 'invoke' | 'setValue' | 'select' | 'toggle' | 'expand' | 'collapse'
@@ -39,5 +41,5 @@ export interface ComputerOperation {
   action: ComputerActionName; window: ComputerWindow; observationId: string;
   /** 输入正文与截图不进入操作摘要，模型工具的原始结果仍由既有任务记录管理。 */
   input: { textLength?: number; elementId?: string; key?: string; x?: number; y?: number; toX?: number; toY?: number };
-  status: 'dispatching' | 'completed' | 'failed' | 'unknown'; result?: Record<string, unknown>; error?: string; code?: string;
+  status: VisualActionResult['status']; result?: Record<string, unknown>; error?: string; code?: string;
 }
