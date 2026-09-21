@@ -6,7 +6,17 @@
  * - 缺失翻译 key 的 console.warn 按 key 去重（高频调用不刷屏）
  */
 import { beforeEach, describe, expect, vi } from 'vitest'
+import { computed } from 'vue'
 import { t, actualLanguage, setDetectedLanguage, setLanguage } from '../index'
+
+test('命中翻译缓存的组件仍会跟随语言切换更新', () => {
+  setLanguage('zh-CN')
+  t('components.tools.structured.rawData')
+  const label = computed(() => t('components.tools.structured.rawData'))
+  expect(label.value).toBe('查看原始数据')
+  setLanguage('en')
+  expect(label.value).toBe('View raw data')
+})
 
 describe('i18n 未知语言兜底', () => {
   beforeEach(() => {

@@ -2664,6 +2664,9 @@ const ja: LanguageMessages = {
                     tooltip: 'ツールを設定'
                 },
                 toolDisplayNames: {
+                    computer_windows: 'アプリのウィンドウ', computer_observe: '画面の確認', computer_control: 'デスクトップ制御', computer_action: 'コンピューター操作',
+                    memory_search: '長期記憶の検索', memory_read: '長期記憶の読み取り', memory_remember: '長期記憶の保存', memory_remove: '長期記憶の削除',
+                    memory_revise: '長期記憶の修正', memory_summarize: '長期記憶の要約', memory_topics: '記憶のトピック', pet_control: 'ペットの操作',
                     browser_tabs: 'ブラウザータブ',
                     browser_read: 'ウェブページを読む',
                     browser_action: 'ウェブページを操作',
@@ -3364,6 +3367,17 @@ const ja: LanguageMessages = {
 
         tools: {
             executing: '実行中...',
+            structured: {
+                statuses: { pending: '未処理', queued: '待機中', in_progress: '進行中', running: '実行中', completed: '完了', done: '完了', success: '成功', failed: '失敗', error: 'エラー', blocked: '条件待ち', cancelled: 'キャンセル済み' },
+                rawData: '元のデータを表示', empty: '項目なし', noOutput: '完了しました。追加の出力はありません。', waiting: 'ツールの結果を待っています…',
+                items: '{count} 件', showMore: 'さらに表示 · 残り {count} 件', moreText: '残り {count} 文字を表示', yes: 'はい', no: 'いいえ', image: 'ツールが返した画像', binary: 'バイナリ内容 · {count} バイト',
+                fields: { action: '操作', query: '検索内容', url: 'URL', title: 'タイトル', text: '本文', content: '内容', path: 'パス', name: '名前', id: 'ID',
+                    tabId: 'タブ', profileId: 'ブラウザ設定', windowId: 'ウィンドウ', observationId: '観察記録', ref: '要素参照', role: '種類', value: '値',
+                    status: '状態', message: '説明', code: 'コード', count: '件数', total: '合計', truncated: '省略あり', nodes: 'ページ内容', frames: 'フレーム',
+                    elements: '要素', windows: 'ウィンドウ一覧', tabs: 'タブ一覧', entries: '記録', tasks: 'タスク', matches: '一致結果', files: 'ファイル',
+                    line: '行', column: '列', stdout: '標準出力', stderr: 'エラー出力', exitCode: '終了コード', width: '幅', height: '高さ',
+                    enabled: '有効', focused: 'フォーカス', command: 'コマンド', result: '結果', data: 'データ', contentBlocks: '内容ブロック' },
+            },
             executed: '実行済み',
             failed: '実行失敗',
             cancelled: 'キャンセル済み',

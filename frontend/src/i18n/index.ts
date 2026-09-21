@@ -177,6 +177,8 @@ export function translate(lang: string, key: string, params?: Record<string, any
  * 支持参数替换：t('message.error', { count: 5 })
  */
 export function t(key: string, params?: Record<string, any>): string {
+    // 缓存命中时也要订阅当前语言，否则已缓存的标签不会随语言切换重新渲染。
+    const messages = currentMessages.value;
     // 无参数调用直接查缓存（命中即返回，跳过 split + 逐层属性访问）
     if (!params) {
         const cached = translationCache.get(key);
@@ -184,7 +186,7 @@ export function t(key: string, params?: Record<string, any>): string {
     }
 
     const keys = key.split('.');
-    let result: any = currentMessages.value;
+    let result: any = messages;
     
     for (const k of keys) {
         if (result && typeof result === 'object' && k in result) {

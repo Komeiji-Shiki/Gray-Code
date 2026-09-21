@@ -2664,6 +2664,9 @@ const en: LanguageMessages = {
                     tooltip: 'Configure Tool'
                 },
                 toolDisplayNames: {
+                    computer_windows: 'Application Windows', computer_observe: 'Observe Computer', computer_control: 'Desktop Control', computer_action: 'Computer Action',
+                    memory_search: 'Search Long-term Memory', memory_read: 'Read Long-term Memory', memory_remember: 'Save Long-term Memory', memory_remove: 'Remove Long-term Memory',
+                    memory_revise: 'Revise Long-term Memory', memory_summarize: 'Summarize Long-term Memory', memory_topics: 'Memory Topics', pet_control: 'Pet Control',
                     browser_tabs: 'Browser Tabs',
                     browser_read: 'Read Webpage',
                     browser_action: 'Interact with Webpage',
@@ -3364,6 +3367,17 @@ const en: LanguageMessages = {
 
         tools: {
             executing: 'Executing...',
+            structured: {
+                statuses: { pending: 'Pending', queued: 'Queued', in_progress: 'In progress', running: 'Running', completed: 'Completed', done: 'Done', success: 'Success', failed: 'Failed', error: 'Error', blocked: 'Blocked', cancelled: 'Cancelled' },
+                rawData: 'View raw data', empty: 'No entries', noOutput: 'Completed with no additional output.', waiting: 'Waiting for tool results…',
+                items: '{count} entries', showMore: 'Show more · {count} remaining', moreText: 'Show {count} remaining characters', yes: 'Yes', no: 'No', image: 'Image returned by the tool', binary: 'Binary content · {count} bytes',
+                fields: { action: 'Action', query: 'Query', url: 'URL', title: 'Title', text: 'Text', content: 'Content', path: 'Path', name: 'Name', id: 'ID',
+                    tabId: 'Tab', profileId: 'Browser profile', windowId: 'Window', observationId: 'Observation', ref: 'Element reference', role: 'Role', value: 'Value',
+                    status: 'Status', message: 'Message', code: 'Code', count: 'Count', total: 'Total', truncated: 'Truncated', nodes: 'Page content', frames: 'Frames',
+                    elements: 'Elements', windows: 'Windows', tabs: 'Tabs', entries: 'Entries', tasks: 'Tasks', matches: 'Matches', files: 'Files',
+                    line: 'Line', column: 'Column', stdout: 'Standard output', stderr: 'Error output', exitCode: 'Exit code', width: 'Width', height: 'Height',
+                    enabled: 'Enabled', focused: 'Focused', command: 'Command', result: 'Result', data: 'Data', contentBlocks: 'Content blocks' },
+            },
             executed: 'Executed',
             failed: 'Execution Failed',
             cancelled: 'Cancelled',

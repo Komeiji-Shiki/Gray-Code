@@ -5,6 +5,7 @@
 
 import { defineAsyncComponent, type Component } from 'vue'
 import type { ToolUsage } from '../types'
+import { toolIcon, toolSummary } from './toolPresentation'
 
 export interface ToolActionContext {
   /** 当前主聊天对话 ID，历史 SubAgent 卡片打开 Monitor 时需要用它恢复 metadata 快照 */
@@ -111,6 +112,7 @@ class ToolRegistry {
 
 // 导出单例
 export const toolRegistry = new ToolRegistry()
+export const DefaultToolResult = lazyToolComponent(() => import('../components/tools/common/ToolResultPanel.vue'))
 
 /**
  * 注册工具的便捷方法
@@ -136,5 +138,10 @@ export function lazyToolComponent(
  * 获取工具配置
  */
 export function getToolConfig(name: string): ToolConfig | undefined {
-  return toolRegistry.get(name)
+  return toolRegistry.get(name) ?? {
+    name,
+    icon: toolIcon(name),
+    descriptionFormatter: args => toolSummary(name, args),
+    contentComponent: DefaultToolResult,
+  }
 }

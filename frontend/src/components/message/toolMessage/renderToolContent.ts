@@ -1,6 +1,6 @@
 import { h, type Component, type VNode } from 'vue'
 import type { ToolUsage } from '../../../types'
-import { getToolConfig } from '../../../utils/toolRegistry'
+import { DefaultToolResult, getToolConfig } from '../../../utils/toolRegistry'
 import {
   confirmDiff,
   rejectDiff,
@@ -15,7 +15,7 @@ import {
 type Translate = (key: string, params?: Record<string, any>) => string
 
 /**
- * 渲染工具详细内容（自定义组件 / contentFormatter / 默认 JSON 展示）。
+ * 渲染工具详细内容（自定义组件 / contentFormatter / 通用结构化展示）。
  * 从 ToolMessage.vue 原样抽出（F-07），t 由调用方通过 useI18n 传入。
  */
 export function renderToolContent(
@@ -54,11 +54,11 @@ export function renderToolContent(
     try {
       content = config.contentFormatter(tool.args, tool.result)
     } catch {
-      // formatter 崩溃时降级到默认 JSON 展示，避免整个工具块渲染失败
+      // formatter 崩溃时仍提供结构化结果，避免整个工具块渲染失败。
       content = null
     }
 
-    // formatter 正常返回非空内容：按原有结构展示；否则落到下方默认 JSON 展示
+    // formatter 正常返回非空内容时保留原有结构，否则使用通用展示。
     if (content) {
       const children: any[] = []
 
@@ -78,19 +78,6 @@ export function renderToolContent(
     }
   }
 
-  // 默认显示：参数和结果的 JSON
-  return h('div', { class: 'tool-content-default' }, [
-    tool.args && h('div', { class: 'content-section' }, [
-      h('div', { class: 'section-label' }, t('components.message.tool.parameters') + ':'),
-      h('pre', { class: 'section-data' }, JSON.stringify(tool.args, null, 2))
-    ]),
-    tool.result && h('div', { class: 'content-section' }, [
-      h('div', { class: 'section-label' }, t('components.message.tool.result') + ':'),
-      h('pre', { class: 'section-data' }, JSON.stringify(tool.result, null, 2))
-    ]),
-    tool.error && h('div', { class: 'content-section error-section' }, [
-      h('div', { class: 'section-label' }, t('components.message.tool.error') + ':'),
-      h('div', { class: 'error-message' }, tool.error)
-    ])
-  ])
+  // 已注册工具没有内容或格式化失败时，同样使用可展开的结构化展示。
+  return h(DefaultToolResult, { args: tool.args, result: tool.result, error: tool.error, status: tool.status, toolName: tool.name })
 }

@@ -2666,6 +2666,9 @@ const zhCN = {
                     tooltip: '配置工具'
                 },
                 toolDisplayNames: {
+                    computer_windows: '应用窗口', computer_observe: '观察电脑', computer_control: '桌面控制权', computer_action: '操作电脑',
+                    memory_search: '检索长期记忆', memory_read: '读取长期记忆', memory_remember: '保存长期记忆', memory_remove: '移除长期记忆',
+                    memory_revise: '修订长期记忆', memory_summarize: '总结长期记忆', memory_topics: '记忆主题', pet_control: '桌宠控制',
                     browser_tabs: '浏览器标签页',
                     browser_read: '读取网页',
                     browser_action: '操作网页',
@@ -3366,6 +3369,17 @@ const zhCN = {
 
         tools: {
             executing: '执行中...',
+            structured: {
+                statuses: { pending: '待处理', queued: '排队中', in_progress: '进行中', running: '运行中', completed: '已完成', done: '已完成', success: '成功', failed: '失败', error: '错误', blocked: '等待条件', cancelled: '已取消' },
+                rawData: '查看原始数据', empty: '没有条目', noOutput: '操作已完成，没有额外输出。', waiting: '等待工具返回结果…',
+                items: '{count} 个条目', showMore: '继续显示，剩余 {count} 项', moreText: '展开剩余 {count} 个字符', yes: '是', no: '否', image: '工具返回的图片', binary: '二进制内容 · {count} 字节',
+                fields: { action: '操作', query: '搜索内容', url: '网页地址', title: '标题', text: '正文', content: '内容', path: '路径', name: '名称', id: '标识',
+                    tabId: '标签页', profileId: '浏览器配置', windowId: '窗口', observationId: '观察记录', ref: '元素引用', role: '类型', value: '值',
+                    status: '状态', message: '说明', code: '状态码', count: '数量', total: '总计', truncated: '已截断', nodes: '页面内容', frames: '页面框架',
+                    elements: '控件', windows: '窗口列表', tabs: '标签页列表', entries: '记录', tasks: '任务', matches: '匹配结果', files: '文件',
+                    line: '行号', column: '列号', stdout: '标准输出', stderr: '错误输出', exitCode: '退出码', width: '宽度', height: '高度',
+                    enabled: '已启用', focused: '已聚焦', command: '命令', result: '结果', data: '数据', contentBlocks: '内容块' },
+            },
             executed: '已执行',
             failed: '执行失败',
             cancelled: '已取消',
