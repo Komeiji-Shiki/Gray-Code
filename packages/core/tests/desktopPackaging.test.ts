@@ -46,3 +46,16 @@ test('安装器参数把含空格文本和路径绑定到对应选项', () => {
   expect(args).toContain('--icon=C:/Gray Code/icon.ico');
   expect(args).not.toContain('GrayCode contributors');
 });
+
+test('打包保护已经运行过的便携目录，避免覆盖或发行用户配置', async () => {
+  const root = await mkdtemp(path.resolve('.tmp/desktop-profile-guard-'));
+  try {
+    await mkdir(path.join(root, 'portable-data'));
+    const module = pathToFileURL(path.resolve('scripts/desktop-profile-guard.mjs')).href;
+    const script = `import { assertCleanDesktopPackage } from ${JSON.stringify(module)};
+      try { assertCleanDesktopPackage(process.argv[1]); } catch (error) { console.log(error.message); }`;
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', script, root], { encoding: 'utf8', windowsHide: true });
+    expect(output).toContain('portable-data 用户配置');
+    expect(output).toContain('GRAYCODE_DESKTOP_OUT');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

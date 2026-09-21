@@ -59,6 +59,12 @@ npm run package:desktop
 
 默认输出为 `release/desktop/GrayCode-win32-x64`。`GRAYCODE_DESKTOP_OUT` 可指定新的发行目录，避免覆盖正在使用的程序。`package:desktop` 编译运行产物，常规开发构建 `build:desktop` 另包含类型检查。首次构建需要下载 Electron 运行时。
 
+便携版首次启动会在 `GrayCode.exe` 旁创建 `portable-data`，将本机已有的用户配置保存为可携带副本。渠道及 API 密钥、提示词、MCP、用户技能和外观配置会在保存时同步；移动或复制程序时，一起保留整个 `portable-data` 目录。`settings.enc` 是加密配置，`profile.key` 是配套密钥，两者都需要携带，持有两者即可读取配置。
+
+聊天、检查点、工作区目录与账号授权仍保存在本机原数据目录，默认是 `%APPDATA%/GrayCode/platform-data`，不会跟随便携程序复制。同一台电脑移动程序后仍可读取原聊天；换到另一台电脑则使用那台电脑的本地工作区和聊天。安装版保持原存储方式；显式指定 `--data` 用于隔离运行时，也继续只使用指定目录。
+
+已运行过的便携目录不能直接重新打包，也不能作为安装器输入，以免覆盖或发行个人配置。请指定新的 `GRAYCODE_DESKTOP_OUT` 生成干净发行包。
+
 生成安装器还需要 .NET 9 SDK，并使用仓库固定的 Velopack 工具版本：
 
 ```powershell

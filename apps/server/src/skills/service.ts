@@ -102,12 +102,12 @@ export class PlatformSkills {
       return reader.getReadSkillTool().handler(args);
     } };
   }
-  async export(draft: ProductSettingsDraft): Promise<PlatformSkillExport[]> {
+  async export(draft: ProductSettingsDraft, userOnly = false): Promise<PlatformSkillExport[]> {
     const result = new Map<string, PlatformSkillExport>();
     const owner = draft.app.accounts.find(actor => actor.role === 'owner' && !actor.revoked);
     if (!owner) throw new Error('主人账号不可用。');
     // 按工作区顺序保留同名技能的首个定义，与原扫描优先级一致。
-    for (const workspaceId of [...draft.app.workspaces.map(workspace => workspace.id), undefined]) {
+    for (const workspaceId of [...(userOnly ? [] : draft.app.workspaces.map(workspace => workspace.id)), undefined]) {
       for (const skill of await this.items(owner.id, undefined, workspaceId, draft)) if (!result.has(skill.id) &&
         (workspaceId === undefined || skill.source.startsWith('project-'))) {
         const saved = draft.value.importedSkills?.find(item => item.id === skill.id);

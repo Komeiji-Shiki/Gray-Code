@@ -88,6 +88,7 @@ checkpoint-history-branch-architecture.plan.md
 # 独立桌面发行产物与本地运行数据
 /release/
 /platform-data/
+/portable-data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

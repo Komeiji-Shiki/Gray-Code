@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectRuntimeDependencies } from './desktop-runtime-dependencies.mjs';
+import { assertCleanDesktopPackage } from './desktop-profile-guard.mjs';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // 打包机直连官方 Electron 下载源不稳定，改走可达镜像；与 @electron/get 的 mirror 变量同口径。
@@ -10,6 +11,7 @@ const { packager } = await import('@electron/packager');
 const outputDirectory = process.env.GRAYCODE_DESKTOP_OUT
   ? path.resolve(root, process.env.GRAYCODE_DESKTOP_OUT)
   : path.join(root, 'release', 'desktop');
+assertCleanDesktopPackage(path.join(outputDirectory, 'GrayCode-win32-x64'));
 // 客户端构建会清空 dist；聊天前端未构建成功时不能生成缺少设置与聊天页面的包。
 const entryFiles = ['apps/desktop/dist/main.cjs', 'apps/desktop/dist/preload.cjs', 'apps/desktop/dist/terminalHost.cjs',
   'apps/desktop/dist/computer-host/GrayCode.ComputerHost.exe',

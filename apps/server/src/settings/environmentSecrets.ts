@@ -6,7 +6,13 @@ export function environmentSecretCodec(variable?: string): SecretCodec | undefin
   if (!variable) return undefined;
   const value = process.env[variable];
   if (!value || !/^[a-f0-9]{64}$/i.test(value)) throw new Error('--key-env 指定的环境变量须包含 32 字节密钥的十六进制表示（64 个字符）。');
-  const key = Buffer.from(value, 'hex');
+  return keySecretCodec(Buffer.from(value, 'hex'));
+}
+
+/** 便携配置和部署密钥共用加密格式，系统密钥服务仍负责本机数据库。 */
+export function keySecretCodec(value: Uint8Array): SecretCodec {
+  if (value.byteLength !== 32) throw new Error('配置加密密钥必须为 32 字节。');
+  const key = Buffer.from(value);
   const scope = Buffer.from('graycode-platform-secrets:v1');
   return {
     encrypt: async text => {

@@ -91,6 +91,7 @@ export class SettingsService<T = never> {
     private readonly storage: PlatformStorage,
     private readonly tools: RuntimeToolRegistry,
     private readonly secrets?: SecretCodec,
+    private readonly afterSave?: () => Promise<void>,
   ) {}
   async initialize(): Promise<void> {
     let record = await this.storage.getVersionedRecord(namespace, "main");
@@ -205,9 +206,12 @@ export class SettingsService<T = never> {
       credentialIds: [...credentialIds],
     };
     projection?.publish();
+    // 本机事务已完成；便携副本失败必须随保存结果明确返回，允许用户重试。
+    try { await this.afterSave?.(); }
+    catch (error) { this.current.activationWarnings = [error instanceof Error ? error.message : String(error)]; }
     // A connector activation failure cannot roll back an already committed document.
     try { await projection?.activate?.(); }
-    catch (error) { this.current.activationWarnings = [(error as Error).message]; }
+    catch (error) { this.current.activationWarnings = [...this.current.activationWarnings ?? [], (error as Error).message]; }
     return this.snapshot();
   }
   private async validate(settings: AppSettings): Promise<void> {

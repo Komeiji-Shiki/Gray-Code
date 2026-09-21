@@ -5,9 +5,11 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createDesktopInstallerArguments } from './desktop-installer-arguments.mjs';
+import { assertCleanDesktopPackage } from './desktop-profile-guard.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = path.resolve(root, process.env.GRAYCODE_DESKTOP_OUT || 'release/desktop', 'GrayCode-win32-x64');
+assertCleanDesktopPackage(source);
 const output = path.resolve(root, process.env.GRAYCODE_INSTALLER_OUT || 'release/desktop-installer');
 const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const packaged = JSON.parse(await readFile(path.join(source, 'resources/app/package.json'), 'utf8'));

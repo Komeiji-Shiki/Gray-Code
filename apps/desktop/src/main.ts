@@ -1,6 +1,7 @@
 import { DesktopUpdates } from './updates';
 import { DesktopInstaller, confirmInstalledRecovery } from './installer';
 import { DesktopStorageLocation } from './storageLocation';
+import { DesktopPortableProfile, portableProfileDirectory } from './portableProfile';
 import { ApplicationBackups } from '../../server/src/backups/service';
 import { BackupRestoreState } from '../../server/src/backups/restore';
 import { desktopNotifications } from './notifications';
@@ -264,8 +265,10 @@ async function main(): Promise<void> {
     },
     decrypt: async (value: Uint8Array) => safeStorage.decryptString(Buffer.from(value)),
   };
+  const portableDirectory = portableProfileDirectory(process.execPath, app.isPackaged, dataIndex >= 0);
   application = await PlatformApplication.open({
     dataDirectory,
+    configurationPersistence: portableDirectory ? new DesktopPortableProfile(portableDirectory) : undefined,
     documentsDirectory: app.getPath('documents'),
     browser: application => browser = new DesktopBrowser(application, () => window, notify),
     computerCapture: new DesktopComputerCapture(),

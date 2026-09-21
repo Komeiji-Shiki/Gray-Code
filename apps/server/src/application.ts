@@ -96,6 +96,10 @@ import { teamTools } from './teams/tools';
 
 export interface ApplicationOptions {
   dataDirectory: string;
+  configurationPersistence?: {
+    initialize(application: PlatformApplication): Promise<void>;
+    save(application: PlatformApplication): Promise<void>;
+  };
   documentsDirectory?: string;
   secretCodec?: SecretCodec;
   models?: ModelProvider;
@@ -107,6 +111,8 @@ export interface ApplicationOptions {
   remoteAccess?: (application: PlatformApplication) => RemoteAccessHost;
 }
 export class PlatformApplication {
+  private configurationReady = false;
+  private readonly configurationPersistence?: ApplicationOptions['configurationPersistence'];
   readonly browser?: BrowserHost;
   readonly computer: ComputerService;
   readonly remoteAccess?: RemoteAccessHost;
@@ -170,6 +176,7 @@ export class PlatformApplication {
     readonly storage: PlatformStorage,
     options: ApplicationOptions,
   ) {
+    this.configurationPersistence = options.configurationPersistence;
     this.botWorkspaces = new BotWorkspaces(this, options.documentsDirectory);
     this.conversationWorkspaces = new ConversationWorkspaces(this, options.documentsDirectory);
     this.dependencies = new DependencyRuntimeManager(join(storage.directory, 'dependencies'));
@@ -190,7 +197,7 @@ export class PlatformApplication {
     this.screenSense = new ScreenSenseService(this);
     this.characterPipeline = new CharacterPipeline(this);
     this.activity = new PlatformActivity(storage);
-    this.images = new AppearanceImages(storage);
+    this.images = new AppearanceImages(storage, () => this.persistConfiguration());
     this.migration = new MigrationService(this);
     this.files = new WorkspaceFiles((workspaceId, file, absolute) => {
       const workspace = this.settings.snapshot().settings.workspaces.find(item => item.id === workspaceId);
@@ -247,6 +254,7 @@ export class PlatformApplication {
       storage,
       this.tools,
       options.secretCodec,
+      () => this.persistConfiguration(),
     );
     this.product = new ProductConfiguration(this);
     this.terminals = new PlatformTerminals(this);
@@ -411,6 +419,8 @@ export class PlatformApplication {
       await application.settings.initialize();
       await application.nodes.initialize();
       await application.product.initialize();
+      await options.configurationPersistence?.initialize(application);
+      application.configurationReady = true;
       await application.pets.initialize();
       await application.screenSense.initialize();
       await application.changes.recover();
@@ -442,6 +452,9 @@ export class PlatformApplication {
   subscribe(listener: (event: Record<string, unknown>) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+  private async persistConfiguration(): Promise<void> {
+    if (this.configurationReady) await this.configurationPersistence?.save(this);
   }
   refreshMutationTools(): void {
     for (const tool of this.media.tools(this.product.runtimeSettings())) this.tools.replaceNamespace(tool.declaration.name, [tool]);

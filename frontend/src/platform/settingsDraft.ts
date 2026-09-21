@@ -78,7 +78,7 @@ export async function saveDesktopSettings(): Promise<void> {
     await flushDesktopSettings();
     const saved = await sendToExtension<{ activationWarnings?: string[] }>('ui.settings.save', {});
     desktopSettingsDraft.dirty = false;
-    if (saved?.activationWarnings?.length) desktopSettingsDraft.error = `设置已保存，但连接应用失败：${saved.activationWarnings.join('；')}`;
+    if (saved?.activationWarnings?.length) desktopSettingsDraft.error = `设置已保存，仍有事项需要处理：${saved.activationWarnings.join('；')}`;
     await sendToExtension('desktop.dirtySettings', { dirty: false });
   } catch (error) { desktopSettingsDraft.error = (error as Error).message; throw error; }
   finally { desktopSettingsDraft.busy = false; }

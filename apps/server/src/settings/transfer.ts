@@ -11,7 +11,7 @@ import { createMcpSettingsDraft } from '../mcp/settings';
 /** 导入先更新统一草稿，确认保存时沿用原设置事务和系统密钥服务。 */
 export class SettingsTransfer {
   constructor(private readonly app: PlatformApplication) {}
-  async export(draft: ProductSettingsDraft) {
+  async export(draft: ProductSettingsDraft, userOnly = false) {
     const channelConfigs = await draft.configs.listConfigs();
     for (const channel of channelConfigs) if (channel.apiKey === '••••••••') channel.apiKey = (await this.app.product.channel(channel.id))?.apiKey ?? '';
     const credentials: Record<string, string> = {};
@@ -26,9 +26,9 @@ export class SettingsTransfer {
       if (original) backgrounds.push({ ...image, dataUrl: `data:${original.mimeType};base64,${Buffer.from(original.bytes).toString('base64')}` });
     }
     return { format: 'graycode-platform', version: 1, exportedAt: Date.now(), settings: draft.app,
-      branchRetentionDays: draft.value.branchRetentionDays, features: draft.settings.getSettings(), channelConfigs, mcpServers: await draft.mcp.listServerConfigs(), credentials, backgrounds, skills: await this.app.skills.export(draft) };
+      branchRetentionDays: draft.value.branchRetentionDays, features: draft.settings.getSettings(), channelConfigs, mcpServers: await draft.mcp.listServerConfigs(), credentials, backgrounds, skills: await this.app.skills.export(draft, userOnly) };
   }
-  async import(draft: ProductSettingsDraft, input: unknown) {
+  async import(draft: ProductSettingsDraft, input: unknown, replaceUserPreferences = false) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('设置文件必须是 JSON 对象。');
     const data = structuredClone(input) as Record<string, any>;
     migrateLimCodeExport(data);
@@ -36,6 +36,11 @@ export class SettingsTransfer {
     if (data.branchRetentionDays !== undefined) { draft.value.branchRetentionDays = branchRetentionDays(data.branchRetentionDays); draft.dirty = true; }
     const errors: string[] = [];
     const imported = { vscodeSettings: false, channelConfigs: 0, mcpServers: 0, skills: 0 };
+    if (replaceUserPreferences) {
+      if (data.format !== 'graycode-platform' || !data.settings) throw new Error('便携配置格式无效。');
+      // 便携副本代表完整配置，已删除的渠道、MCP 和导入技能不能被旧本机副本补回来。
+      draft.value.channels = []; draft.value.mcpServers = []; draft.value.importedSkills = [];
+    }
     // 保留本机账号和工作区授权；设置导入不隐式替换部署的认证身份。
     if (data.format === 'graycode-platform' && data.settings) {
       const { accounts, bindings, workspaces, botGuestAccountId, ...preferences } = data.settings;
@@ -71,9 +76,9 @@ export class SettingsTransfer {
       if (existing < 0) draft.value.mcpServers.push(structuredClone(server)); else draft.value.mcpServers[existing] = structuredClone(server);
       imported.mcpServers++;
     }
-    if (imported.mcpServers) { draft.mcp = createMcpSettingsDraft(draft.value, () => { draft.dirty = true; }); await draft.mcp.initialize(); }
+    if (imported.mcpServers || replaceUserPreferences) { draft.mcp = createMcpSettingsDraft(draft.value, () => { draft.dirty = true; }); await draft.mcp.initialize(); }
     for (const image of data.backgrounds ?? []) {
-      const restored = await this.app.images.add(image);
+      const restored = await this.app.images.add(image, replaceUserPreferences ? image.id : undefined);
       if (draft.app.appearance.backgroundImage === image.url) draft.app.appearance.backgroundImage = restored.url;
     }
     for (const skill of data.skills ?? []) {
@@ -84,6 +89,10 @@ export class SettingsTransfer {
         await draft.settings.setSkillEnabled(value.id, value.enabled, value);
         imported.skills++;
       } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    }
+    if (replaceUserPreferences && !errors.length) {
+      const retained = new Set((data.backgrounds ?? []).map((image: BackgroundImageSummary) => image.id));
+      for (const image of await this.app.images.list()) if (!retained.has(image.id)) await this.app.images.remove(image.id);
     }
     draft.dirty = true;
     return { success: errors.length === 0, imported, errors, draft: true };
