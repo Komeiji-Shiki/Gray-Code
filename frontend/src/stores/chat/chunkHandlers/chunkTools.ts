@@ -312,7 +312,7 @@ export function handleAwaitingConfirmation(
 
     // 标记工具为等待确认状态，并同步已自动执行的工具结果（autoPrefix）
     if (updatedMessage.tools) {
-      const pendingIds = new Set((chunk.pendingToolCalls || []).map((t: any) => t.id))
+      const pendingCalls = new Map((chunk.pendingToolCalls || []).map(tool => [tool.id, tool]))
       const toolResults = chunk.toolResults || []
       const toolResultMap = new Map<string, ToolExecutionResult>()
       for (const tr of toolResults) {
@@ -328,9 +328,11 @@ export function handleAwaitingConfirmation(
         const baseStatus = (isStreaming ? 'queued' : tool.status) || 'queued'
         const baseTool = isStreaming ? { ...tool, partialArgs: undefined } : tool
 
-        if (pendingIds.has(tool.id)) {
+        const pending = pendingCalls.get(tool.id)
+        if (pending) {
           // 轮到该工具，等待用户批准
-          return { ...baseTool, status: 'awaiting_approval' as const }
+          return { ...baseTool, status: 'awaiting_approval' as const, approvalId: pending.approvalId,
+            approvalReason: pending.approvalReason, approvalChoices: pending.approvalChoices }
         }
         
         // 如果有自动执行的结果，写回 result，并推断最终状态（success/error/warning/awaiting_apply）

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import type { ActorIdentity, DiscordOutputSettings, DiscordReplyProfile, PlatformConversation, RecordMutation, RunRecord } from '@graycode/contracts';
+import type { ActorIdentity, ApprovalRequest, DiscordOutputSettings, DiscordReplyProfile, PlatformConversation, RecordMutation, RunRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { BotInbound } from './gateway';
 import { discordAdmitted, discordOutput, botProfile } from './config';
@@ -33,7 +33,7 @@ export type BotAction =
   | { kind: 'model-default' }
   | { kind: 'message' | 'interrupt'; text: string; input?: BotInboxItem }
   | { kind: 'answer'; questionId: string; answers: string[] }
-  | { kind: 'approval'; approvalId: string; accepted: boolean };
+  | { kind: 'approval'; approvalId: string; accepted: boolean; choiceId?: string; choiceIndex?: number };
 interface LoadedSession { id: string; revision: number | null; value: BotSession; actor: ActorIdentity; profile: DiscordReplyProfile }
 export const botKey = (...parts: string[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 const namespace = 'bot-sessions';
@@ -245,7 +245,7 @@ export class BotSessions {
     let conversation = await this.current(loaded);
     let reply = ''; let run: RunRecord | undefined;
     const receiptRecord = (): RecordMutation => ({ namespace: receipts, id: receiptId, value: { receivedAt: Date.now(), reply } });
-    if (action.kind === 'help') reply = '使用 /gray 打开操作面板。文字指令仍可用：/gray new、/gray task 对话ID、/gray workspace 工作区ID（none 为普通聊天）、/gray status、/gray cancel、/gray answer 提问ID 回答、/gray approve 审批ID、/gray deny 审批ID。';
+    if (action.kind === 'help') reply = '使用 /gray 打开操作面板。文字指令仍可用：/gray new、/gray task 对话ID、/gray workspace 工作区ID（none 为普通聊天）、/gray status、/gray cancel、/gray answer 提问ID 回答、/gray approve 审批ID、/gray deny 审批ID、/gray choose 审批ID 选项序号。';
     else if (action.kind === 'workspaces') reply = this.workspaces(loaded.actor.id).map(item => `${item.name} · ${item.id}`).join('\n') || '当前账号没有可用工作区。';
     else if (action.kind === 'workspace') {
       this.app.requireOwner(loaded.actor.id);
@@ -282,8 +282,15 @@ export class BotSessions {
       const targetRun = target ? await this.app.storage.getRun(target.runId) : null;
       const route = targetRun && await this.routeForRun(context.platform, targetRun);
       if (!target || !route || route.botId !== context.botId || route.channelId !== context.channelId) throw new Error('这个请求不属于当前入口，或已经结束。');
-      if (action.kind === 'approval') await this.app.runtime.resolveApproval(action.approvalId, loaded.actor.id, action.accepted);
-      else await this.app.runtime.answerQuestion(action.questionId, loaded.actor.id, action.answers);
+      if (action.kind === 'approval') {
+        let choiceId = action.choiceId;
+        if (action.choiceIndex !== undefined) {
+          const choice = Number.isSafeInteger(action.choiceIndex) && (target as ApprovalRequest).choices?.[action.choiceIndex];
+          if (!choice) throw new Error('请选择列出的选项序号。');
+          choiceId = choice.id;
+        }
+        await this.app.runtime.resolveApproval(action.approvalId, loaded.actor.id, action.accepted, choiceId);
+      } else await this.app.runtime.answerQuestion(action.questionId, loaded.actor.id, action.answers);
       reply = '已提交。';
     } else {
       let latest = conversation ? (await this.app.storage.listRuns({ conversationId: conversation.id, limit: 1 }))[0] : undefined;
@@ -343,5 +350,6 @@ export function parseBotAction(text: string): BotAction {
   const [id, ...rest] = argument.split(/\s+/);
   if (verb === 'answer') return { kind: 'answer', questionId: id, answers: rest.join(' ').split('|').map(value => value.trim()) };
   if (verb === 'approve' || verb === 'deny') return { kind: 'approval', approvalId: id, accepted: verb === 'approve' };
+  if (verb === 'choose') return { kind: 'approval', approvalId: id, accepted: false, choiceIndex: Number(rest[0]) - 1 };
   return { kind: 'help' };
 }

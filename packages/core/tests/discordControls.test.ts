@@ -1,4 +1,4 @@
-import type { ModelInput, ProviderDefinition } from '@graycode/contracts';
+import type { ApprovalRequest, ModelInput, ProviderDefinition } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import type { BotGateway, BotInteraction, BotModal, BotPanel, BotReply } from '../../../apps/server/src/bots/gateway';
 import { discordModal, discordPanel } from '../../../apps/server/src/bots/discordComponents';
@@ -46,6 +46,29 @@ describe('Discord 原生操作与共享运行流程', () => {
     value.settings.discord = { enabled: true, credentialRef: 'env:GRAYCODE_NATIVE_BOT_TEST_TOKEN', allowedChannelIds: ['30', '31'], agentId: 'default', mentionOnly: true,
       defaultProfile: { toolsEnabled: false }, directMessages: { enabled: true } };
     await app.settings.save({ settings: value.settings, expectedRevision: value.revision }); await app.discord.start();
+  });
+
+  test('权限选项分页保留完整说明和原始选项身份', async () => {
+    const state = await app.discord.sessions.snapshot(context('choice-state'));
+    const request: ApprovalRequest = { id: 'approval-choice', runId: 'unused', actorId: 'owner', toolCallId: 'external', toolName: 'external_fixture',
+      args: { command: 'fixture' }, effects: [], reason: '完整的操作说明', choices: Array.from({ length: 30 }, (_, index) => ({
+        id: `opaque/${index}==`, label: `选项 ${index + 1} 的完整说明`, kind: index === 26 ? 'allow_always' : 'allow_once',
+      })) };
+    state.approvals = [request];
+    jest.spyOn(app.discord.sessions, 'snapshot').mockResolvedValue(state);
+    const performed = jest.spyOn(app.discord.sessions, 'perform').mockResolvedValue({ reply: '已选择' });
+    const home = await menu();
+    const list = await menu({ kind: 'button', customId: button(home.panel, '待确认 1').id });
+    const row = list.panel.rows!.find(value => 'select' in value)!;
+    if (!('select' in row)) throw new Error('Expected approval menu');
+    const detail = await menu({ kind: 'select', customId: row.select.id, values: ['0'] });
+    expect(Buffer.from(detail.panel.files![0].data).toString()).toContain('完整的操作说明');
+    const page = await menu({ kind: 'button', customId: button(detail.panel, '下一页').id });
+    const choices = page.panel.rows!.find(value => 'select' in value)!;
+    if (!('select' in choices)) throw new Error('Expected choice menu');
+    expect(choices.select.options[0].label).toContain('26.');
+    await menu({ kind: 'select', customId: choices.select.id, values: ['1'] });
+    expect(performed).toHaveBeenCalledWith(expect.anything(), { kind: 'approval', approvalId: request.id, accepted: true, choiceId: 'opaque/26==' });
   });
   afterEach(async () => { delete process.env.GRAYCODE_NATIVE_BOT_TEST_TOKEN; await app.close(); await f.cleanup(); });
 

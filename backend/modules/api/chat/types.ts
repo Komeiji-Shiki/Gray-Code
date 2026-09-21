@@ -544,6 +544,9 @@ export interface ToolConfirmationResponseData {
 
         /** 是否确认执行 */
         confirmed: boolean;
+        /** 平台审批请求身份与原始权限选项，旧扩展流程可以省略。 */
+        approvalId?: string;
+        choiceId?: string;
     }>;
 
     /** 取消信号 */

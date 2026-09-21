@@ -124,6 +124,35 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     await flushPromises()
   }
 
+  test('具体选项保留请求身份，连续请求不被前一次的等待和失败覆盖', async () => {
+    const choices = [{ id: 'once', label: '仅本次', kind: 'allow_once' }, { id: 'always', label: '始终', kind: 'allow_always' }]
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'first', approvalChoices: choices }] as any })
+    let rejectFirst!: (error: Error) => void
+    let finishSecond!: () => void
+    let confirmationCount = 0
+    runtime.sendToExtension.mockImplementation((channel: string) => {
+      if (channel !== 'toolConfirmation') return Promise.resolve()
+      return ++confirmationCount === 1 ? new Promise((_resolve, reject) => { rejectFirst = reject })
+        : new Promise<void>(resolve => { finishSecond = resolve })
+    })
+    const confirmations = () => runtime.sendToExtension.mock.calls.filter(([channel]) => channel === 'toolConfirmation').map(([, payload]) => payload)
+    await wrapper.findAll('.permission-options button')[0].trigger('click')
+    expect(confirmations()[0].toolResponses[0]).toMatchObject({ approvalId: 'first', choiceId: 'once', confirmed: true })
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'second', approvalChoices: choices }] as any })
+    await flushPromises()
+    expect(wrapper.findAll('.permission-options button')).toHaveLength(2)
+    await wrapper.findAll('.permission-options button')[1].trigger('click')
+    const secondStreamId = runtime.chatStore.activeStreamId
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      rejectFirst(new Error('late first response')); await flushPromises()
+      expect(runtime.chatStore.activeStreamId).toBe(secondStreamId)
+      expect(runtime.chatStore.abortToolConfirmationRound).not.toHaveBeenCalled()
+      expect(confirmations()[1].toolResponses[0]).toMatchObject({ approvalId: 'second', choiceId: 'always', confirmed: true })
+      finishSecond(); await flushPromises()
+    } finally { log.mockRestore() }
+  })
+
   test('输入栏有文字时点击“确认”，不把文字发出、不清空输入栏', async () => {
     runtime.chatStore.inputValue.value = '这是我正在起草的下一条消息'
 

@@ -4,6 +4,7 @@
 
 // B1/T16：跨端共享类型迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导出路径
 import type { CheckpointSummary, ContentPart, SummaryTokenStats, UsageMetadata } from '@shared/protocol'
+import type { ApprovalChoice } from '../../../packages/contracts/src/runtime'
 export type { CheckpointSummary, CheckpointSummaryWithSize, ContentPart, OpenAIResponsesReasoningMetadata, SummaryTokenStats, ThoughtSignatures, TokenDetailsEntry, UsageMetadata } from '@shared/protocol'
 
 // ============ 消息相关类型 ============
@@ -311,7 +312,12 @@ export interface ToolResult {
 /**
  * 工具使用信息 - 用于在消息中显示
  */
-export interface ToolUsage {
+export interface ToolApprovalInfo {
+  approvalId?: string
+  approvalReason?: string
+  approvalChoices?: ApprovalChoice[]
+}
+export interface ToolUsage extends ToolApprovalInfo {
   id: string
   name: string
   args: Record<string, unknown>
@@ -508,7 +514,7 @@ export interface ToolExecutionResult {
 /**
  * 待确认的工具调用
  */
-export interface PendingToolCall {
+export interface PendingToolCall extends ToolApprovalInfo {
   /** 工具调用 ID */
   id: string
   /** 工具名称 */

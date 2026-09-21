@@ -254,11 +254,11 @@ export class SubagentExecutionService {
     return { approvals: this.app.runtime.pendingApprovals().filter(item => record.coreRunIds.includes(item.runId)),
       questions: this.app.runtime.pendingQuestions().filter(item => record.coreRunIds.includes(item.runId)) };
   }
-  async answer(actorId: string, id: string, requestId: string, response: boolean | string[]) {
+  async answer(actorId: string, id: string, requestId: string, response: boolean | string[], choiceId?: string) {
     const requests = await this.requests(actorId, id);
     if (typeof response === 'boolean') {
       if (!requests.approvals.some(item => item.id === requestId)) throw new Error('此审批不属于当前子代理，或已结束。');
-      await this.app.runtime.resolveApproval(requestId, actorId, response);
+      await this.app.runtime.resolveApproval(requestId, actorId, response, choiceId);
     } else {
       if (!requests.questions.some(item => item.id === requestId)) throw new Error('此问题不属于当前子代理，或已结束。');
       await this.app.runtime.answerQuestion(requestId, actorId, response);

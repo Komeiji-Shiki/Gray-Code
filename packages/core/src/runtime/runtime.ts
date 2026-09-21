@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  ActorIdentity, AgentDefinition, ApprovalRequest, ModelProvider, PlatformMessage, RunEvent, RunRecord,
+  ActorIdentity, AgentDefinition, ApprovalRequest, ApprovalChoice, ApprovalDecision, ModelProvider, PlatformMessage, RunEvent, RunRecord,
   StartRunInput, ToolEffect, ToolOutcome, WorkspaceDefinition, ModelInput,
   ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation, ModelRequestSnapshot,
 } from '@graycode/contracts';
@@ -60,7 +60,7 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
   | { type: 'model.delta'; runId: string; parts: Record<string, unknown>[] }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
 interface ActiveRun { controller: AbortController; done: Promise<void> }
-interface PendingApproval { request: ApprovalRequest; resolve: (accepted: boolean) => void }
+interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
 interface FunctionCall { id: string; name: string; args: Record<string, unknown> }
 export interface PreparedConversationChange {
   /** 仅由可信宿主提供的来源记录；公开请求不能直接提交此对象。 */
@@ -229,12 +229,17 @@ export class PlatformRuntime {
   }
   /** 宿主生命周期端口，不作为远程 RPC 暴露；用于结束已确认归属的子任务。 */
   interrupt(runId: string, reason: Error): void { this.active.get(runId)?.controller.abort(reason); }
-  async resolveApproval(approvalId: string, actorId: string, accepted: boolean): Promise<void> {
+  async resolveApproval(approvalId: string, actorId: string, accepted: boolean, choiceId?: string): Promise<void> {
     const actor = await this.services.actor(actorId);
     if (!actor || actor.revoked || (actor.role !== 'owner' && !actor.effects.includes('administration'))) throw new Error('This account cannot approve operations.');
     const pending = this.approvals.get(approvalId);
     if (!pending) throw new Error('Approval has expired or was already resolved.');
-    this.approvals.delete(approvalId); pending.resolve(accepted);
+    if (pending.request.choices) {
+      const choice = pending.request.choices.find(item => item.id === choiceId);
+      if (!choice) throw new Error('请选择这个请求提供的具体选项。');
+      accepted = choice.kind === 'allow_once' || choice.kind === 'allow_always';
+    } else if (choiceId !== undefined) throw new Error('这个请求没有可选项。');
+    this.approvals.delete(approvalId); pending.resolve({ accepted, ...(choiceId !== undefined ? { choiceId } : {}) });
   }
   pendingApprovals(): ApprovalRequest[] { return [...this.approvals.values()].map(value => structuredClone(value.request)); }
   pendingQuestions() { return this.questions.list(); }
@@ -396,7 +401,7 @@ export class PlatformRuntime {
         const review = await this.services.review({ agent, toolName: call.name, args: call.args, effects, signal });
         approval ||= review.requireApproval; reviewReason = review.reason;
       }
-      if (approval && !await this.approve(run, call, effects, signal, reviewReason)) return { success: false, code: 'PERMISSION_DENIED', error: 'Operation was declined.' };
+      if (approval && !(await this.approve(run, call, effects, signal, reviewReason)).accepted) return { success: false, code: 'PERMISSION_DENIED', error: 'Operation was declined.' };
       // Grants may change while a task waits for approval or a reviewer.
       let current = actor;
       if (reviewed || approval) {
@@ -411,7 +416,7 @@ export class PlatformRuntime {
         actor: current ?? undefined,
         requestApproval: async reason => {
           if (approval) return true;
-          if (!await this.approve(run, call, effects, signal, reason)) return false;
+          if (!(await this.approve(run, call, effects, signal, reason)).accepted) return false;
           const latest = await this.services.actor(run.actorId, run);
           const denied = latest ? authorizeEffects(latest, effects, workspace, call.name) : 'Run account no longer exists.';
           if (denied) throw new Error(denied);
@@ -419,6 +424,17 @@ export class PlatformRuntime {
           approval = true;
           context.approvedByToolConfirmation = true;
           return true;
+        },
+        requestPermission: async (reason, choices, requestSignal) => {
+          if (!choices.length || new Set(choices.map(choice => choice.id)).size !== choices.length) throw new Error('权限请求需要提供互不重复的选项。');
+          const permissionSignal = requestSignal ? AbortSignal.any([signal, requestSignal]) : signal;
+          const decision = await this.approve(run, call, effects, permissionSignal, reason, choices);
+          permissionSignal.throwIfAborted();
+          const latest = await this.services.actor(run.actorId, run);
+          const denied = latest ? authorizeEffects(latest, effects, workspace, call.name) : 'Run account no longer exists.';
+          if (denied) throw new Error(denied);
+          context.actor = latest ?? undefined;
+          return decision;
         },
         agent: { ...structuredClone(agent), toolNames: catalog.declarations.map(tool => tool.name) },
         modelSelection: { providerId: selection.providerId, modelOverride: selection.modelOverride, reasoningEffort: selection.reasoningEffort },
@@ -436,19 +452,20 @@ export class PlatformRuntime {
     }
   }
 
-  private async approve(run: RunRecord, call: FunctionCall, effects: ToolEffect[], signal: AbortSignal, reason?: string): Promise<boolean> {
+  private async approve(run: RunRecord, call: FunctionCall, effects: ToolEffect[], signal: AbortSignal, reason?: string, choices?: ApprovalChoice[]): Promise<ApprovalDecision> {
     signal.throwIfAborted();
     const request: ApprovalRequest = { id: randomUUID(), runId: run.id, actorId: run.actorId,
-      toolCallId: call.id, toolName: call.name, args: call.args, effects, workspaceId: run.workspaceId };
-    let settle!: (accepted: boolean) => void;
-    const accepted = new Promise<boolean>(resolve => { settle = resolve; });
-    const abort = () => settle(false);
+      toolCallId: call.id, toolName: call.name, args: call.args, effects, workspaceId: run.workspaceId,
+      ...(reason ? { reason } : {}), ...(choices ? { choices: structuredClone(choices) } : {}) };
+    let settle!: (decision: ApprovalDecision) => void;
+    const accepted = new Promise<ApprovalDecision>(resolve => { settle = resolve; });
+    const abort = () => settle({ accepted: false });
     this.approvals.set(request.id, { request, resolve: settle });
     signal.addEventListener('abort', abort, { once: true });
     try {
       await this.event(run.id, 'approval.requested', { ...request, ...(reason ? { reason } : {}) }, { status: 'awaiting_approval' });
       const result = await accepted;
-      await this.event(run.id, 'approval.resolved', { approvalId: request.id, accepted: result }, { status: 'running' });
+      await this.event(run.id, 'approval.resolved', { approvalId: request.id, toolCallId: call.id, toolName: call.name, ...result }, { status: 'running' });
       return result;
     } finally { signal.removeEventListener('abort', abort); this.approvals.delete(request.id); }
   }

@@ -106,7 +106,8 @@ export class ProductChat {
         tool: { id: result.id, name: result.name, result: result.result, status: (result.result as any)?.success === false ? 'error' : 'success' } });
       const approvals = this.app.runtime.pendingApprovals().filter(item => item.runId === run.id);
       if (approvals.length) this.emitClient(stream, client.clientId, { type: 'awaitingConfirmation', keepStreamOpen: true, content: stream.content,
-        toolResults: stream.results, toolResultContents: stream.resultContents, pendingToolCalls: approvals.map(item => ({ id: item.toolCallId, name: item.toolName, args: item.args })) });
+        toolResults: stream.results, toolResultContents: stream.resultContents, pendingToolCalls: approvals.map(item => ({ id: item.toolCallId, name: item.toolName, args: item.args,
+          approvalId: item.id, approvalReason: item.reason, approvalChoices: item.choices })) });
     }
     return { active: true };
   }
@@ -119,15 +120,20 @@ export class ProductChat {
   async confirm(client: ClientSession, data: Record<string, any>): Promise<unknown> {
     await this.app.conversation(client.actorId, data.conversationId);
     for (const response of data.toolResponses ?? []) {
-      const approval = this.app.runtime.pendingApprovals().find(item => item.toolCallId === response.id);
-      if (!approval) continue;
+      const approval = this.app.runtime.pendingApprovals().find(item => item.toolCallId === response.id
+        && (response.approvalId === undefined || item.id === response.approvalId));
+      if (!approval) {
+        if (response.approvalId !== undefined) throw new Error('这个确认请求已经结束。');
+        continue;
+      }
+      if (approval.choices && response.approvalId !== approval.id) throw new Error('请选择当前请求的具体选项。');
       const run = await this.app.storage.getRun(approval.runId);
       if (run?.conversationId !== data.conversationId) throw new Error('审批不属于当前对话。');
       const stream = this.streams.get(approval.runId);
       if (stream && typeof data.streamId === 'string') {
         stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
       }
-      await this.app.runtime.resolveApproval(approval.id, client.actorId, response.confirmed === true);
+      await this.app.runtime.resolveApproval(approval.id, client.actorId, response.confirmed === true, response.choiceId);
     }
     return { success: true };
   }
@@ -196,7 +202,11 @@ export class ProductChat {
     } else if (event.type === 'approval.requested') {
       this.emit(stream, { type: 'awaitingConfirmation', keepStreamOpen: true, content: stream.content, toolResults: stream.results, toolResultContents: stream.resultContents,
         pendingToolCalls: this.app.runtime.pendingApprovals().filter(approval => approval.runId === runId)
-          .map(approval => ({ id: approval.toolCallId, name: approval.toolName, args: approval.args })) });
+          .map(approval => ({ id: approval.toolCallId, name: approval.toolName, args: approval.args,
+            approvalId: approval.id, approvalReason: approval.reason, approvalChoices: approval.choices })) });
+    } else if (event.type === 'approval.resolved' && typeof event.payload.choiceId === 'string') {
+      this.emit(stream, { type: 'toolStatus', toolStatus: true, tool: { id: event.payload.toolCallId,
+        name: event.payload.toolName, status: 'executing' } });
     } else if (event.type === 'tool.started') {
       this.emit(stream, { type: 'toolStatus', toolStatus: true, tool: { id: event.payload.toolCallId,
         name: event.payload.toolName, args: event.payload.args, status: 'executing' } });

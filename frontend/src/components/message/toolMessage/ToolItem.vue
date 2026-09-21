@@ -36,6 +36,7 @@ const emit = defineEmits<{
   toggle: []
   confirm: []
   reject: []
+  choose: [choiceId: string]
 }>()
 
 const instanceId = getCurrentInstance()?.uid ?? 0
@@ -287,7 +288,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
       <div class="tool-action-buttons">
         <button
-          v-if="tool.status === 'awaiting_approval' && !isProcessing"
+          v-if="tool.status === 'awaiting_approval' && !isProcessing && !tool.approvalChoices?.length"
           type="button"
           class="gc-button gc-button--primary confirm-btn"
           :title="t('components.message.tool.confirmExecution')"
@@ -299,7 +300,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
         </button>
 
         <button
-          v-if="tool.status === 'awaiting_approval' && !isProcessing"
+          v-if="tool.status === 'awaiting_approval' && !isProcessing && !tool.approvalChoices?.length"
           type="button"
           class="gc-button gc-button--ghost reject-btn"
           :title="t('components.message.tool.reject')"
@@ -344,6 +345,14 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
       <component :is="contentHost" :tool="tool" />
     </div>
 
+    <div v-if="tool.status === 'awaiting_approval'" class="permission-request">
+      <p v-if="tool.approvalReason">{{ tool.approvalReason }}</p>
+      <div v-if="tool.approvalChoices?.length" class="permission-options">
+        <button v-for="choice in tool.approvalChoices" :key="choice.id" type="button" class="gc-button"
+          :class="choice.kind.startsWith('allow') ? 'gc-button--primary' : 'gc-button--ghost'"
+          :disabled="isProcessing" @click.stop="emit('choose', choice.id)">{{ choice.label }}</button>
+      </div>
+    </div>
     <!-- Diff 警戒值警告（pending 或已结束都可展示） -->
     <div v-if="diffGuardWarning" class="diff-guard-warning" role="alert">
       <i class="codicon codicon-warning" aria-hidden="true"></i>
@@ -358,6 +367,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 </template>
 
 <style scoped>
+.permission-request{padding:0 12px 10px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.permission-options{display:flex;gap:8px;flex-wrap:wrap}.permission-options button{white-space:normal;border-radius:0;text-align:left}
 .tool-item {
   display: flex;
   flex-direction: column;

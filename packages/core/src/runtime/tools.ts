@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import Ajv, { type ValidateFunction } from 'ajv';
-import type { ActorIdentity, AgentDefinition, ToolDeclaration, ToolEffect, ToolOutcome, WorkspaceDefinition, UserQuestion, QuestionRequest, ModelInput } from '@graycode/contracts';
+import type { ActorIdentity, AgentDefinition, ToolDeclaration, ToolEffect, ToolOutcome, WorkspaceDefinition, UserQuestion, QuestionRequest, ModelInput, ApprovalChoice, ApprovalDecision } from '@graycode/contracts';
 
 export interface ToolContext {
   runId: string;
@@ -20,6 +20,8 @@ export interface ToolContext {
   fileWriteGrants?: Array<{ path: string; recursive: boolean }>;
   /** 工具的目标策略要求额外确认时，复用当前调用的审批记录。 */
   requestApproval?: (reason: string) => Promise<boolean>;
+  /** 外部代理的每个权限请求分别确认，保留上游选项身份，不复用整次工具的确认结果。 */
+  requestPermission?: (reason: string, choices: ApprovalChoice[], signal?: AbortSignal) => Promise<ApprovalDecision>;
   workspace?: WorkspaceDefinition;
   signal: AbortSignal;
   askUser: (questions: UserQuestion[]) => Promise<QuestionRequest>;

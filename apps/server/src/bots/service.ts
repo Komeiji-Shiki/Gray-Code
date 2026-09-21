@@ -216,6 +216,9 @@ export class BoundBotService {
         + `\n\n${this.platform === 'discord' ? '使用 /gray 面板回答，或输入：\n' : ''}/gray answer ${request.id} 你的回答\n多个回答用 | 分隔。`;
     } else if (event.type === 'approval.requested') {
       text = `有操作等待主人确认：${event.payload.toolName}\n${this.platform === 'discord' ? '使用 /gray 面板查看详情并确认。' : `/gray approve ${event.payload.id}\n/gray deny ${event.payload.id}`}`;
+      if (Array.isArray(event.payload.choices)) text = `有操作等待主人选择：${event.payload.toolName}\n${event.payload.reason ?? ''}\n`
+        + (event.payload.choices as import('@graycode/contracts').ApprovalChoice[]).map((choice, index) => `${index + 1}. ${choice.label}`).join('\n')
+        + `\n/gray choose ${event.payload.id} 选项序号`;
     } else {
       text = `任务${botRunLabels[run.status]}${run.error ? '，失败详情可在桌面端查看。' : '。'}`;
       if (this.platform === 'discord') ({ text, footer } = botRunReply(await botRunMessages(this.app, run), route, text));

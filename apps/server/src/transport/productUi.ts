@@ -181,7 +181,7 @@ export class ProductUi {
       case 'subagents.monitor.requests': return this.app.subagents.requests(client.actorId, data.runId);
       case 'subagents.resolveApproval':
         if (typeof data.accepted !== 'boolean') throw new Error('请明确接受或拒绝操作。');
-        return this.app.subagents.answer(client.actorId, data.runId, data.id, data.accepted);
+        return this.app.subagents.answer(client.actorId, data.runId, data.id, data.accepted, data.choiceId);
       case 'subagents.answerQuestion': return this.app.subagents.answer(client.actorId, data.runId, data.id, data.answers);
       case 'subagents.pauseRun': return this.app.subagents.control(client.actorId, data.runId, 'pause');
       case 'subagents.resumeRun': return this.app.subagents.control(client.actorId, data.runId, 'resume');

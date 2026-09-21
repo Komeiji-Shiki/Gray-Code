@@ -37,7 +37,7 @@ export interface RpcMethods {
   'runs.events': Method<{ id: string; afterSequence?: number }, RunEvent[]>;
   'runs.request': Method<{ id: string; iteration: number }, ModelRequestSnapshot | null>;
   'runs.cancel': Method<{ id: string }, void>;
-  'approvals.resolve': Method<{ id: string; accepted: boolean }, void>;
+  'approvals.resolve': Method<{ id: string; accepted: boolean; choiceId?: string }, void>;
   'computer.status': Method<Empty, ComputerStatus>;
   'computer.windows': Method<Empty, ComputerWindows>;
   'computer.observe': Method<ComputerObserveInput, ComputerObservation>;
@@ -91,7 +91,7 @@ const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
     providerId: optional(text), modelOverride: optional(text), reasoningEffort: optional(text) },
   'runs.list': { conversationId: optional(text), activeOnly: optional(boolean) },
   'runs.events': { id: text, afterSequence: optional(number) }, 'runs.request': { id: text, iteration: number }, 'runs.cancel': { id: text },
-  'approvals.resolve': { id: text, accepted: boolean },
+  'approvals.resolve': { id: text, accepted: boolean, choiceId: optional(text) },
   'computer.status': {}, 'computer.windows': {}, 'computer.stop': {}, 'computer.release': {}, 'computer.recent': {},
   'computer.allowRun': { runId: text }, 'computer.acquire': { windowIds: strings },
   'computer.observe': { windowId: text, screenshot: optional(boolean), maxElements: optional(number), maxDepth: optional(number),

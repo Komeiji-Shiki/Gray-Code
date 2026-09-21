@@ -103,7 +103,7 @@ export class NodeExecutor {
       if (method === 'tasks.cancel') { await this.app.runtime.cancel(run.id, peer.grant.actorId); return { success: true }; }
       if (method === 'tasks.approve') {
         if (!this.app.runtime.pendingApprovals().some(value => value.runId === run.id && value.id === params.approvalId)) throw new Error('审批不属于所选任务，或已处理。');
-        await this.app.runtime.resolveApproval(params.approvalId, peer.grant.actorId, params.accepted === true); return { success: true };
+        await this.app.runtime.resolveApproval(params.approvalId, peer.grant.actorId, params.accepted === true, params.choiceId); return { success: true };
       }
       if (method === 'tasks.answer') {
         if (!this.app.runtime.pendingQuestions().some(value => value.runId === run.id && value.id === params.questionId)) throw new Error('问题不属于所选任务，或已结束。');

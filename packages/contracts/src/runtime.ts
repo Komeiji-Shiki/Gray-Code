@@ -89,6 +89,10 @@ export interface RunEvent {
     | 'context.summary.started' | 'context.summary.completed' | 'context.summary.failed' | 'context.fallback';
   payload: Record<string, unknown>;
 }
+export interface ApprovalChoice {
+  id: string; label: string; kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
+}
+export interface ApprovalDecision { accepted: boolean; choiceId?: string }
 export interface ApprovalRequest {
   id: string;
   runId: string;
@@ -98,6 +102,8 @@ export interface ApprovalRequest {
   args: Record<string, unknown>;
   effects: ToolEffect[];
   workspaceId?: string;
+  reason?: string;
+  choices?: ApprovalChoice[];
 }
 export interface ModelRequestMetrics { inputItems: number; inputImages: number; nativeTools: number }
 export interface ModelInput {

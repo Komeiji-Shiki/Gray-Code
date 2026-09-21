@@ -43,7 +43,7 @@ const handlers: { [M in HostedMethod]: Handler<M> } = {
     return app.storage.getRecord('model-requests', `${run.id}:${params.iteration}`) as Promise<ModelRequestSnapshot | null>;
   },
   'runs.cancel': (app, session, params) => app.runtime.cancel(params.id, session.actorId),
-  'approvals.resolve': (app, session, params) => app.runtime.resolveApproval(params.id, session.actorId, params.accepted),
+  'approvals.resolve': (app, session, params) => app.runtime.resolveApproval(params.id, session.actorId, params.accepted, params.choiceId),
 };
 
 export function hasRpcHandler(method: string): method is HostedMethod { return Object.hasOwn(handlers, method); }

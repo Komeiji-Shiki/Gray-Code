@@ -9,7 +9,7 @@ type Control =
   | { kind: 'screen'; screen: Screen; page?: number }
   | { kind: 'perform'; action: BotAction }
   | { kind: 'select'; choices: Map<string, Control> }
-  | { kind: 'approval'; id: string }
+  | { kind: 'approval'; id: string; page?: number }
   | { kind: 'modal'; purpose: 'message' | 'interrupt' | 'conversation'; question?: never }
   | { kind: 'modal'; purpose: 'answer'; question: QuestionRequest }
   | { kind: 'submit'; purpose: 'message' | 'interrupt' | 'conversation'; question?: never }
@@ -60,7 +60,7 @@ export class DiscordControls {
       }
       await input.defer();
       if (control.kind === 'screen') { await input.respond(await this.render(context, control.screen, control.page ?? 0)); return; }
-      if (control.kind === 'approval') { await input.respond(await this.approval(context, control.id)); return; }
+      if (control.kind === 'approval') { await input.respond(await this.approval(context, control.id, control.page)); return; }
       let action: BotAction;
       if (control.kind === 'perform') action = control.action;
       else if (control.kind === 'submit' && input.kind === 'modal') {
@@ -93,7 +93,7 @@ export class DiscordControls {
     return { content: `**GrayCode 操作面板**\n对话：${state.conversation?.title || '尚未选择'}\n后续模型：${state.provider?.name || '未配置'} / ${state.model || '未选择'}\n工作区：${state.workspace?.name || '普通聊天'}\n状态：${state.run ? `${botRunLabels[state.run.status]} · 第 ${state.run.iteration} 轮` : '没有正在执行的任务'}${notice ? `\n\n${notice}` : ''}\n\n这个面板仅对你可见。`,
       rows: [{ buttons: first }, { buttons: second }] };
   }
-  private choices(context: BotContext, screen: Screen, title: string, choices: Choice[], page: number, extras: BotButton[] = []): BotPanel {
+  private choices(context: BotContext, screen: Screen, title: string, choices: Choice[], page: number, extras: BotButton[] = [], navigate?: (page: number) => Control): BotPanel {
     const pages = Math.max(1, Math.ceil(choices.length / 25));
     page = Math.max(0, Math.min(pages - 1, page));
     const visible = choices.slice(page * 25, (page + 1) * 25);
@@ -101,8 +101,8 @@ export class DiscordControls {
     if (visible.length) rows.push({ select: { id: this.ticket(context, { kind: 'select', choices: new Map(visible.map((choice, index) => [String(index), choice.control])) }),
       placeholder: '请选择', options: visible.map((choice, index) => ({ label: choice.label, description: choice.description, value: String(index), selected: choice.selected })) } });
     const buttons = [this.button(context, '返回', { kind: 'screen', screen: 'home' })];
-    if (page > 0) buttons.push(this.button(context, '上一页', { kind: 'screen', screen, page: page - 1 }));
-    if (page + 1 < pages) buttons.push(this.button(context, '下一页', { kind: 'screen', screen, page: page + 1 }));
+    if (page > 0) buttons.push(this.button(context, '上一页', navigate?.(page - 1) ?? { kind: 'screen', screen, page: page - 1 }));
+    if (page + 1 < pages) buttons.push(this.button(context, '下一页', navigate?.(page + 1) ?? { kind: 'screen', screen, page: page + 1 }));
     rows.push({ buttons: [...buttons, ...extras] });
     return { content: `**${title}**\n${choices.length ? `第 ${page + 1} / ${pages} 页，共 ${choices.length} 项。` : '目前没有可选项。'}`, rows };
   }
@@ -130,10 +130,20 @@ export class DiscordControls {
     return this.choices(context, screen, '等待回答的问题', state.questions.map(question => ({ label: question.questions[0]?.title || '任务问题',
       description: `${question.questions.length} 个问题`, control: { kind: 'modal', purpose: 'answer', question } })), page);
   }
-  private async approval(context: BotContext, id: string): Promise<BotPanel> {
+  private async approval(context: BotContext, id: string, page = 0): Promise<BotPanel> {
     const state = await this.sessions.snapshot(context);
     const request = state.approvals.find(item => item.id === id);
     if (!request) throw new Error('这个确认请求已经结束。');
+    if (request.choices?.length) {
+      const panel = this.choices(context, 'approvals', `选择权限：${request.toolName}`, request.choices.map((choice, index) => ({
+        label: `${index + 1}. ${choice.label}`, control: { kind: 'perform', action: {
+          kind: 'approval', approvalId: id, accepted: choice.kind.startsWith('allow'), choiceId: choice.id,
+        } },
+      })), page, [], next => ({ kind: 'approval', id, page: next }));
+      panel.content += '\n请先查看附件中的完整操作和选项说明，再选择。';
+      panel.files = [{ name: '操作与选项.json', data: Buffer.from(JSON.stringify({ args: request.args, reason: request.reason, choices: request.choices }, null, 2)) }];
+      return panel;
+    }
     const params = JSON.stringify(request.args, null, 2);
     return { content: `**确认操作：${request.toolName}**\n${params.length <= 1300 ? `\`\`\`json\n${params}\n\`\`\`` : '完整参数保存在附件中，请查看后再确认。'}`,
       ...(params.length > 1300 ? { files: [{ name: '操作参数.json', data: Buffer.from(params) }] } : {}), rows: [{ buttons: [

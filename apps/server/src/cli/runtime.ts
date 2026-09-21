@@ -62,7 +62,7 @@ export async function runApplicationCommand(
         const event = notification.event;
         if (event.type === "approval.requested")
           process.stderr.write(
-            `\nApproval ${event.payload.id}: ${JSON.stringify(event.payload)}\nEnter: approve <id> or deny <id>\n`,
+            `\nApproval ${event.payload.id}: ${JSON.stringify(event.payload)}\nEnter: ${event.payload.choices ? 'choose <id> <option number, starting at 1>' : 'approve <id> or deny <id>'}\n`,
           );
         if (event.type === "question.asked")
           process.stderr.write(
@@ -83,7 +83,11 @@ export async function runApplicationCommand(
             "owner",
             action === "approve",
           );
-        else if (action === "answer")
+        else if (action === 'choose') {
+          const choice = application.runtime.pendingApprovals().find(item => item.id === id)?.choices?.[Number(rest[0]) - 1];
+          if (!choice) throw new Error('请选择列出的选项序号。');
+          await application.runtime.resolveApproval(id, 'owner', false, choice.id);
+        } else if (action === "answer")
           await application.runtime.answerQuestion(
             id,
             "owner",

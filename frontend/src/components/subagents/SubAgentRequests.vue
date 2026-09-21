@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import { sendToExtension, onMessageFromExtension } from '../../utils/vscode';
-interface Approval { id: string; toolName: string; args: Record<string, unknown> }
+import type { ApprovalRequest as Approval } from '../../../../packages/contracts/src/runtime';
 interface Question { id: string; questions: { title: string; options?: string[] }[] }
 const props = defineProps<{ runId: string }>();
 const approvals = ref<Approval[]>([]); const questions = ref<Question[]>([]);
@@ -16,11 +16,11 @@ async function load() {
     for (const question of result.questions) answers.value[question.id] ??= question.questions.map(() => '');
   } catch (cause) { if (sequence === requestSequence) error.value = (cause as Error).message; }
 }
-async function submit(id: string, accepted?: boolean) {
+async function submit(id: string, accepted?: boolean, choiceId?: string) {
   if (busy.value) return; busy.value = id; error.value = '';
   try {
     await sendToExtension(accepted === undefined ? 'subagents.answerQuestion' : 'subagents.resolveApproval', {
-      runId: props.runId, id, ...(accepted === undefined ? { answers: answers.value[id] } : { accepted }),
+      runId: props.runId, id, ...(accepted === undefined ? { answers: answers.value[id] } : { accepted, choiceId }),
     });
     await load();
   } catch (cause) { error.value = (cause as Error).message; }
@@ -36,7 +36,10 @@ onBeforeUnmount(() => { requestSequence++; unsubscribe(); });
 <template>
   <section v-if="approvals.length || questions.length || error" class="subagent-requests">
     <article v-for="approval in approvals" :key="approval.id"><header><strong>待确认操作 · {{ approval.toolName }}</strong></header>
-      <pre>{{ JSON.stringify(approval.args, null, 2) }}</pre><footer><button :disabled="!!busy" @click="submit(approval.id, false)">拒绝</button><button class="primary" :disabled="!!busy" @click="submit(approval.id, true)">允许执行</button></footer>
+      <pre>{{ approval.reason || JSON.stringify(approval.args, null, 2) }}</pre>
+      <footer v-if="approval.choices?.length"><button v-for="choice in approval.choices" :key="choice.id" :disabled="!!busy"
+        @click="submit(approval.id, choice.kind.startsWith('allow'), choice.id)">{{ choice.label }}</button></footer>
+      <footer v-else><button :disabled="!!busy" @click="submit(approval.id, false)">拒绝</button><button class="primary" :disabled="!!busy" @click="submit(approval.id, true)">允许执行</button></footer>
     </article>
     <article v-for="request in questions" :key="request.id"><strong>子 agent 的问题</strong>
       <label v-for="(question,index) in request.questions" :key="index"><span>{{ question.title }}</span>

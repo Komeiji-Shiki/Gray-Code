@@ -112,7 +112,7 @@ watchEffect(() => {
   }
 })
 
-const processingToolIds = ref<Set<string>>(new Set())
+const processingToolIds = ref(new Map<string, string | undefined>())
 
 // 增强后的工具列表，包含从 store 获取的响应
 const enhancedTools = computed<ToolUsage[]>(() => {
@@ -327,16 +327,16 @@ watch([() => props.tools, pendingDiffViewsByToolId], syncPendingDiffOrphanState,
 
 // 正在处理确认的工具 ID 集合
 
-function addProcessingToolId(toolId: string) {
+function addProcessingToolId(toolId: string, approvalId?: string) {
   if (!toolId || processingToolIds.value.has(toolId)) return
-  const next = new Set(processingToolIds.value)
-  next.add(toolId)
+  const next = new Map(processingToolIds.value)
+  next.set(toolId, approvalId)
   processingToolIds.value = next
 }
 
-function removeProcessingToolId(toolId: string) {
-  if (!toolId || !processingToolIds.value.has(toolId)) return
-  const next = new Set(processingToolIds.value)
+function removeProcessingToolId(toolId: string, approvalId?: string) {
+  if (!toolId || !processingToolIds.value.has(toolId) || processingToolIds.value.get(toolId) !== approvalId) return
+  const next = new Map(processingToolIds.value)
   next.delete(toolId)
   processingToolIds.value = next
 }
@@ -345,16 +345,16 @@ function removeProcessingToolId(toolId: string) {
 watchEffect(() => {
   if (processingToolIds.value.size === 0) return
 
-  const current = new Set(processingToolIds.value)
+  const current = new Map(processingToolIds.value)
   let changed = false
 
-  for (const id of current) {
+  for (const [id, approvalId] of current) {
     // 这里读取“原始工具状态”（props.tools），避免被 enhancedTools 的乐观 executing 状态误清理
     const rawTool = props.tools.find(x => x.id === id)
     const hasResponse = Boolean(rawTool?.result || rawTool?.error || chatStore.getToolResponseById(id))
     const stillAwaitingApproval = rawTool?.status === 'awaiting_approval'
 
-    if (!rawTool || !stillAwaitingApproval || hasResponse) {
+    if (!rawTool || !stillAwaitingApproval || hasResponse || rawTool.approvalId !== approvalId) {
       current.delete(id)
       changed = true
     }
@@ -375,26 +375,32 @@ async function rejectToolExecution(toolId: string, toolName: string) {
   await submitToolDecision(toolId, toolName, false)
 }
 
-async function submitToolDecision(toolId: string, toolName: string, confirmed: boolean) {
+async function submitToolDecision(toolId: string, toolName: string, confirmed: boolean, choiceId?: string) {
   if (!toolId || processingToolIds.value.has(toolId)) return
   const currentTool = props.tools.find(t => t.id === toolId)
   if (!currentTool || currentTool.status !== 'awaiting_approval') return
+  if (choiceId !== undefined) {
+    const choice = currentTool.approvalChoices?.find(item => item.id === choiceId)
+    if (!choice) return
+    confirmed = choice.kind.startsWith('allow')
+  }
 
   // 标记为正在处理（注意：Set 变更需替换引用才能触发响应式更新）
-  addProcessingToolId(toolId)
+  addProcessingToolId(toolId, currentTool.approvalId)
 
   const sent = await sendToolConfirmation([
-    { id: toolId, name: toolName, confirmed }
+    { id: toolId, name: toolName, confirmed, approvalId: currentTool.approvalId, choiceId }
   ])
   if (!sent) {
-    removeProcessingToolId(toolId)
+    removeProcessingToolId(toolId, currentTool.approvalId)
   }
 }
 
 // 发送工具确认响应到后端
 async function sendToolConfirmation(
-  toolResponses: Array<{ id: string; name: string; confirmed: boolean }>
+  toolResponses: Array<{ id: string; name: string; confirmed: boolean; approvalId?: string; choiceId?: string }>
 ): Promise<boolean> {
+  let submittedStreamId: string | undefined
   try {
     const currentConversationId = chatStore.currentConversationId
     const currentConfig = chatStore.currentConfig
@@ -408,6 +414,7 @@ async function sendToolConfirmation(
 
     // 为本次工具确认流绑定 streamId，避免流式过滤器把后端返回的 chunk 当作“未知流”丢弃
     const streamId = generateId()
+    submittedStreamId = streamId
     chatStore.beginToolConfirmationRound({
       conversationId: currentConversationId,
       configId: confirmationConfigId,
@@ -429,7 +436,7 @@ async function sendToolConfirmation(
     console.error('Failed to send tool confirmation:', error)
 
     // 请求未发出时回滚 stream 绑定，避免阻塞后续有效流
-    chatStore.abortToolConfirmationRound()
+    if (chatStore.activeStreamId === submittedStreamId) chatStore.abortToolConfirmationRound()
     return false
   }
 }
@@ -567,6 +574,7 @@ const ToolContentHost = defineComponent({
       @toggle="toggleExpand(tool.id)"
       @confirm="confirmToolExecution(tool.id, tool.name)"
       @reject="rejectToolExecution(tool.id, tool.name)"
+      @choose="choiceId => submitToolDecision(tool.id, tool.name, false, choiceId)"
     />
   </div>
 </template>
