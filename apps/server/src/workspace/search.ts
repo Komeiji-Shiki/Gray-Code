@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ProjectReplacement, ProjectSearchQuery, ProjectSearchResult, WorkspaceDefinition } from '@graycode/contracts';
+import type { DocumentState, ProjectReplacement, ProjectSearchQuery, ProjectSearchResult, WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { buildExcludePattern } from '../../../../backend/tools/shared/globUtils';
@@ -13,17 +13,17 @@ export class WorkspaceSearch {
   private key(session: ClientSession, id: string) { return JSON.stringify([session.clientId, id]); }
   cancel(session: ClientSession, id: string) { this.active.get(this.key(session, id))?.abort(new Error('搜索已取消。')); }
   close() { for (const controller of this.active.values()) controller.abort(new Error('应用正在退出。')); }
-  private async content(session: ClientSession, workspace: WorkspaceDefinition, file: string) {
+  private async content(session: ClientSession, workspace: WorkspaceDefinition, file: string, drafts?: Map<string, DocumentState>) {
     // 读取本客户端的草稿；其他设备的编辑不混入本次查询。
-    await this.app.files.resolve(workspace, file);
-    const draft = this.app.files.clientDocuments(session.clientId, workspace.id).find(item => item.path === file);
+    const draft = drafts ? drafts.get(file) : this.app.files.clientDocuments(session.clientId, workspace.id).find(item => item.path === file);
+    if (draft) await this.app.files.resolve(workspace, file);
     const text = (draft?.text ?? (await this.app.files.read(workspace, file)).text).replace(/^\uFEFF/, '');
-    return { text, hash: hashText(text), draft: draft?.dirty === true };
+    return { text, draft: draft?.dirty === true };
   }
   async search(session: ClientSession, workspaceId: string, requestId: string, options: ProjectSearchQuery): Promise<ProjectSearchResult> {
     this.app.requireOwner(session.actorId);
     const workspace = this.app.workspace(session.actorId, workspaceId, ['workspace_read']);
-    projectSearchExpression(options);
+    const expression = projectSearchExpression(options);
     if (typeof requestId !== 'string' || !requestId) throw new Error('搜索请求编号无效。');
     const key = this.key(session, requestId);
     this.active.get(key)?.abort();
@@ -34,24 +34,27 @@ export class WorkspaceSearch {
     const fileLimit = Math.max(1, config.maxFindFiles ?? 1000);
     const matchLimit = 1000;
     const result: ProjectSearchResult = { files: [], count: 0, truncated: false, skipped: [] };
+    const drafts = new Map(this.app.files.clientDocuments(session.clientId, workspaceId).map(document => [document.path, document]));
     try {
       let scanned = 0;
       for (const root of host.getAllWorkspaces()) {
-        const files = await host.findFiles(root.uri, options.include?.trim() || '**/*',
+        const files = host.iterateFiles(root.uri, options.include?.trim() || '**/*',
           buildExcludePattern([...config.excludePatterns ?? [], ...(options.exclude?.trim() ? [options.exclude.trim()] : [])]), fileLimit + 1);
-        for (const file of files) {
+        for await (const file of files) {
           controller.signal.throwIfAborted();
           if (scanned++ >= fileLimit) { result.truncated = true; return result; }
           const relative = host.toRelativePath(file);
           try {
-            const value = await this.content(session, workspace, relative);
-            const found = searchProjectText(value.text, options, matchLimit - result.count);
-            if (found.matches.length) result.files.push({ path: relative, hash: value.hash, draft: value.draft, matches: found.matches });
+            const value = await this.content(session, workspace, relative, drafts);
+            controller.signal.throwIfAborted();
+            const found = searchProjectText(value.text, expression, matchLimit - result.count);
+            if (found.matches.length) result.files.push({ path: relative, hash: hashText(value.text), draft: value.draft, matches: found.matches });
             result.count += found.matches.length;
             if (found.truncated) { result.truncated = true; return result; }
           } catch (error) { controller.signal.throwIfAborted(); result.skipped.push({ path: relative, reason: String(error) }); }
         }
       }
+      controller.signal.throwIfAborted();
       return result;
     } finally { if (this.active.get(key) === controller) this.active.delete(key); }
   }
@@ -66,7 +69,7 @@ export class WorkspaceSearch {
       if (seen.has(item.path)) throw new Error('同一批替换不能重复选择文件。');
       seen.add(item.path);
       const current = await this.content(session, workspace, item.path);
-      if (current.hash !== item.hash) throw new Error(`文件 ${item.path} 已变化，请重新搜索后再替换。`);
+      if (hashText(current.text) !== item.hash) throw new Error(`文件 ${item.path} 已变化，请重新搜索后再替换。`);
       const after = replaceProjectText(current.text, options, replacement);
       bytes += Buffer.byteLength(current.text) + Buffer.byteLength(after);
       if (Buffer.byteLength(after) > 2 * 1024 * 1024 || bytes > 16 * 1024 * 1024) throw new Error('替换内容超过编辑大小限制，请缩小文件范围。');

@@ -15,6 +15,11 @@ test('项目搜索准确定位中文与多行匹配，文字替换保留美元�
   expect(replaceProjectText('value', { query: 'value' }, '$& $1')).toBe('$& $1');
   expect(searchProjectText('aaa', { query: '(?=a)', regex: true }, 2)).toMatchObject({ truncated: true, matches: [{}, {}] });
   expect(() => searchProjectText('text', { query: '[', regex: true }, 1)).toThrow('正则表达式');
+  expect(() => searchProjectText('a'.repeat(100), { query: '(a+)+$', regex: true }, 1)).toThrow('正则表达式');
+  expect(searchProjectText('first\r\n灰魂\nnext\n灰魂\nlast', { query: '灰魂\\n\\w+|last', regex: true }, 5).matches.map(item => item.range))
+    .toEqual([{ start: { line: 1, character: 0 }, end: { line: 2, character: 4 } }, { start: { line: 3, character: 0 }, end: { line: 4, character: 4 } }]);
+  expect(searchProjectText('😀\n😀', { query: '(?=😀)', regex: true }, 5).matches.map(item => item.range.start))
+    .toEqual([{ line: 0, character: 0 }, { line: 1, character: 0 }]);
 });
 
 test('真实搜索接口包含本窗口草稿，替换预览核对版本和工作区，且不修改磁盘', async () => {
@@ -35,7 +40,10 @@ test('真实搜索接口包含本窗口草稿，替换预览核对版本和工�
     let document = await rpc('documents.open', { path: 'main.ts' });
     document = await rpc('documents.update', { path: 'main.ts', version: document.version, text: '\uFEFFconst draftValue = 1;\r\n' });
     const options = { query: 'draftValue' };
+    const drafts = jest.spyOn(app.files, 'clientDocuments');
     const result = await rpc('files.search', { requestId: 'search', options });
+    expect(drafts).toHaveBeenCalledTimes(1);
+    drafts.mockRestore();
     expect(result.files.map((file: any) => file.path).sort()).toEqual(['main.ts', 'other.ts']);
     expect(result.files.find((file: any) => file.path === 'main.ts')).toMatchObject({ draft: true, matches: [{ range: { start: { line: 0, character: 6 } } }] });
     expect(result.skipped.some((file: any) => file.path === 'image.bin')).toBe(true);
@@ -49,6 +57,29 @@ test('真实搜索接口包含本窗口草稿，替换预览核对版本和工�
     await expect(rpc('files.replacePreview', { options, replacement: '', files: [{ path: '../outside.ts', hash: '' }] })).rejects.toThrow('outside the authorized workspace');
     await expect(rpc('files.search', { requestId: 'search', options }, { actorId: 'reader', clientId: 'reader' })).rejects.toThrow('Owner');
   } finally { await app.close(); await f.cleanup(); }
+});
+
+test('搜索达到结果上限后停止读取后续文件，取消最后一次读取也不能返回结果', async () => {
+  const f = await fixture(); await f.store.close();
+  await writeFile(path.join(f.source, 'first.txt'), 'needle\n'.repeat(1001));
+  await writeFile(path.join(f.source, 'second.txt'), 'needle');
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const session = { actorId: 'owner', clientId: 'bounded-search' };
+  const reader = app.files.read.bind(app.files);
+  const reads = jest.spyOn(app.files, 'read');
+  try {
+    const snapshot = app.settings.snapshot();
+    snapshot.settings.workspaces.push({ id: 'project', name: '搜索工程', directory: f.source, deviceId: 'local' });
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    const result = await app.workspaceSearch.search(session, 'project', 'bounded', { query: 'needle' });
+    expect(result).toMatchObject({ count: 1000, truncated: true });
+    expect(reads).toHaveBeenCalledTimes(1);
+    reads.mockImplementationOnce(async (...args) => {
+      app.workspaceSearch.cancel(session, 'cancelled');
+      return reader(...args);
+    });
+    await expect(app.workspaceSearch.search(session, 'project', 'cancelled', { query: 'needle', include: 'second.txt' })).rejects.toThrow('搜索已取消');
+  } finally { reads.mockRestore(); await app.close(); await f.cleanup(); }
 });
 
 test('整批撤销保护其他文件的新输入，处理完成后可以一起撤销与重做', async () => {

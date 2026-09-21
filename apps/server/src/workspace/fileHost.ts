@@ -68,22 +68,27 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
       entry.isSymbolicLink() ? 64 : entry.isDirectory() ? 2 : entry.isFile() ? 1 : 0]);
   }
   async findFiles(root: FileLocation, pattern: string, exclude: string, limit: number): Promise<FileLocation[]> {
-    const directory = await this.safe(root); const pending = [directory]; const result: FileLocation[] = [];
+    const result: FileLocation[] = [];
+    for await (const file of this.iterateFiles(root, pattern, exclude, limit)) result.push(file);
+    return result;
+  }
+  async *iterateFiles(root: FileLocation, pattern: string, exclude: string, limit: number): AsyncGenerator<FileLocation> {
+    const directory = await this.safe(root); const pending = [directory]; let found = 0;
     const match = new minimatch.Minimatch(pattern, { dot: true, nocase: process.platform === 'win32' });
     const ignored = new minimatch.Minimatch(exclude || '__graycode_no_exclusions__', { dot: true, nocase: process.platform === 'win32' });
-    while (pending.length && result.length < limit) {
+    while (pending.length && found < limit) {
       this.context.signal.throwIfAborted();
       const current = pending.pop()!;
       for (const entry of await readdir(await this.safe(this.location(current)), { withFileTypes: true })) {
+        this.context.signal.throwIfAborted();
         const absolute = path.join(current, entry.name); const relative = path.relative(directory, absolute).replaceAll('\\', '/');
         if (entry.isSymbolicLink()) continue;
         if (ignored.match(relative) || (entry.isDirectory() && ignored.match(`${relative}/`))) continue;
         if (entry.isDirectory()) { if (entry.name !== '.git') pending.push(absolute); }
-        else if (entry.isFile() && match.match(relative)) result.push(this.location(absolute));
-        if (result.length >= limit) break;
+        else if (entry.isFile() && match.match(relative)) { found++; yield this.location(absolute); }
+        if (found >= limit) break;
       }
     }
-    return result;
   }
   async countLines(file: FileLocation, relative: string): Promise<number | undefined> {
     if (isBinaryFile(relative)) return undefined;
