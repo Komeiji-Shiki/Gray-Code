@@ -58,7 +58,9 @@ async function load(directory = '.') {
   const version = (loadVersions.get(directory) ?? 0) + 1; loadVersions.set(directory, version);
   try {
     const entries = await call<DirectoryEntry[]>('files.list', { workspaceId, path: directory });
-    if (epoch === treeEpoch && workspaceId === state.workspaceId && loadVersions.get(directory) === version) children.value[directory] = entries;
+    if (epoch === treeEpoch && workspaceId === state.workspaceId && loadVersions.get(directory) === version) {
+      children.value[directory] = entries; return true;
+    }
   } catch (error) {
     if (epoch !== treeEpoch || workspaceId !== state.workspaceId || loadVersions.get(directory) !== version) return;
     if (directory !== '.') { expanded.value.delete(directory); delete children.value[directory]; }
@@ -80,7 +82,7 @@ async function click(entry: DirectoryEntry) {
   selected.value = entry;
   if (entry.kind === 'directory') {
     if (expanded.value.has(entry.path)) expanded.value.delete(entry.path);
-    else { await load(entry.path); expanded.value.add(entry.path); }
+    else { const epoch = treeEpoch; if (await load(entry.path) && epoch === treeEpoch) expanded.value.add(entry.path); }
   } else emit('open', entry.path, state.workspaceId);
 }
 async function navigate(event: KeyboardEvent, entry: DirectoryEntry) {
