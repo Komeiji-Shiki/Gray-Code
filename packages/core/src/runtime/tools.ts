@@ -27,6 +27,8 @@ export interface ToolContext {
 }
 export interface RuntimeTool {
   declaration: ToolDeclaration;
+  /** 明确独立的读取允许同批并行；实际效果仍须全部属于只读。该标记不进入模型声明。 */
+  parallelRead?: boolean;
   /** Pure classification. Must not read files, contact a service, or create a snapshot. */
   effects: (args: Record<string, unknown>) => ToolEffect[];
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolOutcome>;

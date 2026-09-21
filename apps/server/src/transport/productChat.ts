@@ -195,7 +195,8 @@ export class ProductChat {
       this.emit(stream, { type: 'autoSummaryStatus', autoSummaryStatus: true, status: 'completed' });
     } else if (event.type === 'approval.requested') {
       this.emit(stream, { type: 'awaitingConfirmation', keepStreamOpen: true, content: stream.content, toolResults: stream.results, toolResultContents: stream.resultContents,
-        pendingToolCalls: [{ id: event.payload.toolCallId, name: event.payload.toolName, args: event.payload.args }] });
+        pendingToolCalls: this.app.runtime.pendingApprovals().filter(approval => approval.runId === runId)
+          .map(approval => ({ id: approval.toolCallId, name: approval.toolName, args: approval.args })) });
     } else if (event.type === 'tool.started') {
       this.emit(stream, { type: 'toolStatus', toolStatus: true, tool: { id: event.payload.toolCallId,
         name: event.payload.toolName, args: event.payload.args, status: 'executing' } });

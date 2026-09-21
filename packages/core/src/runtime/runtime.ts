@@ -8,6 +8,7 @@ import { PlatformStorage } from '../storage/client';
 import { RuntimeToolRegistry, authorizeEffects, needsApproval, type ToolCatalog, type ToolContext } from './tools';
 import { QuestionBroker } from './questions';
 import { normalizeToolArguments } from './toolArguments';
+import { DeltaCoalescer } from './deltas';
 
 export interface RuntimeServices {
   executionNodeId?: () => string;
@@ -271,6 +272,7 @@ export class PlatformRuntime {
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
         let streamingEvent: Promise<void> | undefined;
+        const deltas = new DeltaCoalescer(parts => this.notify({ type: 'model.delta', runId: run.id, parts }));
         const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
           onRequest: async captured => {
             const id = `${run.id}:${iteration}`;
@@ -283,11 +285,12 @@ export class PlatformRuntime {
             await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model });
           },
           onDelta: parts => {
+            if (deltas.closed) return;
             if (!streamingEvent) {
               streamingEvent = this.event(run.id, 'model.streaming', { iteration });
               void streamingEvent.catch(() => undefined);
             }
-            this.notify({ type: 'model.delta', runId: run.id, parts });
+            deltas.push(parts);
           },
         };
         const prepared = await this.services.prepareModel?.({ run, agent, workspace, iteration, input: request, history: state });
@@ -296,7 +299,9 @@ export class PlatformRuntime {
         signal.throwIfAborted();
         await this.services.modelBoundary?.(run, workspace, signal, 'before', iteration);
         await this.event(run.id, 'model.started', { iteration });
-        const generated = await this.services.models.generate(request).finally(async () => { await streamingEvent; });
+        let generated: PlatformMessage;
+        try { generated = await this.services.models.generate(request); }
+        finally { deltas.finish(); await streamingEvent; }
         signal.throwIfAborted();
         let content: PlatformMessage = { ...generated, role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
           parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now() };
@@ -304,7 +309,7 @@ export class PlatformRuntime {
         const calls = this.calls(content);
         await this.services.storage.appendHistory(run.conversationId, [content], { expectedRevision: page.revision });
         this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(content) });
-        await this.event(run.id, 'message.saved', { messageId: content.id }, { iteration });
+        await this.event(run.id, 'message.saved', { messageId: content.id, streaming: deltas.statistics() }, { iteration });
         await this.services.modelBoundary?.(run, workspace, signal, 'after', iteration, content);
         if (!calls.length) {
           if (await this.services.deliverFeedback?.(run)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
@@ -318,10 +323,16 @@ export class PlatformRuntime {
           }
           await this.event(run.id, 'run.completed', {}, { status: 'completed' }); return;
         }
-        for (const call of calls) {
-          const outcome = signal.aborted ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
-            : await this.executeTool(run, agent, workspace, catalog, call, signal, request);
-          await this.saveToolResult(run, call, outcome);
+        for (let index = 0; index < calls.length;) {
+          const batch = [calls[index++]];
+          if (this.parallelRead(batch[0], agent, catalog)) {
+            while (batch.length < 4 && index < calls.length && this.parallelRead(calls[index], agent, catalog)) batch.push(calls[index++]);
+          }
+          const outcomes = await Promise.all(batch.map(call => signal.aborted
+            ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
+            : this.executeTool(run, agent, workspace, catalog, call, signal, request)));
+          // 完成时间可以不同，持久化和后续模型输入始终服从原始调用顺序。
+          for (let item = 0; item < batch.length; item++) await this.saveToolResult(run, batch[item], outcomes[item]);
         }
         const afterTools = await this.services.afterTools?.(run, workspace, signal, content);
         if (afterTools?.stop) {
@@ -352,6 +363,16 @@ export class PlatformRuntime {
       calls.push(call);
     }
     return calls;
+  }
+
+  private parallelRead(call: FunctionCall, agent: AgentDefinition, catalog: ToolCatalog): boolean {
+    const entry = catalog.entries.get(call.name);
+    if (!entry?.tool.parallelRead || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
+    try {
+      const args = normalizeToolArguments(call.args, entry.tool.declaration.parameters);
+      const effects = entry.tool.effects(args);
+      return effects.every(effect => effect === 'public_read' || effect === 'workspace_read') && !needsApproval(agent, call.name, effects);
+    } catch { return false; }
   }
 
   private async executeTool(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, call: FunctionCall, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>): Promise<ToolOutcome> {
