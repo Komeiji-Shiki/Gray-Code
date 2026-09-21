@@ -24,6 +24,8 @@ jobs:
           npm ci --no-audit --no-fund
           npm --prefix frontend ci --no-audit --no-fund
           dotnet tool restore
+      - name: Validate application before packaging
+        run: npm run ci
       - name: Package Windows application and installer
         run: |
           npm run package:desktop
