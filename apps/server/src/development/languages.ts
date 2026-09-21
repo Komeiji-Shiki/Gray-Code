@@ -1,6 +1,6 @@
 import { workspaceFilePath, workspaceRoots } from '../workspace/paths';
 import type { ToolContext } from '@graycode/core';
-import { stopDevelopmentProcess } from './process';
+import { stopOwnedProcess } from '../workspace/processLifecycle';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import spawn from 'cross-spawn';
@@ -121,7 +121,7 @@ export class LanguageServices {
       if (session.info.status === 'stopped') return;
       session.info.status = 'failed'; session.info.error = `${String(error)}${session.stderr ? `\n${session.stderr}` : ''}`;
       connection.dispose();
-      void stopDevelopmentProcess(child).catch(stopError => { session.info.error += '\n停止进程失败：' + String(stopError); this.changed(session); });
+      void stopOwnedProcess(child).catch(stopError => { session.info.error += '\n停止进程失败：' + String(stopError); this.changed(session); });
       this.changed(session);
     };
     child.once('error', fail);
@@ -189,7 +189,7 @@ export class LanguageServices {
         await connection.sendNotification('initialized', {});
         if (definition.settings) await connection.sendNotification('workspace/didChangeConfiguration', { settings: definition.settings });
         session.info.status = 'running'; this.changed(session);
-      } catch (error) { fail(error); await stopDevelopmentProcess(child); throw new Error(session.info.error ?? String(error), { cause: error }); }
+      } catch (error) { fail(error); await stopOwnedProcess(child); throw new Error(session.info.error ?? String(error), { cause: error }); }
     })();
     return session;
   }
@@ -385,7 +385,7 @@ export class LanguageServices {
     session.stopping = (async () => {
       // 完成协议关闭后，在父进程仍存活时结束进程树，避免 exit 提前退出后留下后台分析子进程。
       try { await this.timed(session, 'shutdown', null, undefined, 3000); } catch { /* 已退出的语言服务直接释放。 */ }
-      session.connection.dispose(); await stopDevelopmentProcess(session.child);
+      session.connection.dispose(); await stopOwnedProcess(session.child);
       if (session.companion) await this.stopSession(session.companion);
       for (const uri of [...session.documents.keys()]) { session.documents.delete(uri); this.clearDiagnostics(session, uri); }
       session.diagnostics.clear(); this.changed(session);

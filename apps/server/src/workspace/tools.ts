@@ -246,7 +246,7 @@ export function workspaceTools(
           await processes.stop(String(args.id), context.runId);
         return {
           success: true,
-          data: processes.read(String(args.id), context.runId),
+          data: await processes.read(String(args.id), context.runId),
         };
       },
     },

@@ -6,7 +6,7 @@ import spawn from 'cross-spawn';
 import type { DebugAdapterDefinition, DebugAdapterInfo, DebugConfiguration } from '@graycode/contracts';
 import { executable } from './languageCatalog';
 import { DapConnection } from './dapConnection';
-import { stopDevelopmentProcess } from './process';
+import { stopOwnedProcess } from '../workspace/processLifecycle';
 
 export interface DebugAdapterRuntime {
   connect(configuration?: Record<string, any>): Promise<DapConnection>;
@@ -73,7 +73,7 @@ export class DebugAdapterCatalog {
     child.stderr.on('data', bytes => output('adapter', bytes.toString()));
     let failure: Error | undefined;
     child.once('error', error => { failure = error; });
-    const runtime: DebugAdapterRuntime = { child, close: () => stopDevelopmentProcess(child), connect: async () => { throw new Error('调试器正在启动。'); } };
+    const runtime: DebugAdapterRuntime = { child, close: () => stopOwnedProcess(child), connect: async () => { throw new Error('调试器正在启动。'); } };
     try {
       if (definition.transport === 'stdio') {
         let connected = false;

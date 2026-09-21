@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { spawn as nativeSpawn, type ChildProcess } from "node:child_process";
 import crossSpawn from "cross-spawn";
 import type { ToolEffect, WorkspaceDefinition } from "@graycode/contracts";
+import type { PlatformStorage } from '@graycode/core';
+import { stopOwnedProcess } from './processLifecycle';
 
 export interface ProcessResult {
   id: string;
@@ -14,7 +16,7 @@ export interface ProcessResult {
 interface ManagedProcess {
   id: string;
   ownerId: string;
-  child: ChildProcess;
+  child?: ChildProcess;
   output: string;
   truncated: boolean;
   exitCode: number | null;
@@ -29,6 +31,8 @@ export function commandEffects(args: Record<string, unknown>): ToolEffect[] {
 }
 export class WorkspaceProcesses {
   private readonly entries = new Map<string, ManagedProcess>();
+  private closing = false;
+  constructor(private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord'>) {}
   async start(
     workspace: WorkspaceDefinition,
     ownerId: string,
@@ -36,6 +40,7 @@ export class WorkspaceProcesses {
     args: string[],
     onOutput?: (text: string) => void,
   ): Promise<ProcessResult> {
+    if (this.closing) throw new Error('宿主正在关闭，不能启动新命令。');
     if (
       !command ||
       !Array.isArray(args) ||
@@ -54,6 +59,7 @@ export class WorkspaceProcesses {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let finish!: () => void;
+    let fail!: (error: unknown) => void;
     const entry: ManagedProcess = {
       id: randomUUID(),
       ownerId,
@@ -62,8 +68,9 @@ export class WorkspaceProcesses {
       truncated: false,
       exitCode: null,
       running: true,
-      done: new Promise((resolve) => {
+      done: new Promise((resolve, reject) => {
         finish = resolve;
+        fail = reject;
       }),
     };
     this.entries.set(entry.id, entry);
@@ -78,24 +85,30 @@ export class WorkspaceProcesses {
     };
     child.stdout!.on("data", output);
     child.stderr!.on("data", output);
-    child.once("error", (error) => {
+    const onError = (error: Error) => {
       output(error.message);
       entry.exitCode = -1;
-      entry.running = false;
-      finish();
-    });
+    };
+    child.once("error", onError);
     child.once("close", (code) => {
-      entry.exitCode = code;
+      entry.exitCode = code ?? entry.exitCode;
       entry.running = false;
-      finish();
+      child.stdout?.off('data', output);
+      child.stderr?.off('data', output);
+      child.off('error', onError);
+      entry.child = undefined;
+      // 完成结果进入现有存储，释放活动进程及输出回调；历史查询不再占用常驻内存。
+      void this.storage.putRecord({ namespace: 'workspace-processes', id: entry.id,
+        ownerId, value: { ...this.result(entry), ownerId } }).then(() => {
+        this.entries.delete(entry.id);
+        finish();
+      }, fail);
     });
-    await Promise.race([
-      entry.done,
-      new Promise((resolve) => {
-        const timer = setTimeout(resolve, 300);
-        timer.unref();
-      }),
-    ]);
+    void entry.done.catch(error => console.error('命令结果保存失败：', entry.id, error));
+    let timer: ReturnType<typeof setTimeout>;
+    try {
+      await Promise.race([entry.done, new Promise(resolve => { timer = setTimeout(resolve, 300); timer.unref(); })]);
+    } finally { clearTimeout(timer!); }
     return this.result(entry);
   }
   private result(entry: ManagedProcess): ProcessResult {
@@ -115,30 +128,31 @@ export class WorkspaceProcesses {
       );
     return entry;
   }
-  read(id: string, ownerId: string): ProcessResult {
-    return this.result(this.get(id, ownerId));
+  async read(id: string, ownerId: string): Promise<ProcessResult> {
+    const active = this.entries.get(id);
+    if (active) {
+      const entry = this.get(id, ownerId);
+      if (!entry.running) await entry.done;
+      return this.result(entry);
+    }
+    const record = await this.storage.getRecord('workspace-processes', id) as (ProcessResult & { ownerId: string }) | null;
+    if (!record || record.ownerId !== ownerId) throw new Error('Managed process is not accessible to this task or client.');
+    const { ownerId: _ownerId, ...result } = record;
+    return result;
   }
   input(id: string, ownerId: string, text: string): void {
-    this.get(id, ownerId).child.stdin!.write(text);
+    const entry = this.get(id, ownerId);
+    if (!entry.running || !entry.child) throw new Error('命令已经退出。');
+    entry.child.stdin!.write(text);
   }
   async stop(id: string, ownerId: string): Promise<void> {
+    if (!this.entries.has(id)) { await this.read(id, ownerId); return; }
     const entry = this.get(id, ownerId);
-    if (!entry.running || !entry.child.pid) return;
-    // Only a retained ChildProcess started here can be stopped; caller-supplied PIDs are never accepted.
-    if (process.platform === "win32") {
-      await new Promise<void>((resolve, reject) => {
-        const kill = spawn(
-          "taskkill",
-          ["/pid", String(entry.child.pid), "/T", "/F"],
-          { windowsHide: true, stdio: "ignore" },
-        );
-        kill.once("error", reject);
-        kill.once("close", () => resolve());
-      });
-    } else entry.child.kill("SIGTERM");
+    if (entry.child) await stopOwnedProcess(entry.child);
     await entry.done;
   }
   async close(): Promise<void> {
+    this.closing = true;
     await Promise.allSettled(
       [...this.entries.values()].map((entry) =>
         this.stop(entry.id, entry.ownerId),

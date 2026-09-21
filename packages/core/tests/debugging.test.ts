@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { DapConnection } from '../../../apps/server/src/development/dapConnection';
-import { stopDevelopmentProcess } from '../../../apps/server/src/development/process';
+import { stopOwnedProcess } from '../../../apps/server/src/workspace/processLifecycle';
 import { fixture } from './fixtures';
 
 test('DAP 分帧按字节处理中文，反向请求不会阻塞响应，断线拒绝未完成请求', async () => {
@@ -133,7 +133,7 @@ test('Node 附加使用真实 inspector 端口，分离后保留原进程', asyn
     const root = await t.rpc('debug.start', { configuration: { id: 'attach', name: '附加 Node', adapterId: 'node', request: 'attach', port } });
     await stopped; await t.rpc('debug.stop', { id: root.id });
     expect(target.exitCode).toBeNull(); expect(() => process.kill(target!.pid!, 0)).not.toThrow();
-  } finally { if (target) await stopDevelopmentProcess(target); await t.close(); }
+  } finally { if (target) await stopOwnedProcess(target); await t.close(); }
 }, 30_000);
 
 let python = false;
@@ -176,7 +176,7 @@ try { execFileSync('python', ['-c', 'import debugpy'], { windowsHide: true, stdi
     expect(stack.stackFrames[0].line).toBe(5);
     await t.rpc('debug.stop', { id: root.id });
     expect(processHandle.exitCode).toBeNull(); expect(() => process.kill(processHandle!.pid!, 0)).not.toThrow();
-  } finally { if (processHandle) await stopDevelopmentProcess(processHandle); await t.close(); }
+  } finally { if (processHandle) await stopOwnedProcess(processHandle); await t.close(); }
 }, 30_000);
 
 test('TypeScript 构建后的 source map 将断点和调用栈映射到原文件', async () => {

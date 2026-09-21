@@ -151,7 +151,7 @@ export class PlatformApplication {
   readonly debugging: DebugServices;
   readonly terminals: PlatformTerminals;
   readonly interactiveTerminals: InteractiveTerminals;
-  readonly processes = new WorkspaceProcesses();
+  readonly processes: WorkspaceProcesses;
   readonly settings: SettingsService<ProductPreferences>;
   readonly runtime: PlatformRuntime;
   readonly models: ModelProvider;
@@ -177,6 +177,7 @@ export class PlatformApplication {
     options: ApplicationOptions,
   ) {
     this.configurationPersistence = options.configurationPersistence;
+    this.processes = new WorkspaceProcesses(storage);
     this.botWorkspaces = new BotWorkspaces(this, options.documentsDirectory);
     this.conversationWorkspaces = new ConversationWorkspaces(this, options.documentsDirectory);
     this.dependencies = new DependencyRuntimeManager(join(storage.directory, 'dependencies'));

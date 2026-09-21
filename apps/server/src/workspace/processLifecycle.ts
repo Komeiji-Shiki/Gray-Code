@@ -5,7 +5,7 @@ import treeKill from 'tree-kill';
 const stoppingChildren = new WeakMap<ChildProcess, Promise<void>>();
 
 /** 等待所创建的进程及管道实际关闭，避免关闭服务后工作目录仍被占用。 */
-export function stopDevelopmentProcess(child: ChildProcess): Promise<void> {
+export function stopOwnedProcess(child: ChildProcess): Promise<void> {
   const pending = stoppingChildren.get(child);
   if (pending) return pending;
   if (!child.pid) return Promise.resolve();
@@ -16,7 +16,7 @@ export function stopDevelopmentProcess(child: ChildProcess): Promise<void> {
   const closed = new Promise<void>((resolve, reject) => {
     onClose = resolve;
     child.once('close', onClose);
-    timer = setTimeout(() => reject(new Error('开发服务进程未能退出：' + pid)), 7000);
+    timer = setTimeout(() => reject(new Error('受管进程未能退出：' + pid)), 7000);
     if (exited() && child.stdio.every(stream => !stream || 'destroyed' in stream && stream.destroyed)) resolve();
   });
   const terminate = exited() ? Promise.resolve() : new Promise<void>((resolve, reject) => {

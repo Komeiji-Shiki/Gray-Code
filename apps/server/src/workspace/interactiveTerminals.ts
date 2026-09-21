@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { stopDevelopmentProcess } from '../development/process';
+import { stopOwnedProcess } from './processLifecycle';
 import type { InteractiveTerminalInfo, InteractiveTerminalSnapshot } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 
@@ -88,7 +88,7 @@ export class InteractiveTerminals {
       });
       host.send({ type: 'start', command, args, cwd, env, cols, rows });
       try { await ready; if (this.closed) throw new Error('核心服务正在关闭。'); }
-      catch (error) { await stopDevelopmentProcess(host); throw error; }
+      catch (error) { await stopOwnedProcess(host); throw error; }
       this.sessions.set(session.info.id, session); this.changed();
       return { info: this.snapshot(session.info.id), stop: () => this.stopSession(session) };
     } finally { this.creating--; }
@@ -119,7 +119,7 @@ export class InteractiveTerminals {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const graceful = await Promise.race([session.closed.then(() => true), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); })]);
       clearTimeout(timer);
-      if (!graceful) await stopDevelopmentProcess(session.host);
+      if (!graceful) await stopOwnedProcess(session.host);
     })();
     return session.stopping;
   }
