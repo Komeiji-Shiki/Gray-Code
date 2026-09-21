@@ -136,7 +136,7 @@ export class OpenAIFormatter extends BaseFormatter {
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory, config);
+        processedHistory = this.cleanInternalFields(processedHistory);
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
         const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode, !!config.pdfAttachmentEnabled);
@@ -319,6 +319,8 @@ export class OpenAIFormatter extends BaseFormatter {
             }
         }
 
+        const pendingCalls = new Set<string>();
+        const toolMediaMessages: any[] = [];
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
@@ -332,6 +334,7 @@ export class OpenAIFormatter extends BaseFormatter {
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
             
             if (functionCallParts.length > 0) {
+                for (const part of functionCallParts) pendingCalls.add(part.functionCall!.id!);
                 // assistant 消息包含 tool_calls
                 // 所有 functionCall 放到末尾作为 tool_calls
                 const toolCalls = functionCallParts.map((p, index) => ({
@@ -370,6 +373,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 const textContent = textParts.map(p => p.text).join('\n');
                 for (const [index, part] of functionResponseParts.entries()) {
                     const resp = part.functionResponse!;
+                    if (resp.id) pendingCalls.delete(resp.id);
                     const serialized = serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>);
                     messages.push({
                         role: 'tool',
@@ -379,6 +383,16 @@ export class OpenAIFormatter extends BaseFormatter {
                         name: resp.name,  // 工具名称是 OpenAI API 必需的
                         content: index === 0 && textContent ? `${textContent}\n\n${serialized}` : serialized
                     });
+                }
+                if (mediaParts.length) {
+                    const sources = functionResponseParts.map(part => `${part.functionResponse!.name} (${part.functionResponse!.id})`).join(', ');
+                    toolMediaMessages.push({ role: 'user', content: this.buildMessageContent(
+                        [{ text: `Attachments returned by tools: ${sources}` }], mediaParts, pdfAttachmentEnabled) });
+                }
+                // 先完成同批所有 tool 响应，再追加图片，不能让图片消息打断调用配对。
+                if (pendingCalls.size === 0 && toolMediaMessages.length) {
+                    messages.push(...toolMediaMessages);
+                    toolMediaMessages.length = 0;
                 }
             }
 

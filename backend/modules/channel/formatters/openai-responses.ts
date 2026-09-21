@@ -143,7 +143,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         );
 
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory, config);
+        processedHistory = this.cleanInternalFields(processedHistory);
 
         // 转换历史消息为 OpenAI Responses input 格式。
         // reasoning item 的两种回放形态分开控制：

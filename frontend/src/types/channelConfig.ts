@@ -120,7 +120,6 @@ export interface ChannelOptions {
   // Gemini
   temperature?: number
   maxOutputTokens?: number
-  maxImages?: number
   thinkingConfig?: ThinkingConfig
   // OpenAI / Anthropic / OpenAI Responses 通用
   max_tokens?: number
@@ -143,7 +142,6 @@ export interface ChannelOptions {
 export interface ChannelOptionsEnabled {
   temperature?: boolean
   maxOutputTokens?: boolean
-  maxImages?: boolean
   max_tokens?: boolean
   top_p?: boolean
   top_k?: boolean
@@ -186,7 +184,6 @@ export interface ChannelConfig {
   sendCurrentThoughtSignatures?: boolean
   reasoningSignatureMode?: 'official' | 'codex'
   sendHistoryThoughts?: boolean
-  maxInputImages?: number
   historyThinkingRounds?: number
   sendCurrentThoughts?: boolean
   strictToolsEnabled?: boolean

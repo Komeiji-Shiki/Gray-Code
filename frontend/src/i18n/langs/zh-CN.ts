@@ -3159,7 +3159,6 @@ const zhCN = {
                     toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
                 }
             },
-            imageInput: {"label":"输入图片数量上限","placeholder":"0 = 不限制","hint":"按历史与本轮图片合计。超过上限时只发送最近 N 张，保留全部文字；历史原图仍可查看。0 表示不限制。"},
             gemini: {
                 maxImages: {
                     label: '上游请求最多图片数',

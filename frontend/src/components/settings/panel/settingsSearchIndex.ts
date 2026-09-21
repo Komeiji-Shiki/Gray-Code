@@ -51,12 +51,6 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="multimodal"]'
   },
   {
-    key: 'channel-input-images', tab: 'channel',
-    labelKey: 'components.channels.imageInput.label',
-    keywords: ['图片数量', '图片上限', '历史图片', 'input image limit', 'maxInputImages', '画像数'],
-    anchor: '[data-search-anchor="input-image-limit"]'
-  },
-  {
     key: 'channel-strict-tools', tab: 'channel',
     labelKey: 'components.settings.channelSettings.form.strictTools.label',
     keywords: ['strict tool use', '严格工具', '强制工具', '工具调用'],

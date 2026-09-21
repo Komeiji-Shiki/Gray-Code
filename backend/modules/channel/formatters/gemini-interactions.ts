@@ -92,7 +92,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             request.dynamicContextStrategy,
             { stripPreservedThoughtParts: c.sendHistoryThoughts !== true }
         );
-        processedHistory = this.cleanInternalFields(processedHistory, config);
+        processedHistory = this.cleanInternalFields(processedHistory);
 
         // 根据配置限制发送的图片总数（在 Content[] 层面，与 steps 转换解耦）
 

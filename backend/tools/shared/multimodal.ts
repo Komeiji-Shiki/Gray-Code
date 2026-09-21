@@ -207,8 +207,8 @@ export interface MultimodalCapability {
  * 根据渠道类型和工具模式，定义不同的多模态支持级别：
  * - gemini: 全面支持所有多模态功能
  * - openai: 
- *   - function_call 模式不支持多模态工具
- *   - xml/json 模式只支持图片，不支持文档
+ *   - 所有模式支持工具图片，function_call 模式在配对响应后发送图片消息
+ *   - 不支持文档
  * - anthropic: 全部支持
  * - custom: 保守处理，假设全部支持
  * 
@@ -242,25 +242,12 @@ export function getMultimodalCapability(
             };
             
         case 'openai':
-            if (toolMode === 'function_call') {
-                // OpenAI function_call 模式：工具响应不能包含图片数据
-                // （OpenAI API 要求 tool result 必须是字符串）
-                return {
-                    supportsImages: false,
-                    supportsDocuments: false,
-                    supportsHistoryMultimodal: false,
-                };
-            } else {
-                // OpenAI xml/json 模式：
-                // - 支持图片（作为 user 消息附件发送）
-                // - 不支持文档（PDF）
-                // - 历史中的图片可以正常发送（作为 user 消息的 image_url 类型）
-                return {
-                    supportsImages: true,
-                    supportsDocuments: false,
-                    supportsHistoryMultimodal: true, // 历史中的图片可以作为 user 消息发送
-                };
-            }
+            // Chat Completions 的工具响应只放文本，图片由格式器放到同批响应之后。
+            return {
+                supportsImages: true,
+                supportsDocuments: false,
+                supportsHistoryMultimodal: true,
+            };
             
         case 'openai-responses':
             // OpenAI Responses API 全面支持多模态（图片和文档）

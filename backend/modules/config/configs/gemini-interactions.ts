@@ -44,8 +44,6 @@ export interface GeminiInteractionsConfig extends BaseChannelConfig {
         /** 最大输出 token 数 */
         maxOutputTokens?: number;
 
-        /** 发送给上游的图片总数上限，0 表示不限制 */
-        maxImages?: number;
 
         /** 是否流式输出 */
         stream?: boolean;

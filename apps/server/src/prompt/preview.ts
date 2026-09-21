@@ -26,7 +26,6 @@ export async function previewPrompt(app: PlatformApplication, client: ClientSess
   const companion = prepared.input.turnContext?.companionTurn;
   const textTokens = estimateModelInputTokens(prepared.input);
   const notices = [...prepared.notices];
-  if (projected.maxInputImages) notices.push(`本次请求最多发送最近 ${projected.maxInputImages} 张图片，全部文字保留；聊天中的原图不受影响。`);
   if (!data.conversationId && !workspaceId) notices.push('当前还没有保存对话，发送时自动创建的会话目录会补充到工作区信息中。');
   if (turn) notices.push('角色和世界书按当前输入重新激活；含概率或时效条件的条目，在正式发送时可能变化。');
   const memory=prepared.input.turnContext?.longMemory as {references?:unknown[];estimatedTokens?:number;method?:string;embeddingError?:string}|undefined;

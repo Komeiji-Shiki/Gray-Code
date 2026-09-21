@@ -13,7 +13,6 @@ import type { Content } from "../../../../backend/modules/conversation/types";
 import type { GenerateRequest } from "../../../../backend/modules/channel/types";
 import type { ToolDeclaration } from "../../../../backend/tools/types";
 import type { ChannelConfig } from "../../../../backend/modules/config/types";
-import { inputImageLimit, limitInputImages } from '../../../../shared/inputImages';
 import {
   applyProviderCapabilities,
   buildChannelConfig,
@@ -61,7 +60,7 @@ export class ProviderModelAdapter implements ModelProvider {
     const formatter = new FormatterRegistry().get(profile.protocol);
     if (!formatter)
       throw new Error(`Unsupported model protocol: ${profile.protocol}`);
-    let history = limitInputImages(structuredClone(input.messages) as Content[], inputImageLimit(config));
+    let history = structuredClone(input.messages) as Content[];
     if (capabilities.compatibility.deepSeekVision) {
       if (!this.services.prepareVision)
         throw new Error(
@@ -128,8 +127,7 @@ export class ProviderModelAdapter implements ModelProvider {
   /** 使用真实协议格式器生成正文；预览不读取凭据，也不执行 HTTP 请求。 */
   async preview(input: ModelInput) {
     const { profile, config, options } = await this.prepare(input, false);
-    const maximum = inputImageLimit(config);
-    return { protocol: profile.protocol, model: config.model, body: options.body, ...(maximum ? { maxInputImages: maximum } : {}) };
+    return { protocol: profile.protocol, model: config.model, body: options.body };
   }
   async generate(input: ModelInput): Promise<PlatformMessage> {
     const { profile, config, formatter, options } = await this.prepare(input, true);

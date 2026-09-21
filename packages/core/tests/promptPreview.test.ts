@@ -41,22 +41,20 @@ describe('当前完整提示词的只读预览', () => {
   const request = () => ({ conversationId: 'preview-chat', configId: providerId, modelOverride: 'fixture-model', promptModeId: 'preview-preset', message: '当前尚未发送的草稿。' });
   const preview = (data: Record<string, unknown> = request()) => app.productUi.call(client, 'prompt.preview', data) as Promise<PromptPreviewResult>;
 
-  test('渠道图片上限保存后立即反映到预览，旧图片保留且切换渠道类型不丢失上限', async () => {
-    const draft = await app.product.draft();
-    await draft.configs.updateConfig(providerId, { maxInputImages: 1 }); await app.product.save(draft);
-    expect((await app.product.channel(providerId))?.maxInputImages).toBe(1);
+  test('预览和渠道切换均保留所有历史图片，不修改原历史', async () => {
     await app.storage.appendHistory('preview-chat', [{ role: 'user', parts: [
       { text: '图片对应的文字', inlineData: { mimeType: 'image/png', data: 'OLDER_IMAGE' } },
       { inlineData: { mimeType: 'image/png', data: 'LATEST_IMAGE' } },
     ] }]);
     const before = await app.storage.readConversationState('preview-chat');
     const result = await preview();
-    expect(result.notices.some(notice => notice.includes('最近 1 张图片'))).toBe(true);
-    expect(JSON.stringify(result.body)).not.toContain('OLDER_IMAGE');
+    expect(JSON.stringify(result.body)).toContain('OLDER_IMAGE');
     expect(JSON.stringify(result.body)).toContain('LATEST_IMAGE'); expect(JSON.stringify(result.body)).toContain('图片对应的文字');
     expect(await app.storage.readConversationState('preview-chat')).toEqual(before);
     const changed = await app.product.draft(); await changed.configs.updateConfig(providerId, { type: 'anthropic' }); await app.product.save(changed);
-    expect((await app.product.channel(providerId))?.maxInputImages).toBe(1);
+    const switched = await preview();
+    expect(JSON.stringify(switched.body)).toContain('OLDER_IMAGE');
+    expect(JSON.stringify(switched.body)).toContain('LATEST_IMAGE');
   });
 
   test('包含历史、当前草稿、固定文件、工具和预设位置，实际发送复用同一内容', async () => {

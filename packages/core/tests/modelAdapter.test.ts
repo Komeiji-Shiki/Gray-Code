@@ -67,7 +67,7 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(profile.generation.maxOutputTokens).toBe(123);expect(profile.customBody.max_completion_tokens).toBe(9999);
   });
 
-  test('图片上限在视觉预处理前生效，最终 HTTP 和提示词预览保留相同的最近图片', async () => {
+  test('视觉预处理、HTTP 和提示词预览保留同一份完整图片历史', async () => {
     profile.capabilities.compatibility.deepSeekVision = true;
     const request = input();
     request.messages = [{ role: 'user', parts: [
@@ -78,8 +78,8 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => '',
       channel: async () => ({ ...buildChannelConfig(profile, request, ''), maxInputImages: 1 }), prepareVision });
     const preview = await adapter.preview(request);
-    expect(JSON.stringify(prepareVision.mock.calls[0][0])).not.toContain('OLD_IMAGE');
-    expect(preview.maxInputImages).toBe(1); expect(JSON.stringify(preview.body)).toContain('LATEST_IMAGE');
+    expect(JSON.stringify(prepareVision.mock.calls[0][0])).toContain('OLD_IMAGE');
+    expect(JSON.stringify(preview.body)).toContain('OLD_IMAGE'); expect(JSON.stringify(preview.body)).toContain('LATEST_IMAGE');
     expect(JSON.stringify(preview.body)).toContain('全部文字保留');
     await adapter.generate(request); expect(requests[0].body).toEqual(preview.body);
     expect(JSON.stringify(request.messages)).toContain('OLD_IMAGE');

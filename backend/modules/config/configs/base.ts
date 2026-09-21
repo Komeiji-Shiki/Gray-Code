@@ -307,8 +307,6 @@ export interface BaseChannelConfig {
      */
     sendHistoryThoughts?: boolean;
 
-    /** 每次请求最多发送的图片总数；0 或未设置表示不限制，超出时保留最近的图片。 */
-    maxInputImages?: number;
     
     /**
      * 发送历史思考的回合数

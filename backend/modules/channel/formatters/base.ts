@@ -16,7 +16,6 @@ import type {
 } from '../types';
 import type { RequestPromptContext } from '../types';
 import { deserializePromptContextCache } from '../../prompt/promptContextCache';
-import { inputImageLimit, limitInputImages } from '../../../../shared/inputImages';
 
 /**
  * prompt context 注入选项。
@@ -182,9 +181,9 @@ export abstract class BaseFormatter {
      * @param history 历史消息
      * @returns 清理后的历史消息
      */
-    protected cleanInternalFields(history: Content[], config?: ChannelConfig): Content[] {
+    protected cleanInternalFields(history: Content[]): Content[] {
         // 原生请求只携带消息内容；耗时、用量、界面正文和上下文控制字段均属于宿主。
-        return limitInputImages(history, config ? inputImageLimit(config) : undefined).map(content => ({ role: content.role, parts: content.parts }));
+        return history.map(content => ({ role: content.role, parts: content.parts }));
     }
 
     /**
