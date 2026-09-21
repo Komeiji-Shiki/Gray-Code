@@ -9,13 +9,20 @@ export const state = reactive({ panelResizing: false, panelObscured: false, pane
   navigationDialogOpen: false, fileDialogOpen: false,
   snapshot: null as SettingsSnapshot | null, workspaceId: localStorage.getItem('graycode.workspaceId') ?? '' });
 export const appearance = computed(() => state.snapshot?.settings.appearance);
+let settingsRequestSequence = 0;
 export function report(error: unknown) { state.error = error instanceof Error ? error.message : String(error); }
 export async function guard<T>(operation: () => Promise<T>): Promise<T | undefined> {
   try { return await operation(); } catch (error) { report(error); }
 }
 export async function loadSettings() {
-  state.snapshot = await call('settings.get');
-  if (state.workspaceId && !state.snapshot.settings.workspaces.some(workspace => workspace.id === state.workspaceId)) state.workspaceId = '';
+  const sequence = ++settingsRequestSequence;
+  try {
+    const snapshot = await call('settings.get');
+    // 设置事件与工作区操作可以同时刷新，旧响应不能清空较新配置中的工作区选择。
+    if (sequence !== settingsRequestSequence) return;
+    state.snapshot = snapshot;
+    if (state.workspaceId && !snapshot.settings.workspaces.some(workspace => workspace.id === state.workspaceId)) state.workspaceId = '';
+  } catch (error) { if (sequence === settingsRequestSequence) throw error; }
 }
 export async function initialize() {
   await loadSettings(); state.ready = true;
