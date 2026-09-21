@@ -4,6 +4,7 @@
   "private": true,
   "main": "dist/application.cjs",
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
     "@graycode/contracts": "0.1.0",
     "@graycode/core": "0.1.0",
     "@peculiar/x509": "2.1.0",

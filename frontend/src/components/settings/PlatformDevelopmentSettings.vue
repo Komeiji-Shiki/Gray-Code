@@ -5,6 +5,7 @@ import { sendToExtension } from '../../utils/vscode';
 import { markDesktopSettingsDirty, useDesktopSettingsDraft } from '../../platform/settingsDraft';
 import DesktopEditorSettings from './DesktopEditorSettings.vue';
 import DebugAdapterSettings from './DebugAdapterSettings.vue';
+import ExternalAgentSettings from './ExternalAgentSettings.vue';
 interface ServerDraft extends LanguageServerDefinition { key: string; enabled: boolean; languageText: string; optionsText: string; settingsText: string }
 const settings = ref<DevelopmentSettings>({});
 const disabled = ref<string[]>([]);
@@ -124,6 +125,7 @@ onMounted(async () => {
     </article>
     <p v-if="error" class="development-error" role="alert">{{ error }}</p>
     <DebugAdapterSettings v-model="settings.debugAdapters" :disabled="loading || !ready" />
+    <ExternalAgentSettings />
     <DesktopEditorSettings />
   </section>
 </template>

@@ -79,6 +79,7 @@ import { ProductConfiguration, type ProductPreferences } from "./settings/produc
 import { ProductUi } from "./transport/productUi";
 import { PlatformPromptService } from './prompt/service';
 import { PlatformMcpService } from './mcp/service';
+import { ExternalAgents } from './externalAgents/service';
 import { ConversationService } from './conversations/service';
 import { PlatformContextService } from './context/service';
 import { setProductVersionResolver } from '../../../backend/core/productIdentity';
@@ -123,6 +124,7 @@ export class PlatformApplication {
   readonly images: AppearanceImages;
   readonly migration: MigrationService;
   readonly mcp: PlatformMcpService;
+  readonly externalAgents: ExternalAgents;
   readonly previews: ContentPreviews;
   readonly media: PlatformMedia;
   readonly dependencies: DependencyRuntimeManager;
@@ -272,6 +274,7 @@ export class PlatformApplication {
     for(const tool of longMemoryTools(this.longMemory))this.tools.register(tool);
     setProductVersionResolver(() => packageMetadata.version);
     this.mcp = new PlatformMcpService(this);
+    this.externalAgents = new ExternalAgents(this);
     this.modelAdapter = new ProviderModelAdapter({
         profile: async (id) =>
           this.settings
@@ -427,6 +430,7 @@ export class PlatformApplication {
       await application.changes.recover();
       await application.diffs.initialize();
       await application.mcp.initialize();
+      await application.externalAgents.initialize();
       const snapshot = application.settings.snapshot();
       if ((snapshot.settings.toolCatalogVersion ?? 0) < 11) {
         const baseline = snapshot.settings.agents.find(agent => agent.id === 'default');
@@ -569,6 +573,7 @@ export class PlatformApplication {
     await this.discord.summaries.stop();
     await this.onebot.summaries.stop();
     await this.subagents.feedback.continuation.close();
+    await this.externalAgents.close();
     await this.teams.close();
     await this.subagents.close();
     await this.context.close();

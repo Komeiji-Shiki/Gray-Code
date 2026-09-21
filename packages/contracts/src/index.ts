@@ -14,6 +14,7 @@ export * from './search';
 export * from './git';
 export * from './visual';
 export * from './rpc';
+export * from './externalAgents';
 export * from './backups';
 export * from './automations';
 export * from './computer';

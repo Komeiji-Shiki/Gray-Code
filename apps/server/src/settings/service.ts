@@ -1,5 +1,6 @@
 import { workspaceRoots } from '../workspace/paths';
 import { validateDevelopmentSettings } from '../development/settings';
+import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { validateDiscordSettings } from '../bots/config';
 import { validateRemoteAccess } from '../transport/webOrigin';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
@@ -217,6 +218,7 @@ export class SettingsService<T = never> {
   private async validate(settings: AppSettings): Promise<void> {
     validateRemoteAccess(settings.remoteAccess);
     validateDevelopmentSettings(settings.development);
+    validateExternalAgentProfiles(settings.externalAgents);
     if (settings.version !== 1)
       throw new Error("Unsupported settings version.");
     for (const entries of [

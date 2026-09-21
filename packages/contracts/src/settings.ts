@@ -1,4 +1,5 @@
 import type { DevelopmentSettings } from './development';
+import type { ExternalAgentProfile } from './externalAgents';
 import type { RemoteAccessSettings } from './remote';
 import type { CharacterChatConfig } from './characters';
 import type {
@@ -106,6 +107,7 @@ export interface OneBotSettings extends BotConnectionSettings {
 }
 export interface AppSettings {
   remoteAccess?: RemoteAccessSettings;
+  externalAgents?: ExternalAgentProfile[];
   development?: DevelopmentSettings;
   modeProfiles?: Partial<Record<'chat' | 'code' | 'character', { promptModeId?: string; toolNames?: string[] }>>;
   toolCatalogVersion?: number;

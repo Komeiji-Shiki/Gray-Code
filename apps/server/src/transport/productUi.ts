@@ -10,6 +10,7 @@ import { workspaceUiHandlers } from '../workspace/ui';
 import { BranchRetention } from '../conversations/retention';
 import { withDependencyRuntime } from '../../../../backend/modules/dependencies/runtime';
 import { validateDevelopmentSettings } from '../development/settings';
+import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { randomUUID } from 'node:crypto';
 import { createCharacterStarterPreset } from '../../../../shared/characterPromptModules';
 import { characterConversation } from '../characters/conversation';
@@ -313,6 +314,12 @@ export class ProductUi {
         if (!ui.editing) await this.app.product.save(ui.preferences);
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: ui.preferences.dirty } });
         return { id: preset.id, name: preset.name };
+      }
+      case 'platform.externalAgents.get': return ui.preferences.app.externalAgents ?? [];
+      case 'platform.externalAgents.update': {
+        validateExternalAgentProfiles(data.profiles);
+        ui.preferences.app.externalAgents = structuredClone(data.profiles ?? []); ui.preferences.dirty = true;
+        notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: true } }); return { success: true };
       }
       case 'platform.development.get': return ui.preferences.app.development ?? {};
       case 'platform.development.list': return this.app.languages.services(client, [], data.refresh === true);
