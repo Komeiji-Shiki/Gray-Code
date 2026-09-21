@@ -7,6 +7,8 @@ import { formatHistoryForAPI } from '../../../../backend/modules/conversation/ma
 export class CapturedContext {
   readonly state: ConversationState;
   dirty = false;
+  historyReplaced = false;
+  readonly messageUpdates = new Map<number, PlatformMessage>();
   readonly store: ContextConversationStore;
   constructor(state: ConversationState, filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     this.state = structuredClone(state);
@@ -14,6 +16,7 @@ export class CapturedContext {
       const message = this.state.history.messages[index];
       if (!message) throw new Error('Token update refers to an unavailable message.');
       this.state.history.messages[index] = { ...message, ...structuredClone(updates) } as PlatformMessage;
+      this.messageUpdates.set(index, this.state.history.messages[index]);
       this.dirty = true;
     };
     const setCustomMetadata: ContextConversationStore['setCustomMetadata'] = async (_id, key, value) => {

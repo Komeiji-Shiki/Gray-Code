@@ -49,6 +49,7 @@ export interface ModelRequestContext {
   workspace?: WorkspaceDefinition;
   iteration: number;
   input: ModelInput;
+  /** 原始只读快照；上下文修改应通过独立副本和会话事务发布。 */
   history: ConversationState;
 }
 export type RuntimeNotification = { type: 'event'; event: RunEvent }
@@ -252,6 +253,8 @@ export class PlatformRuntime {
       signal.throwIfAborted();
       await this.event(run.id, 'run.started', {}, { status: 'running' });
       await this.services.beforeRun?.(run, workspace, signal);
+      let historyMessages: PlatformMessage[] = [];
+      let historyRevision: number | undefined;
       for (let iteration = 1; agent.maxIterations === -1 || iteration <= agent.maxIterations; iteration++) {
         signal.throwIfAborted();
         await this.services.deliverFeedback?.(run);
@@ -260,7 +263,11 @@ export class PlatformRuntime {
         if (!actor || actor.revoked) throw new Error('Run account was revoked.');
         const access = authorizeEffects(actor, [], workspace);
         if (access) throw new Error(access);
-        let state = await this.services.storage.readConversationState(run.conversationId);
+        let state = await this.services.storage.readConversationState(run.conversationId, undefined, { runId: run.id, revision: historyRevision });
+        const incoming = state.history;
+        historyMessages = [...historyMessages.slice(0, incoming.startIndex), ...incoming.messages];
+        historyRevision = incoming.revision;
+        state = { ...state, history: { ...incoming, startIndex: 0, messages: historyMessages } };
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
         let streamingEvent: Promise<void> | undefined;

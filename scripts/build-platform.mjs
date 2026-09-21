@@ -15,6 +15,7 @@ await build({ ...common, entryPoints: ['packages/contracts/src/index.ts'], outfi
 for (const [entry, output] of [
   ['packages/core/src/index.ts', 'packages/core/dist/index.cjs'],
   ['packages/core/src/storage/worker.ts', 'packages/core/dist/storage.worker.cjs'],
+  ['packages/core/src/storage/longMemory/vector.worker.ts', 'packages/core/dist/long-memory-vector.worker.cjs'],
   ['packages/core/src/characters/worker.ts', 'packages/core/dist/characters.worker.cjs'],
   ['apps/server/src/main.ts', 'apps/server/dist/main.cjs'],
   ['apps/server/src/application.ts', 'apps/server/dist/application.cjs'],

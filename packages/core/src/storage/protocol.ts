@@ -54,7 +54,7 @@ export interface StorageOperations {
   memorySummaries: { input: { scope: MemoryScopeDefinition; lo?: number; hi?: number; expectedRevision?: number }; output: MemorySummary[] };
   memoryRevisions: { input: { scope: MemoryScopeDefinition; before?: number }; output: MemoryRevision[] };
   memoryWrite: { input: MemoryWrite; output: MemoryWriteResult };
-  readConversationState: { input: { id: string; records?: { namespace: string; id: string }[] }; output: ConversationState };
+  readConversationState: { input: { id: string; records?: { namespace: string; id: string }[]; cursor?: import('@graycode/contracts').RuntimeHistoryCursor }; output: ConversationState };
   commitConversation: { input: ConversationCommit; output: ConversationCommitResult };
   createRun: { input: { run: RunRecord; message: PlatformMessage; expectedRevision?: number }; output: { run: RunRecord; created: boolean } };
   getRun: { input: { id: string }; output: RunRecord | null };

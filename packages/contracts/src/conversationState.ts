@@ -7,12 +7,16 @@ export interface ConversationState {
   history: HistoryPage;
   records: { namespace: string; id: string; record: VersionedRecord }[];
 }
+/** 模型循环确认上一次读取的版本，后续只传递发生变化的历史后缀。 */
+export interface RuntimeHistoryCursor { runId: string; revision?: number }
 /** Trusted service operation. Public clients never submit arbitrary records or run identities. */
 export interface ConversationCommit {
   conversationId: string;
   expectedRevision: number;
   expectedMetadataToken?: string;
   messages?: PlatformMessage[];
+  /** 保持消息位置的局部更新，与 messages 整体替换互斥。 */
+  messageUpdates?: { index: number; message: PlatformMessage }[];
   metadata?: PlatformConversation;
   records?: RecordMutation[];
   /** Snapshot the previous history in the same transaction as its replacement. */

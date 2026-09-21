@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SqliteConnection } from './schema';
-import type { PlatformMessage, PageOptions } from '@graycode/contracts';
+import type { PlatformMessage, PageOptions, RuntimeHistoryCursor } from '@graycode/contracts';
 import { ObjectStore } from './objects';
 import { assertIdentifier, invalid, PlatformStorageError } from '../errors';
 
@@ -11,7 +11,32 @@ interface EntryRow { body_hash: Buffer; message_id: string | null; role: string;
 
 /** Sequence spans are small indexes. Forks share spans; message content is immutable. */
 export class HistoryStore {
+  private readonly cursorSnapshots = new Map<string, { historyId: string; revision: number; spans: SpanRow[] }>();
   constructor(private readonly db: SqliteConnection, private readonly objects: ObjectStore) {}
+
+  releaseCursor(runId: string): void { this.cursorSnapshots.delete(runId); }
+  clearCursors(): void { this.cursorSnapshots.clear(); }
+
+  readIncremental(id: string, cursor: RuntimeHistoryCursor) {
+    const info = this.info(id);
+    const spans = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index').all(id) as SpanRow[];
+    const previous = this.cursorSnapshots.get(cursor.runId);
+    let startIndex = 0;
+    if (previous?.historyId === id && previous.revision === cursor.revision) {
+      // 段内条目不可变；段身份、偏移和长度即可确定共享前缀，无需解压旧消息。
+      for (let index = 0; index < Math.min(previous.spans.length, spans.length); index++) {
+        const before = previous.spans[index], after = spans[index];
+        if (before.segment_id !== after.segment_id || before.segment_offset !== after.segment_offset || before.start_index !== after.start_index) break;
+        startIndex += Math.min(before.count, after.count);
+        if (before.count !== after.count) break;
+      }
+    }
+    const rows = this.rows(id, startIndex, info.message_count);
+    if (rows.length !== info.message_count - startIndex) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+    const messages = rows.map(row => this.decode(row));
+    this.cursorSnapshots.set(cursor.runId, { historyId: id, revision: info.revision, spans });
+    return { total: info.message_count, startIndex, revision: info.revision, messages };
+  }
 
   create(): string {
     const id = randomUUID();
@@ -86,13 +111,41 @@ export class HistoryStore {
     for (; prefix < Math.min(old.length, messages.length); prefix++) {
       const next = this.encode(messages[prefix]);
       const previous = old[prefix];
-      if (!next.body_hash.equals(previous.body_hash) || next.message_id !== previous.message_id || next.role !== previous.role || next.timestamp !== previous.timestamp) break;
+      if (!this.sameEntry(next, previous)) break;
     }
     if (prefix === old.length && prefix === messages.length) return;
     this.truncate(id, prefix);
     if (prefix < messages.length) this.append(id, messages.slice(prefix));
     // A replacement is one externally visible mutation, regardless of internal truncate/append.
     this.db.prepare('UPDATE histories SET revision=? WHERE id=?').run(info.revision + 1, id);
+  }
+
+  patch(id: string, updates: { index: number; message: PlatformMessage }[]): void {
+    if (!updates.length) return;
+    const info = this.info(id);
+    const changes = new Map<number, PlatformMessage>();
+    let start = info.message_count;
+    for (const { index, message } of updates) {
+      if (!Number.isSafeInteger(index) || index < 0 || index >= info.message_count) invalid('历史更新位置超出范围。');
+      changes.set(index, message); start = Math.min(start, index);
+    }
+    const rows = this.rows(id, start, info.message_count);
+    if (rows.length !== info.message_count - start) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+    let firstChanged = info.message_count;
+    for (const [index, message] of changes) {
+      if (this.sameEntry(this.encode(message), rows[index - start])) changes.delete(index);
+      else firstChanged = Math.min(firstChanged, index);
+    }
+    if (!changes.size) return;
+    const messages = rows.slice(firstChanged - start).map(row => this.decode(row));
+    for (const [index, message] of changes) messages[index - firstChanged] = message;
+    this.truncate(id, firstChanged);
+    this.append(id, messages);
+    this.db.prepare('UPDATE histories SET revision=? WHERE id=?').run(info.revision + 1, id);
+  }
+
+  private sameEntry(left: EntryRow, right: EntryRow): boolean {
+    return left.body_hash.equals(right.body_hash) && left.message_id === right.message_id && left.role === right.role && left.timestamp === right.timestamp;
   }
 
   fork(id: string, beforeIndex?: number): string {

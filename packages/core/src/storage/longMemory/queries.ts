@@ -2,8 +2,10 @@ import type { LongMemoryQuery, LongMemoryRecall, LongMemoryRecord, LongMemoryRea
 import { invalid } from '../../errors';
 import { MemoryMutationStore, validateMemoryTopic, validateMemoryVector, type RecordRow } from './mutations';
 import { memoryTerms, memoryTokens } from './text';
+import { rankVectors, type VectorRankingRequest } from './vectors';
 
 interface QueryPlan { cte: string; parameters: Array<string | number>; filter: string; filters: Array<string | number> }
+interface SemanticCandidates { available: boolean; matches: Array<{ rowId: number; score: number }> }
 
 /** 目录、摘要和正文共用可见集合，不能在排序截断之后才检查账号或失效来源。 */
 export class MemoryQueries {
@@ -61,7 +63,30 @@ export class MemoryQueries {
     return { cte, parameters, filter: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', filters };
   }
 
-  recall(query: LongMemoryQuery): LongMemoryRecall {
+  prepareVectors(query: LongMemoryQuery, previousKey?: string): { key: string; rowIds: number[]; input: VectorRankingRequest } {
+    const vector = query.vector!; validateMemoryVector(vector);
+    const { cte, parameters, filter, filters } = this.plan(query);
+    const rows = this.store.db.prepare(`${cte} SELECT r.row_id,r.id FROM long_memory_vectors v JOIN eligible r ON r.row_id=v.record_row
+      WHERE v.model=? AND v.dimensions=?${filter}`).all(...parameters, vector.model, vector.dimensions, ...filters) as Array<{ row_id: number; id: string }>;
+    const rowIds = rows.map(row => row.row_id), key = JSON.stringify([vector.model, vector.dimensions, rowIds]);
+    const input: VectorRankingRequest = { dimensions: vector.dimensions, values: vector.values,
+      ids: rows.map(row => row.id), limit: Math.max(40, query.limit) + 1 };
+    if (key !== previousKey) {
+      const bytes = vector.dimensions * 4, packed = Buffer.allocUnsafeSlow(rows.length * bytes);
+      const offsets = new Map(rowIds.map((id, index) => [id, index]));
+      for (let start = 0; start < rowIds.length; start += 500) {
+        const batch = rowIds.slice(start, start + 500);
+        const values = this.store.db.prepare(`SELECT record_row,value FROM long_memory_vectors WHERE record_row IN(${batch.map(() => '?').join(',')})`)
+          .all(...batch) as Array<{ record_row: number; value: Buffer }>;
+        for (const value of values) if (value.value.copy(packed, offsets.get(value.record_row)! * bytes, 0, bytes) !== bytes)
+          throw new Error('记忆向量数据不完整。');
+      }
+      input.vectors = packed.buffer as ArrayBuffer;
+    }
+    return { key, rowIds, input };
+  }
+
+  recall(query: LongMemoryQuery, semanticCandidates?: SemanticCandidates): LongMemoryRecall {
     const { cte, parameters, filter, filters } = this.plan(query);
     const db = this.store.db, terms = [...new Set(memoryTerms(query.text ?? ''))].slice(0,64);
     const candidateLimit = Math.max(40, query.limit)+1;
@@ -83,16 +108,14 @@ export class MemoryQueries {
     add(lexical, terms.length ? '关键词' : '主题');
     let vectorAvailable = false;
     if (query.vector) {
-      validateMemoryVector(query.vector);
-      const rows = db.prepare(`${cte} SELECT r.*,v.value AS vector FROM long_memory_vectors v JOIN eligible r ON r.row_id=v.record_row
-        WHERE v.model=? AND v.dimensions=?${filter}`).all(...parameters, query.vector.model, query.vector.dimensions, ...filters) as Array<RecordRow & { vector: Buffer }>;
-      vectorAvailable = rows.length > 0;
-      const norm = Math.sqrt(query.vector.values.reduce((sum, x) => sum + x*x, 0));
-      const semantic = rows.map(row => {
-        let dot = 0, square = 0;
-        for (let i=0; i<query.vector!.dimensions; i++) { const value = row.vector.readFloatLE(i*4); dot += value*query.vector!.values[i]; square += value*value; }
-        return { ...row, score: norm && square ? dot/(norm*Math.sqrt(square)) : 0 };
-      }).filter(row => row.score > 0).sort((a,b) => b.score-a.score || a.id.localeCompare(b.id)).slice(0,candidateLimit);
+      if (!semanticCandidates) {
+        const prepared = this.prepareVectors(query);
+        semanticCandidates = { available: prepared.rowIds.length > 0,
+          matches: rankVectors({ ...prepared.input, vectors: prepared.input.vectors! }).map(item => ({ rowId: prepared.rowIds[item.index], score: item.score })) };
+      }
+      vectorAvailable = semanticCandidates.available;
+      const statement = db.prepare('SELECT * FROM long_memory_records WHERE row_id=?');
+      const semantic = semanticCandidates.matches.map(item => ({ ...statement.get(item.rowId) as RecordRow, score: item.score }));
       add(semantic, '语义');
     }
     const hits: LongMemoryRecall['hits'] = []; let estimatedTokens = 0, truncated = false;

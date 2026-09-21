@@ -72,6 +72,9 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect(topics.topics.length).toBeLessThanOrEqual(8);expect(topics.estimatedTokens).toBeLessThanOrEqual(300);expect(topics.truncated).toBe(true);
     const result=await f.store.longMemoryRecall(query({text:'不存在的同义词',limit:3,tokenBudget:700,vector:{model:'fixture-two-dimensional',dimensions:2,values:[1,0]}}));
     expect(result.method).toBe('hybrid');expect(result.hits).toHaveLength(3);expect(result.estimatedTokens).toBeLessThanOrEqual(700);
+    await f.store.longMemoryVector({ scope, id: result.hits[0].record.id, version: 1, vector: { model: 'fixture-two-dimensional', dimensions: 2, values: [-1, 0] } });
+    const refreshed = await f.store.longMemoryRecall(query({ text: '不存在的同义词', limit: 3, tokenBudget: 700, vector: { model: 'fixture-two-dimensional', dimensions: 2, values: [1, 0] } }));
+    expect(refreshed.hits.map(hit => hit.record.id)).not.toContain(result.hits[0].record.id);
     expect((await f.store.longMemoryRecall(query({text:'不存在的同义词',vector:{model:'another-model',dimensions:2,values:[1,0]}}))).hits).toEqual([]);
     const expanded=await f.store.longMemoryRead({query:query({limit:1,tokenBudget:350}),references:result.hits.map(hit=>({scopeId:scope.id,id:hit.record.id})),includeSources:true});
     expect(expanded.records.length).toBeLessThanOrEqual(1);expect(expanded.estimatedTokens).toBeLessThanOrEqual(350);

@@ -55,7 +55,10 @@ export class PlatformStorage {
   initializeConversation(metadata: PlatformConversation, messages: PlatformMessage[] = [], records: RecordMutation[] = []) {
     return this.request('initializeConversation', { metadata, messages, records });
   }
-  readConversationState(id: string, records?: { namespace: string; id: string }[]) { return this.request('readConversationState', { id, records }); }
+  /** cursor 仅用于模型循环；返回的 startIndex 以前复用该运行已读取的原始消息。 */
+  readConversationState(id: string, records?: { namespace: string; id: string }[], cursor?: import('@graycode/contracts').RuntimeHistoryCursor) {
+    return this.request('readConversationState', { id, records, cursor });
+  }
   commitConversation(value: ConversationCommit) { return this.request('commitConversation', value); }
   createRun(run: RunRecord, message: PlatformMessage, expectedRevision?: number) { return this.request('createRun', { run, message, expectedRevision }); }
   getRun(id: string) { return this.request('getRun', { id }); }

@@ -7,6 +7,8 @@ import { ObjectStore } from './objects';
 import { HistoryStore } from './histories';
 import { MemoryRepository } from './memories';
 import { LongMemoryRepository } from './longMemory/repository';
+import { VectorRanker } from './longMemory/vectorWorker';
+import type { LongMemoryQuery, LongMemoryRecall } from '@graycode/contracts';
 import { captureStorageSnapshot } from './backup';
 import { backupInventory } from './backupInventory';
 import { mergeBackupUnits } from './backupMerge';
@@ -32,6 +34,8 @@ export class PlatformDatabase {
   private readonly longMemories: LongMemoryRepository;
   private readonly databasePath: string;
   private readonly objectPath: string;
+  private vectorRanker?: VectorRanker;
+  private vectorIndexKey?: string;
 
   constructor(directory: string) {
     if (!path.isAbsolute(directory)) invalid('Storage directory must be absolute.');
@@ -46,6 +50,17 @@ export class PlatformDatabase {
     this.memories = new MemoryRepository(this.db, this.objects);
     this.longMemories = new LongMemoryRepository(this.db);
   }
+
+  async recallMemory(query: LongMemoryQuery): Promise<LongMemoryRecall> {
+    const prepared = this.longMemories.query.prepareVectors(query, this.vectorIndexKey);
+    if (!prepared.rowIds.length) return this.longMemories.query.recall(query, { available: false, matches: [] });
+    const ranker = this.vectorRanker ??= new VectorRanker();
+    const matches = await ranker.rank(prepared.input);
+    this.vectorIndexKey = prepared.key;
+    return this.longMemories.query.recall(query, { available: prepared.rowIds.length > 0,
+      matches: matches.map(item => ({ rowId: prepared.rowIds[item.index], score: item.score })) });
+  }
+  async closeVectorWorker(): Promise<void> { await this.vectorRanker?.close(); }
 
   execute<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): StorageOperations[M]['output'] {
     // The dispatch table is explicit: RPC never indexes arbitrary database methods.
@@ -79,11 +94,11 @@ export class PlatformDatabase {
       memorySummaries: ({ scope, lo, hi, expectedRevision }) => this.memories.summaries(scope, lo, hi, expectedRevision),
       memoryRevisions: ({ scope, before }) => this.memories.revisions(scope, before),
       memoryWrite: input => this.memories.write(input),
-      readConversationState: ({ id, records = [] }) => {
+      readConversationState: ({ id, records = [], cursor }) => {
         const row = this.conversation(id);
         if (records.length > 256) invalid('Too many conversation state records.');
         return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
-          history: this.execute('readFullHistory', { id }),
+          history: cursor ? { conversationId: id, ...this.histories.readIncremental(row.history_id, cursor) } : this.execute('readFullHistory', { id }),
           records: records.map(ref => ({ ...ref, record: this.execute('getVersionedRecord', ref) })) };
       },
       commitConversation: value => this.commitConversation(value),
@@ -96,7 +111,11 @@ export class PlatformDatabase {
       getRun: ({ id }) => this.runs.get(id),
       getRunByRequestKey: ({ requestKey }) => this.runs.byRequestKey(requestKey),
       listRuns: options => this.runs.list(options),
-      appendRunEvent: value => this.runs.append(value),
+      appendRunEvent: value => {
+        const event = this.runs.append(value);
+        if (value.update?.status && ['completed', 'failed', 'cancelled', 'interrupted'].includes(value.update.status)) this.histories.releaseCursor(value.runId);
+        return event;
+      },
       readRunEvents: ({ runId, after, limit }) => this.runs.events(runId, after, limit),
       createConversation: metadata => this.createConversation(metadata),
       initializeConversation: value => this.db.transaction(() => {
@@ -236,11 +255,14 @@ export class PlatformDatabase {
       checkpoint: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); },
       backupSnapshot: () => ({ ...captureStorageSnapshot(this.db, this.databasePath, this.objectPath), statistics: this.statistics() }),
       backupInventory: () => backupInventory(this.db, this.objects),
-      mergeBackupUnits: input => mergeBackupUnits(this.db, this.objects, this.objectPath, input),
+      mergeBackupUnits: input => { this.histories.clearCursors(); return mergeBackupUnits(this.db, this.objects, this.objectPath, input); },
       close: () => { this.db.close(); },
     };
     if (!Object.hasOwn(operations, method)) invalid('Unknown storage operation.');
-    return operations[method](input);
+    const result = operations[method](input);
+    // 只失效记忆数据的计算缓存，普通聊天写入不会迫使下一次搜索重传向量。
+    if (['longMemoryWrite', 'longMemoryVector', 'longMemoryRestore', 'longMemoryJobFinish', 'mergeBackupUnits'].includes(method)) this.vectorIndexKey = undefined;
+    return result;
   }
 
   private commitConversation(value: ConversationCommit): ConversationCommitResult {
@@ -270,7 +292,13 @@ export class PlatformDatabase {
         if (value.snapshot.conversationId !== value.conversationId) invalid('Snapshot belongs to another conversation.');
         this.execute('saveSnapshot', { metadata: value.snapshot });
       }
+      if (value.messages && value.messageUpdates) invalid('不能同时替换历史和提交局部更新。');
       if (value.messages) this.writeHistory(value.conversationId, value.messages, true, value.expectedRevision);
+      if (value.messageUpdates) {
+        this.histories.patch(row.history_id, value.messageUpdates);
+        if (!value.metadata && this.histories.info(row.history_id).revision !== value.expectedRevision)
+          this.saveMetadata({ ...this.objects.getValue<PlatformConversation>(row.metadata_hash), updatedAt: Date.now() });
+      }
       if (value.startRun?.message) this.writeHistory(value.conversationId, [value.startRun.message], false);
       if (value.metadata) {
         if (value.metadata.id !== value.conversationId) invalid('Metadata belongs to another conversation.');
@@ -471,6 +499,8 @@ export class PlatformDatabase {
   }
 
   private collectGarbage(): StorageOperations['collectGarbage']['output'] {
+    // 回收会删除未引用的段，后续 SQLite 可能复用编号，已有运行下次重新取得完整快照。
+    this.histories.clearCursors();
     const result = this.db.transaction(() => {
       this.db.prepare(`DELETE FROM histories WHERE id NOT IN (
         SELECT history_id FROM conversations UNION SELECT history_id FROM snapshots

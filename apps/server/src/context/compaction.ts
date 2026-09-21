@@ -65,7 +65,7 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
   messages.push(summary);
   repairParentChainAfterInsert(messages, full.length, summary.parentId ?? null, summary.id!);
   frame.state.history.messages = messages.map((message, index) => ({ ...message, index })) as unknown as PlatformMessage[];
-  frame.dirty = true;
+  frame.dirty = true; frame.historyReplaced = true;
   await frame.store.setCustomMetadata(frame.state.metadata.id, 'trimState', null);
   await frame.store.setCustomMetadata(frame.state.metadata.id, 'pendingContextWindow', null);
   await frame.store.setCustomMetadata(frame.state.metadata.id, 'contextReminderWindowId', null);

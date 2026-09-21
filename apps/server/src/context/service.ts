@@ -48,10 +48,12 @@ export class PlatformContextService {
     const state = frame.state;
     const result = await this.app.storage.commitConversation({ conversationId: state.metadata.id,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, activeRunId: runId,
-      messages: state.history.messages, metadata: state.metadata,
+      ...(frame.historyReplaced ? { messages: state.history.messages }
+        : frame.messageUpdates.size ? { messageUpdates: [...frame.messageUpdates].map(([index, message]) => ({ index, message })) } : {}),
+      metadata: state.metadata,
       ...(snapshot ? { snapshot: { id: randomUUID(), conversationId: state.metadata.id, timestamp: Date.now(), name: '总结变更前', kind: 'context-summary' } } : {}) });
     state.history.revision = result.revision; state.history.total = result.total; state.metadataToken = result.metadataToken;
-    frame.dirty = false;
+    frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear();
     this.app.productUi.conversations.clearMetadataCache();
   }
   async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
@@ -212,7 +214,7 @@ export class PlatformContextService {
     frame.state.history.messages = messages.map((message, index) => ({ ...message, index })) as unknown as PlatformMessage[];
     (frame.state.history.messages[end] as PlatformMessage).summarizedMessageIds = sourceIds;
     (frame.state.history.messages[end] as PlatformMessage).longMemoryInputIds = fitted.messages.filter(message=>!(message as PlatformMessage).memoryRedacted).map(message=>message.id!);
-    frame.dirty = true;
+    frame.dirty = true; frame.historyReplaced = true;
     await frame.store.setCustomMetadata(frame.state.metadata.id, 'trimState', null);
     return { summaryContent: frame.state.history.messages[end] as Content, insertIndex: end, removedCount: sourceIds.length };
   }
