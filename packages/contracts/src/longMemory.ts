@@ -54,6 +54,9 @@ export interface LongMemoryRead {
 export interface LongMemoryReadResult {
   records: LongMemoryRecord[]; sources: LongMemorySource[];
   unavailable: Array<{ scopeId: string; id: string; version?: number }>; estimatedTokens: number;
+  /** 区分预算省略与内容失效，调用方可提高预算或减少同批编号后重读。 */
+  omitted?: Array<{ kind: 'record' | 'source'; scopeId: string; id: string; version?: number; reason: 'token_budget' | 'record_limit'; estimatedTokens: number }>;
+  truncated?: boolean;
 }
 export interface LongMemoryTombstone {
   scopeId: string; kind: 'source' | 'record'; id: string; action: 'delete' | 'retract'; at: number;

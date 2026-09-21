@@ -9,10 +9,11 @@ import { MemoryEmbeddings } from './embeddings';
 import { sourceMessageText, sourceMessageOrigin } from './content';
 import {memoryReferences,type MemoryRecordReference} from './history';
 import { MemoryBackground } from './background';
+import { revisedMemoryText, type MemoryTextEdit } from './revisionText';
 
 export interface MemoryAccess { actor:ActorIdentity; scopes:LongMemoryScope[]; conversation?:PlatformConversation; workspace?:WorkspaceDefinition }
 export interface MemoryQueryOptions { scopeId?:string; text?:string; topic?:string[]; kinds?:LongMemoryQuery['kinds']; asOf?:number; knownAt?:number; confirmedOnly?:boolean; limit?:number; tokenBudget?:number }
-type MemoryEdit=Omit<Partial<LongMemoryRecordInput>,'attribute'|'value'|'validTo'|'eventAt'>&{attribute?:string|null;value?:string|null;validTo?:number|null;eventAt?:number|null;
+type MemoryEdit=Omit<Partial<LongMemoryRecordInput>,'attribute'|'value'|'validTo'|'eventAt'>&MemoryTextEdit&{attribute?:string|null;value?:string|null;validTo?:number|null;eventAt?:number|null;
   scopeId:string;id:string;expectedVersion:number;sourceMessageId?:string;quote?:string};
 
 export class PlatformLongMemory {
@@ -110,12 +111,13 @@ export class PlatformLongMemory {
     this.requireWrite(access);const scope=this.select(access,input.scopeId)[0];
     const previous=(await this.app.storage.longMemoryRevisions({scope,id:input.id}))[0];
     if(!previous||previous.version!==input.expectedVersion)throw new Error('记忆已经修订或删除，请重新读取后修改。');
-    const source:LongMemorySourceInput&{memoryReferences?:MemoryRecordReference[]}=context?await this.messageSource(access,context,input.sourceMessageId,input.quote):{id:randomUUID(),expectedVersion:0,origin:'user',text:String(input.text??previous.text),recordedAt:Date.now(),reference:{label:'用户修订',speakerActorId:access.actor.id}};
+    const text = revisedMemoryText(previous.text, input);
+    const source:LongMemorySourceInput&{memoryReferences?:MemoryRecordReference[]}=context?await this.messageSource(access,context,input.sourceMessageId,input.quote):{id:randomUUID(),expectedVersion:0,origin:'user',text,recordedAt:Date.now(),reference:{label:'用户修订',speakerActorId:access.actor.id}};
     if(source.memoryReferences?.some(ref=>ref.scopeId!==scope.id))throw new Error('修订需要同一范围的直接来源，不能复制其他范围的模型总结。');
     if(scope.realm!=='real')source.origin='fiction';
     else if(source.origin==='fiction')throw new Error('角色剧情中的来源不能保存为真实个人记忆。');
     const record:LongMemoryRecordInput={...previous,...input,id:previous.id,expectedVersion:previous.version,origin:source.origin,
-      text:input.text??previous.text,kind:input.kind??previous.kind,subject:input.subject??previous.subject,topic:input.topic??previous.topic,entities:input.entities??previous.entities,
+      text,kind:input.kind??previous.kind,subject:input.subject??previous.subject,topic:input.topic??previous.topic,entities:input.entities??previous.entities,
       attribute:input.attribute===null?undefined:input.attribute??previous.attribute,value:input.value===null?undefined:input.value??previous.value,
       validTo:input.validTo===null?undefined:input.validTo??previous.validTo,eventAt:input.eventAt===null?undefined:input.eventAt??previous.eventAt,
       confidence:source.origin==='model'?'inferred':input.confidence??'confirmed',recordedAt:Date.now(),

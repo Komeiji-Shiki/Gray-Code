@@ -22,6 +22,23 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
   afterEach(async()=>{await app.close();await f.cleanup();});
   const personal=async()=>((await router.call(session,'memory.options',{conversationId:'memory-chat'})) as {scopes:LongMemoryScope[]}).scopes.find(scope=>scope.kind==='personal'&&scope.realm==='real')!;
 
+  test('精确替换和追加保留其他正文及修订历史，拒绝歧义和旧版本', async () => {
+    const scope = await personal(), access = await app.longMemory.access('owner', { conversationId: 'memory-chat' });
+    const original = (await app.longMemory.remember(access, { scopeId: scope.id, text: '编辑器：暗色。\n默认端口：4300。\n项目使用 TypeScript。', kind: 'project', topic: ['项目', '配置'] })).records[0];
+    const input = { scopeId: scope.id, id: original.id, expectedVersion: original.version };
+    const patched = (await app.longMemory.revise(access, { ...input, oldText: '默认端口：4300。', newText: '默认端口：4400。' })).records[0];
+    expect(patched.text).toBe('编辑器：暗色。\n默认端口：4400。\n项目使用 TypeScript。');
+    expect(patched.version).toBe(2); expect(patched).not.toHaveProperty('oldText');
+    await expect(app.longMemory.revise(access, { ...input, append: '\n新的约定。' })).rejects.toThrow('重新读取');
+    const appended = (await app.longMemory.revise(access, { ...input, expectedVersion: 2, append: '\n测试使用 Jest。' })).records[0];
+    expect(appended.text).toBe(patched.text + '\n测试使用 Jest。');
+    await expect(app.longMemory.revise(access, { ...input, expectedVersion: 3, oldText: '。', newText: '！' })).rejects.toThrow('出现多次');
+    await expect(app.longMemory.revise(access, { ...input, expectedVersion: 3, oldText: '不存在的文字', newText: '' })).rejects.toThrow('没有找到');
+    await expect(app.longMemory.revise(access, { ...input, expectedVersion: 3, text: '全文', append: '追加' })).rejects.toThrow('只能选择一种');
+    const versions = await app.storage.longMemoryRevisions({ scope, id: original.id });
+    expect(versions.map(item => item.version)).toEqual([3, 2, 1]); expect(versions[2].text).toBe(original.text);
+  });
+
   test('真实记忆工具引用用户原文，跨对话召回，删除阻止旧回复、摘要和历史工具再次发送',async()=>{
     const scope=await personal();let iteration=0;
     generate=async()=>++iteration===1?{role:'model',parts:[{functionCall:{id:'remember-call',name:'memory_remember',args:{scopeId:scope.id,text:'测试代号是青桐-173。',kind:'fact',topic:['测试','代号'],quote:'测试代号是青桐-173。'}}}]}:{role:'model',parts:[{text:'已记住青桐-173。'}]};

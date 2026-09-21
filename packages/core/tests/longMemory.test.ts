@@ -80,6 +80,33 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect(expanded.records.length).toBeLessThanOrEqual(1);expect(expanded.estimatedTokens).toBeLessThanOrEqual(350);
   });
 
+  test('按需读取区分预算省略、条数上限和不存在的记忆，并保持请求顺序', async () => {
+    await f.store.longMemoryWrite({ scope, sources: [source('one-source', '短来源'), source('two-source', '另一来源')],
+      records: [record('one', '第一条事实。'), record('two', '第二条事实。')] });
+    const references = ['two', 'one', 'missing'].map(id => ({ scopeId: scope.id, id }));
+    const limited = await f.store.longMemoryRead({ query: query({ limit: 1, tokenBudget: 16000 }), references });
+    expect(limited.records.map(item => item.id)).toEqual(['two']);
+    expect(limited.unavailable.map(item => item.id)).toEqual(['one', 'missing']);
+    expect(limited.omitted).toEqual([expect.objectContaining({ kind: 'record', id: 'one', reason: 'record_limit' })]);
+    expect(limited.truncated).toBe(true);
+    const small = await f.store.longMemoryRead({ query: query({ tokenBudget: 64 }), references: references.slice(0, 1) });
+    expect(small.omitted?.[0]).toMatchObject({ id: 'two', reason: 'token_budget' });
+    const full = await f.store.longMemoryRead({ query: query({ tokenBudget: 16000 }), references });
+    expect(full.records.map(item => item.id)).toEqual(['two', 'one']); expect(full.omitted).toBeUndefined();
+    const stale = await f.store.longMemoryRead({ query: query(), references: [{ scopeId: scope.id, id: 'one', version: 9 }] });
+    expect(stale.records).toEqual([]); expect(stale.omitted).toBeUndefined();
+  });
+
+  test('正文可读但来源过长时，明确返回被省略的来源和读取预算', async () => {
+    await f.store.longMemoryWrite({ scope, sources: [source('long-source', '来源中的详细原文。'.repeat(200))],
+      records: [record('short', '简短事实。', 'long-source')] });
+    const result = await f.store.longMemoryRead({ query: query({ tokenBudget: 600 }), references: [{ scopeId: scope.id, id: 'short' }], includeSources: true });
+    expect(result.records).toHaveLength(1); expect(result.sources).toEqual([]);
+    expect(result.omitted).toEqual([expect.objectContaining({ kind: 'source', id: 'long-source', reason: 'token_budget' })]);
+    const full = await f.store.longMemoryRead({ query: query({ tokenBudget: 16000 }), references: [{ scopeId: scope.id, id: 'short' }], includeSources: true });
+    expect(full.sources[0].text).toBe('来源中的详细原文。'.repeat(200)); expect(full.omitted).toBeUndefined();
+  });
+
   test('批量失败原子回滚，重试幂等，交换归档可重建关键词索引',async()=>{
     const written=await add();const again=await add();expect(again.state.revision).toBe(written.state.revision);
     await expect(f.store.longMemoryWrite({scope,sources:[source('rollback-source','不应留下。')],records:[record('bad','无效来源。','missing')]})).rejects.toMatchObject({code:'SOURCE_CHANGED'});

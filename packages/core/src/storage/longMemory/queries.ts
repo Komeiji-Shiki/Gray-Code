@@ -157,27 +157,38 @@ export class MemoryQueries {
     const { cte, parameters } = this.plan(input.query);
     if (!Array.isArray(input.references) || input.references.length>100) invalid('一次最多展开 100 条记忆。');
     const scopes = new Set(input.query.scopes.map(scope=>scope.id));
+    for (const ref of input.references) if (!scopes.has(ref.scopeId)) invalid('要展开的记忆不在授权范围中。');
+    // 同一批只计算一次来源可见性，避免每个编号都重复遍历修订和摘要依赖。
+    const rows = input.references.length ? this.store.db.prepare(`${cte} SELECT r.* FROM eligible r WHERE ${input.references.map(() => '(r.scope_id=? AND r.id=?)').join(' OR ')}`)
+      .all(...parameters, ...input.references.flatMap(ref => [ref.scopeId, ref.id])) as RecordRow[] : [];
+    const byId = new Map(rows.map(row => [JSON.stringify([row.scope_id, row.id]), row]));
     const records: LongMemoryRecord[] = [], sources = new Map<string,LongMemorySource>();
     const unavailable: LongMemoryReadResult['unavailable'] = []; let estimatedTokens = 0;
+    const omitted = new Map<string, NonNullable<LongMemoryReadResult['omitted']>[number]>();
     for (const ref of input.references) {
-      if (!scopes.has(ref.scopeId)) invalid('要展开的记忆不在授权范围中。');
-      const row = this.store.db.prepare(`${cte} SELECT r.* FROM eligible r WHERE r.scope_id=? AND r.id=?${ref.version===undefined?'':' AND r.version=?'}`)
-        .get(...parameters, ref.scopeId, ref.id, ...ref.version===undefined?[]:[ref.version]) as RecordRow | undefined;
-      if (!row) { unavailable.push(ref); continue; }
+      const row = byId.get(JSON.stringify([ref.scopeId, ref.id]));
+      if (!row || ref.version !== undefined && row.version !== ref.version) { unavailable.push(ref); continue; }
       const value = JSON.parse(row.payload) as LongMemoryRecord;
       const cost = memoryTokens(JSON.stringify(value));
-      if (records.length>=input.query.limit || estimatedTokens+cost>input.query.tokenBudget) { unavailable.push(ref); continue; }
+      if (records.length>=input.query.limit || estimatedTokens+cost>input.query.tokenBudget) {
+        unavailable.push(ref);
+        omitted.set(JSON.stringify(['record', ref.scopeId, ref.id, ref.version]), { ...ref, kind: 'record', reason: records.length >= input.query.limit ? 'record_limit' : 'token_budget', estimatedTokens: cost });
+        continue;
+      }
       records.push(value); estimatedTokens+=cost;
       if (input.includeSources) for (const dependency of value.dependencies) {
         if (dependency.kind!=='source') continue;
         const source = this.store.source(value.scopeId,dependency.id,dependency.version);
         if (!source || sources.has(`${value.scopeId}:${dependency.id}:${dependency.version}`)) continue;
         const original = JSON.parse(source.payload) as LongMemorySource, size = memoryTokens(JSON.stringify(original));
-        if (estimatedTokens+size>input.query.tokenBudget) continue;
+        if (estimatedTokens+size>input.query.tokenBudget) {
+          omitted.set(JSON.stringify(['source', value.scopeId, dependency.id, dependency.version]), { kind: 'source', scopeId: value.scopeId, id: dependency.id, version: dependency.version, reason: 'token_budget', estimatedTokens: size });
+          continue;
+        }
         sources.set(`${value.scopeId}:${dependency.id}:${dependency.version}`,original); estimatedTokens+=size;
       }
     }
-    return { records,sources:[...sources.values()],unavailable,estimatedTokens };
+    return { records,sources:[...sources.values()],unavailable,estimatedTokens, ...(omitted.size ? { omitted: [...omitted.values()], truncated: true } : {}) };
   }
 
   revisions(scope: LongMemoryScope, id: string): LongMemoryRecord[] {

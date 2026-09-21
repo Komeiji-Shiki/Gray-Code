@@ -15,6 +15,7 @@
 | 配置 MCP、Skills、子代理或 Kimi 等 ACP 程序 | [工具与代理](Agents-and-MCP.md) |
 | 自动任务、Bot、Web 与远程设备 | [自动任务与多端](Automation-and-Devices.md) |
 | 备份恢复、永久记忆、运行记录与排障 | [数据与诊断](Data-and-Diagnostics.md) |
+| 记忆预算、Live2D 参数、桌宠和屏幕感知 | [记忆与陪伴配置](Memory-and-Companions.md) |
 | 查看性能条件、测试范围与技术取舍 | [性能与验证](Performance-and-Validation.md) |
 | 修改源码或构建发行包 | [贡献指南](../CONTRIBUTING.md)与[项目结构](../PROJECT_STRUCTURE.md) |
 
