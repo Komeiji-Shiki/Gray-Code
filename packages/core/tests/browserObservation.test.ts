@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { BrowserPage } from '../../../apps/desktop/src/browser/page';
 import { compactSnapshot, type SnapshotNode } from '../../../apps/desktop/src/browser/snapshot';
 
+
 const signal = () => new AbortController().signal;
 const ax = (id: string, name: string, parentId?: string) => ({ nodeId: id, parentId, backendDOMNodeId: Number(id), role: { value: 'button' }, name: { value: name } });
 
@@ -10,12 +11,13 @@ function fixture(nodes: ReturnType<typeof ax>[]) {
   const sendCommand = jest.fn(async (method: string, params?: any, sessionId?: string): Promise<any> => {
     if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main-frame', url: 'https://fixture.test/' } } };
     if (method === 'Accessibility.getFullAXTree') return { nodes };
+    if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 1280, clientHeight: 720, pageX: 0, pageY: 0 } };
     return {};
   });
   const debug = Object.assign(new EventEmitter(), { sendCommand, isAttached: () => attached, attach: () => { attached = true; } });
   const contents = Object.assign(new EventEmitter(), {
     debugger: debug, isDestroyed: () => false, isDevToolsOpened: () => false,
-    getURL: () => 'https://fixture.test/', getTitle: () => '验收网页', capturePage: jest.fn(),
+    getURL: () => 'https://fixture.test/', getTitle: () => '验收网页', getZoomFactor: (): number => 1, capturePage: jest.fn(),
   });
   return { page: new BrowserPage(contents as any, () => {}), contents, sendCommand };
 }
@@ -63,9 +65,24 @@ test('截图保持比例并报告实际尺寸，小图片不放大', async () =>
   const small = { isEmpty: () => false, getSize: () => ({ width: 1280, height: 720 }), toPNG: () => Buffer.from('fixture'), resize: jest.fn() };
   const large = { ...small, getSize: () => ({ width: 3840, height: 2160 }), resize: jest.fn(() => small) };
   f.contents.capturePage.mockResolvedValueOnce(large).mockResolvedValueOnce(small);
-  expect(await f.page.screenshot(signal())).toMatchObject({ width: 1280, height: 720, mimeType: 'image/png' });
+  expect(await f.page.screenshot(signal(), { width: 1280, height: 720 })).toMatchObject({ observation: { screenshot: { width: 1280, height: 720, mimeType: 'image/png' } } });
   expect(large.resize).toHaveBeenCalledWith({ width: 1280, height: 720, quality: 'best' });
-  await f.page.screenshot(signal(), 2560); expect(small.resize).not.toHaveBeenCalled();
+  await f.page.screenshot(signal(), { width: 1280, height: 720 }, 2560); expect(small.resize).not.toHaveBeenCalled();
+});
+
+test('截图坐标转换为页面坐标，并使旧观察在动作或缩放后失效', async () => {
+  const f = fixture([]);
+  const picture = { isEmpty: () => false, getSize: () => ({ width: 1280, height: 800 }), toPNG: () => Buffer.from('fixture') };
+  f.contents.capturePage.mockResolvedValue(picture);
+  const zoom = jest.spyOn(f.contents, 'getZoomFactor').mockReturnValue(1.25);
+  const frame = await f.page.screenshot(signal(), { width: 800, height: 500 });
+  const args = { action: 'click', observationId: frame.observation.id, x: 640, y: 400 };
+  await f.page.action(args, signal());
+  expect(f.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mousePressed', x: 320, y: 200 }), undefined);
+  await expect(f.page.action(args, signal())).rejects.toMatchObject({ code: 'OBSERVATION_STALE' });
+  const current = await f.page.screenshot(signal(), { width: 800, height: 500 });
+  zoom.mockReturnValue(1.5);
+  await expect(f.page.action({ ...args, observationId: current.observation.id }, signal())).rejects.toMatchObject({ code: 'OBSERVATION_STALE' });
 });
 
 test('日志游标只读取新增记录，缓冲丢失和条数限制均报告截断', () => {

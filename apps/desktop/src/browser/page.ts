@@ -1,6 +1,8 @@
 import type { WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
+import type { BrowserObservation } from '@graycode/contracts';
 import { compactSnapshot, type SnapshotNode } from './snapshot';
+import { browserKey } from './keys';
 
 interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string }
 interface PageLog { cursor: number; time: number; kind: 'console' | 'network' | 'error'; text: string }
@@ -16,6 +18,7 @@ export class BrowserPage {
   private logCursor = 0;
   private epoch = 0;
   private debuggerOwned = false;
+  private observation?: Omit<BrowserObservation, 'tabId'>;
   constructor(readonly contents: WebContents, private readonly changed: () => void) {
     contents.on('did-start-navigation', () => this.invalidate());
     contents.debugger.on('detach', (_event, reason) => {
@@ -40,7 +43,7 @@ export class BrowserPage {
       }
     });
   }
-  invalidate(): void { this.references.clear(); this.epoch++; }
+  invalidate(): void { this.references.clear(); this.observation = undefined; this.epoch++; }
   log(kind: PageLog['kind'], value: unknown): void {
     this.records.push({ cursor: ++this.logCursor, time: Date.now(), kind, text: String(value).slice(0, 3000) });
     if (this.records.length > 200) this.records.splice(0, this.records.length - 200);
@@ -152,24 +155,51 @@ export class BrowserPage {
     return { url: this.contents.getURL(), title: this.contents.getTitle(), frames,
       format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows), truncated };
   }
-  async screenshot(signal: AbortSignal, maxImageDimension = 1280) {
-    signal.throwIfAborted(); const epoch = this.epoch;
+  async screenshot(signal: AbortSignal, bounds: { width: number; height: number }, maxImageDimension = 1280) {
+    await this.connect(); signal.throwIfAborted();
     try {
-      // 捕获不会显示或聚焦窗口；尚无原生绘制表面时明确返回状态，不销毁标签。
+      await this.command('Page.getLayoutMetrics', {}, signal);
+      const epoch = this.epoch, zoomFactor = this.contents.getZoomFactor();
       const picture = await this.pending(this.contents.capturePage(undefined, { stayHidden: false, stayAwake: false }), signal, 5000);
+      const metrics = await this.command('Page.getLayoutMetrics', {}, signal);
       signal.throwIfAborted();
       if (epoch !== this.epoch) throw new Error('页面在截图时发生导航，请重新截图。');
       if (picture.isEmpty()) throw new Error('Current display surface not available for capture');
       const original = picture.getSize();
       const ratio = Math.min(1, maxImageDimension / Math.max(original.width, original.height));
       const image = ratio < 1 ? picture.resize({ width: Math.max(1, Math.round(original.width * ratio)), height: Math.max(1, Math.round(original.height * ratio)), quality: 'best' }) : picture;
-      return { mimeType: 'image/png', data: image.toPNG().toString('base64'), name: 'browser.png', ...image.getSize() };
+      const observation: Omit<BrowserObservation, 'tabId'> = {
+        id: randomUUID(), capturedAt: Date.now(), url: this.contents.getURL(), coordinateSpace: 'image',
+        screenshot: { mimeType: 'image/png', ...image.getSize() },
+        // 视图 DIP 尺寸包括滚动条，除以页面缩放后与整张截图一一对应。
+        viewport: { width: bounds.width / zoomFactor, height: bounds.height / zoomFactor,
+          scrollX: metrics.cssVisualViewport.pageX, scrollY: metrics.cssVisualViewport.pageY, zoomFactor },
+      };
+      this.observation = observation;
+      return { observation, attachment: { mimeType: 'image/png', data: image.toPNG().toString('base64'), name: 'browser.png' } };
     } catch (error) {
       signal.throwIfAborted();
-      if (/display surface.*not available|UnknownVizError/i.test(String(error))) throw Object.assign(new Error('网页尚无可捕获的画面。请先在工作台显示该标签；窗口隐藏时需要用户打开应用。可继续使用页面结构读取，不要重复尝试同一截图。'), { code: 'BROWSER_VIEW_REQUIRED' });
-      if ((error as { code?: string }).code === 'BROWSER_OPERATION_TIMEOUT') throw Object.assign(new Error('网页截图未及时完成。可以继续读取页面结构；请在网页重新显示或恢复后再截图。'), { code: 'BROWSER_CAPTURE_TIMEOUT' });
+      if (/display surface.*not available|UnknownVizError/i.test(String(error))) throw Object.assign(new Error('当前网页的绘制表面不可用，请重新加载标签后观察。'), { code: 'BROWSER_VIEW_REQUIRED' });
+      if ((error as { code?: string }).code === 'BROWSER_OPERATION_TIMEOUT') throw Object.assign(new Error('网页截图未及时完成，请稍后重新观察。'), { code: 'BROWSER_CAPTURE_TIMEOUT' });
       throw error;
     }
+  }
+  private async observed(id: unknown, signal: AbortSignal) {
+    const value = this.observation;
+    if (!value || id !== value.id || Date.now() - value.capturedAt > 120_000)
+      throw Object.assign(new Error('截图观察已失效，请重新截图。'), { code: 'OBSERVATION_STALE' });
+    const metrics = await this.command('Page.getLayoutMetrics', {}, signal);
+    if (this.observation !== value || this.contents.getZoomFactor() !== value.viewport.zoomFactor
+      || metrics.cssVisualViewport.pageX !== value.viewport.scrollX || metrics.cssVisualViewport.pageY !== value.viewport.scrollY)
+      throw Object.assign(new Error('页面缩放或滚动位置已变化，请重新截图。'), { code: 'OBSERVATION_STALE' });
+    return value;
+  }
+  private imagePoint(observation: Omit<BrowserObservation, 'tabId'>, x: unknown, y: unknown) {
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)
+      || x < 0 || y < 0 || x >= observation.screenshot.width || y >= observation.screenshot.height)
+      throw new Error('坐标必须位于返回的截图范围内。');
+    return { x: x * observation.viewport.width / observation.screenshot.width,
+      y: y * observation.viewport.height / observation.screenshot.height };
   }
   private reference(value: unknown): ElementReference {
     const reference = typeof value === 'string' ? this.references.get(value) : undefined;
@@ -185,7 +215,9 @@ export class BrowserPage {
     await this.connect(); signal.throwIfAborted();
     await this.command('Page.setInterceptFileChooserDialog', { enabled: true }, signal);
     const action = String(args.action);
-    const reference = ['click', 'fill', 'press'].includes(action) || args.ref ? this.reference(args.ref) : undefined;
+    const observation = args.observationId ? await this.observed(args.observationId, signal) : undefined;
+    const reference = args.ref || action === 'fill' || !observation && ['click', 'press'].includes(action) ? this.reference(args.ref) : undefined;
+    if (['type', 'drag'].includes(action) && !observation) throw new Error('请提供最近截图的 observationId。');
     try {
       if (action === 'scroll') {
         if (!['up', 'down', 'left', 'right'].includes(String(args.direction))) throw new Error('请提供滚动方向。');
@@ -193,15 +225,40 @@ export class BrowserPage {
         const size = await this.command('Page.getLayoutMetrics', {}, signal);
         let x = size.cssVisualViewport.clientWidth / 2; let y = size.cssVisualViewport.clientHeight / 2;
         if (reference) { const point = await this.point(reference, signal); x = point.x; y = point.y; }
+        else if (observation && (args.x !== undefined || args.y !== undefined)) {
+          const point = this.imagePoint(observation, args.x, args.y); x = point.x; y = point.y;
+        }
         await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' }, signal);
         await this.command('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y,
           deltaX: ['left', 'right'].includes(String(args.direction)) ? (args.direction === 'left' ? -distance : distance) : 0,
           deltaY: ['up', 'down'].includes(String(args.direction)) ? (args.direction === 'up' ? -distance : distance) : 0 }, signal);
       } else if (action === 'click') {
-        const point = await this.point(reference!, signal);
-        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' }, signal, reference!.sessionId);
-        await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 }, signal, reference!.sessionId);
-        await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 }, signal, reference!.sessionId);
+        const point = reference ? await this.point(reference, signal) : this.imagePoint(observation!, args.x, args.y);
+        const button = args.button ?? 'left';
+        if (!['left', 'middle', 'right'].includes(String(button))) throw new Error('不支持的鼠标按键。');
+        const count = args.clickCount === 2 ? 2 : 1;
+        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' }, signal, reference?.sessionId);
+        for (let clickCount = 1; clickCount <= count; clickCount++) {
+          try { await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button, clickCount }, signal, reference?.sessionId); }
+          finally { await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button, clickCount }, AbortSignal.timeout(1000), reference?.sessionId); }
+        }
+      } else if (action === 'drag') {
+        const from = this.imagePoint(observation!, args.x, args.y), to = this.imagePoint(observation!, args.toX, args.toY);
+        const duration = Number(args.durationMs ?? 300), steps = Math.max(2, Math.ceil(duration / 16));
+        let point = from;
+        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' }, signal);
+        try {
+          await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 }, signal);
+          for (let step = 1; step <= steps; step++) {
+            signal.throwIfAborted();
+            point = { x: from.x + (to.x - from.x) * step / steps, y: from.y + (to.y - from.y) * step / steps };
+            await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'left', buttons: 1 }, signal);
+            await new Promise(resolve => setTimeout(resolve, duration / steps));
+          }
+        } finally { await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 }, AbortSignal.timeout(1000)); }
+      } else if (action === 'type') {
+        if (typeof args.text !== 'string') throw new Error('请提供需要输入的文本。');
+        await this.command('Input.insertText', { text: args.text }, signal);
       } else if (action === 'fill') {
         if (typeof args.text !== 'string') throw new Error('请提供需要填入的文本。');
         const objectId = await this.element(reference!, signal);
@@ -210,16 +267,13 @@ export class BrowserPage {
         if (!prepared.result?.value) throw new Error('此元素不是可编辑文本框。');
         await this.command('Input.insertText', { text: args.text }, signal, reference!.sessionId);
       } else if (action === 'press') {
-        const keys: Record<string, { code: string; windowsVirtualKeyCode: number; text?: string }> = {
-          Enter: { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, Tab: { code: 'Tab', windowsVirtualKeyCode: 9 },
-          Escape: { code: 'Escape', windowsVirtualKeyCode: 27 }, Backspace: { code: 'Backspace', windowsVirtualKeyCode: 8 },
-          ArrowUp: { code: 'ArrowUp', windowsVirtualKeyCode: 38 }, ArrowDown: { code: 'ArrowDown', windowsVirtualKeyCode: 40 },
-          ArrowLeft: { code: 'ArrowLeft', windowsVirtualKeyCode: 37 }, ArrowRight: { code: 'ArrowRight', windowsVirtualKeyCode: 39 }, Space: { code: 'Space', windowsVirtualKeyCode: 32, text: ' ' },
-        };
-        const key = keys[String(args.key)]; if (!key) throw new Error('不支持的按键。');
-        await this.command('DOM.focus', { backendNodeId: reference!.backendNodeId }, signal, reference!.sessionId);
-        await this.command('Input.dispatchKeyEvent', { type: 'keyDown', key: args.key === 'Space' ? ' ' : args.key, ...key }, signal, reference!.sessionId);
-        await this.command('Input.dispatchKeyEvent', { type: 'keyUp', key: args.key === 'Space' ? ' ' : args.key, code: key.code, windowsVirtualKeyCode: key.windowsVirtualKeyCode }, signal, reference!.sessionId);
+        const key = browserKey(String(args.key));
+        if (reference) await this.command('DOM.focus', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
+        try { await this.command('Input.dispatchKeyEvent', { type: 'keyDown', ...key }, signal, reference?.sessionId); }
+        finally {
+          const { text: _text, ...released } = key;
+          await this.command('Input.dispatchKeyEvent', { type: 'keyUp', ...released }, AbortSignal.timeout(1000), reference?.sessionId);
+        }
       } else throw new Error('不支持的页面操作。');
     } finally {
       this.invalidate();
