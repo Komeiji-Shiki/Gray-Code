@@ -158,6 +158,11 @@ export class BrowserPage {
   async screenshot(signal: AbortSignal, bounds: { width: number; height: number }, maxImageDimension = 1280) {
     await this.connect(); signal.throwIfAborted();
     try {
+      // 输入派发完成时合成线程可能尚未提交滚动；等新帧后再采集，避免返回操作前的画面。
+      await this.command('Runtime.evaluate', {
+        expression: 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))))',
+        awaitPromise: true, returnByValue: true,
+      }, signal);
       await this.command('Page.getLayoutMetrics', {}, signal);
       const epoch = this.epoch, zoomFactor = this.contents.getZoomFactor();
       const picture = await this.pending(this.contents.capturePage(undefined, { stayHidden: false, stayAwake: false }), signal, 5000);
