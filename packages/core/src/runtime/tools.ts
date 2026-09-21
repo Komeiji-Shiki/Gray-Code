@@ -47,6 +47,7 @@ function canonical(value: unknown): unknown {
 export class RuntimeToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
   private readonly validator = new Ajv({ strict: false, allErrors: false, validateFormats: false });
+  private readonly validators = new Map<string, { schema: string; validate: ValidateFunction }>();
 
   /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
   constructor(private readonly decorate?: (tool: RuntimeTool) => RuntimeTool) {}
@@ -67,7 +68,16 @@ export class RuntimeToolRegistry {
       if (!tool) throw new Error(`Configured tool is unavailable: ${name}`);
       const declaration = canonical(tool.declaration) as ToolDeclaration;
       declarations.push(declaration);
-      entries.set(name, { tool, validate: this.validator.compile(declaration.parameters) });
+      const schema = JSON.stringify(declaration.parameters);
+      let cached = this.validators.get(name);
+      if (cached?.schema !== schema) {
+        const validate = this.validator.compile(declaration.parameters);
+        // Ajv 按对象身份缓存；由工具名和声明内容管理复用，避免每次目录快照积累一个 schema。
+        this.validator.removeSchema(declaration.parameters);
+        cached = { schema, validate };
+        this.validators.set(name, cached);
+      }
+      entries.set(name, { tool, validate: cached.validate });
     }
     return { declarations, entries, version: createHash('sha256').update(JSON.stringify(declarations)).digest('hex') };
   }
@@ -80,6 +90,7 @@ export class RuntimeToolRegistry {
     const next = new RuntimeToolRegistry(this.decorate);
     for (const tool of tools) next.register(tool);
     for (const name of this.tools.keys()) if (name.startsWith(prefix)) this.tools.delete(name);
+    for (const name of this.validators.keys()) if (name.startsWith(prefix)) this.validators.delete(name);
     for (const [name, tool] of next.tools) this.tools.set(name, tool);
   }
 }

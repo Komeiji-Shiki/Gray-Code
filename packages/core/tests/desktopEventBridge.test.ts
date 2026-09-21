@@ -33,3 +33,15 @@ test('重复使用同一回调的订阅仍可分别取消', () => {
   ipcRenderer.emit('graycode:event', {}, { type: 'document.reset' });
   expect(listener).toHaveBeenCalledTimes(1);
 });
+
+test('订阅者抛错不影响其他订阅者或后续事件', () => {
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const broken = bridge.subscribe(() => { throw new Error('界面错误'); });
+  const listener = jest.fn(); const unsubscribe = bridge.subscribe(listener);
+  try {
+    ipcRenderer.emit('graycode:event', {}, { type: 'document.reset' });
+    ipcRenderer.emit('graycode:event', {}, { type: 'transport.resumed' });
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledTimes(2);
+  } finally { broken(); unsubscribe(); log.mockRestore(); }
+});

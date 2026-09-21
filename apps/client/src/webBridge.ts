@@ -62,7 +62,12 @@ function chooseSettingsFile(): Promise<File | null> {
     document.body.appendChild(input); input.click();
   });
 }
-function emit(event: Record<string, any>) { for (const listener of listeners) listener(event); }
+function emit(event: Record<string, any>) {
+  for (const listener of [...listeners]) {
+    try { listener(event); }
+    catch (error) { console.error('Web 事件订阅者处理失败：', event.type, error); }
+  }
+}
 export function closeWebBridge() { eventSource?.close(); eventSource = undefined; finishDirectory(false); }
 export function installWebBridge(): DesktopBridge {
   eventSource?.close();
@@ -83,7 +88,11 @@ export function installWebBridge(): DesktopBridge {
   });
   const bridge: DesktopBridge = {
     kind: 'web',
-    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+    subscribe: listener => {
+      const callback = (event: Record<string, any>) => listener(event);
+      listeners.add(callback);
+      return () => { listeners.delete(callback); };
+    },
     call: async (method, input = {}) => {
       let params: Record<string, any> = input;
       if (method === 'pets.import') return (await webRequest('/pet-resources/import', params)).result;
