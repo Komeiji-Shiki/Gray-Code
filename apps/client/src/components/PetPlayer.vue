@@ -59,6 +59,8 @@ onMounted(async () => {
       heartbeat = setInterval(() => void call('pets.renderer.heartbeat', identity()).catch(cause => failed(cause.message)), 5000);
     }
     const [bundle, runtime] = await Promise.all([call('pets.bundle', { id: props.resource.id }), props.resource.kind === 'live2d' ? call('pets.runtime.get') : Promise.resolve(null)]);
+    // 切换资源或关闭预览后，迟到的加载结果不能再创建观察器。
+    if (closed) return;
     payload = { resource: props.resource, bundle, runtime: runtime?.data }; start();
     observer = new ResizeObserver(entries => { const bounds = entries[0]?.contentRect; if (bounds) post({ action: 'resize', width: Math.max(1, Math.round(bounds.width * devicePixelRatio)), height: Math.max(1, Math.round(bounds.height * devicePixelRatio)) }); });
     if (container.value) observer.observe(container.value);

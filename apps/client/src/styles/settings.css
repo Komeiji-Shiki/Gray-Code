@@ -1,0 +1,7 @@
+/* 工作台的新配置页共用说明层级，随主题配色，不依赖悬停才能读取。 */
+.settings-help { display: block; margin: 0; font-size: 12px; font-weight: 400; line-height: 1.75; color: var(--muted); overflow-wrap: anywhere; }
+.settings-guide { border-left: 2px solid var(--accent); background: var(--panel); padding: 12px 16px; margin: 0 0 20px; }
+.settings-guide strong { color: var(--text); font-size: 13px; font-weight: 500; }
+.settings-guide p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.75; }
+.settings-guide a { color: var(--accent); }
+.settings-form-section { margin-block: 20px; padding-block: 16px; border-top: 1px solid var(--border); }

@@ -2402,25 +2402,25 @@ const en: LanguageMessages = {
                     },
                     runtime: {
                         title: 'Runtime Parameters',
-                        description: 'Fine-tune the memory system output format and capacity. Changing these only affects display; no recomputation is needed.',
+                        description: 'Wake, entry capacity, and pagination for the engineering memory log. Configure the separate layered memory system in Long-term memory → Organization; their budgets are independent.',
                         wakeLines: {
                             label: 'Wake Output Lines',
-                            description: 'How many lines wake prints at most. Larger values = more detail, but higher token cost.',
+                            description: 'Default: 96 lines. Increase to retain more original detail instead of summaries, at a higher input cost. Lower for stable projects; raise when more past agreements matter.',
                             unit: 'lines'
                         },
                         entryChars: {
                             label: 'Max Entry Bytes',
-                            description: 'Maximum bytes per single memory entry. Entries exceeding this limit will be truncated.',
+                            description: 'Default: 280 UTF-8 bytes. A common Chinese character uses 3 bytes. Oversized entries are rejected; shorten the entry or raise the limit. Keep one lasting fact per entry.',
                             unit: 'bytes'
                         },
                         partChars: {
                             label: 'Part Max Characters',
-                            description: 'Maximum characters per output page. Output is split into parts when this limit is exceeded.',
+                            description: 'Default: 20000 characters per page. Smaller pages limit individual tool responses but need more calls to read everything; pagination does not reduce total content.',
                             unit: 'chars'
                         },
                         partLines: {
                             label: 'Part Max Lines',
-                            description: 'Maximum lines per output page. Output is split into parts when this limit is exceeded.',
+                            description: 'Default: 500 lines per page. Both page limits apply; whichever is reached first splits the output. Raise for many short lines; long entries usually reach the character limit first.',
                             unit: 'lines'
                         }
                     },

@@ -11,7 +11,7 @@ defineProps<{ options: AutomationOptions }>();
     <template v-if="form.type === 'file_changed'">
       <label>监控工作区<select v-model="form.workspaceId" required aria-label="事件监控工作区"><option value="" disabled>请选择工作区</option><option v-for="row in options.workspaces" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
       <label>监控文件<input v-model="form.path" required placeholder="例如：src/main.ts" aria-label="事件监控文件" /></label>
-      <label>连续变化的合并等待时间（毫秒）<input v-model="form.debounceMs" type="number" min="100" max="60000" step="1" required aria-label="事件合并等待时间" /></label>
+      <label>连续变化的合并等待时间（毫秒）<input v-model="form.debounceMs" type="number" min="100" max="60000" step="1" required aria-label="事件合并等待时间" /><small class="settings-help">1000 毫秒等于 1 秒。编辑器连续保存可用 500～1000 毫秒；批量生成文件可适当延长。数值越大，重复触发越少，但开始处理也越晚。</small></label>
       <p>监控文件的创建、内容改变和删除。父目录须已存在；重启后继续监听时，会比较关闭前后的内容。</p>
       <p>文件通知无法识别写入者。为阻止跨工作区循环，文件变化会关联当时正在运行的自动任务；如果来源链包含本任务，将跳过并保留原因。本任务运行期间，该文件的新变化也会跳过。</p>
     </template>
