@@ -38,8 +38,7 @@ export type {
 export { McpManager } from './McpManager';
 
 // 客户端
-export { StdioMcpClient } from './StdioClient';
-export { HttpMcpClient } from './HttpClient';
+export { McpClient } from './McpClient';
 
 // 存储适配器
 export {

@@ -90,7 +90,11 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
         
         return {
             success: false,
-            error: errorText
+            error: errorText,
+            ...(mcpResult.executionStatus ? { data: {
+                executionStatus: mcpResult.executionStatus,
+                ...(mcpResult.inputRequired ? { inputRequired: mcpResult.inputRequired } : {}),
+            } } : {}),
         };
     }
 

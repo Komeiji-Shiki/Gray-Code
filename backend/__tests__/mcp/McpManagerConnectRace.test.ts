@@ -9,7 +9,7 @@
  */
 import { McpManager } from '../../modules/mcp/McpManager';
 import { InMemoryMcpStorageAdapter } from '../../modules/mcp/storage';
-import { StdioMcpClient } from '../../modules/mcp/StdioClient';
+import { McpClient } from '../../modules/mcp/McpClient';
 
 function makeTestInput(overrides: Record<string, any> = {}) {
     return {
@@ -72,7 +72,7 @@ describe('McpManager connect lifecycle races', () => {
     test('should reuse the same in-flight connect promise for concurrent connect calls', async () => {
         const id = await createStdioServer('dedupe_srv');
 
-        const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect')
+        const connectSpy = jest.spyOn(McpClient.prototype, 'connect')
             .mockImplementation(() => new Promise(resolve => setTimeout(resolve, 20)));
 
         const p1 = manager.connect(id);
@@ -86,7 +86,7 @@ describe('McpManager connect lifecycle races', () => {
     test('should propagate connect failure to all concurrent callers (no fake success)', async () => {
         const id = await createStdioServer('fail_shared_srv');
 
-        jest.spyOn(StdioMcpClient.prototype, 'connect')
+        jest.spyOn(McpClient.prototype, 'connect')
             .mockImplementation(() => Promise.reject(new Error('server boom')));
 
         const p1 = manager.connect(id);
@@ -104,7 +104,7 @@ describe('McpManager connect lifecycle races', () => {
 
         let rejectOld!: (e: Error) => void;
         let resolveNew!: () => void;
-        const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect');
+        const connectSpy = jest.spyOn(McpClient.prototype, 'connect');
         connectSpy.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }));
         connectSpy.mockImplementationOnce(() => new Promise(resolve => { resolveNew = resolve; }));
 
@@ -133,7 +133,7 @@ describe('McpManager connect lifecycle races', () => {
         const id = await createStdioServer('late_exit_srv');
 
         let resolveNew!: () => void;
-        const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect');
+        const connectSpy = jest.spyOn(McpClient.prototype, 'connect');
         connectSpy.mockImplementationOnce(() => new Promise(() => {})); // A 永久挂起
         connectSpy.mockImplementationOnce(() => new Promise(resolve => { resolveNew = resolve; }));
 

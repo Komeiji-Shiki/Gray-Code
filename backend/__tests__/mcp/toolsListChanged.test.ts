@@ -8,7 +8,7 @@
  * - 无关通知方法不触发刷新
  */
 import { McpManager } from '../../modules/mcp/McpManager';
-import { StdioMcpClient } from '../../modules/mcp/StdioClient';
+import { McpClient } from '../../modules/mcp/McpClient';
 import { InMemoryMcpStorageAdapter } from '../../modules/mcp/storage';
 
 function makeTestInput(overrides: Record<string, any> = {}) {
@@ -47,15 +47,15 @@ describe('McpManager tools list changed notification', () => {
     });
 
     /** 建立连接并返回被管理的 client 实例（用于触发 notification 事件） */
-    async function connectAndGetClient(id: string): Promise<StdioMcpClient> {
-        jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
-        jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
+    async function connectAndGetClient(id: string): Promise<McpClient> {
+        jest.spyOn(McpClient.prototype, 'connect').mockResolvedValue(undefined);
+        jest.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined);
 
         await manager.initialize();
         await manager.createServer(makeTestInput(), id);
         await manager.connect(id);
 
-        const client = (manager as any).clients.get(id) as StdioMcpClient;
+        const client = (manager as any).clients.get(id) as McpClient;
         expect(client).toBeDefined();
         return client;
     }
@@ -67,10 +67,10 @@ describe('McpManager tools list changed notification', () => {
             { name: 'new_tool', description: 'new', inputSchema: { type: 'object' as const } },
         ];
         let current = initialTools;
-        jest.spyOn(StdioMcpClient.prototype, 'getTools').mockImplementation(() => current);
-        jest.spyOn(StdioMcpClient.prototype, 'getResources').mockReturnValue([]);
-        jest.spyOn(StdioMcpClient.prototype, 'getPrompts').mockReturnValue([]);
-        const refreshListsSpy = jest.spyOn(StdioMcpClient.prototype, 'refreshLists')
+        jest.spyOn(McpClient.prototype, 'getTools').mockImplementation(() => current);
+        jest.spyOn(McpClient.prototype, 'getResources').mockReturnValue([]);
+        jest.spyOn(McpClient.prototype, 'getPrompts').mockReturnValue([]);
+        const refreshListsSpy = jest.spyOn(McpClient.prototype, 'refreshLists')
             .mockImplementation(async () => { current = refreshedTools; });
 
         const client = await connectAndGetClient('list_srv');
@@ -102,10 +102,10 @@ describe('McpManager tools list changed notification', () => {
         const initialPrompts = [{ name: 'p1', description: 'd1' }];
         let currentResources = initialResources;
         let currentPrompts = initialPrompts;
-        jest.spyOn(StdioMcpClient.prototype, 'getTools').mockReturnValue([]);
-        jest.spyOn(StdioMcpClient.prototype, 'getResources').mockImplementation(() => currentResources);
-        jest.spyOn(StdioMcpClient.prototype, 'getPrompts').mockImplementation(() => currentPrompts);
-        jest.spyOn(StdioMcpClient.prototype, 'refreshLists')
+        jest.spyOn(McpClient.prototype, 'getTools').mockReturnValue([]);
+        jest.spyOn(McpClient.prototype, 'getResources').mockImplementation(() => currentResources);
+        jest.spyOn(McpClient.prototype, 'getPrompts').mockImplementation(() => currentPrompts);
+        jest.spyOn(McpClient.prototype, 'refreshLists')
             .mockImplementation(async () => {
                 currentResources = [{ uri: 'file:///a.txt', name: 'a' }, { uri: 'file:///b.txt', name: 'b' }];
                 currentPrompts = [{ name: 'p1', description: 'd1' }, { name: 'p2', description: 'd2' }];
@@ -128,12 +128,12 @@ describe('McpManager tools list changed notification', () => {
     });
 
     test('should not reconnect and only log when refresh fails', async () => {
-        jest.spyOn(StdioMcpClient.prototype, 'getTools').mockReturnValue([
+        jest.spyOn(McpClient.prototype, 'getTools').mockReturnValue([
             { name: 'stale_tool', description: 'stale', inputSchema: { type: 'object' as const } },
         ]);
-        jest.spyOn(StdioMcpClient.prototype, 'getResources').mockReturnValue([]);
-        jest.spyOn(StdioMcpClient.prototype, 'getPrompts').mockReturnValue([]);
-        const refreshListsSpy = jest.spyOn(StdioMcpClient.prototype, 'refreshLists')
+        jest.spyOn(McpClient.prototype, 'getResources').mockReturnValue([]);
+        jest.spyOn(McpClient.prototype, 'getPrompts').mockReturnValue([]);
+        const refreshListsSpy = jest.spyOn(McpClient.prototype, 'refreshLists')
             .mockRejectedValue(new Error('server unreachable'));
 
         // 刷新失败时应打印日志
@@ -141,7 +141,7 @@ describe('McpManager tools list changed notification', () => {
 
         const client = await connectAndGetClient('fail_srv');
         // connect 在 connectAndGetClient 中已被 mock 并调用过，需清空历史再断言"未再被调用"
-        const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockClear();
+        const connectSpy = jest.spyOn(McpClient.prototype, 'connect').mockClear();
 
         const updatedEvents: any[] = [];
         manager.addEventListener('server:capabilities_updated', (e) => updatedEvents.push(e));
@@ -164,12 +164,12 @@ describe('McpManager tools list changed notification', () => {
     });
 
     test('should ignore unrelated notification methods', async () => {
-        jest.spyOn(StdioMcpClient.prototype, 'getTools').mockReturnValue([
+        jest.spyOn(McpClient.prototype, 'getTools').mockReturnValue([
             { name: 't1', description: 'd', inputSchema: { type: 'object' as const } },
         ]);
-        jest.spyOn(StdioMcpClient.prototype, 'getResources').mockReturnValue([]);
-        jest.spyOn(StdioMcpClient.prototype, 'getPrompts').mockReturnValue([]);
-        const refreshListsSpy = jest.spyOn(StdioMcpClient.prototype, 'refreshLists')
+        jest.spyOn(McpClient.prototype, 'getResources').mockReturnValue([]);
+        jest.spyOn(McpClient.prototype, 'getPrompts').mockReturnValue([]);
+        const refreshListsSpy = jest.spyOn(McpClient.prototype, 'refreshLists')
             .mockResolvedValue(undefined);
 
         const client = await connectAndGetClient('other_srv');

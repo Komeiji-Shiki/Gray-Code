@@ -4,7 +4,7 @@
  * 覆盖：server ID 校验、connect 失败清理、eager registration、cleanSchema 默认值
  */
 import { McpManager } from '../../modules/mcp/McpManager';
-import { StdioMcpClient } from '../../modules/mcp/StdioClient';
+import { McpClient } from '../../modules/mcp/McpClient';
 import { InMemoryMcpStorageAdapter } from '../../modules/mcp/storage';
 
 function makeTestInput(overrides: Record<string, any> = {}) {
@@ -262,12 +262,12 @@ describe('McpManager', () => {
 
     describe('callTool signal passthrough', () => {
         test('should pass the request signal to the underlying client callTool/readResource', async () => {
-            const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
-            const disconnectSpy = jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
-            const callToolSpy = jest.spyOn(StdioMcpClient.prototype, 'callTool').mockResolvedValue({
+            const connectSpy = jest.spyOn(McpClient.prototype, 'connect').mockResolvedValue(undefined);
+            const disconnectSpy = jest.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined);
+            const callToolSpy = jest.spyOn(McpClient.prototype, 'callTool').mockResolvedValue({
                 content: [{ type: 'text', text: 'ok' }],
             });
-            const readResourceSpy = jest.spyOn(StdioMcpClient.prototype, 'readResource').mockResolvedValue({
+            const readResourceSpy = jest.spyOn(McpClient.prototype, 'readResource').mockResolvedValue({
                 contents: [{ uri: 'u', text: 'data' }],
             });
 
@@ -303,9 +303,9 @@ describe('McpManager', () => {
         });
 
         test('should surface an aborted client rejection as an MCP failure result', async () => {
-            const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
-            const disconnectSpy = jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
-            const callToolSpy = jest.spyOn(StdioMcpClient.prototype, 'callTool')
+            const connectSpy = jest.spyOn(McpClient.prototype, 'connect').mockResolvedValue(undefined);
+            const disconnectSpy = jest.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined);
+            const callToolSpy = jest.spyOn(McpClient.prototype, 'callTool')
                 .mockRejectedValue(new Error('MCP tool call aborted'));
 
             try {

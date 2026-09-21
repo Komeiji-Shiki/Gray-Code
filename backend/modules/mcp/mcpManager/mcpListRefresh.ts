@@ -7,8 +7,7 @@
  */
 
 import type { McpServerInfo, McpEvent } from '../types';
-import type { StdioMcpClient } from '../StdioClient';
-import type { HttpMcpClient } from '../HttpClient';
+import type { McpClient } from '../McpClient';
 
 /**
  * 列表刷新层依赖（由 McpManager 提供）
@@ -38,7 +37,7 @@ export interface McpListRefreshDeps {
 export async function handleServerNotification(
     deps: McpListRefreshDeps,
     info: McpServerInfo,
-    client: StdioMcpClient | HttpMcpClient,
+    client: McpClient,
     generation: number,
     method: string,
     params?: unknown

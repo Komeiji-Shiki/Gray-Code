@@ -15,10 +15,7 @@ import type {
     McpPromptGetRequest,
     McpPromptMessage
 } from '../types';
-import type { StdioMcpClient } from '../StdioClient';
-import type { HttpMcpClient } from '../HttpClient';
-
-type McpClient = StdioMcpClient | HttpMcpClient;
+import { type McpClient, McpInputRequiredError, McpExecutionUnknownError } from '../McpClient';
 
 /**
  * 执行工具调用
@@ -62,6 +59,9 @@ export async function performToolCall(
     } catch (error) {
         return {
             success: false,
+            executionStatus: error instanceof McpInputRequiredError ? 'input_required'
+                : error instanceof McpExecutionUnknownError ? 'unknown' : undefined,
+            inputRequired: error instanceof McpInputRequiredError ? error.inputRequired : undefined,
             error: error instanceof Error ? error.message : t('modules.mcp.errors.toolCallFailed')
         };
     }
@@ -81,7 +81,7 @@ export async function performResourceRead(
     }
     
     const result = await client.readResource(request.uri, request.signal);
-    const contents = result.contents || [];
+    const contents: McpResourceContent[] = result.contents || [];
     if (contents.length === 0) {
         return null;
     }

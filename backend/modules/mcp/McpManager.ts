@@ -23,12 +23,11 @@ import type {
     McpEventListener,
     McpEventType
 } from './types';
-import { StdioMcpClient } from './StdioClient';
-import { HttpMcpClient } from './HttpClient';
+import { McpClient } from './McpClient';
 import { MCP_SERVER_ID_PATTERN } from './mcpToolNameCodec';
 import { generateId, slugifyServerName, transportConfigChanged } from './mcpManager/mcpServerId';
 import { performToolCall, performResourceRead, performPromptGet } from './mcpManager/mcpOperations';
-import { runConnect, performDisconnect, type McpConnectionDeps } from './mcpManager/mcpConnection';
+import { runConnect, performDisconnect, type McpConnectionDeps } from './mcpManager/connection';
 import { handleServerNotification } from './mcpManager/mcpListRefresh';
 
 
@@ -48,7 +47,7 @@ export class McpManager {
     private servers: Map<string, McpServerInfo> = new Map();
     
     /** 活跃的客户端连接 */
-    private clients: Map<string, StdioMcpClient | HttpMcpClient> = new Map();
+    private clients: Map<string, McpClient> = new Map();
     
     /** 每个 serverId 的连接代际计数（防止旧连接的 catch/exit/error 回调覆盖新连接状态） */
     private connectGenerations: Map<string, number> = new Map();
@@ -72,7 +71,7 @@ export class McpManager {
     /** 创建服务器串行队列：校验-保存非原子，并发同 customId 会互相覆盖（M4），整段串行避免 last-writer-wins */
     private createQueue: Promise<unknown> = Promise.resolve();
 
-    /** 连接/刷新抽离服务所共享的依赖（供 mcpConnection / mcpListRefresh 使用） */
+    /** 连接和目录刷新共用的状态与事件入口。 */
     private readonly connectionDeps: McpConnectionDeps;
 
     constructor(storageAdapter: McpStorageAdapter, private readonly options: { connections?: boolean } = {}) {

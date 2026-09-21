@@ -31,7 +31,7 @@ export interface StdioTransportConfig {
  * SSE 传输配置
  *
  * 注意：经典 SSE 传输（GET /sse 端点 + 独立事件流）实际未实现——'sse' 类型仅为
- * 兼容旧配置保留，HttpMcpClient 按 streamable-http 语义统一处理（POST 请求 +
+ * 兼容旧配置保留，McpClient 按 streamable-http 语义统一处理（POST 请求 +
  * SSE 响应流）。新建配置请使用 streamable-http。
  */
 export interface SseTransportConfig {
@@ -216,11 +216,14 @@ export interface McpToolContent {
 
 export interface McpRawToolResult {
     content?: McpToolContent[];
-    structuredContent?: Record<string, unknown>;
+    structuredContent?: unknown;
     isError?: boolean;
 }
 
 export interface McpToolCallResult extends McpRawToolResult {
+    /** 已有副作用的调用中断后，不自动重试；补充输入与空成功结果分别呈现。 */
+    executionStatus?: 'input_required' | 'unknown';
+    inputRequired?: Record<string, unknown>;
     /** 是否成功 */
     success: boolean;
     /** 错误信息 */

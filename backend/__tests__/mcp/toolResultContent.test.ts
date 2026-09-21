@@ -1,8 +1,22 @@
 import { mcpResultToToolResult, mcpToolToDeclaration } from '../../modules/mcp/toolAdapter';
 import { performToolCall } from '../../modules/mcp/mcpManager/mcpOperations';
 import type { McpServerInfo, McpRawToolResult } from '../../modules/mcp/types';
+import { McpInputRequiredError, McpExecutionUnknownError } from '../../modules/mcp/McpClient';
 
 describe('MCP tool result and schema preservation', () => {
+    test.each([
+        [new McpInputRequiredError({ resultType: 'input_required', requestState: 'opaque==' }), 'input_required'],
+        [new McpExecutionUnknownError(new Error('connection lost')), 'unknown'],
+    ] as const)('未完成调用经过管理器和工具适配后仍保留状态：%s', async (error, status) => {
+        const client = { callTool: jest.fn().mockRejectedValue(error) };
+        const result = await performToolCall(new Map([['server', client]]) as any,
+            { config: { id: 'server', name: 'test' } } as McpServerInfo,
+            { serverId: 'server', toolName: 'read', arguments: {} });
+        expect(mcpResultToToolResult(result)).toMatchObject({ success: false, data: { executionStatus: status } });
+        if (status === 'input_required') expect(result.inputRequired?.requestState).toBe('opaque==');
+        expect(client.callTool).toHaveBeenCalledTimes(1);
+    });
+
     test('retains JSON Schema definitions, references and object constraints', () => {
         const inputSchema = { type: 'object' as const, properties: { path: { $ref: '#/$defs/path' } }, required: ['path'], additionalProperties: false, $defs: { path: { type: 'string', minLength: 1 } } };
         const declaration = mcpToolToDeclaration({ name: 'read', inputSchema }, 'test');
