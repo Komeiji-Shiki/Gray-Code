@@ -30,8 +30,9 @@ function collectScriptFiles(): string[] {
     const dir = stack.pop()!
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, entry.name)
-      if (entry.isDirectory()) stack.push(p)
-      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.vue')) out.push(p)
+      // 规则约束业务代码；测试里的攻击样本字符串不是实际 alert 调用。
+      if (entry.isDirectory() && entry.name !== '__tests__') stack.push(p)
+      else if (!entry.isDirectory() && !/\.(test|spec)\.ts$/.test(entry.name) && (entry.name.endsWith('.ts') || entry.name.endsWith('.vue'))) out.push(p)
     }
   }
   return out
