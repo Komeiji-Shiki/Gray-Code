@@ -29,10 +29,10 @@ export async function startHttpServer(application: PlatformApplication, options:
   });
   await sessions.restore();
   const router = new ApplicationRouter(application);
-  const streams = new Map<ServerResponse, { client: ClientSession; connectionId: string; valid(): boolean; queue: Promise<void> }>();
+  const streams = new Map<ServerResponse, { client: ClientSession; connectionId: string; valid(): boolean; queue: Promise<void>; queuedBytes: number; accepting: boolean }>();
   const writable = (response: ServerResponse, identity: { valid(): boolean }) => !response.destroyed && !response.writableEnded && identity.valid();
   const closeInvalidStreams = () => { for (const [stream, identity] of streams) if (!identity.valid()) { stream.end(); streams.delete(stream); } };
-  const epoch = randomUUID(); let sequence = 0; let bufferedBytes = 0;
+  const epoch = randomUUID(); let sequence = 0; let bufferedBytes = 0; let backlogResets = 0;
   const recent: { id: string; event: Record<string, unknown>; frame: string; bytes: number }[] = [];
   const host = new WebHost(application, router);
   const failures = new Map<string, { count: number; until: number }>();
@@ -127,7 +127,7 @@ export async function startHttpServer(application: PlatformApplication, options:
       if (url.pathname === '/events' && request.method === 'GET') {
         response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
         response.write(': connected\n\n');
-        const identity = { ...auth, queue: Promise.resolve() };
+        const identity = { ...auth, queue: Promise.resolve(), queuedBytes: 0, accepting: true };
         const cursor = String(request.headers['last-event-id'] ?? url.searchParams.get('after') ?? '');
         let reset = false;
         if (cursor) {
@@ -173,17 +173,29 @@ export async function startHttpServer(application: PlatformApplication, options:
     while (recent.length > 2000 || bufferedBytes > 8 * 1024 * 1024) bufferedBytes -= recent.shift()!.bytes;
     for (const [stream, identity] of streams) {
       if (!identity.valid()) { stream.end(); streams.delete(stream); continue; }
+      if (!identity.accepting) continue;
+      const backlog = identity.queuedBytes + stream.writableLength;
+      if (backlog > 0 && backlog + bytes > 1024 * 1024) {
+        identity.accepting = false; backlogResets++;
+        // 先完整交付已接受的帧，再让客户端重建快照，不能中途截断一张较大的工具图片。
+        void identity.queue.then(() => {
+          if (!stream.destroyed && !stream.writableEnded) { stream.write('event: reset\ndata: {}\n\n'); stream.end(); }
+        }).catch(() => stream.destroy());
+        continue;
+      }
+      identity.queuedBytes += bytes;
       identity.queue = identity.queue.then(async () => {
         if (!writable(stream, identity) || !await router.mayReceive(identity.client, event) || !writable(stream, identity)) return;
-        if (stream.writableLength > 1024 * 1024) { stream.destroy(); streams.delete(stream); }
-        else stream.write(frame);
-      }).catch(() => undefined);
+        stream.write(frame);
+      }).catch(() => undefined).finally(() => { identity.queuedBytes -= bytes; });
     }
   });
   try { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 0, '127.0.0.1', resolve); }); }
   catch (error) { unsubscribe(); server.close(); throw error; }
   let closing: Promise<void> | undefined;
   return { port: (server.address() as AddressInfo).port, router,
+    diagnostics: () => ({ connections: streams.size, replayEvents: recent.length, replayBytes: bufferedBytes, backlogResets,
+      queuedBytes: [...streams.values()].reduce((total, stream) => total + stream.queuedBytes, 0) }),
     connections: () => { const connected = new Set([...streams.values()].filter(value => value.valid()).map(value => value.connectionId));
       return sessions.connections().map(connection => ({ ...connection, connected: connected.has(connection.id) })); },
     revoke: async (id: string) => { sessions.revoke(id); closeInvalidStreams(); await sessions.flush(); },
