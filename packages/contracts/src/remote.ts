@@ -27,4 +27,12 @@ export interface RemoteAccessStatus {
   address?: string;
   error?: string;
   connections: WebConnectionInfo[];
+  eventStream?: EventStreamStatistics;
+}
+export interface EventStreamStatistics {
+  connections: number; replayEvents: number; replayBytes: number; backlogResets: number; queuedBytes: number;
+}
+export interface RuntimeDiagnostics {
+  activeRuns: number; registeredTools: number; compiledToolSchemas: number; managedProcesses: number;
+  eventStream?: EventStreamStatistics;
 }

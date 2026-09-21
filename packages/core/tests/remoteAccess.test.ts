@@ -71,6 +71,10 @@ test('远程设置随共享草稿保存，设备撤销与令牌轮换立即生�
     const conversation = await app.createConversation('owner', '远程持续任务');
     const started = await rpc(phone, 'runs.start', { conversationId: conversation.id, requestKey: 'remote-once', agentId: 'default', text: '保持运行' });
     expect(started.status).toBe(200); const runId = (await started.json() as any).result.id; await until(() => release);
+    const diagnostic = await (await rpc(browser, 'diagnostics.get')).json() as any;
+    expect(diagnostic.result).toMatchObject({ activeRuns: 1, eventStream: { connections: 1, backlogResets: 0 } });
+    expect(diagnostic.result.registeredTools).toBeGreaterThan(0);
+    await expect(router.call({ actorId: 'guest', clientId: 'guest' }, 'diagnostics.get')).rejects.toThrow('Owner');
     await remote.revoke(phoneConnection.id); await expect(finishedStream).resolves.toContain(': connected');
     expect((await rpc(phone)).status).toBe(401); expect((await rpc(browser)).status).toBe(200);
     expect((await app.storage.getRun(runId))?.status).toBe('running');

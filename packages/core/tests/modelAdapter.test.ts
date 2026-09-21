@@ -70,6 +70,8 @@ describe('real HTTP model adapter with existing provider codecs', () => {
   test('视觉预处理、HTTP 和提示词预览保留同一份完整图片历史', async () => {
     profile.capabilities.compatibility.deepSeekVision = true;
     const request = input();
+    const captured: unknown[] = [];
+    request.onRequest = async value => { captured.push(value); };
     request.messages = [{ role: 'user', parts: [
       { text: '全部文字保留', inlineData: { mimeType: 'image/png', data: 'OLD_IMAGE' } },
       { inlineData: { mimeType: 'image/png', data: 'LATEST_IMAGE' } },
@@ -83,6 +85,8 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(JSON.stringify(preview.body)).toContain('全部文字保留');
     await adapter.generate(request); expect(requests[0].body).toEqual(preview.body);
     expect(JSON.stringify(request.messages)).toContain('OLD_IMAGE');
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({ metrics: { inputImages: 2, nativeTools: 1 } });
   });
 
   test('centralizes token limits, strict schemas, reasoning and stable compatibility identities', async () => {

@@ -1,6 +1,7 @@
 import type { DirectoryEntry, SettingsDraft, SettingsSnapshot } from './settings';
 import type { FileEntryInfo } from './files';
-import type { RunEvent, RunRecord } from './runtime';
+import type { RunEvent, RunRecord, ModelRequestMetrics } from './runtime';
+import type { RuntimeDiagnostics } from './remote';
 import type { ComputerAction, ComputerObservation, ComputerObserveInput, ComputerOperation, ComputerStatus, ComputerWindows } from './computer';
 import type { BrowserLayout, BrowserProfile, BrowserState, BrowserTab } from './browser';
 import type { VisualActionResult } from './visual';
@@ -9,6 +10,7 @@ export interface ModelRequestSnapshot {
   runId: string; iteration: number; capturedAt: number; protocol: string; model: string; body: unknown;
   turnContext?: { characterTurn?: { resources: unknown; activation: unknown; config: unknown } };
   prefix?: Record<string, unknown>;
+  metrics?: ModelRequestMetrics;
 }
 type Method<P, R> = { params: P; result: R };
 type Empty = Record<string, never>;
@@ -18,6 +20,7 @@ export type BrowserControlAction = 'navigate' | 'back' | 'forward' | 'reload' | 
 
 /** 每个领域只在这里声明参数和返回值，桌面与 Web 共用同一调用签名。 */
 export interface RpcMethods {
+  'diagnostics.get': Method<Empty, RuntimeDiagnostics>;
   'settings.get': Method<Empty, SettingsSnapshot>;
   'settings.save': Method<SettingsDraft, SettingsSnapshot>;
   'files.list': Method<{ workspaceId: string; path?: string }, DirectoryEntry[]>;
@@ -77,6 +80,7 @@ const tab = { tabId: text };
 
 // 字段表受方法参数类型约束；新增字段时，遗漏入口检查会触发编译错误。
 const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
+  'diagnostics.get': {},
   'settings.get': {}, 'settings.save': { settings: object, expectedRevision: number, credentials: optional(object) },
   'files.list': { workspaceId: text, path: optional(text) }, 'files.inspect': file, 'files.downloadInfo': file, 'files.download': file,
   'files.create': { ...file, kind: oneOf('file', 'directory') },

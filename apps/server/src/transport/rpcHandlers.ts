@@ -2,12 +2,17 @@ import type { ModelRequestSnapshot, RpcMethod, RpcParams, RpcResult } from '@gra
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
 
-type HostedMethod = 'settings.get' | 'settings.save' | 'files.list' | 'files.inspect' | 'files.downloadInfo'
+type HostedMethod = 'diagnostics.get' | 'settings.get' | 'settings.save' | 'files.list' | 'files.inspect' | 'files.downloadInfo'
   | 'files.create' | 'files.move' | 'files.remove' | 'files.upload' | 'runs.list' | 'runs.events' | 'runs.request' | 'runs.cancel' | 'approvals.resolve';
 type Handler<M extends RpcMethod> = (app: PlatformApplication, session: ClientSession, params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>;
 
 /** 已迁移的处理器同时检查入参和返回值，服务继续执行原有账号、目录和版本判断。 */
 const handlers: { [M in HostedMethod]: Handler<M> } = {
+  'diagnostics.get': (app, session) => {
+    app.requireOwner(session.actorId);
+    return { activeRuns: app.runtime.activeCount, ...app.tools.diagnostics(), managedProcesses: app.processes.activeCount,
+      eventStream: app.remoteAccess?.status().eventStream };
+  },
   'settings.get': (app, session) => { app.requireOwner(session.actorId); return app.settings.snapshot(); },
   'settings.save': (app, session, params) => { app.requireOwner(session.actorId); return app.settings.save(params); },
   'files.list': (app, session, params) => {

@@ -13,6 +13,7 @@ import type { Content } from "../../../../backend/modules/conversation/types";
 import type { GenerateRequest } from "../../../../backend/modules/channel/types";
 import type { ToolDeclaration } from "../../../../backend/tools/types";
 import type { ChannelConfig } from "../../../../backend/modules/config/types";
+import { modelRequestMetrics } from './requestMetrics';
 import {
   applyProviderCapabilities,
   buildChannelConfig,
@@ -132,7 +133,7 @@ export class ProviderModelAdapter implements ModelProvider {
   async generate(input: ModelInput): Promise<PlatformMessage> {
     const { profile, config, formatter, options } = await this.prepare(input, true);
     input.signal.throwIfAborted();
-    await input.onRequest?.({ protocol: profile.protocol, model: config.model, body: options.body });
+    await input.onRequest?.({ protocol: profile.protocol, model: config.model, body: options.body, metrics: modelRequestMetrics(options.body) });
     input.signal.throwIfAborted();
     if (!profile.stream) {
       const requestStartedAt = Date.now();

@@ -33,6 +33,7 @@ export class WorkspaceProcesses {
   private readonly entries = new Map<string, ManagedProcess>();
   private closing = false;
   constructor(private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord'>) {}
+  get activeCount(): number { return [...this.entries.values()].filter(entry => entry.running).length; }
   async start(
     workspace: WorkspaceDefinition,
     ownerId: string,

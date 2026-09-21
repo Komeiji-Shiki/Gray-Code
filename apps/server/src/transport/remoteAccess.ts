@@ -36,7 +36,7 @@ export class RemoteAccessService implements RemoteAccessHost {
     return { available: true, source: this.override ? 'command_line' : 'settings', state: this.state, enabled: config.enabled,
       deviceName: os.hostname(), configuredPort: config.port, credentialRef: config.credentialRef, port, error: this.error,
       ...(port !== undefined ? { localAddress: `http://127.0.0.1:${port}`, address: config.publicOrigin || `http://127.0.0.1:${port}` } : {}),
-      connections: this.server?.connections() ?? [] };
+      connections: this.server?.connections() ?? [], eventStream: this.server?.diagnostics() };
   }
   async initialize(override?: RemoteStartupOptions): Promise<void> {
     this.override = override ? { ...override, publicOrigin: normalizeWebOrigin(override.publicOrigin) } : undefined;

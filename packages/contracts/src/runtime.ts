@@ -99,13 +99,14 @@ export interface ApprovalRequest {
   effects: ToolEffect[];
   workspaceId?: string;
 }
+export interface ModelRequestMetrics { inputItems: number; inputImages: number; nativeTools: number }
 export interface ModelInput {
   /** 仅标注内部请求用途，不改变渠道、模型、工具或缓存标识。 */
   purpose?: 'summary' | 'memory';
   /** 核心捕获的回合资料，供应方适配器不直接发送此对象。 */
   turnContext?: Record<string, unknown>;
   /** 在供应方格式化完成后捕获请求正文；不包含认证请求头。 */
-  onRequest?: (request: { protocol: string; model: string; body: unknown }) => Promise<void>;
+  onRequest?: (request: { protocol: string; model: string; body: unknown; metrics?: ModelRequestMetrics }) => Promise<void>;
   promptContext?: { beforeHistoryMessages: PlatformMessage[]; afterHistoryMessages: PlatformMessage[]; historyPlacement: 'entry' | 'legacy'; taskContextEmbedded?: boolean };
   conversationId: string;
   providerId: string;

@@ -53,6 +53,7 @@ export class RuntimeToolRegistry {
 
   /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
   constructor(private readonly decorate?: (tool: RuntimeTool) => RuntimeTool) {}
+  diagnostics() { return { registeredTools: this.tools.size, compiledToolSchemas: this.validators.size }; }
 
   register(tool: RuntimeTool): void {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(tool.declaration.name)) throw new Error('Invalid tool name.');

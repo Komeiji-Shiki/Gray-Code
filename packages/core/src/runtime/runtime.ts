@@ -81,6 +81,7 @@ export interface RuntimeRunScope {
 /** The task owns generation and tool execution; client disconnects never own its lifetime. */
 export class PlatformRuntime {
   private readonly active = new Map<string, ActiveRun>();
+  get activeCount(): number { return this.active.size; }
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly listeners = new Set<(event: RuntimeNotification) => void>();
   private closing = false;
@@ -282,7 +283,8 @@ export class PlatformRuntime {
                 prefix: { conversationId: request.conversationId, providerId: request.providerId, modelOverride: captured.model,
                   reasoningEffort: request.reasoningEffort, systemPrompt: request.systemPrompt, tools: request.tools,
                   promptContext: request.promptContext, taskContext: request.taskContext, turnContext: request.turnContext } } satisfies ModelRequestSnapshot });
-            await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model });
+            await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model,
+              ...(captured.metrics ? { metrics: captured.metrics } : {}) });
           },
           onDelta: parts => {
             if (deltas.closed) return;
