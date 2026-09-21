@@ -4,8 +4,10 @@ import { longMemoryRequest } from './longMemory';
 import { workspaceDirectoryKey } from '../workspace/identity';
 import { ProjectNavigation } from '../conversations/projects';
 import type { PlatformApplication } from "../application";
-import type { SettingsDraft, StartRunInput, WorkspaceDefinition } from "@graycode/contracts";
+import type { StartRunInput, WorkspaceDefinition } from "@graycode/contracts";
 import { randomUUID } from "node:crypto";
+import { validateRpcParams } from '@graycode/contracts';
+import { hasRpcHandler, rpcRequest } from './rpcHandlers';
 
 export interface ClientSession {
   actorId: string;
@@ -20,6 +22,8 @@ export class ApplicationRouter {
   ): Promise<unknown> {
     const app = this.application;
     if (!app.actor(session.actorId)) throw new Error("Account is unavailable.");
+    validateRpcParams(method, params);
+    if (hasRpcHandler(method)) return rpcRequest(app, session, method, params);
     if (method.startsWith('git.')) return gitRequest(app, session, method, params);
     if (method.startsWith('debug.')) return debugRequest(app, session, method, params);
     if (method.startsWith('memory.')) return longMemoryRequest(app, session, method, params);
@@ -144,12 +148,6 @@ export class ApplicationRouter {
           actor: app.actor(session.actorId),
           clientId: session.clientId,
         };
-      case "settings.get":
-        app.requireOwner(session.actorId);
-        return app.settings.snapshot();
-      case "settings.save":
-        app.requireOwner(session.actorId);
-        return app.settings.save(params as SettingsDraft);
       case "discord.status":
         app.requireOwner(session.actorId);
         return app.discord.status();
@@ -271,40 +269,9 @@ export class ApplicationRouter {
         }
         return app.runtime.start(input, undefined, { clientId: session.clientId });
       }
-      case "runs.list":
-        return app.storage.listRuns({
-          conversationId: params.conversationId,
-          actorId:
-            app.actor(session.actorId)?.role === "owner"
-              ? undefined
-              : session.actorId,
-          activeOnly: params.activeOnly,
-          limit: 100,
-        });
-      case "runs.events": {
-        const run = await app.storage.getRun(params.id);
-        if (!run) throw new Error("Run not found.");
-        await app.conversation(session.actorId, run.conversationId);
-        return app.storage.readRunEvents(params.id, params.afterSequence);
-      }
-      case 'runs.request': {
-        const run = await app.storage.getRun(params.id);
-        if (!run) throw new Error('Run not found.');
-        await app.conversation(session.actorId, run.conversationId);
-        if (!Number.isSafeInteger(params.iteration) || params.iteration < 1) throw new Error('请选择模型调用轮次。');
-        return app.storage.getRecord('model-requests', `${run.id}:${params.iteration}`);
-      }
-      case "runs.cancel":
-        return app.runtime.cancel(params.id, session.actorId);
       case "approvals.list":
         app.requireOwner(session.actorId);
         return app.runtime.pendingApprovals();
-      case "approvals.resolve":
-        return app.runtime.resolveApproval(
-          params.id,
-          session.actorId,
-          params.accepted === true,
-        );
       case "questions.list":
         return app.runtime
           .pendingQuestions()
@@ -322,22 +289,6 @@ export class ApplicationRouter {
       case 'files.search': return app.workspaceSearch.search(session, params.workspaceId, params.requestId, params.options);
       case 'files.searchCancel': app.requireOwner(session.actorId); return app.workspaceSearch.cancel(session, params.requestId);
       case 'files.replacePreview': return app.workspaceSearch.replace(session, params.workspaceId, params.options, params.replacement, params.files);
-      case 'files.inspect': return app.fileActions.inspect(session.actorId, params.workspaceId, params.path);
-      case 'files.downloadInfo': {
-        const { absolute: _absolute, ...info } = await app.fileActions.download(session.actorId, params.workspaceId, params.path); return info;
-      }
-      case 'files.create': return app.fileActions.create(session.actorId, params.workspaceId, params.path, params.kind);
-      case 'files.move': return app.fileActions.move(session.actorId, params.workspaceId, params.path, params.target, params.expectedVersion);
-      case 'files.remove': return app.fileActions.remove(session.actorId, params.workspaceId, params.path, params.expectedVersion, params.recursive === true);
-      case 'files.upload': return app.fileActions.upload(session.actorId, params.workspaceId, params.path, params.expectedVersion, params.bytes);
-      case "files.list":
-        app.requireOwner(session.actorId);
-        return app.files.list(
-          app.workspace(session.actorId, params.workspaceId, [
-            "workspace_read",
-          ]),
-          params.path,
-        );
       case 'language.list': return app.languages.list(session, params.refresh === true);
       case 'language.ensure': return app.languages.ensure(session, params.workspaceId, params.path);
       case 'language.request': return app.languages.request(session, params as any);

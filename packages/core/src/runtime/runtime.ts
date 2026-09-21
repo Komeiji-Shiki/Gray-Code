@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   ActorIdentity, AgentDefinition, ApprovalRequest, ModelProvider, PlatformMessage, RunEvent, RunRecord,
   StartRunInput, ToolEffect, ToolOutcome, WorkspaceDefinition, ModelInput,
-  ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation,
+  ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation, ModelRequestSnapshot,
 } from '@graycode/contracts';
 import { PlatformStorage } from '../storage/client';
 import { RuntimeToolRegistry, authorizeEffects, needsApproval, type ToolCatalog, type ToolContext } from './tools';
@@ -281,7 +281,7 @@ export class PlatformRuntime {
                 // 手动总结复用最近真实调用的固定前缀；不保存信号、回调和认证头。
                 prefix: { conversationId: request.conversationId, providerId: request.providerId, modelOverride: captured.model,
                   reasoningEffort: request.reasoningEffort, systemPrompt: request.systemPrompt, tools: request.tools,
-                  promptContext: request.promptContext, taskContext: request.taskContext, turnContext: request.turnContext } } });
+                  promptContext: request.promptContext, taskContext: request.taskContext, turnContext: request.turnContext } } satisfies ModelRequestSnapshot });
             await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model });
           },
           onDelta: parts => {

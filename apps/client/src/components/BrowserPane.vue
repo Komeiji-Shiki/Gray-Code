@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
-import type { BrowserState, BrowserTab } from '@graycode/contracts';
-import { call, subscribe } from '../api';
+import type { BrowserState, BrowserTab, BrowserControlAction } from '@graycode/contracts';
+import { rpc as call, subscribe } from '../api';
 import { state, guard } from '../state';
 const props = defineProps<{ active: boolean }>();
 const viewport = ref<HTMLElement>(); const address = ref(''); const loaded = ref('about:blank');
@@ -26,7 +26,7 @@ async function refresh(): Promise<void> {
   refreshPromise = (async () => {
     do {
       refreshAgain = false;
-      const result = await call<BrowserState>('browser.state');
+      const result = await call('browser.state');
       browser.value = result;
       if (!selectedProfile.value || !result.profiles.some(profile => profile.id === selectedProfile.value)) selectedProfile.value = result.profiles[0]?.id ?? '';
       const current = result.tabs.find(tab => tab.id === result.activeTabId);
@@ -43,13 +43,13 @@ async function navigate() {
   await call('browser.open', { url, tabId: activeTab.value?.id });
   if (isWeb) { loaded.value = url; layout(); } else await refresh();
 }
-async function control(action: string) { await call('browser.control', { action, tabId: activeTab.value?.id }); await refresh(); }
+async function control(action: BrowserControlAction) { await call('browser.control', { action, tabId: activeTab.value?.id }); await refresh(); }
 async function createTab() { await call('browser.newTab', { profileId: selectedProfile.value || undefined }); await refresh(); address.value = ''; }
 async function selectTab(tab: BrowserTab) { await call('browser.select', { tabId: tab.id }); await refresh(); address.value = tab.url === 'about:blank' ? '' : tab.url; }
 async function closeTab(tab: BrowserTab) { await call('browser.closeTab', { tabId: tab.id }); await refresh(); }
 async function saveProfile() {
   if (editingProfile.value === 'rename') await call('browser.profile.rename', { id: selectedProfile.value, name: profileName.value });
-  else { const profile = await call<{ id: string }>('browser.profile.create', { name: profileName.value }); selectedProfile.value = profile.id; }
+  else { const profile = await call('browser.profile.create', { name: profileName.value }); selectedProfile.value = profile.id; }
   editingProfile.value = null; profileName.value = ''; await refresh();
 }
 function editProfile(mode: 'create' | 'rename') {

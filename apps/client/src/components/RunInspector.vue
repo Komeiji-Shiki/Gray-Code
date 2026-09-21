@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
 import type { RunEvent, RunRecord } from '@graycode/contracts';
-import { call, subscribe } from '../api';
+import { rpc as call, subscribe } from '../api';
 import { state } from '../state';
 import { webUi } from '../webBridge';
 import { eventLabels, eventLane, requestGroups, runActivity, type RequestSnapshot } from '../runInspector';
@@ -40,7 +40,7 @@ async function loadRuns() {
   const conversationId = state.conversationId;
   if (!conversationId) return;
   try {
-    const result = await call<RunRecord[]>('runs.list', { conversationId });
+    const result = await call('runs.list', { conversationId });
     if (epoch !== conversationEpoch) return;
     const followLatest = !selectedId.value || selectedId.value === runs.value[0]?.id;
     runs.value = result;
@@ -54,7 +54,7 @@ async function loadEvents() {
   if (!id || loading.value) return;
   loading.value = true;
   try {
-    const result = await call<RunEvent[]>('runs.events', { id, afterSequence: historyCursor });
+    const result = await call('runs.events', { id, afterSequence: historyCursor });
     if (epoch !== runEpoch) return;
     mergeEvents(result); historyCursor = result.at(-1)?.sequence ?? historyCursor; more.value = result.length === 500;
   } catch (cause) { if (epoch === runEpoch) error.value = (cause as Error).message; }
@@ -64,7 +64,7 @@ async function showRequest(iteration: number) {
   const epoch = ++previewEpoch;
   request.value = null;
   try {
-    const result = await call<RequestSnapshot | null>('runs.request', { id: selectedId.value, iteration });
+    const result = await call('runs.request', { id: selectedId.value, iteration });
     if (epoch !== previewEpoch) return;
     request.value = result;
     if (!result) error.value = '这一轮没有保存请求正文。';

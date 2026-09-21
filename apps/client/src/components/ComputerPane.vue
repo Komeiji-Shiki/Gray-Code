@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue';
 import type { ComputerAction, ComputerElement, ComputerObservation, ComputerOperation, ComputerWindows } from '@graycode/contracts';
-import { call, subscribe } from '../api';
+import { rpc as call, subscribe } from '../api';
 import { computerState, refreshComputerStatus } from '../computer';
 import './computerPane.css';
 
@@ -41,13 +41,13 @@ async function perform(action: () => Promise<void>) {
   finally { busy.value = false; await refreshComputerStatus(); }
 }
 async function readWindows() {
-  const value = await call<ComputerWindows>('computer.windows'); inventory.value = value;
+  const value = await call('computer.windows'); inventory.value = value;
   if (selectedWindow.value && !value.windows.some(item => item.id === selectedWindow.value)) { selectedWindow.value = ''; observation.value = undefined; selectedElement.value = ''; }
 }
 async function observe() {
   if (!selectedWindow.value) return;
   const current = ++epoch;
-  const value = await call<ComputerObservation>('computer.observe', { windowId: selectedWindow.value, screenshot: screenshotEnabled.value });
+  const value = await call('computer.observe', { windowId: selectedWindow.value, screenshot: screenshotEnabled.value });
   if (current !== epoch) return;
   observation.value = value; selectedElement.value = ''; pointerMode.value = 'inspect';
 }
@@ -74,7 +74,7 @@ function pointerUp(event: PointerEvent) {
   if (pointerMode.value === 'drag' && start) void perform(() => action({ action:'drag',coordinateSpace:'image',...start,toX:end.x,toY:end.y }));
   else if (pointerMode.value === 'click') void perform(() => action({ action:'click',coordinateSpace:'image',...end }));
 }
-async function loadHistory() { tab.value='history';history.value=await call<ComputerOperation[]>('computer.recent'); }
+async function loadHistory() { tab.value='history';history.value=await call('computer.recent'); }
 watch(() => props.visible, visible => { if (visible && !inventory.value) void perform(readWindows); }, { immediate: true });
 const unsubscribe = subscribe(event => {
   if (event.type === 'computer.changed' && props.visible) void refreshComputerStatus();
@@ -86,7 +86,7 @@ onUnmounted(() => { epoch++;unsubscribe();void call('computer.release').catch(()
     <header class="computer-toolbar"><strong>本机电脑</strong><span>{{ status?.active ? '控制中' : '未取得控制权' }}</span><button :disabled="busy" @click="perform(readWindows)">刷新窗口</button><button v-if="status?.active" class="computer-stop" @click="call('computer.stop').catch(cause => error = cause.message)">立即停止</button></header>
     <p v-if="status?.error" class="computer-error">{{ status.error }}</p>
     <p v-if="error" class="computer-error" role="alert">{{ error }}</p><p v-if="notice" class="computer-notice" role="status">{{ notice }}</p>
-    <div v-if="status?.pausedRunId" class="computer-paused"><span>主人已接管。任务不会自动恢复电脑操作。</span><button @click="perform(async()=>{await call('computer.allowRun',{runId:status?.pausedRunId});})">允许该任务继续</button></div>
+    <div v-if="status?.pausedRunId" class="computer-paused"><span>主人已接管。任务不会自动恢复电脑操作。</span><button @click="perform(async()=>{await call('computer.allowRun',{runId:status!.pausedRunId!});})">允许该任务继续</button></div>
     <nav class="computer-tabs"><button :aria-pressed="tab==='observe'" @click="tab='observe'">窗口与控件</button><button :disabled="busy" :aria-pressed="tab==='history'" @click="perform(loadHistory)">本次启动的操作</button></nav>
     <div v-if="tab==='history'" class="computer-history"><p v-if="!history.length">还没有电脑操作记录。</p><article v-for="entry in history" :key="entry.id"><strong>{{ actionLabels[entry.action] || entry.action }} · {{ entry.window.title }}</strong><span>{{ resultLabels[entry.status] || entry.status }} · {{ new Date(entry.requestedAt).toLocaleString() }}</span><code>PID {{ entry.window.processId }} · {{ entry.window.executable }}</code><p v-if="entry.error">{{ entry.error }}</p></article></div>
     <div v-else class="computer-body">

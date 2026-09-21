@@ -13,6 +13,7 @@ export * from './files';
 export * from './search';
 export * from './git';
 export * from './visual';
+export * from './rpc';
 export * from './backups';
 export * from './automations';
 export * from './computer';

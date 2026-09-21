@@ -1,4 +1,5 @@
 import { reactive } from 'vue';
+import { validateRpcParams } from '@graycode/contracts';
 import type { DesktopBridge } from './api';
 
 interface Directory { name: string; path: string }
@@ -94,6 +95,7 @@ export function installWebBridge(): DesktopBridge {
       return () => { listeners.delete(callback); };
     },
     call: async (method, input = {}) => {
+      validateRpcParams(method, input);
       let params: Record<string, any> = input;
       if (method === 'pets.import') return (await webRequest('/pet-resources/import', params)).result;
       if (method === 'files.upload') {

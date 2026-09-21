@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
-import { call } from '../api';
+import { rpc as call } from '../api';
 import { guard } from '../state';
 import { computerState, connectComputer, openComputer } from '../computer';
 let unsubscribe: (() => void) | undefined;

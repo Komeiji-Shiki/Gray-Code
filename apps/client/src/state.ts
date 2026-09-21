@@ -1,6 +1,6 @@
 import { computed, reactive } from 'vue';
 import type { ConversationViewInfo, SettingsSnapshot } from '@graycode/contracts';
-import { call, subscribe } from './api';
+import { rpc as call, subscribe } from './api';
 
 export const state = reactive({ panelResizing: false, panelObscured: false, panelMenuOpen: false, contentPreviewOpen: false, inspectorOpen: false, ready: false, error: '', settingsOpen: false, chatFocused: true, workbenchExpanded: false,
   notice: null as { message: string; severity: 'info' | 'warning' } | null,
@@ -14,7 +14,7 @@ export async function guard<T>(operation: () => Promise<T>): Promise<T | undefin
   try { return await operation(); } catch (error) { report(error); }
 }
 export async function loadSettings() {
-  state.snapshot = await call<SettingsSnapshot>('settings.get');
+  state.snapshot = await call('settings.get');
   if (state.workspaceId && !state.snapshot.settings.workspaces.some(workspace => workspace.id === state.workspaceId)) state.workspaceId = '';
 }
 export async function initialize() {

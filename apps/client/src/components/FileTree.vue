@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import type { DirectoryEntry, FileEntryInfo } from '@graycode/contracts';
-import { call, subscribe } from '../api';
+import type { DirectoryEntry } from '@graycode/contracts';
+import { rpc as call, subscribe } from '../api';
 import { guard, state } from '../state';
 import { useWorkspaceRoots } from '../workspaceRoots';
 import WorkspaceFileDialog from './WorkspaceFileDialog.vue';
@@ -57,7 +57,7 @@ async function load(directory = '.') {
   if (!workspaceId) return;
   const version = (loadVersions.get(directory) ?? 0) + 1; loadVersions.set(directory, version);
   try {
-    const entries = await call<DirectoryEntry[]>('files.list', { workspaceId, path: directory });
+    const entries = await call('files.list', { workspaceId, path: directory });
     if (epoch === treeEpoch && workspaceId === state.workspaceId && loadVersions.get(directory) === version) {
       children.value[directory] = entries; return true;
     }
@@ -113,7 +113,7 @@ function showMenu(event: MouseEvent, entry: DirectoryEntry) {
 }
 async function editEntry(kind: 'move' | 'remove') {
   const chosen = menu.value; menu.value = undefined; if (!chosen) return;
-  const entry = await call<FileEntryInfo>('files.inspect', { workspaceId: chosen.workspaceId, path: chosen.entry.path });
+  const entry = await call('files.inspect', { workspaceId: chosen.workspaceId, path: chosen.entry.path });
   if (state.workspaceId !== chosen.workspaceId) return;
   if (entry.kind === 'missing') throw new Error('目录项已经不存在，请刷新文件列表。');
   dialog.value = { kind, workspaceId: chosen.workspaceId, path: entry.path, entry };

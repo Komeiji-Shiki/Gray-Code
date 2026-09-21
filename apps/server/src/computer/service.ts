@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { authorizeEffects, type ToolContext } from '@graycode/core';
-import type { ComputerAction, ComputerCapture, ComputerDisplayCapture, ComputerObservation, ComputerOperation, ComputerStatus, ComputerController, ComputerWindows, ToolOutcome } from '@graycode/contracts';
+import type { ComputerAction, ComputerCapture, ComputerDisplayCapture, ComputerObservation, ComputerObserveInput, ComputerOperation, ComputerStatus, ComputerController, ComputerWindows, ToolOutcome } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { WindowsComputerNative } from './native';
@@ -72,7 +72,7 @@ export class ComputerService {
       throw new ComputerError('OBSERVATION_STALE', '观察记录不属于当前任务或已过期，请重新观察。');
     return saved.value;
   }
-  async observe(identity: Identity, params: { windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number; width?: number; height?: number; frameOnly?: boolean; windowOnly?: boolean; expectedProcess?: { processId: number; processStartedAt?: string | null; className: string }; format?: 'png' | 'jpeg'; quality?: number }) {
+  async observe(identity: Identity, params: ComputerObserveInput) {
     return this.serialized(identity, async () => {
       const epoch = this.stopEpoch;
       const value = await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.frameOnly ? 1 : params.maxElements ?? 250,

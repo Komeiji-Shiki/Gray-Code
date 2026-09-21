@@ -22,6 +22,12 @@ export interface ComputerObservation extends VisualObservation {
   window: ComputerWindow; elements: ComputerElement[];
   focusedElementId?: string; truncated: boolean; accessibilityError?: string; screenshot?: ComputerCapture;
 }
+export interface ComputerObserveInput {
+  windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number;
+  width?: number; height?: number; frameOnly?: boolean; windowOnly?: boolean;
+  expectedProcess?: { processId: number; processStartedAt?: string | null; className: string };
+  format?: 'png' | 'jpeg'; quality?: number;
+}
 export type ComputerActionName = 'focusWindow' | 'focusElement' | 'invoke' | 'setValue' | 'select' | 'toggle' | 'expand' | 'collapse'
   | 'click' | 'type' | 'key' | 'scroll' | 'drag';
 export interface ComputerAction {

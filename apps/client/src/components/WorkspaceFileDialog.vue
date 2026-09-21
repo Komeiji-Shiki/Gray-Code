@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { UI_FILE_UPLOAD_LIMIT, type FileEntryInfo } from '@graycode/contracts';
-import { call } from '../api';
+import { rpc as call } from '../api';
 import { state } from '../state';
 import type { FileDialogRequest } from './files/types';
 const props = defineProps<{ request: FileDialogRequest }>();
@@ -31,7 +31,7 @@ async function scan() {
     try {
       if (row.file.size > UI_FILE_UPLOAD_LIMIT) throw new Error('单个文件不能超过 64 MiB。');
       if (!row.name.trim() || names.filter(name => name === names[index]).length > 1) throw new Error('目标文件名不能为空或重复。');
-      const entry = await call<FileEntryInfo>('files.inspect', { workspaceId: props.request.workspaceId, path: names[index] });
+      const entry = await call('files.inspect', { workspaceId: props.request.workspaceId, path: names[index] });
       if (epoch !== scanEpoch) return;
       row.entry = entry; row.overwrite = false; row.error = ['file', 'missing'].includes(entry.kind) ? '' : '目标是目录或链接，请更换文件名。';
     } catch (cause) { if (epoch === scanEpoch) row.error = (cause as Error).message; }
@@ -50,7 +50,7 @@ async function submit() {
         if (row.status === 'done') continue;
         row.status = 'uploading';
         try {
-          const result = await call<FileEntryInfo>('files.upload', { workspaceId: base.workspaceId, path: destination(row.name), expectedVersion: row.entry!.version, bytes: new Uint8Array(await row.file.arrayBuffer()) });
+          const result = await call('files.upload', { workspaceId: base.workspaceId, path: destination(row.name), expectedVersion: row.entry!.version, bytes: new Uint8Array(await row.file.arrayBuffer()) });
           row.status = 'done'; row.error = ''; emit('changed', result.path, base.workspaceId, false);
         } catch (cause) { row.status = 'error'; row.error = (cause as Error).message; break; }
       }
@@ -61,7 +61,7 @@ async function submit() {
       await call('files.remove', { ...base, expectedVersion: currentEntry.value!.version, recursive: currentEntry.value?.kind === 'directory' });
       emit('changed', props.request.path, base.workspaceId, false);
     } else {
-      const result = await call<FileEntryInfo>(props.request.kind === 'move' ? 'files.move' : 'files.create', props.request.kind === 'move'
+      const result = await call(props.request.kind === 'move' ? 'files.move' : 'files.create', props.request.kind === 'move'
         ? { ...base, target: target.value.trim(), expectedVersion: currentEntry.value!.version }
         : { ...base, path: target.value.trim(), kind: props.request.kind });
       emit('changed', result.path, base.workspaceId, props.request.kind === 'file');
@@ -73,7 +73,7 @@ async function submit() {
 function dismiss() { if (!busy.value) emit('close'); }
 async function refreshEntry() {
   busy.value = true;
-  try { currentEntry.value = await call<FileEntryInfo>('files.inspect', { workspaceId: props.request.workspaceId, path: props.request.path }); error.value = ''; }
+  try { currentEntry.value = await call('files.inspect', { workspaceId: props.request.workspaceId, path: props.request.path }); error.value = ''; }
   catch (cause) { error.value = (cause as Error).message; }
   finally { busy.value = false; }
 }

@@ -29,4 +29,4 @@ export function eventLane(type: string) {
   if (type.startsWith('model.') || type === 'message.saved') return '模型';
   return '任务';
 }
-export interface RequestSnapshot { turnContext?: { characterTurn?: { resources: unknown; activation: unknown; config: unknown } }; runId: string; iteration: number; capturedAt: number; protocol: string; model: string; body: unknown }
+export type { ModelRequestSnapshot as RequestSnapshot } from '@graycode/contracts';

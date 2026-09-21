@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { validateRpcParams } from '@graycode/contracts';
 import type { NodeCapabilities, NodeGrant, NodeTaskInput, NodeTaskDiff, RunRecord, ToolEffect, ComputerAction } from '@graycode/contracts';
 import { authorizeEffects } from '@graycode/core';
 import type { PlatformApplication } from '../application';
@@ -119,6 +120,7 @@ export class NodeExecutor {
     }
     if (method.startsWith('computer.')) {
       if (!peer.grant.computer) throw new Error('此配对未允许电脑操作，请在执行设备上重新授权。');
+      validateRpcParams(method, params);
       const viewId = nodeText(params.viewId, '控制客户端标识', 100);
       const identity = { actorId: peer.grant.actorId, clientId: `node:${peer.id}:${viewId}`, signal: wire.signal };
       // 远程图像上的动作必须使用原观察；本地面板的自动聚焦会更换观察，不能用于远程输入。

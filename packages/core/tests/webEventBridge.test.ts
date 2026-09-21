@@ -18,6 +18,7 @@ function fixture() {
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
   vm.runInNewContext(compiled.outputText, { exports, require: (name: string) => {
     if (name === 'vue') return { reactive: (value: unknown) => value };
+    if (name === '@graycode/contracts') return require('@graycode/contracts');
     throw new Error(name);
   }, window: { addEventListener() {} }, sessionStorage: { getItem: () => 'client', setItem() {} },
   console: { error: log }, EventSource });

@@ -1,6 +1,6 @@
 import { reactive } from 'vue';
 import type { ComputerStatus } from '@graycode/contracts';
-import { call, subscribe } from './api';
+import { rpc as call, subscribe } from './api';
 
 export const computerState = reactive({ status: null as ComputerStatus | null, openRequest: 0 });
 let refresh: Promise<void> | undefined;
@@ -10,7 +10,7 @@ export function refreshComputerStatus() {
   refresh = (async () => {
     do {
       refreshAgain = false;
-      try { computerState.status = await call<ComputerStatus>('computer.status'); } catch { computerState.status = null; }
+      try { computerState.status = await call('computer.status'); } catch { computerState.status = null; }
     } while (refreshAgain);
   })().finally(() => { refresh = undefined; });
   return refresh;
