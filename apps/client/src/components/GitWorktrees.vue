@@ -4,7 +4,7 @@ import type { GitBranch, GitWorktree, GitWorktreeCreate } from '@graycode/contra
 import { call } from '../api';
 const props = defineProps<{ directory: string; worktrees: GitWorktree[]; branches: GitBranch[]; disabled: boolean;
   draft: GitWorktreeCreate; invoke: (method: string, params: Record<string, unknown>, notice: string) => Promise<boolean>;
-  open: (entry: GitWorktree) => Promise<void> }>();
+  open: (entry: GitWorktree, startTask?: boolean) => Promise<void> }>();
 const removing = ref<GitWorktree>(); const pickerError = ref('');
 const sameDirectory = (left: string, right: string) => left.replaceAll('\\', '/').replace(/\/$/, '') === right.replaceAll('\\', '/').replace(/\/$/, '');
 async function choose() {
@@ -25,6 +25,7 @@ async function remove() {
     <div v-for="entry in worktrees" :key="entry.directory" class="worktree-entry">
       <div><strong>{{ entry.branch || (entry.detached ? '分离 HEAD' : '工作树') }}</strong><small>{{ entry.main ? '主工作树' : entry.commit?.slice(0, 8) }}</small><p :title="entry.directory">{{ entry.directory }}</p><p v-if="entry.locked || entry.prunable">{{ entry.locked ? '已锁定：' + entry.locked : '需要修复：' + entry.prunable }}</p></div>
       <button :disabled="disabled || sameDirectory(entry.directory, directory) || !!entry.prunable" @click="open(entry)">{{ sameDirectory(entry.directory, directory) ? '当前' : '打开' }}</button>
+      <button :disabled="disabled || !!entry.prunable" @click="open(entry, true)">新建任务</button>
       <button v-if="!entry.main && !sameDirectory(entry.directory, directory)" :disabled="disabled || !!entry.locked || !!entry.prunable" @click="removing = entry">移除</button>
     </div>
     <div v-if="removing" class="worktree-confirm" role="alertdialog" aria-label="移除工作树"><p>删除这个工作树目录？</p><code>{{ removing.directory }}</code><p>提交记录会保留；仍登记为项目，或存在修改、未跟踪及忽略文件时，会保留目录并提示处理。</p><button :disabled="disabled" @click="removing = undefined">取消</button><button :disabled="disabled" @click="remove">删除工作树目录</button></div>

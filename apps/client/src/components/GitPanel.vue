@@ -76,11 +76,15 @@ async function save() {
   catch (cause) { error.value = String(cause); }
   finally { busy.value = false; }
 }
-async function openWorktree(entry: GitWorktree) {
+async function openWorktree(entry: GitWorktree, startTask = false) {
   if (busy.value) return; busy.value = true; error.value = '';
   try {
     const opened = await call<{ id: string }>('workspaces.add', { directory: entry.directory, name: entry.branch || entry.directory.split(/[\\/]/).at(-1) });
     await loadSettings(); state.workspaceId = opened.id;
+    if (startTask) {
+      const task = await call<{ conversationId: string }>('ui.request', { type: 'ui.mode.new', data: { mode: 'code', workspaceId: opened.id } });
+      await call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: task.conversationId } });
+    }
   } catch (cause) { error.value = String(cause); }
   finally { busy.value = false; }
 }
