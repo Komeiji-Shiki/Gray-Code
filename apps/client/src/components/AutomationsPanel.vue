@@ -163,7 +163,7 @@ function providerChanged() { form.modelId = profile.value?.model ?? ''; form.rea
             <h4>触发时间</h4>
             <label>重复方式<select v-model="form.cadence"><option value="once">只执行一次</option><option value="interval">按分钟间隔</option><option value="daily">每天</option><option value="weekly">指定星期</option></select></label>
             <label v-if="form.cadence === 'once' || form.cadence === 'interval'">{{ form.cadence === 'once' ? '执行时间' : '首次执行时间' }}（当前设备时间）<input v-model="form.at" type="datetime-local" required /></label>
-            <label v-if="form.cadence === 'interval'">间隔分钟<input v-model="form.everyMinutes" type="number" min="1" step="1" required /></label>
+            <label v-if="form.cadence === 'interval'">间隔分钟<input v-model="form.everyMinutes" type="number" min="1" step="1" required /><small class="settings-help">单位为分钟，越短检查越频繁，也可能增加模型请求与费用。进度检查可按几分钟设置，日报可选择每天执行。</small></label>
             <div v-if="form.cadence === 'daily' || form.cadence === 'weekly'" class="automation-fields"><label>每天的时间<input v-model="form.time" type="time" required /></label><label>时区<input v-model="form.timeZone" required placeholder="Asia/Shanghai" /></label></div>
             <fieldset v-if="form.cadence === 'weekly'" class="weekday-options"><legend>执行星期</legend><label v-for="day in weekDays" :key="day.id"><input v-model="form.weekDays" type="checkbox" :value="day.id" />周{{ day.name }}</label></fieldset>
             <label>应用关闭期间错过时间<select v-model="form.missedRunPolicy" required><option value="" disabled>请选择处理方式</option><option value="skip">跳过，等待下次触发</option><option value="once">重开后补一次，不逐次补跑</option></select></label>

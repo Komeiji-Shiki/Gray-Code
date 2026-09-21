@@ -61,9 +61,9 @@ useDesktopSettingsDraft(save, () => !!settings.value);
         <option v-for="font in fonts.filter(item => item.toLowerCase().includes(filter.toLowerCase()))" :key="font" :value="fontValue(font)" :style="{ fontFamily: fontValue(font) }">{{ font }}</option>
       </select>
     </div>
-    <div class="appearance-row"><div><strong>界面字号</strong></div><input v-model.number="settings.appearance.fontSize" type="number" min="10" max="30" /></div>
-    <div class="appearance-row"><div><strong>代码字号</strong></div><input v-model.number="settings.appearance.codeFontSize" type="number" min="10" max="30" /></div>
-    <div class="appearance-row"><div><strong>行高</strong></div><input v-model.number="settings.appearance.lineHeight" type="number" min="1" max="3" step="0.1" /></div>
+    <div class="appearance-row"><div><strong>界面字号</strong><p>10～30 像素。调大更易阅读，但同屏显示的内容会减少。</p></div><input v-model.number="settings.appearance.fontSize" type="number" min="10" max="30" /></div>
+    <div class="appearance-row"><div><strong>代码字号</strong><p>调整代码内容的可读大小；较大值适合高分辨率屏幕，也更容易出现横向滚动。</p></div><input v-model.number="settings.appearance.codeFontSize" type="number" min="10" max="30" /></div>
+    <div class="appearance-row"><div><strong>行高</strong><p>相对字号的倍数。1.4～1.8 适合长文阅读，较低值更紧凑，较高值增加行间空白。</p></div><input v-model.number="settings.appearance.lineHeight" type="number" min="1" max="3" step="0.1" /></div>
     <div class="appearance-row"><strong>布局密度</strong><select v-model="settings.appearance.density"><option value="compact">紧凑</option><option value="comfortable">舒适</option></select></div>
     <div class="color-grid"><label v-for="color in colors" :key="color.key"><span>{{ color.name }}</span><input type="color" :value="settings.appearance.colors[color.key] ?? color.value" @input="settings.appearance.colors[color.key] = ($event.target as HTMLInputElement).value" :aria-label="color.name" /><input class="color-code" :value="settings.appearance.colors[color.key] ?? color.value" @input="settings.appearance.colors[color.key] = ($event.target as HTMLInputElement).value" :aria-label="color.name + '颜色代码'" /></label></div>
     <div class="appearance-row"><div><strong>对话背景</strong><p>{{ settings.appearance.backgroundImage ? '已启用背景图片' : '保持纯色背景' }}</p></div><button @click="galleryOpen = true">管理背景</button></div>

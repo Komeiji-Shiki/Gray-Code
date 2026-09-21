@@ -19,9 +19,19 @@ const busy = ref(false);
 const error = ref('');
 const notice = ref('');
 const confirmLeave = ref(false);
+const destination = ref<'close' | 'memory' | 'reminders'>('close');
 let saved = '';
 const dirty = computed(() => ready.value && (JSON.stringify(form) !== saved || saveAsDefault.value));
-function requestClose() { if (busy.value) return; if (dirty.value) confirmLeave.value = true; else emit('close'); }
+function leave() {
+  // 先撤下原生模态窗口，再打开工作台面板，避免新面板被顶层窗口挡住。
+  emit('close');
+  if (destination.value === 'memory') emit('memory');
+  else if (destination.value === 'reminders') emit('reminders');
+}
+function requestClose(next: typeof destination.value = 'close') {
+  if (busy.value) return; destination.value = next;
+  if (dirty.value) confirmLeave.value = true; else leave();
+}
 async function save() {
   busy.value = true; error.value = '';
   try {
@@ -51,8 +61,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <dialog ref="dialog" class="companion-setup" aria-labelledby="companion-title" @cancel.prevent="requestClose">
-    <header><div><h2 id="companion-title">陪伴配置</h2><p>{{ title || '开始一段新的对话' }}</p></div><button :disabled="busy" @click="requestClose">关闭</button></header>
+  <dialog ref="dialog" class="companion-setup" aria-labelledby="companion-title" @cancel.prevent="requestClose()">
+    <header><div><h2 id="companion-title">陪伴配置</h2><p>{{ title || '开始一段新的对话' }}</p></div><button :disabled="busy" @click="requestClose()">关闭</button></header>
     <form @submit.prevent="save">
       <p v-if="error" class="companion-error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
       <template v-if="ready">
@@ -61,7 +71,7 @@ onMounted(async () => {
         <label>角色语气<select v-model="form.characterId"><option :value="undefined">使用下方填写的名称和交流偏好</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }}</option></select><small>角色卡只提供名称与性格，不带入剧情、世界书、开场白或正则。</small></label>
         <div class="companion-names"><label>陪伴角色名称<input v-model="form.name" maxlength="100" placeholder="留空时使用角色卡名称"></label><label>对你的称呼<input v-model="form.userName" maxlength="100" placeholder="按你希望的方式称呼"></label></div>
         <label>交流偏好<textarea v-model="form.tone" rows="5" maxlength="4000" placeholder="例如：自然轻松地交流，记住我明确说过的约定；讨论项目时保持清楚具体。"></textarea></label>
-        <div class="companion-links"><button type="button" @click="emit('memory')">查看与纠正长期记忆</button><button type="button" @click="emit('reminders')">定时提醒与自动任务</button></div>
+        <div class="companion-links"><button type="button" :disabled="busy" @click="requestClose('memory')">查看与纠正长期记忆</button><button type="button" :disabled="busy" @click="requestClose('reminders')">定时提醒与自动任务</button></div>
         <p>自动提取可在长期记忆页配置或关闭。提醒按定时任务设置执行，声音和系统通知遵循「设置 → 通知系统」里的免打扰。</p>
         <label class="companion-check"><input v-model="saveAsDefault" type="checkbox">同时保存为以后新建对话的默认配置</label>
         <small>未勾选时保留已有默认配置。此配置不用于代码模式、角色模式、Bot 共享频道或其他账号。</small>
@@ -69,7 +79,7 @@ onMounted(async () => {
         <footer><span v-if="dirty">有未保存的更改</span><button class="primary" type="submit" :disabled="busy">{{ busy ? '正在保存…' : conversationId ? '保存当前对话' : '用此配置新建对话' }}</button></footer>
       </template><p v-else-if="busy">正在读取配置…</p>
     </form>
-    <section v-if="confirmLeave" class="companion-leave" role="alert"><p>陪伴配置还没有保存。</p><button @click="confirmLeave = false">保留编辑</button><button @click="emit('close')">放弃并关闭</button></section>
+    <section v-if="confirmLeave" class="companion-leave" role="alert"><p>陪伴配置还没有保存。</p><button @click="confirmLeave = false">保留编辑</button><button @click="leave">放弃更改并继续</button></section>
   </dialog>
 </template>
 
