@@ -28,8 +28,9 @@ export interface ComputerObserveInput {
   expectedProcess?: { processId: number; processStartedAt?: string | null; className: string };
   format?: 'png' | 'jpeg'; quality?: number;
 }
-export type ComputerActionName = 'focusWindow' | 'focusElement' | 'invoke' | 'setValue' | 'select' | 'toggle' | 'expand' | 'collapse'
-  | 'click' | 'type' | 'key' | 'scroll' | 'drag';
+export const computerActionNames = ['focusWindow', 'focusElement', 'invoke', 'setValue', 'select', 'toggle', 'expand', 'collapse',
+  'click', 'type', 'key', 'scroll', 'drag'] as const;
+export type ComputerActionName = typeof computerActionNames[number];
 export interface ComputerAction {
   observationId: string; action: ComputerActionName; elementId?: string; text?: string; key?: string;
   /** 图像坐标按该观察实际返回的图片像素计算；屏幕坐标为物理像素。 */

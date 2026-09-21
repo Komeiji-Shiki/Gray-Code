@@ -1,4 +1,5 @@
 import type { ActorIdentity, RunRecord, WorkspaceDefinition } from './runtime';
+import type { ComputerActionName } from './computer';
 
 /** 执行节点拥有独立存储与运行器，不能与网页登录的客户端记录混用。 */
 export interface NodeGrant {
@@ -14,6 +15,8 @@ export interface NodeCapabilities {
   workspaces: Pick<WorkspaceDefinition, 'id' | 'name' | 'directory'>[];
   agents: { id: string; name: string }[];
   tasks: boolean; computer: boolean; screenshot: boolean;
+  /** 老设备可以省略；新设备明确声明截图像素坐标及当前宿主支持的动作。 */
+  visual?: { version: 1; coordinateSpace: 'image'; actions: ComputerActionName[] };
 }
 export interface NodePeerSummary {
   id: string; nodeId: string; name: string; direction: 'incoming' | 'outgoing';

@@ -214,6 +214,8 @@ describe('执行节点配对、运行与恢复', () => {
     await b.close(); nativeB = new NodeNativeFixture(); await openB();
     const paired = await pair({ actorId: 'owner', workspaceIds: [], tasks: false, computer: true });
     const control = (method: string, params: Record<string, any> = {}) => callA('nodes.request', { peerId: paired.peerId, method, params });
+    expect(await control('capabilities')).toMatchObject({ computer: true, screenshot: true,
+      visual: { version: 1, coordinateSpace: 'image', actions: expect.arrayContaining(['click', 'drag', 'type', 'key', 'scroll']) } });
     await control('computer.acquire', { windowIds: ['98'] });
     const observation = await control('computer.observe', { windowId: '98', screenshot: true });
     let release!: () => void; nativeB.holdAction = () => new Promise<void>(resolve => { release = resolve; });
