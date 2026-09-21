@@ -11,10 +11,15 @@ try {
   buildInfo.buildDirty = !!execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], gitOptions).trim();
 } catch { /* 源码压缩包没有 Git 信息，保留实际构建时间。 */ }
 for (const name of ['main', 'preload']) {
-  await build({ entryPoints: [`apps/desktop/src/${name === 'main' ? 'bootstrap' : name}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
-    bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true,
+  const result = await build({ entryPoints: [`apps/desktop/src/${name === 'main' ? 'bootstrap' : name}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true, metafile: true,
     define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo) },
-    external: ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
+    // 沙箱预加载不能 require 工作区包，纯契约代码必须随它一起打包。
+    external: name === 'preload' ? ['electron'] : ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
+  if (name === 'preload') {
+    const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports).filter(item => item.external && item.path !== 'electron');
+    if (imports.length) throw new Error(`沙箱预加载包含无法加载的外部依赖：${imports.map(item => item.path).join(', ')}`);
+  }
 }
 writeFileSync('apps/desktop/dist/build-info.json', JSON.stringify(buildInfo, null, 2));
 // 原生终端放入独立宿主，进程退出时一并回收其读取线程。
