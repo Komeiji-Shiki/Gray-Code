@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import type { RunEvent, RunRecord, RuntimeDiagnostics } from '@graycode/contracts';
 import { rpc as call, subscribe } from '../api';
 import { state } from '../state';
+import JsonDetails from './JsonDetails.vue';
 import { webUi } from '../webBridge';
 import { eventLabels, eventLane, requestGroups, runActivity, type RequestSnapshot } from '../runInspector';
 
@@ -24,6 +25,9 @@ let runEpoch = 0;
 let previewEpoch = 0;
 let historyCursor = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+let runsRequest: Promise<void> | undefined;
+let refreshRunsAgain = false;
+let disposed = false;
 const selected = computed(() => runs.value.find(run => run.id === selectedId.value));
 const activity = computed(() => window.graycode?.kind === 'web' && webUi.connection !== 'connected'
   ? '正在重新连接，任务状态待同步' : !selected.value && state.snapshot?.settings.providers.length === 0
@@ -47,7 +51,17 @@ async function loadDiagnostics() {
 function mergeEvents(incoming: RunEvent[]) {
   events.value = [...new Map([...events.value, ...incoming].map(event => [event.sequence, event])).values()].sort((a, b) => a.sequence - b.sequence);
 }
-async function loadRuns() {
+function loadRuns(): Promise<void> {
+  if (disposed) return Promise.resolve();
+  if (runsRequest) { refreshRunsAgain = true; return runsRequest; }
+  // 任务事件可能密集到达；慢连接只排一轮补读，避免旧列表覆盖较新的选择。
+  runsRequest = (async () => {
+    do { refreshRunsAgain = false; await readRuns(); }
+    while (refreshRunsAgain && !disposed);
+  })().finally(() => { runsRequest = undefined; });
+  return runsRequest;
+}
+async function readRuns() {
   const epoch = conversationEpoch;
   const conversationId = state.conversationId;
   if (!conversationId) return;
@@ -102,7 +116,7 @@ const unsubscribe = subscribe(notification => {
   if (event.runId === selectedId.value) mergeEvents([event]);
   if (event.type.startsWith('run.') || event.type.startsWith('approval.')) refreshSoon();
 });
-onUnmounted(() => { conversationEpoch++; runEpoch++; previewEpoch++; unsubscribe(); clearTimeout(refreshTimer); });
+onUnmounted(() => { disposed = true; refreshRunsAgain = false; conversationEpoch++; runEpoch++; previewEpoch++; unsubscribe(); clearTimeout(refreshTimer); });
 </script>
 <template>
   <div class="run-status-strip"><span class="run-status-dot" :data-status="selected?.status"></span><span>{{ activity }}</span>
@@ -124,7 +138,7 @@ onUnmounted(() => { conversationEpoch++; runEpoch++; previewEpoch++; unsubscribe
         <article v-for="event in visibleEvents" :key="event.sequence" class="timeline-event" :data-lane="eventLane(event.type)">
           <div><time>{{ time(event.timestamp) }}</time><span>{{ eventLane(event.type) }}</span><strong>{{ eventLabels[event.type] ?? event.type }}</strong></div>
           <button v-if="event.type === 'model.request'" @click="showRequest(Number(event.payload.iteration))">查看第 {{ event.payload.iteration }} 次请求</button>
-          <details v-if="Object.keys(event.payload).length"><summary>详情</summary><pre>{{ json(event.payload) }}</pre></details>
+          <JsonDetails v-if="Object.keys(event.payload).length" label="详情" :value="event.payload" />
         </article>
         <button v-if="more" class="quiet-button" :disabled="loading" @click="loadEvents">继续读取</button>
       </div>
@@ -133,7 +147,7 @@ onUnmounted(() => { conversationEpoch++; runEpoch++; previewEpoch++; unsubscribe
         <p v-if="!request" class="inspector-empty">{{ requests.length ? '从时间线选择一次模型请求。' : '这次任务尚无请求记录；旧任务不会补造请求正文。' }}</p>
         <template v-else><p>{{ request.model }} · {{ request.protocol }} · {{ time(request.capturedAt) }}</p>
           <p v-if="request.metrics" class="preview-note">{{ request.metrics.inputItems }} 条输入项 · {{ request.metrics.inputImages }} 张输入图片 · {{ request.metrics.nativeTools }} 项原生工具声明</p>
-          <details v-if="request.turnContext?.characterTurn" class="request-group"><summary>本回合角色资料与世界书激活结果</summary><pre>{{ json(request.turnContext.characterTurn) }}</pre></details>
+          <JsonDetails v-if="request.turnContext?.characterTurn" class="request-group" label="本回合角色资料与世界书激活结果" :value="request.turnContext.characterTurn" />
           <pre v-if="view === 'plain'">{{ JSON.stringify(request.body, null, 2) }}</pre>
           <template v-else><details v-for="(group, index) in groups" :key="index" class="request-group" open><summary>{{ group.title }}</summary><pre>{{ json(group.value) }}</pre></details></template>
         </template>
