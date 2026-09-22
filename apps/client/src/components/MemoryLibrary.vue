@@ -130,7 +130,8 @@ async function discard(){
   if(pendingClose.value){emit('close');return;}
   const action=pendingNavigation.value;pendingNavigation.value=null;resetEditor();await action?.();
 }
-defineExpose({requestClose});
+function discardChanges(){pendingClose.value=false;pendingNavigation.value=null;resetEditor();if(options.value)setPolicy(options.value.policy.value);}
+defineExpose({requestClose,dirty,busy,discardChanges});
 async function loadGraph(){
   const request=++graphEpoch;graph.value=undefined;graphError.value='';
   if(editorView.value!=='graph'||!editingId.value){graphLoading.value=false;return;}

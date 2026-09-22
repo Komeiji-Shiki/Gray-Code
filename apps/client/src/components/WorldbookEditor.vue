@@ -24,6 +24,10 @@ watch(() => props.raw, raw => {
   loadedDefinition.value = serialized;
   draft.value = JSON.parse(serialized); jsonText.value = JSON.stringify(raw, null, 2); error.value = '';
 }, { immediate: true });
+function discardChanges() {
+  draft.value = JSON.parse(loadedDefinition.value); jsonText.value = JSON.stringify(draft.value, null, 2); error.value = '';
+}
+defineExpose({ dirty, discardChanges });
 function enabled(entry: Record<string, any>) { return entry.enabled !== false && entry.disable !== true; }
 function strategy(entry: Record<string, any>) { return entry.constant || entry.activationMode === 'always' ? 'always' : entry.vectorized || entry.activationMode === 'vector' || entry.extensions?.vectorized ? 'vector' : 'keyword'; }
 function keys(entry: Record<string, any>) { const values = entry.keys ?? entry.key; return Array.isArray(values) ? values.join('\n') : ''; }
