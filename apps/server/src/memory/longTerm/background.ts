@@ -49,7 +49,7 @@ export class MemoryBackground {
   async enqueueConversation(actorId:string,conversationId:string,scopeId:string,automatic=false,sourceRunId?:string):Promise<LongMemoryJob|null>{
     const app=this.service.app,access=await this.service.access(actorId,{conversationId});
     const scope=this.service.select(access,scopeId)[0],policy=(await this.service.policies.get(scope.actorId)).value;
-    if(automatic&&(!policy.automaticExtraction||!policy.automaticScopes?.includes(scope.kind)))return null;
+    if(automatic&&(scope.kind==='library'||!policy.automaticExtraction||!policy.automaticScopes?.includes(scope.kind)))return null;
     if(!policy.providerId)throw new Error('请先在记忆设置中选择整理渠道和模型。');
     const history=await app.storage.readFullHistory(conversationId);
     const view=await app.longMemoryPrompt.history.prepare(actorId,conversationId,history.messages);
@@ -94,7 +94,7 @@ export class MemoryBackground {
       const app=this.service.app,run=await app.storage.getRun(runId);if(!run||run.status!=='completed')return;
       const actor=app.actor(run.actorId);if(!actor||actor.role==='guest')return;
       const access=await this.service.access(run.actorId,{runId,conversationId:run.conversationId,workspaceId:run.workspaceId});
-      for(const scope of access.scopes){const policy=(await this.service.policies.get(scope.actorId)).value;
+      for(const scope of access.scopes){if(scope.kind==='library')continue;const policy=(await this.service.policies.get(scope.actorId)).value;
         if(policy.automaticExtraction&&policy.automaticScopes?.includes(scope.kind))await this.enqueueConversation(run.actorId,run.conversationId,scope.id,true,runId);}
     })().catch(error=>{if(!this.closed)this.service.app.publish({type:'memory.background.failed',message:String((error as Error).message)});});
     void this.track(operation);

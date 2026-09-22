@@ -42,7 +42,7 @@ export interface StorageOperations {
   longMemoryDeletionState: {input:undefined;output:{scopes:LongMemoryScopeState[];tombstones:import('@graycode/contracts').LongMemoryTombstone[]}};
   longMemoryVector: { input: { scope: LongMemoryScope; id: string; version: number; vector: LongMemoryVector }; output: boolean };
   longMemoryExport: { input: { scopes: LongMemoryScope[] }; output: LongMemoryArchive };
-  longMemoryRestore: { input: { actorId: string; archive: LongMemoryArchive }; output: { sources: number; records: number; skipped: number; tombstones: number } };
+  longMemoryRestore: { input: { actorId: string; archive: LongMemoryArchive; publication?: RecordMutation[] }; output: { sources: number; records: number; skipped: number; tombstones: number } };
   longMemoryJobs: { input: { scopes: LongMemoryScope[]; status?: LongMemoryJob['status'] }; output: LongMemoryJob[] };
   longMemoryJob: {input:{scope:LongMemoryScope;id:string};output:LongMemoryJob|null};
   longMemoryEnqueue: { input: { scope: LongMemoryScope; job: LongMemoryJob }; output: LongMemoryJob };

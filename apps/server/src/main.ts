@@ -7,6 +7,7 @@ import {
   validateLegacyImportPaths,
 } from "@graycode/core";
 import { runApplicationCommand } from "./cli/runtime";
+import { importLifeBook } from './memory/imports/migrate';
 
 const HELP = `GrayCode independent platform core
 
@@ -25,6 +26,10 @@ Commands:
   append <id> --text <message>       Append a user message (--revision)
   fork <source-id> <target-id>       Share history into a new conversation (--before)
   import-legacy <old-data-directory> Import JSON/NDJSON history without changing the source
+  import-lifebook <directory>        Import a separate review library, preserving every source file
+        --graph-export <json>       Full Kuzu export from scripts/export-lifebook-graph.py
+        --source-manifest <json>    Verify a snapshot and retain original file timestamps
+        --actor <id> --name <name>  Target account (default owner) and library display name
   verify                            Verify SQLite and referenced content checksums
   gc                                Reclaim unreferenced content (not user history)
 
@@ -54,6 +59,10 @@ async function main(): Promise<void> {
       "token-env": { type: "string" },
       "key-env": { type: "string" },
       "public-origin": { type: "string" },
+      "graph-export": { type: "string" },
+      "source-manifest": { type: "string" },
+      actor: { type: "string" },
+      name: { type: "string" },
       web: { type: "boolean" },
     },
   });
@@ -68,8 +77,8 @@ async function main(): Promise<void> {
     await runApplicationCommand(command, path.resolve(values.data), values);
     return;
   }
-  if (command === "import-legacy") {
-    if (!id) throw new Error("import-legacy requires the old data directory.");
+  if (command === "import-legacy" || command === 'import-lifebook') {
+    if (!id) throw new Error(`${command} requires the source directory.`);
     await validateLegacyImportPaths(
       path.resolve(id),
       path.resolve(values.data),
@@ -84,6 +93,18 @@ async function main(): Promise<void> {
   try {
     let result: unknown;
     switch (command) {
+      case 'import-lifebook': {
+        let previousPhase = '', previousTime = 0;
+        result = await importLifeBook(store, path.resolve(id!), { actorId: values.actor ?? 'owner', name: values.name,
+          graphExport: values['graph-export'], sourceManifest: values['source-manifest'], signal: abort.signal,
+          onProgress(progress) {
+            if (progress.phase !== previousPhase || Date.now() - previousTime > 2000 || progress.completed === progress.total) {
+              process.stderr.write(`${progress.phase}: ${progress.completed}/${progress.total}\n`);
+              previousPhase = progress.phase; previousTime = Date.now();
+            }
+          } });
+        break;
+      }
       case "info":
         result = await store.statistics();
         break;

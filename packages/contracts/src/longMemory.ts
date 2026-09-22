@@ -4,7 +4,7 @@ export type LongMemoryConfidence = 'confirmed' | 'inferred' | 'disputed';
 
 /** 账号与剧情域由宿主绑定，模型只能在已经授权的范围内选择主题。 */
 export interface LongMemoryScope {
-  id: string; actorId: string; kind: 'personal' | 'workspace' | 'group'; key?: string; realm: string;
+  id: string; actorId: string; kind: 'personal' | 'workspace' | 'group' | 'library'; key?: string; realm: string;
 }
 export interface LongMemoryScopeState extends LongMemoryScope { revision: number; invalidation: number; hasRecords?:boolean }
 export interface LongMemoryReference { kind: 'source' | 'record'; id: string; version: number }
@@ -87,7 +87,7 @@ export interface LongMemoryJob {
 }
 export interface LongMemoryPolicy {
   enabled: boolean; automaticExtraction: boolean; providerId?: string; model?: string;
-  automaticScopes?: Array<LongMemoryScope['kind']>;
+  automaticScopes?: Array<Exclude<LongMemoryScope['kind'], 'library'>>;
   recallTokens: number; recallLimit: number; extractionOutputTokens: number;
   embedding?: { url: string; model: string; credentialRef?: string; dimensions?: number; queryPrefix?:string;documentPrefix?:string };
 }

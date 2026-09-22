@@ -1,16 +1,30 @@
 import type { LongMemoryArchive,LongMemoryPolicy,LongMemoryScope } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
+import { importFileChunk, importLibraryFiles, importSourceFiles, listImportLibraries, setImportRecall } from '../memory/imports/library';
 
 export async function longMemoryRequest(app:PlatformApplication,session:ClientSession,method:string,params:Record<string,any>){
   app.requireOwner(session.actorId);
   const service=app.longMemory;
+  if (method.startsWith('memory.import.')) {
+    switch (method) {
+      case 'memory.import.list': return listImportLibraries(app.storage, session.actorId);
+      case 'memory.import.files': return importLibraryFiles(app.storage, session.actorId, params.id, params);
+      case 'memory.import.chunk': return importFileChunk(app.storage, session.actorId, params.id, params.fileId, params.index);
+      case 'memory.import.source': return importSourceFiles(app.storage, session.actorId, params.id, params.sourceId);
+      case 'memory.import.recall': {
+        const result = await setImportRecall(app.storage, session.actorId, params.id, params.enabled);
+        service.changed(result.scopeId, true); app.publish({ type: 'memory.import.changed' }); return result;
+      }
+      default: throw new Error('未知导入资料库操作。');
+    }
+  }
   const context={conversationId:typeof params.conversationId==='string'?params.conversationId:undefined,workspaceId:typeof params.workspaceId==='string'?params.workspaceId:undefined};
   if(method==='memory.options'){
-    const [scopes,policy]=await Promise.all([service.scopesForManagement(session.actorId,context),service.policies.get(session.actorId)]);
+    const [scopes,policy,imports]=await Promise.all([service.scopesForManagement(session.actorId,context),service.policies.get(session.actorId),listImportLibraries(app.storage,session.actorId)]);
     const settings=app.settings.snapshot().settings;
-    const label=(scope:LongMemoryScope)=>scope.kind==='personal'?'个人':scope.kind==='group'?'群组 · '+scope.key:'项目 · '+(settings.workspaces.find(workspace=>workspace.directory.replaceAll('\\','/').toLowerCase()===scope.key?.replaceAll('\\','/').toLowerCase())?.name??scope.key);
-    return {scopes:scopes.map(scope=>({...scope,label:label(scope)+(scope.realm==='real'?'':' · 角色剧情')})),policy,
+    const label=(scope:LongMemoryScope)=>scope.kind==='personal'?'个人':scope.kind==='group'?'群组 · '+scope.key:scope.kind==='library'?'导入资料库':'项目 · '+(settings.workspaces.find(workspace=>workspace.directory.replaceAll('\\','/').toLowerCase()===scope.key?.replaceAll('\\','/').toLowerCase())?.name??scope.key);
+    return {scopes:scopes.map(scope=>({...scope,label:imports.find(item=>item.scopeId===scope.id)?.name??(label(scope)+(scope.realm==='real'?'':' · 角色剧情'))})),policy,
       providers:settings.providers.map(provider=>({id:provider.id,name:provider.name,model:provider.model,models:provider.models.map(model=>model.id)}))};
   }
   if(method==='memory.policy.save'){

@@ -81,7 +81,12 @@ export class PlatformDatabase {
       longMemoryDeletionState: ()=>this.longMemories.deletionState(),
       longMemoryVector: ({ scope, id, version, vector }) => this.longMemories.putVector(scope, id, version, vector),
       longMemoryExport: ({ scopes }) => this.longMemories.archive.export(scopes),
-      longMemoryRestore: ({ actorId, archive }) => this.longMemories.archive.restore(actorId, archive),
+      longMemoryRestore: ({ actorId, archive, publication }) => this.db.transaction(() => {
+        const result = this.longMemories.archive.restore(actorId, archive);
+        // 原始附件先保存，记忆正文与导入目录在同一事务中正式出现。
+        if (publication?.length) this.commitRecords(publication);
+        return result;
+      })(),
       longMemoryJobs: ({ scopes, status }) => this.longMemories.jobs.list(scopes, status),
       longMemoryJob: ({scope,id})=>this.longMemories.jobs.get(scope,id),
       longMemoryEnqueue: ({ scope, job }) => this.longMemories.jobs.enqueue(scope, job),

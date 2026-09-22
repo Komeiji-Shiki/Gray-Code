@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, promises as fs } from 'node:fs';
 import type { PlatformStorage } from '@graycode/core';
 import type { BackupCategoryId, BackupMergeGroup, BackupRestorePreview, BackupRestoreSelection, BackupRestoreSelectionPlan, BackupUnit } from '@graycode/contracts';
+import { MEMORY_IMPORT_NAMESPACE, MEMORY_IMPORT_FILE_NAMESPACE, MEMORY_IMPORT_POLICY_NAMESPACE, type MemoryImportDataset } from '@graycode/contracts';
 
 export const backupCategories: Array<{ id: BackupCategoryId; name: string; description: string }> = [
   { id: 'conversations', name: '对话与任务', description: '完整会话、附件、分支、检查点、角色配置和关联自动任务。相同会话作为一个整体处理。' },
@@ -46,11 +47,18 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
   for (const unit of units.filter(unit => unit.kind !== 'record')) {
     const account = settings?.accounts?.find(account => account.id === unit.actorId)?.displayName ?? unit.actorId ?? '原账号';
     const workspace = unit.scopeKey && settings?.workspaces?.find(workspace => workspace.directory.replaceAll('\\', '/').toLowerCase() === unit.scopeKey!.replaceAll('\\', '/').toLowerCase())?.name;
-    const scope = unit.scopeKind === 'personal' ? '个人记忆' : unit.scopeKind === 'group' ? '群组记忆' : unit.scopeKind === 'workspace' ? '项目记忆' : '原格式记忆';
+    const scope = unit.scopeKind === 'personal' ? '个人记忆' : unit.scopeKind === 'group' ? '群组记忆' : unit.scopeKind === 'workspace' ? '项目记忆' : unit.scopeKind === 'library' ? '导入资料库' : '原格式记忆';
     const name = unit.kind === 'conversation' ? unit.label : `${account} · ${scope}${workspace ? ' · ' + workspace : ''}${unit.realm && unit.realm !== 'real' ? ' · 角色剧情' : ''}`;
     add(unit.key, name, unit.kind === 'conversation' ? 'conversations' : 'memories', [unit]);
   }
   const records = units.filter(unit => unit.kind === 'record');
+  for (const unit of records.filter(unit => unit.namespace === MEMORY_IMPORT_NAMESPACE)) {
+    const data = (await source.getVersionedRecord(MEMORY_IMPORT_NAMESPACE, unit.id, { fields: ['name', 'scopeId'] })).value as Pick<MemoryImportDataset, 'name' | 'scopeId'>;
+    const id = `memory-import:${unit.id}`;
+    add(id, `${data.name} · 原始档案与附件`, 'memories', records.filter(row => row.key === unit.key || row.namespace === MEMORY_IMPORT_FILE_NAMESPACE && row.id.startsWith(unit.id + '/')));
+    const scopeItem = items.find(item => item.units.some(row => row.kind === 'long-memory' && row.id === data.scopeId));
+    if (scopeItem) { scopeItem.name = data.name; scopeItem.requires.push(id); }
+  }
   for (const unit of records.filter(unit => unit.namespace === 'pet-resource')) {
     const info = await source.getRecord(unit.namespace!, unit.id) as { name: string };
     add(`pet:${unit.id}`, info.name, 'pets', records.filter(row => row.key === unit.key || row.namespace === 'pet-resource-file' && row.id.startsWith(unit.id + '/')));
@@ -60,7 +68,7 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
   add('devices', '设备身份与配对', 'devices', records.filter(nodeUnit));
   add('settings', '账号、渠道与功能设置', 'settings', records.filter(unit => ['platform-settings', 'product-settings'].includes(unit.namespace!)));
   add('screen', '屏幕感知配置与记录', 'screen', records.filter(unit => unit.namespace!.startsWith('screen-sense-')));
-  add('memory-settings', '记忆策略与原格式设置', 'memories', records.filter(unit => ['memory-config', 'long-memory-policy'].includes(unit.namespace!)));
+  add('memory-settings', '记忆策略与原格式设置', 'memories', records.filter(unit => ['memory-config', 'long-memory-policy', MEMORY_IMPORT_POLICY_NAMESPACE].includes(unit.namespace!)));
   for (const namespace of new Set(records.filter(unit => !used.has(unit.key) && unit.namespace !== 'platform-secrets').map(unit => unit.namespace!)))
     add(`records:${namespace}`, namespace.startsWith('skill') || namespace === 'imported-skills' ? '技能配置：' + namespace : namespace, /skill/.test(namespace) ? 'skills' : 'other', records.filter(unit => unit.namespace === namespace));
   for (const unit of records.filter(unit => unit.namespace === 'platform-secrets')) add(`secret:${unit.id}`, '连接凭据 ' + unit.id, 'settings', [unit]);
@@ -72,9 +80,9 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
   };
   for (const item of items) {
     if (item.id.startsWith('secret:') || item.units[0].kind !== 'record') continue;
-    const dependencies = new Set<string>();
+    const dependencies = new Set<string>(item.requires);
     for (const unit of item.units) {
-      if (['pet-resource-file', 'pet-runtime', 'computer-actions', 'activity-samples'].includes(unit.namespace!)) continue;
+      if (['pet-resource-file', 'pet-runtime', 'computer-actions', 'activity-samples', MEMORY_IMPORT_FILE_NAMESPACE].includes(unit.namespace!)) continue;
       const value = await source.getRecord(unit.namespace!, unit.id) as Record<string, any>; referenced(value, dependencies);
       if (value?.conversationId) { const conversation = units.find(row => row.kind === 'conversation' && row.id === value.conversationId); if (conversation && !currentUnits.some(row => row.key === conversation.key)) dependencies.add(conversation.key); }
       if (unit.namespace === 'pet-configuration' && value?.resourceId && !currentUnits.some(row => row.namespace === 'pet-resource' && row.id === value.resourceId)) dependencies.add(`pet:${value.resourceId}`);

@@ -3,6 +3,7 @@ import type { ActorIdentity, LongMemoryScope, PlatformConversation, WorkspaceDef
 import type { PlatformApplication } from '../../application';
 import { BOT_CHANNEL_ACCESS, type BotChannelAccess } from '../../bots/channelAccess';
 import { workspaceDirectoryKey } from '../../workspace/identity';
+import { MEMORY_IMPORT_POLICY_NAMESPACE, type MemoryImportPolicy } from '@graycode/contracts';
 
 export function longMemoryScope(actorId:string,kind:LongMemoryScope['kind'],realm='real',key?:string):LongMemoryScope {
   const id=createHash('sha256').update(JSON.stringify([actorId,kind,key??null,realm])).digest('hex');
@@ -27,6 +28,10 @@ export async function conversationMemoryScopes(app:PlatformApplication,actor:Act
   if(workspace){
     app.workspace(actor.id,workspace.id,['workspace_read']);
     scopes.push(longMemoryScope(actor.id,'workspace',realm,workspaceDirectoryKey(workspace.directory)));
+  }
+  if (realm === 'real') {
+    const imports = await app.storage.getRecord(MEMORY_IMPORT_POLICY_NAMESPACE, actor.id) as MemoryImportPolicy | null;
+    for (const scope of imports?.enabledScopes ?? []) if (scope.actorId === actor.id && scope.realm === 'real' && scope.kind === 'library' && scope.key) scopes.push(scope);
   }
   return scopes;
 }

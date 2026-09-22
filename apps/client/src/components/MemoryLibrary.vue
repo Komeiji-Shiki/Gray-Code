@@ -5,12 +5,15 @@ import {call,subscribe} from '../api';
 import {state} from '../state';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
 import MemoryGraph from './MemoryGraph.vue';
+import MemoryImports from './MemoryImports.vue';
+import MemorySourceFiles from './MemorySourceFiles.vue';
+import './memoryShared.css';
 
 interface ScopeRow extends LongMemoryScope {label:string}
 interface Options {scopes:ScopeRow[];policy:{value:LongMemoryPolicy;revision:number|null};providers:Array<{id:string;name:string;model:string;models:string[]}>}
 interface Detail {revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number}
 const emit=defineEmits<{close:[]}>();
-const options=ref<Options>(),scopeId=ref(''),section=ref<'records'|'organize'|'jobs'>('records');
+const options=ref<Options>(),scopeId=ref(''),section=ref<'records'|'organize'|'jobs'|'imports'>('records');
 const searchText=ref(''),appliedQuery=ref(''),topicPath=ref<string[]>([]),kind=ref('');
 const result=ref<LongMemoryRecall>(),topics=ref<LongMemoryTopic[]>([]),detail=ref<Detail>(),jobs=ref<LongMemoryJob[]>([]);
 const error=ref(''),notice=ref(''),busy=ref(false),loading=ref(false),changedElsewhere=ref(false);
@@ -81,6 +84,7 @@ async function choose(id:string){
   graphSource.value=undefined;graphLimit.value=40;
   await nextTick();editor.value?.scrollIntoView({block:'nearest'});
 }
+async function browseImport(id:string){await navigate(async()=>{resetEditor();scopeId.value=id;section.value='records';topicPath.value=[];searchText.value='';appliedQuery.value='';kind.value='';await loadOptions();});}
 function create(){
   resetEditor();editing.value=true;editingScopeId.value=scopeId.value;editorView.value='edit';
   Object.assign(form,{text:'',kind:'fact',subject:'',topic:topicPath.value.join(' / '),attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed'});editorBaseline.value=JSON.stringify(form);
@@ -144,8 +148,8 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
 </script>
 <template>
   <section class="memory-library" aria-label="长期记忆">
-    <div class="memory-toolbar"><label>范围<select v-model="scopeId" :disabled="busy" aria-label="记忆范围" @change="topicPath=[];selectedIds=[];perform(reload)"><option v-for="scope in options?.scopes" :key="scope.id" :value="scope.id">{{scope.label}}</option></select></label>
-      <nav aria-label="记忆管理"><button :aria-pressed="section==='records'" @click="section='records'">浏览与编辑</button><button :aria-pressed="section==='organize'" @click="section='organize'">整理方式</button><button :aria-pressed="section==='jobs'" @click="section='jobs';perform(reload)">后台任务</button></nav>
+    <div class="memory-toolbar"><label v-if="section!=='imports'">范围<select v-model="scopeId" :disabled="busy" aria-label="记忆范围" @change="topicPath=[];selectedIds=[];perform(reload)"><option v-for="scope in options?.scopes" :key="scope.id" :value="scope.id">{{scope.label}}</option></select></label>
+      <nav aria-label="记忆管理"><button :aria-pressed="section==='records'" @click="section='records'">浏览与编辑</button><button :aria-pressed="section==='imports'" @click="section='imports'">导入资料库</button><button :aria-pressed="section==='organize'" @click="section='organize'">整理方式</button><button :aria-pressed="section==='jobs'" @click="section='jobs';perform(reload)">后台任务</button></nav>
       <span v-if="loading" class="memory-muted" role="status">正在读取…</span>
     </div>
     <p v-if="error" class="memory-error" role="alert">{{error}}</p><p v-if="notice" class="memory-notice" role="status">{{notice}}</p>
@@ -169,10 +173,9 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
           <nav v-if="editingId" class="memory-editor-tabs" aria-label="记忆查看方式"><button :aria-pressed="editorView==='edit'" @click="editorView='edit'">编辑正文</button><button :aria-pressed="editorView==='graph'" @click="editorView='graph'">查看关系</button></nav>
           <template v-if="editorView==='graph'">
             <p v-if="editorDirty" class="memory-warning">关系图显示已保存的版本，正在编辑的草稿仍然保留。</p>
-            <p v-if="editorDirty" class="memory-warning">关系图显示已保存的版本，正在编辑的草稿仍然保留。</p>
             <p v-if="graphLoading" class="memory-muted" role="status">正在读取实际来源与派生关系…</p><p v-if="graphError" class="memory-error" role="alert">{{graphError}}</p>
             <MemoryGraph v-if="graph" :graph="graph" :busy="busy" :can-expand="graphLimit<100" @select="selectGraphNode" @more="graphLimit=Math.min(100,graphLimit+30)" />
-            <aside v-if="graphSource" class="memory-source-preview"><header><strong>来源原文 · {{origins[graphSource.origin]}}</strong><button @click="graphSource=undefined">收起原文</button></header><blockquote>{{graphSource.text}}</blockquote></aside>
+            <aside v-if="graphSource" class="memory-source-preview"><header><strong>来源原文 · {{origins[graphSource.origin]}}</strong><button @click="graphSource=undefined">收起原文</button></header><blockquote>{{graphSource.text}}</blockquote><MemorySourceFiles :key="graphSource.id" :source="graphSource" /></aside>
           </template>
           <div v-show="editorView==='edit'">
           <p v-if="changedElsewhere" class="memory-muted">此范围刚有更新，当前编辑内容已保留。保存时会检查版本。</p>
@@ -184,11 +187,12 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
           <div class="memory-editor-actions"><button :disabled="busy||!form.text.trim()" @click="perform(save)">保存记忆</button><button v-if="editingId" :disabled="busy" @click="perform(showImpact)">查看删除影响</button><button v-if="form.kind==='summary'&&editingId" :disabled="busy" @click="perform(regenerateSummary)">按当前依据重新整理</button><button :disabled="busy" @click="navigate(resetEditor)">收起编辑器</button></div>
           </div>
           <div v-if="deleteImpact" class="memory-confirm"><p>将移除 {{deleteImpact.recordCount}} 条记忆及派生内容，并清除有关来源摘录和旧修订。原始会话保留供你查看，相关来源和依赖内容会从后续模型上下文中排除。</p><ul><li v-for="item in deleteImpact.items" :key="item.id">{{kinds[item.kind]}}：{{item.text}}</li></ul><p v-if="deleteImpact.truncated">列表显示前 {{deleteImpact.items.length}} 条，其余引用这条来源的派生内容也会移除。</p><button :disabled="busy" class="memory-delete" @click="perform(remove)">确认删除这些内容</button><button @click="deleteImpact=null">取消</button></div>
-          <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
+          <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote><MemorySourceFiles :source="source" /></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
           <details v-if="detail&&detail.revisions.length>1" class="memory-revisions"><summary>历史修订（{{detail.revisions.length}}）</summary><article v-for="revision in detail.revisions" :key="revision.version"><small>v{{revision.version}} · {{stamp(revision.recordedAt)}} · 自 {{stamp(revision.validFrom)}} 生效</small><p>{{revision.text}}</p></article></details>
         </section>
       </main>
     </div>
+    <MemoryImports v-if="section==='imports'" @browse="browseImport" />
     <section v-show="section==='organize'" class="memory-organization" aria-label="记忆整理方式">
       <div class="settings-guide"><strong>先从 5 条、1200 token 开始</strong><p>条数与预算同时生效，达到任一上限就停止加入记忆。个人偏好通常只需少量条目；复杂项目可增加到 8～12 条、2000～4000 token。提高预算会占用更多模型上下文，并可能增加输入费用。</p></div>
       <div class="memory-form-grid"><fieldset><legend>本轮召回</legend><label class="memory-check"><input v-model="policy.enabled" type="checkbox">聊天时自动引用少量相关记忆</label><label>最多引用条数<input v-model.number="policy.recallLimit" type="number" min="1" max="50" aria-label="最多引用条数"><small class="settings-help">每轮最多自动带入的相关记忆，默认 5 条。条目很短但主题多时，可先增加条数；实际数量还受 token 预算限制。</small></label><label>记忆上下文预算（估算 token）<input v-model.number="policy.recallTokens" type="number" min="256" max="16000" aria-label="记忆上下文预算"><small class="settings-help">默认 1200，包含记忆文字与说明的估算总量。降低可节省上下文；若详细条目放不下，可提高预算。模型仍可通过记忆工具按需展开来源。</small></label><p class="memory-muted">工具循环复用本轮选择。纠正、删除和权限变化会优先使失效依据退出请求。</p></fieldset>

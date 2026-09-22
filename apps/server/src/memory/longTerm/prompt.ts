@@ -56,7 +56,7 @@ export class LongMemoryPrompt {
     const selected:LongMemoryHit[]=[];
     // 空库也提供真实范围编号，避免初次“记住约定”时猜测 scopeId 或退回工程日志。
     const scopeHint=context.input.turnContext?.companionTurn && context.input.tools.some(tool=>tool.name==='memory_remember')
-      ? `本轮授权的长期记忆范围：${access.scopes.map(scope=>`${scope.kind==='personal'?'个人':scope.kind==='workspace'?'当前项目':'群组'}（${scope.realm==='real'?'真实资料':'角色剧情'}）scopeId=${scope.id}`).join('；')}。个人偏好、经历和约定使用个人范围，项目知识使用项目范围。\n\n` : '';
+      ? `本轮授权的长期记忆范围：${access.scopes.map(scope=>`${scope.kind==='personal'?'个人':scope.kind==='workspace'?'当前项目':scope.kind==='library'?'导入资料库':'群组'}（${scope.realm==='real'?'真实资料':'角色剧情'}）scopeId=${scope.id}`).join('；')}。新增个人偏好、经历和约定使用个人范围，项目知识使用项目范围。\n\n` : '';
     const render=(items:LongMemoryHit[])=>scopeHint+(items.length?`本轮相关长期记忆（有来源的参考资料，当前用户的明确纠正优先；更详细的主题或来源可用 memory_topics、memory_search、memory_read 按需查阅）：\n\n${recallText(items)}`:'');
     for(const hit of hits)if(estimateMemoryTokens(render([...selected,hit]))<=policy.recallTokens)selected.push(hit);
     const rendered=render(selected);

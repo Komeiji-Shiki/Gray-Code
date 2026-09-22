@@ -35,7 +35,7 @@ export class MemoryMutationStore {
 
   state(scope: LongMemoryScope, create = false): LongMemoryScopeState {
     assertIdentifier(scope.id); assertIdentifier(scope.actorId); assertIdentifier(scope.realm);
-    if (!['personal', 'workspace', 'group'].includes(scope.kind)) invalid('记忆范围类型无效。');
+    if (!['personal', 'workspace', 'group', 'library'].includes(scope.kind)) invalid('记忆范围类型无效。');
     if (scope.kind === 'personal' ? scope.key !== undefined : !scope.key) invalid('记忆范围标识无效。');
     if (scope.key !== undefined) assertIdentifier(scope.key);
     const row = this.db.prepare('SELECT *,EXISTS(SELECT 1 FROM long_memory_records WHERE scope_id=long_memory_scopes.id) AS has_records FROM long_memory_scopes WHERE id=?').get(scope.id) as ScopeRow | undefined;
