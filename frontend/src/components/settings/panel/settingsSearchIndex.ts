@@ -46,7 +46,7 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
   },
   {
     key: 'channel-multimodal', tab: 'channel',
-    labelKey: 'components.settings.channelSettings.form.multimodal.label',
+    labelKey: isDesktopHost ? 'components.settings.channelSettings.form.multimodal.platformTitle' : 'components.settings.channelSettings.form.multimodal.label',
     keywords: ['多模态', 'multimodal', 'マルチモーダル', '图片', '图像', '文档', '附件', '读取图片'],
     anchor: '[data-search-anchor="multimodal"]'
   },

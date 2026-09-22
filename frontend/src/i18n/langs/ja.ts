@@ -1132,9 +1132,13 @@ const ja: LanguageMessages = {
                             xml: 'XML プロンプト: ツールを XML 形式に変換してシステムプロンプトに挿入',
                             json: 'JSON 境界マーカー: JSON 形式 + <<<TOOL_CALL>>> 境界マーカーを使用'
                         },
-                        openaiWarning: 'OpenAI Function Call モードはマルチモーダルツール（read_file で画像を読み取り、generate_image、remove_background、crop_image、resize_image、rotate_image など）をサポートしていません。マルチモーダル機能を使用するには、XML または JSON モードに切り替えてください。'
+                        openaiWarning: "拡張機能版でマルチモーダルを有効にすると、OpenAI Function Calling でもツール画像の読み取りと画像履歴に対応します。この形式では画像生成・編集ツールは提供されないため、必要な場合は XML または JSON を選択してください。"
                     },
                     multimodal: {
+                        platformTitle: "画像とツール結果",
+                        platformHint: "コンピューター画面、ブラウザー画面、読み取りツールが返した画像は結果とともにモデルへ送信されます。画像入力に対応したモデルを選択してください。対応形式は利用するサービスによります。",
+                        platformOpenAIHint: "デスクトップ版と Web 版では OpenAI Function Calling でもツール画像を送信できます。そのために XML や JSON 形式へ変更する必要はありません。",
+                        platformControlsHint: "有効にするツールは「ツール」設定で選択します。画像生成・編集ツールの完成画像を直接返すかどうかは各ツールで設定します。無効にしても読み取りツールで保存済み画像を確認できます。",
                         label: 'マルチモーダルツールを有効化',
                         supportedTypes: 'サポートされるファイル形式：',
                         image: '画像',

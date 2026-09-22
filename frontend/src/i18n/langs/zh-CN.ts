@@ -1134,9 +1134,13 @@ const zhCN = {
                             xml: 'XML 提示词: 将工具转换为 XML 格式插入系统提示词',
                             json: 'JSON 边界标记: 使用 JSON 格式 + <<<TOOL_CALL>>> 边界标记'
                         },
-                        openaiWarning: 'OpenAI Function Call 模式不支持多模态工具（如 read_file 读取图片、generate_image 生成图片、remove_background 抠图、crop_image 裁切图片、resize_image 缩放图片、rotate_image 旋转图片）。如需使用多模态功能，请切换到 XML 或 JSON 模式。'
+                        openaiWarning: "扩展版开启多模态后，OpenAI Function Calling 可读取工具图片并保留图片历史。图像生成和处理工具在扩展版的这一调用格式下仍不提供，需要这些工具时可选择 XML 或 JSON。"
                     },
                     multimodal: {
+                        platformTitle: "图片与工具结果",
+                        platformHint: "电脑截图、浏览器截图和读取工具返回的图片会随结果发送给模型。请选用支持图片输入的模型，实际格式支持以所用服务为准。",
+                        platformOpenAIHint: "桌面与 Web 版的 OpenAI Function Calling 也能发送工具图片，无须为此切换到 XML 或 JSON 调用格式。",
+                        platformControlsHint: "工具的启用范围在“工具”设置中调整。图片生成和处理工具是否直接返回成品图片，在各自工具配置中调整；关闭直接返回后仍可通过读取工具查看保存的图片。",
                         label: '启用多模态工具',
                         supportedTypes: '支持的文件类型：',
                         image: '图片',

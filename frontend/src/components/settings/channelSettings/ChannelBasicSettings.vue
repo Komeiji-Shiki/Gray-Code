@@ -12,6 +12,8 @@ import { CustomSelect, type SelectOption } from '../../common'
 import { t } from '@/i18n'
 import type { ChannelConfig } from '@/types'
 
+const isPlatformHost = Boolean(window.__GRAYCODE_HOST)
+
 defineProps<{
   config: ChannelConfig
   showApiKey: boolean
@@ -152,7 +154,7 @@ const emit = defineEmits<{
       {{ t('components.settings.channelSettings.form.toolMode.hint.json') }}
     </span>
     <!-- OpenAI Function Call 模式警告 -->
-    <div v-if="config.type === 'openai' && (config.toolMode === 'function_call' || !config.toolMode)" class="tool-mode-warning">
+    <div v-if="!isPlatformHost && config.type === 'openai' && (config.toolMode === 'function_call' || !config.toolMode)" class="tool-mode-warning">
       <i class="codicon codicon-warning"></i>
       <span>{{ t('components.settings.channelSettings.form.toolMode.openaiWarning') }}</span>
     </div>
@@ -160,7 +162,13 @@ const emit = defineEmits<{
 
   <!-- 多模态工具 -->
   <div class="form-group" data-search-anchor="multimodal">
-    <div class="checkbox-with-hint">
+    <template v-if="isPlatformHost">
+      <label>{{ t('components.settings.channelSettings.form.multimodal.platformTitle') }}</label>
+      <p class="field-hint">{{ t('components.settings.channelSettings.form.multimodal.platformHint') }}</p>
+      <p v-if="config.type === 'openai'" class="field-hint">{{ t('components.settings.channelSettings.form.multimodal.platformOpenAIHint') }}</p>
+      <p class="field-hint">{{ t('components.settings.channelSettings.form.multimodal.platformControlsHint') }}</p>
+    </template>
+    <div v-else class="checkbox-with-hint">
       <label class="custom-checkbox">
         <input
           type="checkbox"
@@ -210,22 +218,22 @@ const emit = defineEmits<{
             <span class="channel-name">{{ t('components.settings.channelSettings.form.multimodal.channels.openaiResponses') }}</span>
             <span class="channel-feature support-yes">✓</span>
             <span class="channel-feature support-yes">✓</span>
-            <span class="channel-feature support-no">✗</span>
+            <span class="channel-feature support-yes">✓</span>
             <span class="channel-feature support-yes">✓</span>
           </div>
-          <div class="channel-row" :class="{ current: config.type === 'openai' && config.toolMode !== 'function_call' }">
+          <div class="channel-row" :class="{ current: config.type === 'openai' && (config.toolMode || 'function_call') !== 'function_call' }">
             <span class="channel-name">{{ t('components.settings.channelSettings.form.multimodal.channels.openaiXmlJson') }}</span>
             <span class="channel-feature support-yes">✓</span>
             <span class="channel-feature support-no">✗</span>
             <span class="channel-feature support-yes">✓</span>
             <span class="channel-feature support-yes">✓</span>
           </div>
-          <div class="channel-row" :class="{ current: config.type === 'openai' && config.toolMode === 'function_call' }">
+          <div class="channel-row" :class="{ current: config.type === 'openai' && (config.toolMode || 'function_call') === 'function_call' }">
             <span class="channel-name">{{ t('components.settings.channelSettings.form.multimodal.channels.openaiFunction') }}</span>
+            <span class="channel-feature support-yes">✓</span>
             <span class="channel-feature support-no">✗</span>
             <span class="channel-feature support-no">✗</span>
-            <span class="channel-feature support-no">✗</span>
-            <span class="channel-feature support-no">✗</span>
+            <span class="channel-feature support-yes">✓</span>
           </div>
         </div>
 

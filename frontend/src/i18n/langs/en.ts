@@ -1132,9 +1132,13 @@ const en: LanguageMessages = {
                             xml: 'XML Prompt: Convert tools to XML format in system prompt',
                             json: 'JSON Boundary Markers: Use JSON format + <<<TOOL_CALL>>> boundary markers'
                         },
-                        openaiWarning: 'OpenAI Function Call mode does not support multimodal tools (such as read_file for reading images, generate_image, remove_background, crop_image, resize_image, rotate_image). To use multimodal features, please switch to XML or JSON mode.'
+                        openaiWarning: "With multimodal enabled, the extension can read tool images and retain image history in OpenAI Function Calling. Image generation and editing tools remain unavailable in this extension mode; choose XML or JSON when those tools are needed."
                     },
                     multimodal: {
+                        platformTitle: "Images and tool results",
+                        platformHint: "Computer screenshots, browser screenshots and images returned by read tools accompany their results. Choose a model with image input support; supported formats depend on your service.",
+                        platformOpenAIHint: "OpenAI Function Calling on desktop and Web can also send tool images. Switching to XML or JSON tool mode is unnecessary for this.",
+                        platformControlsHint: "Choose enabled tools in Tools settings. Image generation and editing tools have their own option to return the finished image directly; when disabled, read tools can still view the saved image.",
                         label: 'Enable Multimodal Tools',
                         supportedTypes: 'Supported file types:',
                         image: 'Image',
