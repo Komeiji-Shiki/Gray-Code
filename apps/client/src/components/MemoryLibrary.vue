@@ -76,9 +76,12 @@ function applyRecords(found:Awaited<ReturnType<typeof requestRecords>>){
 }
 async function loadRecordPage(direction:'next'|'previous'){
   const cursor=direction==='next'?browseResult.value?.nextCursor:recordTrail.value.at(-1);
-  const current=++epoch,found=await requestRecords(cursor);if(current!==epoch)return;
-  if(direction==='next')recordTrail.value.push(recordCursor.value);else recordTrail.value.pop();
-  recordCursor.value=cursor;applyRecords(found);
+  const current=++epoch;loading.value=true;
+  try{
+    const found=await requestRecords(cursor);if(current!==epoch)return;
+    if(direction==='next')recordTrail.value.push(recordCursor.value);else recordTrail.value.pop();
+    recordCursor.value=cursor;applyRecords(found);
+  }finally{if(current===epoch)loading.value=false;}
 }
 async function refreshJobs(){
   const scope=scopeId.value;if(!scope)return;const list=await rpc<LongMemoryJob[]>('memory.jobs',{scopeId:scope});
@@ -208,9 +211,9 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
       </aside>
       <main :class="{'has-selection':editing}">
         <div v-if="result" class="memory-result-meta"><span>{{result.method==='hybrid'?'关键词与语义':'关键词'}} · {{result.hits.length}} 条相关结果</span><span v-if="result.truncated">相关结果按召回预算选取，可改用逐条浏览核对全部关键词匹配。</span></div>
-        <div v-if="browseResult" class="memory-pagination"><span>{{browseResult.total?`${browseResult.offset+1}–${browseResult.offset+browseResult.items.length} / ${browseResult.total}`:'0 条'}} · 逐条浏览</span><button :disabled="busy||loading" @click="perform(reload)">刷新列表</button><button :disabled="busy||loading||!recordTrail.length" @click="perform(()=>loadRecordPage('previous'))">上一页记忆</button><button :disabled="busy||loading||!browseResult.nextCursor" @click="perform(()=>loadRecordPage('next'))">下一页记忆</button></div>
+        <div v-if="browseResult" class="memory-pagination"><span v-if="loading">正在读取记忆…</span><span v-else>{{browseResult.total?`${browseResult.offset+1}–${browseResult.offset+browseResult.items.length} / ${browseResult.total}`:'0 条'}} · 逐条浏览</span><button :disabled="busy||loading" @click="perform(reload)">刷新列表</button><button :disabled="busy||loading||!recordTrail.length" @click="perform(()=>loadRecordPage('previous'))">上一页记忆</button><button :disabled="busy||loading||!browseResult.nextCursor" @click="perform(()=>loadRecordPage('next'))">下一页记忆</button></div>
         <div v-if="selectedIds.length" class="memory-summary-actions"><span>已选 {{selectedIds.length}} 条</span><input v-model="summaryTopic" aria-label="摘要主题" placeholder="摘要主题，例如 项目 / 部署"><button :disabled="busy" @click="perform(queueSummary)">按所选依据整理摘要</button></div>
-        <div class="memory-records"><div v-for="record in visibleRecords" :key="record.id" class="memory-record" :class="{selected:editingId===record.id}"><input v-model="selectedIds" type="checkbox" :value="record.id" :disabled="!record.active" :title="record.active?'选择为摘要依据':'非当前有效版本不能作为新的摘要依据'" :aria-label="'选择记忆 '+record.id"><button :disabled="busy" @click="navigate(()=>choose(record.id,record.version))"><span class="memory-record-meta">{{kinds[record.kind]}} · {{origins[record.origin]}}<span v-if="record.confidence!=='confirmed'"> · {{record.confidence==='inferred'?'待核对':'存在争议'}}</span><span v-if="!record.active"> · 未生效或已失效</span><span v-if="record.conflicts.length"> · 有不同说法</span></span><strong>{{record.preview}}</strong><small v-if="record.moreText">打开查看完整正文</small><small>{{record.topic.join(' / ')||'未分类'}}<template v-if="record.reasons.length"> · {{record.reasons.join(' + ')}}</template></small></button></div></div>
+        <div class="memory-records" :aria-busy="loading"><div v-for="record in visibleRecords" :key="record.id" class="memory-record" :class="{selected:editingId===record.id}"><input v-model="selectedIds" type="checkbox" :value="record.id" :disabled="busy||loading||!record.active" :title="record.active?'选择为摘要依据':'非当前有效版本不能作为新的摘要依据'" :aria-label="'选择记忆 '+record.id"><button :disabled="busy||loading" @click="navigate(()=>choose(record.id,record.version))"><span class="memory-record-meta">{{kinds[record.kind]}} · {{origins[record.origin]}}<span v-if="record.confidence!=='confirmed'"> · {{record.confidence==='inferred'?'待核对':'存在争议'}}</span><span v-if="!record.active"> · 未生效或已失效</span><span v-if="record.conflicts.length"> · 有不同说法</span></span><strong>{{record.preview}}</strong><small v-if="record.moreText">打开查看完整正文</small><small>{{record.topic.join(' / ')||'未分类'}}<template v-if="record.reasons.length"> · {{record.reasons.join(' + ')}}</template></small></button></div></div>
         <p v-if="!visibleRecords.length&&!loading" class="memory-empty">没有匹配的记忆。可以调整筛选条件、新增一条，或从当前对话提取。</p>
         <section v-if="editing" ref="editor" class="memory-editor" aria-label="记忆编辑器">
           <header><strong>{{historicalRevision?'查看历史修订':editingId?'编辑记忆':'新增记忆'}}</strong><span>{{scopeLabel(editingScopeId)}}</span><code v-if="editingId">{{editingId.slice(0,12)}} · v{{editingVersion}}</code></header>

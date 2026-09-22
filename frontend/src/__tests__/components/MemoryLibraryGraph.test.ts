@@ -103,3 +103,21 @@ test('实体关联使用虚线，来源依据继续显示箭头',async()=>{
   expect(wrapper.find('.memory-graph-edge.association').attributes('marker-end')).toBeUndefined();
   expect(wrapper.find('.memory-graph-edge:not(.association)').attributes('marker-end')).toContain('memory-arrow');
 });
+
+
+test('加载下一页时明确显示读取状态，完成后再更新页数与可操作记录', async () => {
+  const original=mocks.call.getMockImplementation()!;
+  let complete!:(value:unknown)=>void;
+  mocks.call.mockImplementation((method,params)=>method==='memory.browse'
+    ? params.cursor ? new Promise(resolve=>{complete=resolve;}) : Promise.resolve({items:[{...record,preview:record.text,active:true}],offset:0,total:2,nextCursor:'next'})
+    :original(method,params));
+  const wrapper=await open();await button(wrapper,'下一页记忆').trigger('click');
+  expect(wrapper.find('.memory-pagination').text()).toContain('正在读取记忆');
+  expect(wrapper.find('.memory-pagination').text()).not.toContain('1–1 / 2');
+  expect(wrapper.find('.memory-records').attributes('aria-busy')).toBe('true');
+  expect(wrapper.find('.memory-record>button').attributes('disabled')).toBeDefined();
+  complete({items:[{...record,id:'two',preview:'已读到第二页',active:true}],offset:1,total:2});await flushPromises();
+  expect(wrapper.find('.memory-pagination').text()).toContain('2–2 / 2');
+  expect(wrapper.find('.memory-records').attributes('aria-busy')).toBe('false');
+  expect(wrapper.find('.memory-record>button').attributes('disabled')).toBeUndefined();
+});
