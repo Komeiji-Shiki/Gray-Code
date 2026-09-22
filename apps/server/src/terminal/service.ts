@@ -36,7 +36,7 @@ export class PlatformTerminals {
       getUnavailableShellsDescription: () => '- Availability is checked immediately before execution.',
     };
     const output = createOutputRuntime({ getConfig });
-    const prompts = createTerminalPrompts({ shells, getMaxOutputLines: output.getMaxOutputLines, roots: () => [] });
+    const prompts = createTerminalPrompts({ shells, getMaxOutputLines: output.getMaxOutputLines, roots: () => [], workspaceBinding: 'task' });
     const workspace = directory ? { name: 'workspace', fsPath: directory } : undefined;
     return createTerminalRuntime({ getConfig, tasks, shells, output, prompts,
       getAllWorkspaces: () => workspace ? [workspace] : [],

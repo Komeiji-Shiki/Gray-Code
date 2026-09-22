@@ -5,30 +5,14 @@ import type { createShellRuntime } from './shellConfigRuntime';
 
 
 export type WorkspaceRootPromptInfo = { name: string; path: string };
-export interface createTerminalPromptsHost { roots(): WorkspaceRootPromptInfo[]; shells: ReturnType<typeof createShellRuntime>; getMaxOutputLines(): number }
+export interface createTerminalPromptsHost { roots(): WorkspaceRootPromptInfo[]; shells: ReturnType<typeof createShellRuntime>; getMaxOutputLines(): number; workspaceBinding?: 'task' }
 /** 注入宿主服务；进程、解码状态和事件均归属于当前实例。 */
 export function createTerminalPrompts(host: createTerminalPromptsHost) {
-const { getDefaultShellName, getDefaultShellType, getUnavailableShellsDescription } = host.shells;
+const { getDefaultShellType, getUnavailableShellsDescription } = host.shells;
 const { getMaxOutputLines } = host;
 
 
-/**
- * 获取工作区根目录路径（默认返回第一个）
- */
-
-
-
-/**
- * 获取所有工作区路径
- */
 function getAllWorkspaceRoots(): WorkspaceRootPromptInfo[] { return host.roots(); }
-
-
-/**
- * 根据名称获取工作区路径
- */
-
-
 
 /**
  * 获取操作系统名称
@@ -56,200 +40,33 @@ function getDeclarationLanguage(): LocalizationLanguage {
 }
 
 
-/**
- * 输出截断配置的中英文描述片段（动态值保持运行时插值）。
- */
-function getMaxOutputLinesText(lang: LocalizationLanguage): string {
-    const maxOutputLines = getMaxOutputLines();
-    // maxOutputLines === -1 表示不截断：返回完整句子，由调用处直接拼成完整条目。
-    if (maxOutputLines === -1) {
-        return lang === 'zh-CN' ? '默认不截断输出' : 'by default, output is not truncated';
-    }
-    return lang === 'zh-CN' ? `最后 ${maxOutputLines}` : `last ${maxOutputLines} lines`;
-}
-
-
-/**
- * execute_command 的 Shell 使用提示词（中英文）。
- *
- * 设计原则：保持 execute_command 作为 pure shell 工具，不新增 argv/script/stdin 模式；
- * 通过明确每种 shell 的解析规则降低模型误用概率。
- * 中英文都保留引号/管道等关键解析规则，不删减，也不新增篇幅。
- */
-function getExecuteCommandShellGuidanceDescription(
-    workspaceRoots: WorkspaceRootPromptInfo[],
-    isMultiRoot: boolean
-): string {
+/** 只列出当前可选 Shell 的差异规则，共用的 POSIX 和引号说明只出现一次。 */
+function getExecuteCommandShellGuidanceDescription(): string {
     const lang = getDeclarationLanguage();
-    const defaultShellType = getDefaultShellType();
-    const maxOutputLinesValue = getMaxOutputLines();
-    const maxOutputLines = getMaxOutputLinesText(lang);
-
-    // shellConfig 的 getUnavailableShellsDescription 只有中文本地化（'- 无'），
-    // 这里在英文分支做最小映射，避免英文请求收到中英混排。
-    const unavailableShells = getUnavailableShellsDescription();
-    const unavailableText = lang === 'zh-CN'
-        ? unavailableShells
-        : unavailableShells === '- 无'
-            ? '- None'
-            : unavailableShells;
-
-    if (lang === 'zh-CN') {
-        return [
-            '## 重要语义',
-            '',
-            '`command` 是一段 Shell 文本，不是 argv 数组。Function Calling 只负责把字符串交给工具；随后该字符串会被 `shell` 参数指定的 Shell 继续解析。你必须按照所选 Shell 的语法书写命令。',
-            '',
-            getCwdGuidanceDescription(workspaceRoots, isMultiRoot, lang),
-            '',
-            '## Shell 选择规则',
-            '',
-            `- 如果不传 \`shell\` 或设置为 \`default\`，将使用当前默认 Shell：\`${defaultShellType}\`（${getDefaultShellName()}）。`,
-            '- 当前只能选择 "已启用 Shell 列表" 和参数 enum 中出现的 shell；不要选择不可用的 shell。',
-            '- Windows 文件系统、PowerShell cmdlet、对象管道：优先选择 `powershell`。',
-            '- CMD 内置命令、批处理兼容行为：选择 `cmd`。',
-            '- POSIX sh 语法、`grep` / `sed` / `find` / `head`、heredoc：选择 `sh` / `bash` / `gitbash`。',
-            '- macOS 默认通常是 `zsh`；Linux 默认通常是 `bash`。',
-            (maxOutputLinesValue === -1
-                ? '- 默认不截断输出'
-                : '- 返回输出默认只保留' + maxOutputLines + '行') + '；长任务请设置 `timeout`，单位毫秒，`0` 表示不超时。',
-            '',
-            '## 当前已配置但不可用的 Shell',
-            '',
-            unavailableText,
-            '',
-            getPowerShellGuidanceDescription(lang),
-            '',
-            getCmdGuidanceDescription(lang),
-            '',
-            getPosixShellGuidanceDescription('sh', lang),
-            '',
-            getPosixShellGuidanceDescription('bash', lang),
-            '',
-            getGitMsysGuidanceDescription(lang),
-            '',
-            getWslGuidanceDescription(lang),
-            '',
-            getZshGuidanceDescription(lang),
-            '',
-            getPipeGuidanceDescription(lang),
-            '',
-            getComplexCommandGuidanceDescription(lang),
-            '',
-            getSshGuidanceDescription(lang)
-        ].join('\n');
-    }
-
+    const zh = lang === 'zh-CN';
+    const enabled = new Set(host.shells.getEnabledShellTypesForEnum());
+    const posix = ['sh', 'bash', 'gitbash', 'wsl', 'zsh'].filter(name => enabled.has(name));
+    const unavailable = getUnavailableShellsDescription();
+    const output = getMaxOutputLines() === -1
+        ? (zh ? '默认不截断输出。' : 'Output is not truncated by default.')
+        : (zh ? `默认保留最后 ${getMaxOutputLines()} 行输出。` : `Output keeps the last ${getMaxOutputLines()} lines by default.`);
     return [
-        '## Important semantics',
-        '',
-        '`command` is a Shell text string, not an argv array. Function Calling only hands the string to the tool; the string is then parsed by the shell specified in the `shell` parameter. You must write the command following the selected shell\'s syntax.',
-        '',
-        getCwdGuidanceDescription(workspaceRoots, isMultiRoot, lang),
-        '',
-        '## Shell selection rules',
-        '',
-        `- If \`shell\` is omitted or set to \`default\`, the current default shell is used: \`${defaultShellType}\` (${getDefaultShellName()}).`,
-        '- You can only choose shells listed in the "Enabled Shells" list and the parameter enum; do not choose unavailable shells.',
-        '- Windows filesystem, PowerShell cmdlets, object pipelines: prefer `powershell`.',
-        '- CMD built-in commands and batch-compatible behavior: choose `cmd`.',
-        '- POSIX sh syntax, `grep` / `sed` / `find` / `head`, heredoc: choose `sh` / `bash` / `gitbash`.',
-        '- macOS usually defaults to `zsh`; Linux usually defaults to `bash`.',
-        (maxOutputLinesValue === -1
-            ? '- By default, output is not truncated'
-            : `- By default, only the ${maxOutputLines} of output are kept`) + '; for long tasks set `timeout` in milliseconds, `0` means no timeout.',
-        '',
-        '## Enabled but currently unavailable shells',
-        '',
-        unavailableText,
-        '',
-        getPowerShellGuidanceDescription(lang),
-        '',
-        getCmdGuidanceDescription(lang),
-        '',
-        getPosixShellGuidanceDescription('sh', lang),
-        '',
-        getPosixShellGuidanceDescription('bash', lang),
-        '',
-        getGitMsysGuidanceDescription(lang),
-        '',
-        getWslGuidanceDescription(lang),
-        '',
-        getZshGuidanceDescription(lang),
-        '',
-        getPipeGuidanceDescription(lang),
-        '',
-        getComplexCommandGuidanceDescription(lang),
-        '',
-        getSshGuidanceDescription(lang)
-    ].join('\n');
-}
-
-
-/**
- * 1.2.2-fix：补全 execute_command 的 cwd 选择规则。
- *
- * 为什么要改：模型只看到"relative to workspace root"时，容易把 `cwd`、`command` 内路径、workspace 内外绝对路径混在一起。
- * 怎么改：在主工具描述中集中解释 `cwd` 的职责、单根/多根工作区格式，以及 workspace 内外路径边界。
- * 目的：让模型稳定选择工作目录，减少把 workspace 根目录拼成绝对路径或在多根工作区误用默认根目录的情况。
- */
-function getCwdGuidanceDescription(
-    workspaceRoots: WorkspaceRootPromptInfo[],
-    isMultiRoot: boolean,
-    lang: LocalizationLanguage
-): string {
-    const baseRules = lang === 'zh-CN'
-        ? [
-            '## cwd 工作目录规则',
-            '',
-            '- `cwd` 是 Shell 的启动工作目录，不是要操作的文件或目录参数；真正的操作目标仍应写在 `command` 里。',
-            '- `cwd` 主要用于 workspace 内目录；当操作目标在 workspace 根目录之内时，`cwd` 和 `command` 里的路径都应使用相对路径。',
-            '- 不要把 workspace 根目录拼成绝对路径，例如不要把 `backend` 写成 `C:\\...\\workspace\\backend`。',
-            '- 文件就在 workspace 根目录时，`cwd` 不填或填 `.`，并在 `command` 中直接写文件名，例如 `Get-Content package.json`。',
-            '- 子目录操作时，`cwd` 写相对目录，例如 `backend`、`frontend/src`，命令内再写相对于该 `cwd` 的路径。',
-            '- 只有操作目标位于 workspace 之外时，才在 `command` 中使用绝对路径，例如系统临时目录、下载目录或其他盘符；`cwd` 仍优先保持在 workspace 内。'
-        ]
-        : [
-            '## cwd working directory rules',
-            '',
-            '- `cwd` is the shell\'s starting working directory, not the file/directory argument to operate on; the real operation target should still be written in `command`.',
-            '- `cwd` is mainly for directories inside the workspace; when the operation target is inside the workspace root, use relative paths for both `cwd` and the paths in `command`.',
-            '- Do not build absolute paths by concatenating the workspace root, e.g. do not write `backend` as `C:\\...\\workspace\\backend`.',
-            '- When the file is in the workspace root, leave `cwd` empty or use `.`, and write the file name directly in `command`, e.g. `Get-Content package.json`.',
-            '- For subdirectory operations, write a relative directory in `cwd`, e.g. `backend`, `frontend/src`, and use paths relative to that `cwd` inside the command.',
-            '- Only when the operation target is outside the workspace should you use absolute paths in `command`, e.g. system temp directories, download directories, or other drives; keep `cwd` inside the workspace whenever possible.'
-        ];
-
-    if (workspaceRoots.length === 0) {
-        return [
-            ...baseRules,
-            lang === 'zh-CN'
-                ? '- 当前没有打开 workspace，工具执行时会报错；打开 workspace 后再按上述规则填写 `cwd`。'
-                : '- No workspace is currently open; the tool will error when executed. Open a workspace and then fill `cwd` per the rules above.'
-        ].join('\n');
-    }
-
-    if (isMultiRoot) {
-        return [
-            ...baseRules,
-            lang === 'zh-CN'
-                ? '- 多根工作区不要依赖省略 `cwd` 的默认首个工作区；必须显式写 `workspace_name/path` 或 `@workspace_name/path`。'
-                : '- In a multi-root workspace, do not rely on omitting `cwd` to default to the first workspace; you must explicitly write `workspace_name/path` or `@workspace_name/path`.',
-            lang === 'zh-CN'
-                ? '- 多根工作区的根目录写 `workspace_name` 或 `@workspace_name`；子目录写 `workspace_name/backend`、`@workspace_name/frontend/src`。'
-                : '- In a multi-root workspace, write the root as `workspace_name` or `@workspace_name`; subdirectories as `workspace_name/backend`, `@workspace_name/frontend/src`.',
-            lang === 'zh-CN'
-                ? `- 当前可用工作区：${workspaceRoots.map(w => w.name).join(', ')}。`
-                : `- Current available workspaces: ${workspaceRoots.map(w => w.name).join(', ')}.`
-        ].join('\n');
-    }
-
-    return [
-        ...baseRules,
-        lang === 'zh-CN'
-            ? '- 单根工作区中，不传 `cwd` 或传 `.` 表示当前 workspace 根目录。'
-            : '- In a single-root workspace, omitting `cwd` or passing `.` means the current workspace root.'
-    ].join('\n');
+        zh
+            ? `command 是交给所选 Shell 解析的文本，不是 argv。省略 shell 或填 default 使用 ${getDefaultShellType()}；只选择参数 enum 中的 Shell，勿混用其语法与转义规则。`
+            : `command is text parsed by the selected shell, not argv. Omitted/default shell uses ${getDefaultShellType()}. Use only the shell enum values; do not mix their syntax or escaping rules.`,
+        output,
+        unavailable === '- 无' ? '' : (zh ? '已配置但可能不可用的 Shell：\n' : 'Configured shell availability:\n') + unavailable,
+        enabled.has('powershell') ? getPowerShellGuidanceDescription(lang) : '',
+        enabled.has('cmd') ? getCmdGuidanceDescription(lang) : '',
+        posix.length ? getPosixShellGuidanceDescription(posix, lang) : '',
+        os.platform() === 'win32' && ['bash', 'sh', 'gitbash'].some(name => enabled.has(name)) ? getGitMsysGuidanceDescription(lang) : '',
+        enabled.has('wsl') ? getWslGuidanceDescription(lang) : '',
+        enabled.has('zsh') ? (zh
+            ? 'Zsh 的 glob、alias 和扩展规则可能不同，不要假定所有 Bash 特有语法都适用。'
+            : 'Zsh glob, alias and expansion rules differ; do not assume all Bash-specific syntax works.') : '',
+        getComplexCommandGuidanceDescription(lang, enabled),
+        getSshGuidanceDescription(lang, enabled.has('powershell')),
+    ].filter(Boolean).join('\n\n');
 }
 
 
@@ -262,6 +79,9 @@ function getCwdGuidanceDescription(
  */
 function getCwdParameterDescription(workspaceRoots: WorkspaceRootPromptInfo[], isMultiRoot: boolean): string {
     const lang = getDeclarationLanguage();
+    if (host.workspaceBinding === 'task') return lang === 'zh-CN'
+        ? 'Shell 启动目录，以当前任务绑定的工作区为根。省略或填 . 使用根目录，子目录用 backend、frontend/src 等相对路径。文件目标写在 command 中，并相对于 cwd；不要拼接工作区绝对路径；只有工作区外目标才在 command 中使用绝对路径。执行前任务必须已选择工作区。'
+        : 'Shell startup directory within this task’s bound workspace. Omit or use . for its root; use relative subdirectories such as backend or frontend/src. Put file targets in command relative to cwd, without concatenating the workspace absolute path. Use absolute command targets only outside the workspace. The task must have a workspace selected before execution.';
     const common = lang === 'zh-CN'
         ? '`cwd` 是 Shell 启动工作目录，不是目标文件路径；workspace 内使用相对路径，不要拼接 workspace 绝对路径。'
         : '`cwd` is the shell startup working directory, not the target file path; use relative paths inside the workspace and do not concatenate workspace absolute paths.';
@@ -342,10 +162,11 @@ function getCmdGuidanceDescription(lang: LocalizationLanguage): string {
 }
 
 
-function getPosixShellGuidanceDescription(shellName: 'sh' | 'bash', lang: LocalizationLanguage): string {
+function getPosixShellGuidanceDescription(shellNames: string[], lang: LocalizationLanguage): string {
+    const shellName = shellNames.join(', ');
     return lang === 'zh-CN'
         ? [
-            `## ${shellName} 规则（\`shell: "${shellName}"\`）`,
+            `## POSIX 共用规则（${shellName}）`,
             '',
             `- 使用 POSIX/${shellName} 风格语法，不要使用 PowerShell 的 \`$env:NAME\` 或 CMD 的 \`%NAME%\`。`,
             '- 单引号保留字面量：`\'a|b\'`、`\'$HOME\'`、`\'$(hostname)\'`。',
@@ -355,7 +176,7 @@ function getPosixShellGuidanceDescription(shellName: 'sh' | 'bash', lang: Locali
             '- 如果这是 Windows 上的 Git sh/Git Bash，还要遵守 Git/MSYS 路径转换规则。'
         ].join('\n')
         : [
-            `## ${shellName} rules (\`shell: "${shellName}"\`)`,
+            `## Shared POSIX rules (${shellName})`,
             '',
             `- Use POSIX/${shellName}-style syntax; do not use PowerShell's \`$env:NAME\` or CMD's \`%NAME%\`.`,
             '- Single quotes preserve literals: `\'a|b\'`, `\'$HOME\'`, `\'$(hostname)\'`.',
@@ -409,90 +230,48 @@ function getWslGuidanceDescription(lang: LocalizationLanguage): string {
 }
 
 
-function getZshGuidanceDescription(lang: LocalizationLanguage): string {
-    return lang === 'zh-CN'
-        ? [
-            '## Zsh 规则（`shell: "zsh"`）',
-            '',
-            '- Zsh 是类 POSIX shell，常见管道、重定向、单引号、双引号、heredoc 规则接近 sh/bash。',
-            '- 单引号保留字面量；双引号允许参数展开和命令替换。',
-            '- Zsh 有自己的 glob、alias、扩展规则；不要假定所有 Bash 专有行为完全一致。',
-            '- 复杂多行内容仍优先写临时脚本再执行。'
-        ].join('\n')
-        : [
-            '## Zsh rules (`shell: "zsh"`)',
-            '',
-            '- Zsh is a POSIX-like shell; common pipe, redirection, single-quote, double-quote, and heredoc rules are close to sh/bash.',
-            '- Single quotes preserve literals; double quotes allow parameter expansion and command substitution.',
-            '- Zsh has its own glob, alias, and expansion rules; do not assume all Bash-specific behavior is identical.',
-            '- For complex multi-line content, still prefer writing a temp script first.'
-        ].join('\n');
-}
-
-
-function getPipeGuidanceDescription(lang: LocalizationLanguage): string {
-    return lang === 'zh-CN'
-        ? [
-            '## 管道符 `|` 规则',
-            '',
-            '- `|` 是否是管道，取决于当前 shell 是否在未引用状态下看到它。',
-            '- 作为管道：PowerShell `Get-ChildItem | Select-Object -First 10`；CMD `dir | findstr foo`；sh/bash/zsh `find . -name \'*.ts\' | head`。',
-            '- 作为普通字符：PowerShell `\'a|b\'`；CMD `"a|b"` 或必要时 `a^|b`；sh/bash/zsh `\'a|b\'`。',
-            '- 不要把一个 shell 的转义规则套到另一个 shell：PowerShell 不使用 CMD 的 `^|`；CMD 不依赖 Bash 单引号；sh/bash 不使用 `$env:NAME`。'
-        ].join('\n')
-        : [
-            '## Pipe `|` rules',
-            '',
-            '- Whether `|` is a pipe depends on whether the current shell sees it unquoted.',
-            '- As a pipe: PowerShell `Get-ChildItem | Select-Object -First 10`; CMD `dir | findstr foo`; sh/bash/zsh `find . -name \'*.ts\' | head`.',
-            '- As a plain character: PowerShell `\'a|b\'`; CMD `"a|b"` or, when needed, `a^|b`; sh/bash/zsh `\'a|b\'`.',
-            '- Do not apply one shell\'s escaping rules to another: PowerShell does not use CMD\'s `^|`; CMD does not rely on Bash single quotes; sh/bash do not use `$env:NAME`.'
-        ].join('\n');
-}
-
-
-function getComplexCommandGuidanceDescription(lang: LocalizationLanguage): string {
+function getComplexCommandGuidanceDescription(lang: LocalizationLanguage, enabled: Set<string>): string {
     return lang === 'zh-CN'
         ? [
             '## 复杂命令规则',
             '',
             '- 简单命令可以直接内联；包含多层引号、JSON、正则、Node/Python 代码、Nginx/systemd 配置、SSH 远端脚本时，不要强行写成一行。',
-            '- PowerShell 推荐：用 `@\' ... \'@` 单引号 here-string 写入临时脚本，再用 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` 保存为 UTF-8 无 BOM 后执行。',
-            '- sh/bash/zsh 推荐：用 `cat > /tmp/script.sh <<\'EOF\' ... EOF` 写强字面量 heredoc，再执行脚本。',
-            '- CMD 不适合承载复杂多行脚本；除非用户明确要求 CMD，否则复杂逻辑优先用 PowerShell 或 sh。',
+            ...(enabled.has('powershell') ? ['- PowerShell 推荐：用 `@\' ... \'@` 单引号 here-string 写入临时脚本，再用 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` 保存为 UTF-8 无 BOM 后执行。'] : []),
+            ...(['sh','bash','gitbash','wsl','zsh'].some(name => enabled.has(name)) ? ['- sh/bash/zsh 推荐：用 `cat > /tmp/script.sh <<\'EOF\' ... EOF` 写强字面量 heredoc，再执行脚本。'] : []),
+            ...(enabled.has('cmd') ? ['- CMD 不适合承载复杂多行脚本；除非用户明确要求 CMD，否则复杂逻辑优先用 PowerShell 或 sh。'] : []),
             '- 诊断引号/管道问题时，先写一个 argv/hex 探针确认目标程序实际收到什么，不要猜。'
         ].join('\n')
         : [
             '## Complex command rules',
             '',
             '- Simple commands can be inlined; do not force content with nested quotes, JSON, regex, Node/Python code, Nginx/systemd config, or SSH remote scripts into a single line.',
-            '- PowerShell: prefer writing a temp script with an `@\' ... \'@` single-quoted here-string, then save it as UTF-8 without BOM via `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` and run it.',
-            '- sh/bash/zsh: prefer writing a strong-literal heredoc `cat > /tmp/script.sh <<\'EOF\' ... EOF`, then run the script.',
-            '- CMD is not suited for complex multi-line scripts; unless the user explicitly asks for CMD, prefer PowerShell or sh for complex logic.',
+            ...(enabled.has('powershell') ? ['- PowerShell: prefer writing a temp script with an `@\' ... \'@` single-quoted here-string, then save it as UTF-8 without BOM via `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` and run it.'] : []),
+            ...(['sh','bash','gitbash','wsl','zsh'].some(name => enabled.has(name)) ? ['- sh/bash/zsh: prefer writing a strong-literal heredoc `cat > /tmp/script.sh <<\'EOF\' ... EOF`, then run the script.'] : []),
+            ...(enabled.has('cmd') ? ['- CMD is not suited for complex multi-line scripts; unless the user explicitly asks for CMD, prefer PowerShell or sh for complex logic.'] : []),
             '- When diagnosing quote/pipe issues, first write an argv/hex probe to confirm what the target program actually receives; do not guess.'
         ].join('\n');
 }
 
 
-function getSshGuidanceDescription(lang: LocalizationLanguage): string {
+function getSshGuidanceDescription(lang: LocalizationLanguage, powershell: boolean): string {
     return lang === 'zh-CN'
         ? [
             '## SSH 多层解析规则',
             '',
             '- SSH 至少有两层解析：本地 shell 先解析整条 `ssh ...` 命令；远端用户 shell 再解析远端命令。远端命令不是 argv 直达目标程序。',
-            '- 在 PowerShell 中调用 SSH，外层单引号只能阻止本地 PowerShell 展开；远端 shell 仍会解释 `$HOME`、`$(hostname)`、`|` 等。',
-            '- 当前实测链路 PowerShell → ssh → 远端 bash 中，如果需要远端 shell 用双引号保护参数，PowerShell 命令里通常要写 `\\"`；如果要远端收到字面 `$HOME`，写 `\\"\\$HOME\\"`；字面 `$(hostname)` 写 `\\"\\$(hostname)\\"`。',
+            ...(powershell ? ['- 在 PowerShell 中调用 SSH，外层单引号只能阻止本地 PowerShell 展开；远端 shell 仍会解释 `$HOME`、`$(hostname)`、`|` 等。'] : []),
+            ...(powershell ? ['- 当前实测链路 PowerShell → ssh → 远端 bash 中，如果需要远端 shell 用双引号保护参数，PowerShell 命令里通常要写 `\\"`；如果要远端收到字面 `$HOME`，写 `\\"\\$HOME\\"`；字面 `$(hostname)` 写 `\\"\\$(hostname)\\"`。'] : []),
             '- 复杂远端操作不要硬塞一行：优先本地生成脚本，`scp` 上传到远端 `/tmp/...`，`ssh` 执行远端脚本，完成后清理脚本。',
-            '- Windows 用户目录 SSH key 示例：`ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`。'
+            ...(powershell ? ['- Windows 用户目录 SSH key 示例：`ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`。'] : []),
         ].join('\n')
         : [
             '## SSH multi-layer parsing rules',
             '',
             '- SSH has at least two parsing layers: the local shell first parses the whole `ssh ...` command; the remote user shell then parses the remote command. The remote command is not passed as argv directly to the target program.',
-            '- When calling SSH from PowerShell, an outer single quote only stops local PowerShell expansion; the remote shell still interprets `$HOME`, `$(hostname)`, `|`, etc.',
-            '- In the currently tested PowerShell → ssh → remote bash chain, if the remote shell needs double quotes to protect arguments, PowerShell commands usually need `\\"`; to deliver a literal `$HOME` remotely, write `\\"\\$HOME\\"`; literal `$(hostname)` write `\\"\\$(hostname)\\"`.',
+            ...(powershell ? ['- When calling SSH from PowerShell, an outer single quote only stops local PowerShell expansion; the remote shell still interprets `$HOME`, `$(hostname)`, `|`, etc.'] : []),
+            ...(powershell ? ['- In the currently tested PowerShell → ssh → remote bash chain, if the remote shell needs double quotes to protect arguments, PowerShell commands usually need `\\"`; to deliver a literal `$HOME` remotely, write `\\"\\$HOME\\"`; literal `$(hostname)` write `\\"\\$(hostname)\\"`.'] : []),
             '- Do not cram complex remote operations into one line: prefer generating the script locally, `scp` it to `/tmp/...` on the remote, `ssh` to run it, then clean up the script.',
-            '- Windows SSH key example in the user directory: `ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`.'
+            ...(powershell ? ['- Windows SSH key example in the user directory: `ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`.'] : []),
         ].join('\n');
 }
 return { getAllWorkspaceRoots, getOSName, getExecuteCommandShellGuidanceDescription, getCwdParameterDescription };

@@ -184,6 +184,7 @@ function createExecuteCommandDeclaration(): Tool['declaration'] {
     // 怎么改：按单根/多根工作区动态生成 schema 字段说明。
     // 目的：让只读取参数 schema 的模型也能正确选择 cwd。
     const cwdDescription = getCwdParameterDescription(workspaceRoots, isMultiRoot);
+    const defaultTimeout = host.getConfig().defaultTimeout;
     
     return {
             name: 'execute_command',
@@ -200,7 +201,7 @@ function createExecuteCommandDeclaration(): Tool['declaration'] {
 **当前可用 Shell：**
 ${availableShellsText}${workspaceDescription}
 
-${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`
+${getExecuteCommandShellGuidanceDescription()}`
                 : `Execute a Shell command and return its output.
 
 **Current user environment:**
@@ -211,7 +212,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`
 **Enabled Shells / Available Shells:**
 ${availableShellsText}${workspaceDescription}
 
-${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
+${getExecuteCommandShellGuidanceDescription()}`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -236,9 +237,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     timeout: {
                         type: 'number',
                         description: isZh
-                            ? '超时时间（毫秒）。0 表示不超时，默认 60000（60 秒）。'
-                            : 'Timeout in milliseconds. 0 means no timeout; default is 60000 (60 seconds).',
-                        default: 60000
+                            ? `前台命令的超时时间（毫秒），当前默认 ${defaultTimeout}；0 表示不超时。后台命令不使用此限制。`
+                            : `Foreground timeout in milliseconds; current default ${defaultTimeout}. 0 disables it. Background commands ignore this limit.`,
+                        default: defaultTimeout
                     },
                     background: {
                         type: 'boolean',
