@@ -16,6 +16,8 @@
 
 “清理 Schema”控制发送给模型的工具声明，移除 Schema 节点上的 `$schema` 和 `additionalProperties`，用于处理模型接口拒绝这些字段的兼容问题。参数名称、引用、常量和示例内容保留。桌面执行器仍按服务器提供的原始 Schema 校验参数；关闭该选项后，模型也会收到原始声明。
 
+MCP 工具未指定 `$schema` 时，按协议使用 JSON Schema 2020-12；显式声明的 draft-07、2019-09 和 2020-12 使用各自的校验器，避免新版约束被旧版忽略。参见 [MCP SDK 的方言说明](https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2#behavioral-changes)。
+
 平台使用 @modelcontextprotocol/client 2.0.0 处理新旧协议。旧初始化握手与 2026-07-28 协议在同一客户端边界适配，工具名称、账号、设置与历史仍由 GrayCode 管理。分页发现完成后整体替换目录，目录变更通知不会让一半更新的清单进入任务。
 
 | 结果或事件 | 平台处理 |

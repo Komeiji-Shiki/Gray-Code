@@ -11,7 +11,8 @@ test('桌面 MCP 清理开关控制模型声明，同时保留原始参数校验
   const app = await PlatformApplication.open({ dataDirectory: f.data });
   try {
     const server = { serverId: 'schema', serverName: 'Schema', cleanSchema: true, tools: [{ name: 'read',
-      inputSchema: { type: 'object' as const, additionalProperties: false, properties: { additionalProperties: { type: 'string' } }, required: ['additionalProperties'] } }] };
+      inputSchema: { type: 'object' as const, additionalProperties: false, properties: { additionalProperties: { type: 'string' },
+        tuple: { type: 'array', prefixItems: [{ type: 'string' }], items: false } }, required: ['additionalProperties'] } }] };
     jest.spyOn(app.mcp.manager, 'getAllTools').mockReturnValue([server]);
     await app.mcp.synchronize();
     const cleaned = app.tools.catalog(['mcp__schema__read']);
@@ -19,12 +20,13 @@ test('桌面 MCP 清理开关控制模型声明，同时保留原始参数校验
     expect(cleaned.declarations[0].parameters).toHaveProperty(['properties', 'additionalProperties'], { type: 'string' });
     expect(cleaned.entries.get('mcp__schema__read')!.validate({ additionalProperties: 'ok' })).toBe(true);
     expect(cleaned.entries.get('mcp__schema__read')!.validate({ additionalProperties: 'ok', extra: true })).toBe(false);
+    expect(cleaned.entries.get('mcp__schema__read')!.validate({ additionalProperties: 'ok', tuple: ['valid'] })).toBe(true);
+    expect(cleaned.entries.get('mcp__schema__read')!.validate({ additionalProperties: 'ok', tuple: [1] })).toBe(false);
     server.cleanSchema = false;
     await app.mcp.synchronize();
     expect(app.tools.catalog(['mcp__schema__read']).declarations[0].parameters.additionalProperties).toBe(false);
   } finally { await app.close(); await f.cleanup(); }
 });
-
 
 test('MCP configuration drafts do not spawn processes; committed stdio discovery and calls run through the task core', async () => {
   const f = await fixture(); await f.store.close();

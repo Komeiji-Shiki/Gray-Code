@@ -34,7 +34,8 @@ export class PlatformMcpService {
     for (const server of this.manager.getAllTools()) for (const tool of server.tools ?? []) {
       const declaration = mcpToolToDeclaration(tool, server.serverId);
       tools.push({ declaration: { ...declaration, parameters: server.cleanSchema ? cleanToolSchemaForModel(declaration.parameters) : declaration.parameters },
-        validationSchema: declaration.parameters,
+        // MCP 未声明方言时按协议使用 2020-12；该元数据只用于本地校验。
+        validationSchema: { $schema: 'https://json-schema.org/draft/2020-12/schema', ...declaration.parameters },
         // Server annotations do not grant local or external permissions. Per-tool approvals
         // remain configurable through the same settings used for built-in tools.
         effects: () => ['high_risk'],

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import Ajv, { type ValidateFunction } from 'ajv';
+import type { ValidateFunction } from 'ajv';
+import { ToolSchemaValidators } from './toolSchemaValidation';
 import type { ActorIdentity, AgentDefinition, ToolDeclaration, ToolEffect, ToolOutcome, WorkspaceDefinition, UserQuestion, QuestionRequest, ModelInput, ApprovalChoice, ApprovalDecision } from '@graycode/contracts';
 
 export interface ToolContext {
@@ -52,7 +53,7 @@ function canonical(value: unknown): unknown {
 /** Tool selection belongs to agent configuration, never to the current speaker's role. */
 export class RuntimeToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
-  private readonly validator = new Ajv({ strict: false, allErrors: false, validateFormats: false });
+  private readonly schemaValidators = new ToolSchemaValidators();
   private readonly validators = new Map<string, { schema: string; validate: ValidateFunction }>();
 
   /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
@@ -82,9 +83,9 @@ export class RuntimeToolRegistry {
       const schema = JSON.stringify(parameters);
       let cached = this.validators.get(name);
       if (cached?.schema !== schema) {
-        const validate = this.validator.compile(parameters);
-        // Ajv 按对象身份缓存；由工具名和声明内容管理复用，避免每次目录快照积累一个 schema。
-        this.validator.removeSchema(parameters);
+        let validate: ValidateFunction;
+        try { validate = this.schemaValidators.compile(parameters); }
+        catch (error) { throw new Error(`${name} 的参数声明无效：${error instanceof Error ? error.message : String(error)}`); }
         cached = { schema, validate };
         this.validators.set(name, cached);
       }

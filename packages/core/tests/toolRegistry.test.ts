@@ -59,3 +59,16 @@ test('模型声明的兼容处理不会放宽执行校验，原始约束变化�
   expect(before.entries.get('mcp__sample')!.validate({ value: 'ok', extra: true })).toBe(false);
 });
 
+test.each([
+  ['http://json-schema.org/draft-07/schema#', { type: 'array', items: [{ type: 'string' }], additionalItems: false }, ['ok'], [1]],
+  ['https://json-schema.org/draft/2019-09/schema', { type: 'object', properties: { a: {}, b: {} }, dependentRequired: { a: ['b'] } }, { a: 1, b: 2 }, { a: 1 }],
+  ['https://json-schema.org/draft/2020-12/schema', { type: 'array', prefixItems: [{ type: 'string' }], items: false }, ['ok'], [1]],
+] as const)('按声明的 Schema 版本校验参数：%s', (dialect, shape, valid, invalid) => {
+  const registry = new RuntimeToolRegistry();
+  const input = tool();
+  input.validationSchema = { type: 'object', $schema: dialect, properties: { value: shape }, required: ['value'] };
+  registry.register(input);
+  const validate = registry.catalog(['mcp__sample']).entries.get('mcp__sample')!.validate;
+  expect(validate({ value: valid })).toBe(true);
+  expect(validate({ value: invalid })).toBe(false);
+});
