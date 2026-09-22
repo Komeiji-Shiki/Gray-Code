@@ -24,6 +24,7 @@ import { describe, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 import MarkdownRendererSource from '../MarkdownRenderer.vue?raw'
+import { renderDependencyRevision } from '../markdown/renderDependencies'
 
 // 打桩 vscode 桥接：MarkdownRenderer 后处理会异步调用文件存在性校验/图片读取，
 // 测试环境没有 acquireVsCodeApi，统一返回空结果，避免警告与未捕获异常。
@@ -53,6 +54,7 @@ const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 // 完成态渲染路径含 setTimeout(0) + prevalidate + nextTick，多等几个 tick 让其稳定收敛
 const flushRender = async () => {
+  await vi.dynamicImportSettled()
   for (let i = 0; i < 4; i++) await tick()
 }
 
@@ -72,6 +74,20 @@ async function withFakeScrollHeight(run: () => Promise<void>): Promise<void> {
 }
 
 describe('MarkdownRenderer 流式代码块滚动修复', () => {
+  test('普通正文不加载重库，首次公式和完整语法在加载后自动补全', async () => {
+    const wrapper = mountRenderer({ content: '普通正文，无需公式和语法库。' })
+    await flushRender()
+    expect(renderDependencyRevision.value).toBe(0)
+    const content = '公式：\\(x^2\\)\n\n```mathematica\nPlot[Sin[x], {x, 0, Pi}]\n```'
+    await wrapper.setProps({ content })
+    await flushRender()
+    expect(wrapper.find('.katex').exists()).toBe(true)
+    expect(wrapper.find('.language-mathematica [class*="hljs-"]').exists()).toBe(true)
+    expect(wrapper.find('[data-render-pending]').exists()).toBe(false)
+    expect(wrapper.props('content')).toBe(content)
+    wrapper.unmount()
+  })
+
   test('流式期间根节点带 is-streaming 类；流式结束后移除', async () => {
     const wrapper = mountRenderer({ content: LONG_CODE, isStreaming: true })
     await tick()

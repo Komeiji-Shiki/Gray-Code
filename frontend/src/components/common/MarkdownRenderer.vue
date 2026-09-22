@@ -27,6 +27,7 @@ import { useI18n } from '@/i18n'
 import { renderMermaid, fileExistenceCache } from './markdown/markdownItCore'
 import { extractPotentialFilePaths } from './markdown/workspaceFileRefs'
 import { renderContent, type RenderProfile } from './markdown/markdownItEngine'
+import { renderDependencyRevision } from './markdown/renderDependencies'
 import { createCodeBlockDomController } from './markdown/codeBlockDom'
 import { createWorkspaceAssetController } from './markdown/workspaceAssets'
 import MermaidZoomModal from './markdown/MermaidZoomModal.vue'
@@ -93,6 +94,7 @@ let lastRenderedSource = ''
 let lastRenderedProfile: RenderProfile = 'default'
 let lastRenderedLatexOnly = false
 let lastRenderedLanguage = ''
+let lastRenderedDependencyRevision = renderDependencyRevision.value
 let lastRenderedMode: 'streaming' | 'completed' | '' = ''
 let lastCompletedRenderCacheKey = ''
 /** 上一次流式阶段实际 render 的时间，用于把纯 debounce 升级为 leading + max-wait 节流。 */
@@ -102,7 +104,7 @@ let postProcessedSource = ''
 let postProcessedProfile: RenderProfile = 'default'
 
 function buildCompletedRenderCacheKey(content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
-  return `${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
+  return `${renderDependencyRevision.value}\u0000${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
 }
 
 function buildWorkspaceFileExistenceSignature(content: string): string {
@@ -135,6 +137,7 @@ function renderCurrentContent(): boolean {
     lastRenderedProfile = props.renderProfile
     lastRenderedLatexOnly = props.latexOnly
     lastRenderedLanguage = actualLanguage.value
+    lastRenderedDependencyRevision = renderDependencyRevision.value
     lastRenderedMode = props.isStreaming ? 'streaming' : 'completed'
     lastCompletedRenderCacheKey = ''
     return changed
@@ -147,6 +150,7 @@ function renderCurrentContent(): boolean {
       props.latexOnly === lastRenderedLatexOnly &&
       props.renderProfile === lastRenderedProfile &&
       actualLanguage.value === lastRenderedLanguage &&
+      renderDependencyRevision.value === lastRenderedDependencyRevision &&
       renderedContent.value !== ''
     )
 
@@ -156,6 +160,7 @@ function renderCurrentContent(): boolean {
     lastRenderedLatexOnly = props.latexOnly
     lastRenderedProfile = props.renderProfile
     lastRenderedLanguage = actualLanguage.value
+    lastRenderedDependencyRevision = renderDependencyRevision.value
     lastRenderedMode = 'streaming'
     lastCompletedRenderCacheKey = ''
     renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
@@ -175,6 +180,7 @@ function renderCurrentContent(): boolean {
   lastRenderedLatexOnly = props.latexOnly
   lastRenderedProfile = props.renderProfile
   lastRenderedLanguage = actualLanguage.value
+  lastRenderedDependencyRevision = renderDependencyRevision.value
   lastRenderedMode = 'completed'
   lastCompletedRenderCacheKey = cacheKey
   renderedContent.value = getMemoizedCompletedRender(cacheKey, props.content, props.latexOnly, props.renderProfile)
@@ -352,6 +358,13 @@ watch(
   },
   { immediate: true }
 )
+
+// 库准备好后补全现有正文，失效对应缓存并恢复图片、图表等后处理。
+watch(renderDependencyRevision, () => {
+  if (!renderedContent.value.includes('data-render-pending')) return
+  postProcessedSource = ''
+  scheduleRender()
+})
 
 onUnmounted(()=> {
   clearRenderTimer()

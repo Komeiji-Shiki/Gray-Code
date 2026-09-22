@@ -10,8 +10,7 @@ import type { Options } from 'markdown-it'
 import type Token from 'markdown-it/lib/token.mjs'
 import type Renderer from 'markdown-it/lib/renderer.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import hljs from 'highlight.js'
-import katex from 'katex'
+import { getMathRenderer, getSyntaxHighlighter } from './renderDependencies'
 import { t } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE, RENDER_LATEX_ONLY_PAREN_INLINE_RE, RENDER_LATEX_ONLY_BRACKET_BLOCK_RE } from '@/components/common/markdownUtils'
 import { markdownItMathBlock } from '@/utils/markdownMathBlock'
@@ -349,9 +348,13 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     // 代码高亮
     // #64：无语言标注的代码块跳过 highlightAuto（避免流式期间遍历 192 种语法卡顿主线程）
     // 有标注但 hljs 不识别的语言仍会尝试 highlightAuto，但结果加入 codeHighlightCache
+    const hljs = lang ? getSyntaxHighlighter() : undefined
+    const pendingHighlight = Boolean(lang && !hljs)
     let highlighted: string
     let langClass = ''
-    if (lang && hljs.getLanguage(lang)) {
+    if (pendingHighlight) {
+      highlighted = escapeHtml(code)
+    } else if (lang && hljs?.getLanguage(lang)) {
       // 已知语言路径复用与 auto 相同的模块级有界缓存：流式期间同一段增长中的代码
       // 每帧重复高亮，缓存命中直接取上次结果（键为 lang + 代码全文）
       const cacheKey = `${lang}:${code}`
@@ -367,7 +370,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
         }
       }
       langClass = `language-${lang}`
-    } else if (lang) {
+    } else if (lang && hljs) {
       // 标注了语言但 hljs 不识别的，尝试 auto + 缓存
       const cacheKey = `auto:${code}`
       const cached = codeHighlightCache.get(cacheKey)
@@ -421,7 +424,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
       : `<span class="code-block-title">${titleLabel}</span>`
 
     // 默认：自动换行；按钮 title 表示“点击后要切换到的模式”
-    return `<div class="code-block-container" data-block-id="${blockId}"><div class="code-block-header">${titleHtml}<div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}" style="--line-number-digits: ${lineNumberDigits};">${linesHtml}</code></pre></div>`
+    return `<div class="code-block-container"${pendingHighlight ? ' data-render-pending="highlight"' : ''} data-block-id="${blockId}"><div class="code-block-header">${titleHtml}<div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}" style="--line-number-digits: ${lineNumberDigits};">${linesHtml}</code></pre></div>`
   }
   
   return md
@@ -441,6 +444,12 @@ export function getMarkdownItInstance(renderProfile: RenderProfile): MarkdownIt 
   return _defaultMd
 }
 
+/** 库加载期间保持公式原文可读。 */
+function pendingMath(raw: string, displayMode: boolean): string {
+  const tag = displayMode ? 'div' : 'span'
+  return `<${tag} data-render-pending="math">${escapeHtml(raw)}</${tag}>`
+}
+
 /**
  * 仅渲染 LaTeX（保留原始文本格式）
  * 用于用户消息：保持原始文本，只渲染 LaTeX 公式，保留换行和空格。
@@ -455,6 +464,11 @@ function renderLatexOnly(content: string): string {
 
   const renderFormula = (match: string, formula: string, displayMode: boolean): string => {
     const placeholder = `MS_LATEX_${displayMode ? 'BLOCK' : 'INLINE'}_${formulas.length}`
+    const katex = getMathRenderer()
+    if (!katex) {
+      formulas.push({ placeholder, rendered: pendingMath(match, displayMode) })
+      return placeholder
+    }
     try {
       formulas.push({
         placeholder,
@@ -535,6 +549,13 @@ function markdownItKatex(md: MarkdownIt) {
   }
 
   const renderFormula = (formula: string, displayMode: boolean, markup: string, environment?: MathRenderEnvironment) => {
+    const raw = markup === '\\['
+      ? `\\[${formula}\\]`
+      : markup === '\\('
+        ? `\\(${formula}\\)`
+        : displayMode ? `$$${formula}$$` : `$${formula}$`
+    const katex = getMathRenderer()
+    if (!katex) return pendingMath(raw, displayMode)
     try {
       const rendered = katex.renderToString(formula.trim(), {
         displayMode,
@@ -548,13 +569,6 @@ function markdownItKatex(md: MarkdownIt) {
       environment.trustedMath.set(id, rendered)
       return `<span data-graycode-math="${id}"></span>`
     } catch {
-      const raw = markup === '\\['
-        ? `\\[${formula}\\]`
-        : markup === '\\('
-          ? `\\(${formula}\\)`
-          : displayMode
-            ? `$$${formula}$$`
-            : `$${formula}$`
       return `<span class="katex-error">${escapeHtml(raw)}</span>`
     }
   }
