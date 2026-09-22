@@ -232,7 +232,7 @@ const emit = defineEmits<{
   left: 2px;
   bottom: 2px;
   background-color: var(--vscode-foreground);
-  border-radius: 50%;
+  border-radius: var(--gc-radius-xs);
   transition: 0.2s;
 }
 
@@ -246,6 +246,7 @@ const emit = defineEmits<{
   background-color: var(--vscode-button-foreground);
 }
 
+.toggle-switch:hover input:not(:disabled) + .toggle-slider,
 .toggle-switch input:focus + .toggle-slider {
   border-color: var(--vscode-focusBorder);
 }

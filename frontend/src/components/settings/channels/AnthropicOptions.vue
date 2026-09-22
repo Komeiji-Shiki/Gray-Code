@@ -744,7 +744,7 @@ function handleThinkingNumberChange(field: string, event: any) {
   bottom: 2px;
   background-color: var(--vscode-foreground);
   opacity: 0.6;
-  border-radius: 50%;
+  border-radius: var(--gc-radius-xs);
   transition: all 0.2s;
 }
 
@@ -759,7 +759,7 @@ function handleThinkingNumberChange(field: string, event: any) {
   opacity: 1;
 }
 
-.toggle-switch:hover .toggle-slider {
+.toggle-switch:hover input:not(:disabled) + .toggle-slider {
   border-color: var(--vscode-focusBorder);
 }
 

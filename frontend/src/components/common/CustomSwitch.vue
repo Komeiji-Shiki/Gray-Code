@@ -100,7 +100,7 @@ function handleChange(event: Event) {
   left: 2px;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--gc-radius-xs);
   background: var(--gc-text-primary);
   transition: transform var(--gc-duration-normal) var(--gc-ease-emphasized);
 }
@@ -113,6 +113,11 @@ function handleChange(event: Event) {
 .custom-switch input:checked + .custom-switch-track .custom-switch-thumb {
   transform: translateX(16px);
   background: var(--gc-text-on-accent);
+}
+
+/* 悬停边框覆盖开启状态的边框色，保证四周高亮可见。 */
+.custom-switch:hover input:not(:disabled) + .custom-switch-track {
+  border-color: var(--gc-focus-border);
 }
 
 .custom-switch input:focus-visible + .custom-switch-track {

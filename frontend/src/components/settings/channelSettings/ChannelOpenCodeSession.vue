@@ -116,7 +116,7 @@ const emit = defineEmits<{
   height: 10px;
   content: '';
   background-color: var(--vscode-foreground);
-  border-radius: 50%;
+  border-radius: var(--gc-radius-xs);
   opacity: 0.6;
   transition: all 0.2s;
 }
@@ -132,7 +132,7 @@ const emit = defineEmits<{
   opacity: 1;
 }
 
-.toggle-switch:hover .toggle-slider {
+.toggle-switch:hover input:not(:disabled) + .toggle-slider {
   border-color: var(--vscode-focusBorder);
 }
 </style>
