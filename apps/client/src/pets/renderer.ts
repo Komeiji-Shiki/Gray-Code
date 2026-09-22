@@ -12,10 +12,13 @@ window.addEventListener('message', async event => {
   if (input.action === 'load') {
     if (sessionId) return;
     sessionId = input.sessionId;
+    const loading = ++sequence;
     try {
-      renderer = await (input.payload.resource.kind === 'sprite' ? createSpriteRenderer : createLive2dRenderer)(canvas, input.payload);
+      const loaded = await (input.payload.resource.kind === 'sprite' ? createSpriteRenderer : createLive2dRenderer)(canvas, input.payload);
+      if (loading !== sequence) { loaded.destroy(); return; }
+      renderer = loaded;
       renderer.resize(innerWidth, innerHeight); post({ event: 'ready', parameters: renderer.parameters });
-    } catch (error) { post({ event: 'failed', error: (error as Error).message }); }
+    } catch (error) { if(loading === sequence)post({ event: 'failed', error: (error as Error).message }); }
     return;
   }
   if (input.sessionId !== sessionId || !renderer) return;
