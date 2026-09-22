@@ -19,7 +19,11 @@ async function upload(event: Event) {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) throw new Error('请选择不超过 10 MB 的 JPG、PNG 或 WebP 图片。');
     const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
     const image = new Image(); image.src = dataUrl; await image.decode();
-    const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = Math.max(1, Math.round(image.height / image.width * 320));
+    // 长截图也限制在同一个预览框内，避免固定宽度生成极高的画布。
+    const thumbnailScale = Math.min(1, 320 / image.width, 320 / image.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * thumbnailScale));
+    canvas.height = Math.max(1, Math.round(image.height * thumbnailScale));
     canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
     const result = await sendToExtension<{ url: string }>('appearance.images.add', { name: file.name, dataUrl,
       thumbnail: canvas.toDataURL('image/jpeg', .75), width: image.width, height: image.height });
@@ -45,6 +49,7 @@ async function rename(image: ImageItem, event: Event) {
           <div class="background-preview-content"><small>效果预览</small><p>从一个想法开始，完成今天的工作。</p><div class="preview-input">接下来，我们做些什么？<span>↑</span></div></div>
         </div>
         <label class="strength-row"><strong>背景强度</strong><input v-model.number="strength" type="range" min="0" max="1" step=".01" /><span>{{ Math.round(strength * 100) }}%</span></label>
+        <p class="gallery-note">0% 完全隐藏背景，100% 显示原图强度。数值越大，背景越明显，也更容易影响文字对比度，可结合上方预览调整。</p>
         <div class="gallery-heading"><strong>我的图片 <small>{{ images.length }} 张</small></strong><label class="upload-button">{{ uploading ? '正在上传…' : '上传图片' }}<input type="file" accept="image/jpeg,image/png,image/webp" hidden :disabled="uploading" @change="upload" /></label></div>
         <p class="gallery-note">JPG、PNG、WebP，每张不超过 10 MB。图库管理立即保存，应用背景后再统一保存设置。</p>
         <div class="image-grid">
