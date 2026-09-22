@@ -1828,8 +1828,9 @@ const zhCN = {
                     enabled: '启用',
                     autoConnect: '自动连接',
                     cleanSchema: '清理 Schema',
-                    cleanSchemaHint: '移除 JSON Schema 中不兼容的字段（如 $schema, additionalProperties），某些 API（如 Gemini）需要启用此选项',
-                    timeout: '连接超时 (毫秒)',
+                    cleanSchemaHint: '从发给模型的工具声明中移除 $schema 和 additionalProperties，适合模型接口拒绝这些字段的情况。关闭后保留原始声明；工具参数仍需符合服务器的要求。',
+                    timeout: '连接与单次请求超时（毫秒）',
+                    timeoutHint: '默认 30000，即 30 秒；可填 1000–300000（1 秒到 5 分钟）。连接、工具调用和资源读取分别使用此上限。耗时的搜索或分析工具可设为 60000–120000；调低能更快报告无响应，但也可能中断仍在执行的请求。',
                     cancel: '取消',
                     create: '创建',
                     save: '保存'
@@ -1842,6 +1843,7 @@ const zhCN = {
                     urlRequired: '请输入 URL',
                     invalidJson: '请输入有效的 JSON 对象',
                     invalidArgsJsonArray: '请输入仅包含字符串的有效 JSON 数组',
+                    timeoutInvalid: '超时请输入 1000 到 300000 之间的整数（毫秒）。',
                     createFailed: '创建失败',
                     updateFailed: '更新失败'
                 },

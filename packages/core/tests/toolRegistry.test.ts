@@ -39,3 +39,23 @@ test('相同内容的运行时替换复用校验器，声明变化才重新编�
   expect(unchanged.entries.get('mcp__sample')!.validate).toBe(original.entries.get('mcp__sample')!.validate);
   expect(changed.entries.get('mcp__sample')!.validate).not.toBe(original.entries.get('mcp__sample')!.validate);
 });
+
+test('模型声明的兼容处理不会放宽执行校验，原始约束变化也更新目录版本', () => {
+  const registry = new RuntimeToolRegistry();
+  const input = tool();
+  input.validationSchema = { ...input.declaration.parameters, additionalProperties: false };
+  registry.register(input);
+  // 注册后调用方再修改原对象，不应改变已经登记的执行约束。
+  input.validationSchema.additionalProperties = true;
+  const before = registry.catalog(['mcp__sample']);
+  expect(before.declarations[0].parameters).not.toHaveProperty('additionalProperties');
+  expect(before.entries.get('mcp__sample')!.validate({ value: 'ok', extra: true })).toBe(false);
+  expect(registry.catalog(['mcp__sample']).entries.get('mcp__sample')!.validate).toBe(before.entries.get('mcp__sample')!.validate);
+  registry.replaceNamespace('mcp__', [input]);
+  const after = registry.catalog(['mcp__sample']);
+  expect(after.declarations).toEqual(before.declarations);
+  expect(after.version).not.toBe(before.version);
+  expect(after.entries.get('mcp__sample')!.validate({ value: 'ok', extra: true })).toBe(true);
+  expect(before.entries.get('mcp__sample')!.validate({ value: 'ok', extra: true })).toBe(false);
+});
+

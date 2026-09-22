@@ -165,4 +165,24 @@ describe('McpSettings stdio arguments', () => {
     )
     expect(sendToExtension.mock.calls.some(([command]) => command === 'updateMcpServer')).toBe(false)
   })
+
+  test('超时输入不再静默替换，修正后保存用户实际填写的毫秒数', async () => {
+    wrapper = mount(McpSettings)
+    await flushPromises()
+    await wrapper.findAll('.server-card .action-btn')[1].trigger('click')
+    const input = wrapper.find<HTMLInputElement>('input[type="number"]')
+    const save = wrapper.find('.form-actions .action-button.primary')
+    for (const value of ['', '0', '1000.5', '300001']) {
+      await input.setValue(value)
+      await save.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.form-error').text()).toContain('components.settings.mcpSettings.validation.timeoutInvalid')
+      expect(sendToExtension.mock.calls.some(([command]) => command === 'updateMcpServer')).toBe(false)
+      expect(input.element.value).toBe(value)
+    }
+    await input.setValue('120000')
+    await save.trigger('click')
+    await flushPromises()
+    expect(sendToExtension.mock.calls.find(([command]) => command === 'updateMcpServer')?.[1].updates.timeout).toBe(120000)
+  })
 })

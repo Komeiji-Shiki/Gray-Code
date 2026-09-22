@@ -255,6 +255,7 @@ const emit = defineEmits<{
             min="1000"
             max="300000"
           />
+          <div class="form-hint">{{ t('components.settings.mcpSettings.form.timeoutHint') }}</div>
         </div>
       </div>
 

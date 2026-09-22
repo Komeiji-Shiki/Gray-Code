@@ -1826,8 +1826,9 @@ const en: LanguageMessages = {
                     enabled: 'Enabled',
                     autoConnect: 'Auto Connect',
                     cleanSchema: 'Clean Schema',
-                    cleanSchemaHint: 'Remove incompatible fields from JSON Schema (e.g. $schema, additionalProperties), required for some APIs (e.g. Gemini)',
-                    timeout: 'Connection Timeout (ms)',
+                    cleanSchemaHint: 'Remove $schema and additionalProperties from tool declarations sent to the model when its API rejects these fields. Disable to preserve the original declaration. Tool arguments must still satisfy the server requirements.',
+                    timeout: 'Connection and Request Timeout (ms)',
+                    timeoutHint: 'Default 30000 (30 seconds); range 1000–300000 (1 second to 5 minutes). Applies separately to connection, tool calls and resource reads. Try 60000–120000 for slower search or analysis tools. Lower values report unresponsive requests sooner but can interrupt ongoing work.',
                     cancel: 'Cancel',
                     create: 'Create',
                     save: 'Save'
@@ -1840,6 +1841,7 @@ const en: LanguageMessages = {
                     urlRequired: 'Please enter URL',
                     invalidJson: 'Enter a valid JSON object',
                     invalidArgsJsonArray: 'Enter a valid JSON array containing only strings',
+                    timeoutInvalid: 'Enter an integer from 1000 to 300000 milliseconds.',
                     createFailed: 'Create failed',
                     updateFailed: 'Update failed'
                 },

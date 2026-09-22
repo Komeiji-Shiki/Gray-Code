@@ -29,6 +29,8 @@ export interface ToolContext {
 }
 export interface RuntimeTool {
   declaration: ToolDeclaration;
+  /** 模型声明经过兼容转换时，执行前仍使用原始 Schema 校验参数。 */
+  validationSchema?: ToolDeclaration['parameters'];
   /** 明确独立的读取允许同批并行；实际效果仍须全部属于只读。该标记不进入模型声明。 */
   parallelRead?: boolean;
   /** Pure classification. Must not read files, contact a service, or create a snapshot. */
@@ -60,11 +62,13 @@ export class RuntimeToolRegistry {
   register(tool: RuntimeTool): void {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(tool.declaration.name)) throw new Error('Invalid tool name.');
     if (this.tools.has(tool.declaration.name)) throw new Error(`Tool already registered: ${tool.declaration.name}`);
-    this.tools.set(tool.declaration.name, { ...(this.decorate?.(tool) ?? tool), declaration: structuredClone(tool.declaration) });
+    this.tools.set(tool.declaration.name, { ...(this.decorate?.(tool) ?? tool), declaration: structuredClone(tool.declaration),
+      ...(tool.validationSchema ? { validationSchema: structuredClone(tool.validationSchema) } : {}) });
   }
 
   catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>): ToolCatalog {
     const declarations: ToolDeclaration[] = [];
+    const validationSchemas: Record<string, unknown> = {};
     const entries = new Map<string, { tool: RuntimeTool; validate: ValidateFunction }>();
     for (const name of [...new Set(names)].sort()) {
       const override = overrides?.get(name);
@@ -73,18 +77,21 @@ export class RuntimeToolRegistry {
       if (!tool) throw new Error(`Configured tool is unavailable: ${name}`);
       const declaration = canonical(tool.declaration) as ToolDeclaration;
       declarations.push(declaration);
-      const schema = JSON.stringify(declaration.parameters);
+      const parameters = tool.validationSchema ? canonical(tool.validationSchema) as ToolDeclaration['parameters'] : declaration.parameters;
+      if (tool.validationSchema) validationSchemas[name] = parameters;
+      const schema = JSON.stringify(parameters);
       let cached = this.validators.get(name);
       if (cached?.schema !== schema) {
-        const validate = this.validator.compile(declaration.parameters);
+        const validate = this.validator.compile(parameters);
         // Ajv 按对象身份缓存；由工具名和声明内容管理复用，避免每次目录快照积累一个 schema。
-        this.validator.removeSchema(declaration.parameters);
+        this.validator.removeSchema(parameters);
         cached = { schema, validate };
         this.validators.set(name, cached);
       }
       entries.set(name, { tool, validate: cached.validate });
     }
-    return { declarations, entries, version: createHash('sha256').update(JSON.stringify(declarations)).digest('hex') };
+    const fingerprint = Object.keys(validationSchemas).length ? { declarations, validationSchemas } : declarations;
+    return { declarations, entries, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex') };
   }
 
   declarations(): ToolDeclaration[] { return [...this.tools.values()].map(tool => structuredClone(tool.declaration)); }

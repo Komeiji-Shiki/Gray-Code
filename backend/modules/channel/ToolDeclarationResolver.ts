@@ -27,6 +27,7 @@ import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../../tools/localization/types';
 import { getToolDescriptionLocalization } from '../../tools/localization/catalogs';
 import { localizeToolDeclaration } from '../../tools/localization/localizeToolDeclaration';
+import { cleanToolSchemaForModel } from '../../../shared/toolSchema';
 
 export type DeclarationChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
 export type DeclarationToolMode = 'function_call' | 'xml' | 'json';
@@ -413,22 +414,7 @@ export class ToolDeclarationResolver {
      * 修改目的：避免 SubAgent 通过 toolOverrides 发送未经清理的 schema，导致 Gemini 等接口 400。
      */
     private cleanJsonSchema(schema: any): any {
-        if (!schema || typeof schema !== 'object') {
-            return schema;
-        }
-
-        if (Array.isArray(schema)) {
-            return schema.map(item => this.cleanJsonSchema(item));
-        }
-
-        const cleaned: Record<string, any> = {};
-        for (const [key, value] of Object.entries(schema)) {
-            if (key === '$schema' || key === 'additionalProperties') {
-                continue;
-            }
-            cleaned[key] = this.cleanJsonSchema(value);
-        }
-        return cleaned;
+        return cleanToolSchemaForModel(schema);
     }
 }
 

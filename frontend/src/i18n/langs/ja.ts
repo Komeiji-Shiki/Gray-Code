@@ -1826,8 +1826,9 @@ const ja: LanguageMessages = {
                     enabled: '有効',
                     autoConnect: '自動接続',
                     cleanSchema: 'スキーマをクリーンアップ',
-                    cleanSchemaHint: 'JSON Schema から互換性のないフィールド（$schema、additionalProperties など）を削除します。一部の API（Gemini など）ではこのオプションを有効にする必要があります',
-                    timeout: '接続タイムアウト (ms)',
+                    cleanSchemaHint: 'モデルの API が拒否する場合に、送信するツール定義から $schema と additionalProperties を除去します。無効にすると元の定義を保持します。ツール引数は引き続きサーバーの要件に従います。',
+                    timeout: '接続とリクエストのタイムアウト（ミリ秒）',
+                    timeoutHint: '既定値は 30000（30 秒）、範囲は 1000–300000（1 秒～5 分）。接続、ツール呼び出し、リソース読み込みごとに適用します。時間のかかる検索や分析には 60000–120000 が目安です。小さくすると無応答を早く検出できますが、処理中のリクエストを中断する場合があります。',
                     cancel: 'キャンセル',
                     create: '作成',
                     save: '保存'
@@ -1840,6 +1841,7 @@ const ja: LanguageMessages = {
                     urlRequired: 'URL を入力してください',
                     invalidJson: '有効な JSON オブジェクトを入力してください',
                     invalidArgsJsonArray: '文字列のみを含む有効な JSON 配列を入力してください',
+                    timeoutInvalid: '1000～300000 の整数をミリ秒で入力してください。',
                     createFailed: '作成に失敗しました',
                     updateFailed: '更新に失敗しました'
                 },

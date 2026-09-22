@@ -2,8 +2,31 @@ import { mcpResultToToolResult, mcpToolToDeclaration } from '../../modules/mcp/t
 import { performToolCall } from '../../modules/mcp/mcpManager/mcpOperations';
 import type { McpServerInfo, McpRawToolResult } from '../../modules/mcp/types';
 import { McpInputRequiredError, McpExecutionUnknownError } from '../../modules/mcp/McpClient';
+import { cleanToolSchemaForModel } from '../../../shared/toolSchema';
 
 describe('MCP tool result and schema preservation', () => {
+    test('兼容清理只处理 Schema 节点，保留同名参数、引用、常量和示例', () => {
+        const schema = { type: 'object', $schema: 'https://json-schema.org/draft-07/schema#', additionalProperties: false,
+            properties: { additionalProperties: { type: 'string' }, $schema: { type: 'string' },
+                nested: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { value: { $ref: '#/$defs/value' } } } } },
+            $defs: { value: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } } } },
+            allOf: [{ if: { properties: { $schema: { const: 'x' } } }, then: { additionalProperties: false } }],
+            const: { additionalProperties: false, $schema: 'data' }, examples: [{ additionalProperties: 'keep', $schema: 'example' }] };
+        const cleaned = cleanToolSchemaForModel(schema);
+        expect(cleaned).not.toHaveProperty('$schema');
+        expect(cleaned).not.toHaveProperty('additionalProperties');
+        expect(cleaned.properties.additionalProperties).toEqual({ type: 'string' });
+        expect(cleaned.properties.$schema).toEqual({ type: 'string' });
+        expect(cleaned.properties.nested.items).not.toHaveProperty('additionalProperties');
+        expect(cleaned.properties.nested.items.properties.value).toEqual({ $ref: '#/$defs/value' });
+        expect(cleaned.$defs.value).not.toHaveProperty('additionalProperties');
+        expect(cleaned.allOf[0].then).not.toHaveProperty('additionalProperties');
+        expect(cleaned.const).toEqual(schema.const);
+        expect(cleaned.examples).toEqual(schema.examples);
+        expect(schema.properties.nested.items.additionalProperties).toBe(false);
+    });
+
+
     test.each([
         [new McpInputRequiredError({ resultType: 'input_required', requestState: 'opaque==' }), 'input_required'],
         [new McpExecutionUnknownError(new Error('connection lost')), 'unknown'],

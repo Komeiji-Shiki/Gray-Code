@@ -1,6 +1,7 @@
 import { McpManager } from '../../../../backend/modules/mcp/McpManager';
 import { mcpResultToToolResult, mcpToolToDeclaration } from '../../../../backend/modules/mcp/toolAdapter';
 import { MCP_TOOL_PREFIX } from '../../../../shared/mcpToolNameCodec';
+import { cleanToolSchemaForModel } from '../../../../shared/toolSchema';
 import type { RuntimeTool } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 
@@ -32,7 +33,8 @@ export class PlatformMcpService {
     const tools: RuntimeTool[] = [];
     for (const server of this.manager.getAllTools()) for (const tool of server.tools ?? []) {
       const declaration = mcpToolToDeclaration(tool, server.serverId);
-      tools.push({ declaration: { ...declaration, parameters: { ...declaration.parameters } },
+      tools.push({ declaration: { ...declaration, parameters: server.cleanSchema ? cleanToolSchemaForModel(declaration.parameters) : declaration.parameters },
+        validationSchema: declaration.parameters,
         // Server annotations do not grant local or external permissions. Per-tool approvals
         // remain configurable through the same settings used for built-in tools.
         effects: () => ['high_risk'],
