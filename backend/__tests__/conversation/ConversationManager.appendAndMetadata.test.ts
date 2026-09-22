@@ -324,7 +324,7 @@ describe('updateSummary 合并写入（HIS-09）', () => {
         expect(meta!.custom!.preview).toBe('new preview');
     });
 
-    test('M3：messageCount 超过实际历史提交数时钳制到 index.totalMessages（append 失败后乐观计数不永久超前）', async () => {
+    test('消息数按已提交的历史校正，兼顾乐观计数与迟到摘要', async () => {
         const { adapter } = createAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-clamp', 'Clamp');
@@ -337,15 +337,15 @@ describe('updateSummary 合并写入（HIS-09）', () => {
         let meta = await adapter.loadMetadata('conv-clamp');
         expect(meta!.custom!.messageCount).toBe(3);
 
-        // 合法值（<= totalMessages）不受影响
+        // 迟到摘要的较小值同样按真实历史校正
         await manager.updateSummary('conv-clamp', { messageCount: 2 });
         meta = await adapter.loadMetadata('conv-clamp');
-        expect(meta!.custom!.messageCount).toBe(2);
+        expect(meta!.custom!.messageCount).toBe(3);
 
         // 不传 messageCount 不清除已有值
         await manager.updateSummary('conv-clamp', { preview: 'p' });
         meta = await adapter.loadMetadata('conv-clamp');
-        expect(meta!.custom!.messageCount).toBe(2);
+        expect(meta!.custom!.messageCount).toBe(3);
     });
 });
 

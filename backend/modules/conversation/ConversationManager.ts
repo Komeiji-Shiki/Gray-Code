@@ -2220,13 +2220,11 @@ export class ConversationManager {
             }
             let messageCount = summary.messageCount;
             if (messageCount !== undefined) {
-                // M3：钳制 messageCount 不超过实际历史提交数。appendHistory 失败但前端已乐观更新并
-                // 调 updateSummary 时，不钳制会让 custom.messageCount 永久超前于真实历史。
-                // 走轻量只读 index JSON（getHistoryTotalMessages：1 次读、0 次逐段 stat）；
-                // 索引不可读/legacy 时跳过钳制。
+                // 消息数以已提交的历史为准，避免前端乐观值偏高或迟到摘要覆盖成旧的较小值。
+                // 只读历史索引，不加载正文；旧格式或索引不可读时保留调用方提供的值。
                 const totalMessages = await this.resolveHistoryTotalMessages(conversationId);
                 if (typeof totalMessages === 'number' && totalMessages >= 0) {
-                    messageCount = Math.min(messageCount, totalMessages);
+                    messageCount = totalMessages;
                 }
                 meta.custom.messageCount = messageCount;
             }

@@ -33,6 +33,23 @@ describe('updateSummary M3 钳制轻量化（只读 index JSON，不逐段 stat�
         expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
     });
 
+    test('迟到的较小摘要不会覆盖已提交的消息数，仍只读取索引', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-late-summary', 'Late summary');
+        await manager.addBatch('conv-late-summary', makeHistory(210));
+        fake.statCalls.length = 0;
+        fake.readCalls.length = 0;
+
+        await manager.updateSummary('conv-late-summary', { messageCount: 6, preview: '旧摘要' });
+
+        const meta = await adapter.loadMetadata('conv-late-summary');
+        expect(meta!.custom!.messageCount).toBe(210);
+        expect(meta!.custom!.preview).toBe('旧摘要');
+        expect(fake.statCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
+        expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
+    });
+
     test('legacy 历史（无 index）时钳制跳过，messageCount 按原值保存', async () => {
         const { adapter, fake } = createAdapter();
         const manager = new ConversationManager(adapter);
