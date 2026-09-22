@@ -33,6 +33,7 @@ const { t } = useI18n()
         <input
           type="number"
           :value="maxConcurrentAgents"
+          :aria-label="t('components.settings.subagents.maxConcurrentAgents')"
           min="-1"
           @change="onGlobalNumberChange($event, 'maxConcurrentAgents')"
         />
@@ -43,8 +44,8 @@ const { t } = useI18n()
         <input
           type="number"
           :value="defaultMaxIterations"
-          min="1"
-          max="1000"
+          :aria-label="t('components.settings.subagents.defaultMaxIterations')"
+          min="-1"
           @change="onGlobalNumberChange($event, 'defaultMaxIterations')"
         />
         <span class="field-hint">{{ t('components.settings.subagents.defaultMaxIterationsHint') }}</span>
@@ -54,6 +55,7 @@ const { t } = useI18n()
         <input
           type="number"
           :value="queueTimeoutSeconds"
+          :aria-label="t('components.settings.subagents.queueTimeoutSeconds')"
           min="-1"
           @change="onQueueTimeout"
         />
@@ -64,13 +66,14 @@ const { t } = useI18n()
         <input
           type="number"
           :value="defaultMaxRuntimeSeconds"
+          :aria-label="t('components.settings.subagents.defaultMaxRuntimeSeconds')"
           min="-1"
           @change="onGlobalNumberChange($event, 'defaultMaxRuntimeSeconds')"
         />
         <span class="field-hint">{{ t('components.settings.subagents.defaultMaxRuntimeSecondsHint') }}</span>
       </div>
     </div>
-    <p v-if="globalNumberError" class="field-hint global-number-error" style="color: var(--vscode-errorForeground)">{{ globalNumberError }}</p>
+    <p v-if="globalNumberError" class="field-hint global-number-error" role="alert" style="color: var(--vscode-errorForeground)">{{ globalNumberError }}</p>
     <div class="form-group">
       <CustomCheckbox
         :modelValue="generalWorkerEnabled"
@@ -112,7 +115,7 @@ const { t } = useI18n()
   padding: 6px 10px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--vscode-input-foreground);
   font-size: 13px;
   font-family: inherit;
@@ -127,6 +130,7 @@ const { t } = useI18n()
 
 .field-hint {
   font-size: 11px;
+  line-height: 1.5;
   color: var(--vscode-descriptionForeground);
   margin-top: 2px;
 }
@@ -142,7 +146,7 @@ const { t } = useI18n()
    双类选择器提升特异性（.form-row 在其后定义，单类会被它的 display:flex 覆盖） */
 .global-config .global-config-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 12px;
 }
 
@@ -171,4 +175,5 @@ input[type="number"]::-webkit-inner-spin-button {
 .global-config input[type="number"] {
   width: 100px;
 }
+
 </style>

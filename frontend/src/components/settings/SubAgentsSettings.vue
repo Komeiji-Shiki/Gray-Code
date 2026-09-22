@@ -312,7 +312,7 @@ async function updateAgentField<K extends keyof SubAgentConfig>(field: K, value:
   if (agent) {
     const next = isPlainObject(previous) && isPlainObject(value)
       ? { ...(previous as Record<string, unknown>), ...value }
-      : value
+      : value === null && (field === 'maxIterations' || field === 'maxRuntime') ? undefined : value
     agent[field] = next as SubAgentConfig[K]
   }
 
@@ -383,18 +383,10 @@ const globalNumberError = ref('')
 
 function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntimeSeconds') {
   const raw = (event.target as HTMLInputElement).value
-  const parsed = parseInt(raw, 10)
-  // defaultMaxIterations 要求 1-1000；maxConcurrentAgents / defaultMaxRuntimeSeconds：-（无限制）或 >=1 合法，0 非法
-  const isIterations = field === 'defaultMaxIterations'
-  const max = isIterations ? 1000 : Number.POSITIVE_INFINITY
-  const invalid = isIterations
-    ? isNaN(parsed) || parsed < 1 || parsed > max
-    : isNaN(parsed) || parsed < -1 || parsed === 0
-  if (invalid) {
-    // 非法输入：就地提示；:value 绑定已保存值，重渲染时自动回填
-    globalNumberError.value = isIterations
-      ? '请输入 1-1000 之间的整数'
-      : '请输入 -1 或不小于 1 的整数'
+  const parsed = Number(raw)
+  // 与运行时一致：-1 表示无限制；完整解析数字，避免把小数或科学记数法截断。
+  if (!Number.isSafeInteger(parsed) || (parsed !== -1 && parsed < 1)) {
+    globalNumberError.value = t('components.settings.subagents.queueTimeoutSecondsInvalid')
     return
   }
   globalNumberError.value = ''
@@ -413,8 +405,8 @@ function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | '
 // 排队超时（秒）：-1（无限制）或 >=1 合法，0 非法
 function handleQueueTimeout(event: Event) {
   const raw = (event.target as HTMLInputElement).value
-  const parsed = parseInt(raw, 10)
-  if (isNaN(parsed) || parsed < -1 || parsed === 0) {
+  const parsed = Number(raw)
+  if (!Number.isSafeInteger(parsed) || (parsed !== -1 && parsed < 1)) {
     globalNumberError.value = t('components.settings.subagents.queueTimeoutSecondsInvalid')
     return
   }
@@ -709,7 +701,10 @@ onMounted(async () => {
       <div v-if="currentAgent" class="agent-config">
         <!-- 基本信息 -->
         <SubAgentBasicInfoSection
+          :key="currentAgent.type"
           :agent="currentAgent"
+          :default-max-iterations="defaultMaxIterations"
+          :default-max-runtime-seconds="defaultMaxRuntimeSeconds"
           :on-update-field="handleBasicFieldUpdate"
         />
 

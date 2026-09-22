@@ -5,7 +5,7 @@
  * SettingsManager 聚合委托本服务。
  */
 
-import type { SubAgentsConfig, SubAgentConfigItem } from './types';
+import type { SubAgentsConfig, SubAgentConfigItem, SubAgentConfigUpdate } from './types';
 import { DEFAULT_SUBAGENTS_CONFIG } from './types';
 import { SettingsCore } from './SettingsCore';
 
@@ -62,7 +62,7 @@ export class SubAgentsSettingsService {
     /**
      * 更新子代理
      */
-    async updateSubAgent(type: string, updates: Partial<SubAgentConfigItem>): Promise<boolean> {
+    async updateSubAgent(type: string, updates: SubAgentConfigUpdate): Promise<boolean> {
         return this.core.serializeMutation(async () => {
             const config = this.getSubAgentsConfig();
             const index = config.agents.findIndex(a => a.type === type);
@@ -79,7 +79,18 @@ export class SubAgentsSettingsService {
             }
             
             const agents = [...config.agents];
-            const merged = { ...agents[index], ...updates };
+            const { maxIterations: _iterations, maxRuntime: _runtime, ...fields } = updates;
+            const merged = { ...agents[index], ...fields };
+            for (const field of ['maxIterations', 'maxRuntime'] as const) {
+                const value = updates[field];
+                if (value === null) delete merged[field];
+                else if (value !== undefined) {
+                    if (!Number.isSafeInteger(value) || (value !== -1 && value < 1)) {
+                        throw new Error(`${field} 必须为 -1 或正整数；清空后继承全局设置。`);
+                    }
+                    merged[field] = value;
+                }
+            }
             // channel 为嵌套对象：部分更新（如只改 channelId）整体替换会静默丢
             // modelId/syncWithCurrentModel，做字段级合并（与前端整对象发送兼容）
             if (updates.channel && agents[index].channel) {

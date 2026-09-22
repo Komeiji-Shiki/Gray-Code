@@ -360,7 +360,7 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
  */
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
   // 顶层「必须是对象」已由 MessageRouter 入口按 MESSAGE_SCHEMAS（looseObject）校验；
-  // 各字段的合法值/忽略语义仍保留在 handler（非法值可能被静默忽略，不能上收到统一校验）。
+  // 各字段由此处校验，数值不合法时明确返回错误，避免界面误认为已保存。
   const updates: Record<string, unknown> = {};
 
   // 支持的全局配置字段
@@ -385,10 +385,11 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
   // 全局默认迭代次数（-1 表示无限制，与 per-agent maxIterations 语义一致）
   if (data.defaultMaxIterations !== undefined) {
     const v = data.defaultMaxIterations;
-    // Number.isInteger 校验：浮点值（如 2.5）不可入库（R2-08 复查）
-    if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && (v === -1 || v >= 1)) {
-      updates.defaultMaxIterations = v;
+    if (!Number.isSafeInteger(v) || (v !== -1 && v < 1)) {
+      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'defaultMaxIterations must be -1 or a positive integer');
+      return;
     }
+    updates.defaultMaxIterations = v;
   }
 
   // 排队超时（秒，-1 表示无限制，0 视为非法——避免与「0 无超时」的 limiter 语义混淆）

@@ -73,13 +73,13 @@ export interface SubAgentConfigItem {
     
     /**
      * 最大迭代次数（-1 表示无限制）
-     * 默认: 20
+     * 未设置时继承全局 defaultMaxIterations。
      */
     maxIterations?: number;
     
     /**
      * 最大运行时间（秒，-1 表示无限制）
-     * 默认: 300 (5分钟)
+     * 未设置时继承全局 defaultMaxRuntimeSeconds。
      */
     maxRuntime?: number;
 
@@ -95,8 +95,15 @@ export interface SubAgentConfigItem {
 }
 
 /**
- * 子代理配置
+ * 子代理局部更新。
  */
+export type SubAgentConfigUpdate = Omit<Partial<SubAgentConfigItem>, 'maxIterations' | 'maxRuntime'> & {
+    /** null 撤销单独配置，恢复全局继承；undefined 不修改。 */
+    maxIterations?: number | null;
+    maxRuntime?: number | null;
+};
+
+/** 子代理全局配置。 */
 export interface SubAgentsConfig extends Record<string, unknown> {
     /**
      * 子代理列表
@@ -142,7 +149,7 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     /**
      * 全局默认运行时间上限（秒，-1 表示无限制）。
      *
-     * 未单独配置 maxRuntime 的 agent（含 General Worker）继承该默认值；
+     * 未单独配置 maxRuntime 的自定义 agent 继承该默认值；
      * 单独配置的 agent 优先使用自己的 maxRuntime。默认 1800（30 分钟）。
      */
     defaultMaxRuntimeSeconds?: number;

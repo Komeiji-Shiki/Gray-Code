@@ -65,6 +65,7 @@ import type {
     SkillConfigItem,
     SubAgentsConfig,
     SubAgentConfigItem,
+    SubAgentConfigUpdate,
     HistorySearchToolConfig,
     MemoryToolConfig
 } from './types';
@@ -1317,7 +1318,7 @@ export class SettingsManager {
     /**
      * 更新子代理
      */
-    updateSubAgent(type: string, updates: Partial<SubAgentConfigItem>): Promise<boolean> {
+    updateSubAgent(type: string, updates: SubAgentConfigUpdate): Promise<boolean> {
         return this.subagents.updateSubAgent(type, updates);
     }
 
