@@ -5,7 +5,7 @@ import { ref, reactive, onMounted, onUnmounted, watch, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
-import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
+import { useDeferredNumberInput, getSettingsView } from '@/composables/useDeferredNumberInput'
 import { isValidContextLimit } from '@shared/contextLimits'
 
 const { t } = useI18n()
@@ -133,23 +133,28 @@ async function loadConfig() {
   }
 }
 
-// 加载预览数据
+let previewPending = false
+let previewDisposed = false
+function canRefreshPreview(): boolean {
+  const view = getSettingsView()
+  return !previewDisposed && document.visibilityState !== 'hidden' && (view === undefined || view === 'settings')
+    && (config.includeOpenTabs || config.includeActiveEditor)
+}
+
+// 预览只服务当前可见表单，慢连接中同一时刻最多一轮请求。
 async function loadPreview() {
+  if (previewPending || !canRefreshPreview()) return
+  previewPending = true
   try {
-    // 获取打开的标签页
-    const tabsResponse = await sendToExtension<{ tabs: string[] }>(MESSAGE_NAMES.getOpenTabs, {})
-    if (tabsResponse?.tabs) {
-      openTabs.value = tabsResponse.tabs
-    }
-    
-    // 获取当前活动编辑器
-    const editorResponse = await sendToExtension<{ path: string | null }>(MESSAGE_NAMES.getActiveEditor, {})
-    if (editorResponse) {
-      activeEditor.value = editorResponse.path
-    }
-  } catch (error) {
-    console.error('Failed to load preview data:', error)
-  }
+    const [tabs, editor] = await Promise.allSettled([
+      config.includeOpenTabs ? sendToExtension<{ tabs: string[] }>(MESSAGE_NAMES.getOpenTabs, {}) : Promise.resolve(undefined),
+      config.includeActiveEditor ? sendToExtension<{ path: string | null }>(MESSAGE_NAMES.getActiveEditor, {}) : Promise.resolve(undefined)
+    ])
+    if (!canRefreshPreview()) return
+    if (tabs.status === 'fulfilled' && tabs.value) openTabs.value = tabs.value.tabs
+    if (editor.status === 'fulfilled' && editor.value) activeEditor.value = editor.value.path
+    for (const result of [tabs, editor]) if (result.status === 'rejected') console.error('Failed to load preview data:', result.reason)
+  } finally { previewPending = false }
 }
 
 // 保存队列：串行化整包保存，避免开关快速切换时后写覆盖先写（竞态丢更新）
@@ -248,11 +253,14 @@ onMounted(() => {
   loadConfig()
   
   // 启动自动刷新预览
+  document.addEventListener('visibilitychange', refreshPreviewSchedule)
   startAutoRefresh()
 })
 
 // 组件卸载时清理
 onUnmounted(() => {
+  previewDisposed = true
+  document.removeEventListener('visibilitychange', refreshPreviewSchedule)
   stopAutoRefresh()
   // 清理保存成功消息清除定时器，避免卸载后仍修改 saveMessage
   if (saveMessageTimer) {
@@ -261,25 +269,16 @@ onUnmounted(() => {
   }
 })
 
-// 启动自动刷新
+// 设置页常驻挂载，离开设置视图或隐藏窗口时也必须停止计时器。
 function startAutoRefresh() {
-  if (refreshIntervalId) {
-    clearInterval(refreshIntervalId)
-  }
-  refreshIntervalId = setInterval(() => {
-    // 两个预览开关都关闭时不轮询，避免无条件每 2 秒发请求
-    if (!config.includeOpenTabs && !config.includeActiveEditor) return
-    loadPreview()
-  }, REFRESH_INTERVAL)
+  stopAutoRefresh()
+  if (canRefreshPreview()) refreshIntervalId = setInterval(loadPreview, REFRESH_INTERVAL)
 }
-
-// 预览开关变化时：立即刷新一次预览并重启轮询（开关全关时停止轮询）
-watch(() => [config.includeOpenTabs, config.includeActiveEditor], () => {
+function refreshPreviewSchedule() {
   startAutoRefresh()
-  if (config.includeOpenTabs || config.includeActiveEditor) {
-    loadPreview()
-  }
-})
+  if (canRefreshPreview()) void loadPreview()
+}
+watch(() => [config.includeOpenTabs, config.includeActiveEditor, getSettingsView()], refreshPreviewSchedule)
 
 // 停止自动刷新
 function stopAutoRefresh() {
