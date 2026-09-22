@@ -11,6 +11,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { ref, computed, onMounted } from 'vue'
 import { CustomCheckbox, DependencyWarning } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -48,6 +49,8 @@ const { t } = useI18n()
 const maxToolIterations = ref<number>(0)
 const isLoadingMaxIterations = ref(false)
 const isSavingMaxIterations = ref(false)
+const iterationsLoaded = ref(false)
+const validToolIterations = (value: number) => Number.isSafeInteger(value) && (value === -1 || value >= 1)
 
 // 草稿模式：清空后不立即回退旧值；离开设置页时自动回填已保存值
 // -1 表示无限制，正整数表示具体次数（保留原 parseInt 的整数语义）
@@ -55,7 +58,17 @@ const {
   draft: maxIterationsDraft,
   handleInput: handleMaxIterationsDraftInput,
   syncFromStored: syncMaxIterationsFromStored
-} = useDeferredNumberInput(() => maxToolIterations.value, v => (v === -1 || v >= 1) && Number.isInteger(v))
+} = useDeferredNumberInput(() => maxToolIterations.value, validToolIterations)
+const maxIterationsError = computed(() => {
+  const value = maxIterationsDraft.value.trim()
+  return iterationsLoaded.value && value !== '' && (!/^-?\d+(\.\d+)?$/.test(value) || !validToolIterations(Number(value)))
+    ? t('components.settings.toolsSettings.maxIterations.invalid') : ''
+})
+useDesktopSettingsDraft(async () => {
+  if (maxIterationsError.value) throw new Error(maxIterationsError.value)
+  // 清空保留已保存的数值；有效输入已经通过原有即时暂存路径提交。
+  if (!maxIterationsDraft.value.trim()) syncMaxIterationsFromStored()
+}, () => iterationsLoaded.value)
 
 // 获取所有需要的依赖（从所有工具中）
 const allDependencies = Object.values(TOOL_DEPENDENCIES).flat()
@@ -196,6 +209,7 @@ async function loadMaxToolIterations() {
     if (response?.maxIterations !== undefined) {
       maxToolIterations.value = response.maxIterations
       syncMaxIterationsFromStored()
+      iterationsLoaded.value = true
     }
   } catch (error) {
     console.error('Failed to load maxToolIterations:', error)
@@ -240,12 +254,17 @@ onMounted(() => {
         <div class="config-label">
           <span class="label-text">{{ t('components.settings.toolsSettings.maxIterations.label') }}</span>
           <span class="label-hint">{{ t('components.settings.toolsSettings.maxIterations.hint') }}</span>
+          <span v-if="maxIterationsError" id="tool-iterations-error" role="alert" class="iterations-error">{{ maxIterationsError }}</span>
         </div>
         <div class="config-control">
           <input
             type="number"
             class="iterations-input"
             :value="maxIterationsDraft"
+            :aria-label="t('components.settings.toolsSettings.maxIterations.label')"
+            :aria-invalid="!!maxIterationsError"
+            :aria-describedby="maxIterationsError ? 'tool-iterations-error' : undefined"
+            step="1"
             min="-1"
             :disabled="isLoadingMaxIterations || isSavingMaxIterations"
             @input="handleMaxIterationsChange"
@@ -415,6 +434,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.iterations-error { color: var(--vscode-errorForeground); font-size: 12px; line-height: 1.6; }
 .tools-settings {
   display: flex;
   flex-direction: column;

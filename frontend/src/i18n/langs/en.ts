@@ -2651,7 +2651,8 @@ const en: LanguageMessages = {
             toolsSettings: {
                 maxIterations: {
                     label: 'Max Tool Calls Per Turn',
-                    hint: 'Prevents AI from infinite tool call loops, -1 for unlimited',
+                    hint: 'Enter a positive integer, or -1 for unlimited. Each model generation counts as one iteration and may include several tools. Higher limits allow more model requests. Clearing keeps the current value.',
+                    invalid: 'Enter a positive integer, or -1 for unlimited. Zero and fractions are invalid.',
                     unit: 'calls'
                 },
                 actions: {
