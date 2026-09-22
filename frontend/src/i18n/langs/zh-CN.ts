@@ -3048,6 +3048,7 @@ const zhCN = {
         subagents: {
             monitor: {
                 title: 'SubAgent Monitor',
+                elapsedHint: '从任务创建起的总经过时间，包含排队和暂停。',
                 subtitle: '以聊天窗口形式展示 SubAgent 的 System、Context、Prompt、AI 输出、思维过程和工具调用。',
                 runCount: '{count} 个运行',
                 empty: '暂无 SubAgent 子对话记录。',

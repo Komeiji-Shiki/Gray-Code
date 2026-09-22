@@ -1257,7 +1257,7 @@ onBeforeUnmount(() => {
         @click="selectRun(run.runId)"
       >
         <span class="run-name">{{ run.agentName || t('components.subagents.monitor.defaultAgentName') }}</span>
-        <span class="run-meta">{{ statusLabel(run.status) }} · {{ runElapsed(run) }}</span>
+        <span class="run-meta" :title="t('components.subagents.monitor.elapsedHint')">{{ statusLabel(run.status) }} · {{ runElapsed(run) }}</span>
       </button>
     </div>
 
@@ -1277,7 +1277,7 @@ onBeforeUnmount(() => {
         <div class="run-title-row">
           <div class="run-title-info">
             <div class="run-title">{{ focusedRun.agentName || t('components.subagents.monitor.defaultAgentName') }}</div>
-            <div class="run-subtitle">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ runElapsed(focusedRun) }}</div>
+            <div class="run-subtitle" :title="t('components.subagents.monitor.elapsedHint')">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ runElapsed(focusedRun) }}</div>
             <div v-if="focusedWindow?.hasMoreBefore" class="run-window-note">
               <!--
                 修改原因：当前窗口可能由多次向前分页拼接而来，文案不能继续暗示只显示“最近”尾部。

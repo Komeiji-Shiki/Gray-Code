@@ -3046,6 +3046,7 @@ const ja: LanguageMessages = {
         subagents: {
             monitor: {
                 title: 'SubAgent Monitor',
+                elapsedHint: 'タスク作成からの総経過時間です。待機と一時停止を含みます。',
                 subtitle: 'SubAgent のシステムプロンプト、コンテキスト、AI 出力、思考過程、ツール呼び出しをチャット形式で表示します。',
                 runCount: '{count} 件の実行',
                 empty: 'SubAgent の会話記録はまだありません。',

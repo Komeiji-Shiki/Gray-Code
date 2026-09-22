@@ -3046,6 +3046,7 @@ const en: LanguageMessages = {
         subagents: {
             monitor: {
                 title: 'SubAgent Monitor',
+                elapsedHint: 'Total elapsed time since task creation, including queuing and pauses.',
                 subtitle: 'Shows each SubAgent run as a chat: system prompt, context, AI output, reasoning and tool calls.',
                 runCount: '{count} runs',
                 empty: 'No SubAgent transcripts yet.',
