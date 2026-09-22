@@ -5,6 +5,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
+import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { reactive, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -28,6 +29,7 @@ interface ChannelConfig {
 // 渠道列表
 const channels = ref<ChannelConfig[]>([])
 const isLoadingChannels = ref(false)
+const configLoaded = ref(false)
 
 // 总结配置
 const summarizeConfig = reactive<SummarizeConfig>({
@@ -197,6 +199,7 @@ async function loadConfig() {
       syncMaxAttemptsFromStored()
       syncMaxInputRatioFromStored()
       syncKeepRecentTokensFromStored()
+      configLoaded.value = true
     }
   } catch (error) {
     console.error('Failed to load summarize config:', error)
@@ -312,15 +315,24 @@ watch(() => summarizeConfig.useSeparateModel, (enabled) => {
 // 初始化
 onMounted(async () => {
   await loadDefaultConfig()
-  await Promise.all([loadConfig(), loadChannels()])
+  // 独立宿主沿用当前会话模型，不需要读取隐藏的专用模型渠道列表。
+  await Promise.all([loadConfig(), ...(standaloneContext ? [] : [loadChannels()])])
 })
 
+function cancelConfigSave() {
+  if (configSaveDebounceTimer) clearTimeout(configSaveDebounceTimer)
+  configSaveDebounceTimer = null
+}
+useDesktopSettingsDraft(async () => {
+  // 统一保存和分类跳转先提交最后的输入，撤销时则取消尚未发送的请求。
+  cancelConfigSave()
+  await persistConfig()
+}, () => configLoaded.value, cancelConfigSave)
 onUnmounted(() => {
-  // 卸载时若有待触发的防抖保存，立即 flush 一次（写配置不依赖组件存活），避免最后一次编辑丢失
+  // 独立宿主由统一草稿处理；旧扩展仍在离开前保存尚未提交的输入。
   if (configSaveDebounceTimer) {
-    clearTimeout(configSaveDebounceTimer)
-    configSaveDebounceTimer = null
-    void persistConfig()
+    cancelConfigSave()
+    if (!standaloneContext) void persistConfig()
   }
 })
 </script>
