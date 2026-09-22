@@ -25,6 +25,7 @@ import { productSettingsHandlers } from './productSettings';
 import { ProductChat } from './productChat';
 import { SettingsTransfer } from '../settings/transfer';
 import { ConversationNavigation } from '../conversations/navigation';
+import { NavigationOrderingStore } from '../conversations/navigationOrdering';
 import { ProjectNavigation } from '../conversations/projects';
 import { deleteConversation } from '../conversations/delete';
 import { removePermissionAccount, resolveBotGuestActor } from '../bots/permissions';
@@ -266,6 +267,7 @@ export class ProductUi {
       }
       case 'chat.resumeConversationStream': return this.chat.resumeConversationStream(client, data.conversationId);
       case 'conversation.navigation': return new ConversationNavigation(this.app).list(client.actorId, data);
+      case 'conversation.navigation.reorder': return new NavigationOrderingStore(this.app).reorder(client.actorId, data as any);
       case 'projects.rename': return new ProjectNavigation(this.app).update(client.actorId, data, { name: data.name });
       case 'projects.previewRemoval': return new ProjectNavigation(this.app).previewRemoval(client.actorId, data);
       case 'projects.remove': return new ProjectNavigation(this.app).remove(client.actorId, data, data);

@@ -1,16 +1,20 @@
 import { pathToFileURL } from 'node:url';
-import type { ConversationNavigationItem, ConversationNavigationResult, ConversationSummary } from '@graycode/contracts';
+import type { ConversationNavigationCursor, ConversationNavigationItem, ConversationNavigationResult, ConversationSummary } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import { conversationWorkspace, workspaceDirectoryKey } from '../workspace/identity';
 import { ProjectNavigation, projectNavigationKey } from './projects';
+import { NavigationOrderingStore } from './navigationOrdering';
+import { orderSidebarItems } from '../../../../shared/sidebarOrder';
 const namespace = 'conversation-navigation';
 
 /** 侧边栏只读取摘要和运行索引，点击对话后才装载对应消息。 */
 export class ConversationNavigation {
   constructor(private readonly app: PlatformApplication) {}
-  async list(actorId: string, options: { scope?: 'personal' | 'bots'; query?: string; cursor?: { updatedAt: number; id: string } } = {}): Promise<ConversationNavigationResult> {
+  async list(actorId: string, options: { scope?: 'personal' | 'bots'; query?: string; cursor?: ConversationNavigationCursor } = {}): Promise<ConversationNavigationResult> {
     this.app.requireOwner(actorId);
     if (options.scope !== undefined && !['personal', 'bots'].includes(options.scope)) throw new Error('未知对话列表。');
+    const ordering = await new NavigationOrderingStore(this.app).get(actorId, options.scope);
+    if (options.cursor && options.cursor.orderingRevision !== ordering.revision) throw new Error('侧边栏顺序已变化，请刷新列表。');
     const botPlatform = (item: { id?: string; botPlatform?: string; custom?: { botOrigin?: { platform?: string } } }): ConversationSummary['botPlatform'] => {
       const value = item.botPlatform ?? item.custom?.botOrigin?.platform;
       return value === 'discord' || value === 'onebot' ? value : undefined;
@@ -55,15 +59,36 @@ export class ConversationNavigation {
       }
       pinned.sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0));
     }
-    const items: ConversationNavigationItem[] = []; let cursor = options.cursor;
-    do {
+    const items: ConversationNavigationItem[] = []; let cursor = options.cursor?.recent;
+    let orderedOffset = options.cursor?.orderedOffset ?? 0;
+    if (!Number.isSafeInteger(orderedOffset) || orderedOffset < 0 || orderedOffset > ordering.conversations.length) throw new Error('侧边栏分页位置无效。');
+    const orderedIds = new Set(ordering.conversations);
+    // 手动排列的旧对话直接读取摘要，翻页和重新启动后仍保留其显示位置。
+    while (orderedOffset < ordering.conversations.length && items.length < 30) {
+      const ids = ordering.conversations.slice(orderedOffset, orderedOffset + 30 - items.length);
+      const summaries = await this.app.productUi.conversations.getConversationMetadataBatch(ids);
+      orderedOffset += ids.length;
+      for (const id of ids) {
+        const item = summaries.find(summary => summary?.id === id);
+        if (!item || pins.has(id) || hidden.has(id) || query && !item.title?.toLocaleLowerCase().includes(query)) continue;
+        const metadata = await this.app.storage.getConversation(id);
+        const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
+        const summary = { ...item, botPlatform: botPlatform({ botPlatform: origin }) };
+        if (included(summary) && (options.scope === 'bots' || !preference(item)?.removed)) items.push(enrich(summary));
+      }
+    }
+    let recentStarted = !!options.cursor?.recent;
+    if (items.length < 30) do {
+      recentStarted = true;
       const page = await this.app.storage.listConversations({ limit: 30 - items.length, cursor, query: options.query });
-      items.push(...page.items.filter(item => included(item) && !hidden.has(item.id) && !pins.has(item.id) && (options.scope === 'bots' || !preference(item)?.removed)).map(enrich)); cursor = page.nextCursor;
+      items.push(...page.items.filter(item => included(item) && !hidden.has(item.id) && !pins.has(item.id) && !orderedIds.has(item.id) && (options.scope === 'bots' || !preference(item)?.removed)).map(enrich)); cursor = page.nextCursor;
     } while (cursor && items.length < 30);
     const runs = (await this.app.storage.listRuns({ activeOnly: true, limit: 1000 })).filter(run => !hidden.has(run.conversationId))
       .map(({ id, conversationId, status }) => ({ id, conversationId, status }));
-    return { items, pinned, workspaces: workspaces.filter(item => options.scope !== 'bots' && !item.managedConversationId && !item.id.startsWith('workspace-bot_') && !preference({ workspaceId: item.id })?.removed)
-      .map(item => ({ ...item, name: preference({ workspaceId: item.id })?.name ?? item.name })), runs, ...(cursor ? { nextCursor: cursor } : {}) };
+    return { items, pinned: orderSidebarItems(pinned, ordering.pinned, item => item.id), ordering,
+      workspaces: workspaces.filter(item => options.scope !== 'bots' && !item.managedConversationId && !item.id.startsWith('workspace-bot_') && !preference({ workspaceId: item.id })?.removed)
+        .map(item => ({ ...item, name: preference({ workspaceId: item.id })?.name ?? item.name })), runs,
+      ...(cursor || orderedOffset < ordering.conversations.length || !recentStarted ? { nextCursor: { orderedOffset, orderingRevision: ordering.revision, ...(cursor ? { recent: cursor } : {}) } } : {}) };
   }
   async pin(actorId: string, conversationId: string, pinned: boolean) {
     this.app.requireOwner(actorId); await this.app.conversation(actorId, conversationId);

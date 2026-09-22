@@ -10,3 +10,8 @@
 .navigation-back{transform:rotate(180deg)}.navigation-scope-title{display:flex;align-items:center;gap:9px;padding:10px 20px 4px;font-weight:600}.navigation-bottom button[aria-pressed=true]{color:var(--accent);background:var(--hover)}.navigation-delete-history{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.7;margin:16px 0}.navigation-delete-history input{width:16px;height:16px;margin:3px 0;flex-shrink:0;accent-color:var(--accent)}.navigation-hint{color:var(--muted)}
 @media(hover:none){.navigation-group-heading .navigation-project-more{opacity:1}}
 @media(hover:none){.navigation-group-heading .navigation-project-add{opacity:1}}@media(max-width:850px){.conversation-sidebar:not(.collapsed){width:220px;flex-basis:220px}}
+/* 插入位置只绘制内侧提示线，拖动时不改变行高。 */
+.navigation-group-heading[draggable=true] .navigation-project-select,.navigation-row[draggable=true] .navigation-select,.navigation-draft[draggable=true]>button:first-child{cursor:grab}
+.navigation-dragging{opacity:.45}
+.navigation-drop-before{box-shadow:inset 0 2px var(--accent)}
+.navigation-drop-after{box-shadow:inset 0 -2px var(--accent)}
