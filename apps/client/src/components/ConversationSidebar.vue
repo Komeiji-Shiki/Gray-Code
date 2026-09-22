@@ -7,7 +7,7 @@ import NavigationIcon from './navigation/NavigationIcon.vue';
 import ConversationNavigationRow from './navigation/ConversationNavigationRow.vue';
 import { useNavigationDrag } from './navigation/useNavigationDrag';
 import { orderSidebarItems } from '../../../../shared/sidebarOrder';
-const props = defineProps<{ collapsed: boolean }>();
+defineProps<{ collapsed: boolean }>();
 const emit = defineEmits<{ 'update:collapsed': [value: boolean]; addWorkspace: []; automations: []; navigate: [panel?: 'workbench'] }>();
 const isDesktop = window.graycode?.kind !== 'web';
 const navigation = ref<ConversationNavigationResult>({ items: [], pinned: [], workspaces: [], runs: [] });
