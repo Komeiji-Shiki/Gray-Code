@@ -166,26 +166,26 @@ async function executeResizeTask(
         }
 
         // 执行缩放（使用 fit: 'fill' 进行拉伸填充，不保持宽高比）
-        const resizedBuffer = await sharp(imageFile.data)
+        const pipeline = sharp(imageFile.data)
             .resize(width, height, {
                 fit: 'fill',  // 拉伸填充整个目标尺寸
                 kernel: 'lanczos3'  // 使用高质量的 Lanczos 算法
-            })
-            .toBuffer();
+            });
 
+        // 在同一处理链中选择最终格式，避免中间 JPEG/WebP 再次有损编码。
         // 确定输出格式
         const outputExt = path.extname(output_path).toLowerCase();
         let finalBuffer: Buffer;
         let outputMimeType = 'image/png';
 
         if (outputExt === '.jpg' || outputExt === '.jpeg') {
-            finalBuffer = await sharp(resizedBuffer).jpeg({ quality: 90 }).toBuffer();
+            finalBuffer = await pipeline.jpeg({ quality: 90 }).toBuffer();
             outputMimeType = 'image/jpeg';
         } else if (outputExt === '.webp') {
-            finalBuffer = await sharp(resizedBuffer).webp({ quality: 90 }).toBuffer();
+            finalBuffer = await pipeline.webp({ quality: 90 }).toBuffer();
             outputMimeType = 'image/webp';
         } else {
-            finalBuffer = await sharp(resizedBuffer).png().toBuffer();
+            finalBuffer = await pipeline.png().toBuffer();
             outputMimeType = 'image/png';
         }
 

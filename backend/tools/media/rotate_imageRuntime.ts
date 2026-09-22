@@ -236,16 +236,15 @@ async function executeRotateTask(
 
         // sharp 的 rotate 是顺时针的，我们的 API 也使用顺时针
         // sharp 会自动计算最小包围矩形
-        const rotatedBuffer = await sharp(imageFile.data)
-            .rotate(angle, {
-                background: outputFormat.background
-            })
-            .toBuffer();
-
-        // 获取旋转后的尺寸
-        const rotatedMetadata = await sharp(rotatedBuffer).metadata();
-        const rotatedWidth = rotatedMetadata.width || originalWidth;
-        const rotatedHeight = rotatedMetadata.height || originalHeight;
+        const pipeline = sharp(imageFile.data)
+            .rotate(angle, { background: outputFormat.background });
+        // 旋转后直接编码目标格式，保留透明背景，避免中间图片的重复压缩。
+        if (outputFormat.ext === '.jpg') pipeline.jpeg({ quality: 90 });
+        else if (outputFormat.ext === '.webp') pipeline.webp({ quality: 90 });
+        else pipeline.png();
+        const { data: finalBuffer, info } = await pipeline.toBuffer({ resolveWithObject: true });
+        const rotatedWidth = info.width;
+        const rotatedHeight = info.height;
 
         // 输出像素数护栏（兜底）：预检按包围矩形公式估算，sharp 实际输出尺寸可能略有出入，
         // 旋转完成后仍复查一次，超限时给出可读错误并提示先缩放
@@ -255,17 +254,6 @@ async function executeRotateTask(
                 success: false,
                 error: `Task ${index + 1}: Rotated image would be too large (${rotatedWidth}x${rotatedHeight} = ${rotatedWidth * rotatedHeight} pixels, limit ${MAX_ROTATE_OUTPUT_PIXELS.toLocaleString()} ≈ 50MP). Resize the image first (e.g. resize_image) before rotating.`
             };
-        }
-
-        // 转换为目标格式
-        let finalBuffer: Buffer;
-
-        if (outputFormat.ext === '.jpg') {
-            finalBuffer = await sharp(rotatedBuffer).jpeg({ quality: 90 }).toBuffer();
-        } else if (outputFormat.ext === '.webp') {
-            finalBuffer = await sharp(rotatedBuffer).webp({ quality: 90 }).toBuffer();
-        } else {
-            finalBuffer = await sharp(rotatedBuffer).png().toBuffer();
         }
 
         // 保存结果

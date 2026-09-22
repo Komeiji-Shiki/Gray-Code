@@ -87,7 +87,8 @@ interface CropImageConfig {
  * 获取工具配置
  */
 function getCropImageOptions(context?: ToolContext): CropImageToolOptions {
-    return context?.toolOptions?.cropImage || { useNormalizedCoordinates: true };
+    // 缺少上下文覆盖时继续使用创建工具时的默认值，与模型看到的坐标说明一致。
+    return context?.toolOptions?.cropImage ?? {};
 }
 
 
@@ -225,28 +226,28 @@ async function executeCropTask(
         }
 
         // 执行裁切
-        const croppedBuffer = await sharp(imageFile.data)
+        const pipeline = sharp(imageFile.data)
             .extract({
                 left,
                 top,
                 width: cropWidth,
                 height: cropHeight
-            })
-            .toBuffer();
+            });
 
+        // 在同一处理链中选择最终格式，避免中间 JPEG/WebP 再次有损编码。
         // 确定输出格式
         const outputExt = path.extname(output_path).toLowerCase();
         let finalBuffer: Buffer;
         let outputMimeType = 'image/png';
 
         if (outputExt === '.jpg' || outputExt === '.jpeg') {
-            finalBuffer = await sharp(croppedBuffer).jpeg({ quality: 90 }).toBuffer();
+            finalBuffer = await pipeline.jpeg({ quality: 90 }).toBuffer();
             outputMimeType = 'image/jpeg';
         } else if (outputExt === '.webp') {
-            finalBuffer = await sharp(croppedBuffer).webp({ quality: 90 }).toBuffer();
+            finalBuffer = await pipeline.webp({ quality: 90 }).toBuffer();
             outputMimeType = 'image/webp';
         } else {
-            finalBuffer = await sharp(croppedBuffer).png().toBuffer();
+            finalBuffer = await pipeline.png().toBuffer();
             outputMimeType = 'image/png';
         }
 
