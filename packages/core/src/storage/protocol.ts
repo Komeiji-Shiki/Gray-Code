@@ -68,6 +68,7 @@ export interface StorageOperations {
   createConversation: { input: PlatformConversation; output: ConversationSummary };
   initializeConversation: { input: { metadata: PlatformConversation; messages: PlatformMessage[]; records: RecordMutation[] }; output: ConversationSummary };
   getConversation: { input: { id: string }; output: PlatformConversation | null };
+  getConversationInfo: { input: { id: string }; output: { metadata: PlatformConversation; messageCount: number } | null };
   saveMetadata: { input: PlatformConversation; output: void };
   listConversations: { input: ConversationListOptions; output: ConversationList };
   readHistory: { input: { id: string; options?: PageOptions }; output: HistoryPage };

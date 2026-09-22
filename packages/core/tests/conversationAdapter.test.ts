@@ -30,6 +30,23 @@ describe('existing conversation manager on the independent storage service', () 
     expect((await f.store.verify()).ok).toBe(true);
   });
 
+  test('核心直接写入或替换历史后，旧界面摘要读取实际消息数', async () => {
+    const adapter = new SqliteStorageAdapter(f.store);
+    const manager = new ConversationManager(adapter);
+    await manager.createConversation('direct-core', '准确条数', 'file:///fixture');
+    const original = (await f.store.getConversation('direct-core'))!;
+    await f.store.appendHistory('direct-core', [{ id: 'pending-user', role: 'user', parts: [{ text: '尚未收到回复的请求' }] }]);
+    manager.clearMetadataCache();
+    expect((await manager.getMetadata('direct-core'))?.custom?.messageCount).toBe(1);
+    expect((await manager.getConversationMetadataBatch(['direct-core']))[0].messageCount).toBe(1);
+    expect((await adapter.loadMetadata('direct-core'))?.title).toBe('准确条数');
+    // 摘要投影不会改写原始元数据中的历史字段。
+    expect((await f.store.getConversation('direct-core'))?.custom).toEqual(original.custom);
+    await f.store.replaceHistory('direct-core', []);
+    expect((await adapter.loadMetadata('direct-core'))?.custom?.messageCount).toBe(0);
+    expect(await adapter.loadMetadata('does-not-exist')).toBeNull();
+  });
+
   test('persists subagent transcripts and projections through the existing adapter contract', async () => {
     const adapter = new SqliteStorageAdapter(f.store);
     const manager = new ConversationManager(adapter);

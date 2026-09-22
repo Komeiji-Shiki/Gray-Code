@@ -133,6 +133,11 @@ export class PlatformDatabase {
         return this.summary(this.conversation(value.metadata.id));
       })(),
       getConversation: ({ id }) => this.getConversation(id),
+      getConversationInfo: ({ id }) => {
+        const row = this.findConversation(id);
+        return row ? { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash),
+          messageCount: this.histories.info(row.history_id).message_count } : null;
+      },
       saveMetadata: metadata => this.saveMetadata(metadata),
       listConversations: options => this.listConversations(options),
       readHistory: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }),

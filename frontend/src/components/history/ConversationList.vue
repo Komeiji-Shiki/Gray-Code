@@ -112,7 +112,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
           <div class="item-meta">
             <span class="item-time">{{ formatTime(conversation.updatedAt) }}</span>
             <span v-if="conversation.messageCount > 0" class="item-count">
-              {{ conversation.messageCount }} messages
+              {{ conversation.messageCount }} {{ t('components.history.messages') }}
             </span>
           </div>
         </div>

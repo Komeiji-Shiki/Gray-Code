@@ -67,6 +67,8 @@ export class PlatformStorage {
   appendRunEvent(input: RunEventWrite) { return this.request('appendRunEvent', input); }
   readRunEvents(runId: string, after = 0, limit = 500) { return this.request('readRunEvents', { runId, after, limit }); }
   getConversation(id: string) { return this.request('getConversation', { id }); }
+  /** 摘要读取只取元数据和当前条数，不加载消息正文。 */
+  getConversationInfo(id: string) { return this.request('getConversationInfo', { id }); }
   longMemoryScopes(actorId: string) { return this.request('longMemoryScopes', { actorId }); }
   longMemoryState(scope: StorageOperations['longMemoryState']['input']) { return this.request('longMemoryState', scope); }
   longMemoryWrite(input: StorageOperations['longMemoryWrite']['input']) { return this.request('longMemoryWrite', input); }

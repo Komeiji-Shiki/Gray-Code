@@ -24,7 +24,10 @@ export class SqliteStorageAdapter implements IStorageAdapter {
   }
 
   async loadMetadata(id: string): Promise<ConversationMetadata | null> {
-    return await this.platform.getConversation(id) as ConversationMetadata | null;
+    const info = await this.platform.getConversationInfo(id);
+    if (!info) return null;
+    const metadata = info.metadata as ConversationMetadata;
+    return { ...metadata, custom: { ...metadata.custom, messageCount: info.messageCount } };
   }
 
   loadMetadataWithStatus(id: string): Promise<StorageReadResult<ConversationMetadata>> {
