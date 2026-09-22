@@ -18,6 +18,7 @@
 | 记忆预算、Live2D 参数、桌宠和屏幕感知 | [记忆与陪伴配置](Memory-and-Companions.md) |
 | 迁入 LifeBook 的全部原始档案，并核对后启用召回 | [记忆迁移](Memory-Migration.md) |
 | 查看性能条件、测试范围与技术取舍 | [性能与验证](Performance-and-Validation.md) |
+| 查看这次易用性检查处理的问题与对应行为 | [易用性检查记录](Usability-Review.md) |
 | 修改源码或构建发行包 | [贡献指南](../CONTRIBUTING.md)与[项目结构](../PROJECT_STRUCTURE.md) |
 
 ## 应用中的几个对象
