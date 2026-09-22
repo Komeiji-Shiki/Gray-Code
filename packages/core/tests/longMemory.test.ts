@@ -80,6 +80,23 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect(expanded.records.length).toBeLessThanOrEqual(1);expect(expanded.estimatedTokens).toBeLessThanOrEqual(350);
   });
 
+  test('批量目录摘要遵循确认状态，共用来源的多个条目同时失效', async () => {
+    await add();
+    await f.store.longMemoryWrite({ scope, sources: [{ ...source('pending-source', '模型推测的住址。'), origin: 'model' }], records: [
+      record('pending', '待核对的住址。', 'pending-source', { confidence: 'inferred', origin: 'model' }),
+      record('shared', '同一原文中的另一条住址说明。', 'city-source'),
+      record('summary-valid', '已确认依据的住址摘要。', '', { kind: 'summary', confidence: 'inferred', dependencies: [{ kind: 'record', id: 'city', version: 1 }] }),
+      record('summary-pending', '尚待核对依据的住址摘要。', '', { kind: 'summary', confidence: 'inferred', dependencies: [{ kind: 'record', id: 'pending', version: 1 }] }),
+    ] });
+    const directory = await f.store.longMemoryTopics(query({ text: undefined, topic: ['个人'], includeSummaries: true, tokenBudget: 16000 }));
+    expect(directory.topics[0].summaries.map(item => item.id)).toEqual(['summary-valid']);
+    await f.store.longMemoryWrite({ scope, sources: [{ ...source('city-source', '原来的住址来源已纠正。'), expectedVersion: 1 }] });
+    const found = await f.store.longMemoryRecall(query({ confirmedOnly: false, limit: 50, tokenBudget: 16000 }));
+    expect(found.hits.map(hit => hit.record.id)).not.toEqual(expect.arrayContaining(['city']));
+    expect(found.hits.map(hit => hit.record.id)).not.toEqual(expect.arrayContaining(['shared']));
+    expect(found.hits.map(hit => hit.record.id)).not.toEqual(expect.arrayContaining(['summary-valid']));
+  });
+
   test('关系图只返回真实依赖，保留历史关系并标明失效，节点数量有界', async () => {
     await add();
     await f.store.longMemoryWrite({scope,records:[record('derived','居住信息摘要。','',{kind:'summary',dependencies:[{kind:'record',id:'city',version:1}]})]});
