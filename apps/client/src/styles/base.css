@@ -106,7 +106,9 @@ select option:disabled {
     margin-top: 3px;
   }
   select:not([multiple]):not([size])::picker(select) {
-    inline-size: anchor-size(width);
+    /* 弹层按完整选项展开，短按钮不再把长名称挤成逐字换行。 */
+    inline-size: max-content;
+    min-inline-size: anchor-size(width);
     max-inline-size: calc(100vw - 16px);
     max-block-size: min(360px, 65vh);
     overflow: auto;
