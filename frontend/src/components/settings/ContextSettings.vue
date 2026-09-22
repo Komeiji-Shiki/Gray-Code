@@ -6,6 +6,7 @@ import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
+import { isValidContextLimit } from '@shared/contextLimits'
 
 const { t } = useI18n()
 
@@ -79,22 +80,22 @@ const {
   draft: maxFileDepthDraft,
   handleInput: handleMaxFileDepthInput,
   syncFromStored: syncMaxFileDepthFromStored
-} = useDeferredNumberInput(() => config.maxFileDepth)
+} = useDeferredNumberInput(() => config.maxFileDepth, isValidContextLimit)
 const {
   draft: maxOpenTabsDraft,
   handleInput: handleMaxOpenTabsInput,
   syncFromStored: syncMaxOpenTabsFromStored
-} = useDeferredNumberInput(() => config.maxOpenTabs)
+} = useDeferredNumberInput(() => config.maxOpenTabs, isValidContextLimit)
 const {
   draft: maxDiagnosticsPerFileDraft,
   handleInput: handleMaxDiagnosticsPerFileInput,
   syncFromStored: syncMaxDiagnosticsPerFileFromStored
-} = useDeferredNumberInput(() => config.diagnostics?.maxDiagnosticsPerFile ?? 10)
+} = useDeferredNumberInput(() => config.diagnostics?.maxDiagnosticsPerFile ?? 10, isValidContextLimit)
 const {
   draft: maxFilesDraft,
   handleInput: handleMaxFilesInput,
   syncFromStored: syncMaxFilesFromStored
-} = useDeferredNumberInput(() => config.diagnostics?.maxFiles ?? 20)
+} = useDeferredNumberInput(() => config.diagnostics?.maxFiles ?? 20, isValidContextLimit)
 
 // 预览：打开的标签页
 const openTabs = ref<string[]>([])
@@ -288,7 +289,15 @@ function stopAutoRefresh() {
   }
 }
 
-useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
+function hasInvalidContextLimit(value: string): boolean {
+  const text = value.trim()
+  return text !== '' && (!/^-?\d+(\.\d+)?$/.test(text) || !isValidContextLimit(Number(text)))
+}
+useDesktopSettingsDraft(async () => {
+  if ([maxFileDepthDraft.value, maxOpenTabsDraft.value, maxDiagnosticsPerFileDraft.value, maxFilesDraft.value].some(hasInvalidContextLimit))
+    throw new Error(t('components.settings.contextSettings.invalidLimit'))
+  await saveConfig()
+}, () => !isLoading.value)
 </script>
 
 <template>
@@ -316,19 +325,23 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
             />
           </div>
           
-          <div class="setting-row indented" :class="{ disabled: !config.includeWorkspaceFiles }">
+          <div class="setting-row indented number-setting-row" :class="{ disabled: !config.includeWorkspaceFiles }">
             <label>{{ t('components.settings.contextSettings.workspaceFiles.maxDepth') }}</label>
             <div class="input-with-hint">
               <input
                 type="number"
                 :value="maxFileDepthDraft"
+                :aria-label="t('components.settings.contextSettings.workspaceFiles.maxDepth')"
+                :aria-invalid="hasInvalidContextLimit(maxFileDepthDraft)"
+                step="1"
                 min="-1"
                 max="100"
                 :disabled="!config.includeWorkspaceFiles"
                 class="number-input"
                 @input="(e: any) => handleMaxFileDepthInput(e.target.value, v => updateConfig('maxFileDepth', v))"
               />
-              <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
+              <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.depthHint') }}</span>
+              <span v-if="hasInvalidContextLimit(maxFileDepthDraft)" class="limit-error" role="alert">{{ t('components.settings.contextSettings.invalidLimit') }}</span>
             </div>
           </div>
         </div>
@@ -353,19 +366,23 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
             />
           </div>
           
-          <div class="setting-row indented" :class="{ disabled: !config.includeOpenTabs }">
+          <div class="setting-row indented number-setting-row" :class="{ disabled: !config.includeOpenTabs }">
             <label>{{ t('components.settings.contextSettings.openTabs.maxCount') }}</label>
             <div class="input-with-hint">
               <input
                 type="number"
                 :value="maxOpenTabsDraft"
+                :aria-label="t('components.settings.contextSettings.openTabs.maxCount')"
+                :aria-invalid="hasInvalidContextLimit(maxOpenTabsDraft)"
+                step="1"
                 min="-1"
                 max="100"
                 :disabled="!config.includeOpenTabs"
                 class="number-input"
                 @input="(e: any) => handleMaxOpenTabsInput(e.target.value, v => updateConfig('maxOpenTabs', v))"
               />
-              <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
+              <span class="hint">{{ t('components.settings.contextSettings.openTabs.limitHint') }}</span>
+              <span v-if="hasInvalidContextLimit(maxOpenTabsDraft)" class="limit-error" role="alert">{{ t('components.settings.contextSettings.invalidLimit') }}</span>
             </div>
           </div>
         </div>
@@ -457,35 +474,43 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
           </div>
           
           <!-- 数量限制 -->
-          <div class="setting-row indented" :class="{ disabled: !config.diagnostics?.enabled }">
+          <div class="setting-row indented number-setting-row" :class="{ disabled: !config.diagnostics?.enabled }">
             <label>{{ t('components.settings.contextSettings.diagnostics.maxPerFile') }}</label>
             <div class="input-with-hint">
               <input
                 type="number"
                 :value="maxDiagnosticsPerFileDraft"
+                :aria-label="t('components.settings.contextSettings.diagnostics.maxPerFile')"
+                :aria-invalid="hasInvalidContextLimit(maxDiagnosticsPerFileDraft)"
+                step="1"
                 min="-1"
                 max="100"
                 :disabled="!config.diagnostics?.enabled"
                 class="number-input"
                 @input="(e: any) => handleMaxDiagnosticsPerFileInput(e.target.value, v => updateDiagnosticsConfig('maxDiagnosticsPerFile', v))"
               />
-              <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
+              <span class="hint">{{ t('components.settings.contextSettings.diagnostics.perFileHint') }}</span>
+              <span v-if="hasInvalidContextLimit(maxDiagnosticsPerFileDraft)" class="limit-error" role="alert">{{ t('components.settings.contextSettings.invalidLimit') }}</span>
             </div>
           </div>
           
-          <div class="setting-row indented" :class="{ disabled: !config.diagnostics?.enabled }">
+          <div class="setting-row indented number-setting-row" :class="{ disabled: !config.diagnostics?.enabled }">
             <label>{{ t('components.settings.contextSettings.diagnostics.maxFiles') }}</label>
             <div class="input-with-hint">
               <input
                 type="number"
                 :value="maxFilesDraft"
+                :aria-label="t('components.settings.contextSettings.diagnostics.maxFiles')"
+                :aria-invalid="hasInvalidContextLimit(maxFilesDraft)"
+                step="1"
                 min="-1"
                 max="100"
                 :disabled="!config.diagnostics?.enabled"
                 class="number-input"
                 @input="(e: any) => handleMaxFilesInput(e.target.value, v => updateDiagnosticsConfig('maxFiles', v))"
               />
-              <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
+              <span class="hint">{{ t('components.settings.contextSettings.diagnostics.filesHint') }}</span>
+              <span v-if="hasInvalidContextLimit(maxFilesDraft)" class="limit-error" role="alert">{{ t('components.settings.contextSettings.invalidLimit') }}</span>
             </div>
           </div>
         </div>
@@ -674,11 +699,18 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   min-width: 60px;
 }
 
+.number-setting-row { align-items: flex-start; }
+.number-setting-row > label { padding-top: 4px; flex-shrink: 0; }
+
 .input-with-hint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
+.input-with-hint .hint { font-size: 12px; line-height: 1.6; }
+.limit-error { color: var(--gc-danger); font-size: 12px; }
+.number-input[aria-invalid="true"] { border-color: var(--gc-danger); }
 
 .number-input {
   width: 80px;

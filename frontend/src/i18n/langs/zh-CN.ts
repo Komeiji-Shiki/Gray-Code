@@ -1624,18 +1624,21 @@ const zhCN = {
                 },
             },
             contextSettings: {
+                invalidLimit: "请输入 -1 或非负整数；无效输入不会保存。",
                 loading: '加载中...',
                 workspaceFiles: {
                     title: '工作区文件树',
                     description: '将工作区文件目录结构发送给 AI',
                     sendFileTree: '发送工作区文件树',
                     maxDepth: '最大深度',
+                    depthHint: "默认 2，在根目录条目之外继续展开两层子目录。0 只列根目录条目；-1 最多展开 100 层，仍受目录条目数上限约束。大项目可调低，目录更精简、读取更快；调高有助于了解深层结构，也会增加上下文 token。",
                     unlimitedHint: '-1 表示无限制'
                 },
                 openTabs: {
                     title: '打开的标签页',
                     description: '将当前打开的文件列表发送给 AI',
                     sendOpenTabs: '发送打开的标签页',
+                    limitHint: "默认发送最多 20 个已打开文件的路径，不包含正文。0 不附带列表；-1 包含全部符合筛选的标签页。打开很多文件时调低可减少无关上下文，模型仍可通过工具读取具体文件。",
                     maxCount: '最大数量'
                 },
                 activeEditor: {
@@ -1656,7 +1659,9 @@ const zhCN = {
                     },
                     workspaceOnly: '仅工作区内文件',
                     openFilesOnly: '仅打开的文件',
+                    perFileHint: "默认每文件最多 10 条已筛选的诊断。0 不附带诊断；-1 不限制。调高能提供更多错误线索，也会增加上下文长度。",
                     maxPerFile: '每文件最大数量',
+                    filesHint: "默认最多附带 20 个有诊断的文件。0 不附带诊断；-1 不限制。只处理当前编辑内容时，可配合“仅打开的文件”减少范围；截断时会明确提示。",
                     maxFiles: '最大文件数'
                 },
                 ignorePatterns: {

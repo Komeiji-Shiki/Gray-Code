@@ -1622,18 +1622,21 @@ const en: LanguageMessages = {
                 },
             },
             contextSettings: {
+                invalidLimit: "Enter -1 or a nonnegative integer. Invalid input is not saved.",
                 loading: 'Loading...',
                 workspaceFiles: {
                     title: 'Workspace File Tree',
                     description: 'Send workspace directory structure to AI',
                     sendFileTree: 'Send workspace file tree',
                     maxDepth: 'Max Depth',
+                    depthHint: "Default 2 expands two subdirectory levels beyond root entries. 0 lists root entries only; -1 expands up to 100 levels, still subject to the entry budget. Lower values speed up large projects and reduce context; higher values expose deeper structure and use more input tokens.",
                     unlimitedHint: '-1 means unlimited'
                 },
                 openTabs: {
                     title: 'Open Tabs',
                     description: 'Send current open file list to AI',
                     sendOpenTabs: 'Send open tabs',
+                    limitHint: "Default 20 open file paths, without contents. 0 omits the list; -1 includes all matching tabs. Lower this when many open files are irrelevant; tools can still read specific files.",
                     maxCount: 'Max Count'
                 },
                 activeEditor: {
@@ -1654,7 +1657,9 @@ const en: LanguageMessages = {
                     },
                     workspaceOnly: 'Workspace files only',
                     openFilesOnly: 'Open files only',
+                    perFileHint: "Default 10 matching diagnostics per file. 0 omits diagnostics; -1 is unlimited. Higher limits provide more error details and use more context.",
                     maxPerFile: 'Max per file',
+                    filesHint: "Default 20 files with matching diagnostics. 0 omits diagnostics; -1 is unlimited. Use “Open files only” to focus on current edits. Truncated context is marked.",
                     maxFiles: 'Max files'
                 },
                 ignorePatterns: {

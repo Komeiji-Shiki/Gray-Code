@@ -8,6 +8,7 @@
 import type { ContextAwarenessConfig, DiagnosticsConfig } from './types';
 import { DEFAULT_CONTEXT_AWARENESS_CONFIG, DEFAULT_DIAGNOSTICS_CONFIG } from './types';
 import { SettingsCore } from './SettingsCore';
+import { isValidContextLimit } from '../../../shared/contextLimits';
 
 /**
  * 上下文感知配置服务
@@ -34,6 +35,10 @@ export class ContextSettingsService {
      * 更新上下文感知配置
      */
     async updateContextAwarenessConfig(config: Partial<ContextAwarenessConfig>): Promise<void> {
+        const limits: Array<[unknown, string]> = [[config.maxFileDepth, '文件树深度'], [config.maxOpenTabs, '标签页数量'],
+            [config.diagnostics?.maxDiagnosticsPerFile, '每文件诊断数量'], [config.diagnostics?.maxFiles, '诊断文件数量']];
+        for (const [value, name] of limits) if (value !== undefined && !isValidContextLimit(value))
+            throw new Error(name + '必须是 -1 或非负整数。');
         // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
         // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
         await this.core.serializeMutation(async () => {
