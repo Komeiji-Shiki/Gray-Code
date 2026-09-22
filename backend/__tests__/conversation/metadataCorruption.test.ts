@@ -88,7 +88,8 @@ describe('getMetadata 损坏降级（parse_error → fallback + 备份，不抛 
 
         const meta = await adapter.loadMetadata('conv-recover');
         expect(meta).not.toBeNull();
-        expect(meta!.custom!.messageCount).toBe(1);
+        // 迟到摘要带回旧数量时，仍以重建后的两条真实历史为准。
+        expect(meta!.custom!.messageCount).toBe(2);
         expect(meta!.custom!.preview).toBe('p');
         // 线上 meta.json 是完整可解析 JSON
         expect(JSON.parse(fake.files.get(metaPath('conv-recover'))!)).toMatchObject({ id: 'conv-recover' });
