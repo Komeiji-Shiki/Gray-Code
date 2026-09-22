@@ -84,7 +84,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     expect(wrapper.find('.katex').exists()).toBe(true)
     expect(wrapper.find('.language-mathematica [class*="hljs-"]').exists()).toBe(true)
     expect(wrapper.find('[data-render-pending]').exists()).toBe(false)
-    expect(wrapper.props('content')).toBe(content)
+    expect(wrapper.props()).toMatchObject({ content })
     wrapper.unmount()
   })
 

@@ -28,7 +28,7 @@ export async function createLive2dRenderer(canvas: HTMLCanvasElement, payload: P
     pixi = new PIXI.Application({ view: canvas, width: canvas.width || 300, height: canvas.height || 320, backgroundAlpha: 0, antialias: true, autoStart: false, sharedTicker: false });
     // 禁止库自行随机播放待机动作；实际动作都通过统一控制入口选择。
     let idleMotionGroup = '__graycode_controlled__';
-    while (Object.hasOwn(refs.Motions ?? {}, idleMotionGroup)) idleMotionGroup += '_';
+    while (Object.prototype.hasOwnProperty.call(refs.Motions ?? {}, idleMotionGroup)) idleMotionGroup += '_';
     const model = await Live2DModel.from(raw, { autoInteract: false, autoUpdate: false, idleMotionGroup });
     pixi.stage.addChild(model); model.anchor.set(0.5);
     const internal = model.internalModel as import('./vendor/cubism4').Cubism4InternalModel;
