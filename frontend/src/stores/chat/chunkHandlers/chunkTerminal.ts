@@ -232,7 +232,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   }
 
   if (messageIndex !== -1) {
-    const message = state.allMessages.value[messageIndex]
+    let message = state.allMessages.value[messageIndex]
+    if (chunk.content?.incompleteReason) message = contentToPersistedMessage(chunk.content, message, state)
     
     // 如果消息为空且没有工具调用，删除它
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
@@ -382,7 +383,11 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
 
   if (state.streamingMessageId.value) {
     const errorMessageIndex = getMessageIndexById(state, state.streamingMessageId.value)
-    const messageToRemove = errorMessageIndex >= 0 ? state.allMessages.value[errorMessageIndex] : undefined
+    let messageToRemove = errorMessageIndex >= 0 ? state.allMessages.value[errorMessageIndex] : undefined
+    if (messageToRemove && chunk.content?.incompleteReason) {
+      messageToRemove = { ...contentToPersistedMessage(chunk.content, messageToRemove, state), streaming: false, localOnly: false }
+      replaceMessageAt(state, errorMessageIndex, messageToRemove)
+    }
     
     // 删除空的占位消息（不依赖 streaming 标记；网络中断等场景可能已被提前置为非 streaming）
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
@@ -395,14 +400,14 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
       setTotalMessagesFromWindow(state)
       state._failedStreamMessageId.value = null
     } else if (messageToRemove) {
-      // 有内容的半截消息：保留展示，但记录其 ID，
-      // 供 retryAfterError 在重试前回滚（后端从未持久化该消息）。
+      // 已保存的部分回复使用稳定 ID；旧宿主未保存时才记录临时 ID，
+      // 供 retryAfterError 在重试前清理本地占位。
       // 与 handleCancelled 的保留路径一致，结束其流式渲染标志——
       // 否则 loading 指示器/光标永久闪烁（无后续 chunk 会再置它）。
       if (messageToRemove.streaming) {
         replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false })
       }
-      state._failedStreamMessageId.value = messageToRemove.id
+      state._failedStreamMessageId.value = chunk.content?.incompleteReason ? null : messageToRemove.id
     } else {
       state._failedStreamMessageId.value = null
     }

@@ -278,7 +278,12 @@ export class PlatformRuntime {
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
         let streamingEvent: Promise<void> | undefined;
-        const deltas = new DeltaCoalescer(parts => this.notify({ type: 'model.delta', runId: run.id, parts }));
+        const partialText: string[] = [];
+        const deltas = new DeltaCoalescer(parts => {
+          // 保留已经发给界面的正文；签名、思考与未完成工具参数仍由完整响应处理。
+          for (const part of parts) if (typeof part.text === 'string' && !part.thought) partialText.push(part.text);
+          this.notify({ type: 'model.delta', runId: run.id, parts });
+        });
         const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
           onRequest: async captured => {
             const id = `${run.id}:${iteration}`;
@@ -292,7 +297,7 @@ export class PlatformRuntime {
               ...(captured.metrics ? { metrics: captured.metrics } : {}) });
           },
           onDelta: parts => {
-            if (deltas.closed) return;
+            if (deltas.closed || signal.aborted) return;
             if (!streamingEvent) {
               streamingEvent = this.event(run.id, 'model.streaming', { iteration });
               void streamingEvent.catch(() => undefined);
@@ -307,9 +312,25 @@ export class PlatformRuntime {
         await this.services.modelBoundary?.(run, workspace, signal, 'before', iteration);
         await this.event(run.id, 'model.started', { iteration });
         let generated: PlatformMessage;
-        try { generated = await this.services.models.generate(request); }
-        finally { deltas.finish(); await streamingEvent; }
-        signal.throwIfAborted();
+        try {
+          try { generated = await this.services.models.generate(request); }
+          finally { deltas.finish(); await streamingEvent; }
+          signal.throwIfAborted();
+        } catch (error) {
+          const text = partialText.join('');
+          if (text.trim()) {
+            let partial: PlatformMessage = { role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
+              parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now(), parts: [{ text }], modelVersion: request.modelOverride,
+              incompleteReason: signal.aborted ? 'cancelled' : 'interrupted', usageMetadataPartial: true };
+            // 沿用来源标注钩子，使记忆遗忘与角色会话仍能追溯这段输出的依据。
+            if (this.services.transformOutput) partial = await this.services.transformOutput({ run, message: partial, request });
+            await this.services.storage.appendHistory(run.conversationId, [partial], { expectedRevision: page.revision });
+            this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(partial) });
+            await this.event(run.id, 'message.saved', { messageId: partial.id, incompleteReason: partial.incompleteReason, streaming: deltas.statistics() }, { iteration });
+          }
+          throw error;
+        }
+        partialText.length = 0;
         let content: PlatformMessage = { ...generated, role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
           parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now() };
         if (this.services.transformOutput) content = await this.services.transformOutput({ run, message: content, request });

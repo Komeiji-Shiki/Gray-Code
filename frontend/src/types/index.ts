@@ -18,6 +18,7 @@ export type { CheckpointSummary, CheckpointSummaryWithSize, ContentPart, OpenAIR
 export interface BackgroundTaskInfo { kind: 'terminal' | 'subagent'; taskId: string; status?: string; runId?: string; conversationId?: string; name?: string }
 
 export interface Content {
+  incompleteReason?: 'cancelled' | 'interrupted'
   characterMode?: boolean
   characterOriginalParts?: ContentPart[]
   characterDisplayParts?: ContentPart[]
@@ -227,6 +228,7 @@ export interface Message {
 }
 
 export interface MessageMetadata {
+  incompleteReason?: 'cancelled' | 'interrupted'
   /** 模型版本，如 "gemini-2.5-flash" */
   modelVersion?: string
   /** @deprecated 使用 modelVersion */

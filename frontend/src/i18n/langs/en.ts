@@ -666,7 +666,9 @@ const en: LanguageMessages = {
                 ttft: 'Time to first token (TTFT)',
                 responseDuration: 'Response Duration',
                 tokenRate: 'Token Rate',
-                tokensPerSecond: '{rate} t/s'
+                tokensPerSecond: '{rate} t/s',
+                partialCancelled: 'Stopped; partial response saved',
+                partialInterrupted: 'Interrupted; partial response saved'
             },
             thought: {
                 thinking: 'Thinking...',

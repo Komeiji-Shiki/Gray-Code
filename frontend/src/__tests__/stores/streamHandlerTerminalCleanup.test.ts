@@ -87,6 +87,24 @@ function createCtx(state: ChatStoreState, overrides: Partial<StreamHandlerContex
   } as unknown as StreamHandlerContext
 }
 
+test.each(['cancelled', 'error'] as const)('持久化的部分回复替换临时内容并保留重试身份：%s', type => {
+  const state = createState({
+    allMessages: ref([{ id: 'temporary', role: 'assistant', content: '流式预览', parts: [{ text: '流式预览' }],
+      timestamp: 1, streaming: true, localOnly: true } as Message]),
+    streamingMessageId: ref('temporary'), activeStreamId: ref('stream_1'), isStreaming: ref(true)
+  })
+  const reason = type === 'cancelled' ? 'cancelled' : 'interrupted'
+  handleStreamChunk({ type, conversationId: 'conv_1', streamId: 'stream_1',
+    content: { id: 'saved-partial', role: 'model', parts: [{ text: '完整的已保存片段' }], incompleteReason: reason },
+    ...(type === 'error' ? { error: { code: 'API_ERROR', message: '连接中断' } } : {})
+  }, createCtx(state))
+  expect(state.allMessages.value[0]).toMatchObject({ id: 'saved-partial', content: '完整的已保存片段',
+    localOnly: false, streaming: false, metadata: { incompleteReason: reason } })
+  expect(state._failedStreamMessageId.value).toBeNull()
+  expect(state.activeStreamId.value).toBeNull()
+  expect(state.isStreaming.value).toBe(false)
+})
+
 describe('streamHandler 终结事件状态复位', () => {
   test('独立宿主保留审批期间的运行流，其他入口完成审批后仍接收最终结果', () => {
     const state = createState({ allMessages: ref([{ id: 'msg_1', role: 'assistant', content: '', timestamp: 1, streaming: true, backendIndex: 0 } as Message]),

@@ -311,6 +311,7 @@ export function contentToMessage(content: Content, id?: string): Message {
     metadata: {
       // 存储模型版本（仅 model 消息有值）
       modelVersion: content.modelVersion,
+      incompleteReason: content.incompleteReason,
       // 存储完整的 usageMetadata（仅 model 消息有值）
       usageMetadata: content.usageMetadata,
       // 计时信息（从后端获取）
@@ -447,6 +448,7 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
     summaryEditedAt: content.summaryEditedAt,
     metadata: {
       modelVersion: content.modelVersion,
+      incompleteReason: content.incompleteReason,
       usageMetadata: content.usageMetadata,
       // 从后端加载的思考持续时间
       thinkingDuration: content.thinkingDuration,

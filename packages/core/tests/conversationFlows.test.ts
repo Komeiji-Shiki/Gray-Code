@@ -41,6 +41,37 @@ describe('original UI history operations on the independent core', () => {
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
 
+  test.each(['cancelled', 'interrupted'] as const)('中断回复通过聊天协议返回稳定节点：%s', async reason => {
+    let ready!: () => void, rejectModel!: (error: Error) => void;
+    const received = new Promise<void>(resolve => { ready = resolve; });
+    const generate = jest.spyOn(app.models, 'generate').mockImplementation(async input => {
+      input.onDelta?.([{ text: '这是已经收到的部分正文。' }]);
+      return new Promise((resolve, reject) => {
+        rejectModel = reject;
+        input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true });
+        ready();
+      });
+    });
+    const terminal: any[] = [];
+    const off = app.subscribe(event => {
+      const data = event.type === 'ui.message' ? (event.message as any)?.data : undefined;
+      if (data?.type === 'cancelled' || data?.type === 'error') terminal.push(data);
+    });
+    try {
+      const started = await call('chatStream', { configId: channelId, conversationId: 'conversation', streamId: 'partial-stream', message: '生成后停止' });
+      await received;
+      if (reason === 'cancelled') await call('cancelStream', { conversationId: 'conversation' });
+      else rejectModel(new Error('模拟连接中断'));
+      await app.runtime.wait(started.runId);
+      const partial = (await history()).messages.at(-1)!;
+      expect(partial).toMatchObject({ role: 'model', incompleteReason: reason, parts: [{ text: '这是已经收到的部分正文。' }] });
+      expect(terminal.at(-1)?.content).toMatchObject({ id: partial.id, incompleteReason: reason });
+      generate.mockResolvedValue({ role: 'model', parts: [{ text: '接续后的回复。' }] });
+      await run('retryStream', { streamId: 'partial-continue' });
+      expect((await history()).messages.some(message => message.id === partial.id)).toBe(true);
+    } finally { off(); generate.mockRestore(); }
+  });
+
   test('当前对话的思考强度贯穿发送、继续和重试，新对话不继承', async () => {
     const providers = app.settings.snapshot().settings.providers;
     const select = (reasoningEffort?: string) => call('conversation.setCustomMetadata', { conversationId: 'conversation', key: 'inputModelConfig', value: { configId: channelId, modelId: 'fixture', reasoningEffort } });

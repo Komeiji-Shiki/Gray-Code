@@ -668,7 +668,9 @@ const zhCN = {
                 ttft: '首字延迟 (TTFT)',
                 responseDuration: '响应时间',
                 tokenRate: 'Token 速率',
-                tokensPerSecond: '{rate} t/s'
+                tokensPerSecond: '{rate} t/s',
+                partialCancelled: '生成已停止，保留了部分回复',
+                partialInterrupted: '生成中断，保留了部分回复'
             },
             thought: {
                 thinking: '正在思考...',

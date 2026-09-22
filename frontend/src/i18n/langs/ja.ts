@@ -666,7 +666,9 @@ const ja: LanguageMessages = {
                 ttft: '初回トークン遅延 (TTFT)',
                 responseDuration: '応答時間',
                 tokenRate: 'トークン速度',
-                tokensPerSecond: '{rate} t/s'
+                tokensPerSecond: '{rate} t/s',
+                partialCancelled: '生成を停止し、途中の返答を保存しました',
+                partialInterrupted: '生成が中断され、途中の返答を保存しました'
             },
             thought: {
                 thinking: '考え中...',

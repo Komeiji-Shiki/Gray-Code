@@ -132,6 +132,8 @@ export interface Content {
      * 用于标识是哪个模型生成的回复
      */
     modelVersion?: string;
+    /** 已保留但尚未完成的模型正文。 */
+    incompleteReason?: 'cancelled' | 'interrupted';
     
     /**
      * Token 使用统计（仅 model 消息有值）

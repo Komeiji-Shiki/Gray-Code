@@ -531,13 +531,14 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
 
     <!-- 消息底部信息：时间 + 响应时间 + Token 速率 + Token 统计 -->
     <MessageFooter
-      v-if="!timeInHeader || ttft || responseDuration || tokenRate || hasUsage"
+      v-if="!timeInHeader || ttft || responseDuration || tokenRate || hasUsage || message.metadata?.incompleteReason"
       :formatted-time="timeInHeader ? null : formattedTime"
       :ttft="ttft"
       :response-duration="responseDuration"
       :token-rate="tokenRate"
       :usage="usageMetadata"
       :has-usage="hasUsage"
+      :incomplete-reason="message.metadata?.incompleteReason"
     />
 
     <!-- Cursor 风格任务卡片：Plan/SubAgent 缩略预览，放在消息内容下方 -->

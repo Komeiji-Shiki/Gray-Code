@@ -192,7 +192,7 @@ export class ProductChat {
     if (notification.type !== 'event') return;
     const event = notification.event;
     if (event.type === 'model.started') {
-      stream.phase = 'model'; stream.accumulator.reset();
+      stream.phase = 'model'; stream.content = undefined; stream.accumulator.reset();
     } else if (event.type === 'context.summary.started' || event.type === 'context.summary.failed') {
       this.emit(stream, { type: 'autoSummaryStatus', autoSummaryStatus: true,
         status: event.type.endsWith('started') ? 'started' : 'failed', message: event.payload.message });
@@ -217,7 +217,8 @@ export class ProductChat {
     } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
       // The history transaction already committed. Retry continues that history, without
       // repeating the edit/reroll operation or replaying its previous tool side effects.
-      this.emit(stream, { type: 'error', error: { code: 'API_ERROR', message: event.payload.error ?? event.payload.reason ?? '任务未完成，请检查连接和配置。' } });
+      this.emit(stream, { type: 'error', ...(stream.content?.incompleteReason ? { content: stream.content } : {}),
+        error: { code: 'API_ERROR', message: event.payload.error ?? event.payload.reason ?? '任务未完成，请检查连接和配置。' } });
       this.streams.delete(runId);
     }
   }

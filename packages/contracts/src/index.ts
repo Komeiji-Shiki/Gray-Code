@@ -25,6 +25,8 @@ export interface PlatformMessage {
   id?: string;
   role: string;
   parts: Record<string, unknown>[];
+  /** 生成提前结束时保留的正文，不包含尚未完成的工具调用或思考块。 */
+  incompleteReason?: 'cancelled' | 'interrupted';
   [key: string]: unknown;
 }
 

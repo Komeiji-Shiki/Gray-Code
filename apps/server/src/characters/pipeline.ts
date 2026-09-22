@@ -151,6 +151,8 @@ export class CharacterPipeline {
   }
   async output(turn: CharacterTurn | undefined, message: PlatformMessage, signal: AbortSignal) {
     if (!turn) return message;
+    // 中断时保留用户已经看到的原文和角色来源，不再执行依赖完整输出的转换。
+    if (message.incompleteReason) return { ...message, characterMode: true, characterOriginalParts: message.parts, characterTurn: turn };
     let transformed: Awaited<ReturnType<CharacterPipeline['transformParts']>>;
     try { transformed = await this.transformParts(message.parts, turn, 2, 'source', signal); }
     catch (error) {

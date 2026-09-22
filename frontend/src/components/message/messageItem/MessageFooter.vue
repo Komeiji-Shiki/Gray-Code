@@ -15,6 +15,7 @@ defineProps<{
   tokenRate: string | null
   usage: UsageMetadata | undefined
   hasUsage: boolean
+  incompleteReason?: 'cancelled' | 'interrupted'
 }>()
 </script>
 
@@ -22,6 +23,11 @@ defineProps<{
   <div class="message-footer">
     <div class="message-footer-left">
       <span v-if="formattedTime" class="message-time">{{ formattedTime }}</span>
+
+      <span v-if="incompleteReason" class="response-incomplete">
+        <i class="codicon codicon-debug-pause" aria-hidden="true"></i>
+        {{ t(incompleteReason === 'cancelled' ? 'components.message.stats.partialCancelled' : 'components.message.stats.partialInterrupted') }}
+      </span>
 
       <!-- 首字延迟（TTFT） -->
       <span v-if="ttft" class="ttft" :title="t('components.message.stats.ttft')">
@@ -77,6 +83,8 @@ defineProps<{
   flex-wrap: wrap;
   gap: var(--gc-space-1) var(--gc-space-2);
 }
+
+.response-incomplete { display: inline-flex; align-items: center; gap: var(--gc-space-1); }
 
 .message-time,
 .response-duration,

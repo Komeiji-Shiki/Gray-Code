@@ -17,6 +17,12 @@ function content(partial: Partial<Content> & { id?: string }): Content {
   } as Content
 }
 
+test('重新读取历史时保留部分回复的中断标记', () => {
+  const partial = content({ role: 'model', id: 'partial', incompleteReason: 'cancelled' })
+  expect(contentToMessage(partial).metadata?.incompleteReason).toBe('cancelled')
+  expect(contentToMessageEnhanced(partial).metadata?.incompleteReason).toBe('cancelled')
+})
+
 describe('parsers content.id 透传', () => {
   test('contentToMessage 使用 content.id 作为 Message.id（不再每次加载重新生成）', () => {
     const msg = contentToMessage(content({ role: 'model', id: 'node-123' }))
