@@ -1,4 +1,4 @@
-import type { PetCommandInput, PetParameter } from '@graycode/contracts';
+import type { PetParameter } from '@graycode/contracts';
 import { petAssetPath } from '../../../../shared/petFormat';
 import type { PetRenderer, PetRenderPayload } from './protocol';
 
