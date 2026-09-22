@@ -17,6 +17,10 @@ export class ToolSchemaValidators {
       compiler = key === '2020' ? new Ajv2020(options) : key === '2019' ? new Ajv2019(options) : new Ajv(options);
       this.compilers.set(key, compiler);
     }
+    if (dialect === 'http://json-schema.org/draft-06/schema' && !compiler.getSchema(dialect)) {
+      // draft-06 与 draft-07 共用校验器，按需注册依赖自带的版本定义。
+      compiler.addMetaSchema(require('ajv/dist/refs/json-schema-draft-06.json'));
+    }
     try { return compiler.compile(schema as AnySchema); }
     finally {
       // 工具目录负责按声明内容缓存；释放 Ajv 的对象缓存，不影响已捕获的校验函数。

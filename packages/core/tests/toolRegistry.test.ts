@@ -60,6 +60,7 @@ test('模型声明的兼容处理不会放宽执行校验，原始约束变化�
 });
 
 test.each([
+  ['http://json-schema.org/draft-06/schema#', { type: 'number', exclusiveMinimum: 0 }, 1, 0],
   ['http://json-schema.org/draft-07/schema#', { type: 'array', items: [{ type: 'string' }], additionalItems: false }, ['ok'], [1]],
   ['https://json-schema.org/draft/2019-09/schema', { type: 'object', properties: { a: {}, b: {} }, dependentRequired: { a: ['b'] } }, { a: 1, b: 2 }, { a: 1 }],
   ['https://json-schema.org/draft/2020-12/schema', { type: 'array', prefixItems: [{ type: 'string' }], items: false }, ['ok'], [1]],
