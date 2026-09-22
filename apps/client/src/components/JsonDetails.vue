@@ -12,5 +12,5 @@ const text = computed(() => typeof props.value === 'string' ? props.value : JSON
 </template>
 <style scoped>
 summary { cursor: pointer; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 var(--code-font, monospace); margin: 10px 0; }
 </style>
