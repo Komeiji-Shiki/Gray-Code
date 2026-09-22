@@ -80,6 +80,27 @@ describe('独立代理消息的持久化与调度', () => {
     await expect(app.subagents.dispatch({ agentName: 'General Worker', prompt: '不能启动', maxRuntime: 0 }, context(parent, 'invalid-runtime'))).rejects.toThrow('正整数');
   });
 
+  test('监视器实际暂停后不消耗运行时长，恢复仍可完成原任务', async () => {
+    const root = await app.createConversation('owner', '暂停时长');
+    const parent = await start(root.id); await app.runtime.wait(parent.id);
+    const modelGate = hold(); const modelReady = deferred(); let calls = 0;
+    generate = async input => {
+      if (input.conversationId === root.id) return answer('收到结果');
+      if (++calls === 1) { modelReady.resolve(); await modelGate.promise; return invoke('after-pause', 'fixture_scope', {}); }
+      return answer('暂停后完成');
+    };
+    const result = await app.subagents.dispatch({ agentName: 'General Worker', prompt: '暂停验收', background: true, maxRuntime: 2 }, context(parent, 'pause-runtime'));
+    const id = String((result.data as any).runId);
+    await modelReady.promise;
+    await app.subagents.control('owner', id, 'pause'); modelGate.resolve();
+    await waitUntil(async () => (await app.subagents.get('owner', id))?.status === 'paused');
+    await new Promise(resolve => setTimeout(resolve, 2_100));
+    expect((await app.subagents.get('owner', id))?.status).toBe('paused');
+    await app.subagents.control('owner', id, 'resume'); await idle();
+    expect((await app.subagents.get('owner', id))?.status).toBe('completed');
+    expect(calls).toBe(2);
+  });
+
   test('嵌套前台子代理发信解除主任务等待，单并发可继续且工具配对完整', async () => {
     const root = await app.createConversation('owner', '嵌套协作'); const gate = hold(); const replied = deferred();
     const childCalls = new Map<string, number>(); let rootCalls = 0; let recipientId = '';

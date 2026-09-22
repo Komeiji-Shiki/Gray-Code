@@ -11,6 +11,7 @@ import type { PlatformSubagent, SubagentLaunchContext } from './types';
 import { createSubagentRecord } from './profile';
 import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
 import { LegacySubagents } from './legacy';
+import { SubagentRuntimeTimer } from './runtimeTimer';
 import { getRunContentRange } from '../../../../backend/tools/subagents/eventBus/contentWindow';
 import type { SubAgentRunContentWindowOptions } from '../../../../backend/tools/subagents/eventBus/types';
 
@@ -23,6 +24,7 @@ interface LiveSubagent {
   acceptingMessages: boolean;
   coreRunId?: string;
   pauseRequested: boolean;
+  runtimeTimer?: SubagentRuntimeTimer;
   resume?: () => void;
   retry?: () => void;
   hasSlot: boolean;
@@ -309,13 +311,17 @@ export class SubagentExecutionService {
     if (live.pauseRequested) await this.waitAction(live, signal, 'resume');
     record!.status = 'running'; await this.save(record!); this.emit(record!, 'run_resumed');
   }
-  private waitAction(live: LiveSubagent, signal: AbortSignal, kind: 'resume' | 'retry'): Promise<void> {
+  private async waitAction(live: LiveSubagent, signal: AbortSignal, kind: 'resume' | 'retry'): Promise<void> {
     signal.throwIfAborted();
-    return new Promise((resolve, reject) => {
-      const abort = () => { live[kind] = undefined; reject(signal.reason ?? new Error('子代理已停止。')); };
-      live[kind] = () => { signal.removeEventListener('abort', abort); live[kind] = undefined; resolve(); };
-      signal.addEventListener('abort', abort, { once: true });
-    });
+    const timer = live.runtimeTimer;
+    timer?.pause();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { live[kind] = undefined; reject(signal.reason ?? new Error('子代理已停止。')); };
+        live[kind] = () => { signal.removeEventListener('abort', abort); live[kind] = undefined; resolve(); };
+        signal.addEventListener('abort', abort, { once: true });
+      });
+    } finally { if (!signal.aborted) timer?.resume(); }
   }
   async dispatch(args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
     const key = typeof args.continueFromRunId === 'string' && args.continueFromRunId ? JSON.stringify([context.conversationId, args.continueFromRunId]) : undefined;
@@ -396,14 +402,14 @@ export class SubagentExecutionService {
         const scope = { ...(Object.hasOwn(record, 'workspace') ? { workspace: record.workspace ?? undefined } : {}), modelSelection: record.selection,
           nodeOrigin: parent?.nodeOrigin ?? record.parentConfiguration?.configuration.nodeOrigin,
           automationId: parent?.automationId ?? record.parentConfiguration?.configuration.automationId };
+        live.runtimeTimer = new SubagentRuntimeTimer(record.maxRuntime, () => live.controller.abort(new SubagentTimeoutError('子代理超过配置的运行时间。')));
         const run = message ? await this.app.runtime.start({ ...input, message }, undefined, scope)
           : await this.app.runtime.continue({ ...input, expectedRevision: (await this.app.storage.historyInfo(record.conversationId)).revision }, undefined, scope);
         message = undefined; live.coreRunId = run.id; record.coreRunIds.push(run.id); this.byCoreRun.set(run.id, record);
         if (signal.aborted) abort();
-        const timeout = record.maxRuntime > 0 ? setTimeout(() => live.controller.abort(new SubagentTimeoutError('子代理超过配置的运行时间。')), record.maxRuntime * 1000) : undefined;
         let finished: RunRecord | null;
         try { finished = await this.app.runtime.wait(run.id); }
-        finally { if (timeout) clearTimeout(timeout); this.limiter.release(record.id); live.hasSlot = false; }
+        finally { live.runtimeTimer.dispose(); live.runtimeTimer = undefined; this.limiter.release(record.id); live.hasSlot = false; }
         await this.events;
         record.updatedAt = Date.now();
         record.status = finished?.status === 'completed' ? 'completed' : signal.aborted && !(signal.reason instanceof SubagentTimeoutError) ? 'cancelled' : 'failed';
@@ -416,7 +422,7 @@ export class SubagentExecutionService {
         break;
       }
     } catch (error) { record.status = signal.aborted && !(signal.reason instanceof SubagentTimeoutError) ? 'cancelled' : 'failed'; record.error = (error as Error).message; record.updatedAt = Date.now(); }
-    finally { live.acceptingMessages = false; signal.removeEventListener('abort', abort); if (live.hasSlot) this.limiter.release(record.id); }
+    finally { live.runtimeTimer?.dispose(); live.acceptingMessages = false; signal.removeEventListener('abort', abort); if (live.hasSlot) this.limiter.release(record.id); }
     await this.save(record); this.emit(record, `run_${record.status}`);
     const response = await this.output(record);
     if (record.background) {
