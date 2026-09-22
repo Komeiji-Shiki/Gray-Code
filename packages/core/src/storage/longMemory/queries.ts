@@ -3,6 +3,7 @@ import { invalid } from '../../errors';
 import { MemoryMutationStore, validateMemoryTopic, validateMemoryVector, type RecordRow } from './mutations';
 import { memoryTerms, memoryTokens } from './text';
 import { rankVectors, type VectorRankingRequest } from './vectors';
+import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
 
 interface QueryPlan { cte: string; parameters: Array<string | number>; filter: string; filters: Array<string | number> }
 interface SemanticCandidates { available: boolean; matches: Array<{ rowId: number; score: number }> }
@@ -189,6 +190,54 @@ export class MemoryQueries {
       }
     }
     return { records,sources:[...sources.values()],unavailable,estimatedTokens, ...(omitted.size ? { omitted: [...omitted.values()], truncated: true } : {}) };
+  }
+
+  graph(input: { scope: LongMemoryScope; id: string; version?: number; limit?: number }): LongMemoryGraph {
+    const { scope, id, version } = input, limit = input.limit ?? 40;
+    this.store.state(scope);
+    if (typeof id !== 'string' || !id || id.length > 512 || !Number.isSafeInteger(limit) || limit < 3 || limit > 100
+      || version !== undefined && (!Number.isSafeInteger(version) || version < 1)) invalid('记忆关系图的编号、修订或数量无效。');
+    const row = this.store.record(scope.id, id, version);
+    if (!row) invalid('记忆已删除或不存在，请刷新列表。');
+    const record = JSON.parse(row.payload) as LongMemoryRecord;
+    const root = `record:${id}@${record.version}`;
+    const recordNode = (value: LongMemoryRecord, side: LongMemoryGraphNode['side']): LongMemoryGraphNode => ({
+      key: `record:${value.id}@${value.version}`, id: value.id, scopeId: scope.id, version: value.version,
+      type: 'record', side, kind: value.kind, confidence: value.confidence, title: value.topic.at(-1) || value.kind, preview: value.text.slice(0, 180), active: false,
+    });
+    const nodes: LongMemoryGraphNode[] = [recordNode(record, 'selected')], edges: LongMemoryGraph['edges'] = [];
+    // 保留左右两侧的空间；某侧条目少时，将剩余位置交给另一侧。
+    const dependents = this.store.db.prepare(`SELECT r.* FROM long_memory_records r JOIN long_memory_dependencies d ON d.record_row=r.row_id
+      WHERE r.scope_id=? AND d.parent_kind='record' AND d.parent_id=? AND d.parent_version=?
+        AND r.version=(SELECT max(v.version) FROM long_memory_records v WHERE v.scope_id=r.scope_id AND v.id=r.id)
+      ORDER BY r.recorded_at DESC,r.id LIMIT ?`).all(scope.id, id, record.version, limit) as RecordRow[];
+    const dependencyLimit = Math.max(Math.ceil((limit - 1) / 2), limit - 1 - dependents.length);
+    let truncated = record.dependencies.length > dependencyLimit;
+    for (const ref of record.dependencies.slice(0, dependencyLimit)) {
+      if (ref.kind === 'source') {
+        const source = this.store.source(scope.id, ref.id, ref.version); if (!source) continue;
+        const value = JSON.parse(source.payload) as LongMemorySource;
+        const node: LongMemoryGraphNode = { key: `source:${value.id}@${value.version}`, id: value.id, scopeId: scope.id, version: value.version,
+          type: 'source', side: 'dependency', title: value.reference?.label || '来源摘录', preview: value.text.slice(0, 180), kind: value.origin,
+          active: this.store.source(scope.id, ref.id)?.version === ref.version };
+        nodes.push(node); edges.push({ from: node.key, to: root });
+      } else {
+        const parent = this.store.record(scope.id, ref.id, ref.version); if (!parent) continue;
+        const node = recordNode(JSON.parse(parent.payload), 'dependency'); nodes.push(node); edges.push({ from: node.key, to: root });
+      }
+    }
+    const remaining = limit - nodes.length;
+    // 也显示已经失效的最新摘要，让用户能够理解修订影响，而不是把关系静默隐藏。
+    if (dependents.length > remaining) truncated = true;
+    for (const child of dependents.slice(0, remaining)) {
+      const node = recordNode(JSON.parse(child.payload), 'dependent'); nodes.push(node); edges.push({ from: root, to: node.key });
+    }
+    const ids = [...new Set(nodes.filter(node => node.type === 'record').map(node => node.id))], now = Date.now();
+    const { cte, parameters } = this.plan({ scopes: [scope], asOf: now, knownAt: now, limit: 100, tokenBudget: 32000 });
+    const active = new Set((this.store.db.prepare(`${cte} SELECT r.id,r.version FROM eligible r WHERE r.id IN(${ids.map(() => '?').join(',')})`)
+      .all(...parameters, ...ids) as Array<{ id: string; version: number }>).map(item => `record:${item.id}@${item.version}`));
+    for (const node of nodes) if (node.type === 'record') node.active = active.has(node.key);
+    return { root, nodes, edges, truncated };
   }
 
   revisions(scope: LongMemoryScope, id: string): LongMemoryRecord[] {

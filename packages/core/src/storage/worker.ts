@@ -11,7 +11,7 @@ try {
   const concurrentReads = new Set<StorageMethod>(['getRecord', 'getVersionedRecord', 'listRecords', 'readRecordPage',
     'getConversation', 'listConversations', 'readConversationState', 'readHistory', 'readFullHistory', 'historyInfo',
     'getRun', 'getRunByRequestKey', 'listRuns', 'readRunEvents', 'readUsageState', 'recordRevisions',
-    'getSnapshot', 'listSnapshots', 'longMemoryScopes', 'longMemoryState', 'longMemoryRead', 'longMemoryTopics']);
+    'getSnapshot', 'listSnapshots', 'longMemoryScopes', 'longMemoryState', 'longMemoryRead', 'longMemoryTopics', 'longMemoryGraph']);
   const queue: StorageRequest[] = [];
   let computing = false;
   const failure = (request: StorageRequest, error: unknown) => {

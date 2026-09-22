@@ -1,4 +1,5 @@
 import type { ValueProjection } from './objects';
+import type { LongMemoryGraph } from '@graycode/contracts';
 import type {
   ConversationSummary, HistoryPage, HistoryWriteOptions, PageOptions,
   PlatformConversation, PlatformMessage, StorageStatistics, StoredRecord, SnapshotMetadata, PlatformSnapshot,
@@ -31,6 +32,7 @@ export interface StorageOperations {
   longMemoryRecall: { input: LongMemoryQuery; output: LongMemoryRecall };
   longMemoryTopics: { input: LongMemoryQuery; output: { topics: LongMemoryTopic[]; estimatedTokens: number; truncated: boolean } };
   longMemoryRead: { input: LongMemoryRead; output: LongMemoryReadResult };
+  longMemoryGraph: { input: { scope: LongMemoryScope; id: string; version?: number; limit?: number }; output: LongMemoryGraph };
   longMemoryRevisions: { input: { scope: LongMemoryScope; id: string }; output: LongMemoryRecord[] };
   longMemoryInspect: { input: {scope:LongMemoryScope;id:string}; output:{revisions:LongMemoryRecord[];sources:import('@graycode/contracts').LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number} };
   longMemorySources: {input:{scope:LongMemoryScope;references:Array<{id:string;version:number}>};output:import('@graycode/contracts').LongMemorySource[]};

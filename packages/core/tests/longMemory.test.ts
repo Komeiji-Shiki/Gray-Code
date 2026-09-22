@@ -80,6 +80,22 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect(expanded.records.length).toBeLessThanOrEqual(1);expect(expanded.estimatedTokens).toBeLessThanOrEqual(350);
   });
 
+  test('关系图只返回真实依赖，保留历史关系并标明失效，节点数量有界', async () => {
+    await add();
+    await f.store.longMemoryWrite({scope,records:[record('derived','居住信息摘要。','',{kind:'summary',dependencies:[{kind:'record',id:'city',version:1}]})]});
+    const graph = await f.store.longMemoryGraph({ scope, id: 'city', limit: 3 });
+    expect(graph.nodes.map(node => node.key)).toEqual(['record:city@1','source:city-source@1','record:derived@1']);
+    expect(graph.edges).toEqual([{from:'source:city-source@1',to:'record:city@1'},{from:'record:city@1',to:'record:derived@1'}]);
+    expect(graph.nodes.every(node => node.active)).toBe(true); expect(graph.truncated).toBe(false);
+    await f.store.longMemoryWrite({scope,sources:[source('move-source','目前住杭州。')],records:[record('city','目前住杭州。','move-source',{expectedVersion:1})]});
+    const historical = await f.store.longMemoryGraph({ scope, id: 'city', version: 1 });
+    expect(historical.nodes.find(node => node.id === 'city')?.active).toBe(false);
+    expect(historical.nodes.find(node => node.id === 'derived')?.active).toBe(false);
+    const updated = await f.store.longMemoryGraph({ scope, id: 'city' });
+    expect(updated.root).toBe('record:city@2'); expect(updated.nodes.some(node => node.id === 'derived')).toBe(false);
+    await expect(f.store.longMemoryGraph({scope,id:'city',limit:101})).rejects.toThrow('数量无效');
+  });
+
   test('按需读取区分预算省略、条数上限和不存在的记忆，并保持请求顺序', async () => {
     await f.store.longMemoryWrite({ scope, sources: [source('one-source', '短来源'), source('two-source', '另一来源')],
       records: [record('one', '第一条事实。'), record('two', '第二条事实。')] });

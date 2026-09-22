@@ -71,6 +71,7 @@ export class PlatformDatabase {
       longMemoryRecall: input => this.longMemories.query.recall(input),
       longMemoryTopics: input => this.longMemories.query.topics(input),
       longMemoryRead: input => this.longMemories.query.read(input),
+      longMemoryGraph: input => this.longMemories.query.graph(input),
       longMemoryRevisions: ({ scope, id }) => this.longMemories.query.revisions(scope, id),
       longMemoryInspect: ({scope,id})=>this.longMemories.query.inspect(scope,id),
       longMemorySources: ({scope,references})=>this.longMemories.query.sources(scope,references),

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import {computed,onMounted,onUnmounted,reactive,ref} from 'vue';
+import {computed,nextTick,onMounted,onUnmounted,reactive,ref,watch} from 'vue';
 import type {LongMemoryArchive,LongMemoryJob,LongMemoryPolicy,LongMemoryRecall,LongMemoryRecord,LongMemoryScope,LongMemorySource,LongMemoryTopic} from '@graycode/contracts';
 import {call,subscribe} from '../api';
 import {state} from '../state';
+import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
+import MemoryGraph from './MemoryGraph.vue';
 
 interface ScopeRow extends LongMemoryScope {label:string}
 interface Options {scopes:ScopeRow[];policy:{value:LongMemoryPolicy;revision:number|null};providers:Array<{id:string;name:string;model:string;models:string[]}>}
@@ -18,6 +20,10 @@ const selectedIds=ref<string[]>([]),summaryTopic=ref(''),deleteImpact=ref<{recor
 const importPreview=ref<LongMemoryArchive|null>(null),embeddingCredential=ref(''),policyBaseline=ref('');
 const policy=reactive<LongMemoryPolicy>({enabled:true,automaticExtraction:false,automaticScopes:[],recallTokens:1200,recallLimit:5,extractionOutputTokens:12288});
 const embeddingEnabled=ref(false);
+const editorView=ref<'edit'|'graph'>('edit'), editor=ref<HTMLElement>();
+const graph=ref<LongMemoryGraph>(), graphLoading=ref(false), graphError=ref(''), graphLimit=ref(40);
+const graphSource=ref<LongMemorySource>();
+let graphEpoch=0;
 const embedding=reactive({url:'',model:'',credentialRef:undefined as string|undefined,dimensions:'' as string,queryPrefix:'',documentPrefix:''});
 const form=reactive({text:'',kind:'fact' as LongMemoryRecord['kind'],subject:'',topic:'',attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed' as LongMemoryRecord['confidence']});
 let epoch=0,editorEpoch=0,refreshTimer:ReturnType<typeof setTimeout>|undefined;
@@ -65,16 +71,18 @@ async function loadOptions(){
   if(!scopeId.value||!next.scopes.some(scope=>scope.id===scopeId.value))scopeId.value=next.scopes[0]?.id??'';
   await reload();
 }
-function resetEditor(){editorEpoch++;editing.value=false;detail.value=undefined;editingId.value='';deleteImpact.value=null;changedElsewhere.value=false;}
-async function navigate(action:()=>Promise<void>|void){if(editorDirty.value){pendingNavigation.value=action;return;}await action();}
+function resetEditor(){editorEpoch++;editing.value=false;detail.value=undefined;editingId.value='';deleteImpact.value=null;changedElsewhere.value=false;graphSource.value=undefined;}
+async function navigate(action:()=>Promise<void>|void){if(busy.value)return;if(editorDirty.value){pendingNavigation.value=action;return;}await perform(async()=>{await action();});}
 async function choose(id:string){
   const current=++editorEpoch,scope=scopeId.value,data=await rpc<Detail>('memory.get',{scopeId:scope,id});if(current!==editorEpoch)return;if(!data.revisions.length){resetEditor();return;}
   const record=data.revisions[0];detail.value=data;editingScopeId.value=scope;editingId.value=id;editingVersion.value=record.version;editing.value=true;changedElsewhere.value=false;deleteImpact.value=null;
   Object.assign(form,{text:record.text,kind:record.kind,subject:record.subject,topic:record.topic.join(' / '),attribute:record.attribute??'',value:record.value??'',validFrom:date(record.validFrom),validTo:date(record.validTo),eventAt:date(record.eventAt),confidence:record.confidence});
   editorBaseline.value=JSON.stringify(form);
+  graphSource.value=undefined;graphLimit.value=40;
+  await nextTick();editor.value?.scrollIntoView({block:'nearest'});
 }
 function create(){
-  resetEditor();editing.value=true;editingScopeId.value=scopeId.value;
+  resetEditor();editing.value=true;editingScopeId.value=scopeId.value;editorView.value='edit';
   Object.assign(form,{text:'',kind:'fact',subject:'',topic:topicPath.value.join(' / '),attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed'});editorBaseline.value=JSON.stringify(form);
 }
 async function save(){
@@ -111,6 +119,20 @@ async function discard(){
   const action=pendingNavigation.value;pendingNavigation.value=null;resetEditor();await action?.();
 }
 defineExpose({requestClose});
+async function loadGraph(){
+  const request=++graphEpoch;graph.value=undefined;graphError.value='';
+  if(editorView.value!=='graph'||!editingId.value){graphLoading.value=false;return;}
+  graphLoading.value=true;
+  try{const value=await rpc<LongMemoryGraph>('memory.graph',{scopeId:editingScopeId.value,id:editingId.value,version:editingVersion.value,limit:graphLimit.value});if(request===graphEpoch)graph.value=value;}
+  catch(cause){if(request===graphEpoch)graphError.value=(cause as Error).message;}
+  finally{if(request===graphEpoch)graphLoading.value=false;}
+}
+async function selectGraphNode(node:LongMemoryGraphNode){
+  if(node.type==='source'){graphSource.value=detail.value?.sources.find(source=>source.id===node.id&&source.version===node.version);return;}
+  if(node.id===editingId.value&&node.version===editingVersion.value){editorView.value='edit';return;}
+  await navigate(async()=>{scopeId.value=node.scopeId;await choose(node.id);});
+}
+watch([editorView,editingId,editingVersion,graphLimit],()=>{void loadGraph();});
 let unsubscribe=()=>{};
 onMounted(()=>{void perform(loadOptions);unsubscribe=subscribe(event=>{
   if(['memory.changed','memory.indexed','memory.job.changed'].includes(event.type)&&(!event.scopeId||event.scopeId===scopeId.value)){
@@ -118,7 +140,7 @@ onMounted(()=>{void perform(loadOptions);unsubscribe=subscribe(event=>{
     if(refreshTimer)clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{void reload().catch(cause=>error.value=(cause as Error).message);},180);
   }
 });});
-onUnmounted(()=>{epoch++;unsubscribe();if(refreshTimer)clearTimeout(refreshTimer);});
+onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTimer)clearTimeout(refreshTimer);});
 </script>
 <template>
   <section class="memory-library" aria-label="长期记忆">
@@ -137,13 +159,22 @@ onUnmounted(()=>{epoch++;unsubscribe();if(refreshTimer)clearTimeout(refreshTimer
         <div class="memory-side-actions"><button :disabled="busy||!scopeId" @click="navigate(create)">新增记忆</button><button :disabled="busy||!scopeId" @click="perform(exportScope)">导出当前范围</button><label class="memory-import">合并归档<input type="file" accept=".json" :disabled="busy" @change="readImport"></label></div>
         <p class="memory-muted">按主题逐层查看，只把相关内容交给当前对话。群聊和角色剧情有独立范围。</p>
       </aside>
-      <main>
+      <main :class="{'has-selection':editing}">
         <div v-if="result" class="memory-result-meta"><span>{{result.method==='hybrid'?'关键词与语义':'关键词'}} · {{result.hits.length}} 条</span><span>当前结果约 {{result.estimatedTokens}} token</span><span v-if="result.truncated">已按预算截取，可缩小主题或搜索范围</span></div>
         <div v-if="selectedIds.length" class="memory-summary-actions"><span>已选 {{selectedIds.length}} 条</span><input v-model="summaryTopic" aria-label="摘要主题" placeholder="摘要主题，例如 项目 / 部署"><button :disabled="busy" @click="perform(queueSummary)">按所选依据整理摘要</button></div>
         <div class="memory-records"><div v-for="hit in result?.hits" :key="hit.record.id" class="memory-record" :class="{selected:editingId===hit.record.id}"><input v-model="selectedIds" type="checkbox" :value="hit.record.id" :aria-label="'选择记忆 '+hit.record.id"><button :disabled="busy" @click="navigate(()=>choose(hit.record.id))"><span class="memory-record-meta">{{kinds[hit.record.kind]}} · {{origins[hit.record.origin]}}<span v-if="hit.record.confidence!=='confirmed'"> · {{hit.record.confidence==='inferred'?'待核对':'存在争议'}}</span><span v-if="hit.conflicts.length"> · 有不同说法</span></span><strong>{{hit.record.text}}</strong><small>{{hit.record.topic.join(' / ')||'未分类'}} · {{hit.reasons.join(' + ')}}</small></button></div></div>
         <p v-if="!result?.hits.length&&!loading" class="memory-empty">这里还没有匹配的记忆。可以新增一条，或在选择整理模型后，从当前对话提取。</p>
-        <section v-if="editing" class="memory-editor" aria-label="记忆编辑器">
+        <section v-if="editing" ref="editor" class="memory-editor" aria-label="记忆编辑器">
           <header><strong>{{editingId?'编辑记忆':'新增记忆'}}</strong><span>{{scopeLabel(editingScopeId)}}</span><code v-if="editingId">{{editingId.slice(0,12)}} · v{{editingVersion}}</code></header>
+          <nav v-if="editingId" class="memory-editor-tabs" aria-label="记忆查看方式"><button :aria-pressed="editorView==='edit'" @click="editorView='edit'">编辑正文</button><button :aria-pressed="editorView==='graph'" @click="editorView='graph'">查看关系</button></nav>
+          <template v-if="editorView==='graph'">
+            <p v-if="editorDirty" class="memory-warning">关系图显示已保存的版本，正在编辑的草稿仍然保留。</p>
+            <p v-if="editorDirty" class="memory-warning">关系图显示已保存的版本，正在编辑的草稿仍然保留。</p>
+            <p v-if="graphLoading" class="memory-muted" role="status">正在读取实际来源与派生关系…</p><p v-if="graphError" class="memory-error" role="alert">{{graphError}}</p>
+            <MemoryGraph v-if="graph" :graph="graph" :busy="busy" :can-expand="graphLimit<100" @select="selectGraphNode" @more="graphLimit=Math.min(100,graphLimit+30)" />
+            <aside v-if="graphSource" class="memory-source-preview"><header><strong>来源原文 · {{origins[graphSource.origin]}}</strong><button @click="graphSource=undefined">收起原文</button></header><blockquote>{{graphSource.text}}</blockquote></aside>
+          </template>
+          <div v-show="editorView==='edit'">
           <p v-if="changedElsewhere" class="memory-muted">此范围刚有更新，当前编辑内容已保留。保存时会检查版本。</p>
           <p v-if="detail&&detail.activeVersion===undefined" class="memory-warning">此版本当前不参与召回，可能已经过期或来源已修订。下方可以查看依据。</p>
           <label>正文<textarea v-model="form.text" rows="5" aria-label="记忆正文"></textarea></label>
@@ -151,6 +182,7 @@ onUnmounted(()=>{epoch++;unsubscribe();if(refreshTimer)clearTimeout(refreshTimer
             <label>主体<input v-model="form.subject" placeholder="留空表示当前账号"></label><label>主题层次<input v-model="form.topic" placeholder="个人 / 饮食，使用 / 分层"></label><label>属性<input v-model="form.attribute" placeholder="例如 部署端口、喜欢的饮料"></label><label>属性值<input v-model="form.value" placeholder="可选，用于识别不同说法"></label>
             <label>生效时间（UTC）<input v-model="form.validFrom" type="datetime-local"></label><label>失效时间（UTC）<input v-model="form.validTo" type="datetime-local"></label><label>事件发生时间（UTC）<input v-model="form.eventAt" type="datetime-local"></label></div>
           <div class="memory-editor-actions"><button :disabled="busy||!form.text.trim()" @click="perform(save)">保存记忆</button><button v-if="editingId" :disabled="busy" @click="perform(showImpact)">查看删除影响</button><button v-if="form.kind==='summary'&&editingId" :disabled="busy" @click="perform(regenerateSummary)">按当前依据重新整理</button><button :disabled="busy" @click="navigate(resetEditor)">收起编辑器</button></div>
+          </div>
           <div v-if="deleteImpact" class="memory-confirm"><p>将移除 {{deleteImpact.recordCount}} 条记忆及派生内容，并清除有关来源摘录和旧修订。原始会话保留供你查看，相关来源和依赖内容会从后续模型上下文中排除。</p><ul><li v-for="item in deleteImpact.items" :key="item.id">{{kinds[item.kind]}}：{{item.text}}</li></ul><p v-if="deleteImpact.truncated">列表显示前 {{deleteImpact.items.length}} 条，其余引用这条来源的派生内容也会移除。</p><button :disabled="busy" class="memory-delete" @click="perform(remove)">确认删除这些内容</button><button @click="deleteImpact=null">取消</button></div>
           <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
           <details v-if="detail&&detail.revisions.length>1" class="memory-revisions"><summary>历史修订（{{detail.revisions.length}}）</summary><article v-for="revision in detail.revisions" :key="revision.version"><small>v{{revision.version}} · {{stamp(revision.recordedAt)}} · 自 {{stamp(revision.validFrom)}} 生效</small><p>{{revision.text}}</p></article></details>

@@ -47,6 +47,15 @@ export interface LongMemoryRecall {
 export interface LongMemoryTopic {
   scopeId: string; path: string[]; records: number; summaries: Array<{ id: string; version: number; text: string }>;
 }
+export interface LongMemoryGraphNode {
+  key: string; id: string; scopeId: string; version: number; type: 'record' | 'source';
+  side: 'dependency' | 'selected' | 'dependent'; title: string; preview: string;
+  kind: LongMemoryKind | LongMemoryOrigin; active: boolean; confidence?: LongMemoryConfidence;
+}
+export interface LongMemoryGraph {
+  root: string; nodes: LongMemoryGraphNode[]; edges: Array<{ from: string; to: string }>;
+  truncated: boolean;
+}
 export interface LongMemoryRead {
   query: LongMemoryQuery; references: Array<{ scopeId: string; id: string; version?: number }>;
   includeSources?: boolean;
