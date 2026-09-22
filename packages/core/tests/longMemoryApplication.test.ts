@@ -91,4 +91,16 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     await app.longMemory.remember(access,{scopeId:access.scopes[0].id,text:'群组测试代号是海桥-622。',kind:'fact',topic:['测试']});
     await run('memory-group','测试代号是什么？');expect(plain(seen.at(-1)!)).toContain('海桥-622');expect(plain(seen.at(-1)!)).not.toContain('溪谷-811');
   });
+
+  test('分段来源工具返回实际记忆依据，供后续遗忘和上下文清理使用', async () => {
+    const scope = await personal(), access = await app.longMemory.access('owner', { conversationId: 'memory-chat' });
+    const saved = await app.longMemory.remember(access, { scopeId: scope.id, text: '长来源核对。'.repeat(400), kind: 'fact', topic: ['测试'] });
+    const record = saved.records[0], source = saved.sources[0];
+    const tool = app.tools.catalog(['memory_read']).entries.get('memory_read')!.tool;
+    const result = await tool.execute({ scopeId: scope.id, page: { id: record.id, version: record.version, sourceId: source.id }, tokenBudget: 1000 },
+      { actorId: 'owner', conversationId: 'memory-chat', signal: new AbortController().signal } as any);
+    expect(result.success).toBe(true);
+    expect(result.memoryReferences).toEqual([{ scopeId: scope.id, id: record.id, version: record.version }]);
+    expect((result.data as any).page.source.id).toBe(source.id); expect((result.data as any).page.nextOffset).toBeGreaterThan(0);
+  });
 });

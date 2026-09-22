@@ -24,4 +24,4 @@ export function recallText(hits:LongMemoryHit[]):string {
     return `[${record.scopeId}/${record.id}@${record.version}] ${record.kind} · ${record.origin} · ${record.confidence}\n主题：${record.topic.join(' / ')||'未分类'}；${time}\n${record.text}${conflicts.length?`\n存在未解决的其他说法：${conflicts.join(', ')}。请并列核对，不能默认为本条正确。`:''}`;
   }).join('\n\n');
 }
-export const recordRef=(record:LongMemoryRecord)=>({scopeId:record.scopeId,id:record.id,version:record.version});
+export const recordRef=(record:Pick<LongMemoryRecord,'scopeId'|'id'|'version'>)=>({scopeId:record.scopeId,id:record.id,version:record.version});

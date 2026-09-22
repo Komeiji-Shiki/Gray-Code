@@ -5,6 +5,7 @@ import { memoryDigest, memoryTerms, memoryTokens } from './text';
 import { rankVectors, type VectorRankingRequest } from './vectors';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
 import type { LongMemoryTopicQuery, LongMemoryTopicPage } from '@graycode/contracts';
+import { readMemoryPage } from './pages';
 
 interface QueryPlan { cte: string; parameters: Array<string | number>; filter: string; filters: Array<string | number> }
 interface SemanticCandidates { available: boolean; matches: Array<{ rowId: number; score: number }> }
@@ -200,6 +201,7 @@ export class MemoryQueries {
   read(input: LongMemoryRead): LongMemoryReadResult {
     const { cte, parameters } = this.plan(input.query);
     if (!Array.isArray(input.references) || input.references.length>100) invalid('一次最多展开 100 条记忆。');
+    if (input.page) return readMemoryPage(this.store, input, { cte, parameters });
     const scopes = new Set(input.query.scopes.map(scope=>scope.id));
     for (const ref of input.references) if (!scopes.has(ref.scopeId)) invalid('要展开的记忆不在授权范围中。');
     // 同一批只计算一次来源可见性，避免每个编号都重复遍历修订和摘要依赖。

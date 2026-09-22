@@ -162,6 +162,29 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect(full.sources[0].text).toBe('来源中的详细原文。'.repeat(200)); expect(full.omitted).toBeUndefined();
   });
 
+  test('长正文和来源按预算连续读取，保留 Unicode 和依据，修订后旧页停止返回', async () => {
+    const text = '完整来源🐱\r\n'.repeat(140), body = '完整记忆🐱\n'.repeat(120);
+    await f.store.longMemoryWrite({ scope, sources: [source('paged-source', text)], records: [record('paged', body, 'paged-source')] });
+    const ref = { scopeId: scope.id, id: 'paged', version: 1 };
+    for (const sourceId of [undefined, 'paged-source']) {
+      let offset: number | undefined = 0, joined = '', pages = 0;
+      do {
+        const result = await f.store.longMemoryRead({ query: query({ tokenBudget: 650 }), references: [], page: { record: ref, sourceId, offset } });
+        expect(result.page?.record).toMatchObject(ref); expect(result.estimatedTokens).toBeLessThanOrEqual(650);
+        expect(result.page!.text).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
+        joined += result.page!.text; offset = result.page!.nextOffset; pages++;
+        expect(pages).toBeLessThan(100);
+      } while (offset !== undefined);
+      expect(joined).toBe(sourceId ? text : body); expect(pages).toBeGreaterThan(1);
+    }
+    const small = await f.store.longMemoryRead({ query: query({ tokenBudget: 64 }), references: [], page: { record: ref } });
+    expect(small.requiredTokenBudget).toBeGreaterThan(64); expect(small.page).toBeUndefined();
+    await expect(f.store.longMemoryRead({ query: query(), references: [], page: { record: ref, sourceId: 'not-a-dependency' } })).rejects.toThrow('不属于');
+    await f.store.longMemoryWrite({ scope, sources: [{ ...source('paged-source', '已纠正的来源'), expectedVersion: 1 }] });
+    const stale = await f.store.longMemoryRead({ query: query(), references: [], page: { record: ref, sourceId: 'paged-source', offset: 1 } });
+    expect(stale.page).toBeUndefined(); expect(stale.unavailable).toEqual([ref]);
+  });
+
   test('批量失败原子回滚，重试幂等，交换归档可重建关键词索引',async()=>{
     const written=await add();const again=await add();expect(again.state.revision).toBe(written.state.revision);
     await expect(f.store.longMemoryWrite({scope,sources:[source('rollback-source','不应留下。')],records:[record('bad','无效来源。','missing')]})).rejects.toMatchObject({code:'SOURCE_CHANGED'});

@@ -64,6 +64,11 @@ export interface LongMemoryGraph {
 export interface LongMemoryRead {
   query: LongMemoryQuery; references: Array<{ scopeId: string; id: string; version?: number }>;
   includeSources?: boolean;
+  page?: { record: { scopeId: string; id: string; version: number }; sourceId?: string; offset?: number };
+}
+export interface LongMemoryTextPage {
+  record: Omit<LongMemoryRecord, 'text'>; source?: Omit<LongMemorySource, 'text'>;
+  text: string; offset: number; end: number; totalCharacters: number; nextOffset?: number;
 }
 export interface LongMemoryReadResult {
   records: LongMemoryRecord[]; sources: LongMemorySource[];
@@ -71,6 +76,7 @@ export interface LongMemoryReadResult {
   /** 区分预算省略与内容失效，调用方可提高预算或减少同批编号后重读。 */
   omitted?: Array<{ kind: 'record' | 'source'; scopeId: string; id: string; version?: number; reason: 'token_budget' | 'record_limit'; estimatedTokens: number }>;
   truncated?: boolean;
+  page?: LongMemoryTextPage; requiredTokenBudget?: number;
 }
 export interface LongMemoryTombstone {
   scopeId: string; kind: 'source' | 'record'; id: string; action: 'delete' | 'retract'; at: number;
