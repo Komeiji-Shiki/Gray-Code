@@ -1,4 +1,4 @@
-import type { ModelInput, PlatformMessage } from '@graycode/contracts';
+import type { ModelInput, PlatformMessage, RunRecord } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { validateHistoryIntegrity } from '../../../backend/modules/channel/HistoryIntegrityValidator';
 import type { Content } from '../../../backend/modules/conversation/types';
@@ -29,6 +29,33 @@ describe('完整前缀总结与持久笔记换窗口', () => {
   afterEach(async () => { await app.close(); await f.cleanup(); });
   const start = (key: string) => app.runtime.start({ actorId: 'owner', agentId: 'default', conversationId: 'compaction', providerId, promptModeId: 'minimal',
     requestKey: key, message: { id: key, role: 'user', parts: [{ text: '继续完成最新修改，保留特殊约束。' }] } });
+
+  test('列笔记和请求换窗只读取目录或会话版本，仍校验运行身份与并发版本', async () => {
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' }); await app.product.save(draft);
+    const now = Date.now();
+    const run: RunRecord = { id: 'header-fixture', requestKey: 'header-fixture', actorId: 'owner', agentId: 'default', conversationId: 'compaction',
+      status: 'queued', iteration: 0, catalogVersion: 'fixture', createdAt: now, updatedAt: now };
+    await app.storage.createRun(run, { id: 'header-input', role: 'user', parts: [{ text: '准备换窗口' }] });
+    await app.storage.putRecord({ namespace: 'context-notes', id: JSON.stringify(['compaction', 'checkpoint']), ownerId: 'compaction', value: { text: '继续任务', updatedAt: now } });
+    const context = { runId: run.id, toolCallId: 'header-change', conversationId: 'compaction', actorId: 'owner', signal: new AbortController().signal,
+      progress: () => {}, askUser: async () => { throw new Error('unused'); } };
+    const catalog = app.tools.catalog(['context_notes', 'new_context']);
+    const readState = jest.spyOn(app.storage, 'readConversationState');
+    const prepareHistory = jest.spyOn(app.longMemoryPrompt.history, 'prepare');
+    try {
+      expect(await catalog.entries.get('context_notes')!.tool.execute({ action: 'list' }, context)).toEqual({ success: true, notes: [{ name: 'checkpoint' }] });
+      const before = (await app.storage.getConversationInfo('compaction'))!;
+      expect(await catalog.entries.get('new_context')!.tool.execute({}, context)).toMatchObject({ success: true });
+      expect(readState).not.toHaveBeenCalled(); expect(prepareHistory).not.toHaveBeenCalled();
+      expect((await app.storage.getConversation('compaction'))?.custom).toMatchObject({ pendingContextWindow: { runId: run.id, toolCallId: 'header-change' } });
+      await expect(app.storage.commitConversation({ conversationId: 'compaction', activeRunId: run.id,
+        expectedRevision: before.historyRevision, expectedMetadataToken: before.metadataToken, metadata: before.metadata })).rejects.toThrow();
+      await expect(catalog.entries.get('context_notes')!.tool.execute({ action: 'list' }, { ...context, runId: 'missing-run' })).rejects.toThrow('不能访问其他会话');
+    } finally {
+      readState.mockRestore(); prepareHistory.mockRestore();
+      await app.storage.appendRunEvent({ runId: run.id, type: 'run.cancelled', payload: {}, update: { status: 'cancelled' } });
+    }
+  });
 
   test('手动总结保留完整前缀，重复总结后可以逐次恢复原上下文', async () => {
     const run = await start('latest'); expect(await app.runtime.wait(run.id)).toMatchObject({ status: 'completed' });

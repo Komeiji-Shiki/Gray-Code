@@ -135,8 +135,10 @@ export class PlatformDatabase {
       getConversation: ({ id }) => this.getConversation(id),
       getConversationInfo: ({ id }) => {
         const row = this.findConversation(id);
-        return row ? { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash),
-          messageCount: this.histories.info(row.history_id).message_count } : null;
+        if (!row) return null;
+        const history = this.histories.info(row.history_id);
+        return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
+          messageCount: history.message_count, historyRevision: history.revision };
       },
       saveMetadata: metadata => this.saveMetadata(metadata),
       listConversations: options => this.listConversations(options),

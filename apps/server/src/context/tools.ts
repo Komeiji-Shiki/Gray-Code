@@ -7,13 +7,17 @@ const noteKey = (id: string, name: string) => JSON.stringify([id, name]);
 
 /** 恢复工具只访问当前已授权会话，笔记不借用工作区文件权限。 */
 export function contextTools(app: PlatformApplication): RuntimeTool[] {
-  const scope = async (context: ToolContext) => {
+  const authorizeContext = async (context: ToolContext) => {
     const id = context.conversationId;
     if (!id) throw new Error('工具缺少当前会话身份。');
     await app.conversation(context.actorId, id);
     const run = await app.storage.getRun(context.runId);
     if (!run || run.conversationId !== id || run.actorId !== context.actorId) throw new Error('不能访问其他会话的上下文。');
     context.signal.throwIfAborted();
+    return id;
+  };
+  const scope = async (context: ToolContext) => {
+    const id = await authorizeContext(context);
     const state=await app.storage.readConversationState(id);
     const view=await app.longMemoryPrompt.history.prepare(context.actorId,id,state.history.messages);
     return { id,state,view };
@@ -33,11 +37,13 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         parameters: schema({ action: { type: 'string', enum: ['list', 'read', 'write', 'append'] }, name: { type: 'string', minLength: 1, maxLength: 120 }, text: { type: 'string', maxLength: 100000 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20000 } }, ['action']) },
       effects: () => [],
       execute: async (args, context) => {
-        const { id, state,view } = await scope(context);
         if (args.action === 'list') {
+          // 目录只有名称，不需要加载整段消息、附件或重新计算正文的来源依赖。
+          const id = await authorizeContext(context);
           const keys = await app.storage.listRecords('context-notes', id);
           return { success: true, notes: keys.map(key => ({ name: JSON.parse(key)[1] as string })) };
         }
+        const { id, state,view } = await scope(context);
         if (typeof args.name !== 'string' || !args.name.trim()) throw new Error('需要提供笔记名称。');
         const key = noteKey(id, args.name);
         const previous = await app.storage.getVersionedRecord('context-notes', key);
@@ -105,11 +111,13 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
       declaration: { name: 'new_context', description: 'Start a fresh context window for the same task after saving a working checkpoint with context_notes. Prior messages remain available through context_history. The runtime changes the window after this tool batch finishes, preserving paired tool calls and results. This does not complete the task.', parameters: schema({}, []) },
       effects: () => [],
       execute: async (_args, context) => {
-        const { id, state } = await scope(context);
+        const id = await authorizeContext(context);
+        const state = await app.storage.getConversationInfo(id);
+        if (!state) throw new Error('当前会话已不存在。');
         const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as { turnContext?: { contextManagementMethod?: string } } | undefined;
         if ((prefix?.turnContext?.contextManagementMethod ?? app.context.configuration(state.metadata).method) !== 'notes') throw new Error('当前回合没有选择笔记换窗口方式。');
         context.signal.throwIfAborted();
-        await app.storage.commitConversation({ conversationId: id, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
+        await app.storage.commitConversation({ conversationId: id, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken,
           activeRunId: context.runId, metadata: { ...state.metadata, custom: { ...state.metadata.custom as Record<string, unknown>,
             pendingContextWindow: { runId: context.runId, toolCallId: context.toolCallId } } } });
         return { success: true, message: '本批工具完成后开始新的上下文窗口，请读取笔记并继续原任务。' };
