@@ -3,6 +3,7 @@ import errorSound from '../../../resources/sound/error.mp3?url';
 import completeSound from '../../../resources/sound/taskComplete.mp3?url';
 import taskErrorSound from '../../../resources/sound/taskError.mp3?url';
 import type { HostTransport } from '../utils/hostTransport';
+import { WORKSPACE_PANEL_MESSAGE } from '@shared/workspacePanelNavigation';
 import './theme.css';
 import '@vscode/codicons/dist/codicon.css';
 import { applyDesktopAppearance } from './appearance';
@@ -23,6 +24,7 @@ let persistedState = await desktop.call('ui.state.get');
 const dispatch = (message: unknown) => { for (const listener of subscribers) listener(message); };
 const host: HostTransport = {
   kind: desktop.kind,
+  openWorkspacePanel: panel => window.parent.postMessage({ type: WORKSPACE_PANEL_MESSAGE, panel }, window.location.origin),
   writeClipboardText: desktop.kind === 'web' ? undefined : text => desktop.call('desktop.clipboard.writeText', { text }),
   getDefaultPromptModeId: () => defaultPromptModeId,
   getState: () => persistedState,

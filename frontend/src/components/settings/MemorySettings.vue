@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
+import WorkspaceFeatureLinks from './panel/WorkspaceFeatureLinks.vue'
 /**
  * MemorySettings - 永久记忆系统配置组件
  *
@@ -19,9 +20,9 @@ const { t } = useI18n()
 const ENTRIES_LIMIT = 5000
 
 // 内置默认提示词（与 PromptManager.generateMemorySection 保持一致）。
-// 内容来自语言包（components.settings.memory.defaultPrompt），随界面语言切换；
+// 内容来自语言包（components.settings.settingsPanel.memory.defaultPrompt），随界面语言切换；
 // 用户保存后 systemPrompt 持有其编辑值，不再随语言变化（与旧行为一致：默认值仅作初始/恢复基准）。
-const DEFAULT_SYSTEM_PROMPT = computed(() => t('components.settings.memory.defaultPrompt'))
+const DEFAULT_SYSTEM_PROMPT = computed(() => t('components.settings.settingsPanel.memory.defaultPrompt'))
 
 const isLoading = ref(true)
 const isSaving = ref(false)
@@ -574,6 +575,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 <template>
   <div class="memory-settings">
+    <WorkspaceFeatureLinks area="memory" data-search-anchor="long-memory-settings" />
     <div v-if="isLoading" class="loading-state">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
       {{ t('components.settings.settingsPanel.memory.loading') }}

@@ -1621,6 +1621,15 @@ const ja: LanguageMessages = {
                     followSystem: 'システム設定に従う'
                 },
             },
+            workspaceFeatureLinks: {
+                memoryTitle: "階層型長期メモリとインポート資料",
+                memoryHint: "事実、好み、出典、関連図、インポート資料は長期メモリで管理します。「整理方法」で想起件数、トークン予算、埋め込みを設定できます。この下は独立したログ型メモリの設定です。",
+                openMemory: "長期メモリを開く",
+                companionsTitle: "ペット、Live2D と画面認識",
+                companionsHint: "ペット設定ではモデル、モーション、パラメーター範囲、拡大率、動きの軽減を調整します。画面認識ではキャプチャ対象、間隔、送信方法を別々に設定します。開いても現在の設定の下書きは保持されます。",
+                openPets: "ペットと Live2D を設定",
+                openScreenSense: "画面認識を設定",
+            },
             contextSettings: {
                 invalidLimit: "-1 または 0 以上の整数を入力してください。無効な値は保存されません。",
                 loading: '読み込み中...',
@@ -2403,7 +2412,7 @@ const ja: LanguageMessages = {
                     loading: '記憶設定を読み込み中...',
                     globalOnlyHint: 'グローバル設定です。「グローバル記憶」タブでのみ変更できます。',
                     enabled: {
-                        label: '永久記憶を有効にする',
+                        label: "ログ型メモリを有効化",
                         description: 'AI がセッションをまたいで長期情報を記憶・参照できるようにします。',
                         disabledNotice: '無効にすると、記憶プロンプトは挿入されず、AI に記憶ツールも提供されません。既存の記憶と設定は保持され、下で引き続き表示・編集できます。'
                     },

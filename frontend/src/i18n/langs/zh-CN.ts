@@ -1623,6 +1623,15 @@ const zhCN = {
                     followSystem: '跟随系统'
                 },
             },
+            workspaceFeatureLinks: {
+                memoryTitle: "分层长期记忆与导入资料",
+                memoryHint: "事实、偏好、来源、关系图和导入资料在长期记忆中管理。打开后可在“整理方式”配置召回条数、Token 预算和嵌入服务。本页下方是独立的日志式记忆设置。",
+                openMemory: "打开长期记忆",
+                companionsTitle: "桌宠、Live2D 与屏幕感知",
+                companionsHint: "桌宠设置包含模型、动作、参数范围、缩放和减少动态效果；屏幕感知单独配置采集对象、间隔和发送方式。打开这些面板会保留当前设置草稿。",
+                openPets: "配置桌宠与 Live2D",
+                openScreenSense: "配置屏幕感知",
+            },
             contextSettings: {
                 invalidLimit: "请输入 -1 或非负整数；无效输入不会保存。",
                 loading: '加载中...',
@@ -2405,7 +2414,7 @@ const zhCN = {
                     loading: '正在加载记忆配置...',
                     globalOnlyHint: '全局设置，仅「全局记忆」tab 可修改。',
                     enabled: {
-                        label: '启用长期记忆',
+                        label: "启用日志式记忆",
                         description: '允许 AI 跨会话回忆和记录长期信息。',
                         disabledNotice: '关闭后不会注入记忆提示词，也不会向 AI 提供记忆工具。已有记忆和配置将保留，仍可在下方查看和编辑。'
                     },

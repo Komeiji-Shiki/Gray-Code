@@ -572,6 +572,16 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     keywords: ['启动画面', 'splash', 'スプラッシュ', '启动动画', '开机'],
     anchor: '[data-search-anchor="splash-animation"]'
   },
+  ...(isDesktopHost ? [
+    { key: 'memory-library', tab: 'memory' as const,
+      labelKey: 'components.settings.workspaceFeatureLinks.memoryTitle',
+      keywords: ['长期记忆', '向量', '嵌入', '召回', '预算', '导入资料', '来源', '记忆图谱', 'embedding', 'recall', 'memory library', '長期メモリ'],
+      anchor: '[data-search-anchor="long-memory-settings"]' },
+    { key: 'companion-features', tab: 'appearance' as const,
+      labelKey: 'components.settings.workspaceFeatureLinks.companionsTitle',
+      keywords: ['Live2D', '桌宠', '动作', '表情', '缩放', '屏幕感知', '采集', 'pet', 'screen awareness', 'ペット', '画面認識'],
+      anchor: '[data-search-anchor="companion-settings"]' },
+  ] : []),
   {
     key: 'memory', tab: 'memory',
     labelKey: 'components.settings.settingsPanel.sections.memory.title',
@@ -580,7 +590,7 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
   {
     key: 'memory-toggle', tab: 'memory',
     labelKey: 'components.settings.settingsPanel.memory.enabled.label',
-    keywords: ['启用', 'enabled', '有効', '长期记忆', '总开关'],
+    keywords: ['启用', 'enabled', '有効', '日志式记忆', '工程记忆', 'journal memory'],
     anchor: '[data-search-anchor="memory-toggle"]'
   },
   {

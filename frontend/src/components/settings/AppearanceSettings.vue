@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
+import WorkspaceFeatureLinks from './panel/WorkspaceFeatureLinks.vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
@@ -134,6 +135,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 <template>
   <div class="appearance-settings">
+    <WorkspaceFeatureLinks area="companions" data-search-anchor="companion-settings" />
     <PlatformAppearanceSettings v-if="desktopHost" />
     <div v-if="isLoading" class="loading">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>

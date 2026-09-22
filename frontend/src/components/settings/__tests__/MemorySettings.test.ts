@@ -12,6 +12,7 @@ import { defineComponent } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { describe, expect, vi, beforeEach } from 'vitest'
 import MemorySettings from '../MemorySettings.vue'
+import { setLanguage, t } from '../../../i18n'
 
 const { sendMock } = vi.hoisted(() => ({
   sendMock: vi.fn()
@@ -272,3 +273,19 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
     expect(deleteCalls[0][1]?.workspaceUri).toBe(WS_URI)
   })
 })
+
+
+test('恢复默认显示完整记忆规则，保存时继续使用后端默认提示词', async () => {
+  setLanguage('zh-CN'); defaultSendImplementation();
+  const wrapper = await mountSettings();
+  try {
+    await wrapper.findAll('button').find(button => button.text() === t('components.settings.settingsPanel.memory.reset'))!.trigger('click');
+    const text = wrapper.get<HTMLTextAreaElement>('[data-search-anchor="memory-custom-prompt"] textarea').element.value;
+    expect(text).toContain('memory_wake');
+    expect(text).toContain('memory_note');
+    expect(text).not.toContain('components.settings.');
+    await wrapper.findAll('button').find(button => button.text() === t('components.settings.settingsPanel.memory.save'))!.trigger('click');
+    await flushPromises();
+    expect(mockSend).toHaveBeenCalledWith('updateMemoryConfig', expect.objectContaining({ config: expect.objectContaining({ systemPrompt: '' }) }));
+  } finally { wrapper.unmount(); setLanguage('auto'); }
+});

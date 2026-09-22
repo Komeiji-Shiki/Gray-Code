@@ -1621,6 +1621,15 @@ const en: LanguageMessages = {
                     followSystem: 'Follow system'
                 },
             },
+            workspaceFeatureLinks: {
+                memoryTitle: "Structured memory and imported libraries",
+                memoryHint: "Manage facts, preferences, sources, relationships and imports in Long-term Memory. Its Organization tab configures recall count, token budget and embeddings. The separate settings below manage journal memory.",
+                openMemory: "Open long-term memory",
+                companionsTitle: "Pets, Live2D and screen awareness",
+                companionsHint: "Pet settings cover models, motions, parameter ranges, scale and reduced motion. Screen awareness separately controls capture targets, intervals and delivery. Opening these panels preserves this settings draft.",
+                openPets: "Configure pets and Live2D",
+                openScreenSense: "Configure screen awareness",
+            },
             contextSettings: {
                 invalidLimit: "Enter -1 or a nonnegative integer. Invalid input is not saved.",
                 loading: 'Loading...',
@@ -2403,7 +2412,7 @@ const en: LanguageMessages = {
                     loading: 'Loading memory config...',
                     globalOnlyHint: 'Global setting. Only editable in the "Global Memory" tab.',
                     enabled: {
-                        label: 'Enable Permanent Memory',
+                        label: "Enable journal memory",
                         description: 'Allow the AI to recall and record long-term information across sessions.',
                         disabledNotice: 'When disabled, the memory prompt is not injected and memory tools are not provided to the AI. Existing memories and settings are preserved and can still be viewed or edited below.'
                     },

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { appearance, guard, initialize, loadSettings, state } from './state';
 import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
+import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import Workbench from './components/Workbench.vue';
 import ContentPreview from './components/ContentPreview.vue';
 import RunInspector from './components/RunInspector.vue';
@@ -19,6 +20,13 @@ import PetManager from './components/PetManager.vue';
 import PetSurface from './components/PetSurface.vue';
 import ScreenSenseSettings from './components/ScreenSenseSettings.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
+const productChatFrame = ref<HTMLIFrameElement>();
+function openWorkspacePanel(event: MessageEvent) {
+  const panel = readWorkspacePanelMessage(event, productChatFrame.value?.contentWindow, window.location.origin);
+  if (panel === 'memory') openLibrary('memory');
+  else if (panel === 'pets') petManagerOpen.value = true;
+  else if (panel === 'screenSense') screenSenseOpen.value = true;
+}
 const screenSenseOpen = ref(false);
 const petManagerOpen = ref(false);
 const companionOpen = ref(false);
@@ -112,6 +120,7 @@ const variables = computed(() => {
 useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
 onMounted(() => void guard(async () => {
+  window.addEventListener('message', openWorkspacePanel);
   compactQuery.addEventListener('change', updateViewport);
   window.addEventListener('resize', updateViewport);
   window.visualViewport?.addEventListener('resize', updateViewport);
@@ -127,7 +136,7 @@ onMounted(() => void guard(async () => {
   });
   if (!isWeb) { await nextTick(); await call('desktop.files.ready'); }
 }));
-onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
+onUnmounted(() => { window.removeEventListener('message', openWorkspacePanel); unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
 </script>
 <template>
   <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="resolvedTheme" :data-density="appearance?.density">
@@ -171,7 +180,7 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
         <div v-if="!compactViewport && !navigationCollapsed" class="navigation-resize" role="separator" aria-label="调整对话列表宽度" aria-orientation="vertical" :aria-valuemin="200" :aria-valuemax="sidebarMaximum" :aria-valuenow="Math.round(visibleSidebarWidth)" tabindex="0" @pointerdown.prevent="dragSidebar" @pointermove="moveSidebar" @pointerup="endSidebar" @pointercancel="endSidebar" @lostpointercapture="endSidebar" @keydown.left.prevent="resizeSidebarBy(-10)" @keydown.right.prevent="resizeSidebarBy(10)" @dblclick="sidebarWidth = 250; endSidebar()"></div>
       </div>
     <div ref="container" class="desktop-workspace" :class="{ 'chat-focused': state.chatFocused || state.settingsOpen, 'workbench-expanded': state.workbenchExpanded && !state.chatFocused && !state.settingsOpen, 'mobile-workbench': compactViewport && !state.chatFocused && !state.settingsOpen, resizing }" :style="{ '--chat-width': split + '%' }">
-      <iframe class="product-chat" src="./chat/platform.html" title="GrayCode 对话和设置"></iframe>
+      <iframe ref="productChatFrame" class="product-chat" src="./chat/platform.html" title="GrayCode 对话和设置"></iframe>
       <div v-if="!state.chatFocused && !state.settingsOpen" class="split-handle" role="separator" aria-label="调整对话与侧边面板宽度" aria-orientation="vertical" tabindex="0" @pointerdown="dragSplit" @pointermove="moveSplit" @pointerup="endSplit" @lostpointercapture="endSplit" @keydown.left.prevent="split = Math.max(25, split - 2); endSplit()" @keydown.right.prevent="split = Math.min(75, split + 2); endSplit()"></div>
       <Workbench v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
     </div>
