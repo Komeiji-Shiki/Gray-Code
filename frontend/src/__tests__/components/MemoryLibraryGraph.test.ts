@@ -43,7 +43,7 @@ test('关系图按所选修订加载，来源可展开，当前节点可进入�
 test('切换关系视图不会丢掉正文草稿', async () => {
   const wrapper=await open();await wrapper.find('textarea[aria-label="记忆正文"]').setValue('未保存的修订');
   await button(wrapper,'查看关系').trigger('click');await flushPromises();expect(wrapper.text()).toContain('正在编辑的草稿仍然保留');
-  await button(wrapper,'编辑正文').trigger('click');expect(wrapper.find('textarea[aria-label="记忆正文"]').element.value).toBe('未保存的修订');
+  await button(wrapper,'编辑正文').trigger('click');expect(wrapper.find<HTMLTextAreaElement>('textarea[aria-label="记忆正文"]').element.value).toBe('未保存的修订');
 });
 
 test('读取记忆失败时显示错误，用户仍可继续浏览', async () => {
