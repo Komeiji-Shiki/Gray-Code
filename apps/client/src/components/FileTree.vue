@@ -5,6 +5,7 @@ import { rpc as call, subscribe } from '../api';
 import { guard, state } from '../state';
 import { useWorkspaceRoots } from '../workspaceRoots';
 import WorkspaceFileDialog from './WorkspaceFileDialog.vue';
+import NavigationIcon from './navigation/NavigationIcon.vue';
 import type { FileDialogRequest } from './files/types';
 const emit = defineEmits<{ open: [path: string, workspaceId: string]; hide: [] }>();
 const isWeb = window.graycode?.kind === 'web';
@@ -108,7 +109,7 @@ async function navigate(event: KeyboardEvent, entry: DirectoryEntry) {
 }
 function showMenu(event: MouseEvent, entry: DirectoryEntry) {
   selected.value = entry;
-  if (isRoot(entry)) { menu.value = undefined; return; }
+  if (isRoot(entry) && isWeb) { menu.value = undefined; return; }
   menu.value = { entry, workspaceId: state.workspaceId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 180)) };
 }
 async function editEntry(kind: 'move' | 'remove') {
@@ -132,6 +133,10 @@ async function changed(path: string, workspaceId: string, open: boolean) {
 async function download() {
   const chosen = menu.value; menu.value = undefined;
   if (chosen) await call('files.download', { workspaceId: chosen.workspaceId, path: chosen.entry.path });
+}
+async function reveal() {
+  const chosen = menu.value; menu.value = undefined;
+  if (chosen) await call('files.reveal', { workspaceId: chosen.workspaceId, path: chosen.entry.path });
 }
 watch([menu, dialog], () => { state.fileDialogOpen = !!menu.value || !!dialog.value; });
 watch([() => state.workspaceId, () => JSON.stringify(roots.value)], () => {
@@ -170,7 +175,7 @@ onUnmounted(() => {
 </script>
 <template>
   <section class="file-tree">
-    <header class="panel-heading"><span>文件</span><button class="icon-button" title="刷新文件" @click="guard(refresh)">↻</button><button class="icon-button" title="隐藏文件列表" @click="emit('hide')">‹</button></header>
+    <header class="panel-heading"><span>文件</span><button v-if="!isWeb" class="icon-button" :disabled="!state.workspaceId" title="在资源管理器中打开工作区" aria-label="在资源管理器中打开工作区" @click="guard(() => call('workspace.openInExplorer', { workspaceId: state.workspaceId }))"><NavigationIcon name="folder" /></button><button class="icon-button" title="刷新文件" @click="guard(refresh)">↻</button><button class="icon-button" title="隐藏文件列表" @click="emit('hide')">‹</button></header>
     <div class="file-tree-actions"><button :disabled="!canCreate" title="新建文件" @click="create('file')">新建文件</button><button :disabled="!canCreate" title="新建目录" @click="create('directory')">目录＋</button><button :disabled="!canCreate" title="上传文件" @click="uploadInput?.click()">上传</button><input ref="uploadInput" type="file" multiple hidden aria-label="选择上传文件" @change="chooseUpload" /></div>
     <div v-if="state.workspaceId" class="file-tree-location" :title="folder">位置：{{ folder === '.' ? roots.length > 1 ? '选择一个目录后新建或上传文件' : '工作区根目录' : folder }}</div>
     <div v-else class="empty-note">选择工作区以浏览文件。</div>
@@ -179,13 +184,13 @@ onUnmounted(() => {
     <div class="file-tree-visible" :style="{ transform: `translateY(${startRow * rowHeight}px)` }">
     <div v-for="entry in visibleNodes" :key="entry.path" :data-path="entry.path" class="file-tree-entry" :class="{ selected: selected?.path === entry.path }" @contextmenu.prevent="showMenu($event, entry)">
       <button class="tree-row" :style="{ paddingLeft: `${12 + entry.depth * 15}px` }" :title="entry.path" @click="guard(() => click(entry))" @keydown="guard(() => navigate($event, entry))"><span class="file-glyph">{{ entry.kind === 'directory' ? expanded.has(entry.path) ? '⌄' : '›' : entry.kind === 'symlink' ? '↗' : '·' }}</span><span class="file-name">{{ entry.name }}</span></button>
-      <button v-if="!isRoot(entry)" class="file-entry-more" :aria-label="`操作 ${entry.name}`" title="文件操作" @click="showMenu($event, entry)">⋯</button>
+      <button v-if="!isRoot(entry) || !isWeb" class="file-entry-more" :aria-label="`操作 ${entry.name}`" title="文件操作" @click="showMenu($event, entry)">⋯</button>
     </div>
     </div>
     </div>
     </div>
     <Teleport to=".application">
-      <template v-if="menu"><div class="file-menu-backdrop" @pointerdown="menu = undefined"></div><div class="file-entry-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }"><button role="menuitem" @click="guard(() => editEntry('move'))">重命名或移动</button><button v-if="menu.entry.kind !== 'directory'" role="menuitem" @click="guard(download)">{{ isWeb ? '下载文件' : '另存文件' }}</button><button role="menuitem" class="danger" @click="guard(() => editEntry('remove'))">删除</button></div></template>
+      <template v-if="menu"><div class="file-menu-backdrop" @pointerdown="menu = undefined"></div><div class="file-entry-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }"><button v-if="!isWeb" role="menuitem" @click="guard(reveal)">{{ menu.entry.kind === 'directory' ? '在资源管理器中打开' : '在资源管理器中显示' }}</button><button v-if="!isRoot(menu.entry)" role="menuitem" @click="guard(() => editEntry('move'))">重命名或移动</button><button v-if="menu.entry.kind !== 'directory'" role="menuitem" @click="guard(download)">{{ isWeb ? '下载文件' : '另存文件' }}</button><button v-if="!isRoot(menu.entry)" role="menuitem" class="danger" @click="guard(() => editEntry('remove'))">删除</button></div></template>
       <WorkspaceFileDialog v-if="dialog" :request="dialog" @close="dialog = undefined" @changed="(path, workspaceId, open) => guard(() => changed(path, workspaceId, open))" />
     </Teleport>
   </section>

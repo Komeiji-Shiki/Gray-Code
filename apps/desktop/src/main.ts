@@ -37,6 +37,7 @@ import { DesktopEditorRegistration } from './editorRegistration';
 import { bindDesktopAppearance } from './appearance';
 import { resolveAppearancePalette } from '../../../shared/appearance';
 import { isTrustedApplicationFrame } from './trustedFrame';
+import { openWorkspaceInExplorer, revealWorkspaceFile } from './workspaceExplorer';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: { buildCommit?: string; buildDirty?: boolean; buildTime: string };
@@ -356,6 +357,8 @@ async function main(): Promise<void> {
         params = params.data ?? {};
       }
       if (exiting) throw new Error('应用正在关闭，请稍后重新打开。');
+      if (method === 'files.reveal') return revealWorkspaceFile(application, shell, client.actorId, params as { workspaceId: string; path: string });
+      if (method === 'workspace.openInExplorer') return openWorkspaceInExplorer(application, shell, client.actorId, params);
       if (method === 'desktop.pet.expand') return petWindowController!.expand(params.expanded === true);
       if (['desktop.pet.manage', 'desktop.pet.screenSense', 'desktop.pet.openConversation'].includes(method)) {
         if (method === 'desktop.pet.openConversation') await application.conversation(client.actorId, params.conversationId);
