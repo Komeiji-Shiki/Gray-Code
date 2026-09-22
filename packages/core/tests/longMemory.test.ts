@@ -113,6 +113,28 @@ describe('统一长期记忆的实际存储 worker',()=>{
     await expect(f.store.longMemoryGraph({scope,id:'city',limit:101})).rejects.toThrow('数量无效');
   });
 
+  test('主题续页覆盖所有同级目录，预算不足给出所需额度，变化后的游标要求重新读取', async () => {
+    const sources = Array.from({ length: 65 }, (_, index) => source(`page-source-${index}`, `目录原文 ${index}`));
+    await f.store.longMemoryWrite({ scope, sources, records: sources.map((item, index) => record(`page-${index}`, item.text, item.id, { topic: ['目录', String(index).padStart(2, '0')] })) });
+    const request = query({ text: undefined, topic: ['目录'], limit: 9, tokenBudget: 600 });
+    const seen: string[] = []; let cursor: string | undefined, firstCursor: string | undefined;
+    do {
+      const page = await f.store.longMemoryTopics({ ...request, cursor });
+      expect(page.topics.length).toBeGreaterThan(0); expect(page.estimatedTokens).toBeLessThanOrEqual(600);
+      seen.push(...page.topics.map(topic => topic.path.at(-1)!)); cursor = page.nextCursor; firstCursor ??= cursor;
+    } while (cursor);
+    expect(seen).toEqual(Array.from({ length: 65 }, (_, index) => String(index).padStart(2, '0')));
+    await f.store.longMemoryWrite({ scope, sources: [source('later', '新的目录原文')], records: [record('later', '新的目录', 'later', { topic: ['目录', '后来'] })] });
+    await expect(f.store.longMemoryTopics({ ...request, cursor: firstCursor })).rejects.toThrow('目录或筛选条件已变化');
+    await expect(f.store.longMemoryTopics({ ...request, cursor: '!invalid' })).rejects.toThrow('编号无效');
+    const longPath = Array.from({ length: 8 }, (_, index) => String(index) + '长'.repeat(119));
+    await f.store.longMemoryWrite({ scope, sources: [source('long-name', '长目录')], records: [record('long-name', '长目录条目', 'long-name', { topic: longPath })] });
+    const short = await f.store.longMemoryTopics(query({ text: undefined, topic: longPath.slice(0, 7), tokenBudget: 256 }));
+    expect(short.topics).toEqual([]); expect(short.requiredTokenBudget).toBeGreaterThan(256);
+    const sufficient = await f.store.longMemoryTopics({ ...query({ text: undefined, topic: longPath.slice(0, 7), tokenBudget: short.requiredTokenBudget }), cursor: short.nextCursor });
+    expect(sufficient.topics[0].path).toEqual(longPath); expect(sufficient.nextCursor).toBeUndefined();
+  });
+
   test('按需读取区分预算省略、条数上限和不存在的记忆，并保持请求顺序', async () => {
     await f.store.longMemoryWrite({ scope, sources: [source('one-source', '短来源'), source('two-source', '另一来源')],
       records: [record('one', '第一条事实。'), record('two', '第二条事实。')] });

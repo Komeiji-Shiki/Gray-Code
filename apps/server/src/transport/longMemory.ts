@@ -39,7 +39,7 @@ export async function longMemoryRequest(app:PlatformApplication,session:ClientSe
   const selected=()=>{if(!params.scopeId)throw new Error('请先选择记忆范围。');return service.select(access,params.scopeId)[0];};
   switch(method){
     case 'memory.search':return service.search(access,{...params,kinds:params.kinds??['fact','preference','experience','project','procedure','event','summary'],confirmedOnly:false,limit:params.limit??50,tokenBudget:params.tokenBudget??16000});
-    case 'memory.topics':return app.storage.longMemoryTopics(await service.query(access,{...params,text:undefined,confirmedOnly:false,limit:50,tokenBudget:4000}));
+    case 'memory.topics':return app.storage.longMemoryTopics({...await service.query(access,{...params,text:undefined,confirmedOnly:false,limit:50,tokenBudget:4000}),cursor:params.cursor});
     case 'memory.get':return app.storage.longMemoryInspect({scope:selected(),id:params.id});
     case 'memory.graph':return app.storage.longMemoryGraph({scope:selected(),id:params.id,version:params.version,limit:params.limit});
     case 'memory.remember':return service.remember(access,params as any);

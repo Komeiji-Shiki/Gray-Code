@@ -30,7 +30,7 @@ export interface StorageOperations {
   longMemoryState: { input: LongMemoryScope; output: LongMemoryScopeState };
   longMemoryWrite: { input: LongMemoryWrite; output: LongMemoryWriteResult };
   longMemoryRecall: { input: LongMemoryQuery; output: LongMemoryRecall };
-  longMemoryTopics: { input: LongMemoryQuery; output: { topics: LongMemoryTopic[]; estimatedTokens: number; truncated: boolean } };
+  longMemoryTopics: { input: import('@graycode/contracts').LongMemoryTopicQuery; output: import('@graycode/contracts').LongMemoryTopicPage };
   longMemoryRead: { input: LongMemoryRead; output: LongMemoryReadResult };
   longMemoryGraph: { input: { scope: LongMemoryScope; id: string; version?: number; limit?: number }; output: LongMemoryGraph };
   longMemoryRevisions: { input: { scope: LongMemoryScope; id: string }; output: LongMemoryRecord[] };

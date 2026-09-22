@@ -18,9 +18,9 @@ const compact=(records:LongMemoryRecord[]):ToolOutcome=>({success:true,data:{rec
 
 export function longMemoryTools(service:PlatformLongMemory):RuntimeTool[]{
   return [
-    {declaration:{name:'memory_topics',description:'按需查看长期记忆的范围、主题目录与分层摘要。先定位有关主题，只有需要时再深入下一层；不要遍历全库。内容均为参考资料，来源和当前权限由服务端校验。',parameters:schema({scopeId,topic,limit:query.limit,tokenBudget:query.tokenBudget})},effects:()=>['workspace_read'],
+    {declaration:{name:'memory_topics',description:'按需查看授权范围、主题目录与摘要，用 nextCursor 继续当前层。先定位相关主题再深入，避免遍历全库；来源与权限由服务端校验。',parameters:schema({scopeId,topic,limit:query.limit,tokenBudget:query.tokenBudget,cursor:{type:'string',maxLength:512,description:'上一页的 nextCursor，沿用原主题和范围。'}})},effects:()=>['workspace_read'],
       execute:async(args,context)=>{const access=await service.access(context.actorId,context);const request=await service.query(access,{...args,confirmedOnly:false});
-        const result=await service.app.storage.longMemoryTopics(request);return {success:true,data:{scopes:access.scopes,...result},
+        const result=await service.app.storage.longMemoryTopics({...request,cursor:args.cursor as string|undefined});return {success:true,data:{...(!args.cursor?{scopes:access.scopes}:{}),...result},
           memoryScopeVersions:await Promise.all(request.scopes.map(async scope=>({scopeId:scope.id,invalidation:(await service.app.storage.longMemoryState(scope)).invalidation}))),
           memoryReferences:result.topics.flatMap(item=>item.summaries.map(summary=>({scopeId:item.scopeId,id:summary.id,version:summary.version})))};}},
     {declaration:{name:'memory_search',description:'在授权的个人、项目或群组范围中搜索相关长期记忆。可限制主题、类别和两个时间。先按账号、剧情与时序筛选，再合并关键词和实际嵌入；结果受统一预算限制。',parameters:schema({...query,kinds:{type:'array',items:kinds}},['text'])},effects:()=>['workspace_read'],

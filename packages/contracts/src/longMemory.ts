@@ -47,6 +47,11 @@ export interface LongMemoryRecall {
 export interface LongMemoryTopic {
   scopeId: string; path: string[]; records: number; summaries: Array<{ id: string; version: number; text: string }>;
 }
+export interface LongMemoryTopicQuery extends LongMemoryQuery { cursor?: string }
+export interface LongMemoryTopicPage {
+  topics: LongMemoryTopic[]; estimatedTokens: number; truncated: boolean;
+  nextCursor?: string; requiredTokenBudget?: number;
+}
 export interface LongMemoryGraphNode {
   key: string; id: string; scopeId: string; version: number; type: 'record' | 'source';
   side: 'dependency' | 'selected' | 'dependent'; title: string; preview: string;

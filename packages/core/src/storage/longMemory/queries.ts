@@ -1,9 +1,10 @@
 import type { LongMemoryQuery, LongMemoryRecall, LongMemoryRecord, LongMemoryRead, LongMemoryReadResult, LongMemoryTopic, LongMemorySource, LongMemoryScope } from '@graycode/contracts';
 import { invalid } from '../../errors';
 import { MemoryMutationStore, validateMemoryTopic, validateMemoryVector, type RecordRow } from './mutations';
-import { memoryTerms, memoryTokens } from './text';
+import { memoryDigest, memoryTerms, memoryTokens } from './text';
 import { rankVectors, type VectorRankingRequest } from './vectors';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
+import type { LongMemoryTopicQuery, LongMemoryTopicPage } from '@graycode/contracts';
 
 interface QueryPlan { cte: string; parameters: Array<string | number>; filter: string; filters: Array<string | number> }
 interface SemanticCandidates { available: boolean; matches: Array<{ rowId: number; score: number }> }
@@ -150,12 +151,23 @@ export class MemoryQueries {
       states: query.scopes.map(scope => this.store.state(scope)), truncated };
   }
 
-  topics(query: LongMemoryQuery): { topics: LongMemoryTopic[]; estimatedTokens: number; truncated: boolean } {
+  topics(input: LongMemoryTopicQuery): LongMemoryTopicPage {
+    let query = input, offset = 0, previous: unknown[] | undefined;
+    if (input.cursor !== undefined) {
+      if (typeof input.cursor !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(input.cursor)) invalid('主题续页编号无效。');
+      try { previous = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8')); } catch { invalid('主题续页编号无效。'); }
+      if (!Array.isArray(previous) || previous.length !== 4 || !Number.isSafeInteger(previous[0]) || Number(previous[0]) < 0
+        || !Number.isFinite(previous[1]) || !Number.isFinite(previous[2]) || typeof previous[3] !== 'string') invalid('主题续页编号无效。');
+      offset = previous[0] as number; query = { ...input, asOf: previous[1] as number, knownAt: previous[2] as number };
+    }
     const { cte, parameters, filter, filters } = this.plan(query), depth = query.topic?.length ?? 0;
+    const fingerprint = memoryDigest([query.scopes.map(scope => { const state = this.store.state(scope); return [scope.id, state.revision, state.invalidation]; }),
+      query.topic ?? [], query.kinds ?? [], !!query.confirmedOnly, !!query.includeSummaries]);
+    if (previous && previous[3] !== fingerprint) invalid('记忆目录或筛选条件已变化，请从当前主题重新读取。');
     const rows = this.store.db.prepare(`${cte} SELECT r.scope_id,json_extract(r.topic,'$[${depth}]') AS child,count(*) AS count
-      FROM eligible r WHERE json_array_length(r.topic)>?${filter} GROUP BY r.scope_id,child ORDER BY count DESC,child LIMIT ?`)
-      .all(...parameters, depth, ...filters, query.limit + 1) as Array<{ scope_id: string; child: string; count: number }>;
-    const topics: LongMemoryTopic[] = []; let estimatedTokens = 0, truncated = rows.length > query.limit;
+      FROM eligible r WHERE json_array_length(r.topic)>?${filter} GROUP BY r.scope_id,child ORDER BY count DESC,child,r.scope_id LIMIT ? OFFSET ?`)
+      .all(...parameters, depth, ...filters, query.limit + 1, offset) as Array<{ scope_id: string; child: string; count: number }>;
+    const topics: LongMemoryTopic[] = []; let estimatedTokens = 0, truncated = rows.length > query.limit, requiredTokenBudget: number | undefined;
     const page = rows.slice(0, query.limit), summariesByTopic = new Map<string, LongMemoryTopic['summaries']>();
     if (page.length) {
       const confirmation = this.confirmation(query);
@@ -177,10 +189,12 @@ export class MemoryQueries {
       // 目录优先给出路径和数量，摘要过长时保留编号供 memory_read 按需展开。
       for (const summary of entry.summaries) if (memoryTokens(summary.text)>180) summary.text = '';
       const cost = memoryTokens(JSON.stringify(entry));
-      if (estimatedTokens + cost > query.tokenBudget) { truncated = true; break; }
+      if (estimatedTokens + cost > query.tokenBudget) { truncated = true; if (!topics.length) requiredTokenBudget = cost; break; }
       topics.push(entry); estimatedTokens += cost;
     }
-    return { topics, estimatedTokens, truncated };
+    return { topics, estimatedTokens, truncated,
+      ...(truncated ? { nextCursor: Buffer.from(JSON.stringify([offset + topics.length, query.asOf, query.knownAt, fingerprint])).toString('base64url') } : {}),
+      ...(requiredTokenBudget !== undefined ? { requiredTokenBudget } : {}) };
   }
 
   read(input: LongMemoryRead): LongMemoryReadResult {

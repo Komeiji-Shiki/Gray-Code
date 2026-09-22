@@ -51,3 +51,15 @@ test('读取记忆失败时显示错误，用户仍可继续浏览', async () =>
   await wrapper.find('.memory-record>button').trigger('click');await flushPromises();
   expect(wrapper.find('[role="alert"]').text()).toBe('记录暂时不可读');expect(button(wrapper,'保存记忆').attributes('disabled')).toBeUndefined();
 });
+
+test('同层主题可以继续加载，保留前一页目录', async () => {
+  const original = mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async (method, params) => method === 'memory.topics'
+    ? params.cursor ? { topics: [{ scopeId: 'scope', path: ['第二页'], records: 1, summaries: [] }], truncated: false }
+      : { topics: [{ scopeId: 'scope', path: ['第一页'], records: 1, summaries: [] }], truncated: true, nextCursor: 'next' }
+    : original(method, params));
+  const wrapper = await open(); await button(wrapper, '加载更多主题').trigger('click'); await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('memory.topics', expect.objectContaining({ scopeId: 'scope', topic: [], cursor: 'next' }));
+  expect(wrapper.text()).toContain('第一页'); expect(wrapper.text()).toContain('第二页');
+  expect(wrapper.findAll('button').some(item => item.text() === '加载更多主题')).toBe(false);
+});

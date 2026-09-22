@@ -4,6 +4,7 @@ import type {LongMemoryArchive,LongMemoryJob,LongMemoryPolicy,LongMemoryRecall,L
 import {call,subscribe} from '../api';
 import {state} from '../state';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
+import type { LongMemoryTopicPage } from '@graycode/contracts';
 import MemoryGraph from './MemoryGraph.vue';
 import MemoryImports from './MemoryImports.vue';
 import MemorySourceFiles from './MemorySourceFiles.vue';
@@ -16,6 +17,7 @@ const emit=defineEmits<{close:[]}>();
 const options=ref<Options>(),scopeId=ref(''),section=ref<'records'|'organize'|'jobs'|'imports'>('records');
 const searchText=ref(''),appliedQuery=ref(''),topicPath=ref<string[]>([]),kind=ref('');
 const result=ref<LongMemoryRecall>(),topics=ref<LongMemoryTopic[]>([]),detail=ref<Detail>(),jobs=ref<LongMemoryJob[]>([]);
+const topicCursor=ref<string>();
 const error=ref(''),notice=ref(''),busy=ref(false),loading=ref(false),changedElsewhere=ref(false);
 const editing=ref(false),editingScopeId=ref(''),editingId=ref(''),editingVersion=ref(0),editorBaseline=ref('');
 const pendingNavigation=ref<(()=>Promise<void>|void)|null>(null),pendingClose=ref(false);
@@ -57,14 +59,14 @@ async function perform(action:()=>Promise<void>){
   try{await action();}catch(cause){error.value=(cause as Error).message;}finally{busy.value=false;}
 }
 async function reload(){
-  if(!scopeId.value)return;const current=++epoch,scope=scopeId.value;loading.value=true;
+  if(!scopeId.value)return;const current=++epoch,scope=scopeId.value;loading.value=true;topicCursor.value=undefined;
   try{
     const [found,directory,list]=await Promise.all([
       rpc<LongMemoryRecall>('memory.search',{scopeId:scope,text:appliedQuery.value||undefined,topic:topicPath.value,kinds:kind.value?[kind.value]:undefined}),
-      rpc<{topics:LongMemoryTopic[]}>('memory.topics',{scopeId:scope,topic:topicPath.value}),
+      rpc<LongMemoryTopicPage>('memory.topics',{scopeId:scope,topic:topicPath.value}),
       rpc<LongMemoryJob[]>('memory.jobs',{scopeId:scope}),
     ]);
-    if(current!==epoch)return;result.value=found;topics.value=directory.topics;jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
+    if(current!==epoch)return;result.value=found;topics.value=directory.topics;topicCursor.value=directory.nextCursor;jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
     selectedIds.value=selectedIds.value.filter(id=>found.hits.some(hit=>hit.record.id===id));
   }finally{if(current===epoch)loading.value=false;}
 }
@@ -83,6 +85,12 @@ async function choose(id:string){
   editorBaseline.value=JSON.stringify(form);
   graphSource.value=undefined;graphLimit.value=40;
   await nextTick();editor.value?.scrollIntoView({block:'nearest'});
+}
+async function loadMoreTopics(){
+  if(!topicCursor.value)return;const current=epoch;
+  const page=await rpc<LongMemoryTopicPage>('memory.topics',{scopeId:scopeId.value,topic:topicPath.value,cursor:topicCursor.value});
+  if(current!==epoch)return;topics.value.push(...page.topics);topicCursor.value=page.nextCursor;
+  if(!page.topics.length&&page.requiredTokenBudget)throw new Error('主题名称或摘要超过当前目录预算，请先缩小范围。');
 }
 async function browseImport(id:string){await navigate(async()=>{resetEditor();scopeId.value=id;section.value='records';topicPath.value=[];searchText.value='';appliedQuery.value='';kind.value='';await loadOptions();});}
 function create(){
@@ -160,6 +168,7 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
         <label class="memory-filter">类别<select v-model="kind" @change="perform(reload)"><option value="">全部类别</option><option v-for="(label,key) in kinds" :key="key" :value="key">{{label}}</option></select></label>
         <div class="memory-path"><button @click="topicPath=[];perform(reload)">全部主题</button><button v-for="(part,index) in topicPath" :key="index" @click="topicPath=topicPath.slice(0,index+1);perform(reload)">{{part}}</button></div>
         <button v-for="topic in topics" :key="topic.scopeId+topic.path.join('/')" class="memory-topic" @click="topicPath=topic.path;perform(reload)"><span>{{topic.path.at(-1)}}</span><small>{{topic.records}} 条<span v-if="topic.summaries.length"> · 有摘要</span></small></button>
+        <button v-if="topicCursor" class="memory-topic" :disabled="busy||loading" @click="perform(loadMoreTopics)">加载更多主题</button>
         <div class="memory-side-actions"><button :disabled="busy||!scopeId" @click="navigate(create)">新增记忆</button><button :disabled="busy||!scopeId" @click="perform(exportScope)">导出当前范围</button><label class="memory-import">合并归档<input type="file" accept=".json" :disabled="busy" @change="readImport"></label></div>
         <p class="memory-muted">按主题逐层查看，只把相关内容交给当前对话。群聊和角色剧情有独立范围。</p>
       </aside>
