@@ -60,8 +60,9 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
   const defaultMaxIterations = config.defaultMaxIterations ?? 80;
   const queueTimeoutSeconds = config.queueTimeoutSeconds ?? 600;
   const defaultMaxRuntimeSeconds = config.defaultMaxRuntimeSeconds ?? 1800;
+  const generalWorkerMaxRuntimeSeconds = config.generalWorkerMaxRuntimeSeconds ?? 2400;
   
-  ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds, defaultMaxRuntimeSeconds });
+  ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds, defaultMaxRuntimeSeconds, generalWorkerMaxRuntimeSeconds });
 };
 
 /**
@@ -412,6 +413,15 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
       return;
     }
     updates.defaultMaxRuntimeSeconds = v;
+  }
+
+  if (data.generalWorkerMaxRuntimeSeconds !== undefined) {
+    const value = data.generalWorkerMaxRuntimeSeconds;
+    if (!Number.isSafeInteger(value) || (value !== -1 && value < 1)) {
+      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'generalWorkerMaxRuntimeSeconds must be -1 or a positive integer');
+      return;
+    }
+    updates.generalWorkerMaxRuntimeSeconds = value;
   }
 
   if (Object.keys(updates).length > 0) {

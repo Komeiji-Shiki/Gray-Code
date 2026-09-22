@@ -4,6 +4,7 @@ import type { AgentDefinition, ModelInput, PlatformMessage, RunRecord } from '@g
 import type { ToolContext } from '@graycode/core';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { configuredAgent } from '../../../apps/server/src/settings/agent';
+import { subagentSettingsHandlers } from '../../../apps/server/src/subagents/settingsUi';
 import { fixture } from './fixtures';
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
@@ -52,6 +53,31 @@ describe('独立代理消息的持久化与调度', () => {
     const draft = await app.product.draft(); await draft.settings.setToolEnabled('agent_send_message', false); await app.product.save(draft);
     expect(configuredAgent(app, original).toolNames).not.toContain('agent_send_message');
     expect(configuredAgent(app, agent).toolNames).not.toContain('agent_send_message');
+  });
+
+  test('通用 Worker 使用可保存的默认时长，并允许单次派发和接续覆盖', async () => {
+    const root = await app.createConversation('owner', '时长配置');
+    const parent = await start(root.id);
+    await app.runtime.wait(parent.id);
+    const dispatch = async (args: Record<string, unknown> = {}) => {
+      const result = await app.subagents.dispatch({ agentName: 'General Worker', prompt: '完成隔离任务', ...args }, context(parent, 'runtime-override'));
+      expect(result.success).toBe(true);
+      return (await app.subagents.get('owner', String((result.data as any).runId)))!;
+    };
+    const initial = await dispatch();
+    expect(initial.maxRuntime).toBe(2400);
+    const draft = await app.product.draft();
+    const handlers = subagentSettingsHandlers(draft, app);
+    await handlers['subagents.updateGlobalConfig']({ generalWorkerMaxRuntimeSeconds: 7200 });
+    await app.product.save(draft);
+    expect((await app.subagents.get('owner', initial.id))!.maxRuntime).toBe(2400);
+    expect((await dispatch()).maxRuntime).toBe(7200);
+    const overridden = await dispatch({ maxRuntime: 3600 });
+    expect(overridden.maxRuntime).toBe(3600);
+    expect(app.product.runtimeSettings().getSubAgentsConfig().generalWorkerMaxRuntimeSeconds).toBe(7200);
+    expect((await dispatch({ continueFromRunId: overridden.id, maxRuntime: -1 })).maxRuntime).toBe(-1);
+    expect((await dispatch({ continueFromRunId: overridden.id })).maxRuntime).toBe(7200);
+    await expect(app.subagents.dispatch({ agentName: 'General Worker', prompt: '不能启动', maxRuntime: 0 }, context(parent, 'invalid-runtime'))).rejects.toThrow('正整数');
   });
 
   test('嵌套前台子代理发信解除主任务等待，单并发可继续且工具配对完整', async () => {

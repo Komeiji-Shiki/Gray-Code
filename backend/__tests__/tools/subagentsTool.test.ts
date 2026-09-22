@@ -93,6 +93,28 @@ describe('SubAgents 工具后台分支', () => {
         expect(decl.description).toContain('background: true');
     });
 
+    test.each([undefined, 7200, -1])('通用 Worker 的默认时长可由本次参数覆盖：%s', async override => {
+        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
+            getSubAgentsConfig: () => ({ agents: [], generalWorkerEnabled: true, generalWorkerMaxRuntimeSeconds: 3600 })
+        });
+        (createDefaultExecutor as jest.Mock).mockReturnValue(jest.fn(async () => ({ success: true, response: 'ok', steps: 1, runId: 'runtime-test' })));
+        const tool = getSubAgentsTool();
+        expect((tool.declaration.parameters.properties.maxRuntime as any).description).toContain('3600');
+        const result = await tool.handler({ agentName: 'General Worker', prompt: 'work', ...(override === undefined ? {} : { maxRuntime: override }) },
+            { channelConfigId: 'channel_1', conversationId: 'runtime-config', toolId: `runtime-${override}` });
+        expect(result.success).toBe(true);
+        expect((createDefaultExecutor as jest.Mock).mock.calls[0][0].maxRuntime).toBe(override ?? 3600);
+    });
+
+    test('通用 Worker 时长拒绝无效值，自定义代理不接受单次覆盖', async () => {
+        (getGlobalSettingsManager as jest.Mock).mockReturnValue({ getSubAgentsConfig: () => ({ agents: [], generalWorkerEnabled: true }) });
+        for (const args of [{ agentName: 'General Worker', maxRuntime: 0 }, { agentName: 'General Worker', maxRuntime: 2.5 }, { agentName: 'Test Agent', maxRuntime: 7200 }]) {
+            const result = await getSubAgentsTool().handler({ ...args, prompt: 'work' }, { channelConfigId: 'channel_1' });
+            expect(result.success).toBe(false);
+        }
+        expect(createDefaultExecutor).not.toHaveBeenCalled();
+    });
+
     test('后台调用立即返回 stub，不等待 executor，并注册 background_subagent 任务', async () => {
         let resolveExecutor: (v: unknown) => void = () => { };
         const fakeExecutor = jest.fn(() => new Promise(r => { resolveExecutor = r; }));

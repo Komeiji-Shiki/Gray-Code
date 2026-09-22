@@ -36,6 +36,7 @@ const { t } = useI18n()
 const maxConcurrentAgents = ref(3)
 // 通用 Worker（傻瓜式多 agent 模式）开关，默认开启
 const generalWorkerEnabled = ref(true)
+const generalWorkerMaxRuntimeSeconds = ref(2400)
 // 全局默认迭代次数（未单独配置的 agent 与 General Worker 继承，默认 80）
 const defaultMaxIterations = ref(80)
 // 排队超时（秒，-1 表示无限制，默认 600）
@@ -185,7 +186,7 @@ async function toggleTool(toolName: string, selected: boolean) {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number, queueTimeoutSeconds?: number, defaultMaxRuntimeSeconds?: number }>(MESSAGE_NAMES['subagents.list'], {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, generalWorkerMaxRuntimeSeconds?: number, defaultMaxIterations?: number, queueTimeoutSeconds?: number, defaultMaxRuntimeSeconds?: number }>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -193,6 +194,7 @@ async function loadSubAgents() {
         maxConcurrentAgents.value = response.maxConcurrentAgents
       }
       generalWorkerEnabled.value = response.generalWorkerEnabled !== false
+      generalWorkerMaxRuntimeSeconds.value = response.generalWorkerMaxRuntimeSeconds ?? 2400
       if (response.defaultMaxIterations !== undefined) {
         defaultMaxIterations.value = response.defaultMaxIterations
       }
@@ -381,7 +383,7 @@ function handleGeneralWorkerToggle(value: boolean) {
 // 全局数字输入非法提示（就地校验并提示，不再静默回退默认值）
 const globalNumberError = ref('')
 
-function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntimeSeconds') {
+function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntimeSeconds' | 'generalWorkerMaxRuntimeSeconds') {
   const raw = (event.target as HTMLInputElement).value
   const parsed = Number(raw)
   // 与运行时一致：-1 表示无限制；完整解析数字，避免把小数或科学记数法截断。
@@ -390,16 +392,9 @@ function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | '
     return
   }
   globalNumberError.value = ''
-  if (field === 'maxConcurrentAgents') {
-    maxConcurrentAgents.value = parsed
-    void updateGlobalConfig('maxConcurrentAgents', parsed)
-  } else if (field === 'defaultMaxIterations') {
-    defaultMaxIterations.value = parsed
-    void updateGlobalConfig('defaultMaxIterations', parsed)
-  } else {
-    defaultMaxRuntimeSeconds.value = parsed
-    void updateGlobalConfig('defaultMaxRuntimeSeconds', parsed)
-  }
+  const target = { maxConcurrentAgents, defaultMaxIterations, defaultMaxRuntimeSeconds, generalWorkerMaxRuntimeSeconds }[field]
+  target.value = parsed
+  void updateGlobalConfig(field, parsed)
 }
 
 // 排队超时（秒）：-1（无限制）或 >=1 合法，0 非法
@@ -655,6 +650,7 @@ onMounted(async () => {
         :default-max-runtime-seconds="defaultMaxRuntimeSeconds"
         :global-number-error="globalNumberError"
         :general-worker-enabled="generalWorkerEnabled"
+        :general-worker-max-runtime-seconds="generalWorkerMaxRuntimeSeconds"
         :on-global-number-change="handleGlobalNumberChange"
         :on-queue-timeout="handleQueueTimeout"
         :on-general-worker-toggle="handleGeneralWorkerToggle"

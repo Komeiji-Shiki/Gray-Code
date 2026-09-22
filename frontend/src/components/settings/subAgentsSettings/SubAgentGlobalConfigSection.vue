@@ -16,7 +16,8 @@ defineProps<{
   defaultMaxRuntimeSeconds: number
   globalNumberError: string
   generalWorkerEnabled: boolean
-  onGlobalNumberChange: (event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntimeSeconds') => void
+  generalWorkerMaxRuntimeSeconds: number
+  onGlobalNumberChange: (event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntimeSeconds' | 'generalWorkerMaxRuntimeSeconds') => void
   onQueueTimeout: (event: Event) => void
   onGeneralWorkerToggle: (value: boolean) => void
 }>()
@@ -81,6 +82,13 @@ const { t } = useI18n()
         @update:modelValue="onGeneralWorkerToggle"
       />
       <span class="field-hint">{{ t('components.settings.subagents.generalWorkerHint') }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t('components.settings.subagents.generalWorkerMaxRuntimeSeconds') }}</label>
+      <input type="number" min="-1" :value="generalWorkerMaxRuntimeSeconds" :disabled="!generalWorkerEnabled"
+        :aria-label="t('components.settings.subagents.generalWorkerMaxRuntimeSeconds')"
+        @change="onGlobalNumberChange($event, 'generalWorkerMaxRuntimeSeconds')" />
+      <span class="field-hint">{{ t('components.settings.subagents.generalWorkerMaxRuntimeSecondsHint') }}</span>
     </div>
   </div>
 </template>

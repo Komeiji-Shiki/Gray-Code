@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_SUBAGENTS_CONFIG } from '../../../../backend/modules/settings/types/subAgentsTypes';
 import { MAX_SUBAGENT_NESTING_DEPTH } from '../../../../backend/tools/subagents/types';
+import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
 
@@ -10,6 +11,8 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
   const general = args.agentName === 'General Worker' || args.agentName === 'general-worker';
   const config = general ? undefined : settings.agents.find(agent => agent.enabled && (agent.name === args.agentName || agent.type === args.agentName));
   if (general ? settings.generalWorkerEnabled === false : !config) throw new Error('此子代理未启用或不存在。');
+  const maxRuntime = resolveSubagentMaxRuntime(general, args.maxRuntime,
+    general ? settings.generalWorkerMaxRuntimeSeconds! : config?.maxRuntime ?? settings.defaultMaxRuntimeSeconds!);
   const inherit = general || config!.channel.syncWithCurrentModel === true || config!.channel.syncWithCurrentModel === undefined && settings.forceUseCurrentChannel === true;
   const selection = inherit ? structuredClone(context.modelSelection) : { providerId: config!.channel.channelId, modelOverride: config!.channel.modelId };
   if (!app.settings.snapshot().settings.providers.some(provider => provider.id === selection.providerId)) throw new Error('子代理渠道不存在。');
@@ -34,6 +37,6 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
       systemPrompt: `${systemPrompt}\n\n${environment}`, maxIterations: config?.maxIterations ?? settings.defaultMaxIterations! },
     selection, invocation: { id: `invocation-${id}`, role: 'user', timestamp: now,
       parts: [{ text: `# SubAgent Invocation\n\n## Agent System Prompt\n${systemPrompt}\n\n## Context\n${environment}\n${typeof args.context === 'string' ? args.context : ''}\n\n## User Prompt\n${args.prompt ?? ''}` }] },
-    contentRevision: 0, eventSequence: 0, contentCount: 1, coreRunIds: [], maxRuntime: general ? 2400 : config?.maxRuntime ?? settings.defaultMaxRuntimeSeconds!,
+    contentRevision: 0, eventSequence: 0, contentCount: 1, coreRunIds: [], maxRuntime,
     failureMode: config?.failureModeAfterRetries ?? settings.failureModeAfterRetries! };
 }

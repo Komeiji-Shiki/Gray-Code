@@ -42,7 +42,7 @@ export function subagentSettingsHandlers(draft: ProductSettingsDraft, app: Platf
     'subagents.updateGlobalConfig': async (data: Record<string, any>) => {
       validate('subagents.updateGlobalConfig', data);
       const updates: Record<string, any> = {};
-      for (const key of ['maxConcurrentAgents', 'queueTimeoutSeconds', 'defaultMaxRuntimeSeconds', 'defaultMaxIterations']) if (data[key] !== undefined) {
+      for (const key of ['maxConcurrentAgents', 'queueTimeoutSeconds', 'defaultMaxRuntimeSeconds', 'defaultMaxIterations', 'generalWorkerMaxRuntimeSeconds']) if (data[key] !== undefined) {
         if (!Number.isSafeInteger(data[key]) || data[key] !== -1 && data[key] < 1) throw new Error(`${key} 必须为 -1 或正整数。`);
         updates[key] = data[key];
       }

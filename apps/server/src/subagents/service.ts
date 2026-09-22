@@ -9,6 +9,7 @@ import { SubagentFeedback } from './feedback';
 import { PlatformAgentMessages } from './messages';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
 import { createSubagentRecord } from './profile';
+import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
 import { LegacySubagents } from './legacy';
 import { getRunContentRange } from '../../../../backend/tools/subagents/eventBus/contentWindow';
 import type { SubAgentRunContentWindowOptions } from '../../../../backend/tools/subagents/eventBus/types';
@@ -342,7 +343,10 @@ export class SubagentExecutionService {
       if (!previous) previous = await this.legacy.continue(args.continueFromRunId, args, context as SubagentLaunchContext, depth);
       if (!previous || previous.parentConversationId !== context.conversationId || !terminal(previous.status)) throw new Error('只能继续当前对话中已结束的独立子代理。');
       if (!fromLegacy && previous.agentName !== args.agentName && !(previous.agentName === 'General Worker' && args.agentName === 'general-worker')) throw new Error('继续运行时须沿用原子代理身份。');
+      const general = previous.agentName === 'General Worker';
+      const maxRuntime = resolveSubagentMaxRuntime(general, args.maxRuntime, general ? settings.generalWorkerMaxRuntimeSeconds! : previous.maxRuntime);
       record = previous; record.sourceToolCallId = context.toolCallId; record.parentRunId = context.runId; record.background = background;
+      record.maxRuntime = maxRuntime;
       record.parentConfiguration = undefined;
       record.status = 'queued';
       record.profile.toolNames = record.profile.toolNames.filter(name => context.agent!.toolNames.includes(name));

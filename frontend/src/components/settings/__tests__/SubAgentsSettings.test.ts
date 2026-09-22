@@ -219,6 +219,19 @@ describe('SubAgentsSettings 与当前模型同步（逐代理开关）', () => {
     wrapper.unmount()
   })
 
+  test('通用 Worker 初始时长为 40 分钟，用户可保存独立默认值', async () => {
+    mockDefaults()
+    const wrapper = mountSettings()
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('input[aria-label="通用 Worker 默认时长（秒）"]')
+    expect(input.element.value).toBe('2400')
+    await input.setValue('7200')
+    await flushPromises()
+    expect(mockSend).toHaveBeenCalledWith(MESSAGE_NAMES['subagents.updateGlobalConfig'], { generalWorkerMaxRuntimeSeconds: 7200 })
+    expect(wrapper.find<HTMLInputElement>('input[aria-label="默认最大运行时间（秒）"]').element.value).toBe('1800')
+    wrapper.unmount()
+  })
+
   test('清空代理上限后撤销单独配置，并展示当前继承值', async () => {
     mockDefaults()
     const wrapper = mountSettings()

@@ -1,4 +1,5 @@
 import { createSubagentsDeclaration } from './createDeclaration';
+import { resolveSubagentMaxRuntime } from '../../../shared/subagentRuntime';
 /**
  * SubAgents 工具
  *
@@ -267,9 +268,10 @@ function buildAgentNameDescription(): string {
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8, isZh);
         const globalMaxIterations = getGlobalDefaultMaxIterations();
+        const workerRuntime = formatLimit(getSubAgentsSettings().generalWorkerMaxRuntimeSeconds, 2400, isZh);
         entries.push(isZh
-            ? `  - "${GENERAL_WORKER_NAME}"：零配置的通用型工作代理，继承当前会话的通道和所有可用的非 memory 工具权限；当从另一个子代理调用时，其工具被限制为派发代理自身的工具集\n    工具（${allTools.length} 个）：${toolsStr}\n    限制：最多 ${globalMaxIterations} 次迭代，最多 2400 秒运行时间`
-            : `  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions; when invoked from another sub-agent its tools are limited to the dispatching agent's own tool set\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, max 2400s runtime`);
+            ? `  - "${GENERAL_WORKER_NAME}"：零配置的通用型工作代理，继承当前会话的通道和所有可用的非 memory 工具权限；当从另一个子代理调用时，其工具被限制为派发代理自身的工具集\n    工具（${allTools.length} 个）：${toolsStr}\n    限制：最多 ${globalMaxIterations} 次迭代，默认 ${workerRuntime} 秒运行时间，可用 maxRuntime 覆盖本次时长`
+            : `  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions; when invoked from another sub-agent its tools are limited to the dispatching agent's own tool set\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, default ${workerRuntime}s runtime; maxRuntime overrides this invocation`);
     }
 
     return isZh
@@ -371,7 +373,8 @@ function generateAgentNameDescription(): string {
         getCachedToolNameSnapshot().key,
         hasGeneralWorker,
         getGlobalDefaultMaxIterations(),
-        getGlobalDefaultMaxRuntimeSeconds()
+        getGlobalDefaultMaxRuntimeSeconds(),
+        settings.generalWorkerMaxRuntimeSeconds ?? 2400
     ]);
     if (agentNameDescriptionCache && agentNameDescriptionCache.key === cacheKey) {
         return agentNameDescriptionCache.value;
@@ -407,7 +410,8 @@ export function getSubAgentsToolDeclaration(): ToolDeclaration {
     // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
     const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
-    return createSubagentsDeclaration({ agentNames, isZh, description: generateToolDescription(), agentNameDescription: generateAgentNameDescription() });
+    return createSubagentsDeclaration({ agentNames, isZh, description: generateToolDescription(), agentNameDescription: generateAgentNameDescription(),
+        generalWorkerMaxRuntimeSeconds: getSubAgentsSettings().generalWorkerMaxRuntimeSeconds });
 }
 
 /**
@@ -491,6 +495,10 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         effectiveAgentName = resolution.agentName;
     }
 
+    let workerMaxRuntime: number;
+    try { workerMaxRuntime = resolveSubagentMaxRuntime(isGeneralWorker(effectiveAgentName), args.maxRuntime, settings.generalWorkerMaxRuntimeSeconds ?? 2400); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
+
     // General Worker 虚拟子代理：运行时动态构造配置，无需用户手动创建
     if (isGeneralWorker(effectiveAgentName)) {
         if (settings.generalWorkerEnabled === false) {
@@ -519,7 +527,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             tools: { mode: 'all' },
             // P2：General Worker 是零配置虚拟代理，迭代次数跟随全局默认配置（executor 会再回退到 50）
             maxIterations: getGlobalDefaultMaxIterations(),
-            maxRuntime: 2400,
+            maxRuntime: workerMaxRuntime,
             enabled: true
         };
 

@@ -1,6 +1,6 @@
 import type { ToolDeclaration } from '../types';
 /** 工具声明由旧宿主与独立平台共用。 */
-export function createSubagentsDeclaration(options: { agentNames: string[]; isZh: boolean; description: string; agentNameDescription: string }): ToolDeclaration {
+export function createSubagentsDeclaration(options: { agentNames: string[]; isZh: boolean; description: string; agentNameDescription: string; generalWorkerMaxRuntimeSeconds?: number }): ToolDeclaration {
   const { agentNames, isZh } = options;
     return {
         name: 'subagents',
@@ -32,6 +32,12 @@ export function createSubagentsDeclaration(options: { agentNames: string[]; isZh
                         ? '可选的已完成子代理运行 ID，用于继续该运行。新运行继承该运行的完整记录。正在运行或未知的运行 ID 会被拒绝。'
                         : 'Optional completed Sub-Agent run ID to continue from. The new run inherits that run\'s complete transcript. Running or unknown run IDs are rejected.'
                 },
+                maxRuntime: {
+                    type: 'integer', minimum: -1,
+                    description: isZh
+                        ? `可选，仅覆盖本次 General Worker 的运行时间，单位秒；正整数或 -1（无限制），不能为 0。省略时使用用户默认值 ${options.generalWorkerMaxRuntimeSeconds ?? 2400} 秒。`
+                        : `Optional runtime override for this General Worker invocation, in seconds: positive integer or -1 (unlimited), not 0. Omit to use the user default (${options.generalWorkerMaxRuntimeSeconds ?? 2400}s).`
+                },
                 background: {
                     type: 'boolean',
                     description: isZh
@@ -43,4 +49,4 @@ export function createSubagentsDeclaration(options: { agentNames: string[]; isZh
         }
     };
 }
-
+

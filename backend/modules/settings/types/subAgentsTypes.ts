@@ -138,6 +138,9 @@ export interface SubAgentsConfig extends Record<string, unknown> {
      */
     generalWorkerEnabled?: boolean;
 
+    /** 通用 Worker 的默认运行秒数，默认 2400（40 分钟），-1 表示无限制。 */
+    generalWorkerMaxRuntimeSeconds?: number;
+
     /**
      * 排队等待并发席位的超时（秒，-1 无限制），默认 600。
      *
@@ -173,6 +176,7 @@ export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     maxConcurrentAgents: 3,
     failureModeAfterRetries: 'fail_parent_tool',
     generalWorkerEnabled: true,
+    generalWorkerMaxRuntimeSeconds: 2400,
     defaultMaxIterations: 80,
     queueTimeoutSeconds: 600,
     defaultMaxRuntimeSeconds: 1800
