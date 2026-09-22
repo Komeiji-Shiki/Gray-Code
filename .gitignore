@@ -89,6 +89,7 @@ checkpoint-history-branch-architecture.plan.md
 /release/
 /platform-data/
 /portable-data/
+/local-memory-imports/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
