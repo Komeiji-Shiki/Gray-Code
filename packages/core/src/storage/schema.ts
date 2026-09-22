@@ -2,8 +2,8 @@ import Database from 'better-sqlite3';
 import { PlatformStorageError } from '../errors';
 import { LONG_MEMORY_SCHEMA } from './longMemory/schema';
 
-// 第 8 版增加独立资料库范围；旧客户端不认识该范围，必须通过版本检查明确拒绝。
-export const SCHEMA_VERSION = 8;
+// 第 9 版区分实体关联与确切来源依赖；旧客户端必须拒绝，以免错误传播失效状态。
+export const SCHEMA_VERSION = 9;
 const APPLICATION_ID = 0x47524350;
 
 /** One connection owns writes and collection; callers access it through the storage worker. */
@@ -65,6 +65,7 @@ export function openDatabase(file: string): SqliteConnection {
         if (version < 4) db.exec(MEMORY_SCHEMA);
         if (version < 5) db.exec(LONG_MEMORY_SCHEMA);
         if (version === 5) db.exec('ALTER TABLE long_memory_tombstones ADD COLUMN reference TEXT;');
+        if (version >= 5 && version < 9) db.exec('ALTER TABLE long_memory_dependencies ADD COLUMN association INTEGER NOT NULL DEFAULT 0;');
         if (version < SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
     }

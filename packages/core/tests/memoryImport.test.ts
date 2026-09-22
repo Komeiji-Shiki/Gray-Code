@@ -112,5 +112,10 @@ describe('LifeBook 独立导入资料库', () => {
     expect(fact.validFrom).toBe(Date.parse('2026-01-01T00:00:00Z')); expect(fact.validTo).toBe(Date.parse('2026-01-02T00:00:00Z'));
     const data = await f.store.getRecord(MEMORY_IMPORT_NAMESPACE, result.id) as MemoryImportDataset, raw = data.files.find(file => file.path === '@migration/graph-export.json')!;
     expect(JSON.parse(Buffer.from(await readImportFileChunk(f.store, data.id, raw, 0)).toString()).tables[0].rows[0].name_embedding).toEqual([0.25]);
+    const query = { scopes: [scope], asOf: Date.parse('2026-01-01T12:00:00Z'), knownAt: Date.now(), limit: 20, tokenBudget: 16000, confirmedOnly: false, kinds: ['fact'] as const };
+    expect((await f.store.longMemoryRecall({ ...query, kinds: [...query.kinds] })).hits.some(hit => hit.record.id === fact.id)).toBe(true);
+    const reviewedEntityRecord = archive.records.find(record => record.subject === 'one' && record.id !== fact.id)!;
+    await f.store.longMemoryWrite({ scope, records: [{ ...reviewedEntityRecord, expectedVersion: reviewedEntityRecord.version, confidence: 'confirmed', recordedAt: Date.now() }] });
+    expect((await f.store.longMemoryRecall({ ...query, knownAt: Date.now(), kinds: [...query.kinds] })).hits.some(hit => hit.record.id === fact.id)).toBe(true);
   });
 });

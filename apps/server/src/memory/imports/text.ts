@@ -1,4 +1,4 @@
-import type { LongMemoryArchive, LongMemoryKind, LongMemoryRecord, LongMemoryScope, LongMemorySource, MemoryImportDataset } from '@graycode/contracts';
+import type { LongMemoryArchive, LongMemoryKind, LongMemoryRecord, LongMemoryScope, LongMemorySource, MemoryImportDataset, LongMemoryReference } from '@graycode/contracts';
 import { importHash, type SourceFile } from './files';
 
 export function splitImportText(text: string, maximum = 600): Array<{ text: string; start: number; end: number }> {
@@ -27,7 +27,7 @@ export class ImportedMemoryBuilder {
     this.sources.push(...values); return values;
   }
   add(file: SourceFile, identity: string, text: string, options: { kind?: LongMemoryKind; topic?: string[]; subject?: string; attribute?: string; value?: string;
-    raw?: string; start?: number; representation?: 'file_text' | 'normalized'; dependencies?: Array<{ kind: 'record'; id: string; version: number }>; fileIds?: string[];
+    raw?: string; start?: number; representation?: 'file_text' | 'normalized'; dependencies?: LongMemoryReference[]; fileIds?: string[];
     prefix?: string; sourceLabel?: string; recordedAt?: number; validFrom?: number; validTo?: number; eventAt?: number } = {}): LongMemoryRecord[] {
     if (!text.trim()) return [];
     const sources = this.source(file, identity, options.raw ?? text, options.sourceLabel);

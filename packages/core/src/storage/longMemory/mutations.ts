@@ -70,23 +70,26 @@ export class MemoryMutationStore {
     return !!this.db.prepare('SELECT 1 FROM long_memory_tombstones WHERE scope_id=? AND kind=? AND id=?').get(scopeId, kind, id);
   }
   referenceAvailable(scopeId: string, ref: LongMemoryReference, current = true): boolean {
-    const record = ref.kind === 'source' ? this.source(scopeId, ref.id, current ? undefined : ref.version) : this.record(scopeId, ref.id, current ? undefined : ref.version);
+    const record = ref.kind === 'source' ? this.source(scopeId, ref.id, current ? undefined : ref.version) : this.record(scopeId, ref.id, current && !ref.association ? undefined : ref.version);
     return !!record && record.version === ref.version && !this.tombstoned(scopeId, ref.kind, ref.id);
   }
   private assertDependencies(scopeId: string, id: string, refs: LongMemoryReference[], historical: boolean): void {
     if (!Array.isArray(refs) || refs.length < 1 || refs.length > 256) invalid('记忆必须引用 1 至 256 个确切来源修订。');
+    if (!refs.some(ref => !ref.association)) invalid('实体关联不能代替记忆的来源依据。');
     const unique = new Set<string>();
     for (const ref of refs) {
       assertIdentifier(ref.id);
       if (!['source', 'record'].includes(ref.kind) || !Number.isSafeInteger(ref.version) || ref.version < 1) invalid('来源修订无效。');
-      const key = JSON.stringify(ref); if (unique.has(key)) invalid('记忆来源重复。'); unique.add(key);
+      if (ref.association !== undefined && (ref.association !== true || ref.kind !== 'record')) invalid('关联只能指向同一范围内的记忆。');
+      const key = JSON.stringify([ref.kind,ref.id,ref.version]); if (unique.has(key)) invalid('记忆来源重复。'); unique.add(key);
       if (!this.referenceAvailable(scopeId, ref, !historical)) throw new PlatformStorageError('SOURCE_CHANGED', '来源已经修订或删除，请重新读取后再保存。');
       if (ref.kind === 'record') {
         if (ref.id === id) invalid('记忆不能依赖自身。');
+        if(ref.association)continue;
         const circular = this.db.prepare(`WITH RECURSIVE parents(id) AS (
           SELECT ? UNION SELECT d.parent_id FROM long_memory_dependencies d
           JOIN long_memory_records r ON r.row_id=d.record_row JOIN parents p ON r.id=p.id
-          WHERE r.scope_id=? AND d.parent_kind='record') SELECT 1 FROM parents WHERE id=? LIMIT 1`).get(ref.id, scopeId, id);
+          WHERE r.scope_id=? AND d.parent_kind='record' AND d.association=0) SELECT 1 FROM parents WHERE id=? LIMIT 1`).get(ref.id, scopeId, id);
         if (circular) invalid('分层摘要不能形成循环依赖。');
       }
     }
@@ -145,7 +148,7 @@ export class MemoryMutationStore {
       value.kind, value.confidence, value.subject, value.attribute ?? null, value.value ?? null, memoryTopicKey(value.topic), digest, JSON.stringify(value));
     const rowId = Number(insert.lastInsertRowid);
     this.db.prepare('INSERT INTO long_memory_terms(rowid,tokens) VALUES(?,?)').run(rowId, memoryTerms([value.text, ...value.topic, ...value.entities].join(' ')).join(' '));
-    for (const ref of value.dependencies) this.db.prepare('INSERT INTO long_memory_dependencies VALUES(?,?,?,?,?)').run(rowId, scope.id, ref.kind, ref.id, ref.version);
+    for (const ref of value.dependencies) this.db.prepare('INSERT INTO long_memory_dependencies(record_row,scope_id,parent_kind,parent_id,parent_version,association) VALUES(?,?,?,?,?,?)').run(rowId, scope.id, ref.kind, ref.id, ref.version, ref.association ? 1 : 0);
     for (const id of value.supersedes) this.db.prepare('INSERT INTO long_memory_supersedes VALUES(?,?,?)').run(rowId, scope.id, id);
     if (input.vector) this.putVector(scope, value.id, value.version, input.vector);
     const conflict = value.attribute && this.db.prepare(`SELECT 1 FROM long_memory_records WHERE scope_id=? AND id<>? AND subject=? AND attribute=? AND value IS NOT ? LIMIT 1`)
@@ -160,6 +163,15 @@ export class MemoryMutationStore {
     const values = new Float32Array(vector.values);
     this.db.prepare('INSERT OR REPLACE INTO long_memory_vectors VALUES(?,?,?,?)').run(row.row_id, vector.model, vector.dimensions, Buffer.from(values.buffer));
     return true;
+  }
+
+  /** 元数据修正保持正文时复用已存在的嵌入，已有新索引优先。 */
+  copyVector(scope:LongMemoryScope,id:string,from:number,to:number):void{
+    this.state(scope);assertIdentifier(id);
+    if(!Number.isSafeInteger(from)||!Number.isSafeInteger(to)||from<1||to<1)invalid('索引共享版本无效。');
+    const original=this.record(scope.id,id,from),target=this.record(scope.id,id,to);
+    if(!original||!target||JSON.parse(original.payload).text!==JSON.parse(target.payload).text)invalid('只有正文相同的现有修订可以共享嵌入索引。');
+    this.db.prepare('INSERT OR IGNORE INTO long_memory_vectors(record_row,model,dimensions,value) SELECT ?,model,dimensions,value FROM long_memory_vectors WHERE record_row=?').run(target.row_id,original.row_id);
   }
 
   impact(scope: LongMemoryScope, kind: LongMemoryReference['kind'], id: string, action: 'delete' | 'retract'): Array<{kind:LongMemoryReference['kind'];id:string}> {

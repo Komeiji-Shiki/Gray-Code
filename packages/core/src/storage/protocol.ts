@@ -35,7 +35,7 @@ export interface StorageOperations {
   longMemoryRead: { input: LongMemoryRead; output: LongMemoryReadResult };
   longMemoryGraph: { input: { scope: LongMemoryScope; id: string; version?: number; limit?: number }; output: LongMemoryGraph };
   longMemoryRevisions: { input: { scope: LongMemoryScope; id: string }; output: LongMemoryRecord[] };
-  longMemoryInspect: { input: {scope:LongMemoryScope;id:string;version?:number}; output:{revisions:LongMemoryRecord[];sources:import('@graycode/contracts').LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number} };
+  longMemoryInspect: { input: {scope:LongMemoryScope;id:string;version?:number}; output:{revisions:LongMemoryRecord[];sources:import('@graycode/contracts').LongMemorySource[];parents:LongMemoryRecord[];relations:LongMemoryRecord[];activeVersion?:number} };
   longMemorySources: {input:{scope:LongMemoryScope;references:Array<{id:string;version:number}>};output:import('@graycode/contracts').LongMemorySource[]};
   longMemoryRecordVersions: {input:{scope:LongMemoryScope;references:Array<{id:string;version?:number}>};output:LongMemoryRecord[]};
   longMemoryImpact: { input: { scope: LongMemoryScope; kind: 'source'|'record'; id: string; action: 'delete'|'retract' }; output: Array<{ kind:'source'|'record';id:string }> };
@@ -43,7 +43,7 @@ export interface StorageOperations {
   longMemoryDeletionState: {input:undefined;output:{scopes:LongMemoryScopeState[];tombstones:import('@graycode/contracts').LongMemoryTombstone[]}};
   longMemoryVector: { input: { scope: LongMemoryScope; id: string; version: number; vector: LongMemoryVector }; output: boolean };
   longMemoryExport: { input: { scopes: LongMemoryScope[] }; output: LongMemoryArchive };
-  longMemoryRestore: { input: { actorId: string; archive: LongMemoryArchive; publication?: RecordMutation[] }; output: { sources: number; records: number; skipped: number; tombstones: number } };
+  longMemoryRestore: { input: { actorId: string; archive: LongMemoryArchive; publication?: RecordMutation[]; copyVectors?: Array<{scopeId:string;id:string;from:number;to:number}> }; output: { sources: number; records: number; skipped: number; tombstones: number } };
   longMemoryJobs: { input: { scopes: LongMemoryScope[]; status?: LongMemoryJob['status'] }; output: LongMemoryJob[] };
   longMemoryJob: {input:{scope:LongMemoryScope;id:string};output:LongMemoryJob|null};
   longMemoryEnqueue: { input: { scope: LongMemoryScope; job: LongMemoryJob }; output: LongMemoryJob };

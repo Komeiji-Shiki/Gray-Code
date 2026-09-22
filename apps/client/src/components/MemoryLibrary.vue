@@ -12,7 +12,7 @@ import './memoryShared.css';
 
 interface ScopeRow extends LongMemoryScope {label:string}
 interface Options {scopes:ScopeRow[];policy:{value:LongMemoryPolicy;revision:number|null};providers:Array<{id:string;name:string;model:string;models:string[]}>}
-interface Detail {revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number}
+interface Detail {revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];relations?:LongMemoryRecord[];activeVersion?:number}
 const emit=defineEmits<{close:[]}>();
 const options=ref<Options>(),scopeId=ref(''),section=ref<'records'|'organize'|'jobs'|'imports'>('records');
 const searchText=ref(''),appliedQuery=ref(''),topicPath=ref<string[]>([]),kind=ref('');
@@ -234,6 +234,7 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
           <div v-if="deleteImpact" class="memory-confirm"><p>将移除 {{deleteImpact.recordCount}} 条记忆及派生内容，并清除有关来源摘录和旧修订。原始会话保留供你查看，相关来源和依赖内容会从后续模型上下文中排除。</p><ul><li v-for="item in deleteImpact.items" :key="item.id">{{kinds[item.kind]}}：{{item.text}}</li></ul><p v-if="deleteImpact.truncated">列表显示前 {{deleteImpact.items.length}} 条，其余引用这条来源的派生内容也会移除。</p><button :disabled="busy" class="memory-delete" @click="perform(remove)">确认删除这些内容</button><button @click="deleteImpact=null">取消</button></div>
           <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote><MemorySourceFiles :source="source" /></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id,parent.version))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
           <details v-if="detail&&detail.revisions.length>1" class="memory-revisions"><summary>修订记录（{{detail.revisions.length}}）</summary><article v-for="revision in detail.revisions" :key="revision.version"><small>v{{revision.version}} · {{stamp(revision.recordedAt)}} · 自 {{stamp(revision.validFrom)}} 生效</small><button :disabled="busy||revision.version===editingVersion" @click="scopeId=editingScopeId;navigate(()=>choose(revision.id,revision.version))">查看此修订</button><p>{{revision.text}}</p></article></details>
+          <details v-if="detail?.relations?.length" class="memory-evidence"><summary>关联记忆（{{detail.relations.length}}）</summary><article v-for="related in detail.relations" :key="related.id"><button @click="scopeId=editingScopeId;navigate(()=>choose(related.id,related.version))">查看关联 · {{related.subject}}</button><p>{{related.text}}</p></article></details>
         </section>
       </main>
     </div>

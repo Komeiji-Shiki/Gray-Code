@@ -94,6 +94,7 @@ import { SubagentExecutionService } from './subagents/service';
 import { subagentTools } from './subagents/tools';
 import { TeamService } from './teams/service';
 import { teamTools } from './teams/tools';
+import { upgradeImportedMemoryGraphs } from './memory/imports/upgrades';
 
 export interface ApplicationOptions {
   dataDirectory: string;
@@ -421,6 +422,7 @@ export class PlatformApplication {
     try {
       const application = new PlatformApplication(storage, options);
       await application.settings.initialize();
+      await upgradeImportedMemoryGraphs(storage);
       await application.nodes.initialize();
       await application.product.initialize();
       await options.configurationPersistence?.initialize(application);

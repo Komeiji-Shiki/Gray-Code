@@ -7,7 +7,7 @@ type Row = Record<string, any>;
 interface ExportTable { name: string; type: string; rows: Row[] }
 const internalKey = (id: unknown) => JSON.stringify(id && typeof id === 'object' ? Object.entries(id).sort(([a], [b]) => a.localeCompare(b)) : id);
 const sourceText = (row: Row) => JSON.stringify(Object.fromEntries(Object.entries(row).filter(([name]) => name !== 'name_embedding' && name !== 'fact_embedding')), null, 2);
-const references = (records: LongMemoryRecord[]) => records.map(record => ({ kind: 'record' as const, id: record.id, version: 1 }));
+const references = (records: LongMemoryRecord[], association = false) => records.map(record => ({ kind: 'record' as const, id: record.id, version: 1, ...(association ? { association: true as const } : {}) }));
 
 function graphTime(value: unknown): number | undefined {
   if (value === undefined || value === null) return;
@@ -52,7 +52,7 @@ export async function readLifeBookGraph(file: SourceFile, originalFiles: SourceF
     if (incoming.length !== 1 || outgoing.length !== 1) throw new Error('图谱事实的实体连接不是一对一，请先检查原始图谱。');
     const from = entityByKey.get(internalKey(incoming[0]._src)), to = entityByKey.get(internalKey(outgoing[0]._dst));
     if (!from || !to) throw new Error('图谱事实引用了不存在的实体。');
-    const dependencies = [...references((entityRecords.get(from.uuid) ?? []).slice(0, 1)), ...references((entityRecords.get(to.uuid) ?? []).slice(0, 1))];
+    const dependencies = [...references((entityRecords.get(from.uuid) ?? []).slice(0, 1), true), ...references((entityRecords.get(to.uuid) ?? []).slice(0, 1), true)];
     for (const id of fact.episodes ?? []) {
       const records = episodeRecords.get(id);
       if (records?.length) dependencies.push(...references(records.slice(0, 1))); else missingEpisodeReferences++;

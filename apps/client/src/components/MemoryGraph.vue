@@ -9,7 +9,7 @@ const labels: Record<string, string> = { fact: '事实', preference: '偏好', e
 const nodeWidth = 250, nodeHeight = 116, rowHeight = 150;
 const horizontal = computed(() => viewportWidth.value >= 760);
 const width = computed(() => horizontal.value ? 890 : Math.max(290, Math.min(400, viewportWidth.value - 12)));
-const sides = computed(() => ({ dependency: props.graph.nodes.filter(node => node.side === 'dependency'), dependent: props.graph.nodes.filter(node => node.side === 'dependent') }));
+const sides = computed(() => ({ dependency: props.graph.nodes.filter(node => node.side === 'dependency'), dependent: props.graph.nodes.filter(node => node.side === 'dependent' || node.side === 'related') }));
 const height = computed(() => Math.max(300, (horizontal.value ? Math.max(sides.value.dependency.length, sides.value.dependent.length, 1) : props.graph.nodes.length) * rowHeight + 40));
 const layout = computed(() => props.graph.nodes.map(node => {
   if (!horizontal.value) {
@@ -17,17 +17,17 @@ const layout = computed(() => props.graph.nodes.map(node => {
       : node.side === 'selected' ? sides.value.dependency.length : sides.value.dependency.length + 1 + sides.value.dependent.findIndex(row => row.key === node.key);
     return { ...node, x: (width.value - nodeWidth) / 2, y: 20 + index * rowHeight };
   }
-  const column = node.side === 'dependency' ? 0 : node.side === 'dependent' ? 2 : 1;
-  const rows = node.side === 'selected' ? [node] : sides.value[node.side];
+  const column = node.side === 'dependency' ? 0 : node.side === 'selected' ? 1 : 2;
+  const rows = node.side === 'selected' ? [node] : node.side === 'dependency' ? sides.value.dependency : sides.value.dependent;
   return { ...node, x: 20 + column * 300, y: (height.value - rows.length * rowHeight) / 2 + rows.findIndex(row => row.key === node.key) * rowHeight + 12 };
 }));
 const paths = computed(() => {
   const nodes = new Map(layout.value.map(node => [node.key, node]));
   return props.graph.edges.flatMap(edge => {
     const from = nodes.get(edge.from), to = nodes.get(edge.to); if (!from || !to) return [];
-    if (!horizontal.value) return [{ key: `${edge.from}/${edge.to}`, path: `M${from.x + nodeWidth},${from.y + nodeHeight / 2} H${width.value - 8} V${to.y + nodeHeight / 2} H${to.x + nodeWidth + 3}` }];
+    if (!horizontal.value) return [{ key: `${edge.from}/${edge.to}`, association:edge.association, path: `M${from.x + nodeWidth},${from.y + nodeHeight / 2} H${width.value - 8} V${to.y + nodeHeight / 2} H${to.x + nodeWidth + 3}` }];
     const x = from.x + nodeWidth, y = from.y + nodeHeight / 2, endY = to.y + nodeHeight / 2, middle = (x + to.x) / 2;
-    return [{ key: `${edge.from}/${edge.to}`, path: `M${x},${y} H${middle} V${endY} H${to.x - 3}` }];
+    return [{ key: `${edge.from}/${edge.to}`, association:edge.association, path: `M${x},${y} H${middle} V${endY} H${to.x - 3}` }];
   });
 });
 function fit() {
@@ -51,20 +51,20 @@ watch(() => props.graph.root, () => { if (autoFit.value) fit(); else center(); }
 
 <template>
   <section class="memory-graph" aria-label="记忆关系图">
-    <div class="memory-graph-toolbar"><span>{{horizontal?'来源与依据 → 当前记忆 → 派生记忆':'来源 ↓ 当前记忆 ↓ 派生记忆'}}</span><div><button aria-label="缩小关系图" @click="scale(-0.15)">−</button><span>{{ Math.round(zoom * 100) }}%</span><button aria-label="放大关系图" @click="scale(0.15)">＋</button><button @click="fit">适应宽度</button></div></div>
+    <div class="memory-graph-toolbar"><span>来源与依据 · 当前记忆 · 派生与关联</span><div><button aria-label="缩小关系图" @click="scale(-0.15)">−</button><span>{{ Math.round(zoom * 100) }}%</span><button aria-label="放大关系图" @click="scale(0.15)">＋</button><button @click="fit">适应宽度</button></div></div>
     <div ref="viewport" class="memory-graph-viewport">
       <svg :width="width * zoom" :height="height * zoom" :viewBox="`0 0 ${width} ${height}`" aria-label="点击记忆节点查看或编辑，来源节点显示原文">
         <defs><marker :id="arrowId" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
-        <path v-for="edge in paths" :key="edge.key" class="memory-graph-edge" :d="edge.path" :marker-end="`url(#${arrowId})`" />
+        <path v-for="edge in paths" :key="edge.key" class="memory-graph-edge" :class="{association:edge.association}" :d="edge.path" :marker-end="edge.association?undefined:`url(#${arrowId})`" />
         <foreignObject v-for="node in layout" :key="node.key" :x="node.x" :y="node.y" :width="nodeWidth" :height="nodeHeight">
           <button class="memory-graph-node" :class="{selected:node.key===graph.root, inactive:!node.active, source:node.type==='source'}" :disabled="busy" :aria-label="`${node.type==='source'?'查看来源':'查看记忆'}：${node.preview}`" @click="emit('select',node)">
-            <span class="memory-graph-node-meta"><span>{{labels[node.kind] || node.kind}}{{node.confidence==='inferred'?' · 待核对':node.confidence==='disputed'?' · 有争议':''}}</span><span>v{{node.version}} · {{node.active?'有效':'历史或失效'}}</span></span>
+            <span class="memory-graph-node-meta"><span>{{labels[node.kind] || node.kind}}{{node.side==='related'?' · 关联':''}}{{node.confidence==='inferred'?' · 待核对':node.confidence==='disputed'?' · 有争议':''}}</span><span>v{{node.version}} · {{node.active?'有效':'历史或失效'}}</span></span>
             <strong>{{node.title}}</strong><span class="memory-graph-preview">{{node.preview}}</span>
           </button>
         </foreignObject>
       </svg>
     </div>
-    <footer><span>显示 {{graph.nodes.length}} 个节点。点击当前记忆可编辑，点击相邻记忆继续查看关系。{{graph.truncated?'关系较多，仅显示部分邻接节点。':''}}</span><button v-if="graph.truncated && canExpand !== false" :disabled="busy" @click="emit('more')">显示更多关系</button></footer>
+    <footer><span>显示 {{graph.nodes.length}} 个节点。实线表示依据或派生，虚线表示实体关联。点击记忆可查看对应修订。{{graph.truncated?'关系较多，仅显示部分邻接节点。':''}}</span><button v-if="graph.truncated && canExpand !== false" :disabled="busy" @click="emit('more')">显示更多关系</button></footer>
   </section>
 </template>
 
@@ -78,6 +78,7 @@ watch(() => props.graph.root, () => { if (autoFit.value) fit(); else center(); }
 svg { display: block; margin: auto; }
 marker path { fill: var(--muted); }
 .memory-graph-edge { stroke: var(--muted); stroke-width: 1; fill: none; opacity: .65; }
+.memory-graph-edge.association { stroke: var(--accent); stroke-dasharray: 5 4; }
 .memory-graph-node { box-sizing: border-box; display: flex; flex-direction: column; gap: 7px; width: 100%; height: 100%; margin: 0; padding: 11px 13px; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 0; color: var(--text); cursor: pointer; font: inherit; }
 .memory-graph-node.selected { border: 2px solid var(--accent); }
 .memory-graph-node.inactive { border-style: dashed; }

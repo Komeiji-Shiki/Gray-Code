@@ -7,6 +7,7 @@ import { importHash, inspectImportFile, inspectImportFiles, storeImportFile, ver
 import { decodeImportText, readLifeBookDocuments } from './lifebook';
 import { readLifeBookGraph } from './graph';
 import { ImportedMemoryBuilder } from './text';
+import { upgradeLifeBookGraphAssociations } from './upgrades';
 
 export interface LifeBookImportOptions {
   actorId: string; name?: string; graphExport?: string; sourceManifest?: string; signal?: AbortSignal;
@@ -49,9 +50,9 @@ export async function importLifeBook(storage: PlatformStorage, directory: string
   const fingerprint = importHash(JSON.stringify(files.map(file => [file.path, file.sha256])));
   const id = importHash(JSON.stringify(['lifebook', 1, options.actorId, fingerprint]));
   const existing = await storage.getRecord(MEMORY_IMPORT_NAMESPACE, id) as MemoryImportDataset | null;
-  if (existing) return { id, scopeId: existing.scopeId, alreadyImported: true, records: existing.records, sources: existing.sources,
+  if (existing) { await upgradeLifeBookGraphAssociations(storage, id); return { id, scopeId: existing.scopeId, alreadyImported: true, records: existing.records, sources: existing.sources,
     graph: existing.graph, notes: existing.notes, originalFiles: existing.originalFileCount,
-    verification: await verifyImportFiles(storage, id, existing.files, options.signal) };
+    verification: await verifyImportFiles(storage, id, existing.files, options.signal) }; }
   const scope = longMemoryScope(options.actorId, 'library', 'real', id), builder = new ImportedMemoryBuilder(scope, id);
   options.onProgress?.({ phase: '解析文档与对话', completed: 0, total: originals.length });
   const documents = await readLifeBookDocuments(originals, builder, options.signal);
@@ -67,7 +68,7 @@ export async function importLifeBook(storage: PlatformStorage, directory: string
   const dataset: MemoryImportDataset = { id, actorId: options.actorId, name: options.name?.trim().slice(0, 160) || 'LifeBook 导入资料库', scopeId: scope.id,
     fingerprint, format: 'lifebook', version: 1, importedAt: Date.now(), files: files.map(({ absolute, ...file }) => file), originalFileCount: originals.length,
     bytes: files.reduce((sum, file) => sum + file.bytes, 0), records: builder.records.length, sources: builder.sources.length,
-    segments: builder.segments, attachments: builder.attachments, notes, ...(graph ? { graph: graph.statistics } : {}) };
+    segments: builder.segments, attachments: builder.attachments, notes, ...(graph ? { graph: graph.statistics, graphAssociationsVersion: 1 } : {}) };
   const saved = new Set(await storage.listRecords(MEMORY_IMPORT_FILE_NAMESPACE, id));
   for (const [index, file] of files.entries()) {
     await storeImportFile(storage, id, file, saved, options.signal);

@@ -23,6 +23,7 @@ CREATE INDEX long_memory_records_attribute ON long_memory_records(scope_id,subje
 CREATE TABLE long_memory_dependencies (
   record_row INTEGER NOT NULL REFERENCES long_memory_records(row_id) ON DELETE CASCADE,
   scope_id TEXT NOT NULL, parent_kind TEXT NOT NULL, parent_id TEXT NOT NULL, parent_version INTEGER NOT NULL,
+  association INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(record_row,parent_kind,parent_id,parent_version)
 ) WITHOUT ROWID;
 CREATE INDEX long_memory_dependencies_parent ON long_memory_dependencies(scope_id,parent_kind,parent_id,parent_version);

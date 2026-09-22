@@ -94,3 +94,12 @@ test('关系节点按确切历史版本打开，并要求回到最新修订后�
   await button(wrapper,'返回最新修订再编辑').trigger('click');await flushPromises();
   expect(wrapper.find<HTMLTextAreaElement>('textarea[aria-label="记忆正文"]').element.value).toBe(latest.text);expect(button(wrapper,'保存记忆').attributes('disabled')).toBeUndefined();
 });
+
+test('实体关联使用虚线，来源依据继续显示箭头',async()=>{
+  const original=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(method,params)=>method==='memory.graph'?{...graph,nodes:[...graph.nodes,{key:'record:entity@2',id:'entity',scopeId:'scope',version:2,type:'record',side:'related',kind:'fact',title:'关联实体',preview:'实体的当前说明',active:true}],edges:[...graph.edges,{from:graph.root,to:'record:entity@2',association:true}]}:original(method,params));
+  const wrapper=await open();await button(wrapper,'查看关系').trigger('click');await flushPromises();
+  expect(wrapper.findAll('.memory-graph-node')).toHaveLength(3);
+  expect(wrapper.find('.memory-graph-edge.association').attributes('marker-end')).toBeUndefined();
+  expect(wrapper.find('.memory-graph-edge:not(.association)').attributes('marker-end')).toContain('memory-arrow');
+});

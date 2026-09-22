@@ -7,7 +7,11 @@ export interface LongMemoryScope {
   id: string; actorId: string; kind: 'personal' | 'workspace' | 'group' | 'library'; key?: string; realm: string;
 }
 export interface LongMemoryScopeState extends LongMemoryScope { revision: number; invalidation: number; hasRecords?:boolean }
-export interface LongMemoryReference { kind: 'source' | 'record'; id: string; version: number }
+export interface LongMemoryReference {
+  kind: 'source' | 'record'; id: string; version: number;
+  /** 实体关联保留最初关联的版本；普通修订保持连接，删除仍检查所有引用。 */
+  association?: true;
+}
 export interface LongMemorySource {
   id: string; version: number; scopeId: string; origin: LongMemoryOrigin; text: string;
   recordedAt: number; eventAt?: number;
@@ -63,11 +67,11 @@ export interface LongMemoryPreview {
 export interface LongMemoryBrowseResult { items: LongMemoryPreview[]; offset: number; total: number; nextCursor?: string }
 export interface LongMemoryGraphNode {
   key: string; id: string; scopeId: string; version: number; type: 'record' | 'source';
-  side: 'dependency' | 'selected' | 'dependent'; title: string; preview: string;
+  side: 'dependency' | 'selected' | 'dependent' | 'related'; title: string; preview: string;
   kind: LongMemoryKind | LongMemoryOrigin; active: boolean; confidence?: LongMemoryConfidence;
 }
 export interface LongMemoryGraph {
-  root: string; nodes: LongMemoryGraphNode[]; edges: Array<{ from: string; to: string }>;
+  root: string; nodes: LongMemoryGraphNode[]; edges: Array<{ from: string; to: string; association?: true }>;
   truncated: boolean;
 }
 export interface LongMemoryRead {

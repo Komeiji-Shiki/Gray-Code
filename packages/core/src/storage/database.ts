@@ -82,8 +82,9 @@ export class PlatformDatabase {
       longMemoryDeletionState: ()=>this.longMemories.deletionState(),
       longMemoryVector: ({ scope, id, version, vector }) => this.longMemories.putVector(scope, id, version, vector),
       longMemoryExport: ({ scopes }) => this.longMemories.archive.export(scopes),
-      longMemoryRestore: ({ actorId, archive, publication }) => this.db.transaction(() => {
+      longMemoryRestore: ({ actorId, archive, publication, copyVectors }) => this.db.transaction(() => {
         const result = this.longMemories.archive.restore(actorId, archive);
+        for(const copy of copyVectors??[]){const scope=archive.scopes.find(scope=>scope.id===copy.scopeId);if(!scope)invalid('索引共享范围不属于本次归档。');this.longMemories.copyVector(scope,copy.id,copy.from,copy.to);}
         // 原始附件先保存，记忆正文与导入目录在同一事务中正式出现。
         if (publication?.length) this.commitRecords(publication);
         return result;

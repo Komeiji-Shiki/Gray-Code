@@ -45,10 +45,11 @@ export class MemoryQueries {
     ), dependency_invalid(row_id) AS (
       SELECT r.row_id FROM visible r JOIN long_memory_dependencies d ON d.record_row=r.row_id WHERE
         (d.parent_kind='source' AND NOT EXISTS(SELECT 1 FROM visible_sources s WHERE s.scope_id=r.scope_id AND s.id=d.parent_id AND s.version=d.parent_version))
-        OR (d.parent_kind='record' AND NOT EXISTS(SELECT 1 FROM visible p WHERE p.scope_id=r.scope_id AND p.id=d.parent_id AND p.version=d.parent_version))
+        OR (d.parent_kind='record' AND d.association=0 AND NOT EXISTS(SELECT 1 FROM visible p WHERE p.scope_id=r.scope_id AND p.id=d.parent_id AND p.version=d.parent_version))
+        OR (d.parent_kind='record' AND d.association=1 AND NOT EXISTS(SELECT 1 FROM long_memory_records p WHERE p.scope_id=r.scope_id AND p.id=d.parent_id))
       UNION SELECT d.record_row FROM long_memory_dependencies d JOIN visible parent
         ON parent.scope_id=d.scope_id AND parent.id=d.parent_id AND parent.version=d.parent_version
-        JOIN dependency_invalid bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record'
+        JOIN dependency_invalid bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record' AND d.association=0
     ), invalid_rows(row_id) AS (
       SELECT row_id FROM dependency_invalid
       UNION SELECT r.row_id FROM visible r JOIN long_memory_supersedes edge ON edge.scope_id=r.scope_id AND edge.original_id=r.id
@@ -56,7 +57,7 @@ export class MemoryQueries {
         WHERE NOT EXISTS(SELECT 1 FROM dependency_invalid bad WHERE bad.row_id=replacement.row_id)
       UNION SELECT d.record_row FROM long_memory_dependencies d JOIN visible parent
         ON parent.scope_id=d.scope_id AND parent.id=d.parent_id AND parent.version=d.parent_version
-        JOIN invalid_rows bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record'
+        JOIN invalid_rows bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record' AND d.association=0
     ), eligible AS (
       SELECT r.* FROM visible r WHERE NOT EXISTS(SELECT 1 FROM invalid_rows bad WHERE bad.row_id=r.row_id)
     ), unconfirmed_rows(row_id) AS (
@@ -66,7 +67,7 @@ export class MemoryQueries {
         WHERE d.parent_kind='source' AND json_extract(s.payload,'$.origin') IN('model','import')
       UNION SELECT d.record_row FROM long_memory_dependencies d JOIN eligible parent
         ON parent.scope_id=d.scope_id AND parent.id=d.parent_id AND parent.version=d.parent_version
-        JOIN unconfirmed_rows bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record'
+        JOIN unconfirmed_rows bad ON bad.row_id=parent.row_id WHERE d.parent_kind='record' AND d.association=0
     )`;
     const parameters: Array<string | number> = [...query.scopes.map(scope => scope.id), query.knownAt, query.knownAt,
       ...query.scopes.map(scope => scope.id), query.knownAt, query.asOf, query.knownAt, query.asOf, query.asOf];
@@ -250,10 +251,10 @@ export class MemoryQueries {
     });
     const nodes: LongMemoryGraphNode[] = [recordNode(record, 'selected')], edges: LongMemoryGraph['edges'] = [];
     // 保留左右两侧的空间；某侧条目少时，将剩余位置交给另一侧。
-    const dependents = this.store.db.prepare(`SELECT r.* FROM long_memory_records r JOIN long_memory_dependencies d ON d.record_row=r.row_id
-      WHERE r.scope_id=? AND d.parent_kind='record' AND d.parent_id=? AND d.parent_version=?
+    const dependents = this.store.db.prepare(`SELECT r.*,min(d.association) AS association FROM long_memory_records r JOIN long_memory_dependencies d ON d.record_row=r.row_id
+      WHERE r.scope_id=? AND d.parent_kind='record' AND d.parent_id=? AND (d.parent_version=? OR d.association=1)
         AND r.version=(SELECT max(v.version) FROM long_memory_records v WHERE v.scope_id=r.scope_id AND v.id=r.id)
-      ORDER BY r.recorded_at DESC,r.id LIMIT ?`).all(scope.id, id, record.version, limit) as RecordRow[];
+      GROUP BY r.row_id ORDER BY r.recorded_at DESC,r.id LIMIT ?`).all(scope.id, id, record.version, limit) as Array<RecordRow & {association:number}>;
     const dependencyLimit = Math.max(Math.ceil((limit - 1) / 2), limit - 1 - dependents.length);
     let truncated = record.dependencies.length > dependencyLimit;
     for (const ref of record.dependencies.slice(0, dependencyLimit)) {
@@ -265,15 +266,16 @@ export class MemoryQueries {
           active: this.store.source(scope.id, ref.id)?.version === ref.version };
         nodes.push(node); edges.push({ from: node.key, to: root });
       } else {
-        const parent = this.store.record(scope.id, ref.id, ref.version); if (!parent) continue;
-        const node = recordNode(JSON.parse(parent.payload), 'dependency'); nodes.push(node); edges.push({ from: node.key, to: root });
+        const parent = this.store.record(scope.id, ref.id, ref.association ? undefined : ref.version); if (!parent) continue;
+        const node = recordNode(JSON.parse(parent.payload), ref.association ? 'related' : 'dependency'); nodes.push(node);
+        edges.push(ref.association ? { from: root, to: node.key, association: true } : { from: node.key, to: root });
       }
     }
     const remaining = limit - nodes.length;
     // 也显示已经失效的最新摘要，让用户能够理解修订影响，而不是把关系静默隐藏。
     if (dependents.length > remaining) truncated = true;
     for (const child of dependents.slice(0, remaining)) {
-      const node = recordNode(JSON.parse(child.payload), 'dependent'); nodes.push(node); edges.push({ from: root, to: node.key });
+      const node = recordNode(JSON.parse(child.payload), child.association ? 'related' : 'dependent'); nodes.push(node); edges.push({ from: root, to: node.key, ...(child.association ? { association: true as const } : {}) });
     }
     const ids = [...new Set(nodes.filter(node => node.type === 'record').map(node => node.id))], now = Date.now();
     const { cte, parameters } = this.plan({ scopes: [scope], asOf: now, knownAt: now, limit: 100, tokenBudget: 32000 });
@@ -298,22 +300,23 @@ export class MemoryQueries {
     this.store.state(scope);if(!Array.isArray(references)||references.length>256)invalid('记忆版本读取批次过大。');
     return references.flatMap(ref=>{const row=this.store.record(scope.id,ref.id,ref.version);return row?[JSON.parse(row.payload) as LongMemoryRecord]:[];});
   }
-  inspect(scope:LongMemoryScope,id:string,version?:number):{revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number}{
-    const revisions=this.revisions(scope,id),sources=new Map<string,LongMemorySource>(),parents=new Map<string,LongMemoryRecord>();
+  inspect(scope:LongMemoryScope,id:string,version?:number):{revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];relations:LongMemoryRecord[];activeVersion?:number}{
+    const revisions=this.revisions(scope,id),sources=new Map<string,LongMemorySource>(),parents=new Map<string,LongMemoryRecord>(),relations=new Map<string,LongMemoryRecord>();
     if(version!==undefined){
       if(!Number.isSafeInteger(version)||version<1)invalid('记忆修订编号无效。');
       if(!revisions.some(record=>record.version===version)){const selected=this.store.record(scope.id,id,version);if(selected)revisions.push(JSON.parse(selected.payload));}
     }
-    for(const revision of revisions)for(const ref of revision.dependencies){
+    const selected=version===undefined?revisions[0]:revisions.find(record=>record.version===version);
+    for(const ref of selected?.dependencies??[]){
       const key=JSON.stringify(ref);
       if(ref.kind==='source'){
         const row=this.store.source(scope.id,ref.id,ref.version);if(row)sources.set(key,JSON.parse(row.payload));
       }else{
-        const row=this.store.record(scope.id,ref.id,ref.version);if(row)parents.set(key,JSON.parse(row.payload));
+        const row=this.store.record(scope.id,ref.id,ref.association?undefined:ref.version);if(row)(ref.association?relations:parents).set(key,JSON.parse(row.payload));
       }
     }
     const now=Date.now(),{cte,parameters}=this.plan({scopes:[scope],asOf:now,knownAt:now,limit:1,tokenBudget:256});
     const active=this.store.db.prepare(`${cte} SELECT version FROM eligible WHERE scope_id=? AND id=?`).get(...parameters,scope.id,id) as {version:number}|undefined;
-    return {revisions,sources:[...sources.values()],parents:[...parents.values()],activeVersion:active?.version};
+    return {revisions,sources:[...sources.values()],parents:[...parents.values()],relations:[...relations.values()],activeVersion:active?.version};
   }
 }

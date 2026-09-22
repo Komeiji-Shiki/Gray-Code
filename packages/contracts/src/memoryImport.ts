@@ -11,6 +11,7 @@ export interface MemoryImportDataset {
   format: 'lifebook'; version: 1; importedAt: number;
   files: MemoryImportFile[]; originalFileCount: number; bytes: number; records: number; sources: number;
   graph?: { entities: number; facts: number; episodes: number; connections: number };
+  graphAssociationsVersion?: 1;
   segments: Array<{ fileId: string; sourceId: string; recordId: string; start: number; end: number; representation: 'file_text' | 'normalized' }>;
   attachments: Array<{ sourceId: string; fileIds: string[] }>;
   notes: string[];

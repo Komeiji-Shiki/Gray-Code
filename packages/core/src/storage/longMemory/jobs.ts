@@ -30,6 +30,7 @@ export class MemoryJobs {
       this.store.state(scope,true); assertIdentifier(job.id); assertIdentifier(job.providerId);
       if (job.scopeId!==scope.id || job.status!=='pending' || job.attempts!==0 || !['extract','summarize','embed'].includes(job.kind)
         || !Number.isFinite(job.createdAt) || !Number.isFinite(job.updatedAt) || !Array.isArray(job.dependencies) || !job.dependencies.length || job.dependencies.length>256) invalid('后台记忆任务参数无效。');
+      if(job.dependencies.some(ref=>ref.association))invalid('后台任务的输入必须绑定确切来源版本，实体关联不作为任务输入。');
       const existing=this.get(scope,job.id);
       if(existing) {
         if(JSON.stringify(existing.dependencies)!==JSON.stringify(job.dependencies)||existing.kind!==job.kind||existing.providerId!==job.providerId||existing.model!==job.model)
