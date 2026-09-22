@@ -57,7 +57,7 @@ async function preview(command: PetCommandInput) {
   }
   await player.value?.apply({ ...command, durationMs: duration.value * 1000 }); notice.value = '预览已应用。';
 }
-function leave() { if (leaveDestination.value === 'screenSense') emit('screenSense'); else emit('close'); }
+function leave() { emit('close'); if (leaveDestination.value === 'screenSense') emit('screenSense'); }
 function close(destination: 'close' | 'screenSense' = 'close') {
   if (busy.value) return; leaveDestination.value = destination;
   if (dirty.value) confirmLeave.value = true; else leave();

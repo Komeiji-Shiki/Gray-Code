@@ -24,6 +24,7 @@ describe('桌宠选择草稿', () => {
     const wrapper = await open(); await wrapper.findAll('.pet-row')[1].trigger('click');
     await button(wrapper, '屏幕感知设置').trigger('click'); expect(wrapper.emitted('screenSense')).toBeUndefined();
     await button(wrapper, '放弃更改并继续').trigger('click'); expect(wrapper.emitted('screenSense')).toHaveLength(1);
+    expect(wrapper.emitted('close')).toHaveLength(1);
   });
   it('放弃更改恢复保存的资源选择，随后可直接关闭', async () => {
     const wrapper = await open(); await wrapper.findAll('.pet-row')[1].trigger('click');

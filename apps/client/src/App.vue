@@ -24,6 +24,8 @@ const petManagerOpen = ref(false);
 const companionOpen = ref(false);
 const characterSetup = ref<{ characterId?: string } | null>(null);
 const libraryOpen = ref(false);
+const libraryInitialTab = ref<'resources' | 'memory'>('resources');
+function openLibrary(tab: 'resources' | 'memory' = 'resources') { libraryInitialTab.value = tab; libraryOpen.value = true; }
 const automationsOpen = ref(false);
 const chatReady = ref(false);
 import { webUi } from './webBridge';
@@ -143,18 +145,18 @@ onUnmounted(() => { unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEve
         <button class="quiet-button workspace-add" :disabled="choosingWorkspace" :title="isWeb ? '选择电脑文件夹' : '添加工作区'" :aria-label="isWeb ? '选择电脑文件夹' : '添加工作区'" @click="guard(addWorkspace)">＋</button>
       </div>
       <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? '工作台' : '返回对话') : (state.chatFocused ? '打开侧边面板' : '隐藏侧边面板') }}</button>
-      <button v-if="!compactViewport" class="quiet-button" @click="libraryOpen = true">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
+      <button v-if="!compactViewport" class="quiet-button" @click="openLibrary()">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
       <button v-if="!compactViewport && !state.settingsOpen && state.mode === 'chat'" class="quiet-button" @click="companionOpen = true">陪伴配置</button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
-      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="libraryOpen = true">资料库</button><button v-if="state.mode === 'chat'" @click="companionOpen = true">陪伴配置</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
+      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="openLibrary()">资料库</button><button v-if="state.mode === 'chat'" @click="companionOpen = true">陪伴配置</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
     <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
     <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">关闭</button></div>
     <ComputerStatus v-if="state.ready" /><ScreenSenseStatus v-if="state.ready" @manage="screenSenseOpen = true" />
     <ScreenSenseSettings v-if="screenSenseOpen" @close="screenSenseOpen = false" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
-    <CompanionSetup v-if="companionOpen" :conversation-id="state.conversationId || undefined" @close="companionOpen = false" @memory="libraryOpen = true" @reminders="automationsOpen = true" @applied="id => { if (id !== state.conversationId) guard(() => call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: id } })); }" />
-    <ResourceLibrary v-if="libraryOpen" :initial-tab="companionOpen ? 'memory' : 'resources'" @close="libraryOpen = false" @pets="petManagerOpen = true" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
+    <CompanionSetup v-if="companionOpen" :conversation-id="state.conversationId || undefined" @close="companionOpen = false" @memory="openLibrary('memory')" @reminders="automationsOpen = true" @applied="id => { if (id !== state.conversationId) guard(() => call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: id } })); }" />
+    <ResourceLibrary v-if="libraryOpen" :initial-tab="libraryInitialTab" @close="libraryOpen = false" @pets="petManagerOpen = true" @play="id => { libraryOpen = false; characterSetup = { characterId: id }; }" />
     <PetManager v-if="petManagerOpen" @close="petManagerOpen = false" @screen-sense="screenSenseOpen = true" />
     <PetSurface v-if="state.ready" surface="app" :conversation-id="state.conversationId || undefined" @manage="petManagerOpen = true" @open="id => guard(() => call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: id } }))" />
     <ContentPreview />
