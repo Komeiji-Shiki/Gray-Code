@@ -344,7 +344,7 @@ function saveJson() {
   padding: 8px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .body-checkbox {
@@ -370,7 +370,7 @@ function saveJson() {
   height: 14px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
@@ -410,7 +410,7 @@ function saveJson() {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
 }
 
@@ -426,7 +426,7 @@ function saveJson() {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   font-family: var(--vscode-editor-font-family);
   resize: vertical;
@@ -447,7 +447,7 @@ function saveJson() {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-foreground);
   cursor: pointer;
   opacity: 0.7;
@@ -482,7 +482,7 @@ function saveJson() {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
@@ -520,7 +520,7 @@ function saveJson() {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   font-family: var(--vscode-editor-font-family);
   resize: vertical;

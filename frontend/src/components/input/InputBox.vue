@@ -1152,7 +1152,7 @@ defineExpose({
   left: 50%;
   width: 38px;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
   opacity: 0;
   transform: translateX(-50%);
@@ -1236,7 +1236,7 @@ defineExpose({
 
   padding: 2px 8px;
   margin: 0 2px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 
   background: rgba(0, 122, 204, 0.16);
   border: 1px solid rgba(0, 122, 204, 0.28);
@@ -1358,7 +1358,7 @@ defineExpose({
   margin-bottom: 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: 100;
   max-height: 240px;

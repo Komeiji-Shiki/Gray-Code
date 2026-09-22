@@ -364,7 +364,7 @@ async function copyAllEntries() {
 .recursive-badge {
   font-size: 10px;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
 }
@@ -550,7 +550,7 @@ async function copyAllEntries() {
   font-size: 9px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
 }

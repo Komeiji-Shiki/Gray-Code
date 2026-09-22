@@ -265,7 +265,7 @@ onMounted(() => {
 .history-search-config {
   padding: 12px;
   background: var(--vscode-editor-inactiveSelectionBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-top: 8px;
   display: flex;
   flex-direction: column;
@@ -315,7 +315,7 @@ onMounted(() => {
   padding: 8px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .item-info {
@@ -348,7 +348,7 @@ onMounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   text-align: center;
   outline: none;
@@ -403,7 +403,7 @@ onMounted(() => {
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);
   border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   outline: none;
 }

@@ -985,7 +985,7 @@ onBeforeUnmount(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   padding: 4px 8px;
 }
 
@@ -1134,7 +1134,7 @@ onBeforeUnmount(() => {
 .action-badge {
   font-size: 9px;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   margin-left: var(--spacing-xs, 4px);
   font-weight: 500;
 }

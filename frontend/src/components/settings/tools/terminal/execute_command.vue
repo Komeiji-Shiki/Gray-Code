@@ -327,7 +327,7 @@ onMounted(() => {
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
   border-top: none;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
 }
 
 /* 加载和错误状态 */
@@ -351,7 +351,7 @@ onMounted(() => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
 }
@@ -406,7 +406,7 @@ onMounted(() => {
   padding: 8px 10px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: all 0.15s;
 }
 
@@ -452,7 +452,7 @@ onMounted(() => {
   padding: 1px 6px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 10px;
 }
 
@@ -497,7 +497,7 @@ onMounted(() => {
   height: 24px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
   transition: all 0.15s;
@@ -528,7 +528,7 @@ onMounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   font-family: var(--vscode-editor-font-family);
 }
@@ -594,7 +594,7 @@ onMounted(() => {
   padding: 8px 10px;
   background: var(--vscode-textBlockQuote-background);
   border-left: 3px solid var(--vscode-textLink-foreground);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .config-tips .codicon {

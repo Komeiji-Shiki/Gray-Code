@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
   padding: 1px 4px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   white-space: nowrap;
 }
 
@@ -586,7 +586,7 @@ onBeforeUnmount(() => {
   background: rgba(230, 149, 0, 0.18);
   border: 1px solid rgba(230, 149, 0, 0.35);
   padding: 0 6px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .summary-icon {
@@ -766,7 +766,7 @@ onBeforeUnmount(() => {
   background: var(--vscode-editor-findMatchHighlightBackground);
   color: inherit;
   padding: 0 2px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .footer-info {

@@ -189,7 +189,7 @@ function isMediaTile(attachment: Attachment): boolean {
   height: 32px;
   max-width: 240px;
   padding: 0 4px 0 8px;
-  border-radius: 16px;
+  border-radius: var(--gc-radius-lg);
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-input-border, transparent);
 }

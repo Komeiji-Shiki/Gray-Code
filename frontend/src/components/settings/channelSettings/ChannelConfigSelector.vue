@@ -117,7 +117,7 @@ defineExpose({ focusEdit })
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 13px;
 }
 
@@ -135,7 +135,7 @@ defineExpose({ focusEdit })
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-foreground);
   cursor: pointer;
 }

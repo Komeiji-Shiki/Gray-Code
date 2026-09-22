@@ -310,7 +310,7 @@ async function handleRestore() {
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-badge-background);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
 }
 
 .summary-auto-badge {
@@ -318,7 +318,7 @@ async function handleRestore() {
   color: var(--vscode-charts-yellow, #ddb92f);
   background: rgba(221, 185, 47, 0.1);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   border: 1px solid var(--vscode-focusBorder);
 }
 
@@ -372,7 +372,7 @@ async function handleRestore() {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;

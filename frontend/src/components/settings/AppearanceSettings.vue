@@ -355,7 +355,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

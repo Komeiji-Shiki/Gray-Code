@@ -136,7 +136,7 @@ async function handleDelete(id: string) {
   justify-content: center;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 14px;
+  border-radius: var(--gc-radius-lg);
 }
 
 .logo .logo-svg {
@@ -231,7 +231,7 @@ async function handleDelete(id: string) {
   background: transparent;
   color: var(--vscode-textLink-foreground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s;

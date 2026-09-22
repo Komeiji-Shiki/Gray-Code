@@ -529,7 +529,7 @@ function toggleDelete(nodeId: string): void {
   margin-top: 10px;
   padding: 6px 14px;
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.15));
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   font-size: 13px;

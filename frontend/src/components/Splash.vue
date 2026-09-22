@@ -503,7 +503,7 @@ onBeforeUnmount(() => {
 .bit {
   width: 22px;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: currentColor;
   opacity: 0.12;
   transition: opacity 0.3s ease, background 0.3s ease, width 0.3s ease;

@@ -259,7 +259,7 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border);
-    border-radius: 2px;
+    border-radius: var(--gc-radius-xs);
     font-size: 12px;
 }
 
@@ -280,7 +280,7 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
     padding: 12px;
     background: var(--vscode-editor-background);
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
+    border-radius: var(--gc-radius-sm);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -320,7 +320,7 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
     background: var(--vscode-button-secondaryBackground);
     color: var(--vscode-button-secondaryForeground);
     border: none;
-    border-radius: 2px;
+    border-radius: var(--gc-radius-xs);
     cursor: pointer;
 }
 

@@ -870,7 +870,7 @@ function handleContinue() {
   margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
   background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -910,7 +910,7 @@ function handleContinue() {
   font-family: var(--vscode-editor-font-family, monospace);
   background: rgba(0, 0, 0, 0.15);
   padding: 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin: 0;
 }
 
@@ -935,7 +935,7 @@ function handleContinue() {
   opacity: 0.6;
   cursor: pointer;
   font-size: 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: opacity 0.2s, background 0.2s;
 }
 
@@ -956,7 +956,7 @@ function handleContinue() {
   margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
   background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -1011,7 +1011,7 @@ function handleContinue() {
   font-family: var(--vscode-editor-font-family, monospace);
   background: rgba(0, 0, 0, 0.15);
   padding: 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin: 0;
 }
 
@@ -1035,7 +1035,7 @@ function handleContinue() {
   opacity: 0.6;
   cursor: pointer;
   font-size: 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: opacity 0.2s, background 0.2s;
 }
 
@@ -1062,7 +1062,7 @@ function handleContinue() {
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .interrupt-notice .codicon {
@@ -1093,7 +1093,7 @@ function handleContinue() {
   margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
   background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
 
@@ -1147,7 +1147,7 @@ function handleContinue() {
   background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, 0.2));
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
@@ -1283,7 +1283,7 @@ function handleContinue() {
   border: none;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   opacity: 0.6;
   transition: opacity 0.15s, background 0.15s;
 }
@@ -1309,7 +1309,7 @@ function handleContinue() {
   max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .restore-delete-title {
@@ -1375,6 +1375,6 @@ function handleContinue() {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
   border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 </style>

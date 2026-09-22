@@ -106,7 +106,7 @@ const definitionData = computed(() => {
   color: var(--vscode-errorForeground);
   padding: 8px;
   background: var(--vscode-inputValidation-errorBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .definition-section {
@@ -121,7 +121,7 @@ const definitionData = computed(() => {
   gap: 6px;
   padding: 4px 8px;
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 11px;
 }
 
@@ -155,7 +155,7 @@ const definitionData = computed(() => {
   flex-direction: column;
   gap: 4px;
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   border-left: 2px solid var(--vscode-textLink-foreground);
   overflow: hidden;
 }

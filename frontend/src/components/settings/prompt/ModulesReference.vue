@@ -213,7 +213,7 @@ const emit = defineEmits<{
 .module-item {
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
@@ -245,7 +245,7 @@ const emit = defineEmits<{
   font-size: 11px;
   padding: 2px 6px;
   background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-textPreformat-foreground);
 }
 
@@ -264,7 +264,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
@@ -332,7 +332,7 @@ const emit = defineEmits<{
   font-family: var(--vscode-editor-font-family), monospace;
   line-height: 1.4;
   background: var(--vscode-textCodeBlock-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -344,7 +344,7 @@ const emit = defineEmits<{
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .modules-group:last-child {
@@ -372,7 +372,7 @@ const emit = defineEmits<{
 .group-badge {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-weight: 500;
 }
 

@@ -120,7 +120,7 @@ onMounted(() => {
 .file-access-config {
   padding: 12px;
   background: var(--vscode-editor-inactiveSelectionBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
 
@@ -163,7 +163,7 @@ onMounted(() => {
   padding: 10px;
   text-align: left;
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-input-background);
   color: var(--vscode-foreground);
   cursor: pointer;

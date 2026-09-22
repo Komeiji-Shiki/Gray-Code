@@ -63,7 +63,7 @@ const emit = defineEmits<{
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .section-header {
@@ -114,7 +114,7 @@ const emit = defineEmits<{
   padding: 10px 12px;
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .assembly-option .radio-text {

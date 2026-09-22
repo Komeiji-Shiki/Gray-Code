@@ -395,7 +395,7 @@ defineEmits<{
   padding: 8px 12px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
 
@@ -428,7 +428,7 @@ defineEmits<{
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .clear-search:hover {
@@ -441,7 +441,7 @@ defineEmits<{
   margin-top: 12px;
   height: 300px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editor-background);
   overflow: hidden;
 }
@@ -518,7 +518,7 @@ defineEmits<{
   margin-top: 12px;
   padding: 8px 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .batch-info {
@@ -540,7 +540,7 @@ defineEmits<{
   background: var(--vscode-inputValidation-errorBackground);
   color: var(--vscode-inputValidation-errorForeground);
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -568,7 +568,7 @@ defineEmits<{
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
 }
 
@@ -582,7 +582,7 @@ defineEmits<{
   flex-basis: 100%;
   margin: 4px 0 4px 26px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editor-background);
   overflow: hidden;
 }
@@ -651,7 +651,7 @@ defineEmits<{
 .cp-phase {
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
 
@@ -677,7 +677,7 @@ defineEmits<{
 .cp-type {
   font-size: 10px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   border: 1px solid var(--vscode-panel-border);
   color: var(--vscode-descriptionForeground);
   flex-shrink: 0;
@@ -756,7 +756,7 @@ defineEmits<{
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
 }
 
@@ -780,7 +780,7 @@ defineEmits<{
   background: var(--vscode-inputValidation-warningBackground, var(--vscode-inputValidation-errorBackground));
   color: var(--vscode-inputValidation-warningForeground, var(--vscode-inputValidation-errorForeground));
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .delete-feedback .feedback-close {
@@ -808,7 +808,7 @@ defineEmits<{
   margin-bottom: 10px;
   border: 1px solid var(--vscode-inputValidation-infoBorder, var(--vscode-focusBorder));
   background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
@@ -832,7 +832,7 @@ defineEmits<{
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   padding: 3px 8px;
   font-size: 12px;
   cursor: pointer;
@@ -865,7 +865,7 @@ defineEmits<{
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
 }
 
@@ -903,7 +903,7 @@ defineEmits<{
   height: 24px;
   margin-left: 6px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;

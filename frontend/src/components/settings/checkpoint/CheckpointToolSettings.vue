@@ -134,7 +134,7 @@ defineProps<{
   flex-direction: column;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
   margin-top: 8px;
 }

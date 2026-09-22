@@ -199,7 +199,7 @@ function truncate(text: string, maxLen = 80): string {
   padding: 6px 8px;
   background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-bottom: 6px;
   max-height: 150px;
   overflow-y: auto;
@@ -242,7 +242,7 @@ function truncate(text: string, maxLen = 80): string {
   align-items: center;
   gap: 6px;
   padding: 3px 4px;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   transition: background-color 0.1s, box-shadow 0.15s;
   border: 1px solid transparent;
 }
@@ -274,7 +274,7 @@ function truncate(text: string, maxLen = 80): string {
   color: var(--vscode-descriptionForeground);
   opacity: 0;
   transition: opacity 0.1s;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .queue-drag-handle:active {
@@ -304,7 +304,7 @@ function truncate(text: string, maxLen = 80): string {
   font-weight: 600;
   color: var(--vscode-badge-foreground, #fff);
   background: var(--vscode-badge-background, #4d4d4d);
-  border-radius: 9px;
+  border-radius: var(--gc-radius-md);
   flex-shrink: 0;
 }
 
@@ -354,7 +354,7 @@ function truncate(text: string, maxLen = 80): string {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-foreground);
   cursor: pointer;
   opacity: 0.7;

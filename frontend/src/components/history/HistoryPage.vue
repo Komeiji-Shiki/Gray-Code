@@ -256,7 +256,7 @@ async function handleDelete(id: string) {
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-input-background);
 }
 
@@ -290,7 +290,7 @@ async function handleDelete(id: string) {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
   flex-shrink: 0;
@@ -331,7 +331,7 @@ async function handleDelete(id: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .header-btn:hover {

@@ -391,7 +391,7 @@ function formatLineCount(file: FoundFileDetail): string {
   padding: 1px 4px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   margin-left: var(--spacing-xs, 4px);
 }
 
@@ -455,7 +455,7 @@ function formatLineCount(file: FoundFileDetail): string {
   font-size: 9px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
 }

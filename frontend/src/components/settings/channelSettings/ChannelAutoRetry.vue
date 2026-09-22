@@ -98,7 +98,7 @@ const emit = defineEmits<{
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
@@ -120,7 +120,7 @@ const emit = defineEmits<{
   margin-top: 12px;
   padding: 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .option-item {
@@ -141,7 +141,7 @@ const emit = defineEmits<{
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   appearance: textfield;
   -moz-appearance: textfield; /* Firefox */
@@ -206,7 +206,7 @@ const emit = defineEmits<{
   bottom: 0;
   background-color: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
 

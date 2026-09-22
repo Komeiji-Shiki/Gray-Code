@@ -628,7 +628,7 @@ function handleRemoveAttachment(id: string) {
   background: transparent;
   color: var(--vscode-foreground);
   border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
@@ -651,7 +651,7 @@ function handleRemoveAttachment(id: string) {
 .root-message-hint {
   margin-top: 12px;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -678,7 +678,7 @@ function handleRemoveAttachment(id: string) {
   min-width: 0;
   flex: 0 1 auto;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   border: none;

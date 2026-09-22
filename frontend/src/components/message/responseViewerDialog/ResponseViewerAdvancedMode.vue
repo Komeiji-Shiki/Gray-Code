@@ -490,7 +490,7 @@ function getExpandedLabel(key: string): string {
 .detail-card,
 .attachment-card {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-editor-background);
 }
 
@@ -532,7 +532,7 @@ function getExpandedLabel(key: string): string {
 .detail-type {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 500;
@@ -688,7 +688,7 @@ function getExpandedLabel(key: string): string {
 
 .section-action-btn {
   padding: 5px 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   border: 1px solid var(--vscode-panel-border);
   background: transparent;
   color: var(--vscode-foreground);
@@ -735,7 +735,7 @@ function getExpandedLabel(key: string): string {
 .json-block {
   margin: 0;
   padding: 12px;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   border: 1px solid var(--vscode-panel-border);
   background: rgba(0, 0, 0, 0.15);
   color: var(--vscode-foreground);
@@ -770,7 +770,7 @@ function getExpandedLabel(key: string): string {
 
 .dialog-btn {
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   border: none;

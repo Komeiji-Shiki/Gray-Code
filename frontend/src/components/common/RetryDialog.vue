@@ -153,7 +153,7 @@ function handleRestoreAndRetry() {
   margin: 12px 0 0;
   padding: 8px 10px;
   background: var(--vscode-editorInfo-background, rgba(0, 120, 212, 0.1));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -168,7 +168,7 @@ function handleRestoreAndRetry() {
 
 .dialog-btn {
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   border: none;

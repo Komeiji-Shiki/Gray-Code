@@ -119,7 +119,7 @@ const emit = defineEmits<{
   padding: 10px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   flex-wrap: wrap;
   gap: 8px 12px;
 }
@@ -183,7 +183,7 @@ const emit = defineEmits<{
   height: 24px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-foreground);
   cursor: pointer;
   transition: background 0.1s ease;

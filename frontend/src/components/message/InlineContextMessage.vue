@@ -181,7 +181,7 @@ async function handleContextClick(ctx: PromptContextItem) {
 
   padding: 2px 8px;
   margin: 0 2px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 
   background: rgba(0, 122, 204, 0.16);
   border: 1px solid rgba(0, 122, 204, 0.28);
@@ -221,7 +221,7 @@ async function handleContextClick(ctx: PromptContextItem) {
   margin-bottom: 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: 100;
   max-height: 240px;

@@ -597,7 +597,7 @@ Authorization: Bearer {apiKey}
     padding: 12px;
     background: var(--vscode-editor-background);
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 6px;
+    border-radius: var(--gc-radius-sm);
 }
 
 .settings-intro p {
@@ -615,7 +615,7 @@ Authorization: Bearer {apiKey}
 /* 渠道面板 */
 .channel-panel {
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 6px;
+    border-radius: var(--gc-radius-sm);
     overflow: hidden;
 }
 
@@ -661,7 +661,7 @@ Authorization: Bearer {apiKey}
 .status-badge {
     padding: 2px 8px;
     font-size: 11px;
-    border-radius: 10px;
+    border-radius: var(--gc-radius-md);
     font-weight: 500;
 }
 
@@ -690,7 +690,7 @@ Authorization: Bearer {apiKey}
     gap: 8px;
     padding: 10px 12px;
     background: rgba(255, 200, 0, 0.1);
-    border-radius: 4px;
+    border-radius: var(--gc-radius-sm);
     color: var(--vscode-editorWarning-foreground);
 }
 
@@ -728,7 +728,7 @@ Authorization: Bearer {apiKey}
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border);
-    border-radius: 4px;
+    border-radius: var(--gc-radius-sm);
     outline: none;
     transition: border-color 0.15s;
 }
@@ -766,7 +766,7 @@ Authorization: Bearer {apiKey}
     background: var(--vscode-button-secondaryBackground);
     color: var(--vscode-button-secondaryForeground);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--gc-radius-sm);
     cursor: pointer;
     transition: background-color 0.15s;
 }
@@ -798,7 +798,7 @@ Authorization: Bearer {apiKey}
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--gc-radius-sm);
     cursor: pointer;
     transition: background-color 0.15s;
 }
@@ -837,7 +837,7 @@ Authorization: Bearer {apiKey}
     gap: 10px;
     padding: 12px;
     background: rgba(100, 150, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--gc-radius-sm);
     border: 1px solid rgba(100, 150, 255, 0.2);
 }
 
@@ -872,7 +872,7 @@ Authorization: Bearer {apiKey}
 .api-doc-section {
     margin-top: 8px;
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 6px;
+    border-radius: var(--gc-radius-sm);
     overflow: hidden;
 }
 

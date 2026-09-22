@@ -523,7 +523,7 @@ watch(
 .summary-badge {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   background: rgba(221, 185, 47, 0.1);
   color: var(--vscode-charts-yellow, #ddb92f);
   border: 1px solid var(--vscode-focusBorder);
@@ -540,7 +540,7 @@ watch(
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-badge-background);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
 }
 
 .summary-preview {

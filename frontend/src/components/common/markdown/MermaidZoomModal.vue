@@ -266,7 +266,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 16px;
   padding: 6px 6px 6px 16px;
-  border-radius: 30px;
+  border-radius: var(--gc-radius-lg);
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -278,7 +278,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   background: var(--vscode-editor-background);
-  border-radius: 20px;
+  border-radius: var(--gc-radius-lg);
   border: 1px solid var(--vscode-panel-border);
   overflow: hidden;
 }
@@ -328,7 +328,7 @@ onUnmounted(() => {
   padding: 0 16px;
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
-  border-radius: 16px;
+  border-radius: var(--gc-radius-lg);
   font-weight: 500;
   margin-left: 4px;
 

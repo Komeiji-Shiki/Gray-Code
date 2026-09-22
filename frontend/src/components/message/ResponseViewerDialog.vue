@@ -170,7 +170,7 @@ async function handleCopyBody(text: string): Promise<void> {
   display: inline-flex;
   gap: 8px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.12));
   align-self: flex-start;
   margin-left: 2px;
@@ -181,7 +181,7 @@ async function handleCopyBody(text: string): Promise<void> {
   background: transparent;
   color: var(--vscode-foreground);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   font-size: 13px;
 }
@@ -197,7 +197,7 @@ async function handleCopyBody(text: string): Promise<void> {
 
 .dialog-btn {
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   border: none;

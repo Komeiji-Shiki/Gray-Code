@@ -785,7 +785,7 @@ onBeforeUnmount(() => {
   font-family: var(--vscode-editor-font-family, monospace);
   background: rgba(0, 0, 0, 0.15);
   padding: 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin: 0;
 }
 

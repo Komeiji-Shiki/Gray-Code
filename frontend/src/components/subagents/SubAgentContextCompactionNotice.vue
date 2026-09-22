@@ -100,7 +100,7 @@ const titleText = computed(() => {
   padding: 9px 11px;
   border: 1px solid var(--vscode-panel-border);
   border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-textBlockQuote-background);
   color: var(--vscode-foreground);
 }

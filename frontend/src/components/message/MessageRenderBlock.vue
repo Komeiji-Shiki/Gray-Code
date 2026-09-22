@@ -456,7 +456,7 @@ onUnmounted(releaseThoughtDisplay)
 
   margin: 8px 0;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-textBlockQuote-background);
   overflow: hidden;
 }
@@ -529,7 +529,7 @@ onUnmounted(releaseThoughtDisplay)
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-badge-background);
   padding: 1px 6px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   margin-left: 4px;
   transition: all 0.2s ease;
 }
@@ -563,7 +563,7 @@ onUnmounted(releaseThoughtDisplay)
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .thought-view-btn:hover {
@@ -593,7 +593,7 @@ onUnmounted(releaseThoughtDisplay)
   color: var(--vscode-descriptionForeground);
   background: color-mix(in srgb, var(--vscode-warningForeground, #cca700) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--vscode-warningForeground, #cca700) 28%, transparent);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .thought-trim-hint .codicon {

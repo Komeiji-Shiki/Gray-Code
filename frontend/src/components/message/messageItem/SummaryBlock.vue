@@ -43,7 +43,7 @@ const isSummaryExpanded = ref(false)
 <style scoped>
 .summary-block {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editor-background);
   overflow: hidden;
 }

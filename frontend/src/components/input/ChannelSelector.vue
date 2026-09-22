@@ -259,7 +259,7 @@ function handleKeydown(event: KeyboardEvent) {
   box-sizing: border-box;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   padding: 4px 8px;
   color: var(--vscode-input-foreground);
   font-size: 12px;

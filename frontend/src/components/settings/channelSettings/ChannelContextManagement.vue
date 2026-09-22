@@ -261,7 +261,7 @@ const thresholdHelp = computed(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 13px;
 }
 
@@ -280,7 +280,7 @@ const thresholdHelp = computed(() => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
@@ -304,7 +304,7 @@ const thresholdHelp = computed(() => {
   margin-top: 12px;
   padding: 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .option-item {
@@ -325,7 +325,7 @@ const thresholdHelp = computed(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   appearance: textfield;
   -moz-appearance: textfield; /* Firefox */
@@ -384,7 +384,7 @@ const thresholdHelp = computed(() => {
   bottom: 0;
   background-color: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
 

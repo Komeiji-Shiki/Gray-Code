@@ -66,7 +66,7 @@ const emit = defineEmits<{
   margin: 10px 0;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .dynamic-strategy-options {

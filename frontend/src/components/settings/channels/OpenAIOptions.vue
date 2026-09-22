@@ -461,7 +461,7 @@ function onSendThoughtsChange(e: any) {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   appearance: textfield;
   -moz-appearance: textfield;
@@ -514,7 +514,7 @@ function onSendThoughtsChange(e: any) {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .option-section-header {
@@ -595,7 +595,7 @@ function onSendThoughtsChange(e: any) {
   bottom: 0;
   background-color: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
 
@@ -634,7 +634,7 @@ function onSendThoughtsChange(e: any) {
 }
 
 .toggle-switch.small .toggle-slider {
-  border-radius: 7px;
+  border-radius: var(--gc-radius-md);
 }
 
 .toggle-switch.small .toggle-slider::before {
@@ -696,7 +696,7 @@ function onSendThoughtsChange(e: any) {
   width: 16px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 

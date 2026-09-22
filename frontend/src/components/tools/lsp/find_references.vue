@@ -148,7 +148,7 @@ function isFileExpanded(path: string): boolean {
   color: var(--vscode-errorForeground);
   padding: 8px;
   background: var(--vscode-inputValidation-errorBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .references-section {
@@ -163,7 +163,7 @@ function isFileExpanded(path: string): boolean {
   gap: 6px;
   padding: 4px 8px;
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 11px;
 }
 
@@ -198,7 +198,7 @@ function isFileExpanded(path: string): boolean {
 
 .file-group {
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
 

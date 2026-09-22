@@ -318,7 +318,7 @@ watch(() => chatStore.currentConversationId, async () => {
   text-align: center;
   color: var(--vscode-badge-foreground);
   background: var(--vscode-badge-background);
-  border-radius: 7px;
+  border-radius: var(--gc-radius-md);
 }
 
 .pinned-files-panel {
@@ -329,7 +329,7 @@ watch(() => chatStore.currentConversationId, async () => {
   margin-bottom: 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
   max-height: 300px;
@@ -395,7 +395,7 @@ watch(() => chatStore.currentConversationId, async () => {
   gap: 8px;
   padding: 6px 8px;
   background: var(--vscode-list-hoverBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .pinned-file-item.disabled {
@@ -417,7 +417,7 @@ watch(() => chatStore.currentConversationId, async () => {
   flex-shrink: 0;
   padding: 1px 4px;
   background: rgba(255, 100, 100, 0.15);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .pinned-file-checkbox {
@@ -453,7 +453,7 @@ watch(() => chatStore.currentConversationId, async () => {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .drag-hint .codicon {
@@ -478,7 +478,7 @@ watch(() => chatStore.currentConversationId, async () => {
   justify-content: center;
   gap: 8px;
   background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   z-index: 10;
 }
 

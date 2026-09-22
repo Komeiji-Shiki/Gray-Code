@@ -651,7 +651,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .setting-row {
@@ -687,7 +687,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   /* 隐藏数字输入框的上下箭头 */
   appearance: textfield;
@@ -737,7 +737,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 4px 8px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
@@ -757,7 +757,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   border: none;
   color: inherit;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   opacity: 0.7;
 }
 
@@ -785,7 +785,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
@@ -802,7 +802,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
 }
 
@@ -820,7 +820,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 8px 12px;
   background: var(--vscode-textBlockQuote-background);
   border-left: 3px solid var(--vscode-textBlockQuote-border);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .pattern-help p {
@@ -845,7 +845,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   font-size: 11px;
   padding: 0 3px;
   background: var(--vscode-textCodeBlock-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 /* 预览区域 */
@@ -865,7 +865,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   font-weight: normal;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .auto-refresh-badge .codicon {
@@ -879,7 +879,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .preview-section {
@@ -905,7 +905,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   font-family: var(--vscode-editor-font-family);
   font-size: 11px;
   background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .tabs-list {
@@ -960,7 +960,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   font-size: 12px;
   background: var(--vscode-input-background);

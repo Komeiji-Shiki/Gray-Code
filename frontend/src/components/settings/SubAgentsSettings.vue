@@ -820,7 +820,7 @@ onMounted(async () => {
   padding: 8px 12px;
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-errorForeground);
   font-size: 12px;
   word-break: break-word;
@@ -863,7 +863,7 @@ onMounted(async () => {
   padding: 8px 12px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-descriptionForeground);
 }
 
@@ -879,7 +879,7 @@ onMounted(async () => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   cursor: pointer;
@@ -922,7 +922,7 @@ onMounted(async () => {
   padding: 12px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-input-foreground);
   font-size: 13px;
   font-family: var(--vscode-editor-font-family), monospace;
@@ -971,7 +971,7 @@ onMounted(async () => {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s;

@@ -366,7 +366,7 @@ function formatShort(minutes: number): string {
   margin-bottom: 16px;
   padding: 12px 14px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editorWidget-background, transparent);
 }
 
@@ -389,7 +389,7 @@ function formatShort(minutes: number): string {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -414,7 +414,7 @@ function formatShort(minutes: number): string {
 .time-range-btn {
   padding: 2px 8px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -525,7 +525,7 @@ function formatShort(minutes: number): string {
 .time-day-track {
   flex: 1;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-panel-border);
   position: relative;
   overflow: hidden;
@@ -536,7 +536,7 @@ function formatShort(minutes: number): string {
   left: 0;
   top: 0;
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-progressBar-background, var(--vscode-button-background));
 }
 
@@ -566,7 +566,7 @@ function formatShort(minutes: number): string {
   gap: 6px;
   cursor: pointer;
   padding: 2px 0;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .time-month-row:hover {
@@ -647,7 +647,7 @@ function formatShort(minutes: number): string {
 .time-heat-cell {
   flex: 1;
   height: 10px;
-  border-radius: 1px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-progressBar-background, var(--vscode-button-background));
   opacity: 0.08;
   cursor: default;

@@ -529,7 +529,7 @@ onUnmounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
@@ -571,7 +571,7 @@ onUnmounted(() => {
   gap: 12px;
   padding: 16px;
   border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-inputValidation-errorBackground, rgba(190, 17, 0, 0.12));
 }
 
@@ -600,7 +600,7 @@ onUnmounted(() => {
   gap: 6px;
   padding: 4px 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   cursor: pointer;

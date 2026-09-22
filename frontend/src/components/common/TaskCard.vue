@@ -121,7 +121,7 @@ const statusClass = computed(() => {
   padding: 10px 10px 8px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
@@ -219,7 +219,7 @@ const statusClass = computed(() => {
 .chip {
   font-size: 10px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   white-space: nowrap;
@@ -228,7 +228,7 @@ const statusClass = computed(() => {
 .preview {
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 

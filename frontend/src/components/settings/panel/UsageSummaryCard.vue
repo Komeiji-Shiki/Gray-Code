@@ -157,7 +157,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editorWidget-background, transparent);
 }
 
@@ -187,7 +187,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -211,7 +211,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 .usage-range-btn {
   padding: 2px 8px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -255,7 +255,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   margin-top: 2px;
   padding: 3px 10px;
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   cursor: pointer;
@@ -322,7 +322,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   background: transparent;
   color: var(--vscode-textLink-foreground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

@@ -141,7 +141,7 @@ const emit = defineEmits<{
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .section-header {
@@ -191,7 +191,7 @@ const emit = defineEmits<{
   padding: 10px 12px;
   background: var(--vscode-inputValidation-infoBackground);
   border: 1px solid var(--vscode-inputValidation-infoBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-foreground);
 }
@@ -217,7 +217,7 @@ const emit = defineEmits<{
   padding: 6px 10px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .tool-search .codicon {
@@ -249,7 +249,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
 }
@@ -277,7 +277,7 @@ const emit = defineEmits<{
 .tool-policy-list {
   margin-top: 8px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-sideBar-background);
   overflow: auto;
   max-height: 260px;
@@ -305,7 +305,7 @@ const emit = defineEmits<{
 .tool-category-count {
   font-size: 10px;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
 }
@@ -362,7 +362,7 @@ const emit = defineEmits<{
   flex-shrink: 0;
   font-size: 10px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-inputValidation-warningBackground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
   color: var(--vscode-foreground);
@@ -377,7 +377,7 @@ const emit = defineEmits<{
   margin-top: 8px;
   background: var(--vscode-inputValidation-warningBackground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-foreground);
 }

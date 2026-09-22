@@ -114,7 +114,7 @@ const contentLength = computed(() => {
   gap: 4px;
   padding: 6px 10px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   border-left: 3px solid var(--vscode-terminal-ansiGreen);
 }
 

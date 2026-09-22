@@ -189,7 +189,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   background: color-mix(in srgb, var(--gc-info) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--gc-info) 28%, transparent);
   color: var(--vscode-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
   transition:
@@ -223,7 +223,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   opacity: 0.7;
   padding: 1px 4px;
   background: color-mix(in srgb, var(--gc-text-primary) 10%, transparent);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
 }
 
@@ -236,7 +236,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   margin-bottom: 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: var(--gc-layer-popover);
   max-height: 300px;

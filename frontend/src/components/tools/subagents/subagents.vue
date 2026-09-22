@@ -164,7 +164,7 @@ async function openRun() {
   padding: 8px 10px;
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   font-size: 12px;
   color: var(--vscode-foreground);
   white-space: pre-wrap;
@@ -175,7 +175,7 @@ async function openRun() {
 .response-block {
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
@@ -187,7 +187,7 @@ async function openRun() {
   padding: 8px 10px;
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   color: var(--vscode-errorForeground);
   font-size: 12px;
   word-break: break-word;

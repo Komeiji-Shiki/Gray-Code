@@ -151,7 +151,7 @@ function handleDownload() {
   min-height: 400px;
   max-height: 70vh;
   background: var(--vscode-editor-background);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
@@ -159,13 +159,13 @@ function handleDownload() {
   max-width: 100%;
   max-height: 70vh;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .preview-video {
   max-width: 100%;
   max-height: 70vh;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .preview-unsupported {
@@ -194,7 +194,7 @@ function handleDownload() {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   transition: background-color 0.15s;

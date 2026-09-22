@@ -882,7 +882,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   padding: 4px 8px;
 }
 

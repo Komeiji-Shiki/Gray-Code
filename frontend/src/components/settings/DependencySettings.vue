@@ -378,7 +378,7 @@ onUnmounted(() => {
   margin-bottom: 16px;
   padding: 8px 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
@@ -404,7 +404,7 @@ onUnmounted(() => {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   transition: border-color 0.2s;
 }
 
@@ -448,7 +448,7 @@ onUnmounted(() => {
   color: var(--vscode-charts-green);
   background: color-mix(in srgb, var(--vscode-charts-green) 15%, transparent);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
 }
 
 .dep-description {
@@ -482,7 +482,7 @@ onUnmounted(() => {
   gap: 6px;
   padding: 6px 14px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -532,7 +532,7 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 16px;
   padding: 10px 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
@@ -560,7 +560,7 @@ onUnmounted(() => {
 
 .tool-panel {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
@@ -599,7 +599,7 @@ onUnmounted(() => {
   padding: 2px 8px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: 500;
 }

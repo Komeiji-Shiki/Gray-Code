@@ -387,7 +387,7 @@ watch(() => props.tabs.length, () => {
   bottom: 4px;
   width: 2px;
   background: var(--vscode-focusBorder, #007fd4);
-  border-radius: 1px;
+  border-radius: var(--gc-radius-xs);
   z-index: 10;
 }
 
@@ -400,7 +400,7 @@ watch(() => props.tabs.length, () => {
   bottom: 4px;
   width: 2px;
   background: var(--vscode-focusBorder, #007fd4);
-  border-radius: 1px;
+  border-radius: var(--gc-radius-xs);
   z-index: 10;
 }
 

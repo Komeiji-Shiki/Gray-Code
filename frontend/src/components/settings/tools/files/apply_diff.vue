@@ -388,7 +388,7 @@ onMounted(() => {
 .apply-diff-config {
   padding: 12px;
   background: var(--vscode-editor-inactiveSelectionBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-top: 8px;
   display: flex;
   flex-direction: column;
@@ -441,7 +441,7 @@ onMounted(() => {
   padding: 8px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .item-info {
@@ -473,7 +473,7 @@ onMounted(() => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
   transition: all 0.15s;
@@ -522,7 +522,7 @@ onMounted(() => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -558,7 +558,7 @@ onMounted(() => {
   align-items: flex-start;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   line-height: 1.4;
   color: var(--vscode-descriptionForeground);
@@ -583,7 +583,7 @@ onMounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   text-align: center;
   outline: none;
@@ -612,7 +612,7 @@ onMounted(() => {
   padding: 10px 12px;
   background: var(--vscode-inputValidation-infoBackground, rgba(0, 120, 212, 0.1));
   border: 1px solid var(--vscode-inputValidation-infoBorder, #007fd4);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .info-box .codicon {

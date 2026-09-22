@@ -416,7 +416,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   margin-bottom: 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
   max-height: 400px;
@@ -466,7 +466,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   text-align: center;
   color: var(--vscode-badge-foreground);
   background: var(--vscode-badge-background);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
 }
 
 .header-actions {
@@ -495,7 +495,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   gap: 8px;
   padding: 8px;
   background: var(--vscode-list-hoverBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-bottom: 8px;
 }
 
@@ -506,7 +506,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   outline: none;
 }
 
@@ -530,7 +530,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   padding: 4px 12px;
   font-size: 12px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   cursor: pointer;
   transition: opacity 0.15s;
 }
@@ -593,7 +593,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 
 .context-item {
   background: var(--vscode-list-hoverBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
@@ -633,7 +633,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   padding: 1px 6px;
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
 
@@ -654,7 +654,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   font-family: var(--vscode-editor-font-family);
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 80px;
@@ -670,7 +670,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   resize: vertical;
   min-height: 80px;
 }
@@ -723,7 +723,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   justify-content: center;
   gap: 8px;
   background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   z-index: 10;
 }
 

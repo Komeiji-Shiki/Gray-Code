@@ -142,7 +142,7 @@ function removeAt(index: number) {
   padding: 6px 8px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .pattern-chip {
@@ -153,7 +153,7 @@ function removeAt(index: number) {
   padding: 2px 4px 2px 8px;
   background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
   color: var(--vscode-badge-foreground, var(--vscode-foreground));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
@@ -177,7 +177,7 @@ function removeAt(index: number) {
   color: inherit;
   opacity: 0.6;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
 
@@ -211,7 +211,7 @@ function removeAt(index: number) {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
@@ -231,7 +231,7 @@ function removeAt(index: number) {
   flex-shrink: 0;
   padding: 5px 12px;
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   font-size: 12px;

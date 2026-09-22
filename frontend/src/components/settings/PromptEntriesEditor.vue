@@ -639,7 +639,7 @@ function handleDragEnd() {
   justify-content: center;
   gap: 5px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 5px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -709,7 +709,7 @@ function handleDragEnd() {
   padding: 12px;
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
 }
 
@@ -724,7 +724,7 @@ function handleDragEnd() {
   left: 10px;
   right: 10px;
   height: 2px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-focusBorder);
   opacity: 0;
   pointer-events: none;
@@ -791,7 +791,7 @@ function handleDragEnd() {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
@@ -809,7 +809,7 @@ function handleDragEnd() {
   gap: 6px;
   width: 100%;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-editor-background);
 }
@@ -836,7 +836,7 @@ function handleDragEnd() {
   padding: 10px 12px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-descriptionForeground);
 }
 
@@ -865,7 +865,7 @@ function handleDragEnd() {
   padding: 10px 12px;
   background: var(--vscode-editorWidget-background);
   border: 1px dashed var(--vscode-charts-purple, var(--vscode-panel-border));
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .fake-thought-label {
@@ -892,7 +892,7 @@ function handleDragEnd() {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   font-size: 12px;
   font-family: var(--vscode-editor-font-family), monospace;
@@ -924,7 +924,7 @@ function handleDragEnd() {
 
 .module-chip {
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   border: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-background);
   color: var(--vscode-textPreformat-foreground);

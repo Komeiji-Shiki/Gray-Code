@@ -206,7 +206,7 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
   color: var(--vscode-errorForeground);
   padding: 8px;
   background: var(--vscode-inputValidation-errorBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .results-section {
@@ -233,7 +233,7 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
 
 .file-group {
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
 
@@ -277,7 +277,7 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
   margin-left: auto;
   padding: 1px 4px;
   background: var(--vscode-inputValidation-errorBackground);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .symbols-content {

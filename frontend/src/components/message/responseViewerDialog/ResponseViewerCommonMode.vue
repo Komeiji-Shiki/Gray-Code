@@ -178,7 +178,7 @@ function handleCopyBody(text: string): void {
 .viewer-section,
 .viewer-details {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-editor-background);
 }
 
@@ -226,7 +226,7 @@ function handleCopyBody(text: string): void {
 .status-badge {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 500;
@@ -296,7 +296,7 @@ function handleCopyBody(text: string): void {
 
 .tool-card {
   padding: 14px;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
   border: 1px solid var(--vscode-panel-border);
 }
@@ -381,7 +381,7 @@ function handleCopyBody(text: string): void {
 
 .section-action-btn {
   padding: 5px 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   border: 1px solid var(--vscode-panel-border);
   background: transparent;
   color: var(--vscode-foreground);

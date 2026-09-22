@@ -502,7 +502,7 @@ const tabs = computed(() => ([
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -529,7 +529,7 @@ const tabs = computed(() => ([
 .range-btn {
   padding: 3px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -579,7 +579,7 @@ const tabs = computed(() => ([
   margin-top: 4px;
   padding: 4px 12px;
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   cursor: pointer;
@@ -594,7 +594,7 @@ const tabs = computed(() => ([
 .totals-card {
   padding: 16px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editorWidget-background, transparent);
   margin-bottom: 12px;
 }
@@ -646,7 +646,7 @@ const tabs = computed(() => ([
   gap: 6px;
   padding: 6px 10px;
   margin-bottom: 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-inputValidation-warningBackground, transparent);
   border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
   color: var(--vscode-foreground);
@@ -662,7 +662,7 @@ const tabs = computed(() => ([
   margin: -8px 0 12px;
   border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
   border-top: none;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
   background: var(--vscode-inputValidation-warningBackground, transparent);
   list-style: none;
 }
@@ -698,7 +698,7 @@ const tabs = computed(() => ([
 .tab-btn {
   padding: 4px 12px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -725,7 +725,7 @@ const tabs = computed(() => ([
 .usage-row {
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .usage-row.clickable {
@@ -772,7 +772,7 @@ const tabs = computed(() => ([
   height: 20px;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
@@ -795,7 +795,7 @@ const tabs = computed(() => ([
 
 .row-bar-track {
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-panel-border);
   position: relative;
   margin-bottom: 6px;
@@ -806,7 +806,7 @@ const tabs = computed(() => ([
   left: 0;
   top: 0;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-progressBar-background, var(--vscode-button-background));
 }
 
@@ -823,7 +823,7 @@ const tabs = computed(() => ([
   margin-top: 8px;
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editorWidget-background, transparent);
   cursor: default;
 }
@@ -857,7 +857,7 @@ const tabs = computed(() => ([
 .pricing-field input {
   padding: 3px 6px;
   border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   font-size: 12px;
@@ -879,7 +879,7 @@ const tabs = computed(() => ([
 .pricing-save,
 .pricing-cancel {
   padding: 3px 12px;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   cursor: pointer;
   font-size: 11px;
   border: 1px solid var(--vscode-button-border, transparent);

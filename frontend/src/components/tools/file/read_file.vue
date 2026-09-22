@@ -579,7 +579,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: rgba(255, 255, 255, 0.95);
   background: var(--vscode-charts-orange, #e69500);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 /* 文件错误 */

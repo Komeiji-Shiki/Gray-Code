@@ -375,7 +375,7 @@ async function selectModel(modelId: string) {
   gap: 4px;
   padding: 4px 10px;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s;
@@ -414,7 +414,7 @@ async function selectModel(modelId: string) {
   height: auto;
   max-height: 280px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   display: flex;
   flex-direction: column;
 }
@@ -459,7 +459,7 @@ async function selectModel(modelId: string) {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
   flex-shrink: 0;
@@ -613,7 +613,7 @@ async function selectModel(modelId: string) {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
   opacity: 0;
@@ -660,7 +660,7 @@ async function selectModel(modelId: string) {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
 }
 
@@ -683,7 +683,7 @@ async function selectModel(modelId: string) {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   cursor: pointer;
   transition: background 0.15s;
 }

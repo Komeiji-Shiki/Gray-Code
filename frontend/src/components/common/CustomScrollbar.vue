@@ -1263,7 +1263,7 @@ defineExpose({
   padding: 0;
   background: var(--vscode-editorHoverWidget-background, #2d2d30);
   border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
   z-index: 100;
   pointer-events: auto;

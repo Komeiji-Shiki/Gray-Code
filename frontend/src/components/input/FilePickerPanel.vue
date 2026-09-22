@@ -371,7 +371,7 @@ defineExpose({
   font-size: 11px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -466,7 +466,7 @@ defineExpose({
 .file-path :deep(mark) {
   background: var(--vscode-editor-findMatchHighlightBackground);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   padding: 0 1px;
 }
 
@@ -490,7 +490,7 @@ kbd {
   font-family: var(--vscode-editor-font-family);
   background: var(--vscode-keybindingLabel-background);
   border: 1px solid var(--vscode-keybindingLabel-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   box-shadow: 0 1px 0 var(--vscode-keybindingLabel-bottomBorder);
 }
 

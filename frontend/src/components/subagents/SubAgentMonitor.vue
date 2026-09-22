@@ -1429,7 +1429,7 @@ onBeforeUnmount(() => {
 
 .run-count {
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   font-size: 11px;
@@ -1464,7 +1464,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   padding: 6px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 7px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -1538,7 +1538,7 @@ onBeforeUnmount(() => {
   gap: 5px;
   padding: 4px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-sideBar-background);
   color: var(--vscode-foreground);
   font-size: 11px;
@@ -1603,7 +1603,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 4px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: transparent;
   color: var(--vscode-foreground);
   font-size: 11px;
@@ -1647,7 +1647,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   font-size: 11px;

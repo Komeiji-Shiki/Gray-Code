@@ -163,7 +163,7 @@ function handleRemove(attachmentId: string) {
   width: 32px;
   height: 32px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
 }
 
@@ -257,7 +257,7 @@ function handleRemove(attachmentId: string) {
   background: transparent;
   border: none;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-descriptionForeground);
   transition: background-color 0.15s, color 0.15s;
   flex-shrink: 0;

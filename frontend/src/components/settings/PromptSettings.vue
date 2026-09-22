@@ -1132,7 +1132,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   gap: 6px;
   padding: 8px 14px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
   color: var(--vscode-notifications-foreground, var(--vscode-foreground));
   border: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
@@ -1165,7 +1165,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .section-header {
@@ -1185,7 +1185,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 .section-badge {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-weight: 500;
 }
 

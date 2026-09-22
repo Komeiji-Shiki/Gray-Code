@@ -193,7 +193,7 @@ function truncate(s: string, max: number): string {
   flex-wrap: wrap;
   padding: 6px 10px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   border-left: 3px solid var(--vscode-terminal-ansiGreen);
 }
 
@@ -215,7 +215,7 @@ function truncate(s: string, max: number): string {
   align-items: center;
   gap: 2px;
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-badge-background);
   font-size: 10px;
   line-height: 1.4;
@@ -236,7 +236,7 @@ function truncate(s: string, max: number): string {
 .args-section {
   padding: 6px 10px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .args-header {
@@ -274,7 +274,7 @@ function truncate(s: string, max: number): string {
   padding: 4px 8px;
   background: var(--vscode-editor-inactiveSelectionBackground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-family: var(--vscode-editor-font-family), monospace;
   font-size: 11px;
   line-height: 1.45;
@@ -287,7 +287,7 @@ function truncate(s: string, max: number): string {
 .result-body {
   padding: 8px 10px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .result-body-header {

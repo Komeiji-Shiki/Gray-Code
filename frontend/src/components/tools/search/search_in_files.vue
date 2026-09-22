@@ -634,7 +634,7 @@ function isDiffExpanded(path: string): boolean {
   padding: 1px 4px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .header-stats {
@@ -691,7 +691,7 @@ function isDiffExpanded(path: string): boolean {
   background: rgba(230, 149, 0, 0.18);
   border: 1px solid rgba(230, 149, 0, 0.35);
   padding: 0 6px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   opacity: 1;
 }
 
@@ -702,11 +702,11 @@ function isDiffExpanded(path: string): boolean {
   background: rgba(0, 200, 83, 0.16);
   border: 1px solid rgba(0, 200, 83, 0.35);
   padding: 0 6px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   opacity: 1;
   background: var(--vscode-textCodeBlock-background);
   padding: 0 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .path-text,
@@ -1041,7 +1041,7 @@ function isDiffExpanded(path: string): boolean {
   color: var(--vscode-foreground);
   background: var(--vscode-editor-findMatchHighlightBackground);
   padding: 0 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 /* 结果列表 */
@@ -1110,7 +1110,7 @@ function isDiffExpanded(path: string): boolean {
   background: var(--vscode-editor-findMatchHighlightBackground);
   color: inherit;
   padding: 0 2px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 /* 展开区域 */

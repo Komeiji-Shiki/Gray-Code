@@ -209,7 +209,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   resize: vertical;
   line-height: 1.5;
 }
@@ -237,7 +237,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
   gap: 6px;
   margin: 0;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-textBlockQuote-background);
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
@@ -253,7 +253,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
 .section {
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   padding: 14px 16px;
 }
 
@@ -280,7 +280,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
   padding: 0 5px;
   font-size: 10px;
   font-weight: 600;
-  border-radius: 9px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   margin-left: 4px;
@@ -312,7 +312,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   appearance: textfield;
 }
 
@@ -343,7 +343,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
   padding: 6px 14px;
   font-size: 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -381,7 +381,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
 .status-message {
   font-size: 12px;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-inputValidation-infoBackground);
   color: var(--vscode-inputValidation-infoForeground);
   border: 1px solid var(--vscode-inputValidation-infoBorder);

@@ -49,7 +49,7 @@ const emit = defineEmits<{
   gap: 12px;
   padding: 10px 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .session-copy {
@@ -104,7 +104,7 @@ const emit = defineEmits<{
   inset: 0;
   background-color: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
 

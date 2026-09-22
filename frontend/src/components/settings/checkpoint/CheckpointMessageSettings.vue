@@ -155,7 +155,7 @@ defineProps<{
   flex-direction: column;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
   margin-top: 8px;
 }
@@ -220,7 +220,7 @@ defineProps<{
   margin-top: 12px;
   padding: 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .option-hint {

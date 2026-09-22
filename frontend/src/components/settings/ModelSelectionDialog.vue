@@ -283,7 +283,7 @@ watch(() => props.visible, (visible) => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s;
@@ -331,7 +331,7 @@ watch(() => props.visible, (visible) => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
@@ -359,7 +359,7 @@ watch(() => props.visible, (visible) => {
   padding: 8px;
   margin-bottom: 8px;
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-input-background);
 }
 
@@ -393,7 +393,7 @@ watch(() => props.visible, (visible) => {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
   flex-shrink: 0;
@@ -446,7 +446,7 @@ watch(() => props.visible, (visible) => {
   padding: 10px 12px;
   background: var(--vscode-list-hoverBackground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font: inherit;
   text-align: left;
   color: var(--vscode-foreground);
@@ -478,7 +478,7 @@ watch(() => props.visible, (visible) => {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-input-background);
   transition: all 0.15s;
 }
@@ -528,7 +528,7 @@ watch(() => props.visible, (visible) => {
   font-size: 11px;
   color: var(--vscode-charts-green, #89d185);
   background: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -560,7 +560,7 @@ watch(() => props.visible, (visible) => {
 .btn {
   padding: 6px 12px;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;

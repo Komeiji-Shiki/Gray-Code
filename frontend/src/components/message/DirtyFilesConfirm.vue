@@ -114,7 +114,7 @@ function confirmDiscard(): void {
   max-height: 180px;
   overflow: auto;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   padding: 4px 8px;
 }
 

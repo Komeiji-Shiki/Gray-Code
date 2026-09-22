@@ -141,7 +141,7 @@ const emit = defineEmits<{
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .token-count-header {
@@ -163,7 +163,7 @@ const emit = defineEmits<{
   gap: 8px;
   padding: 6px 10px;
   background: var(--vscode-sideBar-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   min-width: 150px;
 }
 
@@ -198,7 +198,7 @@ const emit = defineEmits<{
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);
   border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   cursor: pointer;
 }
@@ -217,7 +217,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

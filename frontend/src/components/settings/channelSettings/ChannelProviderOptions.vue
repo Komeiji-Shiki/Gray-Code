@@ -100,7 +100,7 @@ const emit = defineEmits<{
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
@@ -118,7 +118,7 @@ const emit = defineEmits<{
   margin-top: 12px;
   padding: 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   display: flex;
   flex-direction: column;
   gap: 12px;

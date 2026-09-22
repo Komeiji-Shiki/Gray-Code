@@ -327,7 +327,7 @@ function hourTitle(row: HeatRow, hour: number): string {
   gap: 12px;
   padding: 8px 10px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   border-left: 3px solid var(--vscode-charts-blue, var(--vscode-foreground));
 }
 
@@ -402,7 +402,7 @@ function hourTitle(row: HeatRow, hour: number): string {
   flex: 1;
   height: 8px;
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
 
@@ -410,7 +410,7 @@ function hourTitle(row: HeatRow, hour: number): string {
   height: 100%;
   min-width: 2px;
   background: var(--vscode-charts-blue, var(--vscode-foreground));
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   opacity: 0.85;
 }
 
@@ -478,6 +478,6 @@ function hourTitle(row: HeatRow, hour: number): string {
   aspect-ratio: 1;
   min-width: 4px;
   background: var(--vscode-charts-blue, var(--vscode-foreground));
-  border-radius: 1px;
+  border-radius: var(--gc-radius-xs);
 }
 </style>

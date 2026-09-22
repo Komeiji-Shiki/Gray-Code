@@ -569,7 +569,7 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
 
 .empty-response {
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   border: 1px dashed var(--vscode-panel-border);
   color: var(--vscode-descriptionForeground);
   font-size: 12px;

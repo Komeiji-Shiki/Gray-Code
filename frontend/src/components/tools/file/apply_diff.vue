@@ -696,7 +696,7 @@ onBeforeUnmount(() => {
 .status-badge {
   font-size: 9px;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-weight: 500;
 }
 
@@ -784,7 +784,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 0 6px;
   height: 16px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -839,7 +839,7 @@ onBeforeUnmount(() => {
   position: relative;
   height: 4px;
   background: rgba(128, 128, 128, 0.1);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
 
@@ -873,7 +873,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   border: none;
   transition: opacity 0.12s ease;
 }

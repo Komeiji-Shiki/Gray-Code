@@ -138,7 +138,7 @@ async function handleCopy() {
 .json-viewer {
   margin: 0;
   padding: 12px;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   border: 1px solid var(--vscode-panel-border);
   background: rgba(0, 0, 0, 0.15);
   color: var(--vscode-foreground);
@@ -152,7 +152,7 @@ async function handleCopy() {
 
 .dialog-btn {
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   cursor: pointer;
   border: none;

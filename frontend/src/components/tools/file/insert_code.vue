@@ -427,7 +427,7 @@ onBeforeUnmount(() => {
 .insert-badge {
   font-size: 9px;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   margin-left: var(--spacing-xs, 4px);
   font-weight: 500;
   background: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);

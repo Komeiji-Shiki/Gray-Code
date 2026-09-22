@@ -303,7 +303,7 @@ defineEmits<{
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
@@ -363,7 +363,7 @@ defineEmits<{
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .profile-edit-btn:hover:not(:disabled) {
@@ -387,7 +387,7 @@ defineEmits<{
   align-items: center;
   padding: 1px 7px;
   margin-left: 6px;
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
   color: var(--vscode-badge-foreground, var(--vscode-foreground));
   font-size: 10px;
@@ -404,7 +404,7 @@ defineEmits<{
   padding: 10px 12px;
   background: var(--vscode-textBlockQuote-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .profile-edit-header {
@@ -434,7 +434,7 @@ defineEmits<{
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .profile-edit-clear:hover:not(:disabled) {
@@ -457,7 +457,7 @@ defineEmits<{
 .profile-edit-cancel {
   padding: 4px 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
 }
@@ -486,7 +486,7 @@ defineEmits<{
   gap: 6px;
   margin: 6px 0;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
   border: 1px solid var(--vscode-inputValidation-errorBorder, rgba(255, 0, 0, 0.4));
   color: var(--vscode-errorForeground, #f14c4c);
@@ -504,7 +504,7 @@ defineEmits<{
   gap: 6px;
   padding: 5px 12px;
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   cursor: pointer;
@@ -523,7 +523,7 @@ defineEmits<{
 .preview-result {
   margin-top: 10px;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 

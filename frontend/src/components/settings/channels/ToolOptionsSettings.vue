@@ -111,7 +111,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 .tool-section {
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
@@ -175,7 +175,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   width: 16px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
@@ -215,7 +215,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   margin-left: 24px;
   padding: 8px 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
 }
 
@@ -256,7 +256,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 .coord-examples code {
   padding: 1px 4px;
   background: var(--vscode-editor-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-family: var(--vscode-editor-font-family);
   font-size: 10px;
 }

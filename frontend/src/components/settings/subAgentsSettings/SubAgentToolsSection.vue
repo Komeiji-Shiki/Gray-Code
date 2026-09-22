@@ -140,7 +140,7 @@ function handleModeChange(mode: string) {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-widget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .tools-mode-hint {
@@ -150,7 +150,7 @@ function handleModeChange(mode: string) {
   padding: 8px 12px;
   background: var(--vscode-textBlockQuote-background);
   border-left: 3px solid var(--vscode-textLink-foreground);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
@@ -186,7 +186,7 @@ function handleModeChange(mode: string) {
   padding: 2px 6px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: normal;
 }
@@ -205,7 +205,7 @@ function handleModeChange(mode: string) {
   padding: 10px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: background 0.15s;
 }
 
@@ -255,7 +255,7 @@ function handleModeChange(mode: string) {
   background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
   color: var(--vscode-textLink-foreground);
   border: 1px solid var(--vscode-textLink-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 10px;
   opacity: 0.8;
   flex-shrink: 0;

@@ -119,7 +119,7 @@ const requestedSkills = computed(() => {
   gap: 8px;
   padding: 6px 10px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 

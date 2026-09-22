@@ -66,7 +66,7 @@ defineEmits<{
   gap: 8px;
   padding: 10px 12px;
   background: rgba(255, 200, 0, 0.1);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-editorWarning-foreground);
 }
 
@@ -81,7 +81,7 @@ defineEmits<{
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

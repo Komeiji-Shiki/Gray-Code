@@ -75,7 +75,7 @@ defineProps<{
   padding: 6px 8px;
   background: var(--vscode-editor-inactiveSelectionBackground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .diff-action-file {
@@ -107,7 +107,7 @@ defineProps<{
   position: relative;
   height: 4px;
   background: rgba(128, 128, 128, 0.1);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
 
@@ -143,7 +143,7 @@ defineProps<{
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   border: none;
   transition: opacity 0.12s ease;
 }
@@ -166,7 +166,7 @@ defineProps<{
   align-items: flex-start;
   gap: 6px;
   padding: 6px 8px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
   color: var(--vscode-inputValidation-errorForeground);

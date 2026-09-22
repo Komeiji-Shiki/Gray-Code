@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
 .mode-badge {
   font-size: 9px;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   margin-left: var(--spacing-xs, 4px);
@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
 .status-badge {
   font-size: 9px;
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-weight: 500;
 }
 

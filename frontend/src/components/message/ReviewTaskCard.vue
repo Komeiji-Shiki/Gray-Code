@@ -849,7 +849,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 6px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   cursor: pointer;
@@ -887,7 +887,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
 }
 
@@ -928,7 +928,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   border: 1px solid var(--vscode-panel-border);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
@@ -955,7 +955,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
 }
 
@@ -981,7 +981,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
 }
 
@@ -1093,7 +1093,7 @@ onBeforeUnmount(() => {
 .review-rich-content,
 .review-raw-result {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
   overflow: hidden;
 }
@@ -1130,13 +1130,13 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
 }
 
 .review-issue-badge {
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: var(--gc-radius-pill);
   padding: 2px 8px;
   font-size: 10px;
   background: var(--vscode-badge-background);

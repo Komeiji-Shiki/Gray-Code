@@ -272,7 +272,7 @@ function handleKeydown(event: KeyboardEvent) {
   box-sizing: border-box;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   padding: 4px 8px;
   color: var(--vscode-input-foreground);
   font-size: 12px;
@@ -292,7 +292,7 @@ function handleKeydown(event: KeyboardEvent) {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background 0.1s ease;
 }

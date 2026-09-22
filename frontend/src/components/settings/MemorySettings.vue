@@ -692,7 +692,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 10px 12px;
   background: var(--vscode-textBlockQuote-background);
   border-left: 3px solid var(--vscode-textBlockQuote-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 

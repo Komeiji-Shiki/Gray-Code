@@ -146,7 +146,7 @@ onMounted(() => {
 .list-files-config {
   padding: 12px;
   background: var(--vscode-editor-inactiveSelectionBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
 
@@ -196,7 +196,7 @@ onMounted(() => {
   padding: 4px 8px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   font-family: var(--vscode-editor-font-family);
 }
@@ -234,7 +234,7 @@ onMounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   font-family: var(--vscode-editor-font-family);
 }
@@ -256,7 +256,7 @@ onMounted(() => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background-color 0.15s;

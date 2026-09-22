@@ -227,7 +227,7 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   gap: 5px;
   padding: 2px 8px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 11px;
   cursor: pointer;
   background: var(--vscode-editor-background);
@@ -296,7 +296,7 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   gap: 4px;
   padding: 2px 8px;
   border: 1px dashed var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   background: transparent;
@@ -312,7 +312,7 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
 .task-output-panel {
   margin-top: 4px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editor-background);
   overflow: hidden;
 }

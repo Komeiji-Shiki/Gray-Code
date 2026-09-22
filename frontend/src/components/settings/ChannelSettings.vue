@@ -1105,7 +1105,7 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
 .btn {
   padding: 6px 12px;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 12px;
   cursor: pointer;
 }

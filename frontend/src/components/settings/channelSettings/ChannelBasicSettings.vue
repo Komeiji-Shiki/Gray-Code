@@ -362,7 +362,7 @@ const emit = defineEmits<{
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   font-size: 13px;
 }
 
@@ -403,7 +403,7 @@ const emit = defineEmits<{
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
   cursor: pointer;
 }
 
@@ -445,7 +445,7 @@ const emit = defineEmits<{
   width: 16px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
@@ -508,7 +508,7 @@ const emit = defineEmits<{
   margin-top: 8px;
   padding: 10px 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
 }
 
@@ -548,7 +548,7 @@ const emit = defineEmits<{
 
 .channel-support-table.detailed {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
@@ -557,7 +557,7 @@ const emit = defineEmits<{
   grid-template-columns: 120px repeat(4, 1fr);
   gap: 4px;
   padding: 4px 6px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 .channel-support-table.detailed .channel-row {
@@ -663,7 +663,7 @@ const emit = defineEmits<{
   padding: 8px 10px;
   background: rgba(221, 185, 47, 0.1);
   border: 1px solid var(--vscode-charts-yellow, #ddb92f);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   color: var(--vscode-charts-yellow, #ddb92f);
   line-height: 1.5;
@@ -679,7 +679,7 @@ const emit = defineEmits<{
 .note-item.highlight {
   background: rgba(0, 122, 204, 0.1);
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-bottom: 4px;
 }
 

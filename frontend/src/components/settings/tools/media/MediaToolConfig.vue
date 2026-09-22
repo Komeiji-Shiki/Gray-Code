@@ -142,7 +142,7 @@ onMounted(() => {
 .media-tool-config {
   padding: 12px;
   background: var(--vscode-editor-inactiveSelectionBackground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
 
@@ -226,7 +226,7 @@ onMounted(() => {
   gap: 8px;
   padding: 8px 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
 }

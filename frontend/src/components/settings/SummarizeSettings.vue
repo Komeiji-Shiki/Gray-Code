@@ -535,7 +535,7 @@ onUnmounted(() => {
   padding: 10px 12px;
   background: var(--vscode-textBlockQuote-background);
   border-left: 3px solid var(--vscode-textLink-foreground);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .feature-description .codicon {
@@ -558,7 +558,7 @@ onUnmounted(() => {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .section-title {
@@ -587,7 +587,7 @@ onUnmounted(() => {
   padding: 2px 6px;
   font-size: 10px;
   font-weight: normal;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   margin-left: auto;
 }
 
@@ -626,7 +626,7 @@ onUnmounted(() => {
   color: var(--vscode-textLink-foreground);
   background: transparent;
   border: 1px solid var(--vscode-textLink-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   line-height: 1.4;
   transition: opacity 0.15s, background-color 0.15s;
@@ -651,7 +651,7 @@ onUnmounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -714,7 +714,7 @@ onUnmounted(() => {
   gap: 6px;
   padding: 8px 10px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
@@ -732,7 +732,7 @@ onUnmounted(() => {
   padding: 8px 10px;
   background: var(--vscode-inputValidation-warningBackground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-foreground);
   margin-top: 8px;

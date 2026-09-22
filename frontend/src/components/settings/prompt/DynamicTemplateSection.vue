@@ -94,7 +94,7 @@ const emit = defineEmits<{
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .template-section.dynamic-section {
@@ -125,7 +125,7 @@ const emit = defineEmits<{
 .section-badge {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-weight: 500;
 }
 
@@ -149,7 +149,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -172,7 +172,7 @@ const emit = defineEmits<{
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   resize: vertical;
   outline: none;
 }
@@ -220,7 +220,7 @@ const emit = defineEmits<{
   bottom: 0;
   background-color: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   transition: 0.2s;
 }
 
@@ -258,7 +258,7 @@ const emit = defineEmits<{
   padding: 12px;
   background: var(--vscode-inputValidation-infoBackground);
   border: 1px solid var(--vscode-inputValidation-infoBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-foreground);
 }

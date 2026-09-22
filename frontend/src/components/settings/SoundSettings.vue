@@ -866,7 +866,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-sideBar-background);
 }
 
@@ -905,7 +905,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .group-label {
@@ -974,7 +974,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   gap: 12px;
   padding: 8px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editorWidget-background);
 }
 
@@ -1046,7 +1046,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   box-sizing: border-box;
 }
 
@@ -1063,7 +1063,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 .variable-chip {
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
 }
@@ -1083,7 +1083,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

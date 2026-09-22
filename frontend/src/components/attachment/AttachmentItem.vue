@@ -156,7 +156,7 @@ function handleDownload() {
   align-items: center;
   justify-content: center;
   background: var(--vscode-editor-background);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 

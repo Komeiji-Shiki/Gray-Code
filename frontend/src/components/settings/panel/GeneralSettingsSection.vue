@@ -428,7 +428,7 @@ function onCustomPathInput(event: Event) {
   padding: 8px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .info-text p {
@@ -458,7 +458,7 @@ function onCustomPathInput(event: Event) {
   text-decoration: none;
   font-size: 12px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: background-color 0.15s;
 }
 
@@ -499,7 +499,7 @@ function onCustomPathInput(event: Event) {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .proxy-enable {
@@ -531,7 +531,7 @@ function onCustomPathInput(event: Event) {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -572,7 +572,7 @@ function onCustomPathInput(event: Event) {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -634,7 +634,7 @@ function onCustomPathInput(event: Event) {
   color: var(--vscode-button-foreground);
   border: none;
   padding: 6px 16px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -679,7 +679,7 @@ function onCustomPathInput(event: Event) {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .path-badge {
@@ -687,7 +687,7 @@ function onCustomPathInput(event: Event) {
   padding: 2px 6px;
   font-size: 10px;
   font-weight: 500;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   text-transform: uppercase;
 }
 
@@ -729,7 +729,7 @@ function onCustomPathInput(event: Event) {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -745,7 +745,7 @@ function onCustomPathInput(event: Event) {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -809,7 +809,7 @@ function onCustomPathInput(event: Event) {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -837,7 +837,7 @@ function onCustomPathInput(event: Event) {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
@@ -861,7 +861,7 @@ function onCustomPathInput(event: Event) {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

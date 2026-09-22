@@ -423,7 +423,7 @@ watch(isRunning, (running) => {
 .status-badge {
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-weight: 500;
 }
 

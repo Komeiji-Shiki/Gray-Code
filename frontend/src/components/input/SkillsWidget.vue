@@ -264,7 +264,7 @@ watch(() => chatStore.currentConversationId, async () => {
   text-align: center;
   color: var(--vscode-badge-foreground);
   background: var(--vscode-badge-background);
-  border-radius: 7px;
+  border-radius: var(--gc-radius-md);
 }
 
 .skills-panel {
@@ -275,7 +275,7 @@ watch(() => chatStore.currentConversationId, async () => {
   margin-bottom: 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
   max-height: 300px;
@@ -346,7 +346,7 @@ watch(() => chatStore.currentConversationId, async () => {
   gap: 8px;
   padding: 6px 8px;
   background: var(--vscode-editor-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: background-color 0.15s;
 }
 
@@ -385,7 +385,7 @@ watch(() => chatStore.currentConversationId, async () => {
   width: 14px;
   height: 14px;
   border: 1px solid var(--vscode-checkbox-border, rgba(255, 255, 255, 0.3));
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: var(--vscode-checkbox-background, rgba(255, 255, 255, 0.1));
   display: flex;
   align-items: center;
@@ -438,7 +438,7 @@ watch(() => chatStore.currentConversationId, async () => {
   color: var(--vscode-editorWarning-foreground);
   padding: 1px 4px;
   background: rgba(255, 200, 0, 0.1);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
 

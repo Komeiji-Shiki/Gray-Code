@@ -185,7 +185,7 @@ onMounted(() => {
   padding: 4px 10px;
   font-size: 12px;
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
   color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
   cursor: pointer;
@@ -218,7 +218,7 @@ onMounted(() => {
   padding: 3px 6px;
   font-size: 12px;
   border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
 }
@@ -235,7 +235,7 @@ onMounted(() => {
   padding: 3px 10px;
   font-size: 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   cursor: pointer;

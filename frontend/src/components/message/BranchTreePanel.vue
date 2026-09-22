@@ -551,7 +551,7 @@ function cancelRename(): void {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
   background: var(--vscode-editor-background);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
   user-select: none;
@@ -567,7 +567,7 @@ function cancelRename(): void {
 .branch-tree-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
 .branch-tree-node-count { color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 400; }
 .branch-tree-busy { color: var(--vscode-descriptionForeground); }
-.branch-tree-close { width: 24px; height: 24px; border-radius: 3px; }
+.branch-tree-close { width: 24px; height: 24px; border-radius: var(--gc-radius-xs); }
 .branch-tree-view-tabs {
   display: flex;
   align-items: center;
@@ -576,7 +576,7 @@ function cancelRename(): void {
   border-bottom: 1px solid var(--vscode-panel-border);
   background: color-mix(in srgb, var(--vscode-sideBar-background) 45%, transparent);
 }
-.branch-tree-view-tab { gap: 5px; height: 25px; padding: 0 9px; border-radius: 4px; font-size: 11px; }
+.branch-tree-view-tab { gap: 5px; height: 25px; padding: 0 9px; border-radius: var(--gc-radius-sm); font-size: 11px; }
 .branch-tree-view-tab:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
 .branch-tree-view-tab.selected { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 .branch-tree-view-hint { min-width: 0; margin-left: 6px; overflow: hidden; color: var(--vscode-descriptionForeground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -622,10 +622,10 @@ function cancelRename(): void {
   width: calc(var(--lane-size) - 7px);
   border-top: 1px solid var(--vscode-panel-border);
 }
-.branch-tree-row.branchPoint .branch-tree-node-marker { border-radius: 4px; color: var(--vscode-charts-orange, #e69500); }
+.branch-tree-row.branchPoint .branch-tree-node-marker { border-radius: var(--gc-radius-sm); color: var(--vscode-charts-orange, #e69500); }
 .branch-tree-row.current .branch-tree-node-marker { color: #fff; border-color: var(--vscode-charts-blue, #3794ff); background: var(--vscode-charts-blue, #3794ff); }
 .branch-tree-row-content { min-width: 0; flex: 1; display: flex; align-items: center; border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 62%, transparent); }
-.branch-tree-row-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 7px; padding: 7px 6px; border-radius: 4px; }
+.branch-tree-row-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 7px; padding: 7px 6px; border-radius: var(--gc-radius-sm); }
 .branch-tree-row:not(.active):not(.deleted) .branch-tree-row-main { cursor: pointer; }
 .branch-tree-row:not(.active):not(.deleted) .branch-tree-row-main:hover { background: var(--vscode-list-hoverBackground); }
 .branch-tree-row.current .branch-tree-row-content { background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 9%, transparent); }
@@ -633,7 +633,7 @@ function cancelRename(): void {
 .branch-tree-role { flex-shrink: 0; min-width: 30px; color: var(--vscode-descriptionForeground); font-size: 10px; }
 .branch-tree-preview { min-width: 0; flex: 1; overflow: hidden; color: var(--vscode-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .branch-tree-time { flex-shrink: 0; color: var(--vscode-descriptionForeground); font-size: 10px; }
-.branch-tree-badge { flex-shrink: 0; padding: 0 4px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; font-size: 10px; }
+.branch-tree-badge { flex-shrink: 0; padding: 0 4px; border: 1px solid var(--vscode-panel-border); border-radius: var(--gc-radius-xs); font-size: 10px; }
 .branch-tree-badge-active { color: var(--vscode-charts-blue, #3794ff); border-color: var(--vscode-charts-blue, #3794ff); }
 .branch-tree-badge-candidates { color: var(--vscode-charts-orange, #e69500); border-color: color-mix(in srgb, var(--vscode-charts-orange, #e69500) 70%, transparent); }
 .branch-tree-badge-deleted { color: var(--vscode-descriptionForeground); }
@@ -641,10 +641,10 @@ function cancelRename(): void {
 .branch-tree-row:hover .branch-tree-actions,
 .branch-tree-row.renaming .branch-tree-actions,
 .branch-tree-action.confirming { opacity: 1; }
-.branch-tree-action { width: 23px; height: 23px; border-radius: 3px; }
+.branch-tree-action { width: 23px; height: 23px; border-radius: var(--gc-radius-xs); }
 .branch-tree-action.confirming { color: var(--vscode-testing-iconFailed, #f14c4c); background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, 0.12)); }
 .branch-tree-action:disabled { opacity: 0.45; cursor: default; }
-.branch-tree-rename-input { width: 140px; padding: 3px 6px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font-size: 11px; }
+.branch-tree-rename-input { width: 140px; padding: 3px 6px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: var(--gc-radius-xs); outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font-size: 11px; }
 .branch-tree-rename-input:focus { border-color: var(--vscode-focusBorder, #3794ff); }
 .branch-tree-collapsed-row { height: 27px; display: flex; align-items: center; gap: 7px; color: var(--vscode-descriptionForeground); font-size: 10px; }
 .branch-tree-collapsed-dot { position: relative; z-index: 1; margin-left: -3px; padding: 0 3px; letter-spacing: 1px; background: var(--vscode-editor-background); }
@@ -658,7 +658,7 @@ function cancelRename(): void {
   padding: 0 9px;
   margin-left: auto;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-descriptionForeground);
   background: transparent;
   cursor: pointer;
@@ -717,7 +717,7 @@ function cancelRename(): void {
 .branch-track-row:hover .branch-tree-actions,
 .branch-track-row.renaming .branch-tree-actions,
 .branch-tree-action.confirming { opacity: 1; }
-.workspace-confirm-secondary { width: 100%; margin-top: 10px; padding: 6px 14px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.15)); cursor: pointer; }
+.workspace-confirm-secondary { width: 100%; margin-top: 10px; padding: 6px 14px; border: 1px solid var(--vscode-button-border, transparent); border-radius: var(--gc-radius-sm); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.15)); cursor: pointer; }
 .workspace-confirm-secondary:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.25)); }
 @media (max-width: 520px) {
   .branch-tree-panel-box { left: 6px; width: calc(100vw - 12px); }

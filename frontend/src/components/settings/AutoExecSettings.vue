@@ -287,7 +287,7 @@ onMounted(() => {
   padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .settings-intro .codicon {
@@ -331,7 +331,7 @@ onMounted(() => {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background-color 0.15s;
@@ -388,7 +388,7 @@ onMounted(() => {
   padding: 8px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 13px;
   font-weight: 500;
 }
@@ -403,7 +403,7 @@ onMounted(() => {
   padding: 2px 8px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: 500;
 }
@@ -424,7 +424,7 @@ onMounted(() => {
   padding: 10px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   transition: background-color 0.15s;
 }
 
@@ -461,7 +461,7 @@ onMounted(() => {
   background: var(--vscode-inputValidation-warningBackground);
   color: var(--vscode-inputValidation-warningForeground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 10px;
 }
 
@@ -477,7 +477,7 @@ onMounted(() => {
   background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
   color: var(--vscode-textLink-foreground);
   border: 1px solid var(--vscode-textLink-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 10px;
   opacity: 0.8;
 }
@@ -532,7 +532,7 @@ onMounted(() => {
   background: var(--vscode-textBlockQuote-background);
   color: var(--vscode-textLink-foreground);
   border: 1px solid var(--vscode-textLink-foreground);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: help;
   white-space: nowrap;
@@ -549,7 +549,7 @@ onMounted(() => {
   padding: 8px 10px;
   background: var(--vscode-textBlockQuote-background);
   border-left: 3px solid var(--vscode-textLink-foreground);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .settings-tips .codicon {
