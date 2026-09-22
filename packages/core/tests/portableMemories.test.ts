@@ -86,3 +86,14 @@ test('未放入记忆数据库的便携程序继续只保存配置', async () =>
     expect(existsSync(directory)).toBe(false);
   } finally { await f.cleanup(); }
 });
+
+test('只复制原始附件而遗漏正文范围时明确报错', async () => {
+  const f = await fixture();
+  const id = 'a'.repeat(64), scope = longMemoryScope('owner', 'library', 'real', id);
+  await f.store.putRecord({ namespace: MEMORY_IMPORT_NAMESPACE, id, ownerId: 'owner', value: { id, actorId: 'owner', scopeId: scope.id } });
+  await f.store.close();
+  const local = await PlatformStorage.open(path.join(f.root, 'machine'));
+  const manager = new DesktopPortableMemories(f.data);
+  try { await expect(manager.initialize(host(local))).rejects.toThrow('缺少记忆正文范围'); }
+  finally { await manager.close(); await local.close(); await f.cleanup(); }
+});

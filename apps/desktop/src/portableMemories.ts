@@ -24,10 +24,12 @@ export class DesktopPortableMemories {
     const portable = this.storage = await PlatformStorage.open(this.directory);
     try {
       await upgradeImportedMemoryGraphs(portable);
+      const availableScopes = await portable.longMemoryScopes('owner');
       for (const id of await portable.listRecords(MEMORY_IMPORT_NAMESPACE, 'owner')) {
         const library = await portable.getRecord(MEMORY_IMPORT_NAMESPACE, id) as MemoryImportDataset;
         const scope = longMemoryScope('owner', 'library', 'real', id);
         if (library.actorId !== 'owner' || library.scopeId !== scope.id) throw new Error('便携资料库归属无效。');
+        if (!availableScopes.some(saved => saved.id === scope.id)) throw new Error('便携资料库只有原始档案，缺少记忆正文范围，请恢复完整资料库。');
         this.libraries.push(library);
         await this.transferLibrary(portable, application.storage, library, scope);
         // 本机上已有的修订和删除记录也合入移动副本，旧电脑不会恢复已删除内容。
