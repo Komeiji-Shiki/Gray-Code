@@ -29,11 +29,11 @@ function changeSummary(patch: Partial<BotAutoSummarySettings>) { set('autoSummar
       <label><span>开启自动总结<small>普通总结与笔记方式使用当前会话模型，时间总结保留原有配置。</small></span><input type="checkbox" :checked="summary.enabled" @change="changeSummary({ enabled: ($event.target as HTMLInputElement).checked })" /></label>
       <label><span>总结方式</span><select :value="summary.method ?? 'time'" @change="changeSummary({ method: ($event.target as HTMLSelectElement).value as 'time' | 'summary' | 'notes' })"><option value="summary">普通总结 · 复用完整前缀</option><option value="notes">笔记换窗口 · 按需恢复历史</option><option value="time">时间总结 · 保留原有方式</option></select></label>
       <template v-if="!summary.method || summary.method === 'time'">
-      <label><span>时间规则</span><select :value="summary.trigger" @change="changeSummary({ trigger: ($event.target as HTMLSelectElement).value as 'idle' | 'interval' })"><option value="idle">频道连续没有新消息</option><option value="interval">距上一次总结已过指定时间</option></select></label>
-      <label><span>间隔（分钟）</span><input type="number" min="1" :value="summary.minutes" @change="changeSummary({ minutes: Number(($event.target as HTMLInputElement).value) })" /></label>
-      <label><span>压缩前面多少内容（%）<small>按 Token 估算并对齐完整回合，最近回合和工具配对会保留。</small></span><input type="number" min="1" max="99" :value="summary.percent" @change="changeSummary({ percent: Number(($event.target as HTMLInputElement).value) })" /></label>
+      <label><span>时间规则</span><select :value="summary.trigger" @change="changeSummary({ trigger: ($event.target as HTMLSelectElement).value as 'idle' | 'interval' })"><option value="idle">频道连续没有新消息</option><option value="interval">距上一次总结尝试已过指定时间</option></select></label>
+      <label><span>间隔（分钟）<small>初始为 30 分钟，至少 1 分钟。空闲规则从最后一条消息计时；固定间隔从上次总结尝试计时。调小会更频繁整理并增加模型请求，调大则保留更长的原文上下文。</small></span><input type="number" min="1" :value="summary.minutes" @change="changeSummary({ minutes: Number(($event.target as HTMLInputElement).value) })" /></label>
+      <label><span>压缩前面多少内容（%）<small>初始为 80%，按 Token 估算较早内容的压缩比例。提高可减少后续输入，但更多原文会改用摘要；降低会保留更多原文。实际会对齐完整回合，并保留最近回合与工具配对。</small></span><input type="number" min="1" max="99" :value="summary.percent" @change="changeSummary({ percent: Number(($event.target as HTMLInputElement).value) })" /></label>
       <label class="bot-full"><span>总结提示词<small>留空使用现有自动总结提示词，可指定要保留的事实、约定或长期记忆。</small></span><textarea rows="4" :value="summary.prompt" @input="changeSummary({ prompt: ($event.target as HTMLTextAreaElement).value })" /></label>
-      <p>任务完成后才会总结，原文可恢复。没有新增消息时不重复总结；检查间隔为 30 秒。</p>
+      <p>任务完成后才会总结，原文可恢复。每 30 秒检查一次，满足时间条件后再发起请求。成功后没有新增消息时不重复总结；失败会按配置间隔重试。</p>
       </template>
       <p v-else-if="summary.method === 'summary'">按当前模型渠道的上下文阈值触发。保留完整请求前缀并追加总结指令，成功后仅保留首条用户消息和摘要。原文与附件仍可查看和恢复。</p>
       <p v-else>按当前模型渠道的上下文阈值提醒模型保存笔记并换窗口。模型可随时使用会话内笔记与历史工具恢复所需内容，任务会在新窗口继续。</p>

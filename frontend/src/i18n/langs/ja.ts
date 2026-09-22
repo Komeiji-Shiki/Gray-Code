@@ -2571,17 +2571,17 @@ const ja: LanguageMessages = {
                     scopeAll: 'すべての会話履歴（デフォルト）',
                     scopeSummarized: '要約された内容のみ',
                     maxSearchMatches: '最大一致数',
-                    maxSearchMatchesDesc: '検索ごとに返される最大一致行数',
+                    maxSearchMatchesDesc: '既定は一致行 30 行、範囲は 1～200 です。増やすと分散した情報を探しやすくなりますが、結果も長くなります。特定の約束を探す場合は小さくできます。',
                     searchContextLines: 'コンテキスト行数',
-                    searchContextLinesDesc: '各一致の前後に表示されるコンテキスト行数',
+                    searchContextLinesDesc: '既定は一致行の前後各 3 行です。0 は一致行のみ、最大 20 行。増やすと文脈を確認しやすくなりますが、結果の量も増えます。',
                     readSection: '読み取りモード',
                     maxReadLines: '最大読み取り行数',
-                    maxReadLinesDesc: '読み取りリクエストごとに返される最大行数',
+                    maxReadLinesDesc: '既定は 1 回 300 行、範囲は 10～2000 です。小さくすると分割して読め、大きくすると呼び出し回数を減らせます。複数行の結果には総文字数上限も適用されます。',
                     outputSection: '出力制限',
                     maxResultChars: '結果の最大文字数',
-                    maxResultCharsDesc: '複数行読み取り時の結果の最大総文字数',
+                    maxResultCharsDesc: '既定は 30000 文字、範囲は 1000～200000 です。検索と複数行の読み取りに適用されます。減らすとコンテキストを節約できますが、追加の読み取りが必要になります。単一行の指定では全文を返します。',
                     lineDisplayLimit: '行表示文字制限',
-                    lineDisplayLimitDesc: '1行あたりの最大表示文字数。超過分は省略されます（単一行 read で全文取得可能）'
+                    lineDisplayLimitDesc: '既定は 1 行 500 文字、範囲は 100～5000 です。小さくすると長いログを一覧しやすく、大きくすると詳細を残せます。省略部分は単一行 read で取得できます。'
                 },
                 terminal: {
                     executeCommand: {

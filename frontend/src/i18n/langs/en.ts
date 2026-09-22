@@ -2571,17 +2571,17 @@ const en: LanguageMessages = {
                     scopeAll: 'All conversation history (Default)',
                     scopeSummarized: 'Summarized content only',
                     maxSearchMatches: 'Max Matches',
-                    maxSearchMatchesDesc: 'Maximum number of matching lines returned per search',
+                    maxSearchMatchesDesc: 'Default: 30 matching lines; range: 1–200. Increase to find scattered details, with longer tool results. Lower it for focused lookups.',
                     searchContextLines: 'Context Lines',
-                    searchContextLinesDesc: 'Number of context lines shown before and after each match',
+                    searchContextLinesDesc: 'Default: 3 lines before and after each match; 0 shows matching lines only, up to 20. More context also increases result size.',
                     readSection: 'Read Mode',
                     maxReadLines: 'Max Read Lines',
-                    maxReadLinesDesc: 'Maximum number of lines returned per read request',
+                    maxReadLinesDesc: 'Default: 300 lines per read; range: 10–2000. Smaller pages support focused reading; larger pages need fewer calls. Multi-line output also follows the total character limit.',
                     outputSection: 'Output Limits',
                     maxResultChars: 'Max Result Characters',
-                    maxResultCharsDesc: 'Maximum total characters in the result (multi-line read)',
+                    maxResultCharsDesc: 'Default: 30000 characters; range: 1000–200000, for search and multi-line reads. Lower values save context but may require further reads. A single-line read returns the entire line.',
                     lineDisplayLimit: 'Line Display Limit',
-                    lineDisplayLimitDesc: 'Max display characters per line; longer lines are truncated (use single-line read for full content)'
+                    lineDisplayLimitDesc: 'Default: 500 characters per line; range: 100–5000. Lower values make long logs easier to browse; higher values retain more detail. Use single-line read to retrieve omitted content.'
                 },
                 terminal: {
                     executeCommand: {

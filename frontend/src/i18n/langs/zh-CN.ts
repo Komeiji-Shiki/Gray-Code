@@ -2573,17 +2573,17 @@ const zhCN = {
                     scopeAll: '全部对话历史（默认）',
                     scopeSummarized: '仅已总结的内容',
                     maxSearchMatches: '最大匹配数',
-                    maxSearchMatchesDesc: '每次搜索返回的最大匹配行数',
+                    maxSearchMatchesDesc: '默认 30 条匹配行，范围 1～200。增大便于查找分散线索，但单次结果更长；只查具体约定时可降低。',
                     searchContextLines: '上下文行数',
-                    searchContextLinesDesc: '每个匹配前后显示的上下文行数',
+                    searchContextLinesDesc: '默认在匹配行前后各显示 3 行，0 只显示匹配行，最多 20。增加可看清上下文，也会增大工具结果。',
                     readSection: '读取模式',
                     maxReadLines: '最大读取行数',
-                    maxReadLinesDesc: '每次读取请求返回的最大行数',
+                    maxReadLinesDesc: '默认每次 300 行，范围 10～2000。较小值适合分段读取，较大值减少翻页次数；多行结果仍受总字符上限限制。',
                     outputSection: '输出限制',
                     maxResultChars: '结果最大字符数',
-                    maxResultCharsDesc: '多行读取时结果的最大总字符数',
+                    maxResultCharsDesc: '默认 30000 字符，范围 1000～200000，限制搜索和多行读取的总输出。降低可节省本轮上下文，但需继续读取；指定单行读取会返回该行全文。',
                     lineDisplayLimit: '单行显示字符限制',
-                    lineDisplayLimitDesc: '每行最大显示字符数，超出部分省略（可通过单行 read 获取完整内容）'
+                    lineDisplayLimitDesc: '默认每行显示 500 字符，范围 100～5000。较小值便于浏览长日志，较大值保留更多细节；省略的内容可通过单行 read 完整读取。'
                 },
                 terminal: {
                     executeCommand: {
