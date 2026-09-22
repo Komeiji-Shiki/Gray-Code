@@ -72,4 +72,29 @@ describe('MCP tool result and schema preservation', () => {
         expect(mcpResultToToolResult({ success: true, content: [{ type: 'resource', text: 'legacy' }] }).data).toBe('legacy');
         expect(mcpResultToToolResult({ success: false, isError: true, content: [{ type: 'text', text: 'tool failed' }] })).toEqual({ success: false, error: 'tool failed' });
     });
+
+    test('只去掉结构化结果的重复 JSON 文本，保留字符串空白和原始数字精度', () => {
+        const structuredContent = { files: ['one file.ts', 'a "quoted" name.ts'], count: 2 };
+        expect(mcpResultToToolResult({ success: true, structuredContent,
+            content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }] }).data).toEqual({ structuredContent });
+        for (const text of ['{"value":9007199254740993}', '{"value":1 0}', 'Result: {"value":10}']) {
+            const details = { value: text.includes('9007') ? 9007199254740992 : 10 };
+            expect(mcpResultToToolResult({ success: true, structuredContent: details, content: [{ type: 'text', text }] }).data)
+                .toEqual({ text, structuredContent: details });
+        }
+    });
+
+    test('工具报错仍保留结构化详情、额外说明和附件', () => {
+        const result = mcpResultToToolResult({ success: false, isError: true, error: 'Capture failed',
+            structuredContent: { code: 'WINDOW_CLOSED', retryable: false },
+            content: [{ type: 'text', text: 'The selected window no longer exists.' }, { type: 'image', mimeType: 'image/png', data: 'c2NyZWVu' }] });
+        expect(result).toEqual({ success: false, error: 'Capture failed',
+            data: { text: 'The selected window no longer exists.', structuredContent: { code: 'WINDOW_CLOSED', retryable: false } },
+            multimodal: [{ mimeType: 'image/png', data: 'c2NyZWVu', name: undefined }] });
+        const structuredContent = { code: 'INVALID_INPUT', message: 'Provide a window ID.' };
+        expect(mcpResultToToolResult({ success: false, isError: true, structuredContent,
+            content: [{ type: 'text', text: JSON.stringify(structuredContent) }] })).toMatchObject({
+            success: false, data: { structuredContent }, error: 'MCP tool returned an error'
+        });
+    });
 });

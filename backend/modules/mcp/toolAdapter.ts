@@ -79,26 +79,7 @@ function convertInputSchemaToParameters(inputSchema?: McpToolSchema): ToolDeclar
  * @returns 标准工具结果
  */
 export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult {
-    // 处理错误情况
-    if (mcpResult.isError || !mcpResult.success) {
-        const errorText = mcpResult.error ||
-            mcpResult.content
-                ?.filter(c => c.type === 'text')
-                .map(c => c.text)
-                .join('\n') ||
-            'Unknown error';
-        
-        return {
-            success: false,
-            error: errorText,
-            ...(mcpResult.executionStatus ? { data: {
-                executionStatus: mcpResult.executionStatus,
-                ...(mcpResult.inputRequired ? { inputRequired: mcpResult.inputRequired } : {}),
-            } } : {}),
-        };
-    }
-
-    // 处理成功响应
+    // 成功和失败都可能包含截图、来源和结构化详情，统一读取后再标记结果状态。
     const textContents: string[] = [];
     const multimodalData: MultimodalData[] = [];
 
@@ -144,13 +125,37 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
         }
     }
 
+    const text = textContents.join('\n');
+    const mirroredJson = mcpResult.structuredContent !== undefined && textContents.length === 1
+        && mcpResult.content?.some(content => content.type === 'text' && content.text === text)
+        && isMirroredJsonText(text, mcpResult.structuredContent);
+    if (mcpResult.isError || !mcpResult.success) {
+        const error = mcpResult.error || (!mirroredJson && text) || (mirroredJson ? 'MCP tool returned an error' : 'Unknown error');
+        const details: Record<string, unknown> = {};
+        if (mcpResult.executionStatus) details.executionStatus = mcpResult.executionStatus;
+        if (mcpResult.inputRequired) details.inputRequired = mcpResult.inputRequired;
+        if (mcpResult.structuredContent !== undefined) details.structuredContent = mcpResult.structuredContent;
+        if (text && text !== error && !mirroredJson) details.text = text;
+        return { success: false, error,
+            ...(Object.keys(details).length ? { data: details } : {}),
+            ...(multimodalData.length ? { multimodal: multimodalData } : {}) };
+    }
+
     return {
         success: true,
         data: mcpResult.structuredContent !== undefined
             ? (textContents.length > 0
-                ? { text: textContents.join('\n'), structuredContent: mcpResult.structuredContent }
+                ? { ...(!mirroredJson ? { text } : {}), structuredContent: mcpResult.structuredContent }
                 : mcpResult.structuredContent)
-            : (textContents.length > 0 ? textContents.join('\n') : undefined),
+            : (textContents.length > 0 ? text : undefined),
         multimodal: multimodalData.length > 0 ? multimodalData : undefined
     };
+}
+
+/** 只忽略字符串外的排版空白，不通过解析后的数值比较丢掉原文数字精度。 */
+function isMirroredJsonText(text: string, value: unknown): boolean {
+    try {
+        JSON.parse(text);
+        return text.replace(/("(?:[^"\\]|\\.)*")|\s+/g, (_match, quoted: string | undefined) => quoted ?? '') === JSON.stringify(value);
+    } catch { return false; }
 }

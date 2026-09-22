@@ -59,6 +59,13 @@ test('MCP configuration drafts do not spawn processes; committed stdio discovery
     const history = await app.storage.readFullHistory(chat.id);
     expect(history.messages.find(message => message.isFunctionResponse)?.parts[0]).toMatchObject({ functionResponse: { response: { success: true, data: { structuredContent: { echoed: 'stdio works' } } } } });
     expect(history.messages.find(message => message.isFunctionResponse)?.parts[1]).toMatchObject({ inlineData: { mimeType: 'application/octet-stream', data: Buffer.from('fixture binary').toString('base64') } });
+    toolText = 'fixture error';
+    const failedTool = await start();
+    expect((await app.runtime.wait(failedTool.id))?.status).toBe('completed');
+    const errorResponse = (await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse).at(-1)!;
+    expect(errorResponse.parts[0]).toMatchObject({ functionResponse: { response: { success: false,
+      data: { structuredContent: { code: 'WINDOW_CLOSED', retryable: false } } } } });
+    expect(errorResponse.parts[1]).toMatchObject({ inlineData: { mimeType: 'image/png' } });
     // Discord 捕获的配置同样保留 MCP 缺省自动执行，避免桌面正常而 Bot 再次请求确认。
     toolText = 'bot default';
     const bot = await captureBotAgent(app, 'owner', chat.id, { agentId: 'default', toolsEnabled: true });
@@ -92,7 +99,7 @@ test('MCP configuration drafts do not spawn processes; committed stdio discovery
     const pending = await start(); await started; await app.runtime.cancel(pending.id, 'owner');
     expect((await app.runtime.wait(pending.id))?.status).toBe('cancelled');
     expect(captured.every(names => names.includes('mcp__fixture__echo'))).toBe(true);
-    expect((await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse)).toHaveLength(4);
+    expect((await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse)).toHaveLength(5);
     await call('disconnectMcpServer', { serverId: 'fixture' });
     expect(app.mcp.names()).toEqual([]);
   } finally { await app.close(); await f.cleanup(); }
