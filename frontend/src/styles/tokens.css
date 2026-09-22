@@ -23,12 +23,12 @@
   --gc-font-weight-medium: 500;
   --gc-font-weight-semibold: 600;
 
-  /* Shape and control density. */
-  --gc-radius-xs: 2px;
-  --gc-radius-sm: 4px;
-  --gc-radius-md: 6px;
-  --gc-radius-lg: 8px;
-  --gc-radius-pill: 999px;
+  /* 控件、卡片和标签统一采用直角，保持平面布局。 */
+  --gc-radius-xs: 0;
+  --gc-radius-sm: 0;
+  --gc-radius-md: 0;
+  --gc-radius-lg: 0;
+  --gc-radius-pill: 0;
   --gc-control-height-sm: 24px;
   --gc-control-height-md: 28px;
   --gc-control-height-lg: 32px;

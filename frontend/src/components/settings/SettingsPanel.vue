@@ -628,6 +628,13 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
   min-height: min-content;
 }
 
+/* 数值影响是配置正文的一部分，统一可读字号，不沿用元数据小字。 */
+.settings-main :deep(.field-hint),
+.settings-main :deep(.form-hint) {
+  font-size: var(--gc-font-size-body);
+  line-height: var(--gc-line-height-normal);
+}
+
 .settings-section h4 {
   margin: 0 0 4px 0;
   font-size: var(--gc-font-size-title);

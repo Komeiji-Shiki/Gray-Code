@@ -144,6 +144,7 @@ const { t } = useI18n()
 }
 
 .global-config {
+  container-type: inline-size;
   margin-bottom: 16px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--vscode-panel-border);
@@ -154,7 +155,7 @@ const { t } = useI18n()
    双类选择器提升特异性（.form-row 在其后定义，单类会被它的 display:flex 覆盖） */
 .global-config .global-config-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -182,6 +183,10 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .global-config input[type="number"] {
   width: 100px;
+}
+
+@container (max-width: 480px) {
+  .global-config .global-config-row { grid-template-columns: 1fr; }
 }
 
 </style>

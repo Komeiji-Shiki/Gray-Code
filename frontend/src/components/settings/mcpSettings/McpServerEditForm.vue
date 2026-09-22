@@ -313,7 +313,7 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
   height: 28px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-foreground);
   cursor: pointer;
 }
@@ -363,7 +363,7 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -420,7 +420,7 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
   font-size: 12px;
   padding: 6px 10px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-descriptionForeground);
 }
 
@@ -464,7 +464,7 @@ input[type="number"] {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background-color 0.15s;
@@ -493,7 +493,7 @@ input[type="number"] {
   margin-bottom: 16px;
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-errorForeground);
 }
@@ -515,7 +515,7 @@ input[type="number"] {
   padding: 8px 16px;
   font-size: 13px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }

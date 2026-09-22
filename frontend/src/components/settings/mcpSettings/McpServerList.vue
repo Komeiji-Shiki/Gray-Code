@@ -197,7 +197,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background-color 0.15s;
@@ -276,7 +276,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   align-items: center;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
+  border-radius: var(--gc-radius-md);
   padding: 12px 16px;
   transition: border-color 0.15s;
 }
@@ -331,7 +331,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   padding: 2px 6px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   font-size: 10px;
   font-weight: 500;
 }
@@ -359,7 +359,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   height: 28px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-foreground);
   cursor: pointer;
   opacity: 0.7;
@@ -394,7 +394,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   font-size: 11px;
   padding: 4px 8px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   color: var(--vscode-foreground);
   display: inline-block;
   max-width: 100%;
@@ -417,7 +417,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   padding: 2px 8px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-  border-radius: 10px;
+  border-radius: var(--gc-radius-pill);
 }
 
 .capability-badge .codicon {
@@ -432,7 +432,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   padding: 8px;
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-errorForeground);
 }
@@ -445,7 +445,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   margin-bottom: 16px;
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   font-size: 12px;
   color: var(--vscode-errorForeground);
 }
