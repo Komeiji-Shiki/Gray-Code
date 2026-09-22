@@ -52,3 +52,27 @@ test.each(cases)('$operation JPEG 原图直接生成 $format，尺寸、内容�
   expect(result.multimodal).toEqual([{ mimeType: format === 'jpg' ? 'image/jpeg' : `image/${format}`, data: saved!.toString('base64'), name: output }]);
   expect((result.data as { paths: string[] }).paths).toEqual([output]);
 });
+
+test.each(['crop', 'resize', 'rotate'] as const)('%s 编码期间取消后不保存文件', async operation => {
+  const controller = new AbortController(), saveImage = jest.fn();
+  const host: MediaToolHost = {
+    getAllWorkspaces: () => [], readImageFile: async () => ({ data: source, mimeType: 'image/jpeg', ext: '.jpg' }), saveImage,
+    tasks: { getTasksByType: () => [], generateTaskId: () => 'cancel-image', cancelTask: () => ({ success: false }),
+      registerTask: jest.fn(), unregisterTask: jest.fn(), onTaskEventByType: () => () => {} },
+  };
+  const cancelAfterEncoding = (input: Buffer) => {
+    const pipeline = sharp(input);
+    const encode = pipeline.toBuffer.bind(pipeline) as (options?: object) => Promise<unknown>;
+    Object.assign(pipeline, { toBuffer: async (options?: object) => { const result = await encode(options); controller.abort(); return result; } });
+    return pipeline;
+  };
+  const tool = operation === 'crop' ? createCropImageRuntime(host).createCropImageTool()
+    : operation === 'resize' ? createResizeImageRuntime(host).createResizeImageTool() : createRotateImageRuntime(host).createRotateImageTool();
+  const base = { image_path: 'source.jpg', output_path: 'cancelled.png' };
+  const args = operation === 'crop' ? { ...base, x1: 0, y1: 0, x2: 1000, y2: 1000 }
+    : operation === 'resize' ? { ...base, width: 48, height: 36 } : { ...base, angle: 33 };
+  const result = await withDependencyRuntime({ getDependencyPath: () => null, load: async () => cancelAfterEncoding },
+    () => tool.handler(args, { abortSignal: controller.signal }));
+  expect(result).toMatchObject({ success: false, cancelled: true });
+  expect(saveImage).not.toHaveBeenCalled();
+});

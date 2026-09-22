@@ -256,6 +256,9 @@ async function executeRotateTask(
             };
         }
 
+        // 编码期间仍可能收到取消请求；交给宿主写入前再次确认。
+        abortSignal?.throwIfAborted();
+
         // 保存结果
         await saveImage(finalBuffer, output_path, context, 'rotate_image');
 
