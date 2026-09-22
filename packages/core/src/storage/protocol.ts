@@ -31,10 +31,11 @@ export interface StorageOperations {
   longMemoryWrite: { input: LongMemoryWrite; output: LongMemoryWriteResult };
   longMemoryRecall: { input: LongMemoryQuery; output: LongMemoryRecall };
   longMemoryTopics: { input: import('@graycode/contracts').LongMemoryTopicQuery; output: import('@graycode/contracts').LongMemoryTopicPage };
+  longMemoryBrowse: { input: import('@graycode/contracts').LongMemoryBrowse; output: import('@graycode/contracts').LongMemoryBrowseResult };
   longMemoryRead: { input: LongMemoryRead; output: LongMemoryReadResult };
   longMemoryGraph: { input: { scope: LongMemoryScope; id: string; version?: number; limit?: number }; output: LongMemoryGraph };
   longMemoryRevisions: { input: { scope: LongMemoryScope; id: string }; output: LongMemoryRecord[] };
-  longMemoryInspect: { input: {scope:LongMemoryScope;id:string}; output:{revisions:LongMemoryRecord[];sources:import('@graycode/contracts').LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number} };
+  longMemoryInspect: { input: {scope:LongMemoryScope;id:string;version?:number}; output:{revisions:LongMemoryRecord[];sources:import('@graycode/contracts').LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number} };
   longMemorySources: {input:{scope:LongMemoryScope;references:Array<{id:string;version:number}>};output:import('@graycode/contracts').LongMemorySource[]};
   longMemoryRecordVersions: {input:{scope:LongMemoryScope;references:Array<{id:string;version?:number}>};output:LongMemoryRecord[]};
   longMemoryImpact: { input: { scope: LongMemoryScope; kind: 'source'|'record'; id: string; action: 'delete'|'retract' }; output: Array<{ kind:'source'|'record';id:string }> };

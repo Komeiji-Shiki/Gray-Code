@@ -4,7 +4,7 @@ import type {LongMemoryArchive,LongMemoryJob,LongMemoryPolicy,LongMemoryRecall,L
 import {call,subscribe} from '../api';
 import {state} from '../state';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
-import type { LongMemoryTopicPage } from '@graycode/contracts';
+import type { LongMemoryTopicPage, LongMemoryBrowseResult, LongMemoryPreview } from '@graycode/contracts';
 import MemoryGraph from './MemoryGraph.vue';
 import MemoryImports from './MemoryImports.vue';
 import MemorySourceFiles from './MemorySourceFiles.vue';
@@ -18,6 +18,12 @@ const options=ref<Options>(),scopeId=ref(''),section=ref<'records'|'organize'|'j
 const searchText=ref(''),appliedQuery=ref(''),topicPath=ref<string[]>([]),kind=ref('');
 const result=ref<LongMemoryRecall>(),topics=ref<LongMemoryTopic[]>([]),detail=ref<Detail>(),jobs=ref<LongMemoryJob[]>([]);
 const topicCursor=ref<string>();
+const browseResult=ref<LongMemoryBrowseResult>(),recordCursor=ref<string>(),recordTrail=ref<Array<string|undefined>>([]);
+const searchMode=ref<'related'|'list'>('related'),filterConfidence=ref(''),filterStatus=ref<'current'|'inactive'|'all'>('current');
+const relatedSearch=computed(()=>searchMode.value==='related'&&!!appliedQuery.value.trim());
+const visibleRecords=computed<Array<LongMemoryPreview&{reasons:string[];conflicts:string[]}>>(()=>result.value
+  ?result.value.hits.map(hit=>({...hit.record,preview:hit.record.text,moreText:false,active:true,reasons:hit.reasons,conflicts:hit.conflicts}))
+  :(browseResult.value?.items??[]).map(item=>({...item,reasons:[],conflicts:[]})));
 const error=ref(''),notice=ref(''),busy=ref(false),loading=ref(false),changedElsewhere=ref(false);
 const editing=ref(false),editingScopeId=ref(''),editingId=ref(''),editingVersion=ref(0),editorBaseline=ref('');
 const pendingNavigation=ref<(()=>Promise<void>|void)|null>(null),pendingClose=ref(false);
@@ -31,7 +37,7 @@ const graphSource=ref<LongMemorySource>();
 let graphEpoch=0;
 const embedding=reactive({url:'',model:'',credentialRef:undefined as string|undefined,dimensions:'' as string,queryPrefix:'',documentPrefix:''});
 const form=reactive({text:'',kind:'fact' as LongMemoryRecord['kind'],subject:'',topic:'',attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed' as LongMemoryRecord['confidence']});
-let epoch=0,editorEpoch=0,refreshTimer:ReturnType<typeof setTimeout>|undefined;
+let epoch=0,editorEpoch=0,refreshTimer:ReturnType<typeof setTimeout>|undefined,refreshRecords=false;
 const kinds:Record<string,string>={fact:'事实',preference:'偏好',experience:'经历与经验',project:'项目知识',procedure:'操作方法',event:'事件',summary:'分层摘要'};
 const origins:Record<string,string>={user:'用户陈述',model:'模型提炼',tool:'工具结果',fiction:'角色剧情',import:'导入资料'};
 const statuses:Record<string,string>={pending:'等待中',running:'正在整理',completed:'完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'};
@@ -41,6 +47,7 @@ const draftPolicy=()=>({...policy,automaticScopes:[...policy.automaticScopes??[]
 const editorDirty=computed(()=>editing.value&&JSON.stringify(form)!==editorBaseline.value);
 const policyDirty=computed(()=>!!options.value&&(JSON.stringify(draftPolicy())!==policyBaseline.value||!!embeddingCredential.value));
 const dirty=computed(()=>editorDirty.value||policyDirty.value);
+const historicalRevision=computed(()=>!!editingId.value&&editingVersion.value!==detail.value?.revisions[0]?.version);
 const scopeLabel=(id:string)=>options.value?.scopes.find(scope=>scope.id===id)?.label??id;
 const rpc=<T,>(method:string,params:Record<string,unknown>={})=>call<T>(method,{conversationId:state.conversationId??undefined,workspaceId:state.workspaceId||undefined,...params});
 const date=(value?:number)=>value===undefined?'':new Date(value).toISOString().slice(0,16);
@@ -58,16 +65,34 @@ async function perform(action:()=>Promise<void>){
   if(busy.value)return;busy.value=true;error.value='';notice.value='';
   try{await action();}catch(cause){error.value=(cause as Error).message;}finally{busy.value=false;}
 }
+async function requestRecords(cursor?:string){
+  const common={scopeId:scopeId.value,text:appliedQuery.value||undefined,topic:topicPath.value};
+  if(relatedSearch.value)return {mode:'related' as const,value:await rpc<LongMemoryRecall>('memory.search',{...common,kinds:kind.value?[kind.value]:undefined})};
+  return {mode:'list' as const,value:await rpc<LongMemoryBrowseResult>('memory.browse',{...common,kind:kind.value||undefined,confidence:filterConfidence.value||undefined,status:filterStatus.value,limit:40,cursor})};
+}
+function applyRecords(found:Awaited<ReturnType<typeof requestRecords>>){
+  if(found.mode==='related'){result.value=found.value;browseResult.value=undefined;}else{browseResult.value=found.value;result.value=undefined;}
+  selectedIds.value=selectedIds.value.filter(id=>visibleRecords.value.some(record=>record.id===id&&record.active));
+}
+async function loadRecordPage(direction:'next'|'previous'){
+  const cursor=direction==='next'?browseResult.value?.nextCursor:recordTrail.value.at(-1);
+  const current=++epoch,found=await requestRecords(cursor);if(current!==epoch)return;
+  if(direction==='next')recordTrail.value.push(recordCursor.value);else recordTrail.value.pop();
+  recordCursor.value=cursor;applyRecords(found);
+}
+async function refreshJobs(){
+  const scope=scopeId.value;if(!scope)return;const list=await rpc<LongMemoryJob[]>('memory.jobs',{scopeId:scope});
+  if(scope===scopeId.value)jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
+}
 async function reload(){
   if(!scopeId.value)return;const current=++epoch,scope=scopeId.value;loading.value=true;topicCursor.value=undefined;
   try{
     const [found,directory,list]=await Promise.all([
-      rpc<LongMemoryRecall>('memory.search',{scopeId:scope,text:appliedQuery.value||undefined,topic:topicPath.value,kinds:kind.value?[kind.value]:undefined}),
+      requestRecords(),
       rpc<LongMemoryTopicPage>('memory.topics',{scopeId:scope,topic:topicPath.value}),
       rpc<LongMemoryJob[]>('memory.jobs',{scopeId:scope}),
     ]);
-    if(current!==epoch)return;result.value=found;topics.value=directory.topics;topicCursor.value=directory.nextCursor;jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
-    selectedIds.value=selectedIds.value.filter(id=>found.hits.some(hit=>hit.record.id===id));
+    if(current!==epoch)return;applyRecords(found);recordCursor.value=undefined;recordTrail.value=[];topics.value=directory.topics;topicCursor.value=directory.nextCursor;jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
   }finally{if(current===epoch)loading.value=false;}
 }
 async function loadOptions(){
@@ -78,9 +103,10 @@ async function loadOptions(){
 }
 function resetEditor(){editorEpoch++;editing.value=false;detail.value=undefined;editingId.value='';deleteImpact.value=null;changedElsewhere.value=false;graphSource.value=undefined;}
 async function navigate(action:()=>Promise<void>|void){if(busy.value)return;if(editorDirty.value){pendingNavigation.value=action;return;}await perform(async()=>{await action();});}
-async function choose(id:string){
-  const current=++editorEpoch,scope=scopeId.value,data=await rpc<Detail>('memory.get',{scopeId:scope,id});if(current!==editorEpoch)return;if(!data.revisions.length){resetEditor();return;}
-  const record=data.revisions[0];detail.value=data;editingScopeId.value=scope;editingId.value=id;editingVersion.value=record.version;editing.value=true;changedElsewhere.value=false;deleteImpact.value=null;
+async function choose(id:string,version?:number){
+  const current=++editorEpoch,scope=scopeId.value,data=await rpc<Detail>('memory.get',{scopeId:scope,id,version});if(current!==editorEpoch)return;if(!data.revisions.length){resetEditor();return;}
+  const record=version===undefined?data.revisions[0]:data.revisions.find(item=>item.version===version);if(!record)throw new Error('这次修订已经不可读取，请刷新列表。');
+  detail.value=data;editingScopeId.value=scope;editingId.value=id;editingVersion.value=record.version;editing.value=true;changedElsewhere.value=false;deleteImpact.value=null;
   Object.assign(form,{text:record.text,kind:record.kind,subject:record.subject,topic:record.topic.join(' / '),attribute:record.attribute??'',value:record.value??'',validFrom:date(record.validFrom),validTo:date(record.validTo),eventAt:date(record.eventAt),confidence:record.confidence});
   editorBaseline.value=JSON.stringify(form);
   graphSource.value=undefined;graphLimit.value=40;
@@ -92,13 +118,15 @@ async function loadMoreTopics(){
   if(current!==epoch)return;topics.value.push(...page.topics);topicCursor.value=page.nextCursor;
   if(!page.topics.length&&page.requiredTokenBudget)throw new Error('主题名称或摘要超过当前目录预算，请先缩小范围。');
 }
-async function browseImport(id:string){await navigate(async()=>{resetEditor();scopeId.value=id;section.value='records';topicPath.value=[];searchText.value='';appliedQuery.value='';kind.value='';await loadOptions();});}
+async function latestRevision(){const scope=editingScopeId.value,id=editingId.value;await navigate(async()=>{scopeId.value=scope;await choose(id);});}
+async function browseImport(id:string){await navigate(async()=>{resetEditor();scopeId.value=id;section.value='records';topicPath.value=[];searchText.value='';appliedQuery.value='';kind.value='';filterConfidence.value='';filterStatus.value='all';searchMode.value='list';await loadOptions();});}
 function create(){
   resetEditor();editing.value=true;editingScopeId.value=scopeId.value;editorView.value='edit';
   Object.assign(form,{text:'',kind:'fact',subject:'',topic:topicPath.value.join(' / '),attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed'});editorBaseline.value=JSON.stringify(form);
 }
 async function save(){
-  const original=detail.value?.revisions[0];
+  if(historicalRevision.value)throw new Error('请先切换到最新修订后再编辑。');
+  const original=detail.value?.revisions.find(record=>record.version===editingVersion.value);
   const params={scopeId:editingScopeId.value,text:form.text,kind:form.kind,subject:form.subject||undefined,topic:topicParts(form.topic),attribute:form.attribute||(editingId.value?null:undefined),value:form.value||(editingId.value?null:undefined),
     validFrom:savedDate(form.validFrom,original?.validFrom),validTo:savedDate(form.validTo,original?.validTo)??(editingId.value?null:undefined),eventAt:savedDate(form.eventAt,original?.eventAt)??(editingId.value?null:undefined),confidence:form.confidence};
   const saved=await rpc<{records:LongMemoryRecord[]}>(editingId.value?'memory.revise':'memory.remember',{...params,...editingId.value?{id:editingId.value,expectedVersion:editingVersion.value}:{}});
@@ -143,14 +171,15 @@ async function loadGraph(){
 async function selectGraphNode(node:LongMemoryGraphNode){
   if(node.type==='source'){graphSource.value=detail.value?.sources.find(source=>source.id===node.id&&source.version===node.version);return;}
   if(node.id===editingId.value&&node.version===editingVersion.value){editorView.value='edit';return;}
-  await navigate(async()=>{scopeId.value=node.scopeId;await choose(node.id);});
+  await navigate(async()=>{scopeId.value=node.scopeId;await choose(node.id,node.version);});
 }
 watch([editorView,editingId,editingVersion,graphLimit],()=>{void loadGraph();});
 let unsubscribe=()=>{};
 onMounted(()=>{void perform(loadOptions);unsubscribe=subscribe(event=>{
   if(['memory.changed','memory.indexed','memory.job.changed'].includes(event.type)&&(!event.scopeId||event.scopeId===scopeId.value)){
     if(editingId.value&&event.type==='memory.changed')changedElsewhere.value=true;
-    if(refreshTimer)clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{void reload().catch(cause=>error.value=(cause as Error).message);},180);
+    refreshRecords ||= event.type==='memory.changed'||event.type==='memory.indexed'&&relatedSearch.value;
+    if(refreshTimer)clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{const reloadRecords=refreshRecords;refreshRecords=false;void (reloadRecords?reload():refreshJobs()).catch(cause=>error.value=(cause as Error).message);},180);
   }
 });});
 onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTimer)clearTimeout(refreshTimer);});
@@ -158,15 +187,19 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
 <template>
   <section class="memory-library" aria-label="长期记忆">
     <div class="memory-toolbar"><label v-if="section!=='imports'">范围<select v-model="scopeId" :disabled="busy" aria-label="记忆范围" @change="topicPath=[];selectedIds=[];perform(reload)"><option v-for="scope in options?.scopes" :key="scope.id" :value="scope.id">{{scope.label}}</option></select></label>
-      <nav aria-label="记忆管理"><button :aria-pressed="section==='records'" @click="section='records'">浏览与编辑</button><button :aria-pressed="section==='imports'" @click="section='imports'">导入资料库</button><button :aria-pressed="section==='organize'" @click="section='organize'">整理方式</button><button :aria-pressed="section==='jobs'" @click="section='jobs';perform(reload)">后台任务</button></nav>
+      <nav aria-label="记忆管理"><button :aria-pressed="section==='records'" @click="section='records'">浏览与编辑</button><button :aria-pressed="section==='imports'" @click="section='imports'">导入资料库</button><button :aria-pressed="section==='organize'" @click="section='organize'">整理方式</button><button :aria-pressed="section==='jobs'" @click="section='jobs';perform(refreshJobs)">后台任务</button></nav>
       <span v-if="loading" class="memory-muted" role="status">正在读取…</span>
     </div>
     <p v-if="error" class="memory-error" role="alert">{{error}}</p><p v-if="notice" class="memory-notice" role="status">{{notice}}</p>
     <div v-if="pendingClose||pendingNavigation" class="memory-confirm"><span>有未保存的更改。可以保留当前编辑，或放弃后继续。</span><button @click="pendingClose=false;pendingNavigation=null">保留当前编辑</button><button @click="perform(discard)">放弃并继续</button></div>
     <div v-if="importPreview" class="memory-confirm"><span>将合并 {{importPreview.scopes.length}} 个范围、{{importPreview.records.length}} 个记忆版本和 {{importPreview.sources.length}} 个来源版本。已有删除标记仍然优先，冲突不会被覆盖。</span><button :disabled="busy" @click="perform(restore)">确认合并归档</button><button @click="importPreview=null">取消</button></div>
     <div v-show="section==='records'" class="memory-columns">
-      <aside><form class="memory-search" @submit.prevent="appliedQuery=searchText;perform(reload)"><input v-model="searchText" aria-label="搜索长期记忆" placeholder="搜索事实、偏好或经验"><button :disabled="busy" type="submit">搜索</button></form>
-        <label class="memory-filter">类别<select v-model="kind" @change="perform(reload)"><option value="">全部类别</option><option v-for="(label,key) in kinds" :key="key" :value="key">{{label}}</option></select></label>
+      <aside><form class="memory-search" @submit.prevent="appliedQuery=searchText;perform(reload)"><input v-model="searchText" :disabled="busy" aria-label="搜索长期记忆" placeholder="搜索事实、偏好或经验"><button :disabled="busy" type="submit">搜索</button></form>
+        <label class="memory-filter">查找方式<select v-model="searchMode" :disabled="busy" aria-label="记忆查找方式" @change="filterConfidence='';filterStatus='current';perform(reload)"><option value="related">相关性搜索</option><option value="list">逐条浏览／关键词</option></select></label>
+        <label class="memory-filter">类别<select v-model="kind" :disabled="busy" @change="perform(reload)"><option value="">全部类别</option><option v-for="(label,key) in kinds" :key="key" :value="key">{{label}}</option></select></label>
+        <label class="memory-filter">确认状态<select v-model="filterConfidence" :disabled="busy" aria-label="筛选确认状态" @change="searchMode='list';perform(reload)"><option value="">全部状态</option><option value="confirmed">已确认</option><option value="inferred">尚待核对</option><option value="disputed">存在争议</option></select></label>
+        <label class="memory-filter">有效性<select v-model="filterStatus" :disabled="busy" aria-label="筛选记忆有效性" @change="searchMode='list';perform(reload)"><option value="current">当前有效版本</option><option value="all">全部条目的最新修订</option><option value="inactive">未生效或已失效</option></select></label>
+        <p class="memory-muted">相关性搜索保留关键词与语义检索。逐条浏览可分页核对全部条目，有效性和确认状态分别筛选。</p>
         <div class="memory-path"><button @click="topicPath=[];perform(reload)">全部主题</button><button v-for="(part,index) in topicPath" :key="index" @click="topicPath=topicPath.slice(0,index+1);perform(reload)">{{part}}</button></div>
         <button v-for="topic in topics" :key="topic.scopeId+topic.path.join('/')" class="memory-topic" @click="topicPath=topic.path;perform(reload)"><span>{{topic.path.at(-1)}}</span><small>{{topic.records}} 条<span v-if="topic.summaries.length"> · 有摘要</span></small></button>
         <button v-if="topicCursor" class="memory-topic" :disabled="busy||loading" @click="perform(loadMoreTopics)">加载更多主题</button>
@@ -174,12 +207,14 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
         <p class="memory-muted">按主题逐层查看，只把相关内容交给当前对话。群聊和角色剧情有独立范围。</p>
       </aside>
       <main :class="{'has-selection':editing}">
-        <div v-if="result" class="memory-result-meta"><span>{{result.method==='hybrid'?'关键词与语义':'关键词'}} · {{result.hits.length}} 条</span><span>当前结果约 {{result.estimatedTokens}} token</span><span v-if="result.truncated">已按预算截取，可缩小主题或搜索范围</span></div>
+        <div v-if="result" class="memory-result-meta"><span>{{result.method==='hybrid'?'关键词与语义':'关键词'}} · {{result.hits.length}} 条相关结果</span><span v-if="result.truncated">相关结果按召回预算选取，可改用逐条浏览核对全部关键词匹配。</span></div>
+        <div v-if="browseResult" class="memory-pagination"><span>{{browseResult.total?`${browseResult.offset+1}–${browseResult.offset+browseResult.items.length} / ${browseResult.total}`:'0 条'}} · 逐条浏览</span><button :disabled="busy||loading" @click="perform(reload)">刷新列表</button><button :disabled="busy||loading||!recordTrail.length" @click="perform(()=>loadRecordPage('previous'))">上一页记忆</button><button :disabled="busy||loading||!browseResult.nextCursor" @click="perform(()=>loadRecordPage('next'))">下一页记忆</button></div>
         <div v-if="selectedIds.length" class="memory-summary-actions"><span>已选 {{selectedIds.length}} 条</span><input v-model="summaryTopic" aria-label="摘要主题" placeholder="摘要主题，例如 项目 / 部署"><button :disabled="busy" @click="perform(queueSummary)">按所选依据整理摘要</button></div>
-        <div class="memory-records"><div v-for="hit in result?.hits" :key="hit.record.id" class="memory-record" :class="{selected:editingId===hit.record.id}"><input v-model="selectedIds" type="checkbox" :value="hit.record.id" :aria-label="'选择记忆 '+hit.record.id"><button :disabled="busy" @click="navigate(()=>choose(hit.record.id))"><span class="memory-record-meta">{{kinds[hit.record.kind]}} · {{origins[hit.record.origin]}}<span v-if="hit.record.confidence!=='confirmed'"> · {{hit.record.confidence==='inferred'?'待核对':'存在争议'}}</span><span v-if="hit.conflicts.length"> · 有不同说法</span></span><strong>{{hit.record.text}}</strong><small>{{hit.record.topic.join(' / ')||'未分类'}} · {{hit.reasons.join(' + ')}}</small></button></div></div>
-        <p v-if="!result?.hits.length&&!loading" class="memory-empty">这里还没有匹配的记忆。可以新增一条，或在选择整理模型后，从当前对话提取。</p>
+        <div class="memory-records"><div v-for="record in visibleRecords" :key="record.id" class="memory-record" :class="{selected:editingId===record.id}"><input v-model="selectedIds" type="checkbox" :value="record.id" :disabled="!record.active" :title="record.active?'选择为摘要依据':'非当前有效版本不能作为新的摘要依据'" :aria-label="'选择记忆 '+record.id"><button :disabled="busy" @click="navigate(()=>choose(record.id,record.version))"><span class="memory-record-meta">{{kinds[record.kind]}} · {{origins[record.origin]}}<span v-if="record.confidence!=='confirmed'"> · {{record.confidence==='inferred'?'待核对':'存在争议'}}</span><span v-if="!record.active"> · 未生效或已失效</span><span v-if="record.conflicts.length"> · 有不同说法</span></span><strong>{{record.preview}}</strong><small v-if="record.moreText">打开查看完整正文</small><small>{{record.topic.join(' / ')||'未分类'}}<template v-if="record.reasons.length"> · {{record.reasons.join(' + ')}}</template></small></button></div></div>
+        <p v-if="!visibleRecords.length&&!loading" class="memory-empty">没有匹配的记忆。可以调整筛选条件、新增一条，或从当前对话提取。</p>
         <section v-if="editing" ref="editor" class="memory-editor" aria-label="记忆编辑器">
-          <header><strong>{{editingId?'编辑记忆':'新增记忆'}}</strong><span>{{scopeLabel(editingScopeId)}}</span><code v-if="editingId">{{editingId.slice(0,12)}} · v{{editingVersion}}</code></header>
+          <header><strong>{{historicalRevision?'查看历史修订':editingId?'编辑记忆':'新增记忆'}}</strong><span>{{scopeLabel(editingScopeId)}}</span><code v-if="editingId">{{editingId.slice(0,12)}} · v{{editingVersion}}</code></header>
+          <p v-if="historicalRevision" class="memory-warning">当前显示所选历史版本。<button :disabled="busy" @click="latestRevision">返回最新修订再编辑</button></p>
           <nav v-if="editingId" class="memory-editor-tabs" aria-label="记忆查看方式"><button :aria-pressed="editorView==='edit'" @click="editorView='edit'">编辑正文</button><button :aria-pressed="editorView==='graph'" @click="editorView='graph'">查看关系</button></nav>
           <template v-if="editorView==='graph'">
             <p v-if="editorDirty" class="memory-warning">关系图显示已保存的版本，正在编辑的草稿仍然保留。</p>
@@ -189,16 +224,16 @@ onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTime
           </template>
           <div v-show="editorView==='edit'">
           <p v-if="changedElsewhere" class="memory-muted">此范围刚有更新，当前编辑内容已保留。保存时会检查版本。</p>
-          <p v-if="detail&&detail.activeVersion===undefined" class="memory-warning">此版本当前不参与召回，可能已经过期或来源已修订。下方可以查看依据。</p>
-          <label>正文<textarea v-model="form.text" rows="5" aria-label="记忆正文"></textarea></label>
-          <div class="memory-form-grid"><label>类别<select v-model="form.kind" :disabled="form.kind==='summary'"><option v-for="(label,key) in kinds" :key="key" :value="key" :disabled="key==='summary'&&form.kind!=='summary'">{{label}}</option></select></label><label>确认状态<select v-model="form.confidence"><option value="confirmed">已确认</option><option value="inferred">尚待核对</option><option value="disputed">存在争议</option></select></label>
-            <label>主体<input v-model="form.subject" placeholder="留空表示当前账号"></label><label>主题层次<input v-model="form.topic" placeholder="个人 / 饮食，使用 / 分层"></label><label>属性<input v-model="form.attribute" placeholder="例如 部署端口、喜欢的饮料"></label><label>属性值<input v-model="form.value" placeholder="可选，用于识别不同说法"></label>
-            <label>生效时间（UTC）<input v-model="form.validFrom" type="datetime-local"></label><label>失效时间（UTC）<input v-model="form.validTo" type="datetime-local"></label><label>事件发生时间（UTC）<input v-model="form.eventAt" type="datetime-local"></label></div>
-          <div class="memory-editor-actions"><button :disabled="busy||!form.text.trim()" @click="perform(save)">保存记忆</button><button v-if="editingId" :disabled="busy" @click="perform(showImpact)">查看删除影响</button><button v-if="form.kind==='summary'&&editingId" :disabled="busy" @click="perform(regenerateSummary)">按当前依据重新整理</button><button :disabled="busy" @click="navigate(resetEditor)">收起编辑器</button></div>
+          <p v-if="detail&&detail.activeVersion!==editingVersion" class="memory-warning">此修订当前不参与召回，可能尚未生效、已经过期或来源已修订。下方可以查看依据。</p>
+          <label>正文<textarea v-model="form.text" :readonly="historicalRevision" rows="5" aria-label="记忆正文"></textarea></label>
+          <div class="memory-form-grid"><label>类别<select v-model="form.kind" :disabled="form.kind==='summary'||historicalRevision"><option v-for="(label,key) in kinds" :key="key" :value="key" :disabled="key==='summary'&&form.kind!=='summary'">{{label}}</option></select></label><label>确认状态<select v-model="form.confidence" :disabled="historicalRevision"><option value="confirmed">已确认</option><option value="inferred">尚待核对</option><option value="disputed">存在争议</option></select></label>
+            <label>主体<input v-model="form.subject" :readonly="historicalRevision" placeholder="留空表示当前账号"></label><label>主题层次<input v-model="form.topic" :readonly="historicalRevision" placeholder="个人 / 饮食，使用 / 分层"></label><label>属性<input v-model="form.attribute" :readonly="historicalRevision" placeholder="例如 部署端口、喜欢的饮料"></label><label>属性值<input v-model="form.value" :readonly="historicalRevision" placeholder="可选，用于识别不同说法"></label>
+            <label>生效时间（UTC）<input v-model="form.validFrom" :readonly="historicalRevision" type="datetime-local"></label><label>失效时间（UTC）<input v-model="form.validTo" :readonly="historicalRevision" type="datetime-local"></label><label>事件发生时间（UTC）<input v-model="form.eventAt" :readonly="historicalRevision" type="datetime-local"></label></div>
+          <div class="memory-editor-actions"><button :disabled="busy||historicalRevision||!form.text.trim()" @click="perform(save)">保存记忆</button><button v-if="editingId" :disabled="busy||historicalRevision" @click="perform(showImpact)">查看删除影响</button><button v-if="form.kind==='summary'&&editingId" :disabled="busy||historicalRevision" @click="perform(regenerateSummary)">按当前依据重新整理</button><button :disabled="busy" @click="navigate(resetEditor)">收起编辑器</button></div>
           </div>
           <div v-if="deleteImpact" class="memory-confirm"><p>将移除 {{deleteImpact.recordCount}} 条记忆及派生内容，并清除有关来源摘录和旧修订。原始会话保留供你查看，相关来源和依赖内容会从后续模型上下文中排除。</p><ul><li v-for="item in deleteImpact.items" :key="item.id">{{kinds[item.kind]}}：{{item.text}}</li></ul><p v-if="deleteImpact.truncated">列表显示前 {{deleteImpact.items.length}} 条，其余引用这条来源的派生内容也会移除。</p><button :disabled="busy" class="memory-delete" @click="perform(remove)">确认删除这些内容</button><button @click="deleteImpact=null">取消</button></div>
-          <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote><MemorySourceFiles :source="source" /></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
-          <details v-if="detail&&detail.revisions.length>1" class="memory-revisions"><summary>历史修订（{{detail.revisions.length}}）</summary><article v-for="revision in detail.revisions" :key="revision.version"><small>v{{revision.version}} · {{stamp(revision.recordedAt)}} · 自 {{stamp(revision.validFrom)}} 生效</small><p>{{revision.text}}</p></article></details>
+          <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote><MemorySourceFiles :source="source" /></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id,parent.version))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
+          <details v-if="detail&&detail.revisions.length>1" class="memory-revisions"><summary>修订记录（{{detail.revisions.length}}）</summary><article v-for="revision in detail.revisions" :key="revision.version"><small>v{{revision.version}} · {{stamp(revision.recordedAt)}} · 自 {{stamp(revision.validFrom)}} 生效</small><button :disabled="busy||revision.version===editingVersion" @click="scopeId=editingScopeId;navigate(()=>choose(revision.id,revision.version))">查看此修订</button><p>{{revision.text}}</p></article></details>
         </section>
       </main>
     </div>

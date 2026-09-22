@@ -19,6 +19,7 @@ beforeEach(() => {
   mocks.call.mockImplementation(async method => {
     if (method === 'memory.options') return {scopes:[{id:'scope',label:'个人',actorId:'owner',kind:'personal',realm:'real'}],providers:[],policy:{value:{enabled:true,automaticExtraction:false,automaticScopes:[],recallTokens:1200,recallLimit:5,extractionOutputTokens:12288},revision:1}};
     if (method === 'memory.search') return {hits:[{record,score:1,reasons:['主题'],conflicts:[]}],estimatedTokens:40,method:'keyword',truncated:false};
+    if (method === 'memory.browse') return {items:[{...record,preview:record.text,moreText:false,active:true}],offset:0,total:1};
     if (method === 'memory.topics') return {topics:[]};
     if (method === 'memory.jobs') return [];
     if (method === 'memory.get') return {revisions:[record],sources:[source],parents:[],activeVersion:1};
@@ -62,4 +63,34 @@ test('同层主题可以继续加载，保留前一页目录', async () => {
   expect(mocks.call).toHaveBeenCalledWith('memory.topics', expect.objectContaining({ scopeId: 'scope', topic: [], cursor: 'next' }));
   expect(wrapper.text()).toContain('第一页'); expect(wrapper.text()).toContain('第二页');
   expect(wrapper.findAll('button').some(item => item.text() === '加载更多主题')).toBe(false);
+});
+
+test('人工列表可以前后翻页，原有相关性搜索仍调用搜索接口', async () => {
+  const original=mocks.call.getMockImplementation()!;
+  mocks.call.mockImplementation(async(method,params)=>method==='memory.browse'
+    ?{items:[{...record,id:params.cursor?'two':'one',preview:params.cursor?'下一页的完整记录':'第一页预览',moreText:true,active:true}],offset:params.cursor?1:0,total:2,...(!params.cursor?{nextCursor:'page-two'}:{})}
+    :original(method,params));
+  const wrapper=await open();
+  await button(wrapper,'下一页记忆').trigger('click');await flushPromises();expect(wrapper.text()).toContain('下一页的完整记录');
+  await button(wrapper,'上一页记忆').trigger('click');await flushPromises();expect(wrapper.text()).toContain('第一页预览');
+  await wrapper.find('input[aria-label="搜索长期记忆"]').setValue('部署端口');await wrapper.find('form.memory-search').trigger('submit');await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('memory.search',expect.objectContaining({text:'部署端口'}));expect(wrapper.text()).toContain('条相关结果');
+});
+
+test('关系节点按确切历史版本打开，并要求回到最新修订后编辑', async () => {
+  const original=mocks.call.getMockImplementation()!;
+  const old={...record,id:'parent',version:1,text:'旧依据正文'},latest={...old,version:2,text:'最新依据正文'};
+  mocks.call.mockImplementation(async(method,params)=>{
+    if(method==='memory.graph')return {...graph,nodes:[...graph.nodes,{key:'record:parent@1',id:'parent',scopeId:'scope',version:1,type:'record',side:'dependency',kind:'fact',title:'旧版本依据',preview:old.text,active:false}],edges:[...graph.edges,{from:'record:parent@1',to:graph.root}]};
+    if(method==='memory.get'&&params.id==='parent')return {revisions:[latest,old],sources:[],parents:[],activeVersion:2};
+    return original(method,params);
+  });
+  const wrapper=await open();await button(wrapper,'查看关系').trigger('click');await flushPromises();
+  await wrapper.findAll('.memory-graph-node').find(node=>node.text().includes('旧版本依据'))!.trigger('click');await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('memory.get',expect.objectContaining({id:'parent',version:1}));
+  await button(wrapper,'编辑正文').trigger('click');
+  expect(wrapper.find<HTMLTextAreaElement>('textarea[aria-label="记忆正文"]').element.value).toBe(old.text);
+  expect(button(wrapper,'保存记忆').attributes('disabled')).toBeDefined();
+  await button(wrapper,'返回最新修订再编辑').trigger('click');await flushPromises();
+  expect(wrapper.find<HTMLTextAreaElement>('textarea[aria-label="记忆正文"]').element.value).toBe(latest.text);expect(button(wrapper,'保存记忆').attributes('disabled')).toBeUndefined();
 });

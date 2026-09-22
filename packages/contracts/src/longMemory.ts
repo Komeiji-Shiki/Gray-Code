@@ -52,6 +52,15 @@ export interface LongMemoryTopicPage {
   topics: LongMemoryTopic[]; estimatedTokens: number; truncated: boolean;
   nextCursor?: string; requiredTokenBudget?: number;
 }
+export interface LongMemoryBrowse {
+  scope: LongMemoryScope; text?: string; topic?: string[]; kind?: LongMemoryKind; confidence?: LongMemoryConfidence;
+  status?: 'current' | 'inactive' | 'all'; limit?: number; cursor?: string;
+}
+export interface LongMemoryPreview {
+  id: string; scopeId: string; version: number; kind: LongMemoryKind; origin: LongMemoryOrigin; confidence: LongMemoryConfidence;
+  subject: string; topic: string[]; recordedAt: number; preview: string; moreText: boolean; active: boolean;
+}
+export interface LongMemoryBrowseResult { items: LongMemoryPreview[]; offset: number; total: number; nextCursor?: string }
 export interface LongMemoryGraphNode {
   key: string; id: string; scopeId: string; version: number; type: 'record' | 'source';
   side: 'dependency' | 'selected' | 'dependent'; title: string; preview: string;

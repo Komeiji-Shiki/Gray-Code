@@ -72,6 +72,7 @@ export class PlatformStorage {
   longMemoryWrite(input: StorageOperations['longMemoryWrite']['input']) { return this.request('longMemoryWrite', input); }
   longMemoryRecall(input: StorageOperations['longMemoryRecall']['input']) { return this.request('longMemoryRecall', input); }
   longMemoryTopics(input: StorageOperations['longMemoryTopics']['input']) { return this.request('longMemoryTopics', input); }
+  longMemoryBrowse(input: StorageOperations['longMemoryBrowse']['input']) { return this.request('longMemoryBrowse', input); }
   longMemoryRead(input: StorageOperations['longMemoryRead']['input']) { return this.request('longMemoryRead', input); }
   longMemoryGraph(input: StorageOperations['longMemoryGraph']['input']) { return this.request('longMemoryGraph', input); }
   longMemoryRevisions(input: StorageOperations['longMemoryRevisions']['input']) { return this.request('longMemoryRevisions', input); }

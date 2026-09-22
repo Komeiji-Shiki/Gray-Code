@@ -6,8 +6,10 @@ import { rankVectors, type VectorRankingRequest } from './vectors';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
 import type { LongMemoryTopicQuery, LongMemoryTopicPage } from '@graycode/contracts';
 import { readMemoryPage } from './pages';
+import { browseMemory } from './browse';
+import { readMemoryCursor, writeMemoryCursor } from './cursor';
 
-interface QueryPlan { cte: string; parameters: Array<string | number>; filter: string; filters: Array<string | number> }
+export interface QueryPlan { cte: string; parameters: Array<string | number>; filter: string; filters: Array<string | number> }
 interface SemanticCandidates { available: boolean; matches: Array<{ rowId: number; score: number }> }
 
 /** 目录、摘要和正文共用可见集合，不能在排序截断之后才检查账号或失效来源。 */
@@ -153,18 +155,12 @@ export class MemoryQueries {
   }
 
   topics(input: LongMemoryTopicQuery): LongMemoryTopicPage {
-    let query = input, offset = 0, previous: unknown[] | undefined;
-    if (input.cursor !== undefined) {
-      if (typeof input.cursor !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(input.cursor)) invalid('主题续页编号无效。');
-      try { previous = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8')); } catch { invalid('主题续页编号无效。'); }
-      if (!Array.isArray(previous) || previous.length !== 4 || !Number.isSafeInteger(previous[0]) || Number(previous[0]) < 0
-        || !Number.isFinite(previous[1]) || !Number.isFinite(previous[2]) || typeof previous[3] !== 'string') invalid('主题续页编号无效。');
-      offset = previous[0] as number; query = { ...input, asOf: previous[1] as number, knownAt: previous[2] as number };
-    }
+    const previous = readMemoryCursor(input.cursor), offset = previous?.offset ?? 0;
+    const query = previous ? { ...input, asOf: previous.asOf, knownAt: previous.knownAt } : input;
     const { cte, parameters, filter, filters } = this.plan(query), depth = query.topic?.length ?? 0;
     const fingerprint = memoryDigest([query.scopes.map(scope => { const state = this.store.state(scope); return [scope.id, state.revision, state.invalidation]; }),
       query.topic ?? [], query.kinds ?? [], !!query.confirmedOnly, !!query.includeSummaries]);
-    if (previous && previous[3] !== fingerprint) invalid('记忆目录或筛选条件已变化，请从当前主题重新读取。');
+    if (previous && previous.fingerprint !== fingerprint) invalid('记忆目录或筛选条件已变化，请从当前主题重新读取。');
     const rows = this.store.db.prepare(`${cte} SELECT r.scope_id,json_extract(r.topic,'$[${depth}]') AS child,count(*) AS count
       FROM eligible r WHERE json_array_length(r.topic)>?${filter} GROUP BY r.scope_id,child ORDER BY count DESC,child,r.scope_id LIMIT ? OFFSET ?`)
       .all(...parameters, depth, ...filters, query.limit + 1, offset) as Array<{ scope_id: string; child: string; count: number }>;
@@ -194,9 +190,11 @@ export class MemoryQueries {
       topics.push(entry); estimatedTokens += cost;
     }
     return { topics, estimatedTokens, truncated,
-      ...(truncated ? { nextCursor: Buffer.from(JSON.stringify([offset + topics.length, query.asOf, query.knownAt, fingerprint])).toString('base64url') } : {}),
+      ...(truncated ? { nextCursor: writeMemoryCursor({ offset: offset + topics.length, asOf: query.asOf, knownAt: query.knownAt, fingerprint }) } : {}),
       ...(requiredTokenBudget !== undefined ? { requiredTokenBudget } : {}) };
   }
+
+  browse(input: import('@graycode/contracts').LongMemoryBrowse) { return browseMemory(this.store, input, query => this.plan(query)); }
 
   read(input: LongMemoryRead): LongMemoryReadResult {
     const { cte, parameters } = this.plan(input.query);
@@ -300,8 +298,12 @@ export class MemoryQueries {
     this.store.state(scope);if(!Array.isArray(references)||references.length>256)invalid('记忆版本读取批次过大。');
     return references.flatMap(ref=>{const row=this.store.record(scope.id,ref.id,ref.version);return row?[JSON.parse(row.payload) as LongMemoryRecord]:[];});
   }
-  inspect(scope:LongMemoryScope,id:string):{revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number}{
+  inspect(scope:LongMemoryScope,id:string,version?:number):{revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];activeVersion?:number}{
     const revisions=this.revisions(scope,id),sources=new Map<string,LongMemorySource>(),parents=new Map<string,LongMemoryRecord>();
+    if(version!==undefined){
+      if(!Number.isSafeInteger(version)||version<1)invalid('记忆修订编号无效。');
+      if(!revisions.some(record=>record.version===version)){const selected=this.store.record(scope.id,id,version);if(selected)revisions.push(JSON.parse(selected.payload));}
+    }
     for(const revision of revisions)for(const ref of revision.dependencies){
       const key=JSON.stringify(ref);
       if(ref.kind==='source'){

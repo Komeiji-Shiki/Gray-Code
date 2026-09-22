@@ -19,6 +19,7 @@ beforeEach(() => {
   mocks.call.mockImplementation(async (method, params) => {
     if (method === 'memory.options') return { scopes: [{ id: 'personal', label: '个人', actorId: 'owner', kind: 'personal', realm: 'real' }], providers: [], policy: { revision: 1, value: { enabled: true, automaticExtraction: false, automaticScopes: [], recallLimit: 5, recallTokens: 1200, extractionOutputTokens: 12288 } } };
     if (method === 'memory.search') return { hits: [], method: 'keyword', estimatedTokens: 0 };
+    if (method === 'memory.browse') return { items: [], offset: 0, total: 0 };
     if (method === 'memory.topics') return { topics: [] };
     if (method === 'memory.jobs') return [];
     if (params.type === 'characters.list') return resources.map(({ raw, ...info }) => structuredClone(info));
