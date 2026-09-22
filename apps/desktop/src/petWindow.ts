@@ -25,7 +25,13 @@ export class DesktopPetWindow {
         } }, 200); this.positionTimer.unref();
       });
       window.on('closed', () => { if (this.window === window) this.window = undefined; });
-      await window.loadURL('graycode://app/pet.html'); if (window.isDestroyed() || this.disposed) return;
+      try { await window.loadURL('graycode://app/pet.html'); }
+      catch (error) {
+        // 主动关闭或已被新窗口替代时，迟到的加载失败不再通知；真正失败则释放窗口供下次重试。
+        if (this.disposed || window.isDestroyed() || this.window !== window) return;
+        window.destroy(); throw error;
+      }
+      if (window.isDestroyed() || this.disposed || this.window !== window) return;
       window.showInactive();
     }
     if (sequence !== this.sequence || !this.window || this.window.isDestroyed()) return;
