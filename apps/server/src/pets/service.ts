@@ -19,6 +19,8 @@ export class PetService {
   private pending = new Map<string, { resolve(value: ToolOutcome): void; timer: NodeJS.Timeout }>();
   private mutation: Promise<unknown> = Promise.resolve();
   private animationTimer?: NodeJS.Timeout;
+  private taskEpoch = 0;
+  private closed = false;
   private heartbeat: NodeJS.Timeout;
   private unsubscribe: () => void;
   private host?: { changed(): void; floatingAvailable: boolean };
@@ -63,6 +65,7 @@ export class PetService {
     this.state.current = undefined; this.publish();
   }
   private reset(reason: string) {
+    this.taskEpoch++;
     this.clearCommand(reason); this.renderer = undefined;
     this.state = { generation: randomUUID(), resourceId: this.configuration.resourceId, phase: 'unloaded', parameters: [] }; this.publish();
   }
@@ -90,6 +93,7 @@ export class PetService {
     const previous = this.configuration; this.configuration = value; this.revision = saved[0]!.revision;
     if (previous.resourceId !== value.resourceId || previous.surface !== value.surface || previous.visible !== value.visible) this.reset('桌宠或显示位置已经切换。');
     else if (value.stopped || value.reducedMotion !== previous.reducedMotion) this.clearCommand('用户停止了动作或调整了动态效果。');
+    else if (previous.taskAnimations && !value.taskAnimations && this.state.current?.source === 'task') this.clearCommand('已关闭任务动画。');
     this.publish(); if (!value.stopped) void this.taskState(); return this.snapshot();
   }
   private verifyRenderer(client: ClientSession, input: Record<string, any>) {
@@ -161,9 +165,12 @@ export class PetService {
       default: throw new Error('未知桌宠操作。');
     }
   }
-  async command(input: PetCommandInput, identity: { source: PetCommand['source']; actorId: string; runId?: string }, signal?: AbortSignal): Promise<ToolOutcome> {
+  async command(input: PetCommandInput, identity: { source: PetCommand['source']; actorId: string; runId?: string }, signal?: AbortSignal, expectedTaskEpoch?: number): Promise<ToolOutcome> {
+    if(this.closed)return {success:false,accepted:false,error:'桌宠服务已关闭。'};
     this.authorize(identity.actorId); signal?.throwIfAborted();
     const generation = this.state.generation; const snapshot = await this.snapshot(); signal?.throwIfAborted();
+    this.authorize(identity.actorId);
+    if(this.closed||identity.source==='task'&&(!this.configuration.taskAnimations||expectedTaskEpoch!==undefined&&expectedTaskEpoch!==this.taskEpoch))return {success:false,accepted:false,error:'任务动画状态已经变化。'};
     if (generation !== this.state.generation || !snapshot.resource || !this.configuration.visible || !this.renderer || this.state.phase !== 'ready') return { success: false, accepted: false, error: '当前桌宠尚未加载显示。' };
     if (this.configuration.stopped) return { success: false, accepted: false, error: '用户已停止桌宠，请由用户恢复。' };
     if (!input || !['play', 'expression', 'look', 'parameters', 'cancel', 'resume'].includes(input.action)) throw new Error('桌宠动作类型无效。');
@@ -195,14 +202,17 @@ export class PetService {
     try { return await result; } finally { signal?.removeEventListener('abort', abort); }
   }
   private async taskState() {
-    if (!this.configuration.visible || this.configuration.stopped || !this.configuration.taskAnimations || this.state.phase !== 'ready' || this.state.current?.source === 'manual' || this.state.current?.source === 'model') return;
+    const request=++this.taskEpoch,generation=this.state.generation,revision=this.revision;
+    const available=()=>!this.closed&&this.configuration.visible&&!this.configuration.stopped&&this.configuration.taskAnimations&&this.state.phase==='ready'&&this.state.current?.source!=='manual'&&this.state.current?.source!=='model';
+    if (!available()) return;
     const runs = await this.app.storage.listRuns({ activeOnly: true, limit: 100 });
     const latest = !runs.length ? (await this.app.storage.listRuns({ limit: 1 }))[0] : undefined;
     const state: PetAnimation = runs.some(run => run.status === 'awaiting_approval') ? 'review' : runs.some(run => run.status === 'awaiting_input') ? 'waiting' : runs.length ? 'running' : latest?.status === 'failed' ? 'failed' : 'idle';
     const resource = this.configuration.resourceId && await this.resources.get(this.configuration.resourceId);
+    if(request!==this.taskEpoch||generation!==this.state.generation||revision!==this.revision||!available())return;
     const id = resource && (resource.kind === 'sprite' ? state : this.configuration.mappings[state]);
     if (!id || this.state.current?.id === id) return;
-    void this.command({ action: 'play', id, durationMs: 120_000 }, { source: 'task', actorId: 'owner' }).catch(() => {});
+    void this.command({ action: 'play', id, durationMs: 120_000 }, { source: 'task', actorId: 'owner' },undefined,request).catch(() => {});
   }
   tools(): RuntimeTool[] {
     return [{ declaration: { name: 'pet_control', description: '控制本执行设备上用户已选择并显示的桌宠。先用 query 读取实际动作、表情和参数范围；play、expression、look、parameters、cancel、resume 只作用于这个模型。不会开启截图。用户停止具有优先权；其他任务控制中返回忙碌。结果区分已接受和播放器实际应用，切换模型后重新查询。', parameters: { type: 'object', properties: {
@@ -212,5 +222,5 @@ export class PetService {
       catch (error) { return { success: false, error: (error as Error).message }; }
     } }];
   }
-  close() { this.unsubscribe(); clearInterval(this.heartbeat); this.host = undefined; this.clearCommand('应用正在关闭。'); }
+  close() { this.closed=true;this.taskEpoch++;this.unsubscribe(); clearInterval(this.heartbeat); this.host = undefined; this.clearCommand('应用正在关闭。'); }
 }

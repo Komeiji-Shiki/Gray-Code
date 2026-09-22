@@ -22,7 +22,7 @@ describe('桌宠资源与统一控制', () => {
   const open = () => PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: f.root, models: { generate: async () => ({ role: 'model', parts: [{ text: '这条回复属于桌宠选择的同一段对话。' }] }) } });
   beforeAll(async () => { bundle = await atlas(); });
   beforeEach(async () => { f = await fixture(); await f.store.close(); app = await open(); });
-  afterEach(async () => { await app.close(); await f.cleanup(); });
+  afterEach(async () => { jest.restoreAllMocks(); await app.close(); await f.cleanup(); });
   const state = () => app.pets.snapshot();
   const configure = async (values: Partial<PetConfiguration>) => { const current = await state(); return app.pets.call(client, 'pets.configure', { configuration: { ...current.configuration, ...values }, revision: current.revision }) as Promise<PetSnapshot>; };
   const renderer = async (parameters: unknown[] = []) => {
@@ -58,6 +58,38 @@ describe('桌宠资源与统一控制', () => {
     expect(await app.pets.command({ action: 'resume' }, { source: 'model', actorId: 'owner', runId: 'task-a' })).toMatchObject({ success: false, accepted: false });
     await configure({ visible: false }); await expect(app.pets.call(client, 'pets.renderer.ready', { ...identity, parameters: [] })).rejects.toThrow('切换');
     await expect(app.pets.call({ actorId: 'unknown', clientId: 'x' }, 'pets.bundle', { id: resource.id })).rejects.toThrow();
+  });
+
+  test('关闭任务动画立即撤下自动动作，并保留用户主动播放',async()=>{
+    const resource=await app.pets.resources.import(bundle);await configure({resourceId:resource.id,visible:true,taskAnimations:true});
+    const identity=await renderer(),automatic=await currentCommand();expect(automatic.source).toBe('task');
+    await app.pets.call(client,'pets.renderer.applied',{...identity,requestId:automatic.requestId,success:true});
+    await configure({taskAnimations:false});expect((await state()).state.current).toBeUndefined();
+    const result=app.pets.command({action:'play',id:'waving',durationMs:10000},{source:'manual',actorId:'owner'});
+    const manual=await currentCommand();await app.pets.call(client,'pets.renderer.applied',{...identity,requestId:manual.requestId,success:true});await result;
+    await configure({taskAnimations:true});await configure({taskAnimations:false});expect((await state()).state.current?.requestId).toBe(manual.requestId);
+  });
+
+  test('迟到的任务状态读取不会在自动动画已关闭后重新播放',async()=>{
+    const resource=await app.pets.resources.import(bundle);await configure({resourceId:resource.id,visible:true,taskAnimations:false});await renderer();
+    let resolveRuns:(value:any)=>void=()=>{};const pending=new Promise<any>(resolve=>resolveRuns=resolve);
+    jest.spyOn(app.storage,'listRuns').mockImplementationOnce(()=>pending);
+    jest.spyOn(app.pets.resources,'get').mockResolvedValue(resource);
+    const commands=jest.spyOn(app.pets,'command');
+    await configure({taskAnimations:true});await configure({taskAnimations:false});
+    resolveRuns([{status:'running'}]);await new Promise<void>(resolve=>setImmediate(resolve));
+    expect(commands).not.toHaveBeenCalled();expect((await state()).state.current).toBeUndefined();
+  });
+
+  test('读取显示资源期间撤销的权限不能继续发出动作',async()=>{
+    const resource=await app.pets.resources.import(bundle);await configure({resourceId:resource.id,visible:true,taskAnimations:false});await renderer();
+    const snapshot=await state(),owner=app.actor('owner')!;
+    let resolveSnapshot:(value:PetSnapshot)=>void=()=>{};
+    jest.spyOn(app.pets,'snapshot').mockImplementationOnce(()=>new Promise(resolve=>resolveSnapshot=resolve));
+    const actors=jest.spyOn(app,'actor').mockReturnValueOnce(owner).mockReturnValue({...owner,revoked:true});
+    const command=app.pets.command({action:'play',id:'waving'},{source:'model',actorId:'owner',runId:'fixture'});
+    const rejected=expect(command).rejects.toThrow();resolveSnapshot(snapshot);await rejected;actors.mockRestore();
+    expect((await state()).state.current).toBeUndefined();
   });
   test('从模型清单读取自定义动作和表情，参数采用运行库报告的真实范围', async () => {
     const texture = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffffff' } }).png().toBuffer();
