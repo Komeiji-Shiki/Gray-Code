@@ -25,7 +25,8 @@ function schedule() {
   if (!disposed && enabled.value && viewing.value && target.value && !gesture.value && !busy.value && !frameBusy.value)
     timer = setTimeout(() => { void capture().catch(failed); }, 1000 / fps.value);
 }
-function failed(cause: unknown) { error.value = (cause as Error).message; viewing.value = false; gesture.value = undefined; clearTimer(); }
+function currentView(generation: number) { return !disposed && enabled.value && generation === epoch; }
+function failed(cause: unknown) { if (disposed || !enabled.value) return; error.value = (cause as Error).message; viewing.value = false; gesture.value = undefined; clearTimer(); }
 async function readSelectedTarget() {
   if (!targetPending || disposed || !enabled.value || busy.value || frameBusy.value) return;
   targetPending = false; const selected = target.value;
@@ -33,13 +34,21 @@ async function readSelectedTarget() {
 }
 async function refreshStatus() {
   if (refreshingStatus) return refreshingStatus;
-  refreshingStatus = (async () => { status.value = await remote('computer.status'); if (!status.value?.active) controlling.value = false; })().finally(() => { refreshingStatus = undefined; });
+  const generation = epoch;
+  refreshingStatus = (async () => {
+    const result = await remote<ComputerStatus>('computer.status');
+    if (!currentView(generation)) return;
+    status.value = result; if (!result.active) controlling.value = false;
+  })().finally(() => { refreshingStatus = undefined; });
   return refreshingStatus;
 }
 async function load() {
   if (!enabled.value || !props.peer.capabilities?.computer) return;
-  const value = await remote<ComputerWindows>('computer.windows'); inventory.value = value; await refreshStatus();
-  if (windowId.value && !value.windows.some(item => item.id === windowId.value) || monitorId.value && !value.displays.some(item => item.id === monitorId.value)) target.value = '';
+  const generation = epoch;
+  const value = await remote<ComputerWindows>('computer.windows');
+  if (!currentView(generation)) return;
+  inventory.value = value; await refreshStatus();
+  if (currentView(generation) && (windowId.value && !value.windows.some(item => item.id === windowId.value) || monitorId.value && !value.displays.some(item => item.id === monitorId.value))) target.value = '';
 }
 async function capture(full = false) {
   if (!enabled.value || !target.value || frameBusy.value || gesture.value) return;
@@ -67,21 +76,39 @@ async function perform(action: () => Promise<void>) {
   try { await action(); } catch (cause) { failed(cause); } finally { busy.value = false; if (targetPending) void readSelectedTarget(); else schedule(); }
 }
 async function acquire() {
-  if (!windowId.value) throw new Error('请先选择要操作的具体窗口。');
-  status.value = await remote('computer.acquire', { windowIds: [windowId.value] }); controlling.value = true; await capture();
+  if (!enabled.value || !windowId.value) throw new Error('请先选择要操作的具体窗口。');
+  const generation = ++epoch;
+  const result = await remote<ComputerStatus>('computer.acquire', { windowIds: [windowId.value] });
+  // 关闭、隐藏或更换目标后，迟到取得的控制权也必须释放。
+  if (!currentView(generation)) { await remote('computer.release'); return; }
+  status.value = result; controlling.value = result.active; await capture();
+}
+async function executeAction(args: Omit<ComputerAction, 'observationId'>, observationId: string, generation: number) {
+  let failure: unknown;
+  try { await remote('computer.action', { ...args, observationId, operationId: crypto.randomUUID() }); }
+  catch (cause) { failure = cause; }
+  if (!currentView(generation)) return;
+  if (!failure) notice.value = '操作已执行。';
+  observation.value = undefined;
+  try { await refreshStatus(); if (currentView(generation)) await capture(); }
+  catch (cause) {
+    // 保留动作本身的失败原因，截图失败不能覆盖已经收到的动作回执。
+    failure ??= new Error(`操作已执行，但刷新画面失败：${(cause as Error).message}。请重新采集后检查结果。`);
+  }
+  if (failure && currentView(generation)) throw failure;
 }
 async function focusWindow() {
-  if (!controlling.value || !windowId.value) throw new Error('请先取得所选窗口的控制权。');
+  if (!enabled.value || !controlling.value || !windowId.value) throw new Error('请先取得所选窗口的控制权。');
+  const generation = epoch;
   // 最小化或尚无截图的窗口，也能通过新鲜的窗口身份恢复并切换焦点。
   const current = await remote<ComputerObservation>('computer.observe', { windowId: windowId.value, frameOnly: true });
-  await remote('computer.action', { action: 'focusWindow', observationId: current.id, operationId: crypto.randomUUID() });
-  await refreshStatus(); await capture();
+  if (!currentView(generation) || !controlling.value) return;
+  await executeAction({ action: 'focusWindow' }, current.id, generation);
 }
 async function action(args: Omit<ComputerAction, 'observationId'>, capturedId?: string) {
   const current = observation.value;
-  if (!controlling.value || !current || capturedId && current.id !== capturedId) throw new Error('控制状态或画面已改变，请重新观察。');
-  try { await remote('computer.action', { ...args, observationId: current.id, operationId: crypto.randomUUID() }); notice.value = '操作已执行。'; }
-  finally { observation.value = undefined; await refreshStatus(); await capture(); }
+  if (!enabled.value || !controlling.value || !current || capturedId && current.id !== capturedId) throw new Error('控制状态或画面已改变，请重新观察。');
+  await executeAction(args, current.id, epoch);
 }
 function point(event: PointerEvent | WheelEvent) {
   const current = image.value; if (!current) return;

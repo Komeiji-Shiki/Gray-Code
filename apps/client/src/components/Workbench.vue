@@ -341,8 +341,8 @@ onUnmounted(() => { unsubscribe(); window.removeEventListener('keydown', project
         </div>
       </div>
       <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
-      <ComputerPane v-if="openedPanels.includes('computer')" v-show="pane === 'computer'" :visible="pane === 'computer' && !state.chatFocused" />
-      <NodePane v-if="openedPanels.includes('nodes')" v-show="pane === 'nodes'" :visible="pane === 'nodes' && !state.chatFocused" />
+      <ComputerPane v-if="openedPanels.includes('computer')" v-show="pane === 'computer'" :visible="pane === 'computer' && !state.chatFocused && !state.settingsOpen" />
+      <NodePane v-if="openedPanels.includes('nodes')" v-show="pane === 'nodes'" :visible="pane === 'nodes' && !state.chatFocused && !state.settingsOpen" />
       <TerminalPanel v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused" /><GitPanel v-if="openedPanels.includes('git')" v-show="pane === 'git'" :visible="pane === 'git'" :save-all="saveAll" :flush="flushDocuments" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
       <SearchPanel v-if="openedPanels.includes('search')" v-show="pane === 'search'" :workspace-id="state.workspaceId" :flush="flushDocuments" :apply="replaceFiles" :save-all="saveAll" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <OutlinePanel v-if="pane === 'outline'" :document="active" :flush="flushDocuments" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
