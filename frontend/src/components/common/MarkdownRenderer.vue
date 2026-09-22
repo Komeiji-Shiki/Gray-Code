@@ -516,8 +516,8 @@ onUnmounted(()=> {
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
   border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--gc-radius-sm) var(--gc-radius-sm) 0 0;
+  background: var(--gc-surface-muted);
 }
 
 .markdown-content :deep(.code-block-title) {
@@ -553,7 +553,7 @@ onUnmounted(()=> {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-xs);
   cursor: pointer;
   padding: 0;
   color: var(--vscode-foreground);
@@ -628,7 +628,7 @@ onUnmounted(()=> {
   background: var(--vscode-textCodeBlock-background);
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
   border-top: none;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
   max-height: 400px;
   overflow-y: auto;
   overflow-x: hidden; /* 默认：自动换行，避免横向滚动条 */
@@ -668,6 +668,45 @@ onUnmounted(()=> {
   display: block;
 }
 
+.markdown-content :deep(.hljs-comment),
+.markdown-content :deep(.hljs-quote) {
+  color: var(--gc-text-muted);
+}
+
+/* 语法颜色跟随主题已有语义色，稍混入正文颜色以免长代码过于刺眼。 */
+.markdown-content :deep(.hljs-keyword),
+.markdown-content :deep(.hljs-selector-tag),
+.markdown-content :deep(.hljs-meta) {
+  color: color-mix(in srgb, var(--gc-info) 85%, var(--gc-text-primary));
+}
+
+.markdown-content :deep(.hljs-string),
+.markdown-content :deep(.hljs-regexp),
+.markdown-content :deep(.hljs-addition) {
+  color: color-mix(in srgb, var(--gc-success) 85%, var(--gc-text-primary));
+}
+
+.markdown-content :deep(.hljs-number),
+.markdown-content :deep(.hljs-literal),
+.markdown-content :deep(.hljs-attr),
+.markdown-content :deep(.hljs-symbol),
+.markdown-content :deep(.hljs-type) {
+  color: color-mix(in srgb, var(--gc-warning) 85%, var(--gc-text-primary));
+}
+
+.markdown-content :deep(.hljs-title),
+.markdown-content :deep(.hljs-built_in),
+.markdown-content :deep(.hljs-section) {
+  color: var(--gc-link);
+}
+
+.markdown-content :deep(.hljs-deletion) {
+  color: var(--gc-danger);
+}
+
+.markdown-content :deep(.hljs-strong) { font-weight: var(--gc-font-weight-semibold); }
+.markdown-content :deep(.hljs-emphasis) { font-style: italic; }
+
 /* 行号布局：每个“原始行”一行号；软换行在同一行号内折行 */
 .markdown-content :deep(.code-with-lines) {
   counter-reset: none;
@@ -706,7 +745,7 @@ onUnmounted(()=> {
 .markdown-content :deep(code:not(.hljs)) {
   padding: 2px 6px;
   background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
   font-size: 0.9em;
   font-style: normal; /* 避免外层（如思考块）设置斜体后影响代码 */
@@ -820,7 +859,7 @@ onUnmounted(()=> {
   font-size: 0.85em;
   background: var(--vscode-textCodeBlock-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   box-shadow: 0 1px 0 var(--vscode-panel-border);
 }
 
@@ -839,7 +878,7 @@ onUnmounted(()=> {
 .markdown-content :deep(mark) {
   background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 235, 59, 0.3));
   padding: 0 2px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 /* 折叠详情 */
@@ -847,7 +886,7 @@ onUnmounted(()=> {
   margin: 0.8em 0;
   padding: 0.5em;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   border: 1px solid var(--vscode-panel-border);
 }
 
@@ -868,7 +907,7 @@ onUnmounted(()=> {
   margin: 1em 0;
   padding: 12px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow-x: auto;
   text-align: center;
 }
@@ -879,7 +918,7 @@ onUnmounted(()=> {
   margin: 0;
   padding: 16px;
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
   display: flex;
   justify-content: center;
@@ -908,7 +947,7 @@ onUnmounted(()=> {
   font-family: var(--vscode-editor-font-family, monospace);
   background: var(--vscode-inputValidation-errorBackground);
   padding: 2px 4px;
-  border-radius: 2px;
+  border-radius: var(--gc-radius-xs);
 }
 
 /* 增加 Mermaid 文字对比度：强制白字黑边 (Meme 字体风格)，确保任何背景色下都清晰
@@ -943,7 +982,7 @@ onUnmounted(()=> {
   max-height: 300px;
   width: auto;
   height: auto;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   object-fit: contain;
 }
 
