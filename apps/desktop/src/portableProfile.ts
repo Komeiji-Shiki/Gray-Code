@@ -6,6 +6,7 @@ import type { PlatformApplication } from '../../server/src/application';
 import type { SecretCodec } from '../../server/src/settings/service';
 import { keySecretCodec } from '../../server/src/settings/environmentSecrets';
 import { SettingsTransfer } from '../../server/src/settings/transfer';
+import { DesktopPortableMemories } from './portableMemories';
 
 /** 免安装程序默认携带配置；安装版和显式 --data 实例沿用各自的存储规则。 */
 export function portableProfileDirectory(executable: string, packaged: boolean, explicitData: boolean): string | undefined {
@@ -22,9 +23,18 @@ export class DesktopPortableProfile {
   private codec!: SecretCodec;
   private queue: Promise<void> = Promise.resolve();
   private readonly filename: string;
+  private memories?: DesktopPortableMemories;
   constructor(readonly directory: string) { this.filename = path.join(directory, 'settings.enc'); }
 
   async initialize(application: PlatformApplication): Promise<void> {
+    await this.loadSettings(application);
+    this.memories = new DesktopPortableMemories(path.join(this.directory, 'memory-storage'));
+    await this.memories.initialize(application);
+  }
+
+  async close(): Promise<void> { await this.memories?.close(); }
+
+  private async loadSettings(application: PlatformApplication): Promise<void> {
     await mkdir(this.directory, { recursive: true });
     const bytes = await readFile(this.filename).catch(error => { if (error.code !== 'ENOENT') throw error; return undefined; });
     const keyFile = path.join(this.directory, 'profile.key');

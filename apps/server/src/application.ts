@@ -101,6 +101,7 @@ export interface ApplicationOptions {
   configurationPersistence?: {
     initialize(application: PlatformApplication): Promise<void>;
     save(application: PlatformApplication): Promise<void>;
+    close?(): Promise<void>;
   };
   documentsDirectory?: string;
   secretCodec?: SecretCodec;
@@ -452,6 +453,7 @@ export class PlatformApplication {
       await application.longMemory.background.initialize();
       return application;
     } catch (error) {
+      await options.configurationPersistence?.close?.().catch(() => {});
       await storage.close();
       throw error;
     }
@@ -593,6 +595,7 @@ export class PlatformApplication {
     await this.languages.close();
     await this.processes.close();
     await this.dependencies.close();
+    await this.configurationPersistence?.close?.();
     await this.storage.close();
   }
 }
