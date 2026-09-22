@@ -88,7 +88,7 @@ export class PlatformContextService {
     const options = this.builder.buildHistoryOptions(config);
     const promptText = [...input.promptContext?.beforeHistoryMessages ?? [], ...input.promptContext?.afterHistoryMessages ?? []]
       .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n') + additionalContextText;
-    const fixedSystem = [input.systemPrompt, JSON.stringify(input.tools), JSON.stringify(input.taskContext ?? {})].join('\n');
+    const fixedSystem = [input.systemPrompt, JSON.stringify(input.tools)].join('\n');
     const evaluate = (advance: boolean) => getHistoryWithContextTrimInfo({ conversationManager: frame.store,
       promptManager: { getSystemPrompt: () => fixedSystem, getDynamicContextText: () => promptText },
       messageBuilderService: this.builder, tokenEstimationService: estimator, log: this.log },

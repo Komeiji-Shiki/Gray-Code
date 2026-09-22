@@ -67,6 +67,30 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(profile.generation.maxOutputTokens).toBe(123);expect(profile.customBody.max_completion_tokens).toBe(9999);
   });
 
+  test('普通请求不自动追加账号与工作区说明，预览和实际发送保持一致', async () => {
+    const request = input();
+    request.taskContext = { actor: { id: 'owner', displayName: '主人', role: 'owner' },
+      workspace: { id: 'bot-workspace', name: 'Discord workspace', deviceId: 'local', directory: 'C:/fixture/discord-workspace' } };
+    request.promptContext = { historyPlacement: 'entry', beforeHistoryMessages: [{ role: 'user', parts: [{ text: '保留已配置的提示词' }] }], afterHistoryMessages: [] };
+    const preview = await adapter.preview(request);
+    await adapter.generate(request);
+    expect(requests[0].body).toEqual(preview.body);
+    expect(JSON.stringify(preview.body)).toContain('保留已配置的提示词');
+    expect(JSON.stringify(preview.body)).not.toContain('Current task context');
+    expect(JSON.stringify(preview.body)).not.toContain('C:/fixture/discord-workspace');
+    expect(request.taskContext.actor.id).toBe('owner');
+  });
+
+  test('真实 Bot 明确组装的发言者消息继续保留', async () => {
+    const request = input();
+    request.taskContext = { actor: { id: 'member', displayName: '群成员', role: 'member' } };
+    request.promptContext = { historyPlacement: 'entry', taskContextEmbedded: true, beforeHistoryMessages: [],
+      afterHistoryMessages: [{ role: 'user', parts: [{ text: '当前发言者：群成员 fixture-member' }] }] };
+    const preview = await adapter.preview(request);
+    expect(JSON.stringify(preview.body)).toContain('当前发言者：群成员 fixture-member');
+    expect(JSON.stringify(preview.body)).not.toContain('Current task context');
+  });
+
   test('视觉预处理、HTTP 和提示词预览保留同一份完整图片历史', async () => {
     profile.capabilities.compatibility.deepSeekVision = true;
     const request = input();

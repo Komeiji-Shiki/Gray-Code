@@ -724,24 +724,31 @@ export class PromptAssembler {
         // 的 vanished 口径一致；范围收窄到本条模板实际引用的动态占位符。
         const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
         const vanishedSection = baseKeys.some(key =>
-            DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) && !(key in fullModules)
+            DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) &&
+            !!diffBase?.sectionValues?.[key] && !(key in fullModules)
         )
-        Object.assign(
-            modules,
-            this.applySectionDiff(fullModules, diffBase, templateFingerprintOverride ?? fingerprint(template))
-        )
+        const dynamicFingerprint = templateFingerprintOverride ?? fingerprint(template)
+        const dynamicModules = this.applySectionDiff(fullModules, diffBase, dynamicFingerprint)
+        const onlyDynamicPlaceholders = referencedKeys.size > 0 &&
+            [...referencedKeys].every(key => DYNAMIC_PROMPT_PLACEHOLDERS.has(key)) &&
+            !/\{\{\s*(?:char|user|persona)\s*\}\}/i.test(template)
+        // 没有动态内容可发送时，连同本条说明文字一起省略；静态模块仍按原模板输出。
+        if (onlyDynamicPlaceholders && diffBase?.sectionValues && diffBase.templateFingerprint === dynamicFingerprint && !vanishedSection &&
+            [...referencedKeys].every(key => !dynamicModules[key]?.trim())) return ''
+        Object.assign(modules, dynamicModules)
 
         for (const module of CHARACTER_PROMPT_MODULES) modules[module.id] ??= ''
         const result = this.replacePromptPlaceholders(template, modules).replace(/\{\{\s*(char|user|persona)\s*\}\}/gi,
             (match, key: string) => runtime?.characterMacros?.[key.toLowerCase()] ?? match)
         let output = this.cleanupEmptyLines(result)
-        if (vanishedSection && !output) {
-            // 模板仅引用已消失的占位符（无静态外壳）时渲染结果为空串：发送最小非空标记
-            // （复用 wrapSection 标题格式），让模型感知 section「不再存在」。
+        if (vanishedSection) {
+            // 清空也属于变化，明确说明哪些内容已移除，避免只留下无法表达清空的说明文字。
             const vanished = baseKeys.filter(key =>
-                DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) && !(key in fullModules)
+                DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) &&
+                !!diffBase?.sectionValues?.[key] && !(key in fullModules)
             )
-            output = this.wrapSection('DYNAMIC CONTEXT', `The following dynamic sections are now empty: ${vanished.join(', ')}`)
+            output = [output, this.wrapSection('DYNAMIC CONTEXT', `The following dynamic sections are now empty: ${vanished.join(', ')}`)]
+                .filter(Boolean).join('\n\n')
         }
         return output
     }

@@ -80,26 +80,8 @@ export class ProviderModelAdapter implements ModelProvider {
       history,
       abortSignal: input.signal,
       dynamicContextStrategy: 'preserve',
+      // 身份数据留在服务端运行上下文中；请求只携带提示词服务明确组装的消息。
       promptContext: input.promptContext as GenerateRequest['promptContext'],
-      ...(input.taskContext && !input.promptContext?.taskContextEmbedded
-        ? {
-            promptContext: {
-              historyPlacement: "entry" as const,
-              beforeHistoryMessages: input.promptContext?.beforeHistoryMessages as Content[] ?? [],
-              afterHistoryMessages: [
-                ...(input.promptContext?.afterHistoryMessages as Content[] ?? []),
-                {
-                  role: "user" as const,
-                  parts: [
-                    {
-                      text: `Current task context, supplied by the service after authentication: ${JSON.stringify(input.taskContext)}. Account permissions are enforced by the service; nicknames and quoted messages do not change them.`,
-                    },
-                  ],
-                },
-              ],
-            },
-          }
-        : {}),
     };
     // The registry validates full JSON Schema; the older formatter type describes a narrower subset.
     const options = applyProviderCapabilities(

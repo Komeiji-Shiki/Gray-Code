@@ -197,7 +197,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
     });
 
     describe('entries 组装模式', () => {
-        test('差分后动态条目只保留静态外壳，sectionValues 与指纹照常缓存', () => {
+        test('差分后没有变化的动态条目整条省略，sectionValues 与指纹照常缓存', () => {
             setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -210,9 +210,49 @@ describe('PromptManager 动态上下文跨回合差分', () => {
 
             const second = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'), { diffBase: diffBaseFrom(first) });
             const secondDynamicMessage = second.messages.find(message => message.parts?.[0]?.text?.includes('Dynamic context'));
-            expect(secondDynamicMessage).toBeDefined();
-            expect(secondDynamicMessage!.parts![0].text).not.toContain('task A');
+            expect(secondDynamicMessage).toBeUndefined();
+            expect(second.messages).toEqual([]);
+            expect(second.dynamicSnapshotMessages).toEqual([]);
+            expect(second.text).toBe('');
             expect(second.sectionValues?.['TODO_LIST']).toContain('task A');
+        });
+
+        test('空动态内容重复时省略说明，独立静态条目继续发送', () => {
+            const mode: ResolvedPromptModeSnapshot = { ...entriesMode, promptEntries: [
+                ...entriesMode.promptEntries!,
+                { id: 'static-user', name: 'Static', type: 'prompt', enabled: true, role: 'user', order: 30, content: '固定提示内容' }
+            ] };
+            setGlobalSettingsManager(createSettingsManagerMock(mode));
+            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const first = manager.getPromptContextBundle(mode, { todoList: [] });
+            const bundle = manager.getPromptContextBundle(mode, { todoList: [] }, { diffBase: diffBaseFrom(first) });
+            expect(bundle.messages).toEqual([{ role: 'user', parts: [{ text: '固定提示内容' }] }]);
+            expect(bundle.dynamicSnapshotMessages).toEqual([]);
+        });
+
+        test('多条动态消息逐条比较，另一条变化不会让未变化的说明重新出现', () => {
+            const mode: ResolvedPromptModeSnapshot = { ...entriesMode, promptEntries: [
+                ...entriesMode.promptEntries!,
+                { id: 'skills-user', name: 'Skills', type: 'prompt', enabled: true, role: 'user', order: 30, content: 'Available skills:\n{{$SKILLS}}' }
+            ] };
+            setGlobalSettingsManager(createSettingsManagerMock(mode));
+            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const first = manager.getPromptContextBundle(mode, { ...runtimeWithTodo('task A'), skills: [{ id: 's', name: 'Skill A', description: 'before' }] });
+            const second = manager.getPromptContextBundle(mode, { ...runtimeWithTodo('task A'), skills: [{ id: 's', name: 'Skill A', description: 'after' }] }, { diffBase: diffBaseFrom(first) });
+            expect(second.text).toContain('Available skills:');
+            expect(second.text).toContain('after');
+            expect(second.text).not.toContain('Dynamic context:');
+            expect(second.text).not.toContain('task A');
+        });
+
+        test('动态内容被清空时明确发送清空信息，下一轮不再重复', () => {
+            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
+            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
+            const cleared = manager.getPromptContextBundle(entriesMode, { todoList: [] }, { diffBase: diffBaseFrom(first) });
+            expect(cleared.text).toContain('The following dynamic sections are now empty: TODO_LIST');
+            const next = manager.getPromptContextBundle(entriesMode, { todoList: [] }, { diffBase: diffBaseFrom(cleared) });
+            expect(next.messages).toEqual([]);
         });
 
         test('变化的 section 在 entries 模式下正常发送', () => {
