@@ -43,3 +43,31 @@ test('对话和代码分别应用预设，未选项目的新对话有独立文�
     expect(promoted.id).toBe(workspace.id); expect(promoted.managedConversationId).toBeUndefined();
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('从代码项目切到对话模式后，两种新建入口都创建专用工作区', async () => {
+  const f = await fixture(); await f.store.close(); const documents = path.join(f.root, 'Documents');
+  const app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: documents });
+  const router = new ApplicationRouter(app); const client = { actorId: 'owner', clientId: 'mode-workspace-test' };
+  const ui = (type: string, data: Record<string, any> = {}) => router.call(client, 'ui.request', { type, data }) as Promise<any>;
+  try {
+    const project = path.join(f.root, 'code-project'); await mkdir(project);
+    const manual = await router.call(client, 'workspaces.add', { directory: project, name: '代码项目' }) as { id: string };
+    await ui('ui.context.set', { mode: 'code', workspaceId: manual.id });
+    const code = await ui('conversation.createConversation', { conversationId: 'code-first', title: '代码会话' });
+    expect(code.workspaceId).toBe(manual.id);
+    await ui('ui.mode.select', { mode: 'chat', conversationId: 'code-first' });
+    const chat = await ui('conversation.createConversation', { conversationId: 'chat-next', title: '独立对话' });
+    const workspace = app.workspace('owner', chat.workspaceId, []);
+    expect(workspace.id).not.toBe(manual.id);
+    expect(workspace.managedConversationId).toBe('chat-next');
+    expect(path.relative(documents, workspace.directory)).toMatch(/^graycode[\\/]/);
+    await access(workspace.directory);
+    const created = await ui('ui.mode.new', { mode: 'chat', workspaceId: manual.id });
+    const other = await app.conversation('owner', created.conversationId);
+    expect(other.workspaceId).not.toBe(manual.id); expect(other.workspaceId).not.toBe(chat.workspaceId);
+    expect(app.workspace('owner', String(other.workspaceId), []).managedConversationId).toBe(other.id);
+    expect((await app.conversation('owner', 'code-first')).workspaceId).toBe(manual.id);
+    const inProject = await ui('ui.mode.new', { mode: 'code', workspaceId: manual.id });
+    expect((await app.conversation('owner', inProject.conversationId)).workspaceId).toBe(manual.id);
+  } finally { await app.close(); await f.cleanup(); }
+});

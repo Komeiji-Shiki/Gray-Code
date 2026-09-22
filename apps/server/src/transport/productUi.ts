@@ -298,7 +298,7 @@ export class ProductUi {
       case 'ui.mode.new': {
         if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
         ui.mode = data.mode;
-        const workspaceId = data.workspaceId || undefined;
+        const workspaceId = data.mode === 'chat' ? undefined : data.workspaceId || undefined;
         const profile = this.app.settings.snapshot().settings.modeProfiles?.[ui.mode!];
         const preset = profile?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
         const conversation = await this.app.createConversation(client.actorId, data.mode === 'character' ? '新角色对话' : '新对话', workspaceId,
@@ -462,7 +462,8 @@ export class ProductUi {
           const mode = ui.mode ?? 'chat';
           const preset = typeof data.promptModeId === 'string' && ui.preferences.settings.getAllPromptModes().some(item => item.id === data.promptModeId)
             ? data.promptModeId : this.app.settings.snapshot().settings.modeProfiles?.[mode]?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
-          await this.app.createConversation(client.actorId, data.title ?? '新对话', workspace?.id,
+          // 对话模式自动创建专用目录，不继承切换模式前选中的项目。
+          await this.app.createConversation(client.actorId, data.title ?? '新对话', mode === 'chat' ? undefined : workspace?.id,
             { platformMode: mode, promptModeConfig: { modeId: preset } }, undefined, { id: data.conversationId, automaticWorkspace: true });
         }
         const created = await this.app.conversation(client.actorId, data.conversationId);
