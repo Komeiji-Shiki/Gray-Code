@@ -67,6 +67,14 @@ export async function flushDesktopSettings(): Promise<void> {
   while (pending.size) await Promise.allSettled([...pending]);
   if (writeErrors.size) throw new Error([...writeErrors.values()][0]);
 }
+/** 表单仍挂载时完成校验和草稿暂存，失败就保留原输入供主人修正。 */
+export async function prepareDesktopSettingsNavigation(): Promise<boolean> {
+  if (desktopSettingsDraft.busy) return false;
+  desktopSettingsDraft.busy = true; desktopSettingsDraft.error = '';
+  try { await flushDesktopSettings(); return true; }
+  catch (error) { desktopSettingsDraft.error = error instanceof Error ? error.message : String(error); return false; }
+  finally { desktopSettingsDraft.busy = false; }
+}
 export async function saveDesktopSettings(): Promise<void> {
   if (desktopSettingsDraft.busy) return;
   desktopSettingsDraft.busy = true; desktopSettingsDraft.error = '';

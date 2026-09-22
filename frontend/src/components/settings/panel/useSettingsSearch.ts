@@ -10,7 +10,7 @@ interface SearchOptions {
   index: readonly SearchIndexEntry[]
   tabs: ComputedRef<TabItem[]>
   activeTab: () => SettingsTab
-  selectTab: (tab: SettingsTab) => void
+  selectTab: (tab: SettingsTab) => void | boolean | Promise<void | boolean>
   container: () => HTMLElement | null | undefined
 }
 
@@ -68,8 +68,9 @@ export function useSettingsSearch(options: SearchOptions) {
 
   async function openSearchResult(entry: SearchIndexEntry) {
     cancelNavigation()
-    searchFocused.value = false; searchQuery.value = ''; activeSearchIndex.value = 0
-    options.selectTab(entry.tab)
+    searchFocused.value = false
+    if (await options.selectTab(entry.tab) === false || disposed || options.activeTab() !== entry.tab) return
+    searchQuery.value = ''; activeSearchIndex.value = 0
     const request = navigation
     await nextTick()
     const container = options.container()

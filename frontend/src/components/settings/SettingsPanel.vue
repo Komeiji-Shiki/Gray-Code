@@ -30,7 +30,7 @@ import { useSettingsImportExport } from '@/composables/useSettingsImportExport'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { useOneShotTimer } from '@/composables/useOneShotTimer'
 import PlatformSettingsFooter from './PlatformSettingsFooter.vue'
-import { desktopSettingsDraft, markDesktopSettingsDirty, useDesktopSettingsDraft } from '@/platform/settingsDraft'
+import { desktopSettingsDraft, markDesktopSettingsDirty, prepareDesktopSettingsNavigation, useDesktopSettingsDraft } from '@/platform/settingsDraft'
 const isDesktopHost = Boolean(window.__GRAYCODE_HOST)
 const platformFooter = ref<InstanceType<typeof PlatformSettingsFooter>>()
 function closeSettings() {
@@ -67,6 +67,19 @@ const UsageSummaryCard = defineAsyncComponent(() => import('./panel/UsageSummary
 
 const settingsStore = useSettingsStore()
 const { t, setLanguage } = useI18n()
+
+async function selectSettingsTab(tab: SettingsTab): Promise<boolean> {
+  if (tab === settingsStore.activeTab) return true
+  if (isDesktopHost && !await prepareDesktopSettingsNavigation()) return false
+  settingsStore.setActiveTab(tab)
+  return true
+}
+async function changeSettingsCategory(event: Event) {
+  const select = event.target as HTMLSelectElement
+  await selectSettingsTab(select.value as SettingsTab)
+  // 原生下拉已先改变显示值，校验失败时还原到仍在编辑的分类。
+  select.value = settingsStore.activeTab
+}
 
 // 侧边栏折叠状态（展开时显示图标+文字，折叠时仅图标）
 const sidebarCollapsed = ref(false)
@@ -111,7 +124,7 @@ const scrollbarRef = ref<InstanceType<typeof CustomScrollbar>>()
 const { searchQuery, searchFocused, activeSearchIndex, searchActive, searchResults, tabsWithMatches,
   tabIcon, moveSearchSelection, openSearchResult } = useSettingsSearch({
   index: SEARCH_INDEX, tabs, activeTab: () => settingsStore.activeTab,
-  selectTab: tab => settingsStore.setActiveTab(tab), container: () => scrollbarRef.value?.getContainer(),
+  selectTab: selectSettingsTab, container: () => scrollbarRef.value?.getContainer(),
 })
 
 // 代理设置
@@ -319,7 +332,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
 
 <template>
   <section class="settings-panel" aria-labelledby="settings-panel-title">
-    <div class="settings-header">
+    <div class="settings-header" :inert="isDesktopHost && desktopSettingsDraft.busy">
       <h3 id="settings-panel-title">{{ t('components.settings.settingsPanel.title') }}</h3>
       <!-- T12：拆至 SettingsSearchBox（搜索框 + 结果下拉） -->
       <SettingsSearchBox
@@ -343,8 +356,8 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
       </button>
     </div>
     
-    <div class="settings-content">
-      <label v-if="isDesktopHost" class="mobile-settings-category">设置分类<select :value="settingsStore.activeTab" aria-label="设置分类" @change="settingsStore.setActiveTab(($event.target as HTMLSelectElement).value as SettingsTab)"><option v-for="tab in tabs" :key="tab.id" :value="tab.id">{{ tab.label }}</option></select></label>
+    <div class="settings-content" :inert="isDesktopHost && desktopSettingsDraft.busy" :aria-busy="isDesktopHost && desktopSettingsDraft.busy">
+      <label v-if="isDesktopHost" class="mobile-settings-category">设置分类<select :value="settingsStore.activeTab" aria-label="设置分类" @change="changeSettingsCategory"><option v-for="tab in tabs" :key="tab.id" :value="tab.id">{{ tab.label }}</option></select></label>
       <!-- 左侧页签（T12：拆至 SettingsSidebar；可折叠：展开显示图标+文字，折叠仅图标+tooltip） -->
       <SettingsSidebar
         :tabs="tabs"
@@ -352,7 +365,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
         v-model:collapsed="sidebarCollapsed"
         :search-active="searchActive"
         :tabs-with-matches="tabsWithMatches"
-        @select="settingsStore.setActiveTab"
+        @select="selectSettingsTab"
       />
       
       <!-- 右侧内容 -->

@@ -15,6 +15,7 @@ let wrapper: VueWrapper
 let search: ReturnType<typeof useSettingsSearch>
 let container: HTMLElement
 let activeTab: Ref<SettingsTab>
+let selectTab: (tab: SettingsTab) => void | boolean | Promise<void | boolean>
 const entry: SearchIndexEntry = {
   key: 'tools:context_notes', tab: 'tools', labelKey: '', label: '任务笔记', keywords: [],
   anchor: '[data-search-tool="context_notes"]',
@@ -26,10 +27,11 @@ beforeEach(async () => {
   container.innerHTML = '<section class="settings-section"><h4>工具</h4></section>'
   container.scrollTo = vi.fn()
   activeTab = ref<SettingsTab>('general')
+  selectTab = tab => { activeTab.value = tab }
   wrapper = mount(defineComponent({ setup() {
     search = useSettingsSearch({ index: settingsSearchIndex(true),
       tabs: computed(() => [{ id: 'tools', label: '工具', icon: 'codicon-tools' }, { id: 'autoExec', label: '自动执行', icon: 'codicon-shield' }]),
-      activeTab: () => activeTab.value, selectTab: tab => { activeTab.value = tab }, container: () => container,
+      activeTab: () => activeTab.value, selectTab: tab => selectTab(tab), container: () => container,
     })
     return () => h('div')
   } }))
@@ -74,3 +76,13 @@ test('用户切换页签后，取消仍在等待内容的旧搜索跳转', async
   expect(container.scrollTo).not.toHaveBeenCalled()
   expect(target.classList.contains('search-flash')).toBe(false)
 })
+
+
+test('目标分类校验未通过时保留查询，也不滚动到其他表单', async () => {
+  selectTab = async () => false;
+  search.searchQuery.value = '任务笔记';
+  await search.openSearchResult(entry);
+  expect(activeTab.value).toBe('general');
+  expect(search.searchQuery.value).toBe('任务笔记');
+  expect(container.scrollTo).not.toHaveBeenCalled();
+});

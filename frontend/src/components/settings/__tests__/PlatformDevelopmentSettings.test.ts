@@ -65,3 +65,14 @@ test('配置读取失败时不能用空表单覆盖已保存设置', async () =>
     expect(calls.register.mock.calls[0][1]()).toBe(false);
   } finally { wrapper.unmount(); }
 });
+
+
+test('高级选项的 JSON 错误指出服务和字段，保留原输入且不回显内容', async () => {
+  const wrapper = render(); await flushPromises();
+  try {
+    await wrapper.findAll('textarea')[0].setValue('{"PRIVATE":"fixture-secret"');
+    await expect(calls.register.mock.calls[0][0]()).rejects.toThrow('项目 Python的初始化选项的 JSON 格式不正确');
+    expect(calls.send.mock.calls.some(([method]) => method === 'platform.development.update')).toBe(false);
+    expect((wrapper.findAll('textarea')[0].element as HTMLTextAreaElement).value).toBe('{"PRIVATE":"fixture-secret"');
+  } finally { wrapper.unmount(); }
+});

@@ -56,7 +56,9 @@ async function focusServer(key: string) {
 }
 function object(text: string, name: string): Record<string, unknown> | undefined {
   if (!text.trim()) return undefined;
-  const value: unknown = JSON.parse(text);
+  let value: unknown;
+  try { value = JSON.parse(text); }
+  catch { throw new Error(name + '的 JSON 格式不正确，请检查双引号和逗号。'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(name + '必须是 JSON 对象。');
   return value as Record<string, unknown>;
 }
