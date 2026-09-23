@@ -3,17 +3,14 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
 import { buildComputerHost } from './build-computer-host.mjs';
+import { readDistributionInfo } from './distribution-info.mjs';
 const require = createRequire(import.meta.url);
-const buildInfo = { buildTime: new Date().toISOString() };
-try {
-  const gitOptions = { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] };
-  buildInfo.buildCommit = execFileSync('git', ['rev-parse', 'HEAD'], gitOptions).trim();
-  buildInfo.buildDirty = !!execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], gitOptions).trim();
-} catch { /* 源码压缩包没有 Git 信息，保留实际构建时间。 */ }
+const distribution = readDistributionInfo();
+const buildInfo = { ...distribution, buildTime: new Date().toISOString() };
 for (const name of ['main', 'preload']) {
   const result = await build({ entryPoints: [`apps/desktop/src/${name === 'main' ? 'bootstrap' : name}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
     bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true, metafile: true,
-    define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo) },
+    define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo), __GRAYCODE_DISTRIBUTION__: JSON.stringify(distribution) },
     // 沙箱预加载不能 require 工作区包，纯契约代码必须随它一起打包。
     external: name === 'preload' ? ['electron'] : ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
   if (name === 'preload') {

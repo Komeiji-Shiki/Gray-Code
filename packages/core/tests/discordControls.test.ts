@@ -18,6 +18,14 @@ describe('Discord 原生操作与共享运行流程', () => {
   let generated: ModelInput[]; let hold: Promise<void> | undefined; let started: ReturnType<typeof deferred<ModelInput>>;
   let sent: Array<{ channelId: string; reply: BotReply }>; let serial: number;
   const context = (id: string, channelId = '30', authorId = '10', direct = false) => ({ platform: 'discord' as const, botId: '900', id, channelId, authorId, direct });
+  test('源码和帮助指令不发起模型任务', async () => {
+    const source = await app.discord.sessions.perform(context('source-notice'), { kind: 'source' });
+    const help = await app.discord.sessions.perform(context('help-notice'), { kind: 'help' });
+    expect(source.reply).toContain('AGPL-3.0-only');
+    expect(help.reply).toContain('/gray source');
+    expect(generated).toHaveLength(0);
+    expect(await app.storage.listRuns({ limit: 1 })).toEqual([]);
+  });
   async function menu(overrides: Partial<BotInteraction> = {}) {
     let panel!: BotPanel; let modal!: BotModal; const acknowledgements: string[] = [];
     await handler({ id: `interaction-${++serial}`, authorId: '10', channelId: '30', direct: false, kind: 'command',

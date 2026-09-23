@@ -1,3 +1,9 @@
+GrayCode component licensing
+
+GNU AGPL version 3 only, with the GrayCode Cubism combination exception below.
+Historical MIT material through commit 9fe9efa909f9afd7240d05b349908050a188baa1 retains its original permissions.
+The historical MIT notice below does not offer MIT for all later GrayCode code. Third-party component notices take precedence for their respective material.
+
 GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007
 
@@ -233,3 +239,67 @@ Also add information on how to contact you by electronic and paper mail.
 If your software can interact with users remotely through a computer network, you should also make sure that it provides a way for users to get its source.  For example, if your program is a web application, its interface could display a "Source" link that leads users to an archive of the code.  There are many ways you could offer source, and different solutions will be better for different programs; see section 13 for the specific requirements.
 
 You should also get your employer (if you work as a programmer) or school, if any, to sign a "copyright disclaimer" for the program, if necessary. For more information on this, and how to apply and follow the GNU AGPL, see <http://www.gnu.org/licenses/>.
+
+GrayCode Cubism combination exception, version 1.0
+
+Additional permission under section 7 of the GNU Affero General Public License,
+version 3 (AGPLv3)
+
+For GrayCode code made available under AGPLv3 with this permission by its
+copyright holders, you may link or combine that code with the following
+components solely to support Live2D model loading and rendering, and convey
+and run the resulting combination:
+
+1. The Cubism Web Framework code contained in the unmodified
+   pixi-live2d-display 0.4.0 cubism4 distribution identified by the hashes and
+   Framework commit in apps/client/src/pets/vendor/provenance.json in this
+   distribution of GrayCode.
+2. An unmodified official Live2D Cubism Core runtime, obtained separately by
+   its user under a valid license from Live2D, that is compatible with that
+   Framework. This permission does not authorize GrayCode distributors to
+   bundle or supply Cubism Core.
+
+The listed components remain subject to their own applicable licenses. This
+permission does not apply AGPLv3 to those components, require their relicensing,
+or require provision of their source code under AGPLv3. It grants no rights in
+Live2D software, models, artwork, trademarks, or other third-party material.
+All applicable third-party use and distribution conditions must still be met.
+
+Except for those listed components, the Corresponding Source requirements of
+AGPLv3 remain unchanged. In particular, GrayCode's renderer integration,
+interfaces, chat, model orchestration, storage, and server code are not exempt
+from AGPLv3. This permission does not extend to other proprietary modules or
+to additional application functionality placed inside a listed component.
+
+When you convey a combination relying on this permission, retain this notice
+with the GrayCode license notices and retain the applicable third-party notices.
+
+If you modify code carrying this permission, you may extend the permission to
+your modifications if you have the necessary rights, but you are not required
+to do so. You may remove this additional permission as provided by AGPLv3
+section 7. Code received from another copyright holder without this permission
+does not acquire it merely by being added to GrayCode. This permission does
+not permit relicensing GrayCode under a proprietary license.
+
+MIT License
+
+Copyright (c) 2025 LimCode Team
+Copyright (c) 2026 GrayCode Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

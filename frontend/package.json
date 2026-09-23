@@ -42,5 +42,6 @@
     "vite": "^6.4.3",
     "vitest": "^4.1.10",
     "vue-tsc": "^2.0.0"
-  }
+  },
+  "license": "SEE LICENSE IN LICENSE"
 }

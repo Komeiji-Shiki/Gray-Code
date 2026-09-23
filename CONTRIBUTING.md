@@ -2,6 +2,12 @@
 
 当前主线以 2.0 独立平台为中心。先阅读[架构导航](PROJECT_STRUCTURE.md)，确认修改属于运行核心、应用服务、宿主还是界面。保留的扩展构建和桌面构建是不同入口。
 
+## 贡献许可与来源
+
+提交前阅读 [LICENSING.md](LICENSING.md)。默认范围内的新贡献采用 AGPL-3.0-only，并包含其中限定的 Cubism 组合许可例外；贡献者保留版权。提交者需有权作出这些授权。第三方代码保留原有许可并说明来源，已有历史 MIT 权利继续有效。
+
+请按 [DCO 1.1](DCO) 确认贡献来源，并使用 `git commit -s` 添加 Signed-off-by。沿用你用于公开贡献的 Git 身份，提交前检查记录内容。DCO 是来源声明，不是版权转让，也不允许替没有授权的其他作者授予例外。纯文档贡献适用同样约定。
+
 ## 环境与首次启动
 
 需要 Node.js 22.15 或更新版本及 npm。Windows 原生电脑宿主使用系统 .NET Framework 4 的 csc.exe，构建脚本定位到 Windows/Microsoft.NET/Framework64/v4.0.30319。构建原生 npm 依赖时，若没有匹配的预编译产物，需按依赖要求准备编译工具。
@@ -64,6 +70,10 @@ ACP 官方 SDK 使用 ESM，平台 Jest 仅转换该依赖的 JavaScript；生�
 本批次性能数据与限制见[性能与验证](wiki/Performance-and-Validation.md)。临时测量放在忽略目录；需要长期防止回归的场景加入现有测试结构。
 
 ## 打包与构建身份
+
+正式桌面打包会先运行 `package:source`，要求已提交的干净源码，并把同一提交的源码归档及 SHA-256 随程序复制。`release/source/` 下的归档、校验文件和清单应与二进制一起提供下载；普通 `build:desktop` 仍可用于有本地修改的开发构建。`npm run license:check` 检查工作区组件的完整许可副本。
+
+派生项目可在构建时设置 `GRAYCODE_SOURCE_REPOSITORY`（公开仓库地址）、`GRAYCODE_SOURCE_URL`（对应部署版本源码下载地址）和 `GRAYCODE_LICENSE_URL`（适用许可说明）。GitHub origin 默认生成按提交固定的链接；其他托管地址需明确提供后两项。通过源码归档构建时，保留其中的 `.graycode-source.json`，构建脚本会核对源文件是否发生变化。
 
 ~~~powershell
 $env:GRAYCODE_DESKTOP_OUT = 'release/desktop-local'

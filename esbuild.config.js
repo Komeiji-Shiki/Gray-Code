@@ -112,6 +112,8 @@ function copyNativePackages() {
 }
 
 async function build() {
+    const { readDistributionInfo } = await import('./scripts/distribution-info.mjs');
+    buildOptions.define = { ...buildOptions.define, __GRAYCODE_DISTRIBUTION__: JSON.stringify(readDistributionInfo(__dirname)) };
     if (isWatch) {
         // 监听模式：文件变更时自动重新打包
         const ctx = await esbuild.context({

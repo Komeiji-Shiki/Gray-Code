@@ -22,7 +22,7 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
+  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue?style=flat-square" alt="AGPL-3.0-only with Cubism exception" /></a>
 </p>
 
 GrayCode 2.0 提供独立桌面工作台：理解工作区、搜索和修改代码、执行命令、调用语言服务，并通过 Diff 审阅文件改动。它支持多模型对话、角色聊天、机器人入口和带共享任务的子代理协作。
@@ -114,4 +114,4 @@ GrayCode 要求 VS Code `^1.84.0` 或更高版本。推荐从 [VS Code 插件市
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)。
+GrayCode 采用 **AGPL-3.0-only，并提供范围限定的 Cubism 组合许可例外**。迁移范围、历史 MIT 权利、第三方许可及对应源码交付见 [LICENSING.md](LICENSING.md)。商业使用和收费须遵守适用的源码及许可要求。

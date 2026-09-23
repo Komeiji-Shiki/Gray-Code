@@ -220,7 +220,7 @@ async function loadSettings() {
 }
 
 // 应用信息来自当前宿主，独立桌面同时提供构建来源与程序位置。
-const appInfo = ref<{ name: string; displayName: string; version: string; buildCommit?: string; buildDirty?: boolean; buildTime?: string; executablePath?: string }>({
+const appInfo = ref<{ name: string; displayName: string; version: string; buildCommit?: string; buildDirty?: boolean; buildTime?: string; executablePath?: string; license?: string; sourceUrl?: string; licenseUrl?: string }>({
   name: '',
   displayName: '',
   version: ''
@@ -237,7 +237,10 @@ async function loadAppInfo() {
         buildCommit: response.buildCommit,
         buildDirty: response.buildDirty,
         buildTime: response.buildTime,
-        executablePath: response.executablePath
+        executablePath: response.executablePath,
+        license: response.license,
+        sourceUrl: response.sourceUrl,
+        licenseUrl: response.licenseUrl
       }
     }
   } catch (error) {

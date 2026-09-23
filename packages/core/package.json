@@ -17,5 +17,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.20.1"
-  }
+  },
+  "license": "SEE LICENSE IN LICENSE"
 }

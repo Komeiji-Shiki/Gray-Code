@@ -15,6 +15,7 @@ import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings';
 import type { MessageHandler } from '../types';
 import { getProductMetadata } from '../../backend/core/productMetadata';
 import { withBoundary } from './errorBoundary';
+import { getDistributionInfo } from '../../shared/distribution';
 
 /**
  * 获取设置
@@ -29,7 +30,7 @@ export const getSettings: MessageHandler = async (data, requestId, ctx) => {
  */
 export const getAppInfo: MessageHandler = async (_data, requestId, ctx) => {
   try {
-    ctx.sendResponse(requestId, getProductMetadata());
+    ctx.sendResponse(requestId, { ...getProductMetadata(), ...getDistributionInfo() });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_APP_INFO_ERROR', error.message || 'Failed to get app info');
   }

@@ -4,12 +4,14 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { buildComputerHost } from './build-computer-host.mjs';
+import { readDistributionInfo } from './distribution-info.mjs';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const common = {
   absWorkingDir: root, bundle: true, platform: 'node', format: 'cjs',
   target: 'node22', sourcemap: true, logLevel: 'warning',
+  define: { __GRAYCODE_DISTRIBUTION__: JSON.stringify(readDistributionInfo(root)) },
 };
 await build({ ...common, entryPoints: ['packages/contracts/src/index.ts'], outfile: 'packages/contracts/dist/index.cjs' });
 for (const [entry, output] of [

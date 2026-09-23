@@ -9,5 +9,6 @@
   },
   "devDependencies": {
     "electron": "44.2.0"
-  }
+  },
+  "license": "SEE LICENSE IN LICENSE"
 }

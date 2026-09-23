@@ -40,7 +40,7 @@ import { isTrustedApplicationFrame } from './trustedFrame';
 import { openWorkspaceInExplorer, revealWorkspaceFile } from './workspaceExplorer';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
-declare const __GRAYCODE_DESKTOP_BUILD__: { buildCommit?: string; buildDirty?: boolean; buildTime: string };
+declare const __GRAYCODE_DESKTOP_BUILD__: import('../../../shared/distribution').DistributionInfo & { buildTime: string };
 
 protocol.registerSchemesAsPrivileged([
   {

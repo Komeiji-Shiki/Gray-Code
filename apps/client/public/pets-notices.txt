@@ -1,5 +1,8 @@
 GrayCode 桌宠播放器第三方许可
 
+GrayCode 自有适配代码采用 AGPL-3.0-only，并适用项目 LICENSES/GrayCode-Cubism-exception.txt 的限定组合许可。
+该例外不改变以下第三方原有授权；Cubism Core 与模型由用户另行取得，不随 GrayCode 分发。
+
 pixi-live2d-display 0.4.0
 来源：https://github.com/guansss/pixi-live2d-display
 MIT License

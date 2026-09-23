@@ -10,6 +10,7 @@ import { BotInbox, type BotInboxItem } from './inbox';
 import { captureBotEnvironment } from './prompt';
 import { actorForBotRun, isBotUserBlocked, resolveBotUser } from './permissions';
 import { authorizeEffects } from '@graycode/core';
+import { distributionSourceNotice } from '../../../../shared/distribution';
 
 export type BotPlatform = 'discord' | 'onebot';
 export interface BotRoute {
@@ -26,7 +27,7 @@ export interface BotSession {
   conversationId?: string; selection: DiscordReplyProfile; updatedAt: number;
 }
 export type BotAction =
-  | { kind: 'status' | 'help' | 'new' | 'cancel' | 'workspaces' }
+  | { kind: 'status' | 'help' | 'source' | 'new' | 'cancel' | 'workspaces' }
   | { kind: 'workspace'; workspaceId: string | null }
   | { kind: 'conversation'; conversationId: string }
   | { kind: 'model'; providerId: string; modelId: string }
@@ -245,7 +246,8 @@ export class BotSessions {
     let conversation = await this.current(loaded);
     let reply = ''; let run: RunRecord | undefined;
     const receiptRecord = (): RecordMutation => ({ namespace: receipts, id: receiptId, value: { receivedAt: Date.now(), reply } });
-    if (action.kind === 'help') reply = '使用 /gray 打开操作面板。文字指令仍可用：/gray new、/gray task 对话ID、/gray workspace 工作区ID（none 为普通聊天）、/gray status、/gray cancel、/gray answer 提问ID 回答、/gray approve 审批ID、/gray deny 审批ID、/gray choose 审批ID 选项序号。';
+    if (action.kind === 'source') reply = distributionSourceNotice();
+    else if (action.kind === 'help') reply = '使用 /gray 打开操作面板。文字指令仍可用：/gray new、/gray task 对话ID、/gray workspace 工作区ID（none 为普通聊天）、/gray status、/gray cancel、/gray answer 提问ID 回答、/gray approve 审批ID、/gray deny 审批ID、/gray choose 审批ID 选项序号。\n/gray source 查看当前版本源码与许可。\n\n' + distributionSourceNotice();
     else if (action.kind === 'workspaces') reply = this.workspaces(loaded.actor.id).map(item => `${item.name} · ${item.id}`).join('\n') || '当前账号没有可用工作区。';
     else if (action.kind === 'workspace') {
       this.app.requireOwner(loaded.actor.id);
@@ -343,7 +345,7 @@ export function parseBotAction(text: string): BotAction {
   if (!command) return { kind: 'message', text };
   const verb = command[1]?.toLowerCase(); const argument = command[2]?.trim() ?? '';
   if (!verb || verb === 'help') return { kind: 'help' };
-  if (verb === 'status' || verb === 'new' || verb === 'cancel' || verb === 'workspaces') return { kind: verb };
+  if (verb === 'status' || verb === 'source' || verb === 'new' || verb === 'cancel' || verb === 'workspaces') return { kind: verb };
   if (verb === 'workspace') return argument ? { kind: 'workspace', workspaceId: argument === 'none' ? null : argument } : { kind: 'workspaces' };
   if (verb === 'task') return { kind: 'conversation', conversationId: argument };
   if (verb === 'ask' || verb === 'interrupt') return { kind: verb === 'ask' ? 'message' : 'interrupt', text: argument };

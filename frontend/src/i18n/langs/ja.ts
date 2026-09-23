@@ -2372,7 +2372,9 @@ const ja: LanguageMessages = {
                     name: '{appName} - Vibe Coding アシスタント',
                     version: 'バージョン：{version}',
                     repository: 'リポジトリ',
-                    developer: '開発者'
+                    developer: '開発者',
+                    source: 'このバージョンのソース',
+                    license: 'ライセンス'
                 },
                 update: {
                     title: '自動更新',

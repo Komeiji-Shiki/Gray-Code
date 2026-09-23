@@ -2372,7 +2372,9 @@ const en: LanguageMessages = {
                     name: '{appName} - Vibe Coding Assistant',
                     version: 'Version: {version}',
                     repository: 'Repository',
-                    developer: 'Developer'
+                    developer: 'Developer',
+                    source: 'Source for this version',
+                    license: 'Licensing'
                 },
                 update: {
                     title: 'Auto Update',

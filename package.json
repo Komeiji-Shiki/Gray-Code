@@ -293,7 +293,7 @@
   },
   "scripts": {
     "build:desktop": "npm run build:platform && node scripts/build-desktop.mjs && npm --workspace @graycode/client run build && npm --prefix frontend run build:platform",
-    "package:desktop": "npm run build:desktop && node scripts/package-desktop.mjs",
+    "package:desktop": "npm run license:check && npm run package:source && npm run build:desktop && node scripts/package-desktop.mjs",
     "desktop": "electron apps/desktop/dist/main.cjs",
     "build:platform": "node scripts/build-platform.mjs",
     "typecheck:platform": "tsc -p packages/core/tsconfig.json && tsc -p apps/server/tsconfig.json",
@@ -322,7 +322,9 @@
     "i18n:check": "node scripts/i18n-sync.mjs --check",
     "benchmark": "jest --config jest.backend.config.js --testMatch \"**/*.benchmark.ts\" --runInBand --testTimeout 600000",
     "build:desktop:trial": "node scripts/build-platform.mjs --package-only && node scripts/build-desktop.mjs --package-only && npm --workspace @graycode/client run build:trial && npm --prefix frontend run build:platform:trial",
-    "package:installer": "node scripts/package-desktop-installer.mjs"
+    "package:installer": "node scripts/package-desktop-installer.mjs",
+    "package:source": "node scripts/package-source.mjs",
+    "license:check": "node scripts/sync-license-notices.mjs --check"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
@@ -363,7 +365,7 @@
     "graycode"
   ],
   "author": "Komeiji-Shiki",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSING.md",
   "repository": {
     "type": "git",
     "url": "https://github.com/Komeiji-Shiki/Gray-Code"

@@ -1,5 +1,6 @@
 import { PlatformPromptService } from '../prompt/service';
 import packageMetadata from '../../../../package.json';
+import { getDistributionInfo } from '../../../../shared/distribution';
 import { previewPrompt } from '../prompt/preview';
 import { ArtifactApproval } from '../artifacts/approval';
 import { CheckpointUi } from '../workspace/checkpointUi';
@@ -457,7 +458,7 @@ export class ProductUi {
         return list.filter(Boolean);
       }
       case 'platform.questions.answer': await this.app.runtime.answerQuestion(data.id, client.actorId, data.answers); return { success: true };
-      case 'getAppInfo': return { name: 'GrayCode', displayName: 'GrayCode', version: packageMetadata.version, publisher: packageMetadata.publisher, runtime: 'server' };
+      case 'getAppInfo': return { name: 'GrayCode', displayName: 'GrayCode', version: packageMetadata.version, publisher: packageMetadata.publisher, runtime: 'server', ...getDistributionInfo() };
       case 'showNotification': this.app.publish({ type: 'notification', message: String(data.message), severity: data.type }); return { success: true };
       case 'conversation.createConversation': {
         if (!await this.app.storage.getConversation(data.conversationId)) {

@@ -1,0 +1,40 @@
+GrayCode Cubism combination exception, version 1.0
+
+Additional permission under section 7 of the GNU Affero General Public License,
+version 3 (AGPLv3)
+
+For GrayCode code made available under AGPLv3 with this permission by its
+copyright holders, you may link or combine that code with the following
+components solely to support Live2D model loading and rendering, and convey
+and run the resulting combination:
+
+1. The Cubism Web Framework code contained in the unmodified
+   pixi-live2d-display 0.4.0 cubism4 distribution identified by the hashes and
+   Framework commit in apps/client/src/pets/vendor/provenance.json in this
+   distribution of GrayCode.
+2. An unmodified official Live2D Cubism Core runtime, obtained separately by
+   its user under a valid license from Live2D, that is compatible with that
+   Framework. This permission does not authorize GrayCode distributors to
+   bundle or supply Cubism Core.
+
+The listed components remain subject to their own applicable licenses. This
+permission does not apply AGPLv3 to those components, require their relicensing,
+or require provision of their source code under AGPLv3. It grants no rights in
+Live2D software, models, artwork, trademarks, or other third-party material.
+All applicable third-party use and distribution conditions must still be met.
+
+Except for those listed components, the Corresponding Source requirements of
+AGPLv3 remain unchanged. In particular, GrayCode's renderer integration,
+interfaces, chat, model orchestration, storage, and server code are not exempt
+from AGPLv3. This permission does not extend to other proprietary modules or
+to additional application functionality placed inside a listed component.
+
+When you convey a combination relying on this permission, retain this notice
+with the GrayCode license notices and retain the applicable third-party notices.
+
+If you modify code carrying this permission, you may extend the permission to
+your modifications if you have the necessary rights, but you are not required
+to do so. You may remove this additional permission as provided by AGPLv3
+section 7. Code received from another copyright holder without this permission
+does not acquire it merely by being added to GrayCode. This permission does
+not permit relicensing GrayCode under a proprietary license.

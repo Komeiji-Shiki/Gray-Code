@@ -2374,7 +2374,9 @@ const zhCN = {
                     name: '{appName} - Vibe Coding 助手',
                     version: '版本：{version}',
                     repository: '项目仓库',
-                    developer: '开发者'
+                    developer: '开发者',
+                    source: '当前版本源码',
+                    license: '许可说明'
                 },
                 update: {
                     title: '自动更新',

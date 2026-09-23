@@ -28,5 +28,6 @@
     "yaml-language-server": "1.24.0",
     "yauzl": "3.4.0",
     "yazl": "2.5.1"
-  }
+  },
+  "license": "SEE LICENSE IN LICENSE"
 }

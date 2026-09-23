@@ -36,5 +36,8 @@ jobs:
           path: |
             release/desktop/GrayCode-win32-x64/**
             release/desktop-installer/**
+            release/source/*.tar.gz
+            release/source/*.sha256
+            release/source/source-package.json
           if-no-files-found: error
           retention-days: 14

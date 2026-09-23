@@ -23,5 +23,6 @@
     "vite": "6.4.3",
     "vue-tsc": "2.2.12",
     "@types/markdown-it": "14.1.2"
-  }
+  },
+  "license": "SEE LICENSE IN LICENSE"
 }

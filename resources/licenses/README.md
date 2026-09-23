@@ -11,4 +11,4 @@
 
 MCP 2.0.0 的包元数据标为 MIT，但随包 `LICENSE` 说明项目正向 Apache-2.0 迁移，未获重授权的贡献继续适用原 MIT 许可。此处保留完整原文，不把包元数据简写当成统一授权结论。ACP 与 MCP SDK 未修改上游源码，由 esbuild 合并进平台与桌面产物；GrayCode 的连接和会话适配在各自业务模块内。
 
-其他独立分发资源：JavaScript 调试器在 `resources/debuggers/js-debug/LICENSE`，桌宠播放器的来源与 Cubism 说明在 `apps/client/src/pets/vendor/`。这些组件与 GrayCode 自有代码的 [MIT 许可](../../LICENSE) 分别适用。更新对应依赖时同步核对原始许可与本表。
+其他独立分发资源：JavaScript 调试器在 `resources/debuggers/js-debug/LICENSE`，桌宠播放器的来源与 Cubism 说明在 `apps/client/src/pets/vendor/`。这些组件与 GrayCode 自有代码的 [AGPL 及限定例外](../../LICENSING.md) 分别适用。更新对应依赖时同步核对原始许可与本表，并保留 [历史 MIT 声明](../../LICENSES/MIT-legacy.txt)。

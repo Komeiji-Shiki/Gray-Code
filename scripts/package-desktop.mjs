@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectRuntimeDependencies } from './desktop-runtime-dependencies.mjs';
 import { assertCleanDesktopPackage } from './desktop-profile-guard.mjs';
+import { verifySourcePackage } from './package-source.mjs';
+import { stageDistributionAssets, verifyDistributionAssets } from './distribution-assets.mjs';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // 打包机直连官方 Electron 下载源不稳定，改走可达镜像；与 @electron/get 的 mirror 变量同口径。
@@ -18,6 +20,10 @@ const entryFiles = ['apps/desktop/dist/main.cjs', 'apps/desktop/dist/preload.cjs
   'apps/client/dist/index.html', 'apps/client/dist/browser.html', 'apps/client/dist/pet.html', 'apps/client/dist/pet-renderer.html', 'apps/client/dist/pet-renderer.js', 'apps/client/dist/chat/platform.html'];
 const missingEntries = entryFiles.filter(file => !require('node:fs').existsSync(path.join(root, file)));
 if (missingEntries.length) throw new Error(`桌面构建尚未完成：${missingEntries.join(', ')}。请先完成 npm run build:desktop。`);
+const sourcePackage = verifySourcePackage(root);
+const buildIdentity = JSON.parse(require('node:fs').readFileSync(path.join(root, 'apps/desktop/dist/build-info.json'), 'utf8'));
+if (buildIdentity.buildDirty || buildIdentity.buildCommit !== sourcePackage.manifest.buildCommit)
+  throw new Error('桌面构建与当前源码归档不一致，请重新运行 package:desktop。');
 
 // 先确认目标程序未运行，避免 packager 删除到一半才遇到被占用的 DLL 或目录。
 if (process.platform === 'win32') {
@@ -46,8 +52,8 @@ function copyPackage(fs, name, dir, dest) {
       if (slim) {
         const rel = path.relative(dir, src).replace(/\\/g, '/');
         if (rel === '') return true;
-        // 工作区包只留 package.json + dist。
-        if (rel === 'package.json' || rel === 'dist' || rel.startsWith('dist/')) return true;
+        // 工作区组件独立携带完整许可，不能只保留元数据中的文件名。
+        if (rel === 'package.json' || rel === 'LICENSE' || rel === 'dist' || rel.startsWith('dist/')) return true;
         return false;
       }
       const base = path.basename(src);
@@ -91,6 +97,7 @@ const out = await packager({
     await fsp.mkdir(`${buildPath}/resources`, { recursive: true });
     await fsp.copyFile(path.join(root, 'resources', 'icon.png'), `${buildPath}/resources/icon.png`);
     await fsp.cp(path.join(root, 'resources', 'licenses'), `${buildPath}/resources/licenses`, { recursive: true });
+    stageDistributionAssets(buildPath, root);
     await fsp.cp(path.join(root, 'resources', 'installer'), `${buildPath}/resources/installer`, { recursive: true });
     // 独立 DAP 发行包包含工作进程、启动注入脚本与许可证，必须作为整体复制。
     await fsp.cp(path.join(root, 'resources', 'debuggers'), `${buildPath}/resources/debuggers`, { recursive: true });
@@ -147,4 +154,5 @@ const missing = requiredFiles.filter(file => !require('node:fs').existsSync(path
 if (missing.length) {
   throw new Error(`桌面包缺少运行时文件：${missing.join(', ')}`);
 }
+verifyDistributionAssets(packagedApp);
 console.log('Packaged:', JSON.stringify(out));
