@@ -45,7 +45,7 @@ Windows x64 桌面版可从 [GitHub Releases](https://github.com/Komeiji-Shiki/G
 
 > 请定位这个异常的原因。先搜索相关代码并说明证据，确认方案后再修改和测试。
 
-[使用手册](wiki/Home.md) · [独立桌面运行与构建说明](apps/desktop/README.md) · [Web 入口](apps/server/WEB.md)
+[使用手册](https://github.com/Komeiji-Shiki/Gray-Code/wiki) · [独立桌面运行与构建说明](apps/desktop/README.md) · [Web 入口](apps/server/WEB.md)
 
 ## 核心亮点
 
@@ -58,7 +58,7 @@ Windows x64 桌面版可从 [GitHub Releases](https://github.com/Komeiji-Shiki/G
 - **长任务与长对话** —— 支持消息队列、自动总结、存档点、后台结果回流，以及 Token、成本和使用时间统计。
 - **树状分支对话** —— 重试与编辑不再覆盖旧回答：每个候选分支都可切换、独立继续发展，切换时可选联动工作区存档，让不同方案并行探索而不丢任何思路。
 
-[查看完整使用手册 →](wiki/Home.md)
+[查看完整使用手册 →](https://github.com/Komeiji-Shiki/Gray-Code/wiki)
 
 ## DeepSeek 视觉模型支持
 
@@ -84,17 +84,17 @@ GrayCode 针对 DeepSeek 视觉模型（如 `deepseek-v4-flash-vision-exp`）的
 
 ## 文档
 
-[GrayCode 使用手册](wiki/Home.md)介绍桌面版的配置与日常使用：
+[GrayCode 使用手册](https://github.com/Komeiji-Shiki/Gray-Code/wiki)介绍桌面版的配置与日常使用：
 
 | 指南 | 内容 |
 | --- | --- |
-| [快速开始](wiki/Getting-Started.md) | 安装、渠道配置、首次任务与 Web 入口 |
-| [模型与上下文](wiki/Models-and-Context.md) | 模型渠道、图片附件、历史与上下文管理 |
-| [编码与工作树](wiki/Coding-and-Worktrees.md) | 编辑、终端、Git 审阅与独立工作树任务 |
-| [电脑与浏览器](wiki/Visual-Tools.md) | 网页交互、桌面应用操作与远程画面 |
-| [工具与代理](wiki/Agents-and-MCP.md) | MCP、Skills、Sub-Agents、团队与 ACP |
-| [自动任务与多端](wiki/Automation-and-Devices.md) | 自动任务、Discord、OneBot 和配对设备 |
-| [数据与诊断](wiki/Data-and-Diagnostics.md) | 永久记忆、备份恢复与常见问题 |
+| [快速开始](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started-zh-CN) | Windows 安装、便携版、渠道与首次对话 |
+| [功能概览](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features-zh-CN) | 桌面工作台、对话、项目与自动任务 |
+| [模型与渠道](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Models-and-Channels-zh-CN) | 模型接口、密钥、工具和 Token 设置 |
+| [工具与工作流](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Tools-and-Workflows-zh-CN) | 文件、终端、Git、电脑与浏览器操作 |
+| [上下文与提示词](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Context-and-Prompts-zh-CN) | 提示词模式、动态上下文和历史 |
+| [扩展与记忆](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Extensions-and-Memory-zh-CN) | MCP、Skills、代理与长期记忆 |
+| [数据与诊断](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Settings-Storage-and-Sync-zh-CN) | 便携配置、备份、迁移与恢复 |
 
 开发环境与贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)，项目结构见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 

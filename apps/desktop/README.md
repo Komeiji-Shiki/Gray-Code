@@ -2,19 +2,19 @@
 
 桌面主进程位于 apps/desktop，工作台外壳位于 apps/client，聊天与设置复用 frontend。应用服务和运行核心分别位于 apps/server、packages/core。
 
-[完整使用手册](../../wiki/Home.md) · [架构](../../PROJECT_STRUCTURE.md) · [开发与验证](../../CONTRIBUTING.md)
+[完整使用手册](https://github.com/Komeiji-Shiki/Gray-Code/wiki) · [架构](../../PROJECT_STRUCTURE.md) · [开发与验证](../../CONTRIBUTING.md)
 
 ## 使用
 
-从[发行页](https://github.com/Komeiji-Shiki/Gray-Code/releases)选择对应 Windows 包。便携版完整解压运行 GrayCode.exe，安装版使用 Setup。当前源码是 2.0.0-pre.2，发行附件对应其发布提交。
+从[发行页](https://github.com/Komeiji-Shiki/Gray-Code/releases)选择对应 Windows 包。便携版完整解压运行 GrayCode.exe，安装版使用 Setup。当前源码是 2.0.0-pre.3，发行附件对应其发布提交。
 
 在“设置 → 渠道”配置模型，选择工作区后开始任务。工作台可展开文件、编辑器、终端、Git、差异和浏览器。设置分类共享草稿；模式切换保持会话。
 
 对话模式创建新会话时自动分配专用工作区；代码模式沿用选中的项目。侧边栏的分组、对话、置顶项和草稿可以拖动排序，顺序会保存，项目归属保持不变。文件树提供文件定位和工作区文件夹入口，项目及对话菜单也可直接在系统资源管理器中打开对应工作区。
 
-电脑工具默认截图观察，浏览器支持坐标动作与后台截图。启用多模态后工具图片进入选定模型端点，已有图片不会因新增图片自动删除。[视觉工具](../../wiki/Visual-Tools.md)说明坐标与操作回执。
+电脑工具默认截图观察，浏览器支持坐标动作与后台截图。启用多模态后工具图片进入选定模型端点，已有图片不会因新增图片自动删除。[工具与工作流](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Tools-and-Workflows-zh-CN)说明桌面操作。
 
-“设置 → 开发”可以配置 ACP 编码程序。Kimi Code 示例为命令 kimi、参数 acp。程序由具体任务启动，保存配置不会启动代理；[代理手册](../../wiki/Agents-and-MCP.md)说明恢复和权限选项。
+“设置 → 开发”可以配置 ACP 编码程序。Kimi Code 示例为命令 kimi、参数 acp。程序由具体任务启动，保存配置不会启动代理；[扩展能力手册](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Extensions-and-Memory-zh-CN)说明代理与记忆。
 
 ## 构建
 
@@ -40,11 +40,11 @@ build:desktop:trial 只编译快速试用产物。正式构建和最终验证记
 
 默认任务数据位于 %APPDATA%/GrayCode/platform-data。--data 指定独立目录，开发和验证用它隔离应用数据。
 
-便携版在程序旁维护 portable-data 配置副本，包含渠道、提示词、MCP、用户技能与外观等配置。settings.enc 和 profile.key 配套携带。聊天、检查点、项目目录与账号授权仍属于本机任务数据；换电脑迁移完整内容使用程序数据备份，并另行处理项目源码。
+便携版在程序旁维护 portable-data 配置副本，包含渠道、提示词、MCP、用户技能与外观等配置。settings.enc 和 profile.key 配套携带；显式放入 portable-data/memory-storage 的导入记忆资料库也会跨电脑同步。聊天、检查点、普通记忆、项目目录与账号授权仍属于本机任务数据；换电脑迁移完整内容使用程序数据备份，并另行处理项目源码。
 
 需要携带导入的长期记忆时，将独立资料库数据放在 portable-data/memory-storage。启动时会合并这份资料库，正文修订、删除记录与召回开关在修改后同步到移动目录，退出前会等待同步完成。整个 portable-data 目录应一起保留；拔盘前请保存并正常退出程序。
 
-外部 ACP 程序的会话文件由该程序保存，恢复 GrayCode 的会话 ID 后仍需要对应程序能恢复原会话。[数据手册](../../wiki/Data-and-Diagnostics.md)列出备份范围。
+外部 ACP 程序的会话文件由该程序保存，恢复 GrayCode 的会话 ID 后仍需要对应程序能恢复原会话。[数据手册](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Settings-Storage-and-Sync-zh-CN)列出备份范围。
 
 ## 安装更新与回退
 
@@ -56,8 +56,8 @@ build:desktop:trial 只编译快速试用产物。正式构建和最终验证记
 
 ## 多端与交付范围
 
-Web 入口、Discord、OneBot 和配对设备共用平台服务。Web 部署参见 [WEB.md](../server/WEB.md)，功能流程见[自动任务与多端](../../wiki/Automation-and-Devices.md)。
+Web 入口、Discord、OneBot 和配对设备共用平台服务。Web 部署参见 [WEB.md](../server/WEB.md)，功能入口见[功能概览](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features-zh-CN)。
 
-Windows x64 是当前构建与本机验收平台。Linux/macOS 发行、真实手机、混合 DPI、多屏及具体外部模型和 Bot 部署需要各自验证。[性能与验证](../../wiki/Performance-and-Validation.md)区分合成测试和实际环境结果。
+Windows x64 是当前构建与本机验收平台。Linux/macOS 发行、真实手机、混合 DPI、多屏及具体外部模型和 Bot 部署需要各自验证。
 
 桌面包携带运行依赖、原生电脑宿主、调试器和[第三方原始许可](../../resources/licenses/README.md)，应保留整个程序目录。

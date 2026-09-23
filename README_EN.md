@@ -43,7 +43,7 @@ Try one of these prompts:
 
 > Investigate this bug. Search the relevant code and explain the evidence before changing and testing it.
 
-[User guide](wiki/Home.md) · [Desktop setup and builds](apps/desktop/README.md) · [Web access](apps/server/WEB.md)
+[User guide](https://github.com/Komeiji-Shiki/Gray-Code/wiki) · [Desktop setup and builds](apps/desktop/README.md) · [Web access](apps/server/WEB.md)
 
 ## Highlights
 
@@ -56,7 +56,7 @@ Try one of these prompts:
 - **Long-running work** — Message queues, automatic summarization, checkpoints, background result delivery, and usage statistics support extended tasks.
 - **Tree-branching conversations** — Retry and edit never overwrite old replies: every candidate branch can be switched to and grow independently, optionally restoring matching workspace checkpoints when switching, so alternative approaches can be explored without losing anything.
 
-[Explore the user guide →](wiki/Home.md)
+[Explore the user guide →](https://github.com/Komeiji-Shiki/Gray-Code/wiki)
 
 ## DeepSeek Vision Support
 
@@ -82,17 +82,17 @@ The related dependencies (`sharp` / `pdfjs-dist` / `@napi-rs/canvas`) can be ins
 
 ## Documentation
 
-The repository [user guide](wiki/Home.md) covers setup and everyday use of the desktop edition. Detailed guides are currently in Chinese.
+The [user guide](https://github.com/Komeiji-Shiki/Gray-Code/wiki) covers setup and everyday use of the desktop edition in Chinese and English.
 
 | Guide | Covers |
 | --- | --- |
-| [Getting Started](wiki/Getting-Started.md) | Installation, channels, your first task, and Web access |
-| [Models and Context](wiki/Models-and-Context.md) | Providers, image attachments, history, and context management |
-| [Coding and Worktrees](wiki/Coding-and-Worktrees.md) | Editing, terminals, Git review, and tasks in separate worktrees |
-| [Computer and Browser Tools](wiki/Visual-Tools.md) | Web interaction, desktop applications, and remote views |
-| [Tools and Agents](wiki/Agents-and-MCP.md) | MCP, Skills, Sub-Agents, teams, and ACP |
-| [Automation and Devices](wiki/Automation-and-Devices.md) | Automation, Discord, OneBot, and paired devices |
-| [Data and Diagnostics](wiki/Data-and-Diagnostics.md) | Persistent memory, backup, restore, and troubleshooting |
+| [Getting Started](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Getting-Started) | Windows installation, portable edition, channels, and first conversation |
+| [Features](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features) | Desktop workbench, conversations, projects, and automation |
+| [Models and Channels](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Models-and-Channels) | API providers, credentials, tools, and token settings |
+| [Tools and Workflows](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Tools-and-Workflows) | Files, terminal, Git, computer, and browser operations |
+| [Context and Prompts](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Context-and-Prompts) | Prompt modes, dynamic context, and history |
+| [Extensions and Memory](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Extensions-and-Memory) | MCP, Skills, agents, and long-term memory |
+| [Settings and Storage](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Settings-Storage-and-Sync) | Portable settings, backups, migration, and restore |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for architecture, and [CHANGELOG.md](CHANGELOG.md) for release history.
 
