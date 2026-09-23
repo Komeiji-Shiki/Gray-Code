@@ -10,7 +10,7 @@ try {
   // 向量计算期间允许独立读取；一旦有排队写入，后续请求继续按原顺序执行。
   const concurrentReads = new Set<StorageMethod>(['getRecord', 'getVersionedRecord', 'listRecords', 'readRecordPage',
     'getConversation', 'getConversationInfo', 'listConversations', 'readConversationState', 'readHistory', 'readFullHistory', 'historyInfo',
-    'getRun', 'getRunByRequestKey', 'listRuns', 'readRunEvents', 'readUsageState', 'recordRevisions',
+    'getRun', 'getRunByRequestKey', 'listRuns', 'readRunEvents', 'readUsageState', 'recordRevisions', 'listUsageConversations',
     'getSnapshot', 'listSnapshots', 'longMemoryScopes', 'longMemoryState', 'longMemoryRead', 'longMemoryTopics', 'longMemoryGraph', 'longMemoryBrowse']);
   const queue: StorageRequest[] = [];
   let computing = false;

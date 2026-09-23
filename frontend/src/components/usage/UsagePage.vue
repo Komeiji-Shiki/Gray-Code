@@ -11,8 +11,9 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted } from 'vue'
 import { CustomScrollbar } from '../common'
+import CopyButton from '../common/CopyButton.vue'
 import UsageTimeSection from './UsageTimeSection.vue'
 import { useSettingsStore, useChatStore } from '@/stores'
 import { sendToExtension } from '@/utils/vscode'
@@ -31,7 +32,8 @@ const chatStore = useChatStore()
 
 const isLoading = ref(false)
 const loadError = ref('')
-const stats = ref<UsageStatsResult | null>(null)
+const stats = shallowRef<UsageStatsResult | null>(null)
+let statsStartTime: number | undefined
 
 /** 读取失败被跳过的对话明细（后端尽力提供标题，失败时回退 conversationId） */
 const skippedConversationList = computed<SkippedConversationInfo[]>(() => stats.value?.totals.skippedConversationDetails ?? [])
@@ -65,11 +67,13 @@ function rangeToStartTime(range: UsageTimeRange): number | undefined {
 let loadRequestId = 0
 async function loadStats(force = false) {
   const requestId = ++loadRequestId
+  const startTime = rangeToStartTime(activeRange.value)
+  // 同一范围刷新保留结果，切换范围或跨天时清除旧口径的数据。
+  if (statsStartTime !== startTime) stats.value = null
+  statsStartTime = startTime
   isLoading.value = true
   loadError.value = ''
   try {
-    const range = activeRange.value
-    const startTime = rangeToStartTime(range)
     const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
     if (force) query.force = true
     const result = await sendToExtension<UsageStatsResult>(MESSAGE_NAMES['usage.getStats'], query)
@@ -273,7 +277,7 @@ const tabs = computed(() => ([
       <h3>{{ t('components.usage.title') }}</h3>
       <div class="header-actions">
         <button class="header-btn" :title="t('components.usage.refresh')" :disabled="isLoading" @click="loadStats(true)">
-          <i class="codicon codicon-refresh"></i>
+          <i class="codicon codicon-refresh" :class="{ 'codicon-modifier-spin': isLoading }"></i>
         </button>
         <button class="header-btn" :title="t('components.usage.backToChat')" @click="settingsStore.showChat">
           <i class="codicon codicon-close"></i>
@@ -299,26 +303,27 @@ const tabs = computed(() => ([
       <UsageTimeSection />
 
       <!-- 加载中 -->
-      <div v-if="isLoading" class="state-hint">
+      <div v-if="isLoading && !stats" class="state-hint">
         <i class="codicon codicon-loading codicon-modifier-spin"></i>
         <span>{{ t('components.usage.loading') }}</span>
       </div>
 
       <!-- 加载失败 -->
-      <div v-else-if="loadError" class="state-hint is-error">
+      <div v-if="loadError" class="state-hint is-error">
         <i class="codicon codicon-error"></i>
         <span>{{ t('components.usage.loadFailed') }}</span>
         <span class="usage-error-detail">{{ loadError }}</span>
+        <CopyButton :text="loadError" />
         <button class="retry-btn" @click="loadStats()">{{ t('components.usage.retry') }}</button>
       </div>
 
       <!-- 空数据 -->
-      <div v-else-if="!stats || stats.totals.modelMessages === 0" class="state-hint">
+      <div v-if="!loadError && stats && stats.totals.modelMessages === 0" class="state-hint">
         <i class="codicon codicon-graph"></i>
         <span>{{ t('components.usage.empty') }}</span>
       </div>
 
-      <template v-else>
+      <template v-if="stats && stats.totals.modelMessages > 0">
         <!-- 总览卡片 -->
         <div class="totals-card">
           <div class="total-main">

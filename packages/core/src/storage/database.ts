@@ -142,6 +142,7 @@ export class PlatformDatabase {
       },
       saveMetadata: metadata => this.saveMetadata(metadata),
       listConversations: options => this.listConversations(options),
+      listUsageConversations: options => this.listUsageConversations(options),
       readHistory: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }),
       historyInfo: ({ id }) => {
         const info = this.histories.info(this.conversation(id).history_id);
@@ -452,6 +453,39 @@ export class PlatformDatabase {
     const items = rows.slice(0, limit).map(row => this.summary(row));
     const last = items.at(-1);
     return { items, ...(more && last ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } } : {}) };
+  }
+
+  /** 在同一批读取元数据和用量版本，避免统计逐会话往返存储线程。 */
+  private listUsageConversations(options: StorageOperations['listUsageConversations']['input']): StorageOperations['listUsageConversations']['output'] {
+    const limit = options.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) invalid('List limit must be between 1 and 1000.');
+    const args: Array<string | number> = [];
+    if (options.cursor) {
+      if (!Number.isFinite(options.cursor.updatedAt)) invalid('Invalid conversation cursor.');
+      assertIdentifier(options.cursor.id);
+      args.push(options.cursor.updatedAt, options.cursor.updatedAt, options.cursor.id);
+    }
+    const rows = this.db.prepare(`SELECT c.id,c.title,c.created_at,c.updated_at,c.metadata_hash,c.history_id,h.revision,
+      u.revision AS usage_revision,b.revision AS branches_revision
+      FROM conversations c JOIN histories h ON h.id=c.history_id
+      LEFT JOIN records u ON u.namespace='conversation-usage' AND u.id=c.id
+      LEFT JOIN records b ON b.namespace='conversation-branches' AND b.id=c.id
+      ${options.cursor ? 'WHERE (c.updated_at<? OR (c.updated_at=? AND c.id>?))' : ''}
+      ORDER BY c.updated_at DESC,c.id LIMIT ?`).all(...args, limit + 1) as Array<{
+        id: string; title: string | null; created_at: number; updated_at: number; metadata_hash: Buffer; history_id: string;
+        revision: number; usage_revision: number | null; branches_revision: number | null;
+      }>;
+    const items = rows.slice(0, limit).map(row => {
+      const metadata = this.objects.getValue<Pick<PlatformConversation, 'parentConversationId' | 'custom'>>(
+        row.metadata_hash, { fields: ['parentConversationId', 'custom'], omitBinary: true });
+      return { id: row.id, title: row.title ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
+        parentConversationId: typeof metadata.parentConversationId === 'string' ? metadata.parentConversationId : undefined,
+        isSubagent: !!(metadata.custom as Record<string, unknown> | undefined)?.platformSubagentId,
+        historyId: row.history_id, revision: row.revision,
+        usageRevision: row.usage_revision, branchesRevision: row.branches_revision };
+    });
+    const last = items.at(-1);
+    return { items, ...(rows.length > limit && last ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } } : {}) };
   }
 
   private migration(sourceKey: string): MigrationRow {

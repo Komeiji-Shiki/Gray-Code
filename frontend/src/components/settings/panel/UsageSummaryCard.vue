@@ -55,7 +55,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
         {{ t('components.usage.title') }}
       </span>
       <button class="usage-summary-refresh" :title="t('components.usage.refresh')" :disabled="loading" @click="emit('refresh')">
-        <i class="codicon codicon-refresh"></i>
+        <i class="codicon codicon-refresh" :class="{ 'codicon-modifier-spin': loading }"></i>
       </button>
     </div>
 
@@ -73,25 +73,25 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="usage-summary-state">
+    <div v-if="loading && !stats" class="usage-summary-state">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
       <span>{{ t('components.usage.loading') }}</span>
     </div>
 
     <!-- 加载失败 -->
-    <div v-else-if="loadError" class="usage-summary-state is-error">
+    <div v-if="loadError" class="usage-summary-state is-error">
       <i class="codicon codicon-error"></i>
       <span>{{ t('components.usage.loadFailed') }}</span>
       <button class="usage-retry-btn" @click="emit('retry')">{{ t('components.usage.retry') }}</button>
     </div>
 
     <!-- 空数据 -->
-    <div v-else-if="!stats || stats.totals.modelMessages === 0" class="usage-summary-state">
+    <div v-if="!loadError && stats && stats.totals.modelMessages === 0" class="usage-summary-state">
       <i class="codicon codicon-graph"></i>
       <span>{{ t('components.usage.empty') }}</span>
     </div>
 
-    <template v-else>
+    <template v-if="stats && stats.totals.modelMessages > 0">
       <!-- 总览卡片 -->
       <div class="usage-summary-totals">
         <div class="usage-summary-total-item is-main">

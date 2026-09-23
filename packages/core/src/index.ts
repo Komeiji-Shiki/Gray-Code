@@ -9,7 +9,7 @@ export { importLegacyHistory, validateLegacyImportPaths } from './migration/lega
 export type { LegacyImportOptions } from './migration/legacy';
 export { importLegacyArtifacts } from './migration/artifacts';
 export type { LegacyArtifactImportOptions, LegacyArtifactResult, LegacyCheckpointConverter } from './migration/artifacts';
-export type { ConversationList, ConversationListOptions, HistoryWriteResult } from './storage/protocol';
+export type { ConversationList, ConversationListOptions, HistoryWriteResult, UsageConversation } from './storage/protocol';
 export type {
   PlatformMessage, PlatformConversation, HistoryPage, PageOptions, HistoryWriteOptions,
   StorageStatistics, MigrationReport, MigrationIssue, StoredRecord, SnapshotMetadata, PlatformSnapshot,

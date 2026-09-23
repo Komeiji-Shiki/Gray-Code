@@ -23,6 +23,18 @@ export interface ConversationList {
   items: ConversationSummary[];
   nextCursor?: { updatedAt: number; id: string };
 }
+export interface UsageConversation {
+  id: string;
+  title?: string;
+  createdAt: number;
+  updatedAt: number;
+  parentConversationId?: string;
+  isSubagent: boolean;
+  historyId: string;
+  revision: number;
+  usageRevision: number | null;
+  branchesRevision: number | null;
+}
 export interface MigrationState { nextIndex: number; complete: boolean }
 
 export interface StorageOperations {
@@ -71,6 +83,7 @@ export interface StorageOperations {
   getConversationInfo: { input: { id: string }; output: { metadata: PlatformConversation; metadataToken: string; messageCount: number; historyRevision: number } | null };
   saveMetadata: { input: PlatformConversation; output: void };
   listConversations: { input: ConversationListOptions; output: ConversationList };
+  listUsageConversations: { input: Pick<ConversationListOptions, 'limit' | 'cursor'>; output: { items: UsageConversation[]; nextCursor?: ConversationList['nextCursor'] } };
   readHistory: { input: { id: string; options?: PageOptions }; output: HistoryPage };
   historyInfo: { input: { id: string }; output: HistoryWriteResult };
   readUsageState: { input: { id: string; records?: { namespace: string; id: string; projection?: ValueProjection }[] }; output: { revision: number; messages: PlatformMessage[]; records: { namespace: string; id: string; record: VersionedRecord }[] } };

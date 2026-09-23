@@ -1,4 +1,4 @@
-import type { ConversationSummary, PlatformConversation } from '@graycode/contracts';
+import type { UsageConversation } from '@graycode/core';
 import { aggregateUsageStats, buildConversationUsageIndex, extractBranchUsageMessages,
   type UsageIndex, type UsageIndexMessage } from '../../../../backend/modules/conversation/usageStats';
 import type { Content, ConversationMetadata } from '../../../../backend/modules/conversation/types';
@@ -32,13 +32,12 @@ export class PlatformUsage {
   constructor(private readonly app: PlatformApplication) {
     app.subscribe(event => { if (event.type === 'migration.completed') this.cache.clear(); });
   }
-  private async own(conversation: ConversationSummary): Promise<UsageIndex> {
+  private async own(conversation: UsageConversation): Promise<UsageIndex> {
     const id = conversation.id;
     const records = [{ namespace: 'conversation-usage', id }, { namespace: 'conversation-branches', id, projection: { fields: ['graph'], omitBinary: true } }];
-    const revisions = await this.app.storage.recordRevisions(records);
-    const signature = JSON.stringify([conversation.revision, ...revisions]);
+    const signature = JSON.stringify([conversation.historyId, conversation.revision, conversation.usageRevision, conversation.branchesRevision]);
     const previous = this.cache.get(id);
-    if (previous?.signature === signature) { this.cache.delete(id); this.cache.set(id, previous); return previous.value; }
+    if (previous?.signature === signature) return previous.value;
     const state = await this.app.storage.readUsageState(id, records);
     const index = buildConversationUsageIndex(id, state.messages as Content[]);
     const imported = state.records.find(item => item.namespace === 'conversation-usage')!.record;
@@ -49,8 +48,7 @@ export class PlatformUsage {
       if (!graph || typeof graph.nodes !== 'object' || !graph.nodes) throw new Error(`分支用量数据无法读取：${id}`);
       index.messages.push(...extractBranchUsageMessages(graph, new Set(state.messages.flatMap(message => message.id ? [message.id] : []))));
     }
-    this.cache.set(id, { signature: JSON.stringify([state.revision, imported.revision, branches.revision]), value: index });
-    while (this.cache.size > 128) this.cache.delete(this.cache.keys().next().value!);
+    this.cache.set(id, { signature: JSON.stringify([conversation.historyId, state.revision, imported.revision, branches.revision]), value: index });
     return index;
   }
   stats(actorId: string, options: UsageQuery): Promise<UsageResult> {
@@ -63,23 +61,18 @@ export class PlatformUsage {
     return request;
   }
   private async collect(options: UsageQuery): Promise<UsageResult> {
-    const summaries = new Map<string, ConversationSummary>();
-    const metadata = new Map<string, PlatformConversation>();
+    const summaries = new Map<string, UsageConversation>();
     let cursor: { updatedAt: number; id: string } | undefined;
     do {
-      const page = await this.app.storage.listConversations({ limit: 1000, cursor });
-      // 分批读取用量索引，避免一次性把所有历史读取排在聊天请求之前。
-      for (let offset = 0; offset < page.items.length; offset += 16) {
-        await Promise.all(page.items.slice(offset, offset + 16).map(async item => {
-          const value = await this.app.storage.getConversation(item.id);
-          if (value) { summaries.set(item.id, item); metadata.set(item.id, value); }
-        }));
-      }
+      const page = await this.app.storage.listUsageConversations({ limit: 100, cursor });
+      for (const item of page.items) summaries.set(item.id, item);
       cursor = page.nextCursor;
     } while (cursor);
+    // 一轮统计需要所有会话的精简用量；固定条数的 LRU 会在大存档中反复淘汰下一轮所需数据。
+    for (const id of this.cache.keys()) if (!summaries.has(id)) this.cache.delete(id);
     const parent = new Map<string, string>();
-    for (const [id, value] of metadata) if ((value.custom as Record<string, unknown> | undefined)?.platformSubagentId &&
-      typeof value.parentConversationId === 'string' && metadata.has(value.parentConversationId)) parent.set(id, value.parentConversationId);
+    for (const [id, value] of summaries) if (value.isSubagent &&
+      typeof value.parentConversationId === 'string' && summaries.has(value.parentConversationId)) parent.set(id, value.parentConversationId);
     const groups = new Map<string, string[]>();
     for (const id of summaries.keys()) {
       let root = id; const visited = new Set<string>();
@@ -87,7 +80,8 @@ export class PlatformUsage {
         if (visited.has(root)) { root = id; break; }
         visited.add(root); root = parent.get(root)!;
       }
-      groups.set(root, [...(groups.get(root) ?? []), id]);
+      const group = groups.get(root);
+      if (group) group.push(id); else groups.set(root, [id]);
     }
     const errors: Record<string, string> = {};
     const loaded = new Map<string, Promise<UsageIndex>>();
@@ -98,8 +92,8 @@ export class PlatformUsage {
     };
     const result = await aggregateUsageStats({
       listConversations: async () => [...groups.keys()],
-      getMetadata: async id => metadata.get(id) as ConversationMetadata,
-      getMetadataLight: async id => metadata.get(id) as ConversationMetadata,
+      getMetadata: async id => summaries.get(id) as ConversationMetadata,
+      getMetadataLight: async id => summaries.get(id) as ConversationMetadata,
       getMessages: async id => (await this.app.storage.readUsageState(id)).messages as Content[],
       getUsageIndex: async id => {
         try {
