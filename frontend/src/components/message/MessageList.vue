@@ -24,12 +24,12 @@ export {
 import { computed, watch } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
 import MessageItem from './MessageItem.vue'
+import ChatError from './ChatError.vue'
 import SummaryMessage from './SummaryMessage.vue'
 import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 import { useChatStore } from '../../stores'
 import { useI18n } from '../../i18n'
 import type { Message, Attachment } from '../../types'
-import { isRetryableError } from '../../stores/chat/messageActions/retryFlows'
 import { recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions/interruptNotices'
 import { useBuildPanel } from './useBuildPanel'
 import { useTodoPanel } from './useTodoPanel'
@@ -486,32 +486,8 @@ function handleContinue() {
         </div>
         
         <!-- 错误提示 - 显示在消息末尾 -->
-        <div v-if="chatStore.error" class="error-message">
-          <div class="error-header">
-            <div class="error-icon">⚠</div>
-            <div class="error-title">{{ t('components.message.error.title') }}</div>
-            <div class="error-actions">
-              <!-- H-3: 重试按钮仅在可重试错误码（STREAM_ERROR 等流式生成错误）时显示，
-                   恢复/预览类错误（RESTORE_ERROR 等）走独立提示，不触发 LLM 重新生成 -->
-              <button
-                v-if="isRetryableError(chatStore.error)"
-                class="error-retry"
-                @click="handleErrorRetry"
-                :title="t('components.message.error.retry')"
-              >
-                <span class="codicon codicon-refresh"></span>
-              </button>
-              <button class="error-dismiss" @click="chatStore.dismissError()" :title="t('components.message.error.dismiss')">
-                ✕
-              </button>
-            </div>
-          </div>
-          <div class="error-body">
-            <CustomScrollbar :max-height="120" :width="4">
-              <pre class="error-text-code">{{ chatStore.error.code }}: {{ chatStore.error.message }}</pre>
-            </CustomScrollbar>
-          </div>
-        </div>
+        <ChatError v-if="chatStore.error" :error="chatStore.error"
+          @retry="handleErrorRetry" @dismiss="chatStore.dismissError()" />
 
         <!-- 恢复结果提示（H-3）：恢复类结果独立展示，不占用错误条，也不提供 LLM 重试 -->
         <div v-if="restoreNotice" class="restore-notice" :class="`restore-notice-${restoreNotice.kind}`">
@@ -861,92 +837,6 @@ function handleContinue() {
   max-width: 90%;
   text-align: center;
   white-space: normal;
-}
-
-/* 错误提示 - 扁平化设计，类似重试面板样式 */
-.error-message {
-  display: flex;
-  flex-direction: column;
-  margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: var(--gc-radius-sm);
-  flex-shrink: 0;
-  overflow: hidden;
-}
-
-.error-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
-}
-
-.error-icon {
-  flex-shrink: 0;
-  font-size: 14px;
-  color: var(--vscode-errorForeground, #f48771);
-}
-
-.error-title {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-}
-
-.error-body {
-  padding: 12px;
-}
-
-.error-text-code {
-  font-size: 11px;
-  color: var(--vscode-foreground);
-  line-height: 1.4;
-  word-break: break-word;
-  white-space: pre-wrap;
-  font-family: var(--vscode-editor-font-family, monospace);
-  background: rgba(0, 0, 0, 0.15);
-  padding: 8px;
-  border-radius: var(--gc-radius-sm);
-  margin: 0;
-}
-
-.error-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.error-retry,
-.error-dismiss {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--vscode-foreground);
-  opacity: 0.6;
-  cursor: pointer;
-  font-size: 14px;
-  border-radius: var(--gc-radius-sm);
-  transition: opacity 0.2s, background 0.2s;
-}
-
-.error-retry:hover,
-.error-dismiss:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.error-retry .codicon {
-  font-size: 14px;
 }
 
 /* 恢复结果提示（H-3）：独立于错误条，按成功/部分成功/警告/失败分级着色 */

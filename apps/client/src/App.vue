@@ -5,6 +5,7 @@ import { appearancePalette, resolvedTheme, useSystemAppearance } from './appeara
 import { call, subscribe } from './api';
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import Workbench from './components/Workbench.vue';
+import ErrorBanner from './components/ErrorBanner.vue';
 import ContentPreview from './components/ContentPreview.vue';
 import RunInspector from './components/RunInspector.vue';
 import ResourceLibrary from './components/ResourceLibrary.vue';
@@ -159,7 +160,7 @@ onUnmounted(() => { window.removeEventListener('message', openWorkspacePanel); u
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
       <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="openLibrary()">资料库</button><button v-if="state.mode === 'chat'" @click="companionOpen = true">陪伴配置</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
-    <div v-if="state.error" class="error-banner"><span>{{ state.error }}</span><button @click="state.error = ''">关闭</button></div>
+    <ErrorBanner v-if="state.error" :message="state.error" @dismiss="state.error = ''" />
     <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">关闭</button></div>
     <ComputerStatus v-if="state.ready" /><ScreenSenseStatus v-if="state.ready" @manage="screenSenseOpen = true" />
     <ScreenSenseSettings v-if="screenSenseOpen" @close="screenSenseOpen = false" />
