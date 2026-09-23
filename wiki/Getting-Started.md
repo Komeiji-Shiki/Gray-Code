@@ -2,63 +2,86 @@
 
 [返回目录](Home.md)
 
-## 安装与数据位置
+本指南帮助你快速完成 GrayCode 的安装、模型渠道配置及第一个编程任务。
 
-Windows x64 便携包完整解压后运行 GrayCode.exe。保留程序目录中的 DLL、resources 和其他配套文件。安装版使用发行页对应的 Setup，默认安装到当前用户的 %LOCALAPPDATA%/GrayCode；数据与程序目录分开。
+---
 
-应用任务数据默认位于 %APPDATA%/GrayCode/platform-data。源码开发或独立验证可以显式传入 --data，例如：
+## 1. 安装与运行
 
-~~~powershell
-npm run desktop -- --data .tmp/desktop-local
-~~~
+### Windows 桌面版
+- **便携版（Portable）**：解压压缩包到任意非系统受限目录，直接双击运行 `GrayCode.exe`。
+- **安装版（Setup）**：运行安装包，默认安装至 `%LOCALAPPDATA%\GrayCode`，自带自动更新与快捷方式。
 
-便携版另有随程序携带的 portable-data 配置副本。模型渠道、提示词、MCP、用户技能和外观可随配置移动；聊天、工作区与账号授权仍使用本机任务数据。移动程序和迁移完整历史是两件事，完整数据使用备份恢复功能。
+### 数据存储路径
+- **应用数据目录**：默认位于 `%APPDATA%\GrayCode\platform-data`，用于存储 SQLite 数据库、会话历史、项目绑定与缓存。
+- **便携模式**：便携版可在程序根目录下使用 `portable-data` 目录，便于将模型配置、提示词模板、MCP 与主题随移动设备携带。
+- **自定义数据目录**：开发或多实例运行时，可以通过 `--data` 参数指定数据路径：
+  ```powershell
+  npm run desktop -- --data .tmp/desktop-local
+  ```
 
-## 配置第一个模型
+---
 
-打开设置的“渠道”，选择接口格式，填写地址、API 凭据和模型。兼容接口按照服务商提供的格式填写，实际工具、图片和思考能力取决于端点。
+## 2. 配置模型渠道
 
-先保存渠道，再回到输入框选择渠道和模型。需要模型读取图片时，在该渠道启用多模态，并选择支持图片输入的模型。系统提示、工具模式、上下文限制、重试和思考选项按渠道配置；当前会话也可以临时选择可用的思考强度。
+1. 点击界面左侧导航栏的 **设置（Settings）→ 渠道（Channels）**。
+2. 点击 **添加渠道**，选择对应的接口协议：
+   - **OpenAI Compatible**：适用于绝大多数兼容 OpenAI 格式的 API（如 DeepSeek、SiliconFlow、OneAPI、Ollama 等）。
+   - **OpenAI Responses**：适用于支持 OpenAI 最新 Responses 协议的端点。
+   - **Anthropic**：适用于 Claude 官方 API 或兼容端点。
+   - **Gemini**：适用于 Google Gemini 官方 API。
+3. 填入你的 **API 密钥（API Key）**、**Base URL** 与 **默认模型名称**。
+4. 按需配置以下高级选项：
+   - **思考模式（Reasoning / Thinking）**：针对 DeepSeek-R1、Claude 3.7 Sonnet 等推理模型开启思考或设定思考预算。
+   - **多模态（Vision）**：勾选后允许发送图片、截图与 PDF。
+   - **DeepSeek Vision 预处理**：当使用 DeepSeek 视觉模型时开启，支持 PDF 逐页渲染与 GIF 拆帧。
+5. 点击 **保存全部** 完成配置。
 
-设置页中编辑的内容先进入共享草稿。“保存全部”提交各分类修改；关闭前可以继续编辑或放弃。启动 Bot、连接服务等动作读取已保存配置。
+---
 
-## 第一次编码任务
+## 3. 开始你的第一个任务
 
-添加或选择本机工作区，再新建编码任务。例如：
+1. 在左侧面板打开或添加一个本地项目目录作为当前 **工作区**。
+2. 在底部输入框上方选择配置好的 **渠道** 与 **模型**。
+3. 选择合适的交互模式：
+   - **Code**：常规编码模式，模型会自动读取、搜索代码、执行修改与终端测试。
+   - **Ask**：问答与咨询模式，仅搜索和读取代码，默认不修改工作区文件。
+   - **Design**：生成架构与技术设计方案文档。
+   - **Plan**：拆解任务计划与实施步骤。
+   - **Review**：代码审查模式，审查变更并给出改进意见。
+4. 输入你的任务需求，例如：
+   > 请阅读当前项目的代码结构，分析核心业务流程，并为主要模块提供一个快速上手说明。
 
-> 阅读项目结构，解释主要模块，找到一个能够复现的问题，修复后运行相关检查。
+---
 
-模型根据当前任务允许的工具搜索、读取、修改文件并运行命令。需要确认时，工具卡片显示具体请求。文件改动可以在差异面板审阅；终端和运行记录用于查看输出与错误。
+## 4. 从源码构建与开发
 
-消息发送后可以编辑重试或重生成回答，候选分支保留在会话中。模式切换仍保留当前会话；在另一个工作树开始新任务时使用工作树列表的“新建任务”。
+如果你需要从源码构建 GrayCode：
 
-## 从源码构建
-
-~~~powershell
+```powershell
+# 1. 安装根目录与前端依赖
 npm ci
 npm --prefix frontend ci
+
+# 2. 构建桌面端并启动调试
 npm run build:desktop
 npm run desktop -- --data .tmp/desktop-local
-~~~
+```
 
-根目录采用 npm workspaces，frontend/ 有独立锁文件，需要单独安装。Windows 电脑宿主使用系统 .NET Framework 4 编译器；具体工具链见[贡献指南](../CONTRIBUTING.md)。正式便携包执行 npm run package:desktop，输出目录与运行说明见[桌面构建](../apps/desktop/README.md)。
+> 提示：更多开发者信息请参阅仓库根目录的 [CONTRIBUTING.md](../CONTRIBUTING.md) 与 [PROJECT_STRUCTURE.md](../PROJECT_STRUCTURE.md)。
 
-## 命令行与 Web
+---
 
-共享平台服务可以脱离桌面外壳运行：
+## 5. CLI 与 Web 模式
 
-~~~powershell
+GrayCode 的核心服务层可以独立于桌面端在服务器或命令行运行：
+
+```powershell
+# 编译平台核心
 npm run build:platform
-npm run platform -- --help
-npm run platform -- --data .tmp/platform-local info
-~~~
 
-CLI 的 chat 运行模型与工具任务，serve 提供 RPC、事件流和可选 Web 界面；list、history、verify 等用于读取和检查数据。--data 明确选择当前任务数据目录。
+# 启动 CLI 或本地 Web 服务
+npm run platform -- serve --web --port 3000
+```
 
-Web 入口可以从桌面设置中启用，也可以通过 CLI 的 serve --web 启动。凭据通过 --token-env 指定的环境变量读取，外部 HTTPS 地址使用 --public-origin。部署参数、登录与代理设置见 [Web 服务说明](../apps/server/WEB.md)。浏览器页面里的项目文件来自运行服务的电脑。
-
-## 更新与恢复
-
-便携版选择新的程序目录，退出旧版后再启动；安装版通过桌面更新设置下载并确认重启安装。离线更新使用匹配的 releases.win-x64.json 与完整 .nupkg。
-
-当前存储格式为版本 7。旧格式可由新版打开升级，旧程序不能读取新版格式；需要退回程序和数据时，使用对应的更新前备份。备份内容与项目源码的关系见[数据与诊断](Data-and-Diagnostics.md)。
+关于 Web 模式的认证、HTTPS 代理与多用户配置，请参考 [Web 服务文档](../apps/server/WEB.md)。

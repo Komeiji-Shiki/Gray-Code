@@ -63,11 +63,10 @@ Try one of these prompts:
 GrayCode provides dedicated image preprocessing for DeepSeek vision models (e.g. `deepseek-v4-flash-vision-exp`), to work around their API limitations. Enable it with the **DeepSeek Vision preprocessing** switch in channel settings (available for OpenAI Chat Completions, OpenAI Responses, and Anthropic channels):
 
 - **PDF page rasterization** — Render every PDF page to an image before sending, avoiding the limitations of plain-text extraction; rendering uses optional `pdfjs-dist` and `@napi-rs/canvas`.
-- **Large-image tiling** — Split large images into tiles under an 800×800 total-pixel budget (each tile at most 4096 on the long edge), preventing DeepSeek from compressing or rejecting them.
 - **GIF frame extraction** — DeepSeek only reads the first GIF frame; GrayCode samples the timeline (up to 5 frames per second) and sends the frames as individual PNGs.
 - **Official format normalization** — `read_file` supports PNG/JPEG/JFIF/GIF/WebP/BMP/SVG/ICO/TIFF/HEIC/HEIF/AVIF; images are converted to DeepSeek's official format before sending (using optional `sharp`).
-- **Split / compress toggle** — The input box shows a checkbox (split by default): keep it checked to preserve tiling; uncheck it to scale images down into the 800×800 total-pixel budget, choosing between clarity and size per message.
-- **Pre-send validation** — Validates the 800×800 tiling, 4096 long edge, 600 images, 32 MiB per image, and 48 MiB request body limits.
+- **Image resizing optimization** — Scale oversized images proportionally to stay within the recommended pixel budget, preventing rejection or severe distortion.
+- **Pre-send validation** — Validates dimensions, image counts, per-image file sizes, and total request body limits before sending.
 
 The related dependencies (`sharp` / `pdfjs-dist` / `@napi-rs/canvas`) can be installed or removed in one click from the DeepSeek Vision group of the dependency manager.
 
