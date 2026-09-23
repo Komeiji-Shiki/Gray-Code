@@ -60,7 +60,7 @@ Try one of these prompts:
 
 ## DeepSeek Vision Support
 
-GrayCode provides dedicated image preprocessing for DeepSeek vision models (e.g. `deepseek-v4-flash-vision-exp`), to work around their API limitations. Enable it with the **DeepSeek Vision preprocessing** switch in channel settings (available for OpenAI Chat Completions, OpenAI Responses, and Anthropic channels):
+GrayCode provides dedicated image preprocessing for DeepSeek vision models to work around their API limitations. Enable it with the **DeepSeek Vision preprocessing** switch in channel settings (available for OpenAI Chat Completions, OpenAI Responses, and Anthropic channels):
 
 - **PDF page rasterization** — Render every PDF page to an image before sending, avoiding the limitations of plain-text extraction; rendering uses optional `pdfjs-dist` and `@napi-rs/canvas`.
 - **GIF frame extraction** — DeepSeek only reads the first GIF frame; GrayCode samples the timeline (up to 5 frames per second) and sends the frames as individual PNGs.

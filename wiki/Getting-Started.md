@@ -32,7 +32,7 @@
    - **Gemini**：适用于 Google Gemini 官方 API。
 3. 填入你的 **API 密钥（API Key）**、**Base URL** 与 **默认模型名称**。
 4. 按需配置以下高级选项：
-   - **思考模式（Reasoning / Thinking）**：针对 DeepSeek-R1、Claude 3.7 Sonnet 等推理模型开启思考或设定思考预算。
+   - **思考模式（Reasoning / Thinking）**：针对各类具备深度思考能力的推理模型开启思考支持，或设定思考 Token 预算。
    - **多模态（Vision）**：勾选后允许发送图片、截图与 PDF。
    - **DeepSeek Vision 预处理**：当使用 DeepSeek 视觉模型时开启，支持 PDF 逐页渲染与 GIF 拆帧。
 5. 点击 **保存全部** 完成配置。

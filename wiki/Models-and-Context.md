@@ -14,8 +14,8 @@ GrayCode 原生支持主流大模型协议，并在协议层做了深度适配�
 | --- | --- | --- |
 | **OpenAI Chat Completions** | DeepSeek、SiliconFlow、OneAPI、Moonshot 等 | 标准 `tool_calls` 与兼容格式，多模态通过标准 `image_url` 传入 |
 | **OpenAI Responses** | OpenAI 官方最新 Responses 接口 | 采用最新输入块结构，提供结构化与多模态流式响应 |
-| **Anthropic** | Claude 3.5 / 3.7 全系列 | 官方 Content Blocks（含 tool_use / tool_result 与原生多模态传递） |
-| **Gemini** | Google Gemini 1.5 / 2.0 / Flash | 原生多模态部件与 Function Calling 格式 |
+| **Anthropic** | Claude 系列模型 | 官方 Content Blocks（含 tool_use / tool_result 与原生多模态传递） |
+| **Gemini** | Google Gemini 系列多模态模型 | 原生多模态部件与 Function Calling 格式 |
 
 ---
 

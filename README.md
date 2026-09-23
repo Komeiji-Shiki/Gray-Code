@@ -62,7 +62,7 @@ Windows x64 桌面版可从 [GitHub Releases](https://github.com/Komeiji-Shiki/G
 
 ## DeepSeek 视觉模型支持
 
-GrayCode 针对 DeepSeek 视觉模型（如 `deepseek-v4-flash-vision-exp`）的接口限制提供专用图像预处理，可在渠道设置的「DeepSeek Vision 预处理」开关中启用（OpenAI Chat Completions、OpenAI Responses 与 Anthropic 渠道均可用）：
+GrayCode 针对 DeepSeek 视觉模型（如官方 Vision 模型）的接口限制提供专用图像预处理，可在渠道设置的「DeepSeek Vision 预处理」开关中启用（OpenAI Chat Completions、OpenAI Responses 与 Anthropic 渠道均可用）：
 
 - **PDF 逐页栅格化** —— 将 PDF 每页渲染为图片后发送，规避纯文本抽取的局限；渲染使用可选的 `pdfjs-dist` 与 `@napi-rs/canvas`。
 - **GIF 动画拆帧** —— DeepSeek 只取 GIF 第一帧，GrayCode 按时间轴采样（每秒最多 5 帧）拆成逐帧 PNG 后发送。
