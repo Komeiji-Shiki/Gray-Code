@@ -278,10 +278,15 @@ export class PlatformRuntime {
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
         let streamingEvent: Promise<void> | undefined;
-        const partialText: string[] = [];
+        const partialParts: PlatformMessage['parts'] = [];
         const deltas = new DeltaCoalescer(parts => {
-          // 保留已经发给界面的正文；签名、思考与未完成工具参数仍由完整响应处理。
-          for (const part of parts) if (typeof part.text === 'string' && !part.thought) partialText.push(part.text);
+          // 已显示的正文和思考均保留；未完成签名、工具参数不能成为可执行的历史调用。
+          for (const part of parts) if (typeof part.text === 'string') {
+            const thought = part.thought === true;
+            const previous = partialParts.at(-1);
+            if (previous && !!previous.thought === thought) previous.text = String(previous.text ?? '') + part.text;
+            else partialParts.push({ text: part.text, ...(thought ? { thought: true } : {}) });
+          }
           this.notify({ type: 'model.delta', runId: run.id, parts });
         });
         const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
@@ -317,10 +322,9 @@ export class PlatformRuntime {
           finally { deltas.finish(); await streamingEvent; }
           signal.throwIfAborted();
         } catch (error) {
-          const text = partialText.join('');
-          if (text.trim()) {
+          if (partialParts.some(part => typeof part.text === 'string' && part.text.trim())) {
             let partial: PlatformMessage = { role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
-              parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now(), parts: [{ text }], modelVersion: request.modelOverride,
+              parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now(), parts: partialParts, modelVersion: request.modelOverride,
               incompleteReason: signal.aborted ? 'cancelled' : 'interrupted', usageMetadataPartial: true };
             // 沿用来源标注钩子，使记忆遗忘与角色会话仍能追溯这段输出的依据。
             if (this.services.transformOutput) partial = await this.services.transformOutput({ run, message: partial, request });
@@ -330,7 +334,7 @@ export class PlatformRuntime {
           }
           throw error;
         }
-        partialText.length = 0;
+        partialParts.length = 0;
         let content: PlatformMessage = { ...generated, role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
           parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now() };
         if (this.services.transformOutput) content = await this.services.transformOutput({ run, message: content, request });

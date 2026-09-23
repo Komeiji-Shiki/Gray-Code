@@ -1,4 +1,4 @@
-import type { ModelInput } from '@graycode/contracts';
+import type { ModelInput, PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
@@ -7,18 +7,37 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
 describe('跨入口的对话实时输出', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication; let router: ApplicationRouter;
   let inputReady: ReturnType<typeof deferred<ModelInput>>; let finish: ReturnType<typeof deferred<void>>; let events: Record<string, any>[];
+  let modelError: Error | undefined; let streamedParts: PlatformMessage['parts'];
   const owner = { actorId: 'owner', clientId: 'desktop-first' }; const observer = { actorId: 'owner', clientId: 'desktop-second' };
   beforeEach(async () => {
     f = await fixture(); await f.store.close(); inputReady = deferred<ModelInput>(); finish = deferred<void>(); events = [];
+    modelError = undefined; streamedParts = [{ text: '已经生成的内容' }];
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async input => {
-      input.onDelta?.([{ text: '已经生成的内容' }]); inputReady.resolve(input);
+      input.onDelta?.(streamedParts); inputReady.resolve(input);
       await Promise.race([finish.promise, new Promise<void>(resolve => input.signal.addEventListener('abort', () => resolve(), { once: true }))]);
+      if (modelError) throw modelError;
       return { role: 'model', parts: [{ text: '已经生成的内容，完整回复。' }] };
     } } });
     router = new ApplicationRouter(app); app.subscribe(event => { if (event.type === 'ui.message') events.push(event); });
   });
   afterEach(async () => { finish.resolve(); await app.close(); await f.cleanup(); });
   async function received(client: typeof owner) { return (await Promise.all(events.map(async event => await router.mayReceive(client, event) ? event.message.data : null))).filter(item => item !== null); }
+
+  test.each([true, false])('流式错误向所有客户端携带已保存内容，刷新后仍存在，含正文=%s', async hasText => {
+    streamedParts = [{ text: '已经生成的思考', thought: true }, ...(hasText ? [{ text: '已经生成的正文' }] : [])];
+    modelError = new Error('OpenAI 在流式响应中返回错误: 上游流在终态事件之前中断');
+    const conversation = await app.createConversation('owner', '部分回复');
+    const result = await app.productUi.chat.start(owner, { conversationId: conversation.id, streamId: 'failed-stream', configId: 'fixture', message: '开始' }, await app.product.draft()) as { runId: string };
+    await inputReady.promise; finish.resolve();
+    expect((await app.runtime.wait(result.runId))?.status).toBe('failed');
+    const saved = (await app.storage.readFullHistory(conversation.id)).messages.at(-1)!;
+    expect(saved).toMatchObject({ role: 'model', incompleteReason: 'interrupted', parts: streamedParts });
+    for (const client of [owner, observer]) {
+      const error = (await received(client)).find(item => item.type === 'error');
+      expect(error).toMatchObject({ error: { code: 'API_ERROR', message: modelError.message }, content: { id: saved.id, parts: streamedParts } });
+    }
+    expect(await app.productUi.chat.resumeConversationStream(observer, conversation.id)).toEqual({ active: false, latestMessageId: saved.id });
+  });
 
   test('Bot 入口任务可在桌面接续已有输出，同一历史继续更新并由桌面停止', async () => {
     const conversation = await app.createConversation('owner', 'Bot 发起的对话');

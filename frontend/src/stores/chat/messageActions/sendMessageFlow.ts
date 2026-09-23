@@ -669,8 +669,12 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
   const failedIndex = state.allMessages.value.findIndex(m => m.id === failedMessageId)
   if (failedIndex === -1) return -1
 
+  // 迟到错误可能留下旧标记；已保存的部分回复属于真实历史，重试不能把它或后续消息截掉。
+  const failedMessage = state.allMessages.value[failedIndex]
+  if (failedMessage.localOnly !== true || failedMessage.metadata?.incompleteReason) return -1
+
   const backendIndex = calculateBackendIndex(state.allMessages.value, failedIndex, state.windowStartIndex.value)
-  state.allMessages.value = state.allMessages.value.slice(0, failedIndex)
+  state.allMessages.value = state.allMessages.value.filter((_, index) => index !== failedIndex)
   rebuildMessageIndexById(state)
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)

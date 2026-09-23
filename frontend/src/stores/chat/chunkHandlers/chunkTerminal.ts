@@ -407,7 +407,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
       if (messageToRemove.streaming) {
         replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false })
       }
-      state._failedStreamMessageId.value = chunk.content?.incompleteReason ? null : messageToRemove.id
+      state._failedStreamMessageId.value = messageToRemove.localOnly === true && !chunk.content?.incompleteReason ? messageToRemove.id : null
     } else {
       state._failedStreamMessageId.value = null
     }

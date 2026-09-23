@@ -48,6 +48,21 @@ describe('real HTTP model adapter with existing provider codecs', () => {
   });
   afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
 
+  test('历史保留中断思考，但后续请求只重用已收到的正文', async () => {
+    profile.protocol = 'anthropic';
+    const request = input();
+    request.messages.push({ role: 'model', incompleteReason: 'interrupted', parts: [
+      { text: '未完成的思考', thought: true, thoughtSignature: 'unfinished-signature' },
+      { functionCall: { id: 'unfinished', name: 'inspect', args: '{' } }, { text: '已经生成的正文' },
+    ] }, { role: 'model', incompleteReason: 'interrupted', parts: [{ text: '只有思考', thought: true }] });
+    const preview = await adapter.preview(request);
+    const body = JSON.stringify(preview.body);
+    expect(body).toContain('已经生成的正文'); expect(body).not.toContain('未完成的思考');
+    expect(body).not.toContain('unfinished'); expect(body).not.toContain('只有思考');
+    expect(request.messages[1].parts).toHaveLength(3);
+    expect(request.messages[2].parts[0].text).toBe('只有思考');
+  });
+
   test('发送前预览与实际 HTTP 正文一致，预览本身不读凭据或请求网络', async () => {
     profile.credentialRef = 'fixture-secret';
     const credential = jest.fn(async () => 'fixture-only');

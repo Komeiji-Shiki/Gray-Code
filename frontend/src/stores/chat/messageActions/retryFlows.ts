@@ -23,7 +23,7 @@ import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { contentToMessageEnhanced } from '../parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, replaceMessageAt } from '../state'
+import { rebuildMessageIndexById, appendMessage, replaceMessageAt, removeMessageAt } from '../state'
 import { translate } from '../../../composables/useI18n'
 import { useSettingsStore } from '../../settingsStore'
 import {
@@ -305,10 +305,9 @@ export async function retryFromMessage(
 }
 
 /**
- * 关闭错误提示：同时清理失败流保留的半截消息（用户明确放弃该次回答）。
+ * 关闭错误提示只影响提示本身，不代表用户要删除已显示的回答。
  */
 export function dismissError(state: ChatStoreState): void {
-  rollbackFailedStreamMessage(state)
   state._pendingBranchReplayContext.value = null
   state.error.value = null
 }
@@ -538,26 +537,8 @@ export async function retryAfterError(
     return
   }
 
-  // 失败流回滚：清理上次流式失败保留的半截 assistant 消息，
-  // 避免重试后窗口/历史出现半截回答残留。
-  const failedMessage = state.allMessages.value.find(m => m.id === state._failedStreamMessageId.value)
-  const backendIndex = rollbackFailedStreamMessage(state)
-
-  // 防御性兜底：极端情况下半截消息已被标记为非 localOnly（后端可能已持久化），
-  // 同步删除后端对应消息，避免重试后历史残留。
-  if (backendIndex !== -1 && failedMessage && !failedMessage.localOnly && typeof failedMessage.backendIndex === 'number') {
-    try {
-      await sendToExtension<any>(MESSAGE_NAMES.deleteMessage, {
-        conversationId: originConvId,
-        targetIndex: backendIndex
-      })
-    } catch (err) {
-      console.error('[messageActions] retryAfterError: failed to delete partial message in backend:', err)
-    }
-    // FIX-C-4：await 后校验会话归属——await 期间当前会话可能已切换，
-    // 中止后续写操作（清错误/建占位/retryStream 都不应落到新会话）。
-    if (!validateSessionIdentity(state, originConvId)) return
-  }
+  // 只清理旧宿主未保存的临时占位；已保存的部分回复由后端继续，不删除真实历史。
+  rollbackFailedStreamMessage(state)
 
   state.error.value = null
   state._pendingBranchReplayContext.value = null
@@ -599,18 +580,26 @@ export async function retryAfterError(
       deepSeekVisionTileSplit: state.visionSplitChecked?.value
     })
   } catch (err: any) {
-    if (state.isStreaming.value) {
+    if (validateSessionIdentity(state, originConvId) && state.streamingMessageId.value === assistantMessageId) {
       safeSetError(state, originConvId, {
         code: err.code || 'RETRY_ERROR',
         message: err.message || 'Retry failed'
       })
+      const index = state.allMessages.value.findIndex(message => message.id === assistantMessageId)
+      if (index >= 0) {
+        const message = state.allMessages.value[index]
+        if (isLocalOnlyAssistant(message) && isEmptyAssistantPlaceholder(message)) {
+          removeMessageAt(state, index)
+          setTotalMessagesFromWindow(state)
+        } else replaceMessageAt(state, index, { ...message, streaming: false })
+      }
       state.streamingMessageId.value = null
       state.isStreaming.value = false
       state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
-    state.isLoading.value = false
+    if (validateSessionIdentity(state, originConvId) && (!state.streamingMessageId.value || state.streamingMessageId.value === assistantMessageId)) state.isLoading.value = false
   }
 }
 

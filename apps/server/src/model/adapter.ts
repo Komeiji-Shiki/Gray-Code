@@ -61,7 +61,12 @@ export class ProviderModelAdapter implements ModelProvider {
     const formatter = new FormatterRegistry().get(profile.protocol);
     if (!formatter)
       throw new Error(`Unsupported model protocol: ${profile.protocol}`);
-    let history = structuredClone(input.messages) as Content[];
+    let history = (structuredClone(input.messages) as Content[]).flatMap(message => {
+      if (message.role !== 'model' || !message.incompleteReason) return [message];
+      // 部分思考保存在历史中供用户查看，但没有完整供应方签名，不能作为下一次请求的有效思考块。
+      const parts = message.parts.filter(part => !part.thought && typeof part.text === 'string').map(part => ({ text: part.text }));
+      return parts.some(part => part.text?.trim()) ? [{ ...message, parts }] : [];
+    });
     if (capabilities.compatibility.deepSeekVision) {
       if (!this.services.prepareVision)
         throw new Error(

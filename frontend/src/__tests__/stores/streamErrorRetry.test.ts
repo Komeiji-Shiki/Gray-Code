@@ -1,15 +1,14 @@
 /**
  * 流式失败重试残留回归测试
  *
- * 问题背景：流式过程中后端报错时，后端不会持久化半截 assistant 消息，
- * 但前端窗口会保留有内容的半截消息。点击错误通知上的"重试"（retryAfterError）
- * 之前不会清理该消息，导致重试后窗口/历史出现半截回答残留。
+ * 已保存的部分回复是有效历史；旧宿主未保存的临时占位仅在明确重试时清理。
+ * 关闭错误提示不删除已显示内容，迟到标记也不能截断真实历史。
  *
  * 覆盖：
  * - handleError 保留有内容消息并记录 _failedStreamMessageId
  * - handleError 删除空占位消息并清空记录
  * - rollbackFailedStreamMessage 清理半截消息、检查点和记录
- * - dismissError 关闭错误时一并清理半截消息
+ * - dismissError 只关闭错误，保留已经显示的内容
  * - retryAfterError 重试前回滚半截消息，且不误删"工具响应继续"场景
  * - sendMessage 发送新消息时清理上次失败的半截消息
  */
@@ -112,6 +111,23 @@ const errorChunk = {
 } as any
 
 describe('handleError 失败残留记录', () => {
+  test('API 中断保存思考后，关闭错误和再次重试均保留稳定历史消息', async () => {
+    const state = createState({ allMessages: ref([createMessage({ id: 'local', localOnly: true, streaming: true,
+      parts: [{ text: '已经输出的思考', thought: true }] })]), streamingMessageId: ref('local') })
+    handleError({ ...errorChunk, error: { code: 'API_ERROR', message: '上游流在终态事件之前中断' }, content: {
+      id: 'saved-partial', role: 'model', timestamp: 1, incompleteReason: 'interrupted',
+      parts: [{ text: '已经输出的思考', thought: true }]
+    } }, state)
+    expect(state.allMessages.value[0]).toMatchObject({ id: 'saved-partial', localOnly: false, streaming: false,
+      parts: [{ text: '已经输出的思考', thought: true }] })
+    dismissError(state)
+    expect(state.allMessages.value).toHaveLength(1)
+    state._failedStreamMessageId.value = 'saved-partial'
+    vi.mocked(sendToExtension).mockClear()
+    await retryAfterError(state, createComputed())
+    expect(state.allMessages.value[0].id).toBe('saved-partial')
+    expect(vi.mocked(sendToExtension).mock.calls.some(call => call[0] === 'deleteMessage')).toBe(false)
+  })
   test('保留有内容的半截消息并记录 _failedStreamMessageId', () => {
     const partial = createMessage({
       id: 'msg_partial',
@@ -166,6 +182,14 @@ describe('handleError 失败残留记录', () => {
 })
 
 describe('rollbackFailedStreamMessage', () => {
+  test('清理临时占位时不截断其后的有效消息', () => {
+    const state = createState({ allMessages: ref([
+      createMessage({ id: 'temporary', content: '失败片段', localOnly: true }),
+      createMessage({ id: 'saved-later', content: '后续历史', localOnly: false }),
+    ]), _failedStreamMessageId: ref('temporary') })
+    rollbackFailedStreamMessage(state)
+    expect(state.allMessages.value.map(message => message.id)).toEqual(['saved-later'])
+  })
   test('删除半截消息、清理检查点并清空记录', () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
     const partial = createMessage({ id: 'msg_partial', role: 'assistant', content: '半截回答', localOnly: true })
@@ -211,7 +235,7 @@ describe('rollbackFailedStreamMessage', () => {
 })
 
 describe('dismissError', () => {
-  test('关闭错误提示时一并清理半截消息', () => {
+  test('关闭错误提示保留尚未保存的半截消息', () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
     const partial = createMessage({ id: 'msg_partial', role: 'assistant', content: '半截回答', localOnly: true })
     const state = createState({
@@ -223,8 +247,8 @@ describe('dismissError', () => {
     dismissError(state)
 
     expect(state.error.value).toBeNull()
-    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user'])
-    expect(state._failedStreamMessageId.value).toBeNull()
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user', 'msg_partial'])
+    expect(state._failedStreamMessageId.value).toBe('msg_partial')
   })
 
   test('没有失败残留时只关闭错误提示', () => {
@@ -295,7 +319,7 @@ describe('retryAfterError', () => {
     expect(call).toBeDefined()
   })
 
-  test('防御分支：半截消息非 localOnly 时同步删除后端消息', async () => {
+  test('旧标记指向已保存回复时，重试保留前后端历史', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
     const partial = createMessage({
       id: 'msg_partial',
@@ -313,8 +337,8 @@ describe('retryAfterError', () => {
     await retryAfterError(state, createComputed())
 
     const deleteCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')
-    expect(deleteCall).toBeDefined()
-    expect(deleteCall![1]).toMatchObject({ conversationId: 'conv_1', targetIndex: 1 })
+    expect(deleteCall).toBeUndefined()
+    expect(state.allMessages.value.some(message => message.id === 'msg_partial')).toBe(true)
   })
 
   test('H-3：非流式错误码（RESTORE_ERROR）不触发重试、不创建占位消息', async () => {
@@ -465,7 +489,7 @@ describe('retryAfterError', () => {
     expect(retryCall).toBeDefined()
   })
 
-  test('FIX-C-4：防御性 deleteMessage await 后会话已切换则中止重试', async () => {
+  test('重试请求再次失败也保留上一次已保存的回复', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
     const partial = createMessage({
       id: 'msg_partial',
@@ -481,21 +505,16 @@ describe('retryAfterError', () => {
       error: ref({ code: 'STREAM_ERROR', message: 'boom' })
     })
 
-    // await deleteMessage 期间用户切换到其他会话
     vi.mocked(sendToExtension).mockImplementation((type: string) => {
-      if (type === 'deleteMessage') {
-        state.currentConversationId.value = 'conv_2'
-        return Promise.resolve({ success: true })
-      }
+      if (type === 'retryStream') return Promise.reject(new Error('模拟再次断开'))
       return Promise.resolve({ success: true })
     })
 
     await retryAfterError(state, createComputed())
 
-    // 会话已切换：不发起 retryStream、不创建新占位、不进入流式状态
-    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
     expect(state.allMessages.value.some(m => m.streaming)).toBe(false)
-    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user'])
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user', 'msg_partial'])
     expect(state.isStreaming.value).toBe(false)
     expect(state.isWaitingForResponse.value).toBe(false)
     expect(state.isLoading.value).toBe(false)
