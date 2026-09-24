@@ -311,6 +311,9 @@ export class BotSessions {
         const agent = await captureBotAgent(this.app, loaded.actor.id, conversation.id, loaded.profile);
         let channelWorkspaceId = loaded.profile.workspaceId === null ? undefined : loaded.profile.workspaceId ?? (typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined);
         if (!channelWorkspaceId && loaded.profile.workspaceId !== null) channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id);
+        if (channelWorkspaceId === `workspace-${conversation.id}` && !this.app.settings.snapshot().settings.workspaces.some(item => item.id === channelWorkspaceId)) {
+          channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id, { existingOnly: true, workspaceUri: conversation.workspaceUri });
+        }
         let workspaceId = channelWorkspaceId;
         if (workspaceId) {
           const actor = await actorForBotRun(this.app, loaded.actor.id, { conversationId: conversation.id, workspaceId });

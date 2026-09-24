@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import type { ModelInput, RunRecord } from '@graycode/contracts';
 import { authorizeEffects } from '@graycode/core';
 import { PlatformApplication } from '../../../apps/server/src/application';
@@ -112,10 +112,11 @@ describe('Bot 默认访客、逐工具授权与单人黑名单', () => {
     expect((await receive('workspace-disabled')).workspaceId).toBeUndefined();
   });
 
-  test('主人在自动工作区配置失效后仍能继续 Discord 对话', async () => {
+  test('主人在自动工作区登记丢失后继续使用原目录', async () => {
     const first = await receive('owner-first', '10');
     expect(first.status).toBe('completed');
     expect(first.workspaceId).toBe(`workspace-${first.conversationId}`);
+    const original = app.workspace('owner', first.workspaceId!, ['workspace_read']);
 
     await update(settings => {
       settings.workspaces = settings.workspaces.filter(workspace => workspace.id !== first.workspaceId);
@@ -123,7 +124,43 @@ describe('Bot 默认访客、逐工具授权与单人黑名单', () => {
 
     const continued = await receive('owner-continued', '10');
     expect(continued.conversationId).toBe(first.conversationId);
-    expect(continued.workspaceId).toBeUndefined();
+    expect(continued.workspaceId).toBe(first.workspaceId);
     expect(continued.status).toBe('completed');
+    expect(app.workspace('owner', continued.workspaceId!, ['workspace_write', 'process_execute']).directory).toBe(original.directory);
+    expect(app.settings.snapshot().settings.workspaces.find(workspace => workspace.id === first.workspaceId)?.managedConversationId).toBe(first.conversationId);
+
+    await update(settings => {
+      settings.botGuestAccountId = 'visitor';
+      const visitor = settings.accounts.find(account => account.id === 'visitor')!;
+      visitor.role = 'member'; visitor.effects.push('workspace_read');
+    });
+    const guest = await receive('guest-after-restore');
+    expect(guest.workspaceId).toBe(first.workspaceId);
+    const granted = (await actorForBotRun(app, guest.actorId, guest))!;
+    expect(granted.workspaceIds).toContain(first.workspaceId);
+  });
+
+  test('自动工作区目录也丢失时不创建空目录替代原文件', async () => {
+    const first = await receive('owner-before-directory-loss', '10');
+    const original = app.workspace('owner', first.workspaceId!, ['workspace_read']);
+    await update(settings => { settings.workspaces = settings.workspaces.filter(workspace => workspace.id !== first.workspaceId); });
+    await rm(original.directory, { recursive: true });
+
+    await app.discord.receive(inbound('owner-after-directory-loss', '10'));
+    expect((await app.storage.listRuns({ conversationId: first.conversationId })).filter(run => run.requestKey === 'discord:owner-after-directory-loss')).toHaveLength(0);
+    await expect(app.botWorkspaces.get(context('10'), first.conversationId, { existingOnly: true })).rejects.toThrow('目录已不存在');
+  });
+
+  test('主人明确选择不绑定工作区时不恢复旧自动目录', async () => {
+    const first = await receive('owner-with-workspace', '10');
+    await update(settings => {
+      settings.workspaces = settings.workspaces.filter(workspace => workspace.id !== first.workspaceId);
+      settings.discord.defaultProfile = { ...settings.discord.defaultProfile, workspaceId: null };
+    });
+
+    const continued = await receive('owner-without-workspace', '10');
+    expect(continued.status).toBe('completed');
+    expect(continued.workspaceId).toBeUndefined();
+    expect(app.settings.snapshot().settings.workspaces.some(workspace => workspace.id === first.workspaceId)).toBe(false);
   });
 });
