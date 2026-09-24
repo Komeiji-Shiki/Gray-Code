@@ -544,6 +544,7 @@ export function formatHistoryForAPI(
         if (opts.includeTurnDynamicContext && message.turnDynamicContext) {
             result.turnDynamicContext = message.turnDynamicContext;
             result.turnDynamicContextStrategy = message.turnDynamicContextStrategy;
+            if (message.botTaskContextEmbedded) result.botTaskContextEmbedded = true;
         }
         
         return result;

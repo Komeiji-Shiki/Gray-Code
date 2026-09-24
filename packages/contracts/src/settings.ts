@@ -50,9 +50,11 @@ export interface BotEnvironmentEntry {
   identityTemplate: string;
 }
 export interface BotAutoSummarySettings {
-  /** 缺省保留已有时间总结；常规方式按模型渠道的上下文阈值触发。 */
+  /** time 仅用于旧配置；新配置选择普通总结或笔记窗口。 */
   method?: 'time' | 'summary' | 'notes';
   enabled: boolean;
+  /** 新配置可在所选方式之外启用定时触发；旧 time 配置始终按原时间总结运行。 */
+  timedEnabled?: boolean;
   trigger: 'idle' | 'interval';
   minutes: number;
   percent: number;

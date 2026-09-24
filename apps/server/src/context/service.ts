@@ -257,11 +257,12 @@ export class PlatformContextService {
         const state = await this.app.conversations.read(actorId, id);
         if ((await this.app.storage.listRuns({ conversationId: id, activeOnly: true })).length) throw new Error('请等待当前任务完成后再手动总结。');
         const frame = new CapturedContext(state);
-        const method = this.configuration(state.metadata).method;
+        const method = botSchedule?.method === 'summary' || botSchedule?.method === 'notes'
+          ? botSchedule.method : this.configuration(state.metadata).method;
         const result = botSchedule && (!botSchedule.method || botSchedule.method === 'time')
           ? await this.summarizeTimed(frame, providerId, modelOverride, controller.signal, 'auto', botSchedule)
-          : method === 'notes' ? await notesWindowBoundary(this.app, frame, false, (await this.app.product.channel(providerId))?.type ?? 'openai')
-            : await summarizeFullContext(this.app, frame, await manualSummaryPrefix(this.app, frame, actorId, providerId, modelOverride), controller.signal, false);
+          : method === 'notes' ? await notesWindowBoundary(this.app, frame, !!botSchedule, (await this.app.product.channel(providerId))?.type ?? 'openai')
+            : await summarizeFullContext(this.app, frame, await manualSummaryPrefix(this.app, frame, actorId, providerId, modelOverride), controller.signal, !!botSchedule);
         controller.signal.throwIfAborted();
         await this.commit(frame, undefined, true);
         return { success: true, ...result, summarizedMessageCount: result.removedCount };

@@ -69,7 +69,8 @@ export function validateDiscordSettings(settings: AppSettings): void {
     }
     if (value.autoSummary) {
       const summary = value.autoSummary;
-      if (summary.method !== undefined && !['time', 'summary', 'notes'].includes(summary.method)) throw new Error(`${label}请选择时间总结、普通总结或笔记换窗口。`);
+      if (summary.method !== undefined && !['time', 'summary', 'notes'].includes(summary.method)) throw new Error(`${label}请选择普通总结或笔记换窗口。`);
+      if (summary.timedEnabled !== undefined && typeof summary.timedEnabled !== 'boolean') throw new Error(`${label}的时间总结开关无效。`);
       if (typeof summary.enabled !== 'boolean' || !['idle', 'interval'].includes(summary.trigger) || !Number.isFinite(summary.minutes) || summary.minutes < 1
         || !Number.isFinite(summary.percent) || summary.percent < 1 || summary.percent > 99 || typeof summary.prompt !== 'string' || summary.prompt.length > 100000)
         throw new Error(`${label}的自动总结配置无效：时间至少 1 分钟，压缩比例为 1 至 99%。`);

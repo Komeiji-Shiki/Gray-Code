@@ -7,12 +7,20 @@ const emit = defineEmits<{ 'update:modelValue': [value: DiscordReplyProfile] }>(
 const environment = computed(() => props.modelValue.environmentEntry ?? props.inherited?.environmentEntry ?? DEFAULT_BOT_ENVIRONMENT);
 const summary = computed(() => props.modelValue.autoSummary ?? props.inherited?.autoSummary ?? DEFAULT_BOT_AUTO_SUMMARY);
 const inheritedSummary = computed(() => props.inherited?.autoSummary ?? DEFAULT_BOT_AUTO_SUMMARY);
+const summaryMode = computed(() => summary.value.method === 'notes' ? 'notes' : 'summary');
+const legacyTime = computed(() => !summary.value.method || summary.value.method === 'time');
+const timeEnabled = computed(() => !summary.value.method || summary.value.method === 'time' || summary.value.timedEnabled === true);
 function set<K extends 'environmentEntry' | 'autoSummary'>(key: K, value: DiscordReplyProfile[K]) {
   const next = { ...props.modelValue }; if (value === undefined) delete next[key]; else next[key] = value;
   emit('update:modelValue', next);
 }
 function changeEnvironment(patch: Partial<BotEnvironmentEntry>) { set('environmentEntry', { ...environment.value, ...patch }); }
-function changeSummary(patch: Partial<BotAutoSummarySettings>) { set('autoSummary', { ...summary.value, ...patch }); }
+function normalizedSummary(): BotAutoSummarySettings {
+  const current = summary.value;
+  return { ...current, method: summaryMode.value, timedEnabled: timeEnabled.value };
+}
+function changeSummary(patch: Partial<BotAutoSummarySettings>) { set('autoSummary', { ...normalizedSummary(), ...patch }); }
+function changeTiming(patch: Partial<BotAutoSummarySettings>) { set('autoSummary', { ...summary.value, ...patch }); }
 </script>
 <template>
   <section class="bot-conversation-fields">
@@ -22,21 +30,23 @@ function changeSummary(patch: Partial<BotAutoSummarySettings>) { set('autoSummar
     <div class="bot-entry-editor">
       <label><span>启用频道环境</span><input type="checkbox" :checked="environment.enabled" :disabled="!modelValue.environmentEntry" @change="changeEnvironment({ enabled: ($event.target as HTMLInputElement).checked })" /></label>
       <label class="bot-full"><span>历史前的频道环境<small><code v-text="'{{$BOT_CONTEXT}}'"></code> 是当前频道和会话工作区的信息，按频道保持稳定。</small></span><textarea rows="5" :value="environment.content" :readonly="!modelValue.environmentEntry" @input="changeEnvironment({ content: ($event.target as HTMLTextAreaElement).value })" /></label>
-      <label class="bot-full"><span>当轮身份说明<small><code v-text="'{{$TASK_CONTEXT}}'"></code> 是后端认证的本轮发言人和实际任务工作区。文字可以修改，旧回合仍保留各自的身份记录。</small></span><textarea rows="4" :value="environment.identityTemplate" :readonly="!modelValue.environmentEntry" @input="changeEnvironment({ identityTemplate: ($event.target as HTMLTextAreaElement).value })" /></label>
+      <label class="bot-full"><span>当轮身份说明<small><code v-text="'{{$TASK_CONTEXT}}'"></code> 是后端认证的发言身份，会放在当前 Discord 发言标记前。文字可以修改。</small></span><textarea rows="4" :value="environment.identityTemplate" :readonly="!modelValue.environmentEntry" @input="changeEnvironment({ identityTemplate: ($event.target as HTMLTextAreaElement).value })" /></label>
     </div>
     <label><span>自动总结配置</span><select :value="modelValue.autoSummary ? 'custom' : 'inherit'" @change="set('autoSummary', ($event.target as HTMLSelectElement).value === 'inherit' ? undefined : { ...summary })"><option value="inherit">继承默认配置（{{ inheritedSummary.enabled ? '已开启' : '已关闭' }}）</option><option value="custom">为这个入口单独配置</option></select></label>
     <template v-if="modelValue.autoSummary">
-      <label><span>开启自动总结<small>普通总结与笔记方式使用当前会话模型，时间总结保留原有配置。</small></span><input type="checkbox" :checked="summary.enabled" @change="changeSummary({ enabled: ($event.target as HTMLInputElement).checked })" /></label>
-      <label><span>总结方式</span><select :value="summary.method ?? 'time'" @change="changeSummary({ method: ($event.target as HTMLSelectElement).value as 'time' | 'summary' | 'notes' })"><option value="summary">普通总结 · 复用完整前缀</option><option value="notes">笔记换窗口 · 按需恢复历史</option><option value="time">时间总结 · 保留原有方式</option></select></label>
-      <template v-if="!summary.method || summary.method === 'time'">
-      <label><span>时间规则</span><select :value="summary.trigger" @change="changeSummary({ trigger: ($event.target as HTMLSelectElement).value as 'idle' | 'interval' })"><option value="idle">频道连续没有新消息</option><option value="interval">距上一次总结尝试已过指定时间</option></select></label>
-      <label><span>间隔（分钟）<small>初始为 30 分钟，至少 1 分钟。空闲规则从最后一条消息计时；固定间隔从上次总结尝试计时。调小会更频繁整理并增加模型请求，调大则保留更长的原文上下文。</small></span><input type="number" min="1" :value="summary.minutes" @change="changeSummary({ minutes: Number(($event.target as HTMLInputElement).value) })" /></label>
-      <label><span>压缩前面多少内容（%）<small>初始为 80%，按 Token 估算较早内容的压缩比例。提高可减少后续输入，但更多原文会改用摘要；降低会保留更多原文。实际会对齐完整回合，并保留最近回合与工具配对。</small></span><input type="number" min="1" max="99" :value="summary.percent" @change="changeSummary({ percent: Number(($event.target as HTMLInputElement).value) })" /></label>
-      <label class="bot-full"><span>总结提示词<small>留空使用现有自动总结提示词，可指定要保留的事实、约定或长期记忆。</small></span><textarea rows="4" :value="summary.prompt" @input="changeSummary({ prompt: ($event.target as HTMLTextAreaElement).value })" /></label>
-      <p>任务完成后才会总结，原文可恢复。每 30 秒检查一次，满足时间条件后再发起请求。成功后没有新增消息时不重复总结；失败会按配置间隔重试。</p>
+      <label><span>开启自动总结</span><input type="checkbox" :checked="summary.enabled" @change="changeTiming({ enabled: ($event.target as HTMLInputElement).checked })" /></label>
+      <label><span>总结方式</span><select :value="summaryMode" @change="changeSummary({ method: ($event.target as HTMLSelectElement).value as 'summary' | 'notes' })"><option value="summary">普通总结 · 复用完整前缀</option><option value="notes">笔记窗口 · 按需恢复历史</option></select></label>
+      <p v-if="summaryMode === 'summary'">按上下文阈值触发时，保留完整请求前缀并生成摘要；原文与附件仍可查看和恢复。</p>
+      <p v-else>按上下文阈值提醒模型保存笔记并切换窗口，之后可通过笔记与历史工具恢复所需内容。</p>
+      <label><span>开启时间总结<small>任务完成后，满足时间规则时执行总结。</small></span><input type="checkbox" :checked="timeEnabled" @change="changeSummary({ timedEnabled: ($event.target as HTMLInputElement).checked })" /></label>
+      <template v-if="timeEnabled">
+        <label><span>时间规则</span><select :value="summary.trigger" @change="changeTiming({ trigger: ($event.target as HTMLSelectElement).value as 'idle' | 'interval' })"><option value="idle">频道连续没有新消息</option><option value="interval">距上一次总结尝试已过指定时间</option></select></label>
+        <label><span>间隔（分钟）<small>初始为 30 分钟，至少 1 分钟；失败后按该间隔重试。</small></span><input type="number" min="1" :value="summary.minutes" @change="changeTiming({ minutes: Number(($event.target as HTMLInputElement).value) })" /></label>
+        <template v-if="legacyTime">
+          <label><span>压缩前面多少内容（%）<small>按 Token 估算较早内容的压缩比例，保留最近的完整回合。</small></span><input type="number" min="1" max="99" :value="summary.percent" @change="changeTiming({ percent: Number(($event.target as HTMLInputElement).value) })" /></label>
+          <label class="bot-full"><span>总结提示词<small>留空使用自动总结提示词，可指定要保留的事实与约定。</small></span><textarea rows="4" :value="summary.prompt" @input="changeTiming({ prompt: ($event.target as HTMLTextAreaElement).value })" /></label>
+        </template>
       </template>
-      <p v-else-if="summary.method === 'summary'">按当前模型渠道的上下文阈值触发。保留完整请求前缀并追加总结指令，成功后仅保留首条用户消息和摘要。原文与附件仍可查看和恢复。</p>
-      <p v-else>按当前模型渠道的上下文阈值提醒模型保存笔记并换窗口。模型可随时使用会话内笔记与历史工具恢复所需内容，任务会在新窗口继续。</p>
     </template>
     <p>未指定工作区时，会在用户文档目录的 graycode/discord 或 graycode/qq 下创建会话目录。模型可以使用现有文件和记忆工具维护资料，具体操作仍受当前账号权限限制。</p>
   </section>

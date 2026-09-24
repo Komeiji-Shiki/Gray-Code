@@ -386,6 +386,9 @@ export interface Content {
      */
     turnDynamicContext?: string;
 
+    /** 旧 Bot 回合曾把身份说明写入动态快照；读取时据此清理旧说明。 */
+    botTaskContextEmbedded?: boolean;
+
     /**
      * 当前回合使用的动态上下文策略（内部缓存字段）。
      */
@@ -596,4 +599,3 @@ export interface MessageInsert {
     /** 要插入的消息 */
     content: Content;
 }
-

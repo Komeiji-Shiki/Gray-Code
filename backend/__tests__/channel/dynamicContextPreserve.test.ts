@@ -44,6 +44,22 @@ function textOf(message: Content): string {
 }
 
 describe('BaseFormatter dynamic context insertion', () => {
+    test('旧 Discord 身份快照不再作为独立 user 消息重复回插', () => {
+        const formatter = new TestFormatter();
+        const legacy = 'Current task context, supplied by the service after authentication: {"actor":{"id":"owner","displayName":"主人","role":"owner"},"workspace":{"directory":"C:\\private"}}.';
+        const oldCache = serializePromptContextCache({
+            beforeHistoryMessages: [], afterHistoryMessages: [{ role: 'user', parts: [{ text: legacy }] }],
+            dynamicSnapshotBeforeHistoryMessages: [], dynamicSnapshotAfterHistoryMessages: [{ role: 'user', parts: [{ text: legacy }] }],
+            messages: [], dynamicSnapshotMessages: [], historyPlacement: 'entry'
+        });
+        const result = formatter.exposeInjectPromptContext([
+            { role: 'user', isUserInput: true, botTaskContextEmbedded: true, turnDynamicContext: oldCache,
+                parts: [{ text: '[Discord 发言 · "Apoieo"]\nping' }] },
+            { role: 'model', parts: [{ text: 'pong' }] },
+            { role: 'user', isUserInput: true, parts: [{ text: '[本轮发言身份：主人]\n[Discord 发言 · "Apoieo"]\ntest' }] }
+        ], { beforeHistoryMessages: [], afterHistoryMessages: [], historyPlacement: 'entry' }, 'preserve');
+        expect(result.map(textOf)).toEqual(['[Discord 发言 · "Apoieo"]\nping', 'pong', '[本轮发言身份：主人]\n[Discord 发言 · "Apoieo"]\ntest']);
+    });
     test('inserts multi-role current context before the current user turn in legacy single mode', () => {
         const formatter = new TestFormatter();
         const history: Content[] = [

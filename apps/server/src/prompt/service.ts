@@ -15,7 +15,8 @@ import { deserializePromptContextCache, serializePromptContextCache } from '../.
 import type { PlatformApplication } from '../application';
 import { formatOpenTabsSection, formatActiveEditorSection } from '../../../../backend/modules/prompt/editorSections';
 import { captureEditorSnapshot, previousEditorSnapshot, type PromptEditorSnapshot } from './editorContext';
-import { botIdentityMessage, type CapturedBotEnvironment } from '../bots/prompt';
+import type { CapturedBotEnvironment } from '../bots/prompt';
+import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
@@ -119,11 +120,6 @@ export class PlatformPromptService {
     if (useContextNotes) bundle.beforeHistoryMessages.push({ role: 'user', contextControl: 'reminder', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] });
     if (botEnvironment?.version === 1) {
       if (botEnvironment.content.trim()) bundle.beforeHistoryMessages.push({ role: 'user', parts: [{ text: botEnvironment.content }] });
-      const identity = botIdentityMessage(botEnvironment, input.actor, input.workspace) as import('../../../../backend/modules/conversation/types').Content | undefined;
-      if (identity) {
-        bundle.afterHistoryMessages.push(identity);
-        bundle.dynamicSnapshotAfterHistoryMessages.push(identity);
-      }
       bundle.messages = [...bundle.beforeHistoryMessages, ...bundle.afterHistoryMessages];
       bundle.dynamicSnapshotMessages = [...bundle.dynamicSnapshotBeforeHistoryMessages, ...bundle.dynamicSnapshotAfterHistoryMessages];
       bundle.text = bundle.messages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
@@ -136,7 +132,8 @@ export class PlatformPromptService {
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
       promptContext: { beforeHistoryMessages: (resumed ?? bundle).beforeHistoryMessages as PlatformMessage[],
-        afterHistoryMessages: [...(resumed ?? bundle).afterHistoryMessages as PlatformMessage[], ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,
+        afterHistoryMessages: [...((resumed ?? bundle).afterHistoryMessages as PlatformMessage[]).filter(message => botEnvironment?.version !== 1
+          || !message.parts.some(part => typeof part.text === 'string' && isLegacyBotIdentityText(part.text))), ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },
       messageParts: characterSource?.parts,
       turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod },

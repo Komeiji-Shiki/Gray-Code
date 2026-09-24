@@ -2,6 +2,7 @@ import { workspaceFilePath } from './workspace/paths';
 import { prepareDeepSeekVisionHistory } from '../../../backend/modules/channel/deepseekVision';
 import { configuredAgent } from './settings/agent';
 import { actorForBotRun, resolveBotGuestActor } from './bots/permissions';
+import { prependBotIdentityToCurrentMessage, type CapturedBotEnvironment } from './bots/prompt';
 import { resolveBotAgent } from './bots/profiles';
 import { canReadBotConversation } from './bots/channelAccess';
 import { PlatformLongMemory } from './memory/longTerm/service';
@@ -314,6 +315,9 @@ export class PlatformApplication {
         const prepared = await this.context.prepare(input,false,memory.text,view.filter);
         prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
         prepared.messages=this.longMemoryPrompt.inject(view.filter(prepared.messages),memory,input.input,view.filter(prepared.history.history.messages));
+        prepared.messages = prependBotIdentityToCurrentMessage(prepared.messages,
+          (prepared.history.metadata.custom as { botEnvironment?: CapturedBotEnvironment } | undefined)?.botEnvironment,
+          input.input.taskContext?.actor);
         return prepared;
       },
       previewModel: async input => {
@@ -322,6 +326,9 @@ export class PlatformApplication {
         const prepared = await this.context.prepare(input, true,memory.text,view.filter);
         prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
         prepared.messages=this.longMemoryPrompt.inject(view.filter(prepared.messages),memory,input.input,view.filter(prepared.history.history.messages));
+        prepared.messages = prependBotIdentityToCurrentMessage(prepared.messages,
+          (prepared.history.metadata.custom as { botEnvironment?: CapturedBotEnvironment } | undefined)?.botEnvironment,
+          input.input.taskContext?.actor);
         return prepared;
       },
       transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),

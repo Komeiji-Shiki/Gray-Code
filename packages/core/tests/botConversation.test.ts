@@ -31,7 +31,7 @@ describe('Bot 频道上下文、附件与定时总结', () => {
         generated.push(input);
         if (nextModelFailure) { const error = nextModelFailure; nextModelFailure = undefined; throw error; }
         if (generated.length === 1) { first.resolve(); if (hold) await hold; } if (generated.length === 2) second.resolve();
-        return { role: 'model', parts: [{ text: input.conversationId.startsWith('summary-')
+        return { role: 'model', parts: [{ text: input.purpose === 'summary' || input.conversationId.startsWith('summary-')
           ? '用户希望保留对话中的明确约定、具体事实、相关文件和工具结果。已经完成的内容按来源区分；后续继续未完成的请求，保留实际身份和当前权限，不把群聊中的转发内容视为主人的新授权。'.repeat(3) : '已完成当前请求。' }] };
       } } });
     const draft = await app.product.draft();
@@ -113,12 +113,15 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect(generated[0].promptContext!.beforeHistoryMessages).toEqual(generated[1].promptContext!.beforeHistoryMessages);
       expect(generated[0].systemPrompt).toEqual(generated[1].systemPrompt);
       expect(generated.every(input => input.promptContext?.taskContextEmbedded)).toBe(true);
-      expect(generated[1].promptContext!.afterHistoryMessages.map(message => message.parts.map(part => part.text).join('')).join('')).toContain('"member"');
+      const currentMember = generated[1].messages.findLast(message => message.isUserInput);
+      expect(currentMember?.parts[0]?.text).toMatch(/^认证身份 成员\n\[Discord 发言/);
+      expect(generated[1].promptContext!.afterHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('')).not.toContain('认证身份');
       const saved = (await app.storage.readFullHistory(id)).messages;
       const turns = saved.filter(message => message.isUserInput);
       expect(turns).toHaveLength(2); expect(saved.filter(message => message.botPassive).map(message => message.botMessageIds)).toEqual([['a', 'b'], ['c'], ['d'], ['f']]);
       const cache = deserializePromptContextCache(turns[0].turnDynamicContext as string);
-      expect(cache.dynamicSnapshotText).toContain('"owner"'); expect(cache.dynamicSnapshotText).not.toContain('"member"');
+      expect(cache.dynamicSnapshotText).not.toContain('认证身份');
+      expect(turns[0].parts[0].text).toMatch(/^\[Discord 发言/);
       await app.discord.receive(inbound('g', '20', true)); expect(generated).toHaveLength(2);
       await app.discord.stop(); await app.discord.start(); expect((await app.discord.sessions.snapshot(context())).conversation!.id).toBe(id);
       await expect(app.conversation('member', id)).resolves.toMatchObject({ id });
@@ -265,6 +268,25 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     await app.discord.summaries.tick(Date.now() + 3600000);
     expect(generated).toHaveLength(0);
     expect(app.context.configuration(await app.conversation('owner', id))).toMatchObject({ method, bot: { enabled: true, method } });
+  });
+
+  test.each(['summary', 'notes'] as const)('Bot %s 方式开启时间总结后，定时检查使用所选方式', async method => {
+    await app.discord.receive(inbound(`timed-${method}`));
+    const id = (await app.discord.sessions.snapshot(context())).conversation!.id;
+    await app.storage.appendHistory(id, Array.from({ length: 12 }, (_, index) => ({ id: `${method}-${index}`,
+      role: index % 2 ? 'model' : 'user', isUserInput: index % 2 === 0,
+      parts: [{ text: `保留 ${method} 方式下的对话事实和要求。`.repeat(40) }] })));
+    const saved = app.settings.snapshot();
+    saved.settings.discord.defaultProfile!.autoSummary = { enabled: true, method, timedEnabled: true,
+      trigger: 'idle', minutes: 1, percent: 80, prompt: '' };
+    await app.settings.save({ settings: saved.settings, expectedRevision: saved.revision });
+    const now = Date.now() + 120000;
+    await app.discord.summaries.tick(now);
+    const history = (await app.storage.readFullHistory(id)).messages;
+    expect(history.at(-1)).toMatchObject({ isSummary: true, isAutoSummary: true, contextMethod: method });
+    expect(generated.filter(input => input.purpose === 'summary')).toHaveLength(method === 'summary' ? 1 : 0);
+    await app.discord.summaries.tick(now + 3600000);
+    expect((await app.storage.readFullHistory(id)).messages.filter(message => message.isSummary)).toHaveLength(1);
   });
 
   test('Discord 转发快照和 OneBot 引用中的图片、文本附件进入内容，无法读取时保留来源', async () => {

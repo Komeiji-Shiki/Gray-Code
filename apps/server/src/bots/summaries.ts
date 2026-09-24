@@ -47,7 +47,8 @@ export class BotSummaries {
     const loaded = await this.sessions.load(value.context, true);
     if (loaded.value.conversationId !== id) return;
     const settings = loaded.profile.autoSummary ?? DEFAULT_BOT_AUTO_SUMMARY;
-    if (!settings.enabled || settings.method && settings.method !== 'time' || this.app.context.isSummarizing(id)) return;
+    const legacyTime = !settings.method || settings.method === 'time';
+    if (!settings.enabled || (!legacyTime && settings.timedEnabled !== true) || this.app.context.isSummarizing(id)) return;
     const agent = this.app.settings.snapshot().settings.agents.find(item => item.id === loaded.profile.agentId);
     const providerId = loaded.profile.providerId ?? agent?.providerId;
     const model = loaded.profile.modelId ?? agent?.modelId;

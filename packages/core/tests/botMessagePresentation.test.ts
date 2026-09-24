@@ -5,6 +5,19 @@ import type { Content } from '../../../backend/modules/conversation/types';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
+import { botIdentityText, prependBotIdentityToCurrentMessage } from '../../../apps/server/src/bots/prompt';
+import { LEGACY_BOT_IDENTITY_TEMPLATE } from '../../../shared/botConversation';
+
+test('旧版 Discord 身份模板只在请求中的发言标记前生成简短角色行', () => {
+  const environment = { version: 1 as const, content: '', identityTemplate: LEGACY_BOT_IDENTITY_TEMPLATE,
+    channel: { platform: 'discord', botId: 'bot', workspace: { directory: 'C:/private' } } };
+  const original = [{ id: 'm1', role: 'user', isUserInput: true, parts: [{ text: '[Discord 发言 · "Apoieo"]\ntest' }] }];
+  const prepared = prependBotIdentityToCurrentMessage(original, environment, { role: 'owner' });
+  expect(botIdentityText(environment, { role: 'owner' })).toBe('[本轮发言身份：主人]');
+  expect(prepared[0].parts[0].text).toBe('[本轮发言身份：主人]\n[Discord 发言 · "Apoieo"]\ntest');
+  expect(JSON.stringify(prepared)).not.toContain('C:/private');
+  expect(original[0].parts[0].text).toBe('[Discord 发言 · "Apoieo"]\ntest');
+});
 
 test('Bot 发言和引用只展示名称及可读时间，不重复发送平台标识', async () => {
   const timestamp = Date.parse('2026-09-10T13:48:38Z');

@@ -16,6 +16,7 @@ import type {
 } from '../types';
 import type { RequestPromptContext } from '../types';
 import { deserializePromptContextCache } from '../../prompt/promptContextCache';
+import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 
 /**
  * prompt context 注入选项。
@@ -304,7 +305,9 @@ export abstract class BaseFormatter {
                 !!message.turnDynamicContext;
 
             if (isHistoricalPreservedTurn) {
-                const cached = this.createDynamicContextMessagesFromCache(message.turnDynamicContext!);
+                const cached = this.createDynamicContextMessagesFromCache(message.turnDynamicContext!).filter(snapshot =>
+                    message.botTaskContextEmbedded !== true || !snapshot.parts.some(part =>
+                        typeof part.text === 'string' && isLegacyBotIdentityText(part.text)));
                 anchors.push(...cached.filter(item => item.promptAnchor));
                 const snapshotMessages = cached.filter(item => !item.promptAnchor);
                 // preserve 回插的快照与直发路径共用同一开关语义：未显式开启
