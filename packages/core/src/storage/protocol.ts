@@ -83,6 +83,7 @@ export interface StorageOperations {
   getConversationInfo: { input: { id: string }; output: { metadata: PlatformConversation; metadataToken: string; messageCount: number; historyRevision: number } | null };
   saveMetadata: { input: PlatformConversation; output: void };
   listConversations: { input: ConversationListOptions; output: ConversationList };
+  searchConversationIds: { input: { query: string }; output: { matches: Array<{ id: string; messageIndex?: number; messageId?: string; excerpt?: string }>; indexing: boolean } };
   listUsageConversations: { input: Pick<ConversationListOptions, 'limit' | 'cursor'>; output: { items: UsageConversation[]; nextCursor?: ConversationList['nextCursor'] } };
   readHistory: { input: { id: string; options?: PageOptions }; output: HistoryPage };
   historyInfo: { input: { id: string }; output: HistoryWriteResult };

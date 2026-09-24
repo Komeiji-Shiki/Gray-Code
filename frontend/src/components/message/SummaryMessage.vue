@@ -140,6 +140,7 @@ async function handleRestore() {
 <template>
   <div
     class="summary-message"
+    :data-message-id="message.id"
     :data-preview="t('components.message.summary.marker', { count: message.summarizedMessageCount || 0 })"
     data-marker-color="rgba(221, 185, 47, 0.9)"
     :data-marker-tooltip-prefix="t('components.message.summary.markerPrefix')"

@@ -102,6 +102,7 @@ export class PlatformStorage {
   memoryWrite(input: MemoryWrite) { return this.request('memoryWrite', input); }
   saveMetadata(metadata: PlatformConversation) { return this.request('saveMetadata', metadata); }
   listConversations(options: ConversationListOptions = {}) { return this.request('listConversations', options); }
+  searchConversationIds(query: string) { return this.request('searchConversationIds', { query }); }
   listUsageConversations(options: StorageOperations['listUsageConversations']['input'] = {}) { return this.request('listUsageConversations', options); }
   readHistory(id: string, options: PageOptions = {}) { return this.request('readHistory', { id, options }); }
   historyInfo(id: string) { return this.request('historyInfo', { id }); }

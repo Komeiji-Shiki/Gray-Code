@@ -1333,6 +1333,17 @@ export class ConversationManager {
         return await this.query.getMessagesPaged(conversationId, options, workspaceUri);
     }
 
+    /** 获取滚动条所需的轻量用户消息索引（实现见 manager/query.ts）。 */
+    async getMessageMarkers(
+        conversationId: string
+    ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }> }> {
+        return await this.query.getMessageMarkers(conversationId);
+    }
+
+    async getMessagePosition(conversationId: string, messageId: string): Promise<{ index?: number }> {
+        return await this.query.getMessagePosition(conversationId, messageId);
+    }
+
     /**
      * 获取指定索引的消息（实现见 manager/query.ts）
      */
@@ -2494,5 +2505,3 @@ export class ConversationManager {
         return await this.toolCalls.settleFunctionResponses(conversationId, parts);
     }
 }
-
-

@@ -142,6 +142,7 @@ export class PlatformDatabase {
       },
       saveMetadata: metadata => this.saveMetadata(metadata),
       listConversations: options => this.listConversations(options),
+      searchConversationIds: ({ query }) => this.searchConversationIds(query),
       listUsageConversations: options => this.listUsageConversations(options),
       readHistory: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }),
       historyInfo: ({ id }) => {
@@ -438,8 +439,8 @@ export class PlatformDatabase {
     const args: Array<string | number> = [];
     if (options.workspaceUri !== undefined) { where.push('workspace_uri=?'); args.push(options.workspaceUri); }
     if (options.query !== undefined) {
-      if (typeof options.query !== 'string' || options.query.length > 512) invalid('Conversation title query is invalid.');
-      if (options.query.trim()) { where.push("instr(lower(coalesce(title,'')),lower(?))>0"); args.push(options.query.trim()); }
+      const query = this.validateSearchQuery(options.query);
+      if (query) { const search = this.conversationSearchCondition(query); where.push(search.sql); args.push(...search.args); }
     }
     if (options.cursor) {
       if (!Number.isFinite(options.cursor.updatedAt)) invalid('Invalid conversation cursor.');
@@ -453,6 +454,47 @@ export class PlatformDatabase {
     const items = rows.slice(0, limit).map(row => this.summary(row));
     const last = items.at(-1);
     return { items, ...(more && last ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } } : {}) };
+  }
+
+  private validateSearchQuery(value: string): string {
+    if (typeof value !== 'string' || value.length > 512) invalid('Conversation search query is invalid.');
+    return value.trim().toLowerCase();
+  }
+
+  private conversationSearchCondition(query: string): { sql: string; args: string[] } {
+    const title = "instr(lower(coalesce(conversations.title,'')),?)>0";
+    if (Array.from(query).length >= 3 && !query.includes('\0')) return {
+      sql: `(${title} OR conversations.history_id IN (
+        SELECT s.history_id FROM history_search_fts f JOIN history_search s ON s.id=f.rowid
+        WHERE f.normalized LIKE ? AND instr(s.normalized,?)>0))`,
+      args: [query, `%${query}%`, query],
+    };
+    return { sql: `(${title} OR conversations.history_id IN (
+      SELECT history_id FROM history_search WHERE instr(normalized,?)>0))`, args: [query, query] };
+  }
+
+  private searchConversationIds(value: string): StorageOperations['searchConversationIds']['output'] {
+    const query = this.validateSearchQuery(value);
+    if (!query) return { matches: [], indexing: false };
+    const indexing = this.histories.advanceSearchIndex();
+    const matches = new Map<string, StorageOperations['searchConversationIds']['output']['matches'][number]>();
+    for (const row of this.db.prepare("SELECT id FROM conversations WHERE instr(lower(coalesce(title,'')),?)>0").all(query) as { id: string }[]) {
+      matches.set(row.id, { id: row.id });
+    }
+    const trigrams = Array.from(query).length >= 3 && !query.includes('\0');
+    const source = trigrams
+      ? `history_search_fts f JOIN history_search s ON s.id=f.rowid WHERE f.normalized LIKE ? AND instr(s.normalized,?)>0`
+      : 'history_search s WHERE instr(s.normalized,?)>0';
+    const args = trigrams ? [query, `%${query}%`, query] : [query, query];
+    const rows = this.db.prepare(`SELECT c.id,h.position,h.message_id,h.excerpt FROM conversations c JOIN (
+      SELECT s.history_id,s.position,s.message_id,
+        substr(s.text,max(1,instr(s.normalized,?)-48),180) AS excerpt,
+        row_number() OVER(PARTITION BY s.history_id ORDER BY s.position DESC) AS rank
+      FROM ${source}
+    ) h ON h.history_id=c.history_id AND h.rank=1`).all(...args) as Array<{ id: string; position: number; message_id: string | null; excerpt: string }>;
+    for (const row of rows) matches.set(row.id, { id: row.id, messageIndex: row.position,
+      ...(row.message_id ? { messageId: row.message_id } : {}), excerpt: row.excerpt.replace(/\s+/g, ' ').trim() });
+    return { matches: [...matches.values()], indexing };
   }
 
   /** 在同一批读取元数据和用量版本，避免统计逐会话往返存储线程。 */

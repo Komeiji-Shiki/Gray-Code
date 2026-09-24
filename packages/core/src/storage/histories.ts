@@ -5,9 +5,13 @@ import { ObjectStore } from './objects';
 import { assertIdentifier, invalid, PlatformStorageError } from '../errors';
 
 const SEGMENT_ENTRIES = 128;
-interface HistoryRow { id: string; message_count: number; revision: number }
+interface HistoryRow { id: string; message_count: number; revision: number; search_revision: number; search_position: number }
 interface SpanRow { start_index: number; segment_id: number; segment_offset: number; count: number }
 interface EntryRow { body_hash: Buffer; message_id: string | null; role: string; timestamp: number | null }
+
+function searchableText(message: Pick<PlatformMessage, 'parts'>): string {
+  return Array.isArray(message.parts) ? message.parts.flatMap(part => typeof part?.text === 'string' && part.thought !== true ? [part.text] : []).join('\n') : '';
+}
 
 /** Sequence spans are small indexes. Forks share spans; message content is immutable. */
 export class HistoryStore {
@@ -40,8 +44,35 @@ export class HistoryStore {
 
   create(): string {
     const id = randomUUID();
-    this.db.prepare('INSERT INTO histories(id) VALUES(?)').run(id);
+    this.db.prepare('INSERT INTO histories(id,search_revision,search_position) VALUES(?,0,0)').run(id);
     return id;
+  }
+
+  /** 每次搜索只补建有限数量的旧消息，避免长对话阻塞其他存储操作。 */
+  advanceSearchIndex(): boolean {
+    const insert = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+    let budget = 512;
+    for (let histories = 0; histories < 16 && budget > 0; histories++) {
+      const pending = this.db.prepare(`SELECT c.history_id FROM conversations c JOIN histories h ON h.id=c.history_id
+        WHERE h.search_revision<>h.revision ORDER BY c.updated_at DESC LIMIT 1`).get() as { history_id: string } | undefined;
+      if (!pending) return false;
+      const id = pending.history_id;
+      this.db.transaction(() => {
+      const info = this.info(id);
+      const end = Math.min(info.message_count, info.search_position + budget);
+      const rows = this.rows(id, info.search_position, end);
+      if (rows.length !== end - info.search_position) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+      rows.forEach((row, offset) => {
+        const text = searchableText(this.objects.getValue<Pick<PlatformMessage, 'parts'>>(row.body_hash, { fields: ['parts'], omitBinary: true }));
+        if (text) insert.run(id, info.search_position + offset, row.message_id, text, text.toLowerCase());
+      });
+      this.db.prepare('UPDATE histories SET search_position=?,search_revision=? WHERE id=?')
+        .run(end, end === info.message_count ? info.revision : -1, id);
+      budget -= rows.length;
+      })();
+    }
+    return !!this.db.prepare(`SELECT 1 FROM conversations c JOIN histories h ON h.id=c.history_id
+      WHERE h.search_revision<>h.revision LIMIT 1`).get();
   }
 
   info(id: string): HistoryRow {
@@ -79,6 +110,7 @@ export class HistoryStore {
     if (!Array.isArray(messages)) invalid('Messages must be an array.');
     if (!messages.length) return;
     const info = this.info(id);
+    const indexed = info.search_revision === info.revision;
     const entries = messages.map(message => this.encode(message));
     let tail = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index DESC LIMIT 1').get(id) as SpanRow | undefined;
     let length = tail ? Number((this.db.prepare('SELECT count(*) AS n FROM segment_entries WHERE segment_id=?').get(tail.segment_id) as { n: number }).n) : 0;
@@ -100,6 +132,14 @@ export class HistoryStore {
         .run(id, tail.start_index, tail.segment_id, tail.segment_offset, tail.count);
     }
     this.db.prepare('UPDATE histories SET message_count=?,revision=revision+1 WHERE id=?').run(total, id);
+    if (indexed) {
+      const insert = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+      messages.forEach((message, offset) => {
+        const text = searchableText(message);
+        if (text) insert.run(id, info.message_count + offset, message.id ?? null, text, text.toLowerCase());
+      });
+      this.db.prepare('UPDATE histories SET search_revision=?,search_position=? WHERE id=?').run(info.revision + 1, total, id);
+    }
   }
 
   replace(id: string, messages: PlatformMessage[]): void {
@@ -117,7 +157,8 @@ export class HistoryStore {
     this.truncate(id, prefix);
     if (prefix < messages.length) this.append(id, messages.slice(prefix));
     // A replacement is one externally visible mutation, regardless of internal truncate/append.
-    this.db.prepare('UPDATE histories SET revision=? WHERE id=?').run(info.revision + 1, id);
+    this.db.prepare('UPDATE histories SET revision=?,search_revision=? WHERE id=?')
+      .run(info.revision + 1, info.search_revision === info.revision ? info.revision + 1 : -1, id);
   }
 
   patch(id: string, updates: { index: number; message: PlatformMessage }[]): void {
@@ -141,7 +182,8 @@ export class HistoryStore {
     for (const [index, message] of changes) messages[index - firstChanged] = message;
     this.truncate(id, firstChanged);
     this.append(id, messages);
-    this.db.prepare('UPDATE histories SET revision=? WHERE id=?').run(info.revision + 1, id);
+    this.db.prepare('UPDATE histories SET revision=?,search_revision=? WHERE id=?')
+      .run(info.revision + 1, info.search_revision === info.revision ? info.revision + 1 : -1, id);
   }
 
   private sameEntry(left: EntryRow, right: EntryRow): boolean {
@@ -157,6 +199,13 @@ export class HistoryStore {
       SELECT ?,start_index,segment_id,segment_offset,min(count,?-start_index)
       FROM history_spans WHERE history_id=? AND start_index<?`).run(target, end, id, end);
     this.db.prepare('UPDATE histories SET message_count=? WHERE id=?').run(end, target);
+    const indexedUntil = Math.min(end, info.search_position);
+    if (indexedUntil) {
+      this.db.prepare(`INSERT INTO history_search(history_id,position,message_id,text,normalized)
+        SELECT ?,position,message_id,text,normalized FROM history_search WHERE history_id=? AND position<?`).run(target, id, indexedUntil);
+    }
+    this.db.prepare('UPDATE histories SET search_revision=?,search_position=? WHERE id=?')
+      .run(indexedUntil === end ? 0 : -1, indexedUntil, target);
     return target;
   }
 
@@ -179,6 +228,8 @@ export class HistoryStore {
   }
 
   private truncate(id: string, length: number): void {
+    this.db.prepare('DELETE FROM history_search WHERE history_id=? AND position>=?').run(id, length);
+    this.db.prepare('UPDATE histories SET search_position=min(search_position,?) WHERE id=?').run(length, id);
     this.db.prepare('DELETE FROM history_spans WHERE history_id=? AND start_index>=?').run(id, length);
     this.db.prepare('UPDATE history_spans SET count=?-start_index WHERE history_id=? AND start_index+count>?').run(length, id, length);
     this.db.prepare('UPDATE histories SET message_count=? WHERE id=?').run(length, id);

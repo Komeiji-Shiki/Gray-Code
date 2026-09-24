@@ -226,6 +226,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 <template>
   <div
     :class="messageClass"
+    :data-message-id="message.id"
     :data-preview="isUser ? previewText : undefined"
     @mouseenter="showActions = true"
     @mouseleave="showActions = false"

@@ -127,7 +127,8 @@ export class ProductUi {
     // Only refresh idle clients. An open or dirty draft retains its original CAS revision.
     if (!ui.editing && !ui.preferences.dirty && ui.preferences.revision !== this.app.settings.snapshot().revision)
       ui.preferences = await this.app.product.draft();
-    const workspace = ui.workspaceId ? this.app.workspace(client.actorId, ui.workspaceId, ['workspace_read']) : undefined;
+    // 新建对话由请求中的工作区选项决定，不能让上一个会话残留的选择阻止创建。
+    const workspace = ui.workspaceId && type !== 'ui.mode.new' ? this.app.workspace(client.actorId, ui.workspaceId, ['workspace_read']) : undefined;
     const uri = workspace ? pathToFileURL(workspace.directory).toString() : null;
     const notify = (message: unknown) => this.app.publish({ type: 'ui.message', clientId: client.clientId, message });
     const refreshPreferences = () => {
@@ -270,6 +271,7 @@ export class ProductUi {
       case 'chat.resumeConversationStream': return this.chat.resumeConversationStream(client, data.conversationId);
       case 'conversation.navigation': return new ConversationNavigation(this.app).list(client.actorId, data);
       case 'conversation.navigation.reorder': return new NavigationOrderingStore(this.app).reorder(client.actorId, data as any);
+      case 'conversation.navigation.pinGroup': return new NavigationOrderingStore(this.app).pinGroup(client.actorId, data as any);
       case 'projects.rename': return new ProjectNavigation(this.app).update(client.actorId, data, { name: data.name });
       case 'projects.previewRemoval': return new ProjectNavigation(this.app).previewRemoval(client.actorId, data);
       case 'projects.remove': return new ProjectNavigation(this.app).remove(client.actorId, data, data);
@@ -301,12 +303,16 @@ export class ProductUi {
       }
       case 'ui.mode.new': {
         if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
+        if (data.automaticWorkspace !== undefined && (data.mode !== 'chat' || typeof data.automaticWorkspace !== 'boolean')) throw new Error('新建对话的工作区选项无效。');
         ui.mode = data.mode;
         const workspaceId = data.mode === 'chat' ? undefined : data.workspaceId || undefined;
         const profile = this.app.settings.snapshot().settings.modeProfiles?.[ui.mode!];
         const preset = profile?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
+        const custom = { platformMode: ui.mode, promptModeConfig: { modeId: preset } };
+        const automaticWorkspace = data.automaticWorkspace !== false;
         const conversation = await this.app.createConversation(client.actorId, data.mode === 'character' ? '新角色对话' : '新对话', workspaceId,
-          { platformMode: ui.mode, promptModeConfig: { modeId: preset } }, undefined, { automaticWorkspace: true });
+          automaticWorkspace ? custom : await this.app.companion.forNewConversation(client.actorId, custom), undefined, { automaticWorkspace });
+        ui.workspaceId = typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined;
         return { conversationId: conversation.id };
       }
       case 'platform.modes.createCharacterPreset': {
@@ -487,8 +493,17 @@ export class ProductUi {
       }
       case 'conversation.getConversationMetadata': return this.conversations.getMetadata(data.conversationId);
       case 'conversation.getConversationMetadataBatch': return this.conversations.getConversationMetadataBatch(data.conversationIds);
+      case 'conversation.getMessageMarkers': {
+        await this.app.conversation(client.actorId, data.conversationId);
+        return this.conversations.getMessageMarkers(data.conversationId);
+      }
+      case 'conversation.getMessagePosition': {
+        await this.app.conversation(client.actorId, data.conversationId);
+        return this.conversations.getMessagePosition(data.conversationId, data.messageId);
+      }
       case 'conversation.getMessages': return this.conversations.getHistory(data.conversationId);
-      case 'conversation.getMessagesPaged': return this.conversations.getMessagesPaged(data.conversationId, { beforeIndex: data.beforeIndex, limit: data.limit });
+      case 'conversation.getMessagesPaged': return this.conversations.getMessagesPaged(data.conversationId,
+        { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit });
       case 'conversation.getCustomMetadata': return this.conversations.getCustomMetadata(data.conversationId, data.key);
       case 'conversation.setCustomMetadata': await this.conversations.setCustomMetadata(data.conversationId, data.key, data.value); return { success: true };
       case 'conversation.setTitle': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);

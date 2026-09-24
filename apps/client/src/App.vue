@@ -22,6 +22,10 @@ import PetSurface from './components/PetSurface.vue';
 import ScreenSenseSettings from './components/ScreenSenseSettings.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
 const productChatFrame = ref<HTMLIFrameElement>();
+function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
+  productChatFrame.value?.contentWindow?.postMessage({ type: 'graycode.jumpToMessage', ...target },
+    window.location.origin === 'null' ? '*' : window.location.origin);
+}
 function openWorkspacePanel(event: MessageEvent) {
   const panel = readWorkspacePanelMessage(event, productChatFrame.value?.contentWindow, window.location.origin);
   if (panel === 'memory') openLibrary('memory');
@@ -177,7 +181,7 @@ onUnmounted(() => { window.removeEventListener('message', openWorkspacePanel); u
     <div v-else class="application-body" :class="{ resizing: sidebarResizing }">
       <button v-if="compactViewport && mobileNavigationOpen && !state.settingsOpen" class="navigation-backdrop" aria-label="收起对话列表" @click="mobileNavigationOpen = false"></button>
       <div ref="navigation" v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)" class="conversation-navigation" :style="{ '--sidebar-width': visibleSidebarWidth + 'px' }" :inert="!chatReady" :aria-busy="!chatReady">
-        <ConversationSidebar v-model:collapsed="navigationCollapsed" @automations="finishNavigation(); automationsOpen = true" @navigate="finishNavigation" @add-workspace="guard(async () => { finishNavigation(); await addWorkspace(); })" />
+        <ConversationSidebar v-model:collapsed="navigationCollapsed" @automations="finishNavigation(); automationsOpen = true" @navigate="finishNavigation" @jump-to-message="jumpToMessage" @add-workspace="guard(async () => { finishNavigation(); await addWorkspace(); })" />
         <div v-if="!compactViewport && !navigationCollapsed" class="navigation-resize" role="separator" aria-label="调整对话列表宽度" aria-orientation="vertical" :aria-valuemin="200" :aria-valuemax="sidebarMaximum" :aria-valuenow="Math.round(visibleSidebarWidth)" tabindex="0" @pointerdown.prevent="dragSidebar" @pointermove="moveSidebar" @pointerup="endSidebar" @pointercancel="endSidebar" @lostpointercapture="endSidebar" @keydown.left.prevent="resizeSidebarBy(-10)" @keydown.right.prevent="resizeSidebarBy(10)" @dblclick="sidebarWidth = 250; endSidebar()"></div>
       </div>
     <div ref="container" class="desktop-workspace" :class="{ 'chat-focused': state.chatFocused || state.settingsOpen, 'workbench-expanded': state.workbenchExpanded && !state.chatFocused && !state.settingsOpen, 'mobile-workbench': compactViewport && !state.chatFocused && !state.settingsOpen, resizing }" :style="{ '--chat-width': split + '%' }">

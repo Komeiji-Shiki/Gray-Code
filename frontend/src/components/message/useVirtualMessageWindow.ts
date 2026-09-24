@@ -17,18 +17,20 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { useChatStore } from '../../stores'
 import { CustomScrollbar } from '../common'
+import { sendToExtension } from '../../utils/vscode'
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { pruneMediumTrimmedByMessageId } from './mediumTrimState'
 import { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './messageViewModes'
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
 import {
   advanceMessageWindowStart,
   computeMessageFloorMap,
-  computeCheckpointFloorMap,
-  computeMessageWindowPadding
+  computeCheckpointFloorMap
 } from './messageListUtils'
 import { clearLineDiffCache } from '../../utils/lineDiff'
 import type { Message, CheckpointRecord } from '../../types'
 import type { MessageListUiState } from './messageListUiState'
+import { jumpToMessage as requestMessageJump, peekMessageJump, takeMessageJump, type MessageJumpTarget } from './messageJump'
 
 /** 根据稳定消息锚点恢复滑动窗口；消息 prepend 后仍能回到原阅读段。 */
 export function resolveRestoredWindowStart(
@@ -86,6 +88,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   const MAX_EMPTY_LOAD_PAGES = 3
   // 滚动到顶部/底部触发加载或贴尾的阈值（px）
   const SCROLL_LOAD_THRESHOLD = 100
+  const ESTIMATED_MESSAGE_ROW_HEIGHT = 96
 
   // F-08：渲染窗口上限。此前 visibleCount 只增不减，用户持续上滚时渲染行数线性增长，
   // 从不裁掉已滚出视口顶部的行；数千条历史会渲染上千个 MessageItem，逐步吃掉流式渲染优化。
@@ -93,9 +96,6 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 同时把底部最早渲染的行裁掉（见 loadMore 的重定位逻辑）。
   // 取值权衡：200 行既覆盖常见视口（约 5~10 屏），又不会让长会话退回 O(n) 渲染。
   const MAX_RENDERED_ROWS = 200
-  // 未渲染消息的高度估算。已渲染消息保留真实 DOM 高度，估算值只用于维持
-  // 长历史的滚动总高度和窗口前后的比例，不参与消息内容布局。
-  const ESTIMATED_MESSAGE_ROW_HEIGHT = 96
 
   // 窗口长度（渲染的消息条数），保持在 [1, MAX_RENDERED_ROWS]
   const visibleCount = ref(VISIBLE_INCREMENT)
@@ -116,22 +116,83 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 窗口终点（不含），即滑动窗口的 endIndex
   const windowEnd = computed(() => safeWindowStart.value + windowSize.value)
 
-  // 只为当前已经加载、但被滑动窗口裁掉的消息保留占位。
-  // 后端尚未加载的历史通过首条已渲染消息的几何位置触发分页，避免在最新页上方
-  // 制造用户必须穿过的巨大空白区域。
-  const renderedAbsoluteStart = computed(() => safeWindowStart.value)
-  const renderedAbsoluteEnd = computed(() => windowEnd.value)
-  const windowPadding = computed(() => computeMessageWindowPadding(
-    messageCount.value,
-    renderedAbsoluteStart.value,
-    renderedAbsoluteEnd.value,
-    ESTIMATED_MESSAGE_ROW_HEIGHT
-  ))
+  interface MessageMarker {
+    index: number
+    id?: string
+    preview?: string
+  }
 
-  // 与 CustomScrollbar 的协调点（F-08）：上下 spacer 保留被裁剪消息的估算高度，
-  // 因此窗口移动时总 scrollHeight 与 marker 的内容偏移保持连续。CustomScrollbar 的
-  // MutationObserver 会在 childList 变更后自动 updateScrollbar 并重扫 marker；吸底时
-  // 其 sticky-bottom 只跟随真实内容尾部，本文件只在窗口到达已加载尾部时交还贴底行为。
+  const messageMarkers = ref<MessageMarker[]>([])
+  const markerTotal = ref(0)
+  const messageMarkerCache = new Map<string, { total: number; markers: MessageMarker[]; loadedAt: number }>()
+  let markerConversationId: string | null = null
+
+  const virtualTotalMessages = computed(() => Math.max(
+    markerTotal.value,
+    Number(chatStore.totalMessages) || 0,
+    Math.max(0, Number(chatStore.windowStartIndex) || 0) + messageCount.value
+  ))
+  const virtualWindowStart = computed(() => {
+    const first = props.messages[safeWindowStart.value]
+    return typeof first?.backendIndex === 'number'
+      ? first.backendIndex
+      : Math.max(0, Number(chatStore.windowStartIndex) || 0) + safeWindowStart.value
+  })
+  const virtualWindowEnd = computed(() => {
+    const last = props.messages[Math.max(safeWindowStart.value, windowEnd.value - 1)]
+    const fallback = Math.max(virtualWindowStart.value, (Number(chatStore.windowStartIndex) || 0) + windowEnd.value)
+    return typeof last?.backendIndex === 'number' ? Math.max(virtualWindowStart.value, last.backendIndex + 1) : fallback
+  })
+  const allMessageMarkers = computed<MessageMarker[]>(() => {
+    const byIndex = new Map<number, MessageMarker>()
+    for (const marker of messageMarkers.value) byIndex.set(marker.index, marker)
+    for (const message of props.messages) {
+      if (message.role !== 'user' || typeof message.backendIndex !== 'number') continue
+      if (byIndex.has(message.backendIndex)) continue
+      const preview = message.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+      byIndex.set(message.backendIndex, {
+        index: message.backendIndex,
+        id: message.id,
+        ...(preview ? { preview } : {})
+      })
+    }
+    return Array.from(byIndex.values()).sort((a, b) => a.index - b.index)
+  })
+
+  async function refreshMessageMarkers(conversationId: string | null): Promise<void> {
+    messageMarkers.value = []
+    markerTotal.value = 0
+    markerConversationId = conversationId
+    if (!conversationId) return
+    const cached = messageMarkerCache.get(conversationId)
+    if (cached && Date.now() - cached.loadedAt < 60_000) {
+      messageMarkers.value = cached.markers
+      markerTotal.value = cached.total
+      return
+    }
+    try {
+      const result = await sendToExtension<{ total?: number; markers?: MessageMarker[] }>(MESSAGE_NAMES['conversation.getMessageMarkers'], {
+        conversationId
+      })
+      if (markerConversationId !== conversationId || chatStore.currentConversationId !== conversationId) return
+      messageMarkers.value = Array.isArray(result?.markers)
+        ? result.markers.filter(marker => Number.isFinite(marker.index) && marker.index >= 0)
+        : []
+      markerTotal.value = Number.isFinite(result?.total) ? Math.max(0, Number(result.total)) : 0
+      messageMarkerCache.set(conversationId, {
+        total: markerTotal.value,
+        markers: messageMarkers.value,
+        loadedAt: Date.now()
+      })
+    } catch (error) {
+      // 老宿主没有 marker 接口时保留现有滚动体验，真实消息页仍可正常分页。
+      console.warn('[MessageList] Failed to load message markers:', error)
+    }
+  }
+
+  // 与 CustomScrollbar 的协调点（F-08）：滑动窗口只保留真实消息节点，避免把
+  // 未加载/未渲染范围伪装成可拖动的空白区域。窗口向下移动时由真实消息锚点恢复位置，
+  // CustomScrollbar 的 marker 始终只对应当前 DOM 中真实存在的消息。
 
   // 是否还有更多“未加载到窗口”的历史消息
   const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
@@ -276,6 +337,82 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     container.scrollTop = Math.max(0, contentOffset - anchor.offset)
   }
 
+  /** 加载并定位到全局消息索引或稳定消息 ID。索引为后端历史 0-based 下标。 */
+  async function jumpToMessage(target: MessageJumpTarget): Promise<boolean> {
+    const conversationId = chatStore.currentConversationId
+    if (!conversationId || target.conversationId && target.conversationId !== conversationId) return false
+
+    let targetIndex = typeof target.index === 'number' ? target.index : target.messageIndex
+    const targetId = target.id || target.messageId
+    if (targetId) {
+      const loaded = props.messages.find(message => message.id === targetId)
+      targetIndex = loaded?.backendIndex
+      if (!Number.isFinite(targetIndex)) {
+        const position = await sendToExtension<{ index?: number }>(MESSAGE_NAMES['conversation.getMessagePosition'], {
+          conversationId, messageId: targetId
+        })
+        if (chatStore.currentConversationId !== conversationId) return false
+        targetIndex = position?.index
+      }
+    }
+    if (!Number.isFinite(targetIndex) || (targetIndex as number) < 0) return false
+    targetIndex = Math.floor(targetIndex as number)
+
+    const matchesTarget = (message: Message) => targetId ? message.id === targetId : message.backendIndex === targetIndex
+    const targetAlreadyLoaded = props.messages.some(matchesTarget)
+    if (!targetAlreadyLoaded) {
+      const loaded = await chatStore.loadMessagesAroundIndex(targetIndex)
+      if (!loaded || chatStore.currentConversationId !== conversationId) return false
+    }
+
+    const localIndex = props.messages.findIndex(matchesTarget)
+    if (localIndex < 0) return false
+
+    visibleCount.value = clampVisibleCount(Math.max(visibleCount.value, Math.min(MAX_RENDERED_ROWS, props.messages.length)))
+    windowStart.value = Math.max(0, Math.min(
+      Math.max(0, props.messages.length - Math.min(visibleCount.value, props.messages.length)),
+      localIndex - Math.floor(Math.max(1, viewportHeight.value / ESTIMATED_MESSAGE_ROW_HEIGHT) / 2)
+    ))
+    await nextTick()
+
+    const container = scrollbarRef.value?.getContainer()
+    if (!container) return false
+    const elements = container.querySelectorAll<HTMLElement>('.message-item, .summary-message')
+    const targetElement = Array.from(elements).find(element =>
+      element.getAttribute('data-message-id') === (targetId || props.messages[localIndex]?.id)
+    )
+    if (!targetElement) return false
+    const containerRect = container.getBoundingClientRect()
+    const targetRect = targetElement.getBoundingClientRect()
+    container.scrollTop = Math.max(0, targetRect.top - containerRect.top + container.scrollTop - container.clientHeight * 0.35)
+    return true
+  }
+
+  async function handleVirtualSeek(index: number): Promise<void> {
+    await jumpToMessage({ index })
+  }
+
+  async function consumePendingMessageJump(): Promise<void> {
+    const conversationId = chatStore.currentConversationId
+    const pending = peekMessageJump(conversationId)
+    if (!pending || (props.messages.length === 0 && messageMarkers.value.length === 0)) return
+    const target = takeMessageJump(conversationId)
+    if (target) await jumpToMessage(target)
+  }
+
+  function handleExternalMessageJump(event: MessageEvent): void {
+    if (event.source !== window && event.source !== window.parent) return
+    if (event.origin !== window.location.origin && event.origin !== 'null') return
+    const data = event.data as Record<string, unknown> | null
+    if (!data || data.type !== 'graycode.jumpToMessage') return
+    requestMessageJump({
+      conversationId: typeof data.conversationId === 'string' ? data.conversationId : undefined,
+      messageIndex: typeof data.messageIndex === 'number' ? data.messageIndex : undefined,
+      messageId: typeof data.messageId === 'string' ? data.messageId : undefined
+    })
+    void consumePendingMessageJump()
+  }
+
   /** 判断最后一条已渲染消息是否已经进入当前视口底部。 */
   function isNearRenderedWindowBottom(container: HTMLElement): boolean {
     const elements = container.querySelectorAll<HTMLElement>('.message-item, .summary-message')
@@ -293,9 +430,10 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     if (!first) return false
     const containerRect = container.getBoundingClientRect()
     const firstRect = first.getBoundingClientRect()
-    // 首行接近视口顶部，或快速滚动已越过首行进入上方占位区时，都要继续加载。
-    // 首行远在视口上方时不触发；超高卡片仍需等滚动到其顶部附近。
-    return firstRect.top >= containerRect.top - SCROLL_LOAD_THRESHOLD
+    // 首行接近视口顶部时触发分页；首行远在视口上方时不触发，避免在最新页底部
+    // 反复请求。以首行顶部与底部共同判断，超高工具卡片进入顶部时也能触发。
+    return firstRect.top <= containerRect.top + SCROLL_LOAD_THRESHOLD
+      && firstRect.bottom > containerRect.top - SCROLL_LOAD_THRESHOLD
   }
 
   // 是否正在加载更多（用于节流）
@@ -584,6 +722,16 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     nextTick(() => tryScrollToBottom({ instant: true }))
   })
 
+  watch(() => chatStore.currentConversationId, newId => {
+    void refreshMessageMarkers(newId)
+  }, { immediate: true })
+
+  watch(
+    [() => chatStore.currentConversationId, () => props.messages.length, () => messageMarkers.value.length],
+    () => { void consumePendingMessageJump() },
+    { immediate: true }
+  )
+
   // 监听消息变化，当消息加载完成时尝试滚动
   watch(() => props.messages, (newMessages) => {
     // 当消息加载完成时，尝试滚动
@@ -622,6 +770,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
   // 设置 ResizeObserver 监听容器尺寸变化
   onMounted(() => {
+    window.addEventListener('message', handleExternalMessageJump)
     // 使用 nextTick 确保 scrollbarRef 已经绑定
     nextTick(() => {
       if (!scrollbarRef.value) return
@@ -664,6 +813,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
   // 清理监听器
   onBeforeUnmount(() => {
+    window.removeEventListener('message', handleExternalMessageJump)
     if (scrollbarRef.value) {
       const container = scrollbarRef.value.getContainer()
       if (container) {
@@ -685,8 +835,12 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     scrollbarRef,
     hasMore,
     loadMore,
-    topSpacerHeight: computed(() => windowPadding.value.top),
-    bottomSpacerHeight: computed(() => windowPadding.value.bottom),
+    jumpToMessage,
+    handleVirtualSeek,
+    virtualTotalMessages,
+    virtualWindowStart,
+    virtualWindowEnd,
+    messageMarkers: allMessageMarkers,
     messageRenderRows,
     checkpointFloorByCheckpointId
   }

@@ -51,6 +51,7 @@ import {
   loadMoreConversations as loadMoreConvsAction,
   loadHistory,
   loadOlderMessagesPage as loadOlderMessagesPageAction,
+  loadMessagesAroundIndex as loadMessagesAroundIndexAction,
   loadCheckpoints,
   switchConversation as switchConvAction,
   deleteConversation as deleteConvAction,
@@ -476,6 +477,7 @@ export const useChatStore = defineStore('chat', () => {
   const refreshConversationSummary = (id: string) => ensureConversationSummary(state, id, true)
   const loadMoreConversations = () => loadMoreConvsAction(state)
   const loadOlderMessagesPage = (options?: { pageSize?: number }) => loadOlderMessagesPageAction(state, options)
+  const loadMessagesAroundIndex = (index: number, options?: { pageSize?: number }) => loadMessagesAroundIndexAction(state, index, options)
 
   /**
    * 切换对话 - 标签页感知
@@ -965,6 +967,7 @@ export const useChatStore = defineStore('chat', () => {
     // 消息管理
     loadHistory: (options: { preserveWindow?: boolean } = {}) => loadHistory(state, false, options),
     loadOlderMessagesPage,
+    loadMessagesAroundIndex,
     sendMessage,
     retryLastMessage,
     retryFromMessage,

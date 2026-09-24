@@ -730,6 +730,53 @@ export async function loadOlderMessagesPage(
 }
 
 /**
+ * 读取包含指定绝对索引的消息窗口，供全局滚动条、搜索结果和外部导航复用。
+ * 页面中心尽量落在目标附近，返回后 allMessages 仍保持连续的后端索引窗口。
+ */
+export async function loadMessagesAroundIndex(
+  state: ChatStoreState,
+  targetIndex: number,
+  options: { pageSize?: number } = {}
+): Promise<boolean> {
+  if (!state.currentConversationId.value) return false
+  if (!Number.isFinite(targetIndex) || targetIndex < 0) return false
+  if (state.isLoadingMoreMessages.value) return false
+
+  const originConversationId = state.currentConversationId.value
+  const pageSize = Math.max(1, Math.min(options.pageSize ?? MESSAGES_PAGE_SIZE, 1000))
+  const requestedIndex = Math.floor(targetIndex)
+  state.isLoadingMoreMessages.value = true
+
+  try {
+    const result = await perfMeasureAsync('conversation.loadMessagesAroundIndex', () =>
+      sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
+        conversationId: originConversationId,
+        offset: Math.max(0, requestedIndex - Math.floor(pageSize / 2)),
+        limit: pageSize
+      })
+    )
+
+    if (!validateSessionIdentity(state, originConversationId)) return false
+    const page = result?.messages || []
+    if (page.length === 0) return false
+
+    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+    rebuildMessageIndexById(state)
+    state.totalMessages.value = result?.total ?? state.totalMessages.value
+    state.windowStartIndex.value = page[0]?.index ?? Math.max(0, requestedIndex - Math.floor(page.length / 2))
+    syncFoldedHistoryHint(state)
+    return state.allMessages.value.some(message => message.backendIndex === requestedIndex)
+  } catch (err) {
+    console.error('[conversationActions] loadMessagesAroundIndex failed:', err)
+    return false
+  } finally {
+    if (validateSessionIdentity(state, originConversationId)) {
+      state.isLoadingMoreMessages.value = false
+    }
+  }
+}
+
+/**
  * 加载当前对话的检查点
  */
 export async function loadCheckpoints(state: ChatStoreState): Promise<void> {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { resolveRestoredWindowStart } from '../useVirtualMessageWindow'
-import { advanceMessageWindowStart, computeMessageWindowPadding } from '../messageListUtils'
+import { advanceMessageWindowStart } from '../messageListUtils'
 
 describe('virtual message window state restoration', () => {
   const messages = (count: number, prefix = 'm') =>
@@ -32,13 +32,6 @@ describe('virtual message window state restoration', () => {
 
   test('旧状态没有窗口信息时才回退到尾部窗口', () => {
     expect(resolveRestoredWindowStart(messages(500), 200, {})).toBe(300)
-  })
-
-  test('长历史已加载数组的窗口占位覆盖被裁剪消息', () => {
-    const padding = computeMessageWindowPadding(1000, 420, 620, 80)
-
-    expect(padding).toEqual({ top: 33600, bottom: 30400 })
-    expect(padding.top + 200 * 80 + padding.bottom).toBe(80000)
   })
 
   test('窗口向下只前移一个步长，不直接贴到对话尾部', () => {

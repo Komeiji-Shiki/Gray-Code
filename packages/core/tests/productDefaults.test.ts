@@ -71,3 +71,26 @@ test('从代码项目切到对话模式后，两种新建入口都创建专用�
     expect((await app.conversation('owner', inProject.conversationId)).workspaceId).toBe(manual.id);
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('普通聊天可明确选择不绑定工作区，自动创建仍使用独立目录', async () => {
+  const f = await fixture(); await f.store.close(); const documents = path.join(f.root, 'Documents');
+  const app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: documents });
+  const router = new ApplicationRouter(app); const client = { actorId: 'owner', clientId: 'chat-workspace-choice-test' };
+  const ui = (type: string, data: Record<string, any> = {}) => router.call(client, 'ui.request', { type, data }) as Promise<any>;
+  try {
+    const initial = app.settings.snapshot();
+    initial.settings.workspaces.push({ id: 'old-project', name: '旧项目', directory: f.source, deviceId: 'local' });
+    await app.settings.save({ settings: initial.settings, expectedRevision: initial.revision });
+    await ui('ui.context.set', { mode: 'code', workspaceId: 'old-project' });
+    const changed = app.settings.snapshot(); changed.settings.workspaces = [];
+    await app.settings.save({ settings: changed.settings, expectedRevision: changed.revision });
+    const unbound = await ui('ui.mode.new', { mode: 'chat', automaticWorkspace: false });
+    expect((await app.conversation('owner', unbound.conversationId)).workspaceId).toBeUndefined();
+    expect(app.settings.snapshot().settings.workspaces).toHaveLength(0);
+    await ui('ui.command', { command: 'platform.openModeConversation', data: { conversationId: unbound.conversationId } });
+    const automatic = await ui('ui.mode.new', { mode: 'chat', automaticWorkspace: true });
+    const bound = await app.conversation('owner', automatic.conversationId);
+    expect(app.workspace('owner', String(bound.workspaceId), []).managedConversationId).toBe(automatic.conversationId);
+    expect(bound.workspaceId).not.toBe(unbound.workspaceId);
+  } finally { await app.close(); await f.cleanup(); }
+});

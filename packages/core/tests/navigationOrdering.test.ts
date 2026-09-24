@@ -48,3 +48,25 @@ test('项目、置顶和草稿保存显示顺序，拖动不会改变项目归�
     await expect(order.reorder('unknown', { kind: 'groups', ids: ['general'], revision: 0 })).rejects.toThrow('Owner access');
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('工作区与普通对话分类可分别置顶，取消置顶后保留原排序', async () => {
+  const f = await fixture(); await f.store.close(); let app = await PlatformApplication.open({ dataDirectory: f.data });
+  try {
+    const settings = app.settings.snapshot();
+    settings.settings.workspaces.push({ id: 'project-a', name: '项目 A', directory: f.source, deviceId: 'local' });
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    let order = new NavigationOrderingStore(app);
+    let saved = await order.reorder('owner', { kind: 'groups', ids: ['project-a', 'general'], revision: 0 });
+    saved = await order.pinGroup('owner', { key: 'general', pinned: true, revision: saved.revision });
+    saved = await order.pinGroup('owner', { key: 'project-a', pinned: true, revision: saved.revision });
+    expect(saved.pinnedGroups).toEqual(['general', 'project-a']);
+    expect(saved.groups).toEqual(['project-a', 'general']);
+    await expect(order.pinGroup('owner', { key: 'missing', pinned: true, revision: saved.revision })).rejects.toThrow('不存在');
+    await expect(order.pinGroup('owner', { key: 'general', pinned: false, revision: 0 })).rejects.toThrow('顺序已变化');
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data }); order = new NavigationOrderingStore(app);
+    expect((await order.get('owner')).pinnedGroups).toEqual(['general', 'project-a']);
+    saved = await order.pinGroup('owner', { key: 'general', pinned: false, revision: saved.revision });
+    expect(saved.pinnedGroups).toEqual(['project-a']);
+    expect(saved.groups).toEqual(['project-a', 'general']);
+  } finally { await app.close(); await f.cleanup(); }
+});

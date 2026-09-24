@@ -2,8 +2,8 @@ import Database from 'better-sqlite3';
 import { PlatformStorageError } from '../errors';
 import { LONG_MEMORY_SCHEMA } from './longMemory/schema';
 
-// 第 9 版区分实体关联与确切来源依赖；旧客户端必须拒绝，以免错误传播失效状态。
-export const SCHEMA_VERSION = 9;
+// 第 10 版增加对话正文索引，旧客户端必须拒绝，以免遗漏索引更新。
+export const SCHEMA_VERSION = 10;
 const APPLICATION_ID = 0x47524350;
 
 /** One connection owns writes and collection; callers access it through the storage worker. */
@@ -53,6 +53,7 @@ export function openDatabase(file: string): SqliteConnection {
         db.exec(SETTINGS_SCHEMA);
         db.exec(MEMORY_SCHEMA);
         db.exec(LONG_MEMORY_SCHEMA);
+        db.exec(CONVERSATION_SEARCH_SCHEMA);
         db.pragma(`application_id = ${APPLICATION_ID}`);
         db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
@@ -66,6 +67,7 @@ export function openDatabase(file: string): SqliteConnection {
         if (version < 5) db.exec(LONG_MEMORY_SCHEMA);
         if (version === 5) db.exec('ALTER TABLE long_memory_tombstones ADD COLUMN reference TEXT;');
         if (version >= 5 && version < 9) db.exec('ALTER TABLE long_memory_dependencies ADD COLUMN association INTEGER NOT NULL DEFAULT 0;');
+        if (version < 10 && !db.prepare("SELECT 1 FROM pragma_table_info('histories') WHERE name='search_revision'").get()) db.exec(CONVERSATION_SEARCH_SCHEMA);
         if (version < SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
     }
@@ -137,6 +139,23 @@ CREATE TABLE migrations (
   imported_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL CHECK(status IN ('importing','complete'))
 ) WITHOUT ROWID;
+`;
+
+const CONVERSATION_SEARCH_SCHEMA = `
+ALTER TABLE histories ADD COLUMN search_revision INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE histories ADD COLUMN search_position INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE history_search (
+  id INTEGER PRIMARY KEY, history_id TEXT NOT NULL REFERENCES histories(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL, message_id TEXT, text TEXT NOT NULL, normalized TEXT NOT NULL,
+  UNIQUE(history_id,position)
+);
+CREATE VIRTUAL TABLE history_search_fts USING fts5(normalized,content='history_search',content_rowid='id',tokenize='trigram');
+CREATE TRIGGER history_search_ai AFTER INSERT ON history_search BEGIN
+  INSERT INTO history_search_fts(rowid,normalized) VALUES(new.id,new.normalized);
+END;
+CREATE TRIGGER history_search_ad AFTER DELETE ON history_search BEGIN
+  INSERT INTO history_search_fts(history_search_fts,rowid,normalized) VALUES('delete',old.id,old.normalized);
+END;
 `;
 
 const RUNTIME_SCHEMA = `

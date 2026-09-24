@@ -44,6 +44,26 @@ function historyWithDanglingCall(): ConversationHistory {
 }
 
 describe('getMessagesPaged - 悬空工具调用补齐', () => {
+    test('getMessageMarkers 只返回轻量用户索引并保留绝对下标', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await storage.saveHistory('conv-markers', [
+            { role: 'user', id: 'u-0', parts: [{ text: '第一条很长的正文' }] },
+            { role: 'model', id: 'm-1', parts: [{ text: '回答' }] },
+            { role: 'user', id: 'u-2', parts: [{ text: '第二条' }] },
+        ] as ConversationHistory);
+
+        const result = await manager.getMessageMarkers('conv-markers');
+
+        expect(result.total).toBe(3);
+        expect(result.markers).toEqual([
+            { index: 0, id: 'u-0', preview: '第一条很长的正文' },
+            { index: 2, id: 'u-2', preview: '第二条' },
+        ]);
+        expect(await manager.getMessagePosition('conv-markers', 'm-1')).toEqual({ index: 1 });
+        expect(await manager.getMessagePosition('conv-markers', 'missing')).toEqual({});
+    });
+
     test('分段存储首次加载会补齐悬空 functionCall', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);

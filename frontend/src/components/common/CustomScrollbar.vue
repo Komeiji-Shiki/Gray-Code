@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import { t } from '../../i18n'
 
 /**
@@ -14,7 +14,9 @@ interface MarkerItem {
   /** marker 对应的内容预览文本（从 data-preview 读取） */
   contentPreview: string
   /** 对应的 DOM 元素（用于点击跳转） */
-  element: HTMLElement
+  element?: HTMLElement
+  /** 虚拟轨道 marker 对应的全局消息索引（0-based） */
+  targetIndex?: number
   /** marker 的索引序号（用于 tooltip 显示） */
   index: number
   /** marker 颜色（从 data-marker-color 读取，缺省用 props.markerColor） */
@@ -117,8 +119,38 @@ const props = defineProps({
   markerTooltipPrefix: {
     type: String,
     default: 'User'
+  },
+  /** 虚拟消息轨道的总消息数；为 0 时使用真实 DOM 高度。 */
+  virtualTotal: {
+    type: Number,
+    default: 0
+  },
+  /** 当前已渲染窗口在对话中的绝对起点（0-based）。 */
+  virtualStart: {
+    type: Number,
+    default: 0
+  },
+  /** 当前已渲染窗口在对话中的绝对终点（不含）。 */
+  virtualEnd: {
+    type: Number,
+    default: 0
+  },
+  /** 虚拟消息高度估算，仅用于滚动条比例，不会生成布局空白。 */
+  virtualEstimatedRowHeight: {
+    type: Number,
+    default: 96
+  },
+  /** 全局用户消息 marker 索引。 */
+  virtualMarkers: {
+    type: Array,
+    default: () => []
   }
 })
+
+const emit = defineEmits<{
+  /** 请求外部加载并定位到全局消息索引。 */
+  seek: [index: number]
+}>()
 
 const scrollContainer = ref<HTMLElement | null>(null)
 const scrollTrack = ref<HTMLElement | null>(null)
@@ -151,6 +183,8 @@ const pendingLayoutUpdateOptions = {
 // 避免流式期间每帧对 '.user-message' 等元素逐个 getBoundingClientRect()
 // （强制同步布局）并重建 markerPositions 响应式数组。
 const MARKER_SCAN_THROTTLE_MS = 500
+/** 10k 条历史可能产生同量用户消息 marker，轨道只保留均匀采样节点，点击仍落到真实索引。 */
+const MAX_VIRTUAL_MARKER_NODES = 2000
 let lastMarkerScanAt = 0
 let pendingMarkerScanTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -168,19 +202,70 @@ let tooltipRafId: number | null = null
 // 拖动状态用 ref：模板据此在拖动期间给 .scroll-thumb-v / .scroll-thumb-h 挂 'dragging' 类（仅拖动时启用 will-change）
 const isDragging = ref(false)
 const isHDragging = ref(false)
+/** 虚拟轨道拖动中的比例，释放鼠标后才发起一次 seek。 */
+const virtualDragRatio = ref<number | null>(null)
 let startY = 0
 let startX = 0
 let startScrollTop = 0
 let startScrollLeft = 0
+let startVirtualScrollTop = 0
 let resizeObserver: ResizeObserver | null = null
 let mutationObserver: MutationObserver | null = null
+
+const isVirtualScroll = computed(() => props.virtualTotal > 0)
+const virtualRowHeight = computed(() => Math.max(1, Number.isFinite(props.virtualEstimatedRowHeight) && props.virtualEstimatedRowHeight > 0
+  ? props.virtualEstimatedRowHeight
+  : 96))
+
+/** 虚拟模式下把当前真实窗口的局部 scrollTop 映射到全局估算坐标。 */
+function getVerticalLayoutMetrics(container: HTMLElement): {
+  scrollHeight: number
+  clientHeight: number
+  scrollTop: number
+  maxScrollTop: number
+} {
+  const clientHeight = container.clientHeight
+  if (!isVirtualScroll.value) {
+    const scrollHeight = container.scrollHeight
+    return {
+      scrollHeight,
+      clientHeight,
+      scrollTop: container.scrollTop,
+      maxScrollTop: Math.max(0, scrollHeight - clientHeight)
+    }
+  }
+
+  const scrollHeight = Math.max(clientHeight + 1, props.virtualTotal * virtualRowHeight.value)
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight)
+  const globalTop = props.virtualStart * virtualRowHeight.value + container.scrollTop
+  return {
+    scrollHeight,
+    clientHeight,
+    scrollTop: Math.max(0, Math.min(maxScrollTop, globalTop)),
+    maxScrollTop
+  }
+}
+
+function getVirtualThumbRatio(container: HTMLElement): number {
+  const metrics = getVerticalLayoutMetrics(container)
+  if (metrics.maxScrollTop <= 0) return 0
+  return metrics.scrollTop / metrics.maxScrollTop
+}
+
+function emitVirtualSeekRatio(ratio: number): void {
+  if (!isVirtualScroll.value || props.virtualTotal <= 0) return
+  const clamped = Math.max(0, Math.min(1, ratio))
+  emit('seek', Math.round(clamped * Math.max(0, props.virtualTotal - 1)))
+}
 
 // 检查是否在底部（用于粘性底部）
 function isAtBottom(): boolean {
   if (!scrollContainer.value) return false
   const container = scrollContainer.value
-  const { scrollTop, scrollHeight, clientHeight } = container
-  return scrollHeight - scrollTop - clientHeight <= props.stickyThreshold
+  const metrics = getVerticalLayoutMetrics(container)
+  // 已加载窗口尚未覆盖全局尾部时，局部 DOM 到底不等于对话到底。
+  if (isVirtualScroll.value && props.virtualEnd > 0 && props.virtualEnd < props.virtualTotal) return false
+  return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= props.stickyThreshold
 }
 
 // 记录是否在底部（内容变化前检查）
@@ -225,9 +310,10 @@ function updateScrollbar() {
   if (!scrollContainer.value) return
 
   const container = scrollContainer.value
-  const scrollHeight = container.scrollHeight
-  const clientHeight = container.clientHeight
-  const scrollTop = container.scrollTop
+  const verticalMetrics = getVerticalLayoutMetrics(container)
+  const scrollHeight = verticalMetrics.scrollHeight
+  const clientHeight = verticalMetrics.clientHeight
+  const scrollTop = verticalMetrics.scrollTop
 
   let unchanged = lastScrollMetrics !== null &&
     lastScrollMetrics.scrollHeight === scrollHeight &&
@@ -343,6 +429,31 @@ function updateMarkers() {
   const clientHeight = container.clientHeight
   const trackHeight = scrollTrack.value.clientHeight
 
+  if (isVirtualScroll.value) {
+    const total = Math.max(1, props.virtualTotal)
+    if (trackHeight <= 0 || props.virtualMarkers.length === 0) {
+      markerPositions.value = []
+      return
+    }
+
+    const rawMarkers = props.virtualMarkers as Array<{ index: number; preview?: string }>
+    const stride = Math.max(1, Math.ceil(rawMarkers.length / MAX_VIRTUAL_MARKER_NODES))
+    const sampledMarkers = stride === 1 ? rawMarkers : rawMarkers.filter((_marker, idx) => idx % stride === 0)
+    markerPositions.value = sampledMarkers.map((marker, idx) => {
+      const targetIndex = Math.max(0, Math.min(total - 1, Math.floor(marker.index)))
+      return {
+        top: ((targetIndex + 0.5) / total) * trackHeight,
+        element: undefined,
+        targetIndex,
+        index: idx + 1,
+        contentPreview: marker.preview || '',
+        color: '',
+        tooltipPrefix: ''
+      }
+    })
+    return
+  }
+
   // 内容不足以滚动时无需显示 marker
   if (scrollHeight <= clientHeight || trackHeight <= 0) {
     markerPositions.value = []
@@ -368,13 +479,30 @@ function updateMarkers() {
   markerPositions.value = newPositions
 }
 
+// 虚拟窗口滚动到新页或 marker 索引刷新时，滚动条本身没有 childList 变更，
+// 因此需要直接按全局索引重算 thumb 与 marker。
+watch(
+  () => [props.virtualTotal, props.virtualStart, props.virtualEnd, props.virtualMarkers] as const,
+  () => {
+    nextTick(() => {
+      updateScrollbar()
+      updateMarkers()
+    })
+  },
+  { deep: true }
+)
+
 /**
  * 点击 marker 跳转到对应元素
  */
 function handleMarkerClick(marker: MarkerItem, e: MouseEvent) {
   e.stopPropagation()
   if (!scrollContainer.value) return
-  marker.element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (typeof marker.targetIndex === 'number') {
+    emit('seek', marker.targetIndex)
+    return
+  }
+  marker.element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 /**
@@ -506,7 +634,7 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
 
   updateScrollbar()
 
-  if (options.updateMarkers && props.markerSelector) {
+  if (options.updateMarkers && (props.markerSelector || isVirtualScroll.value)) {
     requestMarkerScan()
   }
 }
@@ -566,6 +694,8 @@ function handleThumbMouseDown(e: MouseEvent) {
   isDragging.value = true
   startY = e.clientY
   startScrollTop = scrollContainer.value.scrollTop
+  startVirtualScrollTop = getVerticalLayoutMetrics(scrollContainer.value).scrollTop
+  virtualDragRatio.value = isVirtualScroll.value ? getVirtualThumbRatio(scrollContainer.value) : null
   
   document.addEventListener('mousemove', handleMouseMove)
   document.addEventListener('mouseup', handleMouseUp)
@@ -576,7 +706,7 @@ function handleThumbMouseDown(e: MouseEvent) {
 // 垂直滚动 - 鼠标移动
 function handleMouseMove(e: MouseEvent) {
   if (!isDragging.value || !scrollContainer.value) return
-  
+
   const container = scrollContainer.value
   const deltaY = e.clientY - startY
   const scrollHeight = container.scrollHeight
@@ -584,7 +714,14 @@ function handleMouseMove(e: MouseEvent) {
   const trackHeight = scrollTrack.value?.clientHeight || clientHeight
   const maxScrollTop = scrollHeight - clientHeight
   const maxThumbTop = trackHeight - thumbHeight.value
-  
+
+  if (isVirtualScroll.value) {
+    const virtualMaxThumbTop = Math.max(1, maxThumbTop)
+    const currentThumbTop = (startVirtualScrollTop / Math.max(1, getVerticalLayoutMetrics(container).maxScrollTop)) * virtualMaxThumbTop
+    virtualDragRatio.value = Math.max(0, Math.min(1, (currentThumbTop + deltaY) / virtualMaxThumbTop))
+    return
+  }
+
   // 计算新的滚动位置
   const scrollDelta = (deltaY / Math.max(1, maxThumbTop)) * maxScrollTop
   container.scrollTop = startScrollTop + scrollDelta
@@ -592,7 +729,11 @@ function handleMouseMove(e: MouseEvent) {
 
 // 垂直滚动 - 鼠标释放
 function handleMouseUp() {
+  if (isDragging.value && isVirtualScroll.value && virtualDragRatio.value !== null) {
+    emitVirtualSeekRatio(virtualDragRatio.value)
+  }
   isDragging.value = false
+  virtualDragRatio.value = null
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
 }
@@ -615,6 +756,11 @@ function handleTrackClick(e: MouseEvent) {
   const targetThumbTop = clickY - thumbHeight.value / 2
   const maxThumbTop = trackHeight - thumbHeight.value
   const ratio = Math.max(0, Math.min(1, targetThumbTop / Math.max(1, maxThumbTop)))
+
+  if (isVirtualScroll.value) {
+    emitVirtualSeekRatio(ratio)
+    return
+  }
   
   container.scrollTop = ratio * maxScrollTop
 }
@@ -685,6 +831,27 @@ function handleThumbKeydown(e: KeyboardEvent) {
   const container = scrollContainer.value
   if (!container) return
   const isHorizontal = (e.currentTarget as HTMLElement).classList.contains('scroll-thumb-h')
+
+  if (!isHorizontal && isVirtualScroll.value) {
+    e.preventDefault()
+    const current = getVerticalLayoutMetrics(container).scrollTop
+    const max = Math.max(0, props.virtualTotal * virtualRowHeight.value - container.clientHeight)
+    const page = Math.max(1, container.clientHeight)
+    let next = current
+    switch (e.key) {
+      case 'ArrowUp': next -= Math.max(virtualRowHeight.value, page * 0.1); break
+      case 'ArrowDown': next += Math.max(virtualRowHeight.value, page * 0.1); break
+      case 'PageUp': next -= page; break
+      case 'PageDown': next += page; break
+      case 'Home': next = 0; break
+      case 'End': next = max; break
+      default: return
+    }
+    emitVirtualSeekRatio(max > 0 ? Math.max(0, Math.min(1, next / max)) : 0)
+    lastUserScrollInputAt = performance.now()
+    return
+  }
+
   const page = isHorizontal ? container.clientWidth : container.clientHeight
   const step = Math.max(40, page * 0.1)
   const current = isHorizontal ? container.scrollLeft : container.scrollTop
@@ -762,9 +929,12 @@ const trackStyle = computed(() => {
 })
 
 const thumbStyle = computed(() => {
+  const dragThumbTop = virtualDragRatio.value !== null
+    ? virtualDragRatio.value * Math.max(0, (scrollTrack.value?.clientHeight || 0) - thumbHeight.value)
+    : thumbTop.value
   const style: Record<string, string> = {
     height: `${thumbHeight.value}px`,
-    transform: `translateY(${thumbTop.value}px)`,
+    transform: `translateY(${dragThumbTop}px)`,
   }
   if (props.thumbColor) {
     style.background = props.thumbColor

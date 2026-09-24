@@ -8,7 +8,8 @@ import ConversationNavigationRow from './navigation/ConversationNavigationRow.vu
 import { useNavigationDrag } from './navigation/useNavigationDrag';
 import { orderSidebarItems } from '../../../../shared/sidebarOrder';
 defineProps<{ collapsed: boolean }>();
-const emit = defineEmits<{ 'update:collapsed': [value: boolean]; addWorkspace: []; automations: []; navigate: [panel?: 'workbench'] }>();
+const emit = defineEmits<{ 'update:collapsed': [value: boolean]; addWorkspace: []; automations: []; navigate: [panel?: 'workbench'];
+  jumpToMessage: [target: { conversationId: string; messageIndex: number; messageId?: string }] }>();
 const isDesktop = window.graycode?.kind !== 'web';
 const navigation = ref<ConversationNavigationResult>({ items: [], pinned: [], workspaces: [], runs: [] });
 const query = ref('');
@@ -18,9 +19,12 @@ const initialLoading = ref(true);
 const loadingMore = ref(false);
 const error = ref('');
 const collapsedGroups = ref(new Set<string>());
-interface NavigationProject { name: string; uri: string; workspace?: ConversationNavigationResult['workspaces'][number] }
+interface NavigationProject { key: string; name: string; uri: string; workspace?: ConversationNavigationResult['workspaces'][number] }
+interface NavigationGroup extends NavigationProject { items: ConversationNavigationItem[] }
 type NavigationDialogKind = 'rename' | 'delete' | 'close' | 'project-rename' | 'project-remove';
 const menu = ref<{ item?: ConversationNavigationItem; view?: ConversationViewInfo; project?: NavigationProject; x: number; y: number }>();
+const createMenu = ref<{ x: number; y: number }>();
+const createMenuElement = ref<HTMLDivElement>();
 const dialog = ref<{ kind: NavigationDialogKind; item?: ConversationNavigationItem; view?: ConversationViewInfo; project?: NavigationProject }>();
 const projectRemoval = ref<{ count: number; activeCount: number; token: string }>();
 const deleteProjectConversations = ref(false);
@@ -29,7 +33,7 @@ const dialogBusy = ref(false);
 const dialogInput = ref<HTMLInputElement>();
 let epoch = 0; let refreshTimer: ReturnType<typeof setTimeout> | undefined; let unsubscribe: (() => void) | undefined;
 const rpc = <T,>(type: string, data: Record<string, unknown> = {}) => call<T>('ui.request', { type, data });
-const ordering = computed<NavigationOrdering>(() => navigation.value.ordering ?? { revision: 0, groups: [], conversations: [], pinned: [], drafts: [] });
+const ordering = computed<NavigationOrdering>(() => navigation.value.ordering ?? { revision: 0, groups: [], pinnedGroups: [], conversations: [], pinned: [], drafts: [] });
 const views = computed(() => new Map(state.conversationViews.filter(view => view.conversationId).map(view => [view.conversationId!, view])));
 const drafts = computed(() => orderSidebarItems(state.conversationViews.filter(view => !view.conversationId && (view.active || view.hasDraft)), ordering.value.drafts, view => view.id));
 const runs = computed(() => new Map(navigation.value.runs.map(run => [run.conversationId, run.status])));
@@ -42,7 +46,10 @@ const drag = useNavigationDrag(async (kind, ids) => {
     pinned: orderSidebarItems(navigation.value.pinned, result.pinned, item => item.id) };
   await refresh();
 }, cause => { error.value = cause instanceof Error ? cause.message : String(cause); });
-const groups = computed(() => {
+const groupPinned = (key: string) => ordering.value.pinnedGroups.includes(key);
+const groupDrag = (key: string) => drag.target('groups', key, groupPinned(key) ? 'pinned-groups' : 'groups');
+const groupDragIds = (key: string) => groups.value.filter(group => groupPinned(group.key) === groupPinned(key)).map(group => group.key);
+const groups = computed<NavigationGroup[]>(() => {
   const items = navigation.value.items;
   if (navigationScope.value === 'bots') return orderSidebarItems((['discord', 'onebot'] as const).map(platform => ({ key: platform, name: platform === 'discord' ? 'Discord' : 'QQ / OneBot', uri: '', workspace: undefined,
     items: items.filter(item => item.botPlatform === platform) })), ordering.value.groups, group => group.key);
@@ -58,7 +65,10 @@ const groups = computed(() => {
     if (uri) { try { name = decodeURIComponent(uri).replace(/\/$/, '').split(/[\\/]/).at(-1) || uri; } catch { name = uri; } }
     return { key: key || 'general', name: values[0].projectName || name, uri, workspace: undefined, items: values };
   });
-  return orderSidebarItems([...known, ...other], ordering.value.groups, group => group.key);
+  // 普通对话是固定分类，即使暂时没有已加载的消息，也保留创建入口。
+  if (!other.some(group => group.key === 'general')) other.push({ key: 'general', name: '普通对话', uri: '', workspace: undefined, items: [] });
+  const ordered = orderSidebarItems([...known, ...other], ordering.value.groups, group => group.key);
+  return [...ordered.filter(group => groupPinned(group.key)), ...ordered.filter(group => !groupPinned(group.key))];
 });
 async function refresh(reset = false, more = false) {
   if (more && (loadingMore.value || !navigation.value.nextCursor)) return;
@@ -73,6 +83,10 @@ async function refresh(reset = false, more = false) {
     const cursor = reset || more || !navigation.value.nextCursor || navigation.value.ordering?.revision !== result.ordering?.revision ? result.nextCursor : navigation.value.nextCursor;
     navigation.value = { ...result, items: orderSidebarItems([...items.values()].sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id)), result.ordering?.conversations ?? [], item => item.id), nextCursor: cursor };
     error.value = '';
+    if (result.searchIndexing && searching) {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => { refreshTimer = undefined; void refresh(true); }, 120);
+    }
   } catch (cause) { if (current === epoch) error.value = (cause as Error).message; }
   finally { if (current === epoch) { initialLoading.value = false; loadingMore.value = false; } }
 }
@@ -85,7 +99,14 @@ async function command(command: string, data?: Record<string, unknown>) {
   if (['newChat', 'platform.openModeConversation', 'platform.switchConversationView', 'showHistory', 'showUsage', 'showSettings'].includes(command)) emit('navigate');
   return result;
 }
-function open(item: ConversationNavigationItem) { menu.value = undefined; void guard(() => command('platform.openModeConversation', { conversationId: item.id })); }
+function open(item: ConversationNavigationItem) {
+  menu.value = undefined;
+  void guard(async () => {
+    await command('platform.openModeConversation', { conversationId: item.id });
+    if (item.searchHit) emit('jumpToMessage', { conversationId: item.id,
+      messageIndex: item.searchHit.messageIndex, ...(item.searchHit.messageId ? { messageId: item.searchHit.messageId } : {}) });
+  });
+}
 async function selectProject(group: (typeof groups.value)[number]) {
   if (!group.uri) { toggleGroup(group.key); return; }
   const candidates = [...group.items, ...navigation.value.pinned.filter(item => group.workspace && item.workspaceId === group.workspace.id)]
@@ -103,7 +124,18 @@ async function newConversation(workspaceId?: string) {
   } else await command('newChat');
 }
 function showMenu(event: MouseEvent, item?: ConversationNavigationItem, view?: ConversationViewInfo) {
+  createMenu.value = undefined;
   menu.value = { item, view: view ?? (item && views.value.get(item.id)), ...menuPosition(event) };
+}
+function showCreateMenu(event: MouseEvent) {
+  event.stopPropagation(); menu.value = undefined;
+  createMenu.value = { ...menuPosition(event) };
+  void nextTick(() => createMenuElement.value?.querySelector<HTMLButtonElement>('button')?.focus());
+}
+async function createGeneralConversation(automaticWorkspace: boolean) {
+  createMenu.value = undefined;
+  const result = await rpc<{ conversationId: string }>('ui.mode.new', { mode: 'chat', automaticWorkspace });
+  await command('platform.openModeConversation', { conversationId: result.conversationId });
 }
 async function openInExplorer() {
   const selected = menu.value; menu.value = undefined;
@@ -117,9 +149,17 @@ function menuPosition(event: MouseEvent) {
     y: Math.max(8, Math.min(pointer ? event.clientY : rect.bottom + 3, window.innerHeight - 185)) };
 }
 function showProjectMenu(event: MouseEvent, project: NavigationProject) {
-  if (!project.uri) return;
+  if (!project.uri && project.key !== 'general') return;
   event.preventDefault(); event.stopPropagation();
+  createMenu.value = undefined;
   menu.value = { project, ...menuPosition(event) };
+}
+async function changeGroupPin() {
+  const project = menu.value?.project; menu.value = undefined;
+  if (!project || project.key !== 'general' && !project.workspace) return;
+  const result = await rpc<NavigationOrdering>('conversation.navigation.pinGroup', { key: project.key, pinned: !groupPinned(project.key), revision: ordering.value.revision });
+  navigation.value = { ...navigation.value, ordering: result, nextCursor: undefined };
+  await refresh();
 }
 const projectTarget = (project: NavigationProject) => ({ workspaceId: project.workspace?.id, workspaceUri: project.uri });
 async function showDialog(kind: NavigationDialogKind) {
@@ -173,9 +213,9 @@ async function confirmDialog() {
 }
 function toggleGroup(key: string) { const next = new Set(collapsedGroups.value); if (next.has(key)) next.delete(key); else next.add(key); collapsedGroups.value = next; }
 async function focusSearch() { emit('update:collapsed', false); await nextTick(); searchInput.value?.focus(); }
-function dismiss(event: KeyboardEvent) { if (event.key === 'Escape') { drag.clear(); menu.value = undefined; if (!dialogBusy.value) dialog.value = undefined; } }
-watch([query, navigationScope], () => { ++epoch; drag.clear(); menu.value = undefined; initialLoading.value = true; navigation.value = { items: [], pinned: [], workspaces: [], runs: [] }; if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { refreshTimer = undefined; void refresh(true); }, 180); });
-watch([dialog, menu], ([currentDialog, currentMenu]) => { state.navigationDialogOpen = !!(currentDialog || currentMenu); });
+function dismiss(event: KeyboardEvent) { if (event.key === 'Escape') { drag.clear(); menu.value = undefined; createMenu.value = undefined; if (!dialogBusy.value) dialog.value = undefined; } }
+watch([query, navigationScope], () => { ++epoch; drag.clear(); menu.value = undefined; createMenu.value = undefined; initialLoading.value = true; navigation.value = { items: [], pinned: [], workspaces: [], runs: [] }; if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { refreshTimer = undefined; void refresh(true); }, 180); });
+watch([dialog, menu, createMenu], ([currentDialog, currentMenu, currentCreateMenu]) => { state.navigationDialogOpen = !!(currentDialog || currentMenu || currentCreateMenu); });
 onMounted(() => {
   void refresh(true); window.addEventListener('keydown', dismiss);
   unsubscribe = subscribe(event => {
@@ -195,7 +235,7 @@ onUnmounted(() => { ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsub
   <aside class="conversation-sidebar" :class="{ collapsed }" aria-label="对话导航">
     <div class="navigation-top"><button v-if="navigationScope === 'bots'" title="返回项目与对话" @click="navigationScope = 'personal'"><NavigationIcon name="chevron" class="navigation-back" /><span v-if="!collapsed">返回项目与对话</span></button><button v-else class="new-conversation" title="新建对话" @click="guard(() => newConversation())"><NavigationIcon name="plus" /><span v-if="!collapsed">新对话</span></button><button v-if="collapsed" title="搜索对话" aria-label="搜索对话" @click="focusSearch"><NavigationIcon name="search" /></button></div>
     <div v-if="navigationScope === 'bots' && !collapsed" class="navigation-scope-title"><NavigationIcon name="bot" />机器人会话</div>
-    <div v-if="!collapsed" class="navigation-search"><NavigationIcon name="search" /><input ref="searchInput" v-model="query" type="search" aria-label="搜索对话标题" placeholder="搜索对话标题" /></div>
+    <div v-if="!collapsed" class="navigation-search"><NavigationIcon name="search" /><input ref="searchInput" v-model="query" type="search" aria-label="搜索对话标题和内容" placeholder="搜索对话标题和内容" /></div>
     <div v-if="!collapsed" class="navigation-scroll">
       <p v-if="error && !dialog" class="navigation-error" role="alert">{{ error }}<button @click="refresh()">重试</button></p>
       <section v-if="navigationScope === 'personal' && drafts.length && !query" class="navigation-group"><h3>当前输入</h3>
@@ -215,13 +255,14 @@ onUnmounted(() => { ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsub
       </section>
       <p v-if="initialLoading" class="navigation-empty">正在读取对话…</p>
       <section v-for="group in groups" :key="group.key" class="navigation-group" :data-navigation-group="group.key">
-        <div class="navigation-group-heading" :class="{ selected: group.workspace?.id === state.workspaceId, ...drag.classes(drag.target('groups', group.key)) }" @contextmenu="showProjectMenu($event, group)"
-          :draggable="!drag.state.saving" @dragstart.stop="drag.start($event, drag.target('groups', group.key))" @dragend="drag.clear"
-          @dragover="drag.over($event, drag.target('groups', group.key))" @drop="drag.drop($event, drag.target('groups', group.key), groups.map(value => value.key))">
+        <div class="navigation-group-heading" :class="{ selected: group.workspace?.id === state.workspaceId, ...drag.classes(groupDrag(group.key)) }" @contextmenu="showProjectMenu($event, group)"
+          :draggable="!drag.state.saving" @dragstart.stop="drag.start($event, groupDrag(group.key))" @dragend="drag.clear"
+          @dragover="drag.over($event, groupDrag(group.key))" @drop="drag.drop($event, groupDrag(group.key), groupDragIds(group.key))">
           <button class="navigation-project-toggle" :aria-label="`${collapsedGroups.has(group.key) ? '展开' : '收起'}${group.name}`" :aria-expanded="!collapsedGroups.has(group.key)" @click="toggleGroup(group.key)"><NavigationIcon name="chevron" :class="{ expanded: !collapsedGroups.has(group.key) }" /></button>
-          <button class="navigation-project-select" :title="group.workspace?.directory || group.uri" @click="guard(() => selectProject(group))"><NavigationIcon :name="group.uri ? 'folder' : 'chat'" /><span>{{ group.name }}</span></button>
+          <button class="navigation-project-select" :title="group.workspace?.directory || group.uri" @click="guard(() => selectProject(group))"><NavigationIcon :name="group.uri ? 'folder' : 'chat'" /><span>{{ group.name }}</span><NavigationIcon v-if="groupPinned(group.key)" name="pin" class="navigation-group-pin" /></button>
           <button v-if="group.workspace" class="navigation-project-add" title="在这个项目中新建对话" aria-label="在这个项目中新建对话" @click="guard(() => newConversation(group.workspace!.id))"><NavigationIcon name="plus" /></button>
-          <button v-if="group.uri" class="navigation-project-more" title="项目操作" aria-label="项目操作" aria-haspopup="menu" @click="showProjectMenu($event, group)"><NavigationIcon name="more" /></button>
+          <button v-else-if="group.key === 'general'" class="navigation-project-add" title="在普通对话中新建聊天" aria-label="在普通对话中新建聊天" aria-haspopup="menu" :aria-expanded="!!createMenu" @click="showCreateMenu($event)"><NavigationIcon name="plus" /></button>
+          <button v-if="group.uri || group.key === 'general'" class="navigation-project-more" :title="group.key === 'general' ? '普通对话操作' : '项目操作'" :aria-label="group.key === 'general' ? '普通对话操作' : '项目操作'" aria-haspopup="menu" @click="showProjectMenu($event, group)"><NavigationIcon name="more" /></button>
         </div>
         <template v-if="!collapsedGroups.has(group.key)">
           <ConversationNavigationRow v-for="item in group.items" :key="item.id" :item="item" :active="state.conversationId === item.id" :status="runs.get(item.id)" :has-draft="views.get(item.id)?.hasDraft"
@@ -229,22 +270,28 @@ onUnmounted(() => { ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsub
             @dragstart.stop="drag.start($event, drag.target('conversations', item.id, group.key))" @dragend="drag.clear"
             @dragover="drag.over($event, drag.target('conversations', item.id, group.key))" @drop="drag.drop($event, drag.target('conversations', item.id, group.key), group.items.map(value => value.id))"
             @select="open(item)" @menu="showMenu($event, item)" />
-          <p v-if="!group.items.length" class="navigation-group-empty">{{ query ? '没有匹配的对话' : '暂无最近对话' }}</p>
+          <p v-if="!group.items.length" class="navigation-group-empty">{{ query ? navigation.searchIndexing ? '正在搜索对话内容…' : '没有匹配的对话' : '暂无最近对话' }}</p>
         </template>
       </section>
-      <p v-if="!initialLoading && !navigation.items.length && !navigation.pinned.length && query" class="navigation-empty">没有找到匹配的对话。</p>
-      <button v-if="navigation.nextCursor" class="navigation-load-more" :disabled="loadingMore" @click="refresh(false, true)">{{ loadingMore ? '正在读取…' : '显示更多对话' }}</button>
+      <p v-if="navigation.searchIndexing" class="navigation-empty" role="status">正在建立对话内容索引，搜索结果会继续更新…</p>
+      <p v-if="!initialLoading && !navigation.searchIndexing && !navigation.items.length && !navigation.pinned.length && query" class="navigation-empty">没有找到匹配的对话。</p>
+      <button v-if="navigation.nextCursor && !navigation.searchIndexing" class="navigation-load-more" :disabled="loadingMore" @click="refresh(false, true)">{{ loadingMore ? '正在读取…' : '显示更多对话' }}</button>
       <button v-if="navigationScope === 'personal'" class="navigation-add-project" @click="emit('addWorkspace')"><NavigationIcon name="folder" />添加项目</button>
     </div>
     <div class="navigation-bottom"><button title="自动任务" @click="emit('automations')"><NavigationIcon name="calendar" /><span v-if="!collapsed">自动任务</span></button><button title="机器人会话" :aria-pressed="navigationScope === 'bots'" @click="navigationScope = navigationScope === 'bots' ? 'personal' : 'bots'"><NavigationIcon name="bot" /><span v-if="!collapsed">机器人会话</span></button><button title="全部对话历史" @click="guard(() => command('showHistory'))"><NavigationIcon name="history" /><span v-if="!collapsed">全部历史</span></button><button title="用量统计" @click="guard(() => command('showUsage'))"><NavigationIcon name="chart" /><span v-if="!collapsed">用量统计</span></button><button title="设置" @click="guard(() => command('showSettings'))"><NavigationIcon name="settings" /><span v-if="!collapsed">设置</span></button></div>
   </aside>
-  <Teleport v-if="menu || dialog" to=".application">
-    <template v-if="menu">
-      <div class="navigation-menu-dismiss" @pointerdown="menu = undefined" @contextmenu.prevent="menu = undefined"></div>
-      <div class="navigation-menu" role="menu" :aria-label="menu.project ? '项目操作' : '对话操作'" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
-        <button v-if="isDesktop && (menu.project || menu.item?.workspaceId || menu.item?.workspaceUri)" role="menuitem" @click="guard(openInExplorer)">在资源管理器中打开工作区</button>
-        <template v-if="menu.project"><button role="menuitem" @click="showDialog('project-rename')">重命名项目</button><button role="menuitem" class="danger" @click="showDialog('project-remove')">移除项目</button></template>
+  <Teleport v-if="menu || dialog || createMenu" to=".application">
+    <template v-if="menu || createMenu">
+      <div class="navigation-menu-dismiss" @pointerdown="menu = undefined; createMenu = undefined" @contextmenu.prevent="menu = undefined; createMenu = undefined"></div>
+      <div v-if="menu" class="navigation-menu" role="menu" :aria-label="menu.project?.key === 'general' ? '普通对话操作' : menu.project ? '项目操作' : '对话操作'" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
+        <button v-if="isDesktop && (menu.project?.uri || menu.item?.workspaceId || menu.item?.workspaceUri)" role="menuitem" @click="guard(openInExplorer)">在资源管理器中打开工作区</button>
+        <button v-if="menu.project && (menu.project.key === 'general' || menu.project.workspace)" role="menuitem" @click="guard(changeGroupPin)">{{ groupPinned(menu.project.key) ? '取消置顶分组' : '置顶分组' }}</button>
+        <template v-if="menu.project?.uri"><button role="menuitem" @click="showDialog('project-rename')">重命名项目</button><button role="menuitem" class="danger" @click="showDialog('project-remove')">移除项目</button></template>
         <button v-if="menu.item" role="menuitem" @click="showDialog('rename')">重命名</button><button v-if="menu.item" role="menuitem" @click="guard(changePin)">{{ menu.item.pinnedAt ? '取消置顶' : '置顶对话' }}</button><button v-if="menu.view" role="menuitem" @click="guard(closeView)">关闭视图，保留任务</button><button v-if="menu.item" role="menuitem" class="danger" @click="showDialog('delete')">删除对话</button>
+      </div>
+      <div v-else-if="createMenu" ref="createMenuElement" class="navigation-menu navigation-creation-menu" role="menu" aria-label="新建普通对话" :style="{ left: createMenu.x + 'px', top: createMenu.y + 'px' }">
+        <button role="menuitem" @click="guard(() => createGeneralConversation(true))"><strong>聊天，自动创建工作区</strong><small>在 Documents/graycode 中使用独立目录</small></button>
+        <button role="menuitem" @click="guard(() => createGeneralConversation(false))"><strong>聊天，不绑定工作区</strong><small>直接打开对话，不创建文件目录</small></button>
       </div>
     </template>
     <div v-if="dialog" class="navigation-dialog-backdrop">

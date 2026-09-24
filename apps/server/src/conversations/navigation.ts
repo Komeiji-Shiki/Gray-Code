@@ -38,20 +38,28 @@ export class ConversationNavigation {
       const value = await this.app.storage.getRecord(namespace, id) as { pinnedAt?: number } | null;
       if (value?.pinnedAt && !hidden.has(id)) pins.set(id, value.pinnedAt);
     }
-    const enrich = (item: Omit<ConversationSummary, 'revision'>): ConversationNavigationItem => ({ ...item,
-      automaticWorkspace: !!conversationWorkspace(item, workspaces)?.managedConversationId,
-      workspaceId: conversationWorkspace(item, workspaces)?.id,
-      workspaceIdentity: workspaceDirectoryKey(item.workspaceUri),
-      botPlatform: botPlatform(item),
-      projectName: preference(item)?.name,
-      ...(pins.has(item.id) ? { pinnedAt: pins.get(item.id) } : {}),
-    });
-    const pinned: ConversationNavigationItem[] = [];
     const query = options.query?.trim().toLocaleLowerCase() ?? '';
+    const matches = query ? await this.app.storage.searchConversationIds(query) : undefined;
+    const matching = new Map(matches?.matches.map(item => [item.id, item]) ?? []);
+    const enrich = (item: Omit<ConversationSummary, 'revision'>): ConversationNavigationItem => {
+      const hit = matching.get(item.id);
+      return { ...item,
+        automaticWorkspace: !!conversationWorkspace(item, workspaces)?.managedConversationId,
+        workspaceId: conversationWorkspace(item, workspaces)?.id,
+        workspaceIdentity: workspaceDirectoryKey(item.workspaceUri),
+        botPlatform: botPlatform(item),
+        projectName: preference(item)?.name,
+        ...(pins.has(item.id) ? { pinnedAt: pins.get(item.id) } : {}),
+        ...(hit?.messageIndex !== undefined ? { searchHit: {
+          messageIndex: hit.messageIndex, ...(hit.messageId ? { messageId: hit.messageId } : {}), excerpt: hit.excerpt ?? '',
+        } } : {}),
+      };
+    };
+    const pinned: ConversationNavigationItem[] = [];
     if (pins.size) {
       const summaries = await this.app.productUi.conversations.getConversationMetadataBatch([...pins.keys()]);
       for (const item of summaries) {
-        if (!item || query && !item.title?.toLocaleLowerCase().includes(query)) continue;
+        if (!item || query && !matching.has(item.id)) continue;
         const metadata = await this.app.storage.getConversation(item.id);
         const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
         const summary = { ...item, botPlatform: botPlatform({ botPlatform: origin }) };
@@ -70,7 +78,7 @@ export class ConversationNavigation {
       orderedOffset += ids.length;
       for (const id of ids) {
         const item = summaries.find(summary => summary?.id === id);
-        if (!item || pins.has(id) || hidden.has(id) || query && !item.title?.toLocaleLowerCase().includes(query)) continue;
+        if (!item || pins.has(id) || hidden.has(id) || query && !matching.has(id)) continue;
         const metadata = await this.app.storage.getConversation(id);
         const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
         const summary = { ...item, botPlatform: botPlatform({ botPlatform: origin }) };
@@ -86,6 +94,7 @@ export class ConversationNavigation {
     const runs = (await this.app.storage.listRuns({ activeOnly: true, limit: 1000 })).filter(run => !hidden.has(run.conversationId))
       .map(({ id, conversationId, status }) => ({ id, conversationId, status }));
     return { items, pinned: orderSidebarItems(pinned, ordering.pinned, item => item.id), ordering,
+      ...(matches?.indexing ? { searchIndexing: true } : {}),
       workspaces: workspaces.filter(item => options.scope !== 'bots' && !item.managedConversationId && !item.id.startsWith('workspace-bot_') && !preference({ workspaceId: item.id })?.removed)
         .map(item => ({ ...item, name: preference({ workspaceId: item.id })?.name ?? item.name })), runs,
       ...(cursor || orderedOffset < ordering.conversations.length || !recentStarted ? { nextCursor: { orderedOffset, orderingRevision: ordering.revision, ...(cursor ? { recent: cursor } : {}) } } : {}) };

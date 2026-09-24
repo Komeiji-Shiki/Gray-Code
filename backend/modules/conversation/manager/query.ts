@@ -138,6 +138,47 @@ export class ConversationQueryService {
     }
 
     /**
+     * 获取滚动条所需的轻量用户消息索引。
+     * 只返回绝对索引、稳定节点 ID 和短预览，不把消息正文发送到前端；
+     * 前端点击/拖动后再按索引请求真实分页窗口。
+     */
+    async getMessageMarkers(
+        conversationId: string
+    ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }> }> {
+        // 与 getMessagesPaged 使用同一显示规范化入口，保证悬空工具响应插入、Bot
+        // 来源格式化和稳定 ID 迁移后，marker 的绝对索引仍与前端真实分页一致。
+        const history = await this.normalizeHistoryForDisplay(conversationId);
+        const markers: Array<{ index: number; id?: string; preview?: string }> = [];
+
+        for (let index = 0; index < history.length; index++) {
+            const message = history[index];
+            if (message.role !== 'user' || message.isFunctionResponse) continue;
+
+            const preview = (message.parts ?? [])
+                .map(part => typeof part.text === 'string' ? part.text : '')
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 80);
+            markers.push({
+                index,
+                ...(typeof message.id === 'string' && message.id ? { id: message.id } : {}),
+                ...(preview ? { preview } : {})
+            });
+        }
+
+        return { total: history.length, markers };
+    }
+
+    /** 搜索结果按稳定 ID 解析显示索引，避免旧历史规范化时插入消息造成偏移。 */
+    async getMessagePosition(conversationId: string, messageId: string): Promise<{ index?: number }> {
+        if (typeof messageId !== 'string' || !messageId || messageId.length > 512) return {};
+        const history = await this.normalizeHistoryForDisplay(conversationId);
+        const index = history.findIndex(message => message.id === messageId);
+        return index >= 0 ? { index } : {};
+    }
+
+    /**
      * 获取指定索引的消息
      */
     async getMessage(conversationId: string, index: number): Promise<Content | undefined> {

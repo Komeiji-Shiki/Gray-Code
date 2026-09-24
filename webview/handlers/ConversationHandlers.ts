@@ -197,6 +197,17 @@ export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => 
   ctx.sendResponse(requestId, result);
 };
 
+/** 获取全局滚动条所需的轻量用户消息索引。 */
+export const getMessageMarkers: MessageHandler = async (data, requestId, ctx) => {
+  const result = await ctx.conversationManager.getMessageMarkers(data?.conversationId);
+  ctx.sendResponse(requestId, result);
+};
+
+export const getMessagePosition: MessageHandler = async (data, requestId, ctx) => {
+  const result = await ctx.conversationManager.getMessagePosition(data?.conversationId, data?.messageId);
+  ctx.sendResponse(requestId, result);
+};
+
 /**
  * 获取对话视图所需数据
  *
@@ -301,6 +312,8 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   register(MESSAGE_NAMES['conversation.deleteConversation'], deleteConversation);
   register(MESSAGE_NAMES['conversation.createBranchConversation'], createBranchConversation);
   register(MESSAGE_NAMES['conversation.getMessagesPaged'], getMessagesPaged);
+  register(MESSAGE_NAMES['conversation.getMessageMarkers'], getMessageMarkers);
+  register(MESSAGE_NAMES['conversation.getMessagePosition'], getMessagePosition);
   register(MESSAGE_NAMES['conversation.loadConversationForView'], loadConversationForView);
   register(MESSAGE_NAMES['conversation.rejectToolCalls'], rejectToolCalls);
   // 直接注册（不经 withConversationBoundary）：保持拆分前（FileHandlers.ts 域 G）的

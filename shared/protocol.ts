@@ -110,6 +110,8 @@ export const MESSAGE_NAMES = {
   'conversation.getBranchRetentionConfig': 'conversation.getBranchRetentionConfig',
   'conversation.getConversationMetadata': 'conversation.getConversationMetadata',
   'conversation.getConversationMetadataBatch': 'conversation.getConversationMetadataBatch',
+  'conversation.getMessageMarkers': 'conversation.getMessageMarkers',
+  'conversation.getMessagePosition': 'conversation.getMessagePosition',
   'conversation.getDeletedBranchCount': 'conversation.getDeletedBranchCount',
   'conversation.getMessagesPaged': 'conversation.getMessagesPaged',
   'conversation.listConversations': 'conversation.listConversations',

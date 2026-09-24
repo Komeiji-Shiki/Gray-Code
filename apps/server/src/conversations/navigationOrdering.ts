@@ -12,7 +12,25 @@ export class NavigationOrderingStore {
     this.app.requireOwner(actorId);
     if (!['personal', 'bots'].includes(scope)) throw new Error('未知侧边栏列表。');
     const saved = await this.app.storage.getVersionedRecord(namespace, JSON.stringify([actorId, scope]));
-    return { groups: [], conversations: [], pinned: [], drafts: [], ...saved.value as Partial<NavigationOrdering>, revision: saved.revision ?? 0 };
+    return { groups: [], pinnedGroups: [], conversations: [], pinned: [], drafts: [], ...saved.value as Partial<NavigationOrdering>, revision: saved.revision ?? 0 };
+  }
+
+  async pinGroup(actorId: string, input: { key: string; pinned: boolean; revision: number }) {
+    this.app.requireOwner(actorId);
+    if (typeof input.key !== 'string' || typeof input.pinned !== 'boolean' ||
+      input.key !== 'general' && !this.app.settings.snapshot().settings.workspaces.some(workspace =>
+        workspace.id === input.key && !workspace.managedConversationId && !workspace.id.startsWith('workspace-bot_')))
+      throw new Error('这个对话分组不存在。');
+    const current = await this.get(actorId);
+    if (current.revision !== input.revision) throw new Error('侧边栏顺序已变化，请刷新后重试。');
+    if (current.pinnedGroups.includes(input.key) === input.pinned) return current;
+    // 置顶状态只决定分组所在区域，原有手动排列顺序继续保留。
+    const pinnedGroups = input.pinned ? [...current.pinnedGroups, input.key] : current.pinnedGroups.filter(key => key !== input.key);
+    const { revision, ...value } = { ...current, pinnedGroups };
+    await this.app.storage.commitRecords([{ namespace, id: JSON.stringify([actorId, 'personal']), ownerId: actorId,
+      expectedRevision: revision || null, value }]);
+    this.app.publish({ type: 'conversation.navigation.changed' });
+    return this.get(actorId);
   }
 
   async reorder(actorId: string, input: { scope?: Scope; kind: NavigationOrderKind; ids: string[]; revision: number }) {
