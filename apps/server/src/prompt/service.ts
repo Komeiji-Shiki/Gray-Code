@@ -16,6 +16,7 @@ import type { PlatformApplication } from '../application';
 import { formatOpenTabsSection, formatActiveEditorSection } from '../../../../backend/modules/prompt/editorSections';
 import { captureEditorSnapshot, previousEditorSnapshot, type PromptEditorSnapshot } from './editorContext';
 import { botIdentityMessage, type CapturedBotEnvironment } from '../bots/prompt';
+import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
 
@@ -26,6 +27,10 @@ export class PlatformPromptService {
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string;
     settingsOverride?: ReturnType<PlatformApplication['product']['runtimeSettings']>; preview?: boolean }) {
     if (!('message' in input.request) && normalizePendingApprovalGate((input.conversation.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) throw new Error('请先确认当前设计、评审或计划文档。');
+    const previousRun = (await this.app.storage.listRuns({ conversationId: input.conversation.id, limit: 1 }))[0];
+    const failure = previousRun && botFailureContext(previousRun.status, previousRun.error);
+    // 失败提示属于本轮动态上下文，不写成用户历史消息，也不进入上一轮的缓存快照。
+    const failureMessage: PlatformMessage[] = failure ? [{ role: 'user', contextControl: 'run_failure', parts: [{ text: failure }] }] : [];
     const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
     const contextManagementMethod = this.app.context.configuration(input.conversation, contextChannel ?? undefined).method;
     const useContextNotes = contextManagementMethod === 'notes';
@@ -36,7 +41,9 @@ export class PlatformPromptService {
     if (typeof (input.conversation.custom as Record<string, unknown> | undefined)?.platformSubagentId === 'string') return {
       systemPrompt: input.agent.systemPrompt, toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
       turnContext: { contextManagementMethod },
-      ...(useContextNotes ? { promptContext: { historyPlacement: 'entry' as const, beforeHistoryMessages: [{ role: 'user', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] }] as PlatformMessage[], afterHistoryMessages: [] as PlatformMessage[] } } : {}),
+      ...(useContextNotes || failure ? { promptContext: { historyPlacement: 'entry' as const,
+        beforeHistoryMessages: (useContextNotes ? [{ role: 'user', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] }] : []) as PlatformMessage[],
+        afterHistoryMessages: failureMessage } } : {}),
     };
     const settings = input.settingsOverride ?? this.app.product.runtimeSettings();
     const conversationMode = (input.conversation.custom as Record<string, unknown> | undefined)?.platformMode;
@@ -128,7 +135,8 @@ export class PlatformPromptService {
       ...(input.preview ? { previewDynamicText: assembler.getDynamicContextText(mode, context) } : {}),
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
-      promptContext: { beforeHistoryMessages: (resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], afterHistoryMessages: (resumed ?? bundle).afterHistoryMessages as PlatformMessage[], historyPlacement: (resumed ?? bundle).historyPlacement,
+      promptContext: { beforeHistoryMessages: (resumed ?? bundle).beforeHistoryMessages as PlatformMessage[],
+        afterHistoryMessages: [...(resumed ?? bundle).afterHistoryMessages as PlatformMessage[], ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },
       messageParts: characterSource?.parts,
       turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod },

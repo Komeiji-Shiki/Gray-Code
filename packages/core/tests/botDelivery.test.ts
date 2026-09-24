@@ -10,6 +10,7 @@ import { inlineBotArguments, splitBotText } from '../../../apps/server/src/bots/
 import { fixture, metadata } from './fixtures';
 import { cleanBotPresentationReferences, stripDiscordPresentation } from '../../../apps/server/src/bots/presentation';
 import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
+import { botFailureContext, publicBotError } from '../../../apps/server/src/bots/errorSummary';
 
 describe('Bot 回复合并与发送恢复', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication; let outbox: BotOutbox;
@@ -26,6 +27,16 @@ describe('Bot 回复合并与发送恢复', () => {
     outbox = new BotOutbox(app, 'discord', () => connected ? { gateway, botId: '900' } : undefined, async () => admitted);
   });
   afterEach(async () => { await outbox.close(); await f.cleanup(); });
+
+  test('仅公开固定安全错误或 HTTP 状态，未知异常不泄露给 Discord 和模型', () => {
+    expect(publicBotError('Workspace or account is unavailable.')).toBe('Workspace or account is unavailable.');
+    expect(publicBotError('HTTP 502: upstream echoed Bearer private-value at https://secret.invalid/')).toBe('模型接口返回 HTTP 502。');
+    expect(publicBotError('Bearer private-value at C:\\Users\\secret\\config.json')).toBeUndefined();
+    expect(botFailureContext('failed', 'Bearer private-value at C:\\Users\\secret\\config.json')).toContain('具体错误未提供给模型');
+    expect(botFailureContext('failed', 'Bearer private-value at C:\\Users\\secret\\config.json')).not.toContain('private-value');
+    expect(botFailureContext('interrupted', 'Workspace or account is unavailable.')).toContain('上一轮任务执行中断');
+    expect(botFailureContext('completed', 'Workspace or account is unavailable.')).toBeUndefined();
+  });
 
   test('本 Bot 输出被引用或转发时清理展示统计，保留代码块与其他人的原文', async () => {
     const rendered = '**已进行思考 1.2 秒**\n\n实际正文\n\n-# 第 1 轮 · TTFT 0.10s · 耗时 2.00s · TPS 10.0';

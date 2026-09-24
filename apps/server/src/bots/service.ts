@@ -11,6 +11,7 @@ import { BotStreams, botFinalReplies, botMessageText } from './streaming';
 import { botRunMessages, botRunReply } from './rounds';
 import { botInboundParts } from './media';
 import { BotSummaries } from './summaries';
+import { publicBotError } from './errorSummary';
 
 /** 平台适配器负责传输，共享会话服务负责所有文字指令和交互菜单的任务操作。 */
 export class BoundBotService {
@@ -189,7 +190,9 @@ export class BoundBotService {
       const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
         conversationId: '', platformUserId: context.authorId, direct: context.direct, network: context.network,
         ...(context.sourceMessageId ? { replyToMessageId: context.sourceMessageId } : {}) };
-      await this.outbox.put(`error-${message.id}`, route, [{ content: `这条消息尚未完成处理：${this.current.error}` }]).catch(() => {});
+      const visible = publicBotError(this.current.error);
+      await this.outbox.put(`error-${message.id}`, route, [{ content: visible
+        ? `这条消息尚未完成处理：${visible}` : '这条消息尚未完成处理，详情可在桌面端查看。' }]).catch(() => {});
     }
   }
   private async onEvent(event: RunEvent): Promise<void> {
@@ -220,7 +223,9 @@ export class BoundBotService {
         + (event.payload.choices as import('@graycode/contracts').ApprovalChoice[]).map((choice, index) => `${index + 1}. ${choice.label}`).join('\n')
         + `\n/gray choose ${event.payload.id} 选项序号`;
     } else {
-      text = `任务${botRunLabels[run.status]}${run.error ? '，失败详情可在桌面端查看。' : '。'}`;
+      const visible = event.type === 'run.failed' && this.platform === 'discord' ? publicBotError(run.error) : undefined;
+      text = `任务${botRunLabels[run.status]}${visible ? `：${visible}` : run.error ? '，失败详情可在桌面端查看。' : '。'}`;
+      if (this.platform === 'discord' && (event.type === 'run.failed' || event.type === 'run.interrupted')) text += '\n可用 /gray-retry 重试。';
       if (this.platform === 'discord') ({ text, footer } = botRunReply(await botRunMessages(this.app, run), route, text));
     }
     const terminal = event.type.startsWith('run.');

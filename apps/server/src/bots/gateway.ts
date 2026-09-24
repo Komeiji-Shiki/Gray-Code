@@ -25,7 +25,7 @@ export interface BotMessageReceipt { id: string }
 export interface BotModal { id: string; title: string; fields: Array<{ id: string; label: string; value?: string; placeholder?: string; required?: boolean }> }
 export interface BotInteraction {
   id: string; authorId: string; channelId: string; direct: boolean; guildId?: string;
-  kind: 'command' | 'button' | 'select' | 'modal'; customId?: string; values?: string[]; fields?: Record<string, string>;
+  kind: 'command' | 'button' | 'select' | 'modal'; commandName?: string; customId?: string; values?: string[]; fields?: Record<string, string>;
   defer(): Promise<void>;
   respond(panel: BotPanel): Promise<void>;
   showModal(modal: BotModal): Promise<void>;

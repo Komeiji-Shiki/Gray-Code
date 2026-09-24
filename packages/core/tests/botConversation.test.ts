@@ -48,6 +48,45 @@ describe('Bot 频道上下文、附件与定时总结', () => {
   });
   afterEach(async () => { delete process.env.GRAYCODE_CONTEXT_TEST_TOKEN; await app.close(); await f.cleanup(); });
 
+  test.each([
+    ['安全错误', 'Workspace or account is unavailable.', 'Workspace or account is unavailable.'],
+    ['未知敏感错误', 'Bearer private-value at C:\\Users\\secret\\config.json', '失败详情可在桌面端查看'],
+  ])('失败回执和下一轮模型上下文：%s', async (_kind, failure, visible) => {
+    const replies: string[] = [];
+    const send = jest.spyOn(gateway, 'send').mockImplementation(async (_channelId, content) => { replies.push(content); });
+    try {
+      nextModelFailure = new Error(failure);
+      await app.discord.receive(inbound('failed-message', '10', true));
+      const id = (await app.discord.sessions.snapshot(context())).conversation!.id;
+      const failed = (await app.storage.listRuns({ conversationId: id, limit: 1 }))[0];
+      expect((await app.runtime.wait(failed.id))?.status).toBe('failed');
+      await (app.discord as any).events;
+      expect(replies.join('\n')).toContain(visible);
+      expect(replies.join('\n')).not.toContain('private-value');
+
+      await app.discord.receive(inbound('retry-message', '10', true));
+      const retried = (await app.storage.listRuns({ conversationId: id, limit: 1 }))[0];
+      expect((await app.runtime.wait(retried.id))?.status).toBe('completed');
+      const contextText = generated[1].promptContext!.afterHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
+      expect(contextText).toContain('上一轮任务执行失败');
+      expect(contextText).toContain(failure === visible ? failure : '具体错误未提供给模型');
+      expect(contextText).not.toContain('private-value');
+      expect((await app.storage.readFullHistory(id)).messages.filter(message => message.isUserInput)).toHaveLength(2);
+    } finally { send.mockRestore(); }
+  });
+
+  test('控制指令异常只发送安全回执，不回显未知错误原文', async () => {
+    const replies: string[] = [];
+    const send = jest.spyOn(gateway, 'send').mockImplementation(async (_channelId, content) => { replies.push(content); });
+    const perform = jest.spyOn(app.discord.sessions, 'perform').mockRejectedValueOnce(new Error('Bearer private-value at C:\\Users\\secret\\config.json'));
+    try {
+      await app.discord.receive({ ...inbound('control-error', '10', true), content: '/gray status' });
+      expect(replies.join('\n')).toContain('详情可在桌面端查看');
+      expect(replies.join('\n')).not.toContain('private-value');
+      expect(replies.join('\n')).not.toContain('config.json');
+    } finally { perform.mockRestore(); send.mockRestore(); }
+  });
+
   test('未 @ 背景、五分钟分组、忙时排队和实际身份共同保留，重连不换会话', async () => {
     const time = Date.now();
     await app.discord.receive(inbound('a', 'unbound', false, time));

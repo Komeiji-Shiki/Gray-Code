@@ -2,7 +2,7 @@ import type { ApprovalRequest, ModelInput, ProviderDefinition } from '@graycode/
 import { PlatformApplication } from '../../../apps/server/src/application';
 import type { BotGateway, BotInteraction, BotModal, BotPanel, BotReply } from '../../../apps/server/src/bots/gateway';
 import { discordModal, discordPanel } from '../../../apps/server/src/bots/discordComponents';
-import { botKey } from '../../../apps/server/src/bots/sessions';
+import { botKey, parseBotAction } from '../../../apps/server/src/bots/sessions';
 import { fixture } from './fixtures';
 
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
@@ -15,7 +15,7 @@ const provider: ProviderDefinition = {
 describe('Discord 原生操作与共享运行流程', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication;
   let handler: (input: BotInteraction) => Promise<void>;
-  let generated: ModelInput[]; let hold: Promise<void> | undefined; let started: ReturnType<typeof deferred<ModelInput>>;
+  let generated: ModelInput[]; let hold: Promise<void> | undefined; let started: ReturnType<typeof deferred<ModelInput>>; let failOnce: boolean;
   let sent: Array<{ channelId: string; reply: BotReply }>; let serial: number;
   const context = (id: string, channelId = '30', authorId = '10', direct = false) => ({ platform: 'discord' as const, botId: '900', id, channelId, authorId, direct });
   test('源码和帮助指令不发起模型任务', async () => {
@@ -23,6 +23,7 @@ describe('Discord 原生操作与共享运行流程', () => {
     const help = await app.discord.sessions.perform(context('help-notice'), { kind: 'help' });
     expect(source.reply).toContain('AGPL-3.0-only');
     expect(help.reply).toContain('/gray source');
+    expect(parseBotAction('/gray retry')).toEqual({ kind: 'retry' });
     expect(generated).toHaveLength(0);
     expect(await app.storage.listRuns({ limit: 1 })).toEqual([]);
   });
@@ -35,7 +36,7 @@ describe('Discord 原生操作与共享运行流程', () => {
   }
   const button = (panel: BotPanel, label: string) => panel.rows!.flatMap(row => 'buttons' in row ? row.buttons : []).find(item => item.label === label)!;
   beforeEach(async () => {
-    serial = 0; generated = []; sent = []; hold = undefined; started = deferred<ModelInput>(); f = await fixture(); await f.store.close();
+    serial = 0; generated = []; sent = []; hold = undefined; failOnce = false; started = deferred<ModelInput>(); f = await fixture(); await f.store.close();
     const gateway: BotGateway = { connect: async () => ({ id: '900', name: '隔离 Bot', controlsReady: true }), disconnect: async () => {},
       setInteractionHandler: value => { handler = value; }, send: async (channelId, content) => { sent.push({ channelId, reply: { content } }); },
       sendReply: async (channelId, reply) => { sent.push({ channelId, reply }); return { id: String(sent.length) }; },
@@ -43,6 +44,7 @@ describe('Discord 原生操作与共享运行流程', () => {
     };
     app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: f.root, discordGateway: () => gateway,
       models: { generate: async input => { generated.push(input); started.resolve(input); if (hold) await hold;
+        if (failOnce) { failOnce = false; throw new Error('fixture model disconnected'); }
         return { role: 'model', parts: [{ text: '隔离任务完成' }] }; } },
     });
     process.env.GRAYCODE_NATIVE_BOT_TEST_TOKEN = 'fixture-not-real';
@@ -88,7 +90,10 @@ describe('Discord 原生操作与共享运行流程', () => {
     const created = await menu({ kind: 'button', customId: newButton.id });
     expect((await menu({ kind: 'button', customId: newButton.id })).panel.content).toContain('已经过期');
     expect((await app.storage.listConversations({ limit: 10 })).items).toHaveLength(1);
-    const models = await menu({ kind: 'button', customId: button(created.panel, '切换模型').id });
+    const providers = await menu({ kind: 'button', customId: button(created.panel, '切换模型').id });
+    const providerRow = providers.panel.rows![0]; if (!('select' in providerRow)) throw new Error('缺少渠道菜单');
+    expect(providerRow.select.options).toHaveLength(1);
+    const models = await menu({ kind: 'select', customId: providerRow.select.id, values: [providerRow.select.options[0].value] });
     const payload = discordPanel(models.panel); expect(payload.components[0].toJSON().components[0]).toMatchObject({ type: 3 });
     expect('select' in models.panel.rows![0] && models.panel.rows![0].select.options).toHaveLength(25);
     const next = await menu({ kind: 'button', customId: button(models.panel, '下一页').id });
@@ -104,6 +109,22 @@ describe('Discord 原生操作与共享运行流程', () => {
     expect((await menu({ direct: true, channelId: '99', authorId: '20' })).panel.content).toContain('只对主人开放');
     expect((await menu({ direct: true, channelId: '99' })).panel.content).toContain('操作面板');
     expect((await menu({ authorId: '20' })).panel.rows!.flatMap(row => 'buttons' in row ? row.buttons : []).some(item => item.label === '切换模型')).toBe(false);
+  });
+
+  test('Discord 模型面板搜索渠道、模型名称和 ID 后可直接选用结果', async () => {
+    const home = await menu();
+    const providers = await menu({ kind: 'button', customId: button(home.panel, '切换模型').id });
+    const search = await menu({ kind: 'button', customId: button(providers.panel, '搜索模型').id });
+    expect(search.acknowledgements).toEqual(['modal']);
+    const result = await menu({ kind: 'modal', customId: search.modal.id, fields: { text: 'model-27' } });
+    const row = result.panel.rows![0]; if (!('select' in row)) throw new Error('缺少搜索结果');
+    expect(row.select.options).toHaveLength(1);
+    const chosen = await menu({ kind: 'select', customId: row.select.id, values: [row.select.options[0].value] });
+    expect(chosen.panel.content).toContain('model-27');
+    expect((await app.discord.sessions.snapshot(context('selected'))).model).toBe('model-27');
+    const sent = await app.discord.sessions.perform(context('after-search'), { kind: 'message', text: '使用搜索选中的模型' });
+    await app.runtime.wait(sent.run!.id);
+    expect(generated.at(-1)?.modelOverride).toBe('model-27');
   });
 
   test('任务保存来源和模型配置，切换频道与默认工作区不改变正在执行的任务', async () => {
@@ -125,6 +146,37 @@ describe('Discord 原生操作与共享运行流程', () => {
       expect(history.messages[0].source).toMatchObject({ platform: 'discord', messageId: 'message-original', platformUserId: '10' });
       await app.discord.close(); expect(sent.filter(item => item.reply.content?.startsWith('隔离任务完成')).map(item => item.channelId)).toEqual(['30', '30']);
     } finally { gate.resolve(); }
+  });
+
+  test('Discord 失败任务通过原生指令续跑，不重复用户消息或借用他人任务', async () => {
+    failOnce = true;
+    const first = await app.discord.sessions.perform(context('failed-message'), { kind: 'message', text: '请完成原任务' });
+    expect((await app.runtime.wait(first.run!.id))?.status).toBe('failed');
+    await expect(app.discord.sessions.perform(context('other-user-retry', '30', '20'), { kind: 'retry' })).rejects.toThrow('只能重试你');
+
+    const home = await menu();
+    expect(button(home.panel, '重试失败任务')).toBeDefined();
+    const startedAgain = await menu({ id: 'retry-interaction', commandName: 'gray-retry' });
+    expect(startedAgain.panel.content).toContain('任务已经开始');
+    const second = (await app.storage.listRuns({ conversationId: first.run!.conversationId, limit: 1 }))[0];
+    expect(second.requestKey).toBe('discord:retry-interaction');
+    expect((await app.runtime.wait(second.id))?.status).toBe('completed');
+    expect(generated[1].promptContext?.afterHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n')).toContain('上一轮任务执行失败');
+    expect((await app.storage.readFullHistory(second.conversationId)).messages.filter(message => message.isUserInput)).toHaveLength(1);
+    expect(await app.storage.getRecord('bot-request-routes', second.requestKey)).toMatchObject({ channelId: '30', actorId: 'owner' });
+
+    await menu({ id: 'retry-interaction', commandName: 'gray-retry' });
+    expect((await app.storage.listRuns({ conversationId: second.conversationId })).length).toBe(2);
+    await expect(app.discord.sessions.perform(context('completed-retry'), { kind: 'retry' })).rejects.toThrow('没有可重试');
+  });
+
+  test('原生指令的未知错误不在 Discord 面板泄露', async () => {
+    const perform = jest.spyOn(app.discord.sessions, 'perform').mockRejectedValueOnce(new Error('Bearer private-value at C:\\Users\\secret\\config.json'));
+    try {
+      const result = await menu({ commandName: 'gray-retry' });
+      expect(result.panel.content).toContain('桌面端查看详情');
+      expect(result.panel.content).not.toContain('private-value');
+    } finally { perform.mockRestore(); }
   });
 
   test('连接可以先于频道选择；旧版已处理事件不会因会话迁移重放', async () => {

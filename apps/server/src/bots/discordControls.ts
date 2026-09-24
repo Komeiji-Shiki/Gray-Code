@@ -3,16 +3,19 @@ import type { QuestionRequest } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { BotButton, BotInteraction, BotPanel, BotPanelRow } from './gateway';
 import { BotSessions, botRunLabels, type BotAction, type BotContext } from './sessions';
+import { publicBotError } from './errorSummary';
 
-type Screen = 'home' | 'conversations' | 'models' | 'workspaces' | 'approvals' | 'questions';
+type Screen = 'home' | 'conversations' | 'providers' | 'models' | 'workspaces' | 'approvals' | 'questions';
 type Control =
-  | { kind: 'screen'; screen: Screen; page?: number }
+  | { kind: 'screen'; screen: Screen; page?: number; providerId?: string; query?: string }
   | { kind: 'perform'; action: BotAction }
   | { kind: 'select'; choices: Map<string, Control> }
   | { kind: 'approval'; id: string; page?: number }
   | { kind: 'modal'; purpose: 'message' | 'interrupt' | 'conversation'; question?: never }
+  | { kind: 'modal'; purpose: 'model-search'; providerId?: string; question?: never }
   | { kind: 'modal'; purpose: 'answer'; question: QuestionRequest }
   | { kind: 'submit'; purpose: 'message' | 'interrupt' | 'conversation'; question?: never }
+  | { kind: 'submit'; purpose: 'model-search'; providerId?: string; question?: never }
   | { kind: 'submit'; purpose: 'answer'; question: QuestionRequest };
 interface Ticket { context: BotContext; expiresAt: number; control: Control }
 interface Choice { label: string; description?: string; control: Control; selected?: boolean }
@@ -38,7 +41,8 @@ export class DiscordControls {
     try {
       const context = this.context(input);
       this.sessions.authorize(context);
-      let control: Control = { kind: 'screen', screen: 'home' };
+      let control: Control = input.kind === 'command' && input.commandName === 'gray-retry'
+        ? { kind: 'perform', action: { kind: 'retry' } } : { kind: 'screen', screen: 'home' };
       if (input.kind !== 'command') {
         const ticket = input.customId && this.tickets.get(input.customId);
         if (!ticket || ticket.expiresAt <= Date.now() || ticket.context.authorId !== context.authorId
@@ -53,17 +57,22 @@ export class DiscordControls {
       if (control.kind === 'modal') {
         if (input.kind === 'modal') throw new Error('表单已经处理，请重新打开面板。');
         const fields = control.purpose === 'answer' ? control.question.questions.map((question, index) => ({ id: `answer_${index}`, label: question.title,
-          placeholder: question.options?.join(' / ') })) : [{ id: 'text', label: control.purpose === 'conversation' ? '对话 ID' : control.purpose === 'interrupt' ? '追加给当前任务的说明' : '发送给 GrayCode 的消息' }];
+          placeholder: question.options?.join(' / ') })) : [{ id: 'text', label: control.purpose === 'model-search' ? '渠道或模型名称 / ID' : control.purpose === 'conversation' ? '对话 ID' : control.purpose === 'interrupt' ? '追加给当前任务的说明' : '发送给 GrayCode 的消息' }];
         if (fields.length > 5) throw new Error('这个问题包含超过五项内容，请在桌面端回答。');
-        await input.showModal({ id: this.ticket(context, { ...control, kind: 'submit' }), title: control.purpose === 'answer' ? '回答任务问题' : control.purpose === 'conversation' ? '打开已有对话' : '发送消息', fields });
+        await input.showModal({ id: this.ticket(context, { ...control, kind: 'submit' }), title: control.purpose === 'answer' ? '回答任务问题' : control.purpose === 'model-search' ? '搜索模型' : control.purpose === 'conversation' ? '打开已有对话' : '发送消息', fields });
         return;
       }
       await input.defer();
-      if (control.kind === 'screen') { await input.respond(await this.render(context, control.screen, control.page ?? 0)); return; }
+      if (control.kind === 'screen') { await input.respond(await this.render(context, control.screen, control.page ?? 0, control.providerId, control.query)); return; }
       if (control.kind === 'approval') { await input.respond(await this.approval(context, control.id, control.page)); return; }
+      if (control.kind === 'submit' && control.purpose === 'model-search' && input.kind === 'modal') {
+        const query = input.fields?.text?.trim() ?? '';
+        await input.respond(await this.render(context, query || control.providerId ? 'models' : 'providers', 0, control.providerId, query));
+        return;
+      }
       let action: BotAction;
       if (control.kind === 'perform') action = control.action;
-      else if (control.kind === 'submit' && input.kind === 'modal') {
+      else if (control.kind === 'submit' && control.purpose !== 'model-search' && input.kind === 'modal') {
         const text = input.fields?.text?.trim() ?? '';
         action = control.purpose === 'answer' ? { kind: 'answer', questionId: control.question.id,
           answers: control.question.questions.map((_, index) => input.fields?.[`answer_${index}`]?.trim() ?? '') }
@@ -72,7 +81,8 @@ export class DiscordControls {
       const result = await this.sessions.perform(context, action);
       await input.respond(await this.home(context, result.run ? '任务已经开始，可查看状态或停止任务。' : result.reply));
     } catch (error) {
-      await input.respond({ content: error instanceof Error ? error.message : '操作未完成，请重新打开 /gray。' });
+      await input.respond({ content: publicBotError(error instanceof Error ? error.message : undefined)
+        ?? '操作未完成，请在桌面端查看详情，或重新打开 /gray。' });
     }
   }
   private async home(context: BotContext, notice = ''): Promise<BotPanel> {
@@ -84,29 +94,32 @@ export class DiscordControls {
       this.button(context, state.active ? '追加说明' : '发消息', { kind: 'modal', purpose: state.active ? 'interrupt' : 'message' }, { style: 'primary', disabled: state.active && !canControl }),
       ...(owner ? [this.button(context, '切换对话', { kind: 'screen', screen: 'conversations' })] : []),
     ];
-    if (state.loaded.actor.role === 'owner') first.push(this.button(context, '切换模型', { kind: 'screen', screen: 'models' }));
+    if (state.loaded.actor.role === 'owner') first.push(this.button(context, '切换模型', { kind: 'screen', screen: 'providers' }));
     if (owner) first.push(this.button(context, '切换工作区', { kind: 'screen', screen: 'workspaces' }));
     const second: BotButton[] = [this.button(context, '刷新状态', { kind: 'screen', screen: 'home' }),
       this.button(context, '停止任务', { kind: 'perform', action: { kind: 'cancel' } }, { style: 'danger', disabled: !state.active || !canControl })];
+    if (state.run && ['failed', 'interrupted'].includes(state.run.status) && state.run.actorId === state.loaded.actor.id)
+      second.push(this.button(context, '重试失败任务', { kind: 'perform', action: { kind: 'retry' } }, { style: 'primary' }));
     if (state.approvals.length) second.push(this.button(context, `待确认 ${state.approvals.length}`, { kind: 'screen', screen: 'approvals' }, { style: 'primary' }));
     if (state.questions.length) second.push(this.button(context, `待回答 ${state.questions.length}`, { kind: 'screen', screen: 'questions' }, { style: 'primary' }));
     return { content: `**GrayCode 操作面板**\n对话：${state.conversation?.title || '尚未选择'}\n后续模型：${state.provider?.name || '未配置'} / ${state.model || '未选择'}\n工作区：${state.workspace?.name || '普通聊天'}\n状态：${state.run ? `${botRunLabels[state.run.status]} · 第 ${state.run.iteration} 轮` : '没有正在执行的任务'}${notice ? `\n\n${notice}` : ''}\n\n这个面板仅对你可见。`,
       rows: [{ buttons: first }, { buttons: second }] };
   }
-  private choices(context: BotContext, screen: Screen, title: string, choices: Choice[], page: number, extras: BotButton[] = [], navigate?: (page: number) => Control): BotPanel {
+  private choices(context: BotContext, screen: Screen, title: string, choices: Choice[], page: number, extras: BotButton[] = [], navigate?: (page: number) => Control,
+    back: Control = { kind: 'screen', screen: 'home' }): BotPanel {
     const pages = Math.max(1, Math.ceil(choices.length / 25));
     page = Math.max(0, Math.min(pages - 1, page));
     const visible = choices.slice(page * 25, (page + 1) * 25);
     const rows: BotPanelRow[] = [];
     if (visible.length) rows.push({ select: { id: this.ticket(context, { kind: 'select', choices: new Map(visible.map((choice, index) => [String(index), choice.control])) }),
       placeholder: '请选择', options: visible.map((choice, index) => ({ label: choice.label, description: choice.description, value: String(index), selected: choice.selected })) } });
-    const buttons = [this.button(context, '返回', { kind: 'screen', screen: 'home' })];
+    const buttons = [this.button(context, '返回', back)];
     if (page > 0) buttons.push(this.button(context, '上一页', navigate?.(page - 1) ?? { kind: 'screen', screen, page: page - 1 }));
     if (page + 1 < pages) buttons.push(this.button(context, '下一页', navigate?.(page + 1) ?? { kind: 'screen', screen, page: page + 1 }));
     rows.push({ buttons: [...buttons, ...extras] });
     return { content: `**${title}**\n${choices.length ? `第 ${page + 1} / ${pages} 页，共 ${choices.length} 项。` : '目前没有可选项。'}`, rows };
   }
-  private async render(context: BotContext, screen: Screen, page: number): Promise<BotPanel> {
+  private async render(context: BotContext, screen: Screen, page: number, providerId?: string, query?: string): Promise<BotPanel> {
     if (screen === 'home') return this.home(context);
     const state = await this.sessions.snapshot(context);
     if (screen === 'conversations') {
@@ -116,10 +129,29 @@ export class DiscordControls {
       return this.choices(context, screen, '切换对话 · 最近 200 项', choices, page,
         [this.button(context, '按对话 ID 打开', { kind: 'modal', purpose: 'conversation' })]);
     }
-    if (screen === 'models') return this.choices(context, screen, '选择后续请求的模型', this.sessions.models(state.loaded.actor.id).map(model => ({
-      label: model.label, description: model.providerName, selected: state.provider?.id === model.providerId && state.model === model.modelId,
-      control: { kind: 'perform', action: { kind: 'model', providerId: model.providerId, modelId: model.modelId } },
-    })), page, [this.button(context, '使用默认模型', { kind: 'perform', action: { kind: 'model-default' } })]);
+    if (screen === 'providers') {
+      const providers = new Map<string, { name: string; count: number }>();
+      for (const model of this.sessions.models(state.loaded.actor.id)) {
+        const value = providers.get(model.providerId) ?? { name: model.providerName, count: 0 };
+        value.count++; providers.set(model.providerId, value);
+      }
+      return this.choices(context, screen, '先选择模型渠道', [...providers].map(([id, value]) => ({
+        label: value.name, description: `${value.count} 个模型`, selected: state.provider?.id === id,
+        control: { kind: 'screen', screen: 'models', providerId: id },
+      })), page, [this.button(context, '搜索模型', { kind: 'modal', purpose: 'model-search' }),
+        this.button(context, '使用默认模型', { kind: 'perform', action: { kind: 'model-default' } })]);
+    }
+    if (screen === 'models') {
+      const needle = query?.trim().toLocaleLowerCase();
+      const models = this.sessions.models(state.loaded.actor.id).filter(model => (!providerId || model.providerId === providerId)
+        && (!needle || [model.label, model.modelId, model.providerName, model.providerId].some(value => value.toLocaleLowerCase().includes(needle))));
+      const title = needle ? `搜索模型：${query!.slice(0, 80)}` : `选择 ${models[0]?.providerName ?? '渠道'} 的模型`;
+      return this.choices(context, screen, title, models.map(model => ({
+        label: model.label, description: model.providerName, selected: state.provider?.id === model.providerId && state.model === model.modelId,
+        control: { kind: 'perform', action: { kind: 'model', providerId: model.providerId, modelId: model.modelId } },
+      })), page, [this.button(context, '搜索模型', { kind: 'modal', purpose: 'model-search', providerId })],
+      next => ({ kind: 'screen', screen: 'models', page: next, providerId, query }), { kind: 'screen', screen: 'providers' });
+    }
     if (screen === 'workspaces') return this.choices(context, screen, '选择后续任务的工作区', [
       { label: '普通聊天，不绑定工作区', control: { kind: 'perform', action: { kind: 'workspace', workspaceId: null } } },
       ...this.sessions.workspaces(state.loaded.actor.id).map(workspace => ({ label: workspace.name, description: workspace.id,

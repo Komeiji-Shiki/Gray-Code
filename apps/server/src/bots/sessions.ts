@@ -27,7 +27,7 @@ export interface BotSession {
   conversationId?: string; selection: DiscordReplyProfile; updatedAt: number;
 }
 export type BotAction =
-  | { kind: 'status' | 'help' | 'source' | 'new' | 'cancel' | 'workspaces' }
+  | { kind: 'status' | 'help' | 'source' | 'new' | 'cancel' | 'retry' | 'workspaces' }
   | { kind: 'workspace'; workspaceId: string | null }
   | { kind: 'conversation'; conversationId: string }
   | { kind: 'model'; providerId: string; modelId: string }
@@ -204,6 +204,25 @@ export class BotSessions {
     loaded.value.updatedAt = Date.now();
     return { namespace, id: loaded.id, ownerId: loaded.value.actorId, expectedRevision: loaded.revision, value: loaded.value };
   }
+  private async runWorkspace(context: BotContext, loaded: LoadedSession, conversation: PlatformConversation) {
+    let channelWorkspaceId = loaded.profile.workspaceId === null ? undefined : loaded.profile.workspaceId ?? (typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined);
+    if (!channelWorkspaceId && loaded.profile.workspaceId !== null) channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id);
+    if (channelWorkspaceId === `workspace-${conversation.id}` && !this.app.settings.snapshot().settings.workspaces.some(item => item.id === channelWorkspaceId)) {
+      channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id, { existingOnly: true, workspaceUri: conversation.workspaceUri });
+    }
+    let workspaceId = channelWorkspaceId;
+    if (workspaceId) {
+      const actor = await actorForBotRun(this.app, loaded.actor.id, { conversationId: conversation.id, workspaceId });
+      const workspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === workspaceId);
+      if (!actor || !workspace || authorizeEffects(actor, ['workspace_read'], workspace)) workspaceId = undefined;
+    }
+    return { channelWorkspaceId, workspaceId };
+  }
+  private runMetadata(conversation: PlatformConversation, context: BotContext, loaded: LoadedSession, channelWorkspaceId?: string) {
+    const channelWorkspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === channelWorkspaceId);
+    return { ...conversation, workspaceId: channelWorkspaceId, workspaceUri: channelWorkspace ? pathToFileURL(channelWorkspace.directory).toString() : undefined,
+      custom: { ...conversation.custom as Record<string, unknown>, botEnvironment: captureBotEnvironment(this.app, context, loaded.profile, channelWorkspaceId) } };
+  }
   async recordingConversation(context: BotContext) {
     const loaded = await this.load(context, true);
     let conversation = await this.current(loaded);
@@ -247,7 +266,7 @@ export class BotSessions {
     let reply = ''; let run: RunRecord | undefined;
     const receiptRecord = (): RecordMutation => ({ namespace: receipts, id: receiptId, value: { receivedAt: Date.now(), reply } });
     if (action.kind === 'source') reply = distributionSourceNotice();
-    else if (action.kind === 'help') reply = '使用 /gray 打开操作面板。文字指令仍可用：/gray new、/gray task 对话ID、/gray workspace 工作区ID（none 为普通聊天）、/gray status、/gray cancel、/gray answer 提问ID 回答、/gray approve 审批ID、/gray deny 审批ID、/gray choose 审批ID 选项序号。\n/gray source 查看当前版本源码与许可。\n\n' + distributionSourceNotice();
+    else if (action.kind === 'help') reply = '使用 /gray 打开操作面板；失败任务可用 /gray-retry 重试。文字指令仍可用：/gray new、/gray retry、/gray task 对话ID、/gray workspace 工作区ID（none 为普通聊天）、/gray status、/gray cancel、/gray answer 提问ID 回答、/gray approve 审批ID、/gray deny 审批ID、/gray choose 审批ID 选项序号。\n/gray source 查看当前版本源码与许可。\n\n' + distributionSourceNotice();
     else if (action.kind === 'workspaces') reply = this.workspaces(loaded.actor.id).map(item => `${item.name} · ${item.id}`).join('\n') || '当前账号没有可用工作区。';
     else if (action.kind === 'workspace') {
       this.app.requireOwner(loaded.actor.id);
@@ -304,31 +323,39 @@ export class BotSessions {
         if (!conversation || !active(latest)) throw new Error('当前没有运行中的任务，请直接发送新消息。');
         await this.app.productUi.call({ actorId: loaded.actor.id, clientId: `bot-${loaded.id}` }, 'chat.sendInterruptMessage', { conversationId: conversation.id, text: action.text });
         reply = '追加说明已交给当前任务。';
+      } else if (action.kind === 'retry') {
+        if (context.platform !== 'discord') throw new Error('当前只支持从 Discord 重试任务。');
+        if (!conversation || !latest || !['failed', 'interrupted'].includes(latest.status)) throw new Error('当前对话没有可重试的失败任务。');
+        const originalRoute = await this.app.storage.getRecord(botRouteNamespace, latest.requestKey) as BotRoute | null;
+        if (!originalRoute || originalRoute.platform !== context.platform || originalRoute.botId !== context.botId
+          || originalRoute.channelId !== context.channelId || originalRoute.platformUserId !== context.authorId
+          || latest.actorId !== loaded.actor.id) throw new Error('只能重试你在当前频道发起的任务。');
+        const state = await this.app.conversations.read(loaded.actor.id, conversation.id);
+        const { channelWorkspaceId, workspaceId } = await this.runWorkspace(context, loaded, conversation);
+        const requestKey = `${context.platform}:${context.id}`;
+        const route: BotRoute = { platform: context.platform, botId: context.botId, channelId: context.channelId, actorId: loaded.actor.id,
+          conversationId: conversation.id, platformUserId: context.authorId, direct: context.direct,
+          ...(context.sourceMessageId ? { replyToMessageId: context.sourceMessageId } : {}),
+          output: { ...discordOutput(this.app.settings.snapshot().settings.discord), ...loaded.profile.output } };
+        run = await this.app.runtime.continue({ actorId: loaded.actor.id, conversationId: conversation.id, agentId: latest.agentId,
+          workspaceId, requestKey, expectedRevision: state.history.revision }, { state, commit: {
+          metadata: this.runMetadata(state.metadata, context, loaded, channelWorkspaceId),
+          records: [this.mutation(loaded), receiptRecord(), { namespace: botRouteNamespace, id: requestKey, ownerId: conversation.id, value: route }],
+        } });
+        return { reply: '', run };
       } else if (action.kind === 'message') {
         if (active(latest)) return { reply: '当前任务仍在执行，可用 /gray 查看状态、追加说明，或新建另一段对话。' };
         if (!action.text.trim()) throw new Error('请输入消息。');
         if (!conversation) conversation = await this.create(context, loaded, `${context.platform === 'discord' ? 'Discord' : 'QQ'} · ${action.text.slice(0, 48)}`);
         const agent = await captureBotAgent(this.app, loaded.actor.id, conversation.id, loaded.profile);
-        let channelWorkspaceId = loaded.profile.workspaceId === null ? undefined : loaded.profile.workspaceId ?? (typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined);
-        if (!channelWorkspaceId && loaded.profile.workspaceId !== null) channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id);
-        if (channelWorkspaceId === `workspace-${conversation.id}` && !this.app.settings.snapshot().settings.workspaces.some(item => item.id === channelWorkspaceId)) {
-          channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id, { existingOnly: true, workspaceUri: conversation.workspaceUri });
-        }
-        let workspaceId = channelWorkspaceId;
-        if (workspaceId) {
-          const actor = await actorForBotRun(this.app, loaded.actor.id, { conversationId: conversation.id, workspaceId });
-          const workspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === workspaceId);
-          if (!actor || !workspace || authorizeEffects(actor, ['workspace_read'], workspace)) workspaceId = undefined;
-        }
+        const { channelWorkspaceId, workspaceId } = await this.runWorkspace(context, loaded, conversation);
         const requestKey = `${context.platform}:${context.id}`;
         const route: BotRoute = { platform: context.platform, botId: context.botId, channelId: context.channelId, actorId: loaded.actor.id,
           conversationId: conversation.id, platformUserId: context.authorId, network: context.network, direct: context.direct,
           ...(action.input ? { replyToMessageId: context.sourceMessageId ?? (context.platform === 'discord' ? context.id : undefined) } : {}),
           ...(context.platform === 'discord' ? { output: { ...discordOutput(this.app.settings.snapshot().settings.discord), ...loaded.profile.output } } : {}) };
         const state = await this.app.conversations.read(loaded.actor.id, conversation.id);
-        const channelWorkspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === channelWorkspaceId);
-        const metadata = { ...state.metadata, workspaceId: channelWorkspaceId, workspaceUri: channelWorkspace ? pathToFileURL(channelWorkspace.directory).toString() : undefined,
-          custom: { ...state.metadata.custom as Record<string, unknown>, botEnvironment: captureBotEnvironment(this.app, context, loaded.profile, channelWorkspaceId) } };
+        const metadata = this.runMetadata(state.metadata, context, loaded, channelWorkspaceId);
         run = await this.app.runtime.start({ requestKey, actorId: loaded.actor.id, conversationId: conversation.id, workspaceId, agentId: agent.id,
           message: { role: 'user', parts: action.input?.message.parts ?? [{ text: action.text }] } }, { state,
           messageMetadata: { ...action.input?.message, source: { ...(action.input?.message.source as Record<string, unknown> | undefined), platform: context.platform, messageId: context.id, platformUserId: context.authorId, displayName: context.authorName } },
@@ -348,7 +375,7 @@ export function parseBotAction(text: string): BotAction {
   if (!command) return { kind: 'message', text };
   const verb = command[1]?.toLowerCase(); const argument = command[2]?.trim() ?? '';
   if (!verb || verb === 'help') return { kind: 'help' };
-  if (verb === 'status' || verb === 'source' || verb === 'new' || verb === 'cancel' || verb === 'workspaces') return { kind: verb };
+  if (verb === 'status' || verb === 'source' || verb === 'new' || verb === 'cancel' || verb === 'retry' || verb === 'workspaces') return { kind: verb };
   if (verb === 'workspace') return argument ? { kind: 'workspace', workspaceId: argument === 'none' ? null : argument } : { kind: 'workspaces' };
   if (verb === 'task') return { kind: 'conversation', conversationId: argument };
   if (verb === 'ask' || verb === 'interrupt') return { kind: verb === 'ask' ? 'message' : 'interrupt', text: argument };
