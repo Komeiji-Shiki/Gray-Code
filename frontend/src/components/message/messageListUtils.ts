@@ -17,6 +17,53 @@ export interface ComputeVirtualRowsResult<T> {
   reason?: 'below_threshold' | 'invalid_estimate' | 'invalid_viewport' | 'empty_slice' | 'clamped'
 }
 
+export interface MessageWindowPadding {
+  top: number
+  bottom: number
+}
+
+/**
+ * 计算消息滑动窗口前后的估算占位高度。
+ *
+ * windowStart/windowEnd 使用当前已加载数组的消息下标，因此占位只覆盖
+ * 已加载但暂时未渲染的消息；尚未从后端加载的历史由消息列表的边缘检测触发分页。
+ */
+export function computeMessageWindowPadding(
+  totalRows: number,
+  windowStart: number,
+  windowEnd: number,
+  estimatedRowHeight: number
+): MessageWindowPadding {
+  const total = Number.isFinite(totalRows) ? Math.max(0, Math.floor(totalRows)) : 0
+  const estimate = Number.isFinite(estimatedRowHeight) && estimatedRowHeight > 0 ? estimatedRowHeight : 0
+  const start = Math.min(total, Math.max(0, Math.floor(Number.isFinite(windowStart) ? windowStart : 0)))
+  const end = Math.min(total, Math.max(start, Math.floor(Number.isFinite(windowEnd) ? windowEnd : start)))
+
+  return {
+    top: start * estimate,
+    bottom: Math.max(0, total - end) * estimate
+  }
+}
+
+/**
+ * 将消息窗口向后移动一个步长，并限制在可用范围内。
+ * 仅移动窗口，不把它直接贴到对话尾部，供滚动到底部时逐步阅读历史。
+ */
+export function advanceMessageWindowStart(
+  currentStart: number,
+  windowSize: number,
+  totalRows: number,
+  step: number
+): number {
+  const total = Number.isFinite(totalRows) ? Math.max(0, Math.floor(totalRows)) : 0
+  const size = Number.isFinite(windowSize) ? Math.max(0, Math.floor(windowSize)) : 0
+  const current = Number.isFinite(currentStart) ? Math.max(0, Math.floor(currentStart)) : 0
+  const increment = Number.isFinite(step) ? Math.max(0, Math.floor(step)) : 0
+  const maxStart = Math.max(0, total - size)
+
+  return Math.min(maxStart, current + increment)
+}
+
 export function resolveLoadedVisibleMessages<T>(messages: T[], visibleCount: number): T[] {
   if (!Array.isArray(messages) || messages.length === 0) return []
   // 尾部窗口切片：仅取最近 visibleCount 条消息参与 enhance/重排，

@@ -162,6 +162,8 @@ const {
   scrollbarRef,
   hasMore,
   loadMore,
+  topSpacerHeight,
+  bottomSpacerHeight,
   messageRenderRows,
   checkpointFloorByCheckpointId
 } = virtualWindow
@@ -253,6 +255,14 @@ function handleContinue() {
             {{ t('components.message.historyFolded', { count: chatStore.foldedMessageCount }) }}
           </span>
         </button>
+
+        <!-- 被裁掉的顶部消息占位：保留整段对话的滚动总高度和 marker 比例。 -->
+        <div
+          v-if="topSpacerHeight > 0"
+          class="virtual-message-spacer virtual-message-spacer-top"
+          :style="{ height: `${topSpacerHeight}px` }"
+          aria-hidden="true"
+        ></div>
 
         <template v-for="row in messageRenderRows" :key="row.key">
           <div v-if="row.kind === 'build'" class="build-sticky-shell">
@@ -467,6 +477,14 @@ function handleContinue() {
             </div>
           </div>
         </template>
+
+        <!-- 被裁掉的底部消息占位：向下滚动到渲染窗口末尾时由 composable 逐步前移窗口。 -->
+        <div
+          v-if="bottomSpacerHeight > 0"
+          class="virtual-message-spacer virtual-message-spacer-bottom"
+          :style="{ height: `${bottomSpacerHeight}px` }"
+          aria-hidden="true"
+        ></div>
         
         <!-- 继续对话提示 - 当最后一条是工具响应时显示 -->
         <div v-if="chatStore.needsContinueButton" class="continue-message">
@@ -810,6 +828,14 @@ function handleContinue() {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+}
+
+/* 虚拟窗口省略的消息只保留高度，不参与 marker 和键盘焦点。 */
+.virtual-message-spacer {
+  width: 100%;
+  flex: 0 0 auto;
+  pointer-events: none;
+  overflow: hidden;
 }
 
 /* 加载更多指示器（button 语义：可键盘聚焦触发加载） */
