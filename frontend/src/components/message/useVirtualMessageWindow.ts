@@ -375,7 +375,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     ))
     await nextTick()
 
-    const container = scrollbarRef.value?.getContainer()
+    const container = scrollbarRef.value?.getContainer() as HTMLElement | null | undefined
     if (!container) return false
     const elements = container.querySelectorAll<HTMLElement>('.message-item, .summary-message')
     const targetElement = Array.from(elements).find(element =>
