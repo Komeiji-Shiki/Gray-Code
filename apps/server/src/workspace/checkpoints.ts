@@ -57,10 +57,37 @@ export class WorkspaceCheckpoints {
     await this.app.conversation(actorId, conversationId);
     const history = await this.app.storage.readFullHistory(conversationId);
     const positions = new Map(history.messages.map((message, index) => [message.id, index]));
-    return { checkpoints: (await this.list(actorId, conversationId))
-      .filter(value => includeInactive || !value.messageNodeId || positions.has(value.messageNodeId))
-      .map(value => ({ id: value.id, conversationId, timestamp: value.timestamp,
-      name: value.name, messageIndex: positions.get(value.messageNodeId ?? '') ?? value.messageIndex, messageNodeId: value.messageNodeId, toolName: value.toolName, phase: value.phase,
+    const checkpoints = await this.list(actorId, conversationId);
+    const modelBeforeByRun = new Map<string, WorkspaceCheckpoint[]>();
+    for (const checkpoint of checkpoints) {
+      if (checkpoint.toolName !== 'model_message' || checkpoint.phase !== 'before' || !checkpoint.runId) continue;
+      const group = modelBeforeByRun.get(checkpoint.runId) ?? [];
+      group.push(checkpoint);
+      modelBeforeByRun.set(checkpoint.runId, group);
+    }
+    // 旧版“模型消息前”存档错误地绑定上一条消息。按运行 ID 和创建时间
+    // 找到真正随后写入的模型消息；若目标消息已删除，保留存档记录但不错误显示在别的消息前。
+    const modelBeforePosition = (checkpoint: WorkspaceCheckpoint): number => {
+      if (!checkpoint.runId) return -1;
+      const group = modelBeforeByRun.get(checkpoint.runId) ?? [];
+      const following = group.find(value => value.timestamp > checkpoint.timestamp
+        || value.timestamp === checkpoint.timestamp && value.id > checkpoint.id);
+      return history.messages.findIndex(message => message.role === 'model'
+        && message.runId === checkpoint.runId
+        && typeof message.timestamp === 'number'
+        && message.timestamp >= checkpoint.timestamp
+        && (!following || message.timestamp < following.timestamp));
+    };
+    return { checkpoints: checkpoints
+      .map(value => ({ value, modelPosition: value.toolName === 'model_message' && value.phase === 'before'
+        ? modelBeforePosition(value) : -1 }))
+      .filter(({ value, modelPosition }) => {
+        if (includeInactive) return true;
+        if (value.toolName === 'model_message' && value.phase === 'before') return modelPosition >= 0;
+        return !value.messageNodeId || positions.has(value.messageNodeId);
+      })
+      .map(({ value, modelPosition }) => ({ id: value.id, conversationId, timestamp: value.timestamp,
+      name: value.name, messageIndex: modelPosition >= 0 ? modelPosition : positions.get(value.messageNodeId ?? '') ?? value.messageIndex, messageNodeId: value.messageNodeId, toolName: value.toolName, phase: value.phase,
       fileCount: Object.keys(value.manifest.files).length, size: Object.values(value.manifest.files).reduce((sum, file) => sum + file.size, 0),
       manifestVersion: 1, partial: value.manifest.partial, isUserMessage: value.toolName === 'user_message', isModelMessage: value.toolName === 'model_message' })) };
   }
@@ -73,10 +100,12 @@ export class WorkspaceCheckpoints {
       const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
       options.operation?.update('scanning');
       const snapshot = await this.scan(workspace, options.signal ?? options.operation?.signal, options.affectedPaths);
+      const beforeFutureModel = options.toolName === 'model_message' && options.phase === 'before' && !options.messageId;
       const checkpoint: WorkspaceCheckpoint = { id: randomUUID(), conversationId, workspaceId: workspace.id, directory: workspace.directory,
         timestamp: Date.now(), name: options.name, toolName: options.toolName ?? 'manual', phase: options.phase ?? 'after', runId: options.runId,
-        messageIndex: options.messageId ? state.history.messages.findIndex(message => message.id === options.messageId) : Math.max(0, state.history.total - 1),
-        messageNodeId: options.messageId ?? state.history.messages.at(-1)?.id, manifest: snapshot.manifest, contentIds: {} };
+        messageIndex: options.messageId ? state.history.messages.findIndex(message => message.id === options.messageId)
+          : beforeFutureModel ? state.history.total : Math.max(0, state.history.total - 1),
+        messageNodeId: options.messageId ?? (beforeFutureModel ? undefined : state.history.messages.at(-1)?.id), manifest: snapshot.manifest, contentIds: {} };
       const branches = readBranches(state);
       // 工具结果属于前一条模型节点；检查点与分支绑定在发布清单的同一事务提交。
       let position = checkpoint.messageIndex;

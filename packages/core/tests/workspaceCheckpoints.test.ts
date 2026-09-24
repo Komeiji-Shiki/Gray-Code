@@ -121,6 +121,24 @@ describe('workspace checkpoints application contract', () => {
     expect(await app.checkpoints.list('owner', 'protected')).toHaveLength(0);
   });
 
+  test('模型消息前存档关联即将写入的模型消息，并纠正旧存档的上一条消息绑定', async () => {
+    await createConversation('model-before');
+    await app.storage.appendHistory('model-before', [{ ...message(0), runId: 'run-one' }]);
+    const before = await app.checkpoints.create('owner', 'model-before', {
+      toolName: 'model_message', phase: 'before'
+    });
+    expect(before.messageIndex).toBe(1);
+    expect(before.messageNodeId).toBeUndefined();
+    expect((await app.checkpoints.summaries('owner', 'model-before')).checkpoints).toHaveLength(0);
+
+    // 模拟旧记录：模型前存档误绑在上一条用户消息上。
+    await app.storage.putRecord({ namespace: 'workspace-checkpoints', id: before.id,
+      ownerId: 'model-before', value: { ...before, runId: 'run-one', messageIndex: 0, messageNodeId: 'message_0' } });
+    await app.storage.appendHistory('model-before', [{ ...message(1), runId: 'run-one', timestamp: before.timestamp + 1 }]);
+    const [summary] = (await app.checkpoints.summaries('owner', 'model-before')).checkpoints;
+    expect(summary).toMatchObject({ id: before.id, messageIndex: 1 });
+  });
+
   test('清单外脏文件也阻止恢复', async () => {
     await createConversation('dirty-outside');
     await writeFile(path.join(f.source, 'a.txt'), 'a0');
