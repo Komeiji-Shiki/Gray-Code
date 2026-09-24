@@ -505,7 +505,8 @@ export function formatHistoryForAPI(
                 if (keys.length === 1 && keys[0] === 'thought' && (part as any).thought === true) return false;
                 // Gemini oneof data 守卫：part 必须至少携带一个 data 成员
                 // thought / thoughtSignature / thoughtSignatures / redactedThinking 不属于 data
-                const hasData = (typeof part.text === 'string' && part.text.length > 0)
+                const hasData = (typeof part.text === 'string' && (part.text.length > 0
+                    || (channelType === 'gemini' && !!part.thoughtSignatures?.gemini)))
                     || (!!part.inlineData?.mimeType && !!part.inlineData?.data)
                     || !!part.fileData?.fileUri
                     || !!part.functionCall

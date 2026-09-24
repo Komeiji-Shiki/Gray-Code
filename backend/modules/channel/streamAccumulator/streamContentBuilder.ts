@@ -114,7 +114,7 @@ export function buildContentFromState(state: StreamContentBuildState, options: B
             // 保留非文本part（functionCall 等）
             if (!('text' in p) || p.functionCall) return true;
             // 过滤空文本（但保留有意义的内容）
-            if ('text' in p && p.text === '' && !p.thought) return false;
+            if ('text' in p && p.text === '' && !p.thought && !p.thoughtSignatures?.gemini) return false;
             return true;
         });
 

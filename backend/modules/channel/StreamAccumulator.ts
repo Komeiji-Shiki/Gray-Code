@@ -652,7 +652,14 @@ export class StreamAccumulator {
         if (lastPart && 'text' in lastPart && !lastPart.functionCall) {
             const lastIsThought = lastPart.thought === true;
 
-            if (lastIsThought === isThought) {
+            // Gemini 的签名属于原始 part，带签名的文本不能与相邻文本合并。
+            // 流末也可能单独返回带签名的空文本 part，必须保留其边界供下轮原样回传。
+            const hasGeminiSignatureBoundary = this.providerType === 'gemini' && (
+                !!part.thoughtSignatures?.gemini ||
+                !!(part as any).thoughtSignature ||
+                !!lastPart.thoughtSignatures?.gemini
+            );
+            if (lastIsThought === isThought && !hasGeminiSignatureBoundary) {
                 // 纯文本追加：前端可通过 delta 自行还原，不递增结构修订号
                 lastPart.text = (lastPart.text ?? '') + (part.text ?? '');
                 return;

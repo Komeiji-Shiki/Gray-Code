@@ -74,7 +74,8 @@ export function buildGeminiApiUrl(
  * 仅含这些字段的 part 会触发 GenerateContentRequest.contents[*].parts[*].data 400
  */
 function hasGeminiPartData(part: ContentPart): boolean {
-    if (typeof part.text === 'string' && part.text.length > 0) return true;
+    // Gemini 流式末尾可能用空文本 part 承载签名；text 仍是有效的 oneof data。
+    if (typeof part.text === 'string' && (part.text.length > 0 || !!part.thoughtSignatures?.gemini || !!(part as any).thoughtSignature)) return true;
     if (part.inlineData?.mimeType && part.inlineData?.data) return true;
     if (part.fileData?.fileUri) return true;
     if (part.functionCall) return true;
@@ -761,4 +762,3 @@ export class GeminiFormatter extends BaseFormatter {
         }];
     }
 }
-
