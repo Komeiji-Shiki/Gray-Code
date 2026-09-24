@@ -41,6 +41,16 @@ function hasPreview(attachment: Attachment): boolean {
   return ['image', 'video', 'audio'].includes(attachment.type)
 }
 
+// 历史消息只保存原图；大图重建时不复制整份 base64 到 thumbnail。
+// 当前消息真正显示时才用原图数据生成地址，避免回复后缩略图消失。
+function getImageSource(attachment: Attachment): string | undefined {
+  if (attachment.thumbnail) return attachment.thumbnail
+  if (attachment.type === 'image' && attachment.data) {
+    return `data:${attachment.mimeType};base64,${attachment.data}`
+  }
+  return undefined
+}
+
 // 预览附件（在 VSCode 中打开）
 async function previewAttachment(attachment: Attachment) {
   if (!attachment.data) return
@@ -81,10 +91,12 @@ function handleRemove(attachmentId: string) {
         @click="previewAttachment(attachment)"
       >
         <img
-          v-if="(attachment.type === 'image' || attachment.type === 'video') && attachment.thumbnail"
-          :src="attachment.thumbnail"
+          v-if="(attachment.type === 'image' || attachment.type === 'video') && getImageSource(attachment)"
+          :src="getImageSource(attachment)"
           :alt="attachment.name"
           class="attachment-preview"
+          loading="lazy"
+          decoding="async"
         />
         <i
           v-if="attachment.type === 'video'"
@@ -96,13 +108,15 @@ function handleRemove(attachmentId: string) {
           class="codicon codicon-unmute media-center-icon"
           aria-hidden="true"
         ></i>
-        <i v-else-if="!attachment.thumbnail" :class="['codicon', getAttachmentIconClass(attachment.type), 'media-center-icon']" aria-hidden="true"></i>
+        <i v-else-if="!getImageSource(attachment)" :class="['codicon', getAttachmentIconClass(attachment.type), 'media-center-icon']" aria-hidden="true"></i>
       </button>
       <img
-        v-else-if="attachment.type === 'image' && attachment.thumbnail"
-        :src="attachment.thumbnail"
+        v-else-if="attachment.type === 'image' && getImageSource(attachment)"
+        :src="getImageSource(attachment)"
         :alt="attachment.name"
         class="attachment-preview"
+        loading="lazy"
+        decoding="async"
       />
       <i
         v-else
