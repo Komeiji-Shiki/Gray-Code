@@ -30,7 +30,8 @@ export class PlatformLongMemory {
     const draft=!!options.capturedConversation&&options.capturedConversation.id===options.conversationId&&options.capturedConversation.actorId===actorId
       &&!await this.app.storage.getConversation(options.conversationId!);
     const conversation=draft?options.capturedConversation:options.conversationId?await this.app.conversation(actorId,options.conversationId):undefined;
-    const workspaceId=options.workspaceId??(typeof conversation?.workspaceId==='string'?conversation.workspaceId:undefined);
+    // 已建立的任务以本轮捕获的工作区为准；没有工作区也不能回退到对话中可能已失效的旧绑定。
+    const workspaceId=run?run.workspaceId:options.workspaceId??(typeof conversation?.workspaceId==='string'?conversation.workspaceId:undefined);
     const workspace=workspaceId?this.app.workspace(actorId,workspaceId,['workspace_read']):undefined;
     const scopes=await conversationMemoryScopes(this.app,actor,conversation,workspace,draft);
     return {actor,scopes,conversation,workspace};

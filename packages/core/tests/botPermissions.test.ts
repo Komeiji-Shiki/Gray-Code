@@ -111,4 +111,19 @@ describe('Bot 默认访客、逐工具授权与单人黑名单', () => {
     await update(settings => { settings.accounts.find(account => account.id === 'visitor')!.botWorkspaceAccess = false; });
     expect((await receive('workspace-disabled')).workspaceId).toBeUndefined();
   });
+
+  test('主人在自动工作区配置失效后仍能继续 Discord 对话', async () => {
+    const first = await receive('owner-first', '10');
+    expect(first.status).toBe('completed');
+    expect(first.workspaceId).toBe(`workspace-${first.conversationId}`);
+
+    await update(settings => {
+      settings.workspaces = settings.workspaces.filter(workspace => workspace.id !== first.workspaceId);
+    });
+
+    const continued = await receive('owner-continued', '10');
+    expect(continued.conversationId).toBe(first.conversationId);
+    expect(continued.workspaceId).toBeUndefined();
+    expect(continued.status).toBe('completed');
+  });
 });

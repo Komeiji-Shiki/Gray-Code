@@ -92,6 +92,21 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     await run('memory-group','测试代号是什么？');expect(plain(seen.at(-1)!)).toContain('海桥-622');expect(plain(seen.at(-1)!)).not.toContain('溪谷-811');
   });
 
+  test('任务未绑定工作区时不沿用对话中已失效的工作区', async () => {
+    const draft = app.settings.snapshot();
+    draft.settings.workspaces.push({ id: 'old-workspace', name: '旧工作区', deviceId: 'local', directory: f.root });
+    await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
+    await app.createConversation('owner', '旧工作区对话', 'old-workspace', {}, [], { id: 'memory-stale-workspace' });
+
+    const current = app.settings.snapshot();
+    current.settings.workspaces = current.settings.workspaces.filter(workspace => workspace.id !== 'old-workspace');
+    await app.settings.save({ settings: current.settings, expectedRevision: current.revision });
+
+    const completed = await run('memory-stale-workspace', '继续普通聊天');
+    const access = await app.longMemory.access('owner', { runId: completed.id, conversationId: completed.conversationId });
+    expect(access.workspace).toBeUndefined();
+  });
+
   test('分段来源工具返回实际记忆依据，供后续遗忘和上下文清理使用', async () => {
     const scope = await personal(), access = await app.longMemory.access('owner', { conversationId: 'memory-chat' });
     const saved = await app.longMemory.remember(access, { scopeId: scope.id, text: '长来源核对。'.repeat(400), kind: 'fact', topic: ['测试'] });
