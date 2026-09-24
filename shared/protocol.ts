@@ -95,6 +95,7 @@ export const MESSAGE_NAMES = {
   'config.createConfig': 'config.createConfig',
   'config.deleteConfig': 'config.deleteConfig',
   'config.getConfig': 'config.getConfig',
+  'config.revealApiKey': 'config.revealApiKey',
   'config.listConfigs': 'config.listConfigs',
   'config.updateConfig': 'config.updateConfig',
 

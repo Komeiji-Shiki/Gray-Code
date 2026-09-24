@@ -17,6 +17,8 @@ const isPlatformHost = Boolean(window.__GRAYCODE_HOST)
 defineProps<{
   config: ChannelConfig
   showApiKey: boolean
+  apiKeyDisplayValue?: string
+  apiKeyRevealError?: string
   typeOptions: SelectOption[]
   toolModeOptions: SelectOption[]
   timeoutDraft: string
@@ -67,11 +69,14 @@ const emit = defineEmits<{
     <div class="input-with-action">
       <input
         :type="showApiKey ? 'text' : 'password'"
-        :value="config.apiKey"
+        :value="apiKeyDisplayValue ?? config.apiKey"
+        autocomplete="new-password"
+        spellcheck="false"
         :placeholder="t('components.settings.channelSettings.form.apiKey.placeholder')"
         @input="(e: any) => emit('api-key-url-input', 'apiKey', e.target.value)"
       />
       <button
+        type="button"
         class="input-action-btn"
         :title="showApiKey ? t('components.settings.channelSettings.form.apiKey.hide') : t('components.settings.channelSettings.form.apiKey.show')"
         @click="emit('toggle-show-api-key')"
@@ -79,6 +84,7 @@ const emit = defineEmits<{
         <i :class="['codicon', showApiKey ? 'codicon-eye-closed' : 'codicon-eye']"></i>
       </button>
     </div>
+    <p v-if="apiKeyRevealError" class="field-hint" role="alert">{{ apiKeyRevealError }}</p>
 
     <!-- 使用 Authorization 格式（仅 Gemini/Gemini Interactions 和 Anthropic） -->
     <div v-if="config.type === 'gemini' || config.type === 'gemini-interactions' || config.type === 'anthropic'" class="checkbox-group api-key-option">

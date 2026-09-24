@@ -81,7 +81,21 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     'subagents.updateConfig': async data => { await settings.updateSubAgentsConfig(data.config); return { success: true }; },
     ...subagentSettingsHandlers(draft, app),
     'config.listConfigs': () => draft.configs.listConfigs().then(configs => configs.map(config => config.id)),
-    'config.getConfig': data => draft.configs.getConfig(data.configId),
+    'config.getConfig': async data => {
+      const config = await draft.configs.getConfig(data.configId);
+      if (!config) return null;
+      // 保存后 ConfigManager 缓存仍可能持有刚提交的明文；设置草稿才是当前展示值。
+      return { ...config, apiKey: draft.value.channels.find(value => value.id === data.configId)?.apiKey ?? config.apiKey };
+    },
+    'config.revealApiKey': async data => {
+      const config = await draft.configs.getConfig(data.configId);
+      if (!config) throw new Error('渠道不存在。');
+      // 设置草稿中已有新凭据时优先显示草稿；占位值才从凭据存储按需读取。
+      const draftKey = draft.value.channels.find(value => value.id === data.configId)?.apiKey ?? config.apiKey;
+      return { apiKey: draftKey === '••••••••'
+        ? (await app.product.channel(data.configId))?.apiKey ?? ''
+        : draftKey };
+    },
     'config.createConfig': data => draft.configs.createConfig(data as any),
     'config.updateConfig': async data => { await draft.configs.updateConfig(data.configId, data.updates); return { success: true }; },
     'config.deleteConfig': async data => { await draft.configs.deleteConfig(data.configId); return { success: true }; },

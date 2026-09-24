@@ -85,8 +85,33 @@ describe('ChannelSettings url/apiKey 防抖保存', () => {
 
   afterEach(() => {
     wrapper?.unmount()
+    delete (window as any).__GRAYCODE_HOST
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  test('桌面端显示已保存密钥时读取明文，隐藏后清除临时值', async () => {
+    ;(window as any).__GRAYCODE_HOST = {}
+    setChannelConfigsCache([{ ...makeConfig('cfg-1'), apiKey: '••••••••' }])
+    chatStoreMock.configId = 'cfg-1'
+    mockSend.mockImplementation((type: string) => type === 'config.revealApiKey'
+      ? Promise.resolve({ apiKey: 'saved-test-key' }) : Promise.resolve(undefined))
+    wrapper = mountSettings()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
+    const input = () => wrapper.find('[data-search-anchor="api-key"] input').element as HTMLInputElement
+    expect(input().type).toBe('password')
+    expect(input().value).toBe('••••••••')
+
+    await wrapper.find('[data-search-anchor="api-key"] button').trigger('click')
+    await flushPromises()
+    expect(input().type).toBe('text')
+    expect(input().value).toBe('saved-test-key')
+    expect(mockSend.mock.calls.filter(([type]) => type === 'config.revealApiKey')).toHaveLength(1)
+
+    await wrapper.find('[data-search-anchor="api-key"] button').trigger('click')
+    expect(input().type).toBe('password')
+    expect(input().value).toBe('••••••••')
   })
 
   test('同一防抖窗口内输入 url 与 apiKey：聚合为一次 updateConfig 提交', async () => {

@@ -1,3 +1,4 @@
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
@@ -73,5 +74,30 @@ test('the existing UI protocol uses original settings services and streams core 
       expect(event.message.data.streamId).toBe(`background:${result.runId}`);
     }
     await expect(router.call({ actorId: 'nobody', clientId: 'bad' }, 'ui.request', { type: 'getSettings' })).rejects.toThrow();
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('设置页仅在显式显示时按需读取已保存的渠道 API Key', async () => {
+  const f = await fixture(); await f.store.close();
+  const key = randomBytes(32);
+  const app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: {
+    encrypt: async text => { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', key, iv);
+      const content = Buffer.concat([cipher.update(text), cipher.final()]);
+      return Buffer.concat([iv, cipher.getAuthTag(), content]); },
+    decrypt: async data => { const bytes = Buffer.from(data); const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+      cipher.setAuthTag(bytes.subarray(12, 28)); return Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString(); }
+  } });
+  const router = new ApplicationRouter(app);
+  const call = (type: string, data = {}) => router.call({ actorId: 'owner', clientId: 'key-ui' }, 'ui.request', { type, data }) as Promise<any>;
+  try {
+    await call('ui.settings.begin');
+    const id = await call('config.createConfig', { name: '测试渠道', type: 'openai' });
+    await call('config.updateConfig', { configId: id, updates: { apiKey: 'saved-test-key' } });
+    await call('ui.settings.save');
+    expect((await call('config.getConfig', { configId: id })).apiKey).toBe('••••••••');
+    expect(await call('config.revealApiKey', { configId: id })).toEqual({ apiKey: 'saved-test-key' });
+    await call('config.updateConfig', { configId: id, updates: { apiKey: 'unsaved-test-key' } });
+    expect(await call('config.revealApiKey', { configId: id })).toEqual({ apiKey: 'unsaved-test-key' });
+    await expect(call('config.revealApiKey', { configId: 'missing' })).rejects.toThrow('渠道不存在');
   } finally { await app.close(); await f.cleanup(); }
 });

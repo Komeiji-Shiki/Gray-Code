@@ -51,6 +51,9 @@ const isCreatingConfig = ref(false)
 
 // API Key 显示
 const showApiKey = ref(false)
+const revealedApiKey = ref<string | null>(null)
+const apiKeyRevealError = ref('')
+let apiKeyRevealEpoch = 0
 
 // 高级选项展开状态
 const showAdvancedOptions = ref(false)
@@ -265,6 +268,11 @@ function syncChannelNumericDrafts() {
 
 // 切换渠道配置时，草稿跟随新配置重置；同时清除上一渠道遗留的阈值输入错误状态（避免新渠道合法值被误标红）
 watch(currentConfigId, () => {
+  // 切换渠道后，上一渠道的明文及尚未返回的读取结果都不能进入当前输入框。
+  apiKeyRevealEpoch++
+  showApiKey.value = false
+  revealedApiKey.value = null
+  apiKeyRevealError.value = ''
   syncChannelNumericDrafts()
   contextThresholdError.value = false
 })
@@ -431,6 +439,10 @@ async function updateContextManagementMode(_mode: string) {
 
 // 加载配置列表
 async function loadConfigs() {
+  apiKeyRevealEpoch++
+  showApiKey.value = false
+  revealedApiKey.value = null
+  apiKeyRevealError.value = ''
   isLoading.value = true
   loadError.value = ''
   try {
@@ -658,6 +670,7 @@ async function commitPendingApiKeyUrlPatch(configId: string): Promise<void> {
 }
 
 function handleApiKeyUrlInput(field: 'url' | 'apiKey', value: string) {
+  if (field === 'apiKey' && showApiKey.value) revealedApiKey.value = value
   // 输入时快照渠道 ID：防抖窗口内用户可能切换渠道；回调触发时若渠道已切换则丢弃本次输入
   const configId = currentConfigId.value
   // 渠道切换后重置补丁：新渠道的输入不应与旧渠道残留补丁合并
@@ -668,6 +681,37 @@ function handleApiKeyUrlInput(field: 'url' | 'apiKey', value: string) {
   // 聚合：同一防抖窗口内 url / apiKey 各自累积，后输入字段不覆盖先输入字段
   pendingUrlApiKeyPatch = { ...pendingUrlApiKeyPatch, [field]: value }
   scheduleApiKeyUrlSave(() => commitPendingApiKeyUrlPatch(configId))
+}
+
+async function toggleApiKeyVisibility() {
+  if (showApiKey.value) {
+    apiKeyRevealEpoch++
+    showApiKey.value = false
+    revealedApiKey.value = null
+    apiKeyRevealError.value = ''
+    return
+  }
+  const config = currentConfig.value
+  if (!config) return
+  const configId = config.id
+  const pendingKey = pendingUrlApiKeyConfigId === configId ? pendingUrlApiKeyPatch?.apiKey : undefined
+  apiKeyRevealError.value = ''
+  if (pendingKey !== undefined || !window.__GRAYCODE_HOST || config.apiKey !== '••••••••') {
+    revealedApiKey.value = pendingKey ?? null
+    showApiKey.value = true
+    return
+  }
+  const epoch = ++apiKeyRevealEpoch
+  try {
+    const result = await sendToExtension<{ apiKey: string }>(MESSAGE_NAMES['config.revealApiKey'], { configId })
+    if (epoch !== apiKeyRevealEpoch || currentConfigId.value !== configId) return
+    revealedApiKey.value = result.apiKey
+    showApiKey.value = true
+  } catch (error) {
+    if (epoch !== apiKeyRevealEpoch || currentConfigId.value !== configId) return
+    apiKeyRevealError.value = '读取已保存的 API Key 失败，请重试。'
+    console.error('Failed to reveal channel API key:', error)
+  }
 }
 
 // 打开模型选择对话框前先落盘未保存的 url/apiKey 编辑。
@@ -887,6 +931,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  apiKeyRevealEpoch++
+  revealedApiKey.value = null
   if (unsubscribeConfigChanged) {
     unsubscribeConfigChanged()
     unsubscribeConfigChanged = null
@@ -949,6 +995,8 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
       <ChannelBasicSettings
         :config="currentConfig"
         :show-api-key="showApiKey"
+        :api-key-display-value="revealedApiKey ?? undefined"
+        :api-key-reveal-error="apiKeyRevealError"
         :type-options="typeOptions"
         :tool-mode-options="toolModeOptions"
         :timeout-draft="timeoutDraft"
@@ -959,7 +1007,7 @@ useDesktopSettingsDraft(prepareModelFetch, () => !!currentConfigId.value, () => 
         @api-key-url-input="handleApiKeyUrlInput"
         @timeout-input="onTimeoutInput"
         @max-context-tokens-input="onMaxContextTokensInput"
-        @toggle-show-api-key="showApiKey = !showApiKey"
+        @toggle-show-api-key="toggleApiKeyVisibility"
         @change-type="onChangeType"
       />
 
