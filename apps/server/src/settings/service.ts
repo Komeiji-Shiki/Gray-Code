@@ -3,6 +3,7 @@ import { validateDevelopmentSettings } from '../development/settings';
 import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { validateDiscordSettings } from '../bots/config';
 import { validateRemoteAccess } from '../transport/webOrigin';
+import { validateDecisionProvider } from '../model/decisionReviewer';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
@@ -335,6 +336,7 @@ export class SettingsService<T = never> {
     }
     for (const agent of settings.agents) {
       if (agent.modelId !== undefined && (typeof agent.modelId !== 'string' || !agent.modelId.trim())) throw new Error('智能体默认模型格式无效。');
+      if (agent.reviewerApi !== undefined && agent.reviewerApi !== 'systemone') throw new Error('审核接口类型无效。');
       this.tools.catalog(agent.toolNames);
       if (agent.reviewerToolNames !== undefined && (!Array.isArray(agent.reviewerToolNames) || agent.reviewerToolNames.some(name => typeof name !== 'string' || !name))) throw new Error('审核工具列表无效。');
       if (
@@ -349,6 +351,11 @@ export class SettingsService<T = never> {
         )
       )
         throw new Error("Reviewer provider does not exist.");
+      if (agent.reviewerApi === 'systemone' && agent.reviewerProviderId) {
+        const reviewer = settings.providers.find(profile => profile.id === agent.reviewerProviderId)!;
+        validateDecisionProvider(reviewer);
+        if (!reviewer.credentialRef) throw new Error('决策模型渠道需要配置 API Key。');
+      }
       if (
         !Number.isSafeInteger(agent.maxIterations) ||
         (agent.maxIterations !== -1 && agent.maxIterations < 1)

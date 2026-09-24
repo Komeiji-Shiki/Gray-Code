@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { sendToExtension } from '../../utils/vscode';
-interface Reviewer { id: string; name: string; reviewerProviderId?: string; reviewerToolNames?: string[] }
+interface Reviewer { id: string; name: string; reviewerProviderId?: string; reviewerApi?: '' | 'systemone'; reviewerToolNames?: string[] }
 const agents = ref<Reviewer[]>([]);
-const providers = ref<Array<{ id: string; name: string; model: string }>>([]);
+const providers = ref<Array<{ id: string; name: string; model: string; endpoint: string }>>([]);
 const tools = ref<Array<{ name: string }>>([]);
 const error = ref('');
 async function save(agent: Reviewer) {
@@ -13,6 +13,20 @@ async function save(agent: Reviewer) {
 function scope(agent: Reviewer, mode: string) {
   agent.reviewerToolNames = mode === 'selected' ? [] : undefined;
   void save(agent);
+}
+function setApi(agent: Reviewer, api: '' | 'systemone') {
+  agent.reviewerApi = api;
+  agent.reviewerProviderId = '';
+  void save(agent);
+}
+function availableProviders(agent: Reviewer) {
+  if (agent.reviewerApi !== 'systemone') return providers.value;
+  return providers.value.filter(provider => {
+    try {
+      const url = new URL(provider.endpoint);
+      return !!provider.model?.trim() && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+    } catch { return false; }
+  });
 }
 function toggle(agent: Reviewer, name: string, checked: boolean) {
   const selected = new Set(agent.reviewerToolNames); checked ? selected.add(name) : selected.delete(name);
@@ -30,7 +44,9 @@ onMounted(async () => {
     <h4>审核模型</h4><p>可完全关闭，也可仅审核指定工具。已明确需要人工确认的操作直接显示确认，不额外调用审核模型。</p>
     <div v-for="agent in agents" :key="agent.id" class="review-agent">
       <strong>{{ agent.name }}</strong>
-      <label>审核模型<select v-model="agent.reviewerProviderId" @change="save(agent)"><option value="">完全关闭</option><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.model }}</option></select></label>
+      <label>审核接口<select :value="agent.reviewerApi ?? ''" @change="setApi(agent, ($event.target as HTMLSelectElement).value as '' | 'systemone')"><option value="">普通生成模型</option><option value="systemone">System One 格式决策接口</option></select></label>
+      <p v-if="agent.reviewerApi === 'systemone'">请在渠道设置中创建审核专用渠道，填写服务商提供的完整决策接口 URL、模型名和 API Key。这些字段之后也可以在渠道设置中修改。</p>
+      <label>审核模型<select v-model="agent.reviewerProviderId" @change="save(agent)"><option value="">完全关闭</option><option v-for="provider in availableProviders(agent)" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.model }}</option></select></label>
       <template v-if="agent.reviewerProviderId">
         <label>审核范围<select :value="agent.reviewerToolNames === undefined ? 'mutations' : 'selected'" @change="scope(agent, ($event.target as HTMLSelectElement).value)"><option value="mutations">修改、执行及其他非读取操作</option><option value="selected">仅选择的工具</option></select></label>
         <div v-if="agent.reviewerToolNames" class="review-tools"><label v-for="tool in tools" :key="tool.name"><input type="checkbox" :checked="agent.reviewerToolNames.includes(tool.name)" @change="toggle(agent, tool.name, ($event.target as HTMLInputElement).checked)" />{{ tool.name }}</label></div>

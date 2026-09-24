@@ -59,6 +59,8 @@ import {
   createAskUserTool,
 } from "@graycode/core";
 import { ProviderModelAdapter } from "./model/adapter";
+import { reviewWithSystemOne } from './model/decisionReviewer';
+import { ChannelHttpExecutor } from '../../../backend/modules/channel/channelManager/channelHttpExecutor';
 import { SettingsService, type SecretCodec } from "./settings/service";
 import { WorkspaceFiles } from "./workspace/files";
 import { WorkspaceFileActions } from './workspace/fileActions';
@@ -362,6 +364,18 @@ export class PlatformApplication {
           .snapshot()
           .settings.workspaces.find((workspace) => workspace.id === id) ?? null,
       review: async (input) => {
+        if (input.agent.reviewerApi === 'systemone') {
+          try {
+            const profile = this.settings.snapshot().settings.providers.find(item => item.id === input.agent.reviewerProviderId);
+            if (!profile) throw new Error('决策模型渠道不存在。');
+            const credential = profile.credentialRef ? await this.settings.credential(profile.credentialRef) : null;
+            const proxy = this.product.runtimeSettings().getProxySettings();
+            return await reviewWithSystemOne(input, profile, credential ?? '', new ChannelHttpExecutor(() => proxy.enabled ? proxy.url : undefined));
+          } catch {
+            input.signal.throwIfAborted();
+            return { requireApproval: true, reason: '决策模型审核失败，需人工确认。' };
+          }
+        }
         const response = await this.models.generate({
           conversationId: `review-${randomUUID()}`,
           providerId: input.agent.reviewerProviderId!,

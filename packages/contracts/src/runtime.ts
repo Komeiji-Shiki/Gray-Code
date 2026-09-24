@@ -46,6 +46,8 @@ export interface AgentDefinition {
   approvalMode: ApprovalMode;
   toolApproval?: Record<string, 'auto' | 'ask' | 'deny'>;
   reviewerProviderId?: string;
+  /** 缺省使用普通生成模型；systemone 使用渠道中的专用决策接口。 */
+  reviewerApi?: 'systemone';
   /** 缺省按操作类型审核；空数组不审核工具，明确列表只审核所选工具。 */
   reviewerToolNames?: string[];
   maxIterations: number;

@@ -31,6 +31,7 @@ import { ProjectNavigation } from '../conversations/projects';
 import { deleteConversation } from '../conversations/delete';
 import { removePermissionAccount, resolveBotGuestActor } from '../bots/permissions';
 import { activateConversationWorkspace } from '../conversations/workspace';
+import { validateDecisionProvider } from '../model/decisionReviewer';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -392,13 +393,20 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.appearance', data: data.settings.appearance });
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: true } }); return { success: true };
       case 'platform.reviewers.get': return {
-        agents: ui.preferences.app.agents.map(({ id, name, reviewerProviderId, reviewerToolNames }) => ({ id, name, reviewerProviderId: reviewerProviderId ?? '', reviewerToolNames })),
-        providers: ui.preferences.app.providers.map(({ id, name, model }) => ({ id, name, model })), tools: this.app.tools.declarations().map(({ name }) => ({ name })),
+        agents: ui.preferences.app.agents.map(({ id, name, reviewerProviderId, reviewerApi, reviewerToolNames }) => ({ id, name, reviewerProviderId: reviewerProviderId ?? '', reviewerApi: reviewerApi ?? '', reviewerToolNames })),
+        providers: ui.preferences.value.channels.map(({ id, name, model, url }) => ({ id, name, model, endpoint: url })), tools: this.app.tools.declarations().map(({ name }) => ({ name })),
       };
       case 'platform.reviewers.update': {
         const agent = ui.preferences.app.agents.find(agent => agent.id === data.id);
         if (!agent) throw new Error('Agent 配置不存在。');
+        if (data.reviewerApi !== '' && data.reviewerApi !== 'systemone' && data.reviewerApi !== undefined) throw new Error('审核接口类型无效。');
+        if (data.reviewerApi === 'systemone' && data.reviewerProviderId) {
+          const channel = ui.preferences.value.channels.find(item => item.id === data.reviewerProviderId);
+          if (!channel) throw new Error('决策模型渠道不存在。');
+          validateDecisionProvider({ endpoint: channel.url, model: channel.model ?? '' });
+        }
         agent.reviewerProviderId = data.reviewerProviderId || undefined;
+        agent.reviewerApi = data.reviewerApi || undefined;
         agent.reviewerToolNames = Array.isArray(data.reviewerToolNames) ? [...new Set(data.reviewerToolNames.filter((name: unknown): name is string => typeof name === 'string'))] as string[] : undefined;
         ui.preferences.dirty = true;
         if (!ui.editing) await this.app.product.save(ui.preferences);
