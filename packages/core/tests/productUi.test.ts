@@ -56,6 +56,10 @@ test('the existing UI protocol uses original settings services and streams core 
     expect((await app.runtime.wait(result.runId))?.status).toBe('completed');
     const history = await call('conversation.getMessagesPaged', { conversationId: 'original-chat', limit: 120 });
     expect(history.messages[0].id).toBe('stable-user-id');
+    const positioned = await call('conversation.getMessagesPaged', { conversationId: 'original-chat', offset: 1, limit: 1 });
+    expect(positioned.messages).toHaveLength(1);
+    expect(positioned.messages[0].index).toBe(1);
+    expect(await call('conversation.getMessagePosition', { conversationId: 'original-chat', messageId: 'stable-user-id' })).toEqual({ index: 0 });
     // 应用同时发布原始客户端帧与供其他入口使用的后台帧，分别验证投递对象。
     const chunks = notifications.filter(event => event.message.type === 'streamChunk' && event.clientId === owner.clientId).map(event => event.message.data);
     expect(chunks.map(chunk => chunk.type)).toEqual(expect.arrayContaining(['toolsExecuting', 'toolIteration', 'complete']));
