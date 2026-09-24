@@ -392,12 +392,16 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     await jumpToMessage({ index })
   }
 
+  let consumingMessageJump = false
   async function consumePendingMessageJump(): Promise<void> {
+    if (consumingMessageJump) return
     const conversationId = chatStore.currentConversationId
     const pending = peekMessageJump(conversationId)
     if (!pending || (props.messages.length === 0 && messageMarkers.value.length === 0)) return
-    const target = takeMessageJump(conversationId)
-    if (target) await jumpToMessage(target)
+    consumingMessageJump = true
+    try {
+      if (await jumpToMessage(pending) && peekMessageJump(conversationId) === pending) takeMessageJump(conversationId)
+    } finally { consumingMessageJump = false }
   }
 
   function handleExternalMessageJump(event: MessageEvent): void {
@@ -727,7 +731,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   }, { immediate: true })
 
   watch(
-    [() => chatStore.currentConversationId, () => props.messages.length, () => messageMarkers.value.length],
+    [() => chatStore.currentConversationId, () => props.messages.length, () => messageMarkers.value.length,
+      () => chatStore.isLoadingMoreMessages],
     () => { void consumePendingMessageJump() },
     { immediate: true }
   )
