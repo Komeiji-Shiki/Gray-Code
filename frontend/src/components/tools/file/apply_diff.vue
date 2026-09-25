@@ -431,7 +431,7 @@ onBeforeUnmount(() => {
     <!-- 结果状态 -->
     <div v-if="resultData" class="result-status" :class="{ 'is-error': isFailed && !isPartial, 'is-partial': isPartial }">
       <span v-if="!isFailed && !isPartial" class="codicon codicon-check status-icon success"></span>
-      <span v-else-if="isPartial" class="codicon codicon-check status-icon partial"></span>
+      <span v-else-if="isPartial" class="codicon codicon-warning status-icon partial"></span>
       <span v-else class="codicon codicon-error status-icon error"></span>
       <span class="status-text">
         <template v-if="error">{{ error }}</template>

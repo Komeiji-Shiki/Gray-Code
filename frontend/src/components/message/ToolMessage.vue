@@ -197,10 +197,10 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       // 兼容：少数工具可能在 response.data.status 里返回 pending（一般用于“等待应用/审阅”）
       if (data?.status === 'pending') {
         status = 'awaiting_apply'
-      }
-
-      // 检查是否为部分成功 (针对 apply_diff 等工具)
-      if (success && data && data.status !== 'pending' && (data.partial === true || data.status === 'partial' || (data.appliedCount > 0 && data.failedCount > 0))) {
+      } else if (data && (data.partial === true || data.status === 'partial' || (data.appliedCount > 0 && data.failedCount > 0))) {
+        // 部分成功（apply_diff 等）：确实应用了一部分就不算失败。后端对失败的 hunk 会同时
+        // 给出 error 文本，旧实现把该判定挂在 `success &&` 上，success 被 error 拉成 false 后
+        // 这里进不来，头部就按 error 渲染成红色叉号。独立判定后回落为黄色警告。
         status = 'warning'
       }
 

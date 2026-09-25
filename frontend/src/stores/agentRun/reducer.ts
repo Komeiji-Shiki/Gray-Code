@@ -227,10 +227,9 @@ function deriveToolResultStatus(
   error: string | undefined,
   result: Record<string, unknown> | undefined
 ): ToolUsage['status'] {
-  if (typeof error === 'string' && error.trim()) return 'error'
-  if (result && result.success === false) return 'error'
-
-  // 部分接受（apply_diff 返回 partial:true 或 status:'partial'，或混合成败计数）→ warning
+  // 部分接受（apply_diff 返回 partial:true 或 status:'partial'，或混合成败计数）→ warning。
+  // 该判定必须早于 error：部分成功时上游仍带着失败块的 error 文本，
+  // 先判 error 会把「应用了一部分」误显示成整体失败（红色叉号）。
   if (result) {
     const data = result.data
     if (data && typeof data === 'object') {
@@ -243,6 +242,9 @@ function deriveToolResultStatus(
       }
     }
   }
+
+  if (typeof error === 'string' && error.trim()) return 'error'
+  if (result && result.success === false) return 'error'
 
   return 'success'
 }

@@ -36,15 +36,15 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
 
   // 明确的失败/取消/拒绝优先
   if (r?.cancelled || r?.rejected) return 'error'
-  if (r?.success === false) return 'error'
-  if (typeof r?.error === 'string' && r.error.trim()) return 'error'
 
   const data = r?.data
   if (data && typeof data === 'object') {
     // diff 等工具可能返回 data.status=pending 表示等待用户应用/审阅
     if ((data as any).status === 'pending') return 'awaiting_apply'
 
-    // 部分接受（用户拒绝了部分块或手动编辑内容）→ warning；与 apply_diff 返回的 partial 标记对齐
+    // 部分接受（用户拒绝了部分块或手动编辑内容）→ warning；与 apply_diff 返回的 partial 标记对齐。
+    // 必须早于 error 判定：部分成功时响应里仍带着失败块的 error 文本，
+    // 先判 error 会把「应用了一部分」显示成整体失败。
     if ((data as any).partial === true || (data as any).status === 'partial') return 'warning'
 
     const appliedCount = (data as any).appliedCount
@@ -53,6 +53,9 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
       return 'warning'
     }
   }
+
+  if (r?.success === false) return 'error'
+  if (typeof r?.error === 'string' && r.error.trim()) return 'error'
 
   return 'success'
 }
