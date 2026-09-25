@@ -11,7 +11,7 @@
  */
 
 import {
-    RAW_MAX, TREE_REC, DEFAULT_MEMORY_CONFIG,
+    RAW_MAX, DEFAULT_MEMORY_CONFIG,
     type LogEntry, type WakeBlock, type WakeResult,
     type NoteResult, type RecallResult, type CompressResult,
     type ZoomResult, type NapPrompt, type MemoryConfig,
@@ -19,11 +19,16 @@ import {
 import { validateRegexPattern } from '../../core/services/regexGuard';
 import type { MemoryStore, MemoryHost } from './MemoryStore';
 import { computeCover } from './cover';
-import { die, plural, MEMORY_CONFIG_BOUNDS, ZOOM_RAW_FALLBACK_MAX } from './logFormat';
+import { die, plural, MAX_TREE_SUMMARY_BYTES, MEMORY_CONFIG_BOUNDS, ZOOM_RAW_FALLBACK_MAX } from './logFormat';
 
 export class MemoryEngine {
     private config: MemoryConfig;
     private store: MemoryStore;
+    /**
+     * 上一次已提示的压缩任务签名（`待压缩块数:最老块`）：note 只在待压缩状态
+     * 发生变化时再次提示，避免每次追加记忆都重复推送同一段含正文的提示。
+     */
+    private lastNapNotice: string | null = null;
 
     constructor(private readonly host: MemoryHost, config?: Partial<MemoryConfig>) {
         this.config = { ...DEFAULT_MEMORY_CONFIG, ...config };
@@ -127,9 +132,9 @@ export class MemoryEngine {
             `\n${remaining} maintenance compressions remain after this one.`;
 
         const blockId = `${lo}-${hi - 1}`;
-        // 修改原因：compress 的摘要预算已按树记录宽度钳制（min(entryChars, TREE_REC-1)，见 compress），
+        // 修改原因：compress 的摘要预算已按树记录宽度钳制（min(entryChars, MAX_TREE_SUMMARY_BYTES)），
         //          提示语必须使用同一预算并按字节计，否则模型按 entryChars 生成超长摘要必然被拒。
-        const summaryLimit = Math.min(this.config.entryChars, TREE_REC - 1);
+        const summaryLimit = this.summaryLimit();
         const urgency = required
             ? 'This block is required before memory_wake can finish.'
             : 'Deferred maintenance: do not interrupt the current user task. Compress it after the current deliverable, or when memory_wake later requires it.';
@@ -146,6 +151,42 @@ export class MemoryEngine {
         if (todo.length === 0) return null;
         const [lo, hi] = todo[0];
         return this.napPrompt(lo, hi, await this.pendingCount(T) - 1);
+    }
+
+    /** 单行树摘要的字节预算：entryChars 与固定宽度树记录容量的较小值 */
+    private summaryLimit(): number {
+        return Math.min(this.config.entryChars, MAX_TREE_SUMMARY_BYTES);
+    }
+
+    /** 待压缩提示的签名：待压缩块数 + 最老块（集合未变化时不重复提示） */
+    private napSignature(nap: NapPrompt): string {
+        return `${nap.remaining + 1}:${nap.blockId}`;
+    }
+
+    /**
+     * 记录提示签名（不节流）：wake/compress 的提示总是返回，但会更新签名，
+     * 使紧随其后的 note 不重复同一段提示。
+     */
+    private markNapNotice(nap: NapPrompt | null): NapPrompt | null {
+        this.lastNapNotice = nap ? this.napSignature(nap) : null;
+        return nap;
+    }
+
+    /**
+     * 带节流的提示（note 专用）：追加记忆会改变记忆总数，但待压缩集合可能完全没变——
+     * 反复返回同一段包含记忆正文的提示只会持续推高上下文，而模型多半已经知道该维护任务。
+     * 仅当待压缩状态（块数 + 最老块）变化时才再次提示；无可压缩块时清除签名。
+     */
+    private async nextNapThrottled(T: number): Promise<NapPrompt | null> {
+        const nap = await this.nextNap(T);
+        if (nap === null) {
+            this.lastNapNotice = null;
+            return null;
+        }
+        const signature = this.napSignature(nap);
+        if (signature === this.lastNapNotice) return null;
+        this.lastNapNotice = signature;
+        return nap;
     }
 
     // ─── 分页 ──────────────────────────────────
@@ -267,7 +308,8 @@ export class MemoryEngine {
 
         let pendingCompression: NapPrompt | undefined;
         if (awake) {
-            const nap = await this.nextNap(snapshotT);
+            // wake 是会话入口：总是返回提示（同时更新签名，使紧随其后的 note 不重复同一段）
+            const nap = this.markNapNotice(await this.nextNap(snapshotT));
             if (nap) pendingCompression = nap;
         }
 
@@ -312,7 +354,7 @@ export class MemoryEngine {
         // 整条固定宽度记录容量校验（含头部开销）在 logAppend 锁内按真实 id 执行
         const id = await this.logAppend([{ date: today, text: trimmed }]);
 
-        const nap = await this.nextNap(id + 1);
+        const nap = await this.nextNapThrottled(id + 1);
         return { id, pendingCompression: nap ?? undefined };
     }
 
@@ -410,14 +452,14 @@ export class MemoryEngine {
                     die('A summary is one line.');
                 }
                 const byteLen = Buffer.byteLength(trimmed, 'utf-8');
-                // 修改原因：树摘要写入 treePut 用 TREE_REC=288 的固定宽度记录，pad() 只容纳
-                //           TREE_REC-1=287 字节；entryChars 上限按 LOG 记录宽度（约 1000）校验，
-                //           配置调高后 288+ 字节的摘要能通过 entryChars 校验，却在 treePut 的
-                //           pad() 处抛晦涩的 "Too long"（拒绝而非损坏，但体验差）。
-                // 修改方式：compress 的摘要预算按树记录宽度钳制为 min(entryChars, TREE_REC-1)，
+                // 修改原因：树摘要写入 treePut 用固定宽度记录，pad() 只容纳
+                //           MAX_TREE_SUMMARY_BYTES（=TREE_REC-1）字节；entryChars 上限按 LOG
+                //           记录宽度校验，配置调高后更长的摘要能通过 entryChars 校验，却在
+                //           treePut 的 pad() 处抛晦涩的 "Too long"（拒绝而非损坏，但体验差）。
+                // 修改方式：compress 的摘要预算按树记录宽度钳制为 min(entryChars, MAX_TREE_SUMMARY_BYTES)，
                 //           校验失败的错误信息与真实落盘容量一致，且与 napPrompt 提示同口径。
                 // 修改目的：配置调高后 compress 不再因记录宽度限制报错。
-                const summaryLimit = Math.min(this.config.entryChars, TREE_REC - 1);
+                const summaryLimit = this.summaryLimit();
                 if (byteLen > summaryLimit) {
                     die(`Too long: ${byteLen} bytes, limit ${summaryLimit}.`);
                 }
@@ -435,7 +477,7 @@ export class MemoryEngine {
             }
         }
 
-        const nap = await this.nextNap(T);
+        const nap = this.markNapNotice(await this.nextNap(T));
         return { done: said ? 1 : 0, pendingCompression: nap ?? undefined };
     }
 
@@ -533,7 +575,7 @@ export class MemoryEngine {
 
     /**
      * updateEntry: 原地覆写单条原始记忆的文本。
-     * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 1023 字节）。
+     * 新文本不得超过 entryChars 配置上限（整条记录容量由存储层按真实 id 精确校验）。
      */
     async updateEntry(id: number, text: string): Promise<void> {
         await this.store.updateEntry(id, text);
@@ -579,7 +621,7 @@ export class MemoryEngine {
 
     async updateConfig(updates: Partial<MemoryConfig>): Promise<MemoryConfig> {
         // 逐项校验：非法值直接抛错（与模块内 die() 的错误风格一致，工具层会转成失败结果），
-        // 避免 entryChars 被设为 >1000 后所有 note/compress 都在 pad() 抛 Too long。
+        // 避免 entryChars 超出记录容量后所有 note/compress 都在 pad() 抛 Too long。
         const validated: Partial<MemoryConfig> = {};
         for (const [key, min, max] of MEMORY_CONFIG_BOUNDS) {
             const value = updates[key];

@@ -131,6 +131,62 @@ describe('MemoryManager.compress', () => {
     });
 });
 
+describe('MemoryManager 压缩提示节流', () => {
+    test('待压缩状态未变化时 note 不重复提示', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-nap-throttle-'));
+        try {
+            const mm = new MemoryManager(dir, { entryChars: 280 } as any);
+            await mm.init();
+            await mm.note('a');
+            // T=2：出现首个待压缩块 [0,2) → 首次提示
+            const first = await mm.note('b');
+            expect(first.pendingCompression?.blockId).toBe('0-1');
+            // T=3：待压缩集合仍是 [0,2)（数量与最老块均未变）→ 不重复提示
+            const second = await mm.note('c');
+            expect(second.pendingCompression).toBeUndefined();
+            // T=4：新增 [2,4)，待压缩数量 1 → 2 → 状态变化，再次提示
+            const third = await mm.note('d');
+            expect(third.pendingCompression?.blockId).toBe('0-1');
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('compress 后紧接着的 note 不重复同一提示', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-nap-throttle2-'));
+        try {
+            const mm = new MemoryManager(dir, { entryChars: 280 } as any);
+            await mm.init();
+            for (const t of ['a', 'b', 'c', 'd']) await mm.note(t);
+            const compressed = await mm.compress('0-1', 'ab');
+            expect(compressed.done).toBe(1);
+            expect(compressed.pendingCompression).toBeTruthy();
+            // compress 已返回下一段提示（并记录签名）：note 不重复同一状态
+            const next = await mm.note('e');
+            expect(next.pendingCompression).toBeUndefined();
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('wake 提示后紧接着的 note 不重复同一提示', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-nap-throttle3-'));
+        try {
+            const mm = new MemoryManager(dir, { entryChars: 280 } as any);
+            await mm.init();
+            await mm.note('a');
+            await mm.note('b');
+            // wake 是会话入口：总是返回提示
+            const wake = await mm.wake();
+            expect(wake.pendingCompression?.blockId).toBe('0-1');
+            const next = await mm.note('c');
+            expect(next.pendingCompression).toBeUndefined();
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe('MemoryManager.wake', () => {
     test('缺失摘要时提示基于实际缺失的块构造（而非第一个待压缩块）', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-wake-'));

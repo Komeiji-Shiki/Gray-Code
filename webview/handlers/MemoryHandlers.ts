@@ -8,6 +8,7 @@
 import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { getGlobalMemoryManager, getMemoryManagerForWorkspace, listWorkspaceMemoryScopes } from '../../backend/modules/memory';
+import { MEMORY_CONFIG_BOUNDS } from '../../backend/modules/memory/logFormat';
 import type { MessageHandler } from '../types';
 
 /**
@@ -18,6 +19,17 @@ import type { MessageHandler } from '../types';
  */
 const MAX_BATCH_DELETE_IDS = 10000;
 const MAX_MEMORY_ENTRIES_LIMIT = 10000;
+
+/**
+ * 各运行时配置项的硬边界（单一来源：memory 模块的 MEMORY_CONFIG_BOUNDS）。
+ * 随 getMemoryConfig 下发，设置页输入框的 min/max 直接使用，避免前端硬编码上限
+ * 与后端漂移（例如 entryChars 上限随固定宽度记录尺寸调整）。
+ */
+function memoryConfigBounds(): Record<string, { min: number; max: number }> {
+  const out: Record<string, { min: number; max: number }> = {};
+  for (const [key, min, max] of MEMORY_CONFIG_BOUNDS) out[key] = { min, max };
+  return out;
+}
 
 /**
  * 记忆 handler 解析目标 MemoryManager：
@@ -58,9 +70,10 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
         entryChars: runtimeConfig.entryChars,
         partChars: runtimeConfig.partChars,
         partLines: runtimeConfig.partLines,
+        bounds: memoryConfigBounds(),
       });
     }
-    ctx.sendResponse(requestId, config);
+    ctx.sendResponse(requestId, { ...config, bounds: memoryConfigBounds() });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_MEMORY_CONFIG_ERROR', error.message || 'Failed to get memory config');
   }

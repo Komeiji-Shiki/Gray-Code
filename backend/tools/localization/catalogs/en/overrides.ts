@@ -10,6 +10,7 @@
  */
 
 import type { ToolDescriptionLocalization } from '../../types';
+import { MAX_ENTRY_CHARS, MAX_TREE_SUMMARY_BYTES } from '../../../../modules/memory/logFormat';
 
 export const overrides: Record<string, ToolDescriptionLocalization> = {
     // delete_code 的 "parameterMUST" 拼写错误位于其顶层 description
@@ -24,7 +25,7 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
 
     // memory_* 工具的源声明为中文，这里提供与源声明及 zh-CN/auxiliary.ts 语义对等的英文覆盖。
     // 必须保留：全局/工作区作用域（scope: global|workspace）、分页快照（part 1-based、snapshotT）、
-    // 单条长度上限（entryChars 默认 280 字节、可调至 1000）、压缩顺序（pendingCompression → memory_compress）、
+    // 单条长度上限（entryChars 默认 280 字节、上限 MAX_ENTRY_CHARS）、压缩顺序（pendingCompression → memory_compress）、
     // zoom 的二叉树节点（#a-b blockId）、forget 的三种 blockId（范围 16-31 / 单个 5 / 闭区间 1,3）。
     memory_wake: {
         description:
@@ -42,9 +43,9 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
         description:
             'Record a permanent memory that is likely to remain useful in future sessions.\n' +
             'The memory is saved to the current workspace\'s memory store (separate from global memory; memory_wake reads both).\n' +
-            'Single line of text, limited by the entryChars cap in memory_config (default max 280 characters, counted in bytes, accented characters take 2 bytes; can be raised up to 1000 via memory_config).\n' +
+            `Single line of text, limited by the entryChars cap in memory_config (default max 280 characters, counted in bytes, accented characters take 2 bytes; can be raised up to ${MAX_ENTRY_CHARS} via memory_config).\n` +
             'Do not record transient progress, work logs, repository-reconstructable content, secrets, or duplicates.\n' +
-            'If pendingCompression is returned, it is deferred maintenance. Do not interrupt the current user task; compress after the current deliverable.',
+            'If pendingCompression is returned, it is deferred maintenance. Do not interrupt the current user task; compress after the current deliverable. The same pending state is not reported again.',
         parameters: {
             text: 'The memory text to record. Single line, limited by the entryChars cap in memory_config (default max 280 characters).'
         }
@@ -67,12 +68,12 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
             'The memory system uses a binary tree structure: adjacent memories are merged pairwise into one-line summaries, and summaries are merged further.\n' +
             'pendingCompression from a successful memory_note or memory_wake is deferred maintenance and must not interrupt the current user task. It is immediately required only when memory_wake fails because a summary is missing.\n' +
             'Once maintenance starts, follow prompts in order. Independent scopes may be handled with calls in the same response.\n' +
-            'Parameters: blockId (block ID, e.g. "0-1"); summary (compressed summary text, one line, limited by the entryChars cap, default ≤280 bytes).\n' +
+            `Parameters: blockId (block ID, e.g. "0-1"); summary (compressed summary text, one line, limited to the smaller of the entryChars cap and the tree record capacity of ${MAX_TREE_SUMMARY_BYTES} bytes, ≤280 bytes under the default config).\n` +
             'With no arguments, returns the next pending compression prompt.\n' +
             'Scope: with a workspace open, defaults to the current workspace memory; pass scope="global" to operate on global memory.',
         parameters: {
             blockId: 'Block ID to compress (e.g. "0-1"). Copy it from the compression prompt.',
-            summary: 'The compressed summary text. One line, limited by the entryChars cap (default max 280 bytes). Preserve durable decisions, preferences, constraints, facts, and necessary context; drop transient progress and repetition. Do not fabricate.',
+            summary: `The compressed summary text. One line, no more than ${MAX_TREE_SUMMARY_BYTES} bytes and limited by the entryChars cap (max 280 bytes under the default config). Preserve durable decisions, preferences, constraints, facts, and necessary context; drop transient progress and repetition. Do not fabricate.`,
             scope: 'Memory scope. With a workspace open, defaults to the current workspace memory; pass "global" to operate on global memory, or "workspace" to explicitly operate on workspace memory.'
         }
     },
@@ -109,14 +110,14 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
             'View or modify configuration parameters of the permanent memory system.\n' +
             'Configurable items:\n' +
             '- wakeLines: line budget for wake output (default 96, ≈8k tokens)\n' +
-            '- entryChars: max bytes per memory entry (default 280, max 1000)\n' +
+            `- entryChars: max bytes per memory entry (default 280, max ${MAX_ENTRY_CHARS})\n` +
             '- partChars: max characters per output part (default 20000)\n' +
             '- partLines: max lines per output part (default 500)\n' +
             'With no arguments, shows the current config. With arguments, updates the corresponding items.\n' +
             'Changes only affect output formatting; nothing needs to be recomputed.',
         parameters: {
             wakeLines: 'Line budget for wake output. Larger values = more detail.',
-            entryChars: 'Max bytes per memory entry. Default 280, max 1000 (fixed-width record constraint, including record header overhead).',
+            entryChars: `Max bytes per memory entry. Default 280, max ${MAX_ENTRY_CHARS} (fixed-width record constraint, including record header overhead).`,
             partChars: 'Max characters per output part.',
             partLines: 'Max lines per output part.'
         }

@@ -14,17 +14,26 @@ import {
 } from './types';
 import { AsyncLock } from './AsyncLock';
 import {
-    assertRecordFits, die, ISO_DATE_RE, OLD_LOG_REC, pad, parse, records,
+    assertRecordFits, die, ISO_DATE_RE, isValidTreeRecord, isValidTreeSummary, logHeaderLooksLike,
+    LEGACY_LOG_RECS, LEGACY_TREE_REC, pad, parse, records,
 } from './logFormat';
 
 export class MemoryLogStore {
     private dir: string;
     private lock = new AsyncLock();
     /**
-     * 当前 LOG 记录宽度：新格式 1024（默认）；迁移失败且文件为旧格式（320 对齐非 1024 对齐）
-     * 时降级为 320——按 1024 解析旧记录会产生空结果/混拼乱码（见 repairLog）。
+     * 当前 LOG 记录宽度：当前格式 LOG_REC（默认）；迁移中止且文件为旧格式
+     * （320/1024 对齐非 LOG_REC 对齐）时降级为对应旧宽度——按新宽度解析旧记录
+     * 会产生空结果/混拼乱码（见 repairLog）。
      */
     private logRecMode: number = LOG_REC;
+
+    /**
+     * TREE 目录旧宽度（288B/条）迁移是否已检查过（实例级一次性标志）：
+     * 迁移失败的个别文件由读取路径的槽位合法性校验兜底（视为空槽触发重建），
+     * 不重复扫描目录。
+     */
+    private treeMigrated = false;
 
     /**
      * TREE 槽位占用位图缓存（size -> { mtimeMs, fileSize, slots }）：
@@ -88,19 +97,26 @@ export class MemoryLogStore {
 
     /**
      * 修复 LOG 文件（所有 LOG 访问的统一前置入口，必须在锁内调用）：
-     * 1. 旧格式（320B/条）无损迁移到新格式（LOG_REC=1024B/条）；
-     * 2. 撕裂的尾部半条记录按新宽度截断（与 repair() 语义一致）。
+     * 1. TREE 目录的旧宽度（288B/条）摘要迁移到当前宽度（TREE_REC）；
+     * 2. 旧 LOG 格式（320B/条、1024B/条）无损迁移到当前格式（LOG_REC=4096B/条）；
+     * 3. 撕裂的尾部半条记录按判定宽度截断（与 repair() 语义一致）。
      *
-     * 格式判定（按文件大小）：
-     * - size % LOG_REC === 0 且非 320 对齐 → 新格式，无需处理；
-     * - 其余（旧格式 320 对齐 / 撕裂尾巴 / 同时 320·1024 对齐的歧义尺寸）→ 先尝试严格迁移：
-     *   tryMigrateLog 要求「全部完整 320 切片均为合法记录（id 连续、日期 ISO）」才执行重写，
-     *   天然区分旧格式与新格式——新格式文件的第二个 320 切片必然落在第一条 1024 记录内部，
-     *   解析失败，因此歧义尺寸（lcm=5120 的倍数）无需额外判别；
-     * - 迁移未执行时保持现状（fail-open）：对齐文件不动（可能是损坏的旧/新格式，避免截断丢数据），
-     *   非对齐文件按 LOG_REC 截断撕裂尾（与旧 repair 行为一致）。
+     * 格式判定（按文件大小 + 内容探测）：
+     * - size % LOG_REC === 0 不能单独证明是当前格式：上一代宽度 1024 是 LOG_REC 的约数，
+     *   4096 对齐的旧文件必须靠内容探测排除；
+     * - 候选旧宽度按「从旧到新」逐个探测（LEGACY_LOG_RECS），内容匹配者胜：
+     *   probeLegacyFormat 要求前两条记录都是合法记录（id 0/1、ISO 日期）才认定，
+     *   文件过小（< 2 条）无法探测时交给全量严格校验判定（tryMigrateLog 要求
+     *   「全部完整切片均为合法记录（id 连续、日期 ISO）」才重写）；
+     *   当前格式文件的第二个旧宽度切片必然落在第一条记录内部，解析失败，因此
+     *   歧义尺寸（如 320 与 1024 的公倍数 5120）无需额外判别；
+     * - 迁移未执行时保持现状（fail-open）：对齐文件不动（可能是损坏的旧/新格式，
+     *   避免截断丢数据），非对齐文件按判定宽度截断撕裂尾（与旧 repair 行为一致）。
      */
     private async repairLog(): Promise<void> {
+        // TREE 旧宽度迁移与 LOG 处理独立：同一把锁保护下先行完成（一次性、幂等）
+        await this.migrateTreeFilesUnlocked();
+
         const logPath = this.logPath();
         let size: number;
         try {
@@ -115,85 +131,104 @@ export class MemoryLogStore {
             return;
         }
 
-        // 纯新格式（1024 对齐且非 320 对齐）：无需处理
-        if (size % LOG_REC === 0 && size % OLD_LOG_REC !== 0) {
-            this.logRecMode = LOG_REC;
-            return;
-        }
-
-        // 其余：先尝试严格迁移（旧格式 / 旧格式+撕裂尾 / 歧义尺寸中的旧格式）
-        if (await this.tryMigrateLog()) {
-            this.logRecMode = LOG_REC;
-            return;
-        }
-
-        // 迁移未执行：保持现状（fail-open，不丢数据）
-        if (size % LOG_REC === 0 || size % OLD_LOG_REC === 0) {
-            // 对齐文件不动。旧格式（320 对齐非 1024 对齐）→ 读/写降级为 320 宽度：
-            // 迁移失败说明含损坏记录，按 1024 解析会产生空结果/混拼乱码，
-            // 降级后损坏记录被跳过、合法记录仍可读。
-            this.logRecMode = size % LOG_REC === 0 ? LOG_REC : OLD_LOG_REC;
-            return;
-        }
-
-        // 非对齐（撕裂尾）：必须先判定格式倾向再截断——迁移失败场景下若文件是旧格式
-        // （320 对齐的主体 + 撕裂尾），按 1024 截断会直接删掉旧格式字节（M1）。
-        // probe 前两条 320 记录判定；probe 无法判定（<640B 小文件）时取截断损失更小的宽度。
-        const handle = await fs.open(logPath, 'r');
-        let legacyLike: boolean;
+        // 旧宽度探测（候选按「从旧到新」逐个探测，内容匹配者胜）：
+        // 探测阶段读写句柄先全部关闭，再执行迁移（Windows 上目标文件被占用时 rename 会 EPERM）
+        const probes: Array<{ rec: number; result: boolean | null }> = [];
         try {
-            const legacy = await this.probeLegacyFormat(handle, size);
-            legacyLike = legacy !== null ? legacy : size % OLD_LOG_REC <= size % LOG_REC;
-        } finally {
-            await handle.close();
+            const probeHandle = await fs.open(logPath, 'r');
+            try {
+                for (const rec of LEGACY_LOG_RECS) {
+                    if (size < rec) continue; // 比一条记录还小，不可能是该格式
+                    probes.push({ rec, result: await this.probeLegacyFormat(probeHandle, size, rec) });
+                }
+            } finally {
+                await probeHandle.close();
+            }
+        } catch (e: any) {
+            if (e?.code !== 'ENOENT') throw e;
         }
-        if (legacyLike) {
-            await this.truncateLogTail(logPath, size, OLD_LOG_REC);
-            this.logRecMode = OLD_LOG_REC;
+
+        // 旧宽度迁移：命中或无法判定的候选直接尝试无损迁移
+        //（允许撕裂尾：只迁移完整切片，尾部半条记录丢弃，与 repair 截断语义一致）；
+        // 迁移中止（内容不合法）且文件对齐该宽度时降级为该宽度继续读写。
+        for (const { rec, result } of probes) {
+            if (result === false) continue; // 明确不是该宽度
+            if (await this.tryMigrateLog(rec)) {
+                this.logRecMode = LOG_REC;
+                return;
+            }
+            if (size % rec === 0) {
+                this.logRecMode = rec;
+                return;
+            }
+        }
+
+        if (size % LOG_REC === 0) {
+            this.logRecMode = LOG_REC;
             return;
         }
-        await this.truncateLogTail(logPath, size, LOG_REC);
-        this.logRecMode = LOG_REC;
+
+        // 撕裂尾（非任何宽度对齐）：按内容倾向（或丢弃最少）的宽度截断，并沿用该宽度读写
+        const rec = this.pickTruncateRec(size, probes);
+        await this.truncateLogTail(logPath, size, rec);
+        this.logRecMode = rec;
     }
 
     /**
-     * 快速判别文件是否为旧格式（320B/条）：前两条 320 记录必须都是合法记录（id 0/1、ISO 日期）。
+     * 快速判别文件是否为指定旧宽度的格式：前两条该宽度记录必须都是合法记录（id 0/1、ISO 日期）。
      *
-     * 返回 true = 旧格式嫌疑；false = 确非旧格式（probe 读够且前两条不合法）；
-     * null = 文件过小（< 640B，仅一条）无法 probe。
-     * 复用于迁移判定（tryMigrateLog）与迁移失败后的截断宽度/降级判定（repairLog）。
+     * 返回 true = 该旧宽度嫌疑；false = 确非该宽度（probe 读够且前两条不合法）；
+     * null = 文件过小（< 2 条）无法 probe（交给全量严格校验判定）。
+     * 候选顺序「从旧到新」（见 LEGACY_LOG_RECS）：当前格式文件的第二个旧宽度切片
+     * 必然落在第一条记录内部，解析失败，因此歧义尺寸无需额外判别。
      */
     private async probeLegacyFormat(
         handle: import('fs').promises.FileHandle,
-        fileSize: number
+        fileSize: number,
+        rec: number
     ): Promise<boolean | null> {
-        if (fileSize < OLD_LOG_REC * 2) return null;
-        const probe = Buffer.alloc(OLD_LOG_REC * 2);
+        if (fileSize < rec * 2) return null;
+        const probe = Buffer.alloc(rec * 2);
         const { bytesRead: probeRead } = await handle.read(probe, 0, probe.length, 0);
-        if (probeRead < OLD_LOG_REC * 2) return null;
-        const p0 = probe.subarray(0, OLD_LOG_REC).toString('utf-8').trimEnd();
-        const p1 = probe.subarray(OLD_LOG_REC, OLD_LOG_REC * 2).toString('utf-8').trimEnd();
-        const e0 = p0 ? parse(p0) : null;
-        const e1 = p1 ? parse(p1) : null;
-        if (!e0 || e0.id !== 0 || !ISO_DATE_RE.test(e0.date) ||
-            !e1 || e1.id !== 1 || !ISO_DATE_RE.test(e1.date)) {
-            return false; // 非旧格式
-        }
-        return true;
+        if (probeRead < rec * 2) return null;
+        return logHeaderLooksLike(probe, rec);
     }
 
     /**
-     * 把 LOG 从旧格式（OLD_LOG_REC=320B/条）无损迁移到新格式（LOG_REC=1024B/条）：
-     * 按 320 逐条解析（复用 parse()），重新 pad 成 1024 写入 tmp，rename 原子替换。
+     * 撕裂尾文件（不对齐任何宽度）的截断宽度：
+     * - 内容匹配某旧宽度的（probe 为 true）→ 按该旧宽度截断（旧格式主体 + 撕裂尾时
+     *   按当前宽度截断会删掉旧格式字节）；
+     * - 能被探测且被明确否定的（probe 为 false）→ 主体是当前格式，按当前宽度截断；
+     * - 文件太小而无法探测（probe 全为 null）→ 取余数最小（保留最多）的宽度。
+     */
+    private pickTruncateRec(
+        size: number,
+        probes: Array<{ rec: number; result: boolean | null }>
+    ): number {
+        for (const { rec, result } of probes) {
+            if (result === true) return rec;
+        }
+        if (probes.some(p => p.result === false)) return LOG_REC;
+        let best = LOG_REC;
+        for (const rec of LEGACY_LOG_RECS) {
+            if (size % rec < size % best) best = rec;
+        }
+        return best;
+    }
+
+    /**
+     * 把 LOG 从指定旧宽度（sourceRec：320 或 1024）无损迁移到当前格式（LOG_REC）：
+     * 按 sourceRec 逐条解析（复用 parse()），重新 pad 成 LOG_REC 写入 tmp，rename 原子替换。
      *
-     * 判定/幂等：只有「全部完整 320 切片均为合法记录（id 连续、日期 ISO）」的文件才会被
-     * 迁移——新格式或损坏文件任一切片不合法即中止，原文件不动（fail-open，不丢数据）；
-     * 迁移成功后文件为 1024 对齐，后续调用直接返回 false。
+     * 判定/幂等：只有「全部完整切片均为合法记录（id 连续、日期 ISO）」的文件才会被迁移——
+     * 任一完整切片不合法即中止，原文件不动（fail-open，不丢数据）；迁移成功后文件为
+     * LOG_REC 对齐，下次探测（detectLegacyLogRec）不再命中。
+     * 调用方（repairLog）已用前两条记录做过格式探测，此处再做全量严格校验。
      * 撕裂尾巴：只迁移完整切片，尾部半条记录被丢弃（与 repair 截断语义一致）。
      * 崩溃安全：写 LOG.txt.tmp 后 rename 原子替换；任何失败/中止都清理 tmp。
      * 必须在锁内调用（写路径经 repairLog，读路径经 ensureLogMigrated）。
      */
-    private async tryMigrateLog(): Promise<boolean> {
+    private async tryMigrateLog(sourceRec: number): Promise<boolean> {
         const logPath = this.logPath();
         const tmpPath = `${logPath}.tmp`;
         let migrated = false;
@@ -202,32 +237,25 @@ export class MemoryLogStore {
             let valid = false;
             try {
                 const stat = await handle.stat();
-                if (stat.size >= OLD_LOG_REC) {
-                    // 快速判别：前两条 320 记录必须都合法（id 0/1、ISO 日期），否则不是旧格式
-                    // ——新格式/损坏文件的第二个 320 切片必然落在第一条 1024 记录内部，解析失败。
-                    // 避免大文件每次访问都全量扫描（歧义尺寸下 1024 对齐的新文件也会走到这里）。
-                    // probe 返回 null（<640B 单条记录小文件）时不拦截，交给全量校验判定。
-                    const legacy = await this.probeLegacyFormat(handle, stat.size);
-                    if (legacy === false) return false; // 非旧格式
-                }
+                if (stat.size >= sourceRec) {
                     const outHandle = await fs.open(tmpPath, 'w');
                     try {
                         valid = true;
                         let outCount = 0;
                         const CHUNK = 4096; // 每次最多处理的旧记录条数（≈1.3MB）
-                        for (let base = 0; base < stat.size; base += CHUNK * OLD_LOG_REC) {
-                            const bytes = Math.min(CHUNK * OLD_LOG_REC, stat.size - base);
+                        for (let base = 0; base < stat.size; base += CHUNK * sourceRec) {
+                            const bytes = Math.min(CHUNK * sourceRec, stat.size - base);
                             const buf = Buffer.alloc(bytes);
                             const { bytesRead } = await handle.read(buf, 0, bytes, base);
-                            const effective = Math.floor(bytesRead / OLD_LOG_REC);
+                            const effective = Math.floor(bytesRead / sourceRec);
                             const kept: Buffer[] = [];
                             for (let i = 0; i < effective; i++) {
-                                const idx = base / OLD_LOG_REC + i; // 旧格式 id 连续，切片序号即期望 id
-                                const slice = buf.subarray(i * OLD_LOG_REC, (i + 1) * OLD_LOG_REC);
+                                const idx = base / sourceRec + i; // 旧格式 id 连续，切片序号即期望 id
+                                const slice = buf.subarray(i * sourceRec, (i + 1) * sourceRec);
                                 const str = slice.toString('utf-8').trimEnd();
                                 const entry = str ? parse(str) : null;
                                 // 严格校验：任一完整切片不是合法记录（空/损坏/id 不连续/日期非 ISO）
-                                // 即中止迁移——防止把新格式或损坏文件误判为旧格式而重写损坏。
+                                // 即中止迁移——防止把其他宽度的文件误判为旧格式而重写损坏。
                                 if (!entry || entry.id !== idx || !ISO_DATE_RE.test(entry.date)) {
                                     valid = false;
                                     break;
@@ -241,6 +269,7 @@ export class MemoryLogStore {
                     } finally {
                         await outHandle.close();
                     }
+                }
             } finally {
                 await handle.close();
             }
@@ -255,6 +284,155 @@ export class MemoryLogStore {
             // fail-open：迁移失败不影响正常读写——原文件不动，仅告警（残留 tmp 由下次尝试清理）
             try { await fs.unlink(tmpPath); } catch { /* 忽略 */ }
             console.warn(`[MemoryManager] LOG migration skipped (${e?.message ?? e}); the file is kept as-is.`);
+        }
+        return migrated;
+    }
+
+    /**
+     * 树格式迁移的读取侧入口（未持锁路径调用）：取锁后执行一次迁移检查。
+     * 已持锁路径（treePut/treeDrop/deleteRange/truncateLog/…）由 repairLog 内部直接完成。
+     */
+    private async ensureTreeReady(): Promise<void> {
+        if (this.treeMigrated) return;
+        const release = await this.lock.acquire();
+        try {
+            await this.migrateTreeFilesUnlocked();
+        } finally {
+            release();
+        }
+    }
+
+    /**
+     * 迁移 TREE 目录下所有旧宽度（288B/条）摘要文件到当前宽度（TREE_REC）。
+     *
+     * 幂等且只执行一次（实例级标志）：迁移后文件为 TREE_REC 对齐，再次调用直接跳过。
+     * 个别文件迁移失败（内容不合法）时保持原样——读取路径的槽位合法性校验会把
+     * 错位内容判为无效（视为空槽），触发重新压缩（树是缓存，可重建）。
+     * 必须在锁内调用。
+     */
+    private async migrateTreeFilesUnlocked(): Promise<void> {
+        if (this.treeMigrated) return;
+        // 先置位：迁移失败的个别文件由读取路径兜底，不再反复扫描目录
+        this.treeMigrated = true;
+        let names: string[];
+        try {
+            names = await fs.readdir(path.join(this.dir, 'TREE'));
+        } catch {
+            return; // 无 TREE 目录：尚未初始化
+        }
+        let migratedAny = false;
+        for (const name of names) {
+            if (!/^\d+$/.test(name)) continue; // 只处理块文件（忽略 .tmp/备份）
+            const p = path.join(this.dir, 'TREE', name);
+            try {
+                const size = (await fs.stat(p)).size;
+                if (size === 0) continue;
+                if (await this.migrateTreeFile(p, size)) migratedAny = true;
+            } catch (e: any) {
+                console.warn(`[MemoryManager] TREE ${name} migration skipped (${e?.message ?? e}); the file is kept as-is.`);
+            }
+        }
+        if (migratedAny) this.treeSlotCache.clear();
+    }
+
+    /**
+     * 处理单个 TREE 文件：旧宽度（LEGACY_TREE_REC）→ 当前宽度（TREE_REC）无损迁移。
+     * 返回 true 表示发生了迁移（需失效槽位缓存）。
+     *
+     * - 已是当前宽度（TREE_REC 对齐且非旧宽度对齐）：无需处理；
+     *   两者同时对齐时（公倍数 9216 的倍数）仍需内容探测排除旧宽度；
+     * - 内容确非旧宽度（前两条切片不是合法定宽记录）且大小未对齐当前宽度：
+     *   按当前宽度截断撕裂尾（与 repair 语义一致）；
+     * - 旧宽度嫌疑或无法判定（单条小文件）：全量校验后重写。
+     */
+    private async migrateTreeFile(p: string, size: number): Promise<boolean> {
+        const overridesCurrent = size % TREE_REC === 0 && size % LEGACY_TREE_REC !== 0;
+        if (overridesCurrent) return false;
+
+        let legacyLike: boolean | null = null;
+        const handle = await fs.open(p, 'r');
+        try {
+            legacyLike = await this.probeLegacyTree(handle, size);
+        } finally {
+            await handle.close();
+        }
+        if (legacyLike === false) {
+            // 确非旧宽度：可能是撕裂尾的当前宽度文件，按当前宽度截断
+            if (size % TREE_REC !== 0) await this.repair(p, TREE_REC);
+            return false;
+        }
+        // 旧宽度嫌疑（含无法判定的单条文件）：全量校验后重写
+        return await this.rewriteTreeFileAsCurrent(p, size);
+    }
+
+    /**
+     * 探测 TREE 文件是否为旧宽度（288B/条）：前两条旧宽度切片都必须是以
+     * 换行结尾的合法定宽记录（isValidTreeRecord）。
+     * 返回 true = 旧宽度嫌疑；false = 确非；null = 文件过小（< 2 条）无法探测。
+     */
+    private async probeLegacyTree(
+        handle: import('fs').promises.FileHandle,
+        fileSize: number
+    ): Promise<boolean | null> {
+        if (fileSize < LEGACY_TREE_REC * 2) return null;
+        const probe = Buffer.alloc(LEGACY_TREE_REC * 2);
+        const { bytesRead } = await handle.read(probe, 0, probe.length, 0);
+        if (bytesRead < probe.length) return null;
+        for (let i = 0; i < 2; i++) {
+            if (!isValidTreeRecord(probe.subarray(i * LEGACY_TREE_REC, (i + 1) * LEGACY_TREE_REC))) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 按旧宽度（LEGACY_TREE_REC）逐条解析 TREE 文件，校验后重写为当前宽度：
+     * 任一完整切片不是合法记录即中止（fail-open，原文件不动）；撕裂尾巴丢弃。
+     * 崩溃安全：写 <file>.tmp 后 rename 原子替换；任何失败/中止都清理 tmp。
+     */
+    private async rewriteTreeFileAsCurrent(p: string, size: number): Promise<boolean> {
+        const tmpPath = `${p}.tmp`;
+        let migrated = false;
+        try {
+            const handle = await fs.open(p, 'r');
+            let valid = false;
+            try {
+                const outHandle = await fs.open(tmpPath, 'w');
+                try {
+                    valid = true;
+                    const CHUNK = 4096;
+                    for (let base = 0; base < size; base += CHUNK * LEGACY_TREE_REC) {
+                        const bytes = Math.min(CHUNK * LEGACY_TREE_REC, size - base);
+                        const buf = Buffer.alloc(bytes);
+                        const { bytesRead } = await handle.read(buf, 0, bytes, base);
+                        const effective = Math.floor(bytesRead / LEGACY_TREE_REC);
+                        const kept: Buffer[] = [];
+                        for (let i = 0; i < effective; i++) {
+                            const slice = buf.subarray(i * LEGACY_TREE_REC, (i + 1) * LEGACY_TREE_REC);
+                            if (!isValidTreeRecord(slice)) {
+                                valid = false;
+                                break;
+                            }
+                            // 去尾部空格与换行后按当前宽度重新成帧；空槽保持为空槽
+                            kept.push(pad(slice.toString('utf-8').trimEnd(), TREE_REC));
+                        }
+                        if (!valid) break;
+                        if (kept.length > 0) await outHandle.write(Buffer.concat(kept));
+                    }
+                } finally {
+                    await outHandle.close();
+                }
+            } finally {
+                await handle.close();
+            }
+            if (valid) {
+                await fs.rename(tmpPath, p);
+                migrated = true;
+            } else {
+                await fs.unlink(tmpPath).catch(() => { /* 无残留则忽略 */ });
+            }
+        } catch (e: any) {
+            try { await fs.unlink(tmpPath); } catch { /* 忽略 */ }
+            console.warn(`[MemoryManager] TREE migration skipped (${e?.message ?? e}); the file is kept as-is.`);
         }
         return migrated;
     }
@@ -304,7 +482,7 @@ export class MemoryLogStore {
     async logAppend(items: Array<{ date: string; text: string }>): Promise<number> {
         const release = await this.lock.acquire();
         try {
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            await this.repairLog(); // 打开前修复：TREE 迁移 + 旧 LOG 格式迁移 + 撕裂尾截断
             const rec = this.logRecMode;
             const base = await this.logLen();
             const chunks: Buffer[] = [];
@@ -395,9 +573,10 @@ export class MemoryLogStore {
         }
     }
 
-    /** 读取树摘要 */
+    /** 读取树摘要（首次访问时先完成旧宽度迁移） */
     async treeGet(lo: number, hi: number): Promise<string | null> {
         const size = hi - lo;
+        await this.ensureTreeReady();
         try {
             const handle = await fs.open(this.treePath(size), 'r');
             try {
@@ -405,7 +584,9 @@ export class MemoryLogStore {
                 const { bytesRead } = await handle.read(buf, 0, TREE_REC, (lo / size) * TREE_REC);
                 if (bytesRead < TREE_REC) return null;
                 const str = buf.toString('utf-8').trimEnd();
-                return str || null;
+                // 槽位合法性校验：未迁移/损坏的旧宽度文件按新宽度读会拼入记录尾换行，
+                // 此时视为无摘要（触发重新压缩），而不是把乱码当摘要展示。
+                return isValidTreeSummary(str) ? str : null;
             } finally {
                 await handle.close();
             }
@@ -419,6 +600,7 @@ export class MemoryLogStore {
         const size = hi - lo;
         const release = await this.lock.acquire();
         try {
+            await this.migrateTreeFilesUnlocked();
             const p = this.treePath(size);
             await this.repair(p, TREE_REC);
             const n = await this.count(p, TREE_REC);
@@ -437,11 +619,13 @@ export class MemoryLogStore {
             }
 
             // treeDrop 会把中间槽位清空以保留后续块；允许重新压缩时复用该空槽。
+            // 「空」的判定与读取路径一致（isValidTreeSummary）：未迁移/错位的旧宽度内容
+            // 视为空槽可覆盖，否则会永远无法重建（pending 要求该块而写入被拒）。
             const handle = await fs.open(p, 'r+');
             try {
                 const buffer = Buffer.alloc(TREE_REC);
                 await handle.read(buffer, 0, TREE_REC, targetIndex * TREE_REC);
-                if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) return false;
+                if (isValidTreeSummary(buffer.toString('utf-8'))) return false;
                 const record = pad(text, TREE_REC);
                 await handle.write(record, 0, record.length, targetIndex * TREE_REC);
                 this.treeCacheInvalidate(size);
@@ -465,8 +649,11 @@ export class MemoryLogStore {
      * 替代逐槽 open/read/close（记忆量大时 O(T) 次文件句柄循环）。
      * 文件不存在视为 0 槽；写路径已主动失效（treeCacheInvalidate），读路径以
      * mtime+size 一致性 + cache.set 前二次 stat 双重兜底并发窗口。
+     * 「有内容」的判定与 treeGet 一致（isValidTreeSummary）：- 跨宽度错位读取的
+     * 拼接内容视为空槽，以便 pending 要求重建（否则该块永远缺失且 wake 报 blank）。
      */
     private async treeSlotBitmap(size: number): Promise<{ have: number; slots: boolean[] }> {
+        await this.ensureTreeReady();
         const p = this.treePath(size);
         let stat: import('fs').Stats;
         try {
@@ -502,7 +689,7 @@ export class MemoryLogStore {
             }
             for (let k = 0; k < have; k++) {
                 const slice = buf.subarray(k * TREE_REC, (k + 1) * TREE_REC);
-                slots.push(slice.toString('utf-8').trimEnd().length > 0);
+                slots.push(isValidTreeSummary(slice.toString('utf-8')));
             }
         }
         if (cacheable) {
@@ -517,7 +704,8 @@ export class MemoryLogStore {
         let size = hi - lo;
         const release = await this.lock.acquire();
         try {
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            await this.migrateTreeFilesUnlocked();
+            await this.repairLog(); // 打开前修复：TREE/旧格式迁移 + 撕裂尾截断
             const T = await this.logLen();
             while (size <= T) {
                 const p = this.treePath(size);
@@ -536,7 +724,7 @@ export class MemoryLogStore {
                         for (let i = kStart; i < clearEnd; i++) {
                             const buffer = Buffer.alloc(TREE_REC);
                             await handle.read(buffer, 0, TREE_REC, i * TREE_REC);
-                            if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) {
+                            if (isValidTreeSummary(buffer.toString('utf-8'))) {
                                 gone.push([i * size, (i + 1) * size]);
                                 await handle.write(emptyRecord, 0, emptyRecord.length, i * TREE_REC);
                             }
@@ -548,7 +736,7 @@ export class MemoryLogStore {
                         while (trailingCount > 0) {
                             buffer.fill(0);
                             await handle.read(buffer, 0, TREE_REC, (trailingCount - 1) * TREE_REC);
-                            if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) break;
+                            if (isValidTreeSummary(buffer.toString('utf-8'))) break;
                             trailingCount--;
                         }
                         if (trailingCount < n) {
@@ -611,7 +799,8 @@ export class MemoryLogStore {
 
     /**
      * updateEntry: 原地覆写单条原始记忆的文本。
-     * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 1023 字节）。
+     * 新文本不得超过 entryChars 配置上限；整条记录的容量由 assertRecordFits
+     * 按真实 id 精确校验（记录宽度为当前 logRecMode）。
      */
     async updateEntry(id: number, text: string): Promise<void> {
         const entryChars = this.getConfig().entryChars;
@@ -629,7 +818,7 @@ export class MemoryLogStore {
         // 基于过期 id 的写入会越过 EOF，产生零填充垃圾记录。
         const release = await this.lock.acquire();
         try {
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            await this.repairLog(); // 打开前修复：TREE 迁移 + 旧 LOG 格式迁移 + 撕裂尾截断
             const rec = this.logRecMode;
             const T = await this.logLen();
             if (id < 0 || id >= T) {
@@ -686,7 +875,7 @@ export class MemoryLogStore {
                 die(`Invalid delete range: lo=${lo}, hi=${hi}.`);
             }
             const logPath = this.logPath();
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            await this.repairLog(); // 打开前修复：TREE 迁移 + 旧 LOG 格式迁移 + 撕裂尾截断
             T = await this.logLen();
             if (lo < 0 || lo >= T) {
                 die(`No memory at index ${lo}.`);
@@ -801,7 +990,7 @@ export class MemoryLogStore {
         const release = await this.lock.acquire();
         try {
             const logPath = this.logPath();
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            await this.repairLog(); // 打开前修复：TREE 迁移 + 旧 LOG 格式迁移 + 撕裂尾截断
             const T = await this.logLen();
             const maxId = sorted[sorted.length - 1];
             if (maxId >= T) {
@@ -939,7 +1128,7 @@ export class MemoryLogStore {
             // 其余写路径（logAppend/updateEntry/deleteRange/deleteEntries）均为
             // repairLog 在前、logLen 在后，此处与之一致。
             const logPath = this.logPath();
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            await this.repairLog(); // 打开前修复：TREE 迁移 + 旧 LOG 格式迁移 + 撕裂尾截断
             const T = await this.logLen();
             if (keepId >= T) {
                 return { removed: 0 };

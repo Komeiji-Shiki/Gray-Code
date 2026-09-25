@@ -19,6 +19,8 @@ const props = defineProps<{
   entryChars: number
   partChars: number
   partLines: number
+  /** 各配置项的后端硬边界（key → {min,max}），用于渲染输入范围；缺失时用内置兜底值 */
+  configBounds?: Record<string, { min: number; max: number }>
   isSaving: boolean
   statusMessage: string
   statusError: boolean
@@ -43,6 +45,19 @@ const wakeLinesModel = computed({ get: () => props.wakeLines, set: (v: number) =
 const entryCharsModel = computed({ get: () => props.entryChars, set: (v: number) => emit('update:entryChars', v) })
 const partCharsModel = computed({ get: () => props.partChars, set: (v: number) => emit('update:partChars', v) })
 const partLinesModel = computed({ get: () => props.partLines, set: (v: number) => emit('update:partLines', v) })
+
+/**
+ * 配置项边界的兜底值（与 backend/modules/memory/logFormat.MEMORY_CONFIG_BOUNDS 同值）：
+ * 仅在后端响应未携带 bounds 时使用；正常路径以后端下发值为准。
+ */
+const FALLBACK_BOUNDS: Record<string, { min: number; max: number }> = {
+  wakeLines: { min: 1, max: 10000 },
+  entryChars: { min: 1, max: 4072 },
+  partChars: { min: 1, max: 1000000 },
+  partLines: { min: 1, max: 100000 },
+}
+const boundMin = (key: string): number => props.configBounds?.[key]?.min ?? FALLBACK_BOUNDS[key]?.min ?? 1
+const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALLBACK_BOUNDS[key]?.max ?? 1
 </script>
 
 <template>
@@ -109,7 +124,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
           {{ t('components.settings.settingsPanel.memory.runtime.wakeLines.description') }}
         </p>
         <div class="number-input-row">
-          <input type="number" v-model.number="wakeLinesModel" min="1" max="500" class="form-input-number" :disabled="!enabled" />
+          <input type="number" v-model.number="wakeLinesModel" :min="boundMin('wakeLines')" :max="boundMax('wakeLines')" class="form-input-number" :disabled="!enabled" />
           <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.wakeLines.unit') }}</span>
         </div>
       </div>
@@ -121,7 +136,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
           {{ t('components.settings.settingsPanel.memory.runtime.entryChars.description') }}
         </p>
         <div class="number-input-row">
-          <input type="number" v-model.number="entryCharsModel" min="1" max="1000" class="form-input-number" :disabled="!enabled" />
+          <input type="number" v-model.number="entryCharsModel" :min="boundMin('entryChars')" :max="boundMax('entryChars')" class="form-input-number" :disabled="!enabled" />
           <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
         </div>
       </div>
@@ -133,7 +148,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
           {{ t('components.settings.settingsPanel.memory.runtime.partChars.description') }}
         </p>
         <div class="number-input-row">
-          <input type="number" v-model.number="partCharsModel" min="100" max="100000" step="100" class="form-input-number" :disabled="!enabled" />
+          <input type="number" v-model.number="partCharsModel" :min="boundMin('partChars')" :max="boundMax('partChars')" step="100" class="form-input-number" :disabled="!enabled" />
           <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partChars.unit') }}</span>
         </div>
       </div>
@@ -145,7 +160,7 @@ const partLinesModel = computed({ get: () => props.partLines, set: (v: number) =
           {{ t('components.settings.settingsPanel.memory.runtime.partLines.description') }}
         </p>
         <div class="number-input-row">
-          <input type="number" v-model.number="partLinesModel" min="10" max="2000" step="10" class="form-input-number" :disabled="!enabled" />
+          <input type="number" v-model.number="partLinesModel" :min="boundMin('partLines')" :max="boundMax('partLines')" step="10" class="form-input-number" :disabled="!enabled" />
           <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partLines.unit') }}</span>
         </div>
       </div>

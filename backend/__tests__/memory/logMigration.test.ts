@@ -1,10 +1,10 @@
 /**
- * LOG 旧格式（320B/条）→ 新格式（LOG_REC=1024B/条）迁移回归测试：
- * 1. 旧格式文件打开后数据无损（文本/日期/id 完整），文件被重写为新格式（1024 对齐）
+ * LOG 旧格式（320B/条 与 1024B/条）→ 当前格式（LOG_REC=4096B/条）迁移回归测试：
+ * 1. 旧格式文件打开后数据无损（文本/日期/id 完整），文件被重写为当前格式（LOG_REC 对齐）
  * 2. 迁移幂等：首次访问触发一次原子替换，再次访问不重复重写
  * 3. 旧格式 + 撕裂尾巴：完整记录无损迁移，尾巴被丢弃
- * 4. 新格式文件不受影响（不触发重写，字节不变）
- * 5. 歧义尺寸（5120 = 16×320 = 5×1024）：内容判别，旧格式正确迁移
+ * 4. 当前格式文件不受影响（不触发重写，字节不变）
+ * 5. 歧义尺寸（5120 = 16×320 = 5×1024；4096 = 4×1024）：内容判别，旧格式正确迁移
  * 6. 320 对齐但内容非旧格式（垃圾）：不迁移、不抛错（fail-open），文件保持原样
  * 7. 迁移后 wake/recall 输出完整
  * 8. 迁移后可正常追加/编辑/删除
@@ -15,10 +15,13 @@ import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { LOG_REC } from '../../modules/memory/types';
 
-// 旧格式固定宽度（迁移前的 LOG_REC=320）
+// 早期固定宽度（LOG_REC=320 时代）
 const OLD_REC = 320;
+// 上一代固定宽度（LOG_REC=1024 时代）：与当前宽度 4096 不互质（1024 × 4 = 4096），
+// 4096 对齐的文件必须靠内容探测才能区分两代格式
+const LEGACY_REC = 1024;
 
-/** 构造一条旧格式记录（320B：「#id date text」+ 空格填充 + 换行） */
+/** 构造一条 320B 旧记录（「#id date text」+ 空格填充 + 换行） */
 function oldRecord(id: number, date: string, text: string): Buffer {
     const rec = Buffer.alloc(OLD_REC);
     const line = Buffer.from(`#${id} ${date} ${text}`, 'utf-8');
@@ -29,12 +32,34 @@ function oldRecord(id: number, date: string, text: string): Buffer {
     return rec;
 }
 
-/** 构造旧格式 LOG 文件（创建目录 + LOG.txt），可选追加撕裂尾巴，返回目录 */
-function makeOldLog(texts: string[], tail?: Buffer): string {
+/** 构造一条 1024B 旧记录（上一代格式） */
+function legacyRecord(id: number, date: string, text: string): Buffer {
+    const rec = Buffer.alloc(LEGACY_REC);
+    const line = Buffer.from(`#${id} ${date} ${text}`, 'utf-8');
+    if (line.length > LEGACY_REC - 1) throw new Error(`fixture too long: ${line.length} bytes`);
+    line.copy(rec);
+    rec.fill(0x20, line.length, LEGACY_REC - 1);
+    rec[LEGACY_REC - 1] = 0x0a;
+    return rec;
+}
+
+/** 以指定宽度构造 LOG 文件（创建目录 + LOG.txt），可选追加撕裂尾巴，返回目录 */
+function makeLogWith(rec: number, texts: string[], tail?: Buffer): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-migrate-'));
-    const records = texts.map((t, i) => oldRecord(i, '2024-01-01', t));
+    const records = texts.map((t, i) =>
+        rec === OLD_REC ? oldRecord(i, '2024-01-01', t) : legacyRecord(i, '2024-01-01', t));
     fs.writeFileSync(path.join(dir, 'LOG.txt'), Buffer.concat([...records, ...(tail ? [tail] : [])]));
     return dir;
+}
+
+/** 构造旧格式 LOG 文件（320B/条） */
+function makeOldLog(texts: string[], tail?: Buffer): string {
+    return makeLogWith(OLD_REC, texts, tail);
+}
+
+/** 构造上一代格式 LOG 文件（1024B/条） */
+function makeLegacyLog(texts: string[], tail?: Buffer): string {
+    return makeLogWith(LEGACY_REC, texts, tail);
 }
 
 /** 以新宽度（LOG_REC）解析 LOG 文件全部记录，供断言迁移结果 */
@@ -62,7 +87,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
             expect(entries.every(e => e.date === '2024-01-01')).toBe(true);
 
-            // 文件已重写为新格式：1024 对齐、非 320 对齐，且内容按新宽度可完整解析
+            // 文件已重写为当前格式：LOG_REC 对齐、非 320 对齐，且内容按当前宽度可完整解析
             const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
             expect(buf.length % LOG_REC).toBe(0);
             expect(buf.length % OLD_REC).not.toBe(0);
@@ -202,6 +227,55 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect((await mm.listEntries()).map(e => e.text)).toEqual(['A', 'b', 'c', 'd']);
             await mm.deleteEntry(1);
             expect((await mm.listEntries()).map(e => e.text)).toEqual(['A', 'c', 'd']);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('上一代格式（1024B/条）：打开后数据无损迁移到当前宽度', async () => {
+        const texts = ['alpha', 'x'.repeat(600), '记忆-β'];
+        const dir = makeLegacyLog(texts);
+        try {
+            const mm = new MemoryManager(dir);
+            await mm.init();
+            const entries = await mm.listEntries(); // 读取触发迁移
+            expect(entries.map(e => e.text)).toEqual(texts);
+            expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
+
+            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
+            expect(buf.length).toBe(3 * LOG_REC);
+            expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('上一代格式尺寸恰好是当前宽度整数倍（4×1024 = 4096）：内容判别后正确迁移', async () => {
+        const texts = ['m0', 'm1', 'm2', 'm3'];
+        const dir = makeLegacyLog(texts); // 4096 字节：同时整除 LOG_REC=4096 与 LEGACY_REC=1024
+        try {
+            const mm = new MemoryManager(dir);
+            await mm.init();
+            const entries = await mm.listEntries();
+            expect(entries.map(e => e.text)).toEqual(texts);
+            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
+            expect(buf.length).toBe(4 * LOG_REC);
+            expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('上一代格式 + 撕裂尾巴：完整记录无损迁移，尾巴被丢弃', async () => {
+        const dir = makeLegacyLog(['a', 'b'], Buffer.from('partial-garbage-tail'));
+        try {
+            const mm = new MemoryManager(dir);
+            await mm.init();
+            const entries = await mm.listEntries();
+            expect(entries.map(e => e.text)).toEqual(['a', 'b']);
+            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
+            expect(buf.length).toBe(2 * LOG_REC);
+            expect(readNewFormat(dir).map(e => e.text)).toEqual(['a', 'b']);
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }

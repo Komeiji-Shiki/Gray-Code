@@ -9,10 +9,11 @@
  *
  * 注意：
  * - memory_* 说明必须保留全局/工作区作用域、分页快照、字节上限和压缩顺序语义；
- * - memory_note 的单条长度上限（entryChars，默认 280 字节）语义要保留。
+ * - memory_note 的单条长度上限（entryChars，默认 280 字节，上限 MAX_ENTRY_CHARS）语义要保留。
  */
 
 import type { ToolDescriptionLocalization } from '../../types';
+import { MAX_ENTRY_CHARS, MAX_TREE_SUMMARY_BYTES } from '../../../../modules/memory/logFormat';
 
 export const auxiliary: Record<string, ToolDescriptionLocalization> = {
     memory_wake: {
@@ -31,9 +32,9 @@ export const auxiliary: Record<string, ToolDescriptionLocalization> = {
         description:
             '记录一条对未来会话仍有价值的永久记忆。\n' +
             '记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n' +
-            '一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 1000）。\n' +
+            `一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 ${MAX_ENTRY_CHARS}）。\n` +
             '不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n' +
-            '如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩。',
+            '如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩，同一待压缩状态不会重复提示。',
         parameters: {
             text: '要记录的记忆文本。一行，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符）。'
         }
@@ -56,12 +57,12 @@ export const auxiliary: Record<string, ToolDescriptionLocalization> = {
             '记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\n' +
             '成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n' +
             '开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。\n' +
-            '参数：blockId（块 ID，如 "0-1"）；summary（压缩后的摘要文本，一行，长度受 entryChars 上限约束，默认 ≤280 字节）。\n' +
+            `参数：blockId（块 ID，如 "0-1"）；summary（压缩后的摘要文本，一行，长度取 entryChars 与树记录容量 ${MAX_TREE_SUMMARY_BYTES} 字节的较小值，默认配置下不超 280 字节）。\n` +
             '不传参数时，返回下一个待压缩的提示。\n' +
             '作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope="global"。',
         parameters: {
             blockId: '要压缩的块 ID（如 "0-1"）。从压缩提示中复制。',
-            summary: '压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。',
+            summary: `压缩后的摘要文本。一行，长度不超过 ${MAX_TREE_SUMMARY_BYTES} 字节且受 entryChars 上限约束（默认配置下最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。`,
             scope: '记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 "global"，如需显式操作工作区记忆请传 "workspace"。'
         }
     },
@@ -94,14 +95,14 @@ export const auxiliary: Record<string, ToolDescriptionLocalization> = {
             '查看或修改永久记忆系统的配置参数。\n' +
             '可配置项：\n' +
             '- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n' +
-            '- entryChars: 单条记忆最大字节数（默认 280，上限 1000）\n' +
+            `- entryChars: 单条记忆最大字节数（默认 280，上限 ${MAX_ENTRY_CHARS}）\n` +
             '- partChars: 输出分页最大字符数（默认 20000）\n' +
             '- partLines: 输出分页最大行数（默认 500）\n' +
             '不传参数时显示当前配置。传参数时修改对应项。\n' +
             '修改只影响输出格式，不需要重新计算任何东西。',
         parameters: {
             wakeLines: 'wake 输出的行数预算。更大的值 = 更多细节。',
-            entryChars: '单条记忆最大字节数。默认 280，上限 1000（固定宽度记录约束，含记录头部开销）。',
+            entryChars: `单条记忆最大字节数。默认 280，上限 ${MAX_ENTRY_CHARS}（固定宽度记录约束，含记录头部开销）。`,
             partChars: '输出分页最大字符数。',
             partLines: '输出分页最大行数。'
         }

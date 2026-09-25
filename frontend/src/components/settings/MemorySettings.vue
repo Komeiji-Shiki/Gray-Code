@@ -45,6 +45,9 @@ const wakeLines = ref(96)
 const entryChars = ref(280)
 const partChars = ref(20000)
 const partLines = ref(500)
+// 各运行时参数的后端硬边界（getMemoryConfig 下发）：设置页输入框的 min/max 用它，
+// 不再前端硬编码上限（entryChars 上限随固定宽度记录尺寸调整，硬编码会漂移）
+const configBounds = ref<Record<string, { min: number; max: number }>>({})
 
 // ─── 记忆条目管理 ───
 interface LogEntry {
@@ -92,6 +95,7 @@ interface ScopeCache {
     entryChars: number
     partChars: number
     partLines: number
+    bounds?: Record<string, { min: number; max: number }>
   }
   entriesLoaded: boolean
   configLoaded: boolean
@@ -169,6 +173,7 @@ function applyCachedScope(): void {
     entryChars.value = cached.config.entryChars
     partChars.value = cached.config.partChars
     partLines.value = cached.config.partLines
+    if (cached.config.bounds) configBounds.value = cached.config.bounds
     configLoadedOnce.value = true
   }
 }
@@ -370,6 +375,7 @@ async function loadConfig(silent = false) {
       if (typeof config.entryChars === 'number') entryChars.value = config.entryChars
       if (typeof config.partChars === 'number') partChars.value = config.partChars
       if (typeof config.partLines === 'number') partLines.value = config.partLines
+      if (config.bounds && typeof config.bounds === 'object') configBounds.value = config.bounds
       configLoadedOnce.value = true
       // 写回缓存：切换回来时可立即渲染，无需重新等待
       const key = scopeKey()
@@ -382,6 +388,7 @@ async function loadConfig(silent = false) {
           entryChars: entryChars.value,
           partChars: partChars.value,
           partLines: partLines.value,
+          bounds: configBounds.value,
         }
         cached.configLoaded = true
       }
@@ -589,6 +596,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
         :entry-chars="entryChars"
         :part-chars="partChars"
         :part-lines="partLines"
+        :config-bounds="configBounds"
         :is-saving="isSaving"
         :status-message="statusMessage"
         :status-error="statusError"

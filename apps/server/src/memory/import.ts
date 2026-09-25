@@ -6,7 +6,7 @@ import { lstat, open, readdir, realpath, readFile, mkdtemp, rm } from 'node:fs/p
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MigrationIssue } from '@graycode/contracts';
-import { parse, OLD_LOG_REC, ISO_DATE_RE } from '../../../../backend/modules/memory/logFormat';
+import { parse, isValidTreeRecord, logHeaderLooksLike, LEGACY_LOG_RECS, LEGACY_TREE_REC } from '../../../../backend/modules/memory/logFormat';
 import { LOG_REC, TREE_REC } from '../../../../backend/modules/memory/types';
 import { parseConfigContent } from '../../../../backend/modules/memory/configFile';
 import type { PlatformApplication } from '../application';
@@ -62,19 +62,46 @@ export class LegacyMemoryImporter {
       }
     } finally { await file.close(); }
   }
+  /**
+   * LOG 的记录宽度：当前宽度（LOG_REC）或旧宽度（LEGACY_LOG_RECS：320 / 1024）。
+   * 候选按「从旧到新」内容探测（前两条记录必须是 id 0/1 + ISO 日期），与 backend 的
+   * MemoryLogStore 同一判定口径；单条旧记录（无法内容探测）按可整除的宽度兜底。
+   */
   private async logWidth(source: SourceFile): Promise<number> {
     if (!source.size) return LOG_REC;
-    if (source.size % LOG_REC === 0 && source.size % OLD_LOG_REC !== 0) return LOG_REC;
-    if (source.size % OLD_LOG_REC === 0 && source.size % LOG_REC !== 0) return OLD_LOG_REC;
     const file = await open(source.file, 'r');
     try {
-      const buffer = Buffer.alloc(OLD_LOG_REC * 2); await file.read(buffer, 0, buffer.length, 0);
-      const first = parse(buffer.subarray(0, OLD_LOG_REC).toString('utf8').trimEnd());
-      const second = parse(buffer.subarray(OLD_LOG_REC).toString('utf8').trimEnd());
-      if (first?.id === 0 && second?.id === 1 && ISO_DATE_RE.test(first.date) && ISO_DATE_RE.test(second.date)) return OLD_LOG_REC;
-      if (source.size % LOG_REC === 0) return LOG_REC;
-      throw new Error('记忆 LOG 的记录宽度或尾部不完整，未尝试修复源文件。');
+      for (const rec of LEGACY_LOG_RECS) {
+        if (source.size % rec !== 0 || source.size < rec * 2) continue;
+        const buffer = Buffer.alloc(rec * 2); await file.read(buffer, 0, buffer.length, 0);
+        if (logHeaderLooksLike(buffer, rec)) return rec;
+      }
     } finally { await file.close(); }
+    if (source.size % LOG_REC === 0) return LOG_REC;
+    // 单条旧宽度记录（文件过小而无法内容探测）：按能整除的旧宽度导入
+    for (const rec of LEGACY_LOG_RECS) if (source.size % rec === 0) return rec;
+    throw new Error('记忆 LOG 的记录宽度或尾部不完整，未尝试修复源文件。');
+  }
+  /**
+   * 摘要文件的记录宽度：当前宽度（TREE_REC）或旧宽度（LEGACY_TREE_REC，288B/条）。
+   * 两者同时整除的歧义尺寸靠内容探测（前两条必须是合法定宽记录）区分。
+   */
+  private async treeWidth(source: SourceFile): Promise<number> {
+    if (!source.size) return TREE_REC;
+    if (source.size % TREE_REC === 0 && source.size % LEGACY_TREE_REC !== 0) return TREE_REC;
+    if (source.size >= LEGACY_TREE_REC * 2) {
+      const file = await open(source.file, 'r');
+      try {
+        const buffer = Buffer.alloc(LEGACY_TREE_REC * 2); await file.read(buffer, 0, buffer.length, 0);
+        let legacy = true;
+        for (let index = 0; index < 2; index++)
+          if (!isValidTreeRecord(buffer.subarray(index * LEGACY_TREE_REC, (index + 1) * LEGACY_TREE_REC))) legacy = false;
+        if (legacy) return LEGACY_TREE_REC;
+      } finally { await file.close(); }
+    }
+    if (source.size % TREE_REC === 0) return TREE_REC;
+    if (source.size % LEGACY_TREE_REC === 0) return LEGACY_TREE_REC; // 单条旧记录（无法内容探测）
+    throw new Error('摘要文件的记录宽度无法识别，未修改源文件。');
   }
   async run(actorId: string, root: string, signal: AbortSignal): Promise<MemoryImportReport> {
     this.app.requireOwner(actorId);
@@ -184,12 +211,15 @@ export class LegacyMemoryImporter {
         await flush();
         const summaries: Array<{ lo: number; hi: number; text: string }> = [];
         const flushSummaries = async () => { if (summaries.length) state = await this.app.storage.memoryImportBatch({ staging, sourceKey, fingerprint, expectedRevision: state.revision, summaries: summaries.splice(0) }); };
-        for (const tree of trees.sort((a, b) => a.width - b.width)) await this.records(tree.source, TREE_REC, signal, async (text, position) => {
-          if (!text) return;
-          const lo = position * tree.width; const hi = lo + tree.width;
-          if (hi > total || /[\r\n]/.test(text)) throw new Error(`摘要范围超出原始记忆：${lo}-${hi - 1}`);
-          summaries.push({ lo, hi, text }); if (summaries.length >= 256) await flushSummaries();
-        });
+        for (const tree of trees.sort((a, b) => a.width - b.width)) {
+          const recordWidth = await this.treeWidth(tree.source);
+          await this.records(tree.source, recordWidth, signal, async (text, position) => {
+            if (!text) return;
+            const lo = position * tree.width; const hi = lo + tree.width;
+            if (hi > total || /[\r\n]/.test(text)) throw new Error(`摘要范围超出原始记忆：${lo}-${hi - 1}`);
+            summaries.push({ lo, hi, text }); if (summaries.length >= 256) await flushSummaries();
+          });
+        }
         await flushSummaries();
         // 正文来自同一份捕获文件，发布前只检查来源元数据是否变化。
         for (const file of files) {

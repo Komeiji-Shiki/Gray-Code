@@ -263,22 +263,24 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/file/listFilesRuntime.ts",
   },
   'memory_compress': {
-    description: "执行待处理的记忆压缩合并。\n记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\n成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。\n参数：blockId（块 ID，如 \"0-1\"）；summary（压缩后的摘要文本，一行，长度受 entryChars 上限约束，默认 ≤280 字节）。\n不传参数时，返回下一个待压缩的提示。\n作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope=\"global\"。",
+    descriptionDynamic: true,
     parameters: {
       "blockId": {"type":"string","description":"要压缩的块 ID（如 \"0-1\"）。从压缩提示中复制。"},
-      "summary": {"type":"string","description":"压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。"},
+      "summary": {"type":"string"},
       "scope": {"type":"string","description":"记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 \"global\"，如需显式操作工作区记忆请传 \"workspace\"。","enum":["global","workspace"]},
     },
+    parametersDynamic: true,
     source: "backend/tools/memory/memory_compressRuntime.ts",
   },
   'memory_config': {
-    description: "查看或修改永久记忆系统的配置参数。\n可配置项：\n- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n- entryChars: 单条记忆最大字节数（默认 280，上限 1000）\n- partChars: 输出分页最大字符数（默认 20000）\n- partLines: 输出分页最大行数（默认 500）\n不传参数时显示当前配置。传参数时修改对应项。\n修改只影响输出格式，不需要重新计算任何东西。",
+    descriptionDynamic: true,
     parameters: {
       "wakeLines": {"type":"number","description":"wake 输出的行数预算。更大的值 = 更多细节。"},
-      "entryChars": {"type":"number","description":"单条记忆最大字节数。默认 280，上限 1000（固定宽度记录约束，含记录头部开销）。"},
+      "entryChars": {"type":"number"},
       "partChars": {"type":"number","description":"输出分页最大字符数。"},
       "partLines": {"type":"number","description":"输出分页最大行数。"},
     },
+    parametersDynamic: true,
     source: "backend/tools/memory/memory_configRuntime.ts",
   },
   'memory_forget': {
@@ -290,7 +292,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/memory/memory_forgetRuntime.ts",
   },
   'memory_note': {
-    description: "记录一条对未来会话仍有价值的永久记忆。\n记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 1000）。\n不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩。",
+    descriptionDynamic: true,
     parameters: {
       "text": {"type":"string","description":"要记录的记忆文本。一行，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符）。","required":true},
     },

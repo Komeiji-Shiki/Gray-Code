@@ -11,8 +11,30 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { LOG_REC } from '../../modules/memory/types';
+import { MAX_ENTRY_CHARS } from '../../modules/memory/logFormat';
 
 describe('MemoryManager.note 手动新增', () => {
+    test('entryChars 可调高到 1280 并写入 1280 字节文本（不再被旧上限 1000 拒绝）', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-note-cap-'));
+        try {
+            const mm = new MemoryManager(dir);
+            await mm.init();
+            // 旧实现的 entryChars 上限为 1000，1280 会报 "Invalid entryChars"
+            const cfg = await mm.updateConfig({ entryChars: 1280 });
+            expect(cfg.entryChars).toBe(1280);
+
+            const text = 'x'.repeat(1280);
+            const { id } = await mm.note(text);
+            expect(id).toBe(0);
+            expect((await mm.listEntries())[0].text).toBe(text);
+
+            // 超过记录容量硬上限仍在 updateConfig 处被明确拒绝
+            await expect(mm.updateConfig({ entryChars: MAX_ENTRY_CHARS + 1 }))
+                .rejects.toThrow(/Must be an integer between 1 and \d+/);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
     test('拒绝多行文本', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-note-'));
         try {

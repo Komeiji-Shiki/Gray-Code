@@ -131,11 +131,17 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 };
 
 /**
- * 固定宽度记录大小（LOG 文件，1024B/条；entryChars 上限 = LOG_REC - 1 - 记录头部最大字节）。
- * 历史版本为 320B/条：旧 LOG 文件在打开时由 MemoryManager.repairLog 无损迁移到新宽度。
+ * 固定宽度记录大小（LOG 文件，4096B/条；entryChars 上限 = LOG_REC - 1 - 记录头部最大字节）。
+ * 历史宽度为 320B/条（早期）与 1024B/条（上一代）：旧 LOG 文件在打开时由
+ * MemoryLogStore.repairLog 按宽度阶梯无损迁移到当前宽度（候选见 logFormat.LEGACY_LOG_RECS）。
  */
-export const LOG_REC = 1024;
-export const TREE_REC = 288;
+export const LOG_REC = 4096;
+
+/**
+ * TREE 摘要固定宽度（1024B/条；单行摘要上限 = TREE_REC - 1 = 1023 字节）。
+ * 历史宽度为 288B/条：旧 TREE 文件在首次访问时由 MemoryLogStore 无损迁移到当前宽度。
+ */
+export const TREE_REC = 1024;
 
 /** 最多直接从原始日志压缩的记忆条数 */
 export const RAW_MAX = 16;

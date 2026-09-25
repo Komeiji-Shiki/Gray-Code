@@ -1,6 +1,7 @@
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { DEFAULT_MEMORY_CONFIG } from '../../modules/memory/types';
 import type { MemoryConfig } from '../../modules/memory/types';
+import { MAX_ENTRY_CHARS } from '../../modules/memory/logFormat';
 import type { MemoryToolHost } from './host';
 
 export function createMemoryConfigRuntime(host: MemoryToolHost) {
@@ -14,7 +15,7 @@ function createMemoryConfigDeclaration(): ToolDeclaration {
             '查看或修改永久记忆系统的配置参数。\n' +
             '可配置项：\n' +
             '- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n' +
-            '- entryChars: 单条记忆最大字节数（默认 280，上限 1000）\n' +
+            `- entryChars: 单条记忆最大字节数（默认 280，上限 ${MAX_ENTRY_CHARS}）\n` +
             '- partChars: 输出分页最大字符数（默认 20000）\n' +
             '- partLines: 输出分页最大行数（默认 500）\n' +
             '不传参数时显示当前配置。传参数时修改对应项。\n' +
@@ -29,7 +30,7 @@ function createMemoryConfigDeclaration(): ToolDeclaration {
                 },
                 entryChars: {
                     type: 'number',
-                    description: '单条记忆最大字节数。默认 280，上限 1000（固定宽度记录约束，含记录头部开销）。',
+                    description: `单条记忆最大字节数。默认 280，上限 ${MAX_ENTRY_CHARS}（固定宽度记录约束，含记录头部开销）。`,
                 },
                 partChars: {
                     type: 'number',

@@ -1,4 +1,5 @@
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
+import { MAX_ENTRY_CHARS } from '../../modules/memory/logFormat';
 import type { MemoryToolHost } from './host';
 
 export function createMemoryNoteRuntime(host: MemoryToolHost) {
@@ -11,9 +12,9 @@ function createMemoryNoteDeclaration(): ToolDeclaration {
         description:
             '记录一条对未来会话仍有价值的永久记忆。\n' +
             '记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n' +
-            '一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 1000）。\n' +
+            `一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 ${MAX_ENTRY_CHARS}）。\n` +
             '不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n' +
-            '如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩。',
+            '如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩，同一待压缩状态不会重复提示。',
         category: 'memory',
         parameters: {
             type: 'object',
