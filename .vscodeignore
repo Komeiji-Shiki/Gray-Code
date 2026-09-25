@@ -67,6 +67,7 @@ shared/**
 docs/**
 *.plan.md
 AUDIT_REMEDIATION.md
+AGENTS.md
 
 # 前端源文件（只需要 dist）
 frontend/src/**
