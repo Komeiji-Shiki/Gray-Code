@@ -231,4 +231,22 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(body.tools[0].strict).toBe(false);
     expect(body.reasoning_effort).toBeUndefined();
   });
+
+  test('发送前清理重复的工具响应，不再触发 Unpaired tool history', async () => {
+    const request = input();
+    request.messages = [
+      { role: 'user', parts: [{ text: '继续' }] },
+      { role: 'model', parts: [{ functionCall: { id: 'call_dup', name: 'inspect', args: { path: 'a.ts', optional: null } } }] },
+      { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'call_dup', name: 'inspect', response: { success: false, error: '用户拒绝执行此工具', rejected: true } } }] },
+      { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'call_dup', name: 'inspect', response: { success: true, data: 'REAL_RESULT' } } }] },
+    ];
+    // 修复前：prepare 的完整性校验会拒绝对话（duplicate_function_response_id）。
+    // 修复后：副本上清理重复响应，请求可用且真实结果保留。
+    const response = await adapter.generate(request);
+    expect(response.parts[0]).toMatchObject({ functionCall: { name: 'inspect' } });
+    expect(requests).toHaveLength(1);
+    const body = JSON.stringify(requests[0].body);
+    expect(body).toContain('REAL_RESULT');
+    expect(body).not.toContain('"rejected":true');
+  });
 });

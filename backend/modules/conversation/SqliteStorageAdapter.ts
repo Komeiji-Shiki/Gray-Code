@@ -42,6 +42,16 @@ export class SqliteStorageAdapter implements IStorageAdapter {
     await this.platform.appendHistory(id, contents.map(toPlatform));
   }
 
+  /**
+   * 平台运行时模式：会话当前活跃（未终结）任务的 ID 集合。
+   * 读取路径的悬空调用补齐用它跳过"结果尚未落盘"的在途调用，避免给迟到的真实
+   * 结果制造重复响应（duplicate_function_response_id）。
+   */
+  async listActiveRunIds(conversationId: string): Promise<Set<string> | undefined> {
+      const runs = await this.platform.listRuns({ conversationId, activeOnly: true });
+      return new Set(runs.map(run => run.id));
+  }
+
   async loadHistory(id: string): Promise<ConversationHistory | null> {
     try {
       return (await this.platform.readFullHistory(id)).messages as Content[];

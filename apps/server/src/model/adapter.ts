@@ -8,6 +8,7 @@ import { FormatterRegistry } from "../../../../backend/modules/channel/formatter
 import { ChannelHttpExecutor } from "../../../../backend/modules/channel/channelManager/channelHttpExecutor";
 import { StreamAccumulator } from "../../../../backend/modules/channel/StreamAccumulator";
 import { validateHistoryIntegrity } from "../../../../backend/modules/channel/HistoryIntegrityValidator";
+import { repairDuplicateFunctionResponses } from "../../../../backend/modules/conversation/manager/historyRepair";
 import { extractUpstreamErrorMessage } from "../../../../backend/modules/channel/channelManager/channelResponseHelpers";
 import type { Content } from "../../../../backend/modules/conversation/types";
 import type { GenerateRequest } from "../../../../backend/modules/channel/types";
@@ -74,6 +75,10 @@ export class ProviderModelAdapter implements ModelProvider {
         );
       history = await this.services.prepareVision(history, config.model, input.signal);
     }
+    // 发送前自愈：历史里同一工具调用的重复响应（读取补齐占位与迟到的真实结果并存）会让请求
+    // 被完整性校验拒绝。这里在只影响本次请求的副本上清理，保证请求可用；存储由对话读取路径修复。
+    const repairedHistory = repairDuplicateFunctionResponses(history);
+    if (repairedHistory.changed) history = repairedHistory.history;
     const integrity = validateHistoryIntegrity(history, {
       detectOrphanFunctionCall: true,
     });

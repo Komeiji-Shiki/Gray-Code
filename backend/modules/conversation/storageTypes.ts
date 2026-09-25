@@ -173,6 +173,16 @@ export interface IStorageAdapter {
     appendHistory?(conversationId: string, contents: ConversationHistory): Promise<void>;
 
     /**
+     * 平台运行时模式（可选）：返回该会话当前活跃（未终结）任务的 ID 集合，
+     * 供读取路径判断"调用是否仍在执行、结果只是尚未落盘"。
+     *
+     * 悬空工具调用的读取补齐会跳过这些任务的调用——在途状态写成占位会给迟到的
+     * 真实结果制造 duplicate_function_response_id。未实现（旧存储适配器）时返回
+     * undefined，读取路径保持原行为（不跳过）。
+     */
+    listActiveRunIds?(conversationId: string): Promise<Set<string> | undefined>;
+
+    /**
      * 仅读取历史索引结构（不解析段消息内容，HIS-11）。
      * 可选：未实现时调用方回退 getConversationIntegrity。
      */

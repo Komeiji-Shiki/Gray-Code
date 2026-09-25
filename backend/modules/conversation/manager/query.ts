@@ -12,7 +12,9 @@ import type { Content, ContentPart, ConversationHistory, MessageFilter, MessageP
 import type { IStorageAdapter } from '../storage';
 import type { ITranscriptRepository } from '../TranscriptRepository';
 import { ensureNodeId, needsNodeIdMigration } from './nodeId';
-import { findFunctionResponseInsertIndex, scanHistoryForInitialPage } from './utils';
+import { findFunctionResponseInsertIndex, messageRunId, scanHistoryForInitialPage } from './utils';
+import type { InitialPageScan } from './utils';
+import { repairDuplicateFunctionResponses } from './historyRepair';
 import { toDisplayMessages } from './historyFormatting';
 
 /** ConversationQueryService 依赖的 ConversationManager 能力（委托绑定） */
@@ -75,14 +77,14 @@ export class ConversationQueryService {
         // 只在首次加载（默认页）做一次全量补齐：上拉加载更早消息时跳过，避免每翻一页读一次全量。
         // 补齐会插入消息、改变 index，必须发生在分页取数之前。
         const isInitialPage = options.beforeIndex === undefined && options.offset === undefined;
-        // 初始页浅扫描结果提升到函数级：悬空调用写回路径与（非分段存储的）规范化回退路径
-        // 都复用同一份 scan——不再对同一份历史重复「全量读盘 + 双循环扫描」（双重扫描）。
-        let initialPageScan: { hasUnresolvedCalls: boolean; needsNodeIdMigration: boolean } | undefined;
+        // 初始页浅扫描结果提升到函数级：悬空调用/响应异常写回路径与（非分段存储的）规范化
+        // 回退路径都复用同一份 scan——不再对同一份历史重复「全量读盘 + 双循环扫描」（双重扫描）。
+        let initialPageScan: InitialPageScan | undefined;
         if (isInitialPage) {
-            // 单次全量浅扫描（无深拷贝）：悬空工具调用 + 缺节点 ID 检测。
+            // 单次全量浅扫描（无深拷贝）：悬空工具调用 + 响应侧异常 + 缺节点 ID 检测。
             initialPageScan = await scanHistoryForInitialPage(this.ctx.storage, conversationId);
-            if (initialPageScan.hasUnresolvedCalls) {
-                // 只有浅扫描命中悬空工具调用时才走 mutate + 深拷贝写回路径；
+            if (initialPageScan.hasUnresolvedCalls || initialPageScan.hasResponseAnomalies) {
+                // 只有浅扫描命中悬空工具调用或响应侧异常时才走 mutate + 深拷贝写回路径；
                 // 正常历史跳过 normalizeHistoryForDisplay 的全量 JSON 深拷贝。
                 // 传入 scan 复用扫描结果（normalizeHistoryForDisplay 内部不再二次全量扫描）。
                 await this.normalizeHistoryForDisplay(conversationId, workspaceUri, initialPageScan);
@@ -101,15 +103,16 @@ export class ConversationQueryService {
             };
         }
 
-        // 非分段回退路径：初始页若已在上方处理悬空调用（插入 rejected 响应），不能再复用
-        // 仍标记 hasUnresolvedCalls=true 的陈旧扫描——否则会重复进入 mutateContents（深拷贝 +
-        // 写锁）路径。降级为「悬空调用已处理，仅按 needsNodeIdMigration 决定是否补 ID（幂等）」；
-        // hasUnresolvedCalls 原本为 false 时该降级与原始扫描等价（行为不变）。
+        // 非分段回退路径：初始页若已在上方处理悬空调用（插入 rejected 响应）或响应异常
+        // （清理重复响应），不能再复用仍标记异常的陈旧扫描——否则会重复进入 mutateContents
+        // （深拷贝 + 写锁）路径。降级为「异常已处理，仅按 needsNodeIdMigration 决定是否补 ID
+        // （幂等）」；hasUnresolvedCalls / hasResponseAnomalies 原本为 false 时该降级与原始
+        // 扫描等价（行为不变）。
         const history = await this.normalizeHistoryForDisplay(
             conversationId,
             workspaceUri,
             initialPageScan
-                ? { hasUnresolvedCalls: false, needsNodeIdMigration: initialPageScan.needsNodeIdMigration }
+                ? { hasUnresolvedCalls: false, hasResponseAnomalies: false, needsNodeIdMigration: initialPageScan.needsNodeIdMigration }
                 : undefined
         );
 
@@ -265,15 +268,19 @@ export class ConversationQueryService {
     }
 
     /**
-     * 规范化历史：补齐未响应的工具调用（rejected + functionResponse 插入），并在必要时写回存储。
+     * 规范化历史：清理重复的工具响应（响应侧自愈），补齐未响应的工具调用（rejected +
+     * functionResponse 插入），并在必要时写回存储。
      *
      * 注意：此过程会改变 history 的长度，从而改变消息 index。
      * 前端依赖 index 进行删除/重试等操作，因此必须在返回前完成该规范化。
      *
-     * 锁边界（读取路径不占用会话写锁）：先锁外浅扫描（无深拷贝）——绝大多数历史无悬空
-     * 工具调用，直接返回存储形态（调用方按只读使用），跳过全量 JSON 深拷贝与潜在写回；
-     * 仅当扫描发现悬空调用 / 缺 id 才进入读-改-写路径：缺 id 入写锁补写（BR-02 幂等迁移）
-     * 后锁外重读；悬空调用走 mutateContents 深拷贝 + 写回（无变更不写回，返回原引用跳过）。
+     * 锁边界（读取路径不占用会话写锁）：先锁外浅扫描（无深拷贝）——绝大多数历史无响应异常
+     * 且无悬空工具调用，直接返回存储形态（调用方按只读使用），跳过全量 JSON 深拷贝与潜在写回；
+     * 仅当扫描发现悬空调用 / 响应异常 / 缺 id 才进入读-改-写路径：缺 id 入写锁补写（BR-02
+     * 幂等迁移）后锁外重读；其余走 mutateContents 深拷贝 + 写回（无变更不写回，返回原引用跳过）。
+     *
+     * 补齐会跳过属于活跃任务（initialScan.activeRunIds）的调用：结果可能只是尚未落盘，
+     * 替它写占位会给迟到的真实结果制造重复响应。
      *
      * @param scan 可选：调用方已完成的全量浅扫描结果（getMessagesPaged 首屏路径传入复用，
      *             避免同一份历史被「全量读盘 + 双循环」扫描两次）；未传时本方法自行扫描。
@@ -281,10 +288,10 @@ export class ConversationQueryService {
     async normalizeHistoryForDisplay(
         conversationId: string,
         workspaceUri?: string,
-        scan?: { hasUnresolvedCalls: boolean; needsNodeIdMigration: boolean }
+        scan?: InitialPageScan
     ): Promise<ConversationHistory> {
         const initialScan = scan ?? await scanHistoryForInitialPage(this.ctx.storage, conversationId);
-        if (!initialScan.hasUnresolvedCalls) {
+        if (!initialScan.hasUnresolvedCalls && !initialScan.hasResponseAnomalies) {
             if (initialScan.needsNodeIdMigration) {
                 // BR-02：缺 id 才在写锁内补 ID（幂等迁移），补写后锁外重读
                 await this.ctx.ensureHistoryNodeIds(conversationId);
@@ -293,9 +300,14 @@ export class ConversationQueryService {
         }
 
         return await this.ctx.getTranscriptRepository(conversationId, workspaceUri).mutateContents(history => {
-            // 收集所有 functionResponse 的 ID
+            // ① 响应侧自愈：同一调用 ID 只保留一条响应（优先真实结果），并清除真实响应上
+            //    残留的 rejected 标记。先于补齐执行：清理后的形态决定调用是否"已响应"。
+            const repaired = repairDuplicateFunctionResponses(history);
+            const current = repaired.changed ? repaired.history : history;
+
+            // ② 收集所有 functionResponse 的 ID（按清理后的形态）。
             const respondedToolCallIds = new Set<string>();
-            for (const message of history) {
+            for (const message of current) {
                 if (message.parts) {
                     for (const part of message.parts) {
                         if (part.functionResponse?.id) {
@@ -305,11 +317,17 @@ export class ConversationQueryService {
                 }
             }
 
-            // 收集未响应的工具调用，记录它们所在的消息索引
+            // ③ 收集未响应的工具调用，记录它们所在的消息索引。
+            //    跳过活跃任务写下的调用：结果可能只是尚未落盘，不能按"已放弃"补齐占位。
+            const activeRunIds = initialScan.activeRunIds;
             const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
-            for (let i = 0; i < history.length; i++) {
-                const original = history[i];
+            for (let i = 0; i < current.length; i++) {
+                const original = current[i];
                 if (!original.parts) {
+                    continue;
+                }
+                const runId = messageRunId(original);
+                if (runId && activeRunIds?.has(runId)) {
                     continue;
                 }
                 let working = original;
@@ -324,7 +342,7 @@ export class ConversationQueryService {
                             // 避免 rejected 标记污染 HistorySegmentCache。
                             if (working === original) {
                                 working = structuredClone(original);
-                                history[i] = working;
+                                current[i] = working;
                             }
                             const target = working.parts!.find(p => p.functionCall?.id === callId);
                             if (target?.functionCall) {
@@ -341,9 +359,9 @@ export class ConversationQueryService {
                 }
             }
 
-            // 无未响应的工具调用：没有任何修改，返回原引用跳过写回
+            // 无未响应的工具调用：重复清理有变更则写回，否则返回原引用跳过写回
             if (unresolvedCallsByIndex.size === 0) {
-                return history;
+                return current === history ? history : current;
             }
 
             // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
@@ -365,9 +383,9 @@ export class ConversationQueryService {
                 }));
 
                 // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-                const insertAt = findFunctionResponseInsertIndex(history, messageIndex);
-                const parent = insertAt > 0 ? history[insertAt - 1] : null;
-                history.splice(insertAt, 0, ensureNodeId({
+                const insertAt = findFunctionResponseInsertIndex(current, messageIndex);
+                const parent = insertAt > 0 ? current[insertAt - 1] : null;
+                current.splice(insertAt, 0, ensureNodeId({
                     role: 'user',
                     parts: rejectedResponseParts,
                     isFunctionResponse: true
@@ -375,7 +393,7 @@ export class ConversationQueryService {
             }
 
             // 有新插入：返回新引用触发写回（契约：返回原引用=跳过写回）
-            return history.slice();
+            return current === history ? current.slice() : current;
         });
     }
 }
