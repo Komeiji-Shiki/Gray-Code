@@ -438,8 +438,16 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         // 「回填历史思考内容」与「发送历史思考签名」同时开启时，明文与签名一起回传：
                         // encrypted_content/summary 供官方端点校验，明文 reasoning_text 供只认该字段的
                         // 端点（DeepSeek 等）读取，两种端点都能在同一条 reasoning item 上取到所需形态。
-                        if (options?.allowReasoningContent === true && reasoningContent.length > 0) {
-                            reasoningItem.content = reasoningContent;
+                        if (options?.allowReasoningContent === true) {
+                            if (reasoningContent.length > 0) {
+                                reasoningItem.content = reasoningContent;
+                            } else if (options?.useDeepSeekReasoningTextFallback === true) {
+                                // 模型没产出可回填的思考文本时，这一轮仍必须携带 reasoning_text，
+                                // 否则带 tools 的后续请求会报 400；优先用摘要文本，没有则补空字符串。
+                                reasoningItem.content = displayText
+                                    ? [{ type: 'reasoning_text' as const, text: displayText }]
+                                    : createDeepSeekReasoningTextFallbackContent();
+                            }
                         }
                     } else if (reasoningContent.length > 0) {
                         // DeepSeek 等端点要求 plain reasoning_text，并不接受

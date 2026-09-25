@@ -26,6 +26,8 @@
   - 修复 Gemini / Anthropic 渠道把动态上下文与用户提问拆开导致忽略提问：Gemini 的 generateContent 要求用户与模型严格交替，动态上下文与总结消息会在用户回合前额外产生一条同角色消息，Anthropic 也有端点对相邻同角色敏感；现在下发前合并相邻同角色内容，并在真实用户输入前插入 `[User Input]` 边界标识——合并后各段之间没有边界，模型仍会把动态上下文整段当成最新输入、只回答上下文而忽略用户真正的问题。
   - 修复 Responses 渠道推理回传被模型名门控永久关闭：桌面端的 `providerReasoningContentEnabled` 总是被写成布尔 `false`，短路掉模型名推断，`allowReasoningContent` 恒为 false，任何模型都不再回传 plain `reasoning_text`，DeepSeek 带工具的后续请求持续报 `HTTP 400: The reasoning_text in the thinking mode must be passed back to the API`。reasoning item 是 Responses 协议的标准输入形态（官方 GPT 与 DeepSeek 端点都接受回传），现改为默认回传，并新增 `replayReasoningContent` 三态字段（未设置即回传）供显式关闭；模型名识别同时接受 `ds` 别名，按独立标识段匹配，不误判 `words`/`hands` 等普通词。
   - 修复 apply_diff 等工具部分成功时显示为整体失败：响应里仍带着失败块的 error 文本，而 error 判定排在 partial 判定之前，`ToolMessage` 还把 partial 判定挂在 `success` 上，`success` 被 error 拉成 false 后该分支无法进入；现在 partial 与混合成败判定优先于 error，回落为黄色警告，`apply_diff` 面板的 partial 图标同步改为警告图标。
+  - 修复 Responses 渠道历史思考被签名能力门控过滤：`sendHistoryThoughts` 只在推理签名能力为 deepseek 的渠道开启，其余 Responses 渠道的历史思考分段被 `historyFormatting` 判为不可回传而整段丢弃，明文 `reasoning_text` 因此没有内容可发；该协议的标准输入形态就是 reasoning item（官方 GPT 与 DeepSeek 端点都接受回传），现默认开启历史思考回传。
+  - 修复 Responses 渠道历史推理缺明文 `reasoning_text`：签名分支原先独占回传，只写 `encrypted_content`/`summary` 而不写明文 `content`，只认 `reasoning_text` 的端点（DeepSeek 等）在带工具的后续请求里持续报 `HTTP 400: The reasoning_text in the thinking mode must be passed back to the API`。现在「回填历史思考内容」与「发送历史思考签名」同时开启时两种字段并存，官方端点读加密签名、DeepSeek 类端点读明文；该轮只有摘要没有明文时用摘要文本补全，模型完全没思考而直接输出时（模型名含 `ds`/`deepseek`）补空字符串占位，显式关闭「回填历史思考内容」时仍只发签名。
 
 ## [2.0.0-pre.3] - 2026-09-23
 

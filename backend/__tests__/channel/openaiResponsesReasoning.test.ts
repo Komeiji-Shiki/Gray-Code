@@ -1118,4 +1118,75 @@ describe('Responses 思考签名回传格式：DeepSeek 兼容', () => {
             { type: 'function_call', name: 'read_file', call_id: 'call_dsmode_1', arguments: '{"path":"a.ts"}' }
         ]);
     });
+
+    test('模型名含 ds/deepseek 且某轮完全没有思考时，补空 reasoning_text 占位', () => {
+        // 模型偷懒不思考而直接输出时，历史里该轮没有 reasoning part（无签名也无元数据）。
+        // 带 tools 的后续请求仍需这一轮携带 reasoning_text，因此按模型名补空字符串占位。
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '直接回答。' }] },
+            { role: 'model', parts: [{ text: '这是直接输出的文本。' }] },
+            { role: 'user', parts: [{ text: '继续。' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'ds-v4.1-flash',
+                reasoningSignatureMode: 'official',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: true
+            })
+        );
+
+        const assistantTurnItems = request.body.input.filter((item: any) =>
+            item.type === 'reasoning' || (item.type === 'message' && item.role === 'assistant')
+        );
+        expect(assistantTurnItems).toEqual([
+            { type: 'reasoning', content: [{ type: 'reasoning_text', text: '' }] },
+            {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: '这是直接输出的文本。' }]
+            }
+        ]);
+    });
+
+    test('official 模式下只有摘要没有明文时，签名与明文一起回传', () => {
+        // 流式解析只拿到 reasoning item 的摘要（官方加密形态）而没拿到明文时，
+        // 签名分支过去只写 encrypted_content/summary，带 tools 的请求仍报 reasoning_text 缺失；
+        // 现在用摘要文本补全明文 content，两种形态一起发送。
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [{
+                    text: '',
+                    thought: true,
+                    thoughtSignatures: { 'openai-responses': 'ENC_DS' },
+                    openaiResponsesReasoning: {
+                        id: 'rs_summary_only_1',
+                        status: 'completed',
+                        summary: [{ type: 'summary_text', text: '摘要文本' }]
+                    }
+                }, { text: '正文。' }]
+            },
+            { role: 'user', parts: [{ text: 'Continue.' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'ds-v4.1-flash',
+                reasoningSignatureMode: 'official',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: true
+            })
+        );
+
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        expect(reasoningItems).toHaveLength(1);
+        expect(reasoningItems[0].encrypted_content).toBe('ENC_DS');
+        expect(reasoningItems[0].content).toEqual([{ type: 'reasoning_text', text: '摘要文本' }]);
+    });
 });
