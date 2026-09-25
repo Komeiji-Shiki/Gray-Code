@@ -167,14 +167,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         //   sendHistoryThoughtSignatures 控制；不能因为 DeepSeek 的兼容限制而删掉 GPT 思考衔接。
         // - 非 DeepSeek 的 content-only reasoning：不构造 reasoning item，也不降级成普通文本，
         //   避免把不被当前 Responses endpoint 接受的 reasoning_text 发出去。
-        // 不能用 `??`：providerReasoningContentEnabled 会被渠道配置显式写成布尔 false，
-        // ?? 会短路掉模型名推断（桌面端因此恒为 false，DeepSeek 的空 reasoning_text
-        // 占位回传永久失效，带 tools 的后续请求继续 400）。
+        // reasoningSignatureMode 只有 official/codex/deepseek 三种字符串取值，用 `??` 取默认值即可。
         const reasoningSignatureMode = config.reasoningSignatureMode ?? 'official';
         // DeepSeek Responses 端点只支持明文 content 形式的 reasoning：官方文档列出
         // summary、encrypted_content 与 include 均不受支持。该模式强制走明文路径，
         // 同时打开 useDeepSeekReasoningTextFallback（模型名不认识时也能补空占位）。
         const deepSeekSignatureCompat = reasoningSignatureMode === 'deepseek';
+        // providerReasoningContentEnabled 会被渠道配置显式写成布尔 false，只能用 === true 判断：
+        // 若按「缺省即取默认值」处理，渠道显式关闭的意图会被模型名推断覆盖。
         const isDeepSeek = deepSeekSignatureCompat
             || config.providerReasoningContentEnabled === true
             || isDeepSeekModel(config.model);
@@ -426,8 +426,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     }
 
                     if (canReplaySignedReasoning) {
-                        // OpenAI 官方 Responses 的加密推理回传：保留 encrypted_content
-                        // 和官方 summary；不要把 plain content 混入该兼容路径。
+                        // OpenAI 官方 Responses 的加密推理回传：保留 encrypted_content 和 summary。
                         reasoningItem.encrypted_content = encryptedContent;
                         const summary = reasoningSummary.length > 0
                             ? reasoningSummary
@@ -436,6 +435,12 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                                 : []);
                         // 官方 Responses 对 reasoning 输入要求 summary 字段，即使为空。
                         reasoningItem.summary = summary;
+                        // 「回填历史思考内容」与「发送历史思考签名」同时开启时，明文与签名一起回传：
+                        // encrypted_content/summary 供官方端点校验，明文 reasoning_text 供只认该字段的
+                        // 端点（DeepSeek 等）读取，两种端点都能在同一条 reasoning item 上取到所需形态。
+                        if (options?.allowReasoningContent === true && reasoningContent.length > 0) {
+                            reasoningItem.content = reasoningContent;
+                        }
                     } else if (reasoningContent.length > 0) {
                         // DeepSeek 等端点要求 plain reasoning_text，并不接受
                         // encrypted_content/summary；使用权威 content 数组原样回传。

@@ -1050,7 +1050,9 @@ describe('Responses 思考签名回传格式：DeepSeek 兼容', () => {
         expect(assistantTexts.join('')).not.toContain('先读文件再回答。');
     });
 
-    test('official 模式仍优先回传加密签名与摘要（对照，行为不变）', () => {
+    test('内容与签名同时开启时，明文 reasoning_text 与加密签名一起回传', () => {
+        // 「回填历史思考内容」控制明文 content，「发送历史思考签名」控制 encrypted_content/summary。
+        // 两个开关同时开启时两种形态一起发送：官方端点读加密签名，只认 reasoning_text 的端点读明文。
         const formatter = new OpenAIResponsesFormatter();
         const request = formatter.buildRequest(
             { configId: 'responses-test', history: signedReasoningHistory() },
@@ -1067,6 +1069,25 @@ describe('Responses 思考签名回传格式：DeepSeek 兼容', () => {
         expect(reasoningItems[0].encrypted_content).toBe('ENC_DS');
         expect(reasoningItems[0].summary).toEqual([{ type: 'summary_text', text: '摘要文本' }]);
         expect(reasoningItems[0].id).toBe('rs_ds_signed_1');
+        expect(reasoningItems[0].content).toEqual([{ type: 'reasoning_text', text: '先读文件再回答。' }]);
+    });
+
+    test('显式关闭内容回传时只发加密签名，不混入明文 reasoning_text', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history: signedReasoningHistory() },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'gpt-5',
+                reasoningSignatureMode: 'official',
+                sendHistoryThoughts: true,
+                replayReasoningContent: false,
+                sendHistoryThoughtSignatures: true
+            })
+        );
+
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        expect(reasoningItems[0].encrypted_content).toBe('ENC_DS');
+        expect(reasoningItems[0]).not.toHaveProperty('content');
     });
 
     test('deepseek 模式开启后，模型名不带 deepseek 也启用空占位', () => {
