@@ -90,7 +90,12 @@ export class MessageBuilderService {
         // 必须保持相同的回传策略，否则已发送的提示词前缀会被重写并导致缓存失效。
         // 以历史开关作为统一值：既尊重“不要发送历史思考”的既有选择，也与界面合并后的单开关一致。
         const isOpenAIChannel = config.type === 'openai';
-        const sendHistoryThoughts = config.sendHistoryThoughts ?? false;
+        // Responses 渠道：reasoning item 是该协议的标准输入形态，且不区分当前/历史轮次。
+        // 从其它渠道（oai 兼容等）切过来的历史只有裸 thought part、没有 Responses 元数据，
+        // 按 false 处理会在 historyFormatting 整段丢弃，切换后的首轮便没有 reasoning_text
+        // 可回传，只认明文的上游（DeepSeek 等）直接报 400。未显式关闭时默认回传。
+        const isResponsesChannel = config.type === 'openai-responses';
+        const sendHistoryThoughts = config.sendHistoryThoughts ?? isResponsesChannel;
         const sendCurrentThoughts = isOpenAIChannel
             ? sendHistoryThoughts
             : (config.sendCurrentThoughts ?? true);
@@ -101,7 +106,6 @@ export class MessageBuilderService {
 
         // Responses 渠道的 reasoning item 回传不区分「当前/历史」轮次（convertToResponsesInput
         // 统一遍历），因此把 current 签名开关合并到 history 开关：两者共用 sendHistoryThoughtSignatures。
-        const isResponsesChannel = config.type === 'openai-responses';
         const sendCurrentThoughtSignatures = isResponsesChannel
             ? sendHistoryThoughtSignatures
             : (config.sendCurrentThoughtSignatures ?? (config.type === 'gemini' || config.type === 'anthropic'));

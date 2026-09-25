@@ -28,6 +28,10 @@
   - 修复 apply_diff 等工具部分成功时显示为整体失败：响应里仍带着失败块的 error 文本，而 error 判定排在 partial 判定之前，`ToolMessage` 还把 partial 判定挂在 `success` 上，`success` 被 error 拉成 false 后该分支无法进入；现在 partial 与混合成败判定优先于 error，回落为黄色警告，`apply_diff` 面板的 partial 图标同步改为警告图标。
   - 修复 Responses 渠道历史思考被签名能力门控过滤：`sendHistoryThoughts` 只在推理签名能力为 deepseek 的渠道开启，其余 Responses 渠道的历史思考分段被 `historyFormatting` 判为不可回传而整段丢弃，明文 `reasoning_text` 因此没有内容可发；该协议的标准输入形态就是 reasoning item（官方 GPT 与 DeepSeek 端点都接受回传），现默认开启历史思考回传。
   - 修复 Responses 渠道历史推理缺明文 `reasoning_text`：签名分支原先独占回传，只写 `encrypted_content`/`summary` 而不写明文 `content`，只认 `reasoning_text` 的端点（DeepSeek 等）在带工具的后续请求里持续报 `HTTP 400: The reasoning_text in the thinking mode must be passed back to the API`。现在「回填历史思考内容」与「发送历史思考签名」同时开启时两种字段并存，官方端点读加密签名、DeepSeek 类端点读明文；该轮只有摘要没有明文时用摘要文本补全，模型完全没思考而直接输出时（模型名含 `ds`/`deepseek`）补空字符串占位，显式关闭「回填历史思考内容」时仍只发签名。
+  - 修复从 oai 兼容渠道切到 Responses 渠道后首轮报 `HTTP 400: The reasoning_text in the thinking mode must be passed back to the API`：切换前那几轮的思考只有裸 thought part（没有 Responses 元数据），`buildHistoryOptions` 按未设置默认 false 处理时会被 `historyFormatting` 整段丢弃，切换后就没有 `reasoning_text` 可回传。现 Responses 渠道未显式关闭时默认回传历史思考（openai 兼容渠道行为不变）。
+  - 修复上游报错信息不完整、只显示通用 `HTTP 400`：网关（FastAPI/Starlette）的错误体是 `{"detail": "..."}`，而 channelManager 路径的 `extractUpstreamErrorMessage` 只认 `error.message` / `error` 字符串 / `message`，真实原因被丢掉。现支持 `detail`（字符串/对象/数组）、`errors` 数组，并在结构未知但确实携带内容时原样透出（500 字符截断，与流式路径 `streamError` 口径一致）。
+  - 修复桌面与 Web 版 `read_file` 声明支持图片/PDF 却一律拒绝（提示“多模态工具未启用”）：渠道设置不再提供该开关，工具执行前按所选供应方的协议计算能力并注入上下文，图片/文档随工具结果作为附件返回。
+  - 修复桌面普通对话被注入“上一轮任务执行失败”状态：该提示原本对所有对话无条件注入，会被模型当成任务背景；现只面向 Bot 频道对话。
 
 ## [2.0.0-pre.3] - 2026-09-23
 

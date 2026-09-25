@@ -30,6 +30,28 @@ function asRecord(value: unknown): Record<string, any> | undefined {
     return value as Record<string, any>;
 }
 
+/**
+ * 结构未知的错误体原样透出时的长度上限。
+ * 与 streamError 的 500 字符口径一致：展示完整原因，同时不让巨型错误页刷屏。
+ */
+const MAX_UPSTREAM_MESSAGE_LENGTH = 500;
+
+/**
+ * 递归判断错误体里是否存在可读内容。
+ * 只看顶层键会把 `{ error: { errors: [] } }` 这类空壳当成有效错误原样透出，
+ * 真正需要原样透出的是确实携带了文本/数值的结构未知错误体。
+ */
+function hasReadableContent(value: unknown): boolean {
+    if (value === undefined || value === null || value === '') return false;
+    if (typeof value === 'string') return value.trim() !== '';
+    if (typeof value === 'number' || typeof value === 'boolean') return true;
+    if (Array.isArray(value)) return value.some(hasReadableContent);
+    if (typeof value === 'object') {
+        return Object.values(value as Record<string, unknown>).some(hasReadableContent);
+    }
+    return true;
+}
+
 function getEndpointHost(url: string): string | undefined {
     try {
         return new URL(url).host || undefined;
@@ -215,20 +237,62 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
         if (typeof body === 'string' && body.trim()) return body.trim();
         return undefined;
     }
+    if (Array.isArray(body)) {
+        // 部分 provider（如 Google）把错误体包成数组，逐个元素尝试。
+        for (const item of body) {
+            const nested = extractUpstreamErrorMessage(item);
+            if (nested) return nested;
+        }
+        return undefined;
+    }
     const obj = body as Record<string, any>;
     // Anthropic/OpenAI/OpenRouter 的 { error: { message: "..." } }
-    if (obj.error && typeof obj.error === 'object' && typeof obj.error.message === 'string') {
-        return obj.error.message.trim();
+    if (obj.error && typeof obj.error === 'object' && !Array.isArray(obj.error) && typeof obj.error.message === 'string') {
+        const nested = obj.error.message.trim();
+        if (nested) return nested;
     }
     // { error: "..." }
-    if (typeof obj.error === 'string') {
+    if (typeof obj.error === 'string' && obj.error.trim()) {
         return obj.error.trim();
     }
+    // { error: {...} } 内层没有可读 message（如 { code }）时仍尝试外层字段
+    if (obj.error && typeof obj.error === 'object') {
+        const nested = extractUpstreamErrorMessage(obj.error);
+        if (nested) return nested;
+    }
+    // FastAPI/Starlette 风格 { detail: "..." | {...} | [...] }：网关错误常见形态
+    if (obj.detail !== undefined && obj.detail !== null) {
+        if (typeof obj.detail === 'string' && obj.detail.trim()) return obj.detail.trim();
+        const nested = extractUpstreamErrorMessage(obj.detail);
+        if (nested) return nested;
+    }
+    // Google 等把错误包在 errors 数组里（{ error: { errors: [{ message }] } }）
+    if (Array.isArray(obj.errors)) {
+        for (const item of obj.errors) {
+            const nested = extractUpstreamErrorMessage(item);
+            if (nested) return nested;
+        }
+        return undefined;
+    }
     // { message: "..." }
-    if (typeof obj.message === 'string') {
+    if (typeof obj.message === 'string' && obj.message.trim()) {
         return obj.message.trim();
     }
-    return undefined;
+    // { msg: "..." }
+    if (typeof obj.msg === 'string' && obj.msg.trim()) {
+        return obj.msg.trim();
+    }
+    // 结构不认识但确实带了可读内容：原样透出，总好过只显示一个状态码。
+    if (!hasReadableContent(obj)) return undefined;
+    try {
+        const serialized = JSON.stringify(obj);
+        if (!serialized || serialized === '{}' || serialized === '[]') return undefined;
+        return serialized.length > MAX_UPSTREAM_MESSAGE_LENGTH
+            ? `${serialized.slice(0, MAX_UPSTREAM_MESSAGE_LENGTH)}…`
+            : serialized;
+    } catch {
+        return undefined;
+    }
 }
 
 /**

@@ -189,4 +189,35 @@ describe('OpenAI thought backfill policy', () => {
         )).toBe(true);
         expect(thoughtTexts(forApi)).toEqual(['First reasoning']);
     });
+
+    test('openai-responses 未显式设置思考开关时默认回传历史思考（渠道切换场景）', () => {
+        // 从 oai 兼容渠道切到 Responses 渠道后，历史里的思考只有裸 thought part（无 Responses 元数据）。
+        // 若按 false 处理，historyFormatting 会整段丢弃它，切换后的首轮就没有 reasoning_text 可回传，
+        // 只认明文的上游（DeepSeek 等）会直接报 400。
+        const base = createConfig('openai-responses', false, true) as unknown as Record<string, unknown>;
+        const withoutFlags = { ...base };
+        delete withoutFlags.sendHistoryThoughts;
+        delete withoutFlags.sendCurrentThoughts;
+
+        const options = messageBuilder.buildHistoryOptions(withoutFlags as unknown as BaseChannelConfig);
+        expect(options.sendHistoryThoughts).toBe(true);
+
+        const history: Content[] = [
+            { role: 'user', isUserInput: true, parts: [{ text: 'First question' }] },
+            { role: 'model', parts: [{ text: 'From another channel', thought: true }, { text: 'First answer' }] }
+        ];
+        expect(thoughtTexts(
+            conversationManager.getHistoryForAPIFrom(history, options)
+        )).toEqual(['From another channel']);
+    });
+
+    test('openai 兼容渠道未显式设置时仍默认不回传历史思考（行为不变）', () => {
+        const base = createConfig('openai', false, true) as unknown as Record<string, unknown>;
+        const withoutFlags = { ...base };
+        delete withoutFlags.sendHistoryThoughts;
+        delete withoutFlags.sendCurrentThoughts;
+
+        const options = messageBuilder.buildHistoryOptions(withoutFlags as unknown as BaseChannelConfig);
+        expect(options.sendHistoryThoughts).toBe(false);
+    });
 });
