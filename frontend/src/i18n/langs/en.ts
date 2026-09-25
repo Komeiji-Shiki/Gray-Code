@@ -3123,6 +3123,7 @@ const en: LanguageMessages = {
                     signatures: 'Send Thought Signatures',
                     signaturesHint: 'Backfill reasoning context (history signatures & summaries) to keep multi-turn continuity; disable to skip reasoning items for endpoints that do not support the reasoning input type',
                     content: 'Send Thought Content',
+                    contentHint: 'Backfill historical reasoning (reasoning_text / summary) to keep multi-turn continuity; disable to stop sending reasoning input items for endpoints that do not support them',
                     currentGroup: 'Current Round',
                     currentSignatures: 'Send Current Signatures',
                     currentSignaturesHint: 'Maintain reasoning context for current step',

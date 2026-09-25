@@ -91,8 +91,22 @@ function getReasoningDisplayText(item: any): string | undefined {
 const PROMPT_CACHE_KEY_PREFIX = 'graycode-cache-';
 const DEEPSEEK_REASONING_TEXT_FALLBACK = '';
 
+/**
+ * 判断是否按 DeepSeek 兼容语义处理 Responses 推理回传。
+ *
+ * DeepSeek 无状态 Responses 接口要求带 tools 的后续请求把上一轮 reasoning 作为
+ * `reasoning` 输入项回传（plain content[].reasoning_text），缺项时上游直接报
+ * HTTP 400「The reasoning_text in the thinking mode must be passed back to the API」。
+ *
+ * 模型标识不统一：官方名是 deepseek-*，中转/代理常用 ds-* 别名，两者都按 DeepSeek
+ * 处理。`ds` 按独立标识段匹配（ds-v3、org/ds-v3、v3-ds），避免命中 words/hands 之类
+ * 包含 ds 的普通词；多补一个空字符串占位无害，漏判才会直接 400。
+ */
 function isDeepSeekModel(model: string): boolean {
-    return model.toLowerCase().includes('deepseek');
+    const normalized = model.trim().toLowerCase();
+    if (!normalized) return false;
+    if (normalized.includes('deepseek')) return true;
+    return /(?:^|[^a-z])ds(?:[^a-z]|$)/.test(normalized);
 }
 
 function createDeepSeekReasoningTextFallbackContent(): Array<{ type: 'reasoning_text'; text: string }> {
@@ -153,9 +167,16 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         //   sendHistoryThoughtSignatures 控制；不能因为 DeepSeek 的兼容限制而删掉 GPT 思考衔接。
         // - 非 DeepSeek 的 content-only reasoning：不构造 reasoning item，也不降级成普通文本，
         //   避免把不被当前 Responses endpoint 接受的 reasoning_text 发出去。
-        const isDeepSeek = config.providerReasoningContentEnabled ?? isDeepSeekModel(config.model);
+        // 不能用 `??`：providerReasoningContentEnabled 会被渠道配置显式写成布尔 false，
+        // ?? 会短路掉模型名推断（桌面端因此恒为 false，DeepSeek 的空 reasoning_text
+        // 占位回传永久失效，带 tools 的后续请求继续 400）。
+        const isDeepSeek = config.providerReasoningContentEnabled === true || isDeepSeekModel(config.model);
         const input = this.convertToResponsesInput(processedHistory, {
-            allowReasoningContent: isDeepSeek && config.sendHistoryThoughts === true,
+            // plain reasoning_text/summary 回传不再按模型名门控：reasoning item 是 Responses
+            // 协议的标准输入形态，官方 GPT 与 DeepSeek 端点都接受回传。未设置 = 回传；
+            // 只有渠道显式写下 replayReasoningContent=false 时才停止回传（兼容不支持
+            // reasoning 输入的端点）。旧渠道没有该字段，因此自动跟随新默认。
+            allowReasoningContent: config.replayReasoningContent !== false,
             allowReasoningSignatures: config.sendHistoryThoughtSignatures === true,
             reasoningSignatureMode: config.reasoningSignatureMode ?? 'official',
             useDeepSeekReasoningTextFallback: isDeepSeek

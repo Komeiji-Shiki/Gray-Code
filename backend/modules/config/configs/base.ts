@@ -307,6 +307,21 @@ export interface BaseChannelConfig {
      */
     sendHistoryThoughts?: boolean;
 
+    /**
+     * 是否回传推理内容（OpenAI Responses 渠道专用）
+     *
+     * Responses 的 reasoning item 是协议标准输入形态，官方 GPT 与 DeepSeek 端点
+     * 都接受回传 plain reasoning_text/summary，因此默认回传。
+     *
+     * 默认值：true（未设置 = 回传）。仅在显式设为 false 时停止发送 reasoning
+     * 输入项，用于兼容不接受该输入类型的第三方端点。
+     *
+     * 为什么不复用 sendHistoryThoughts：该字段在桌面端由渠道能力自动派生并已持久化
+     * 过 false，无法与用户主动关闭区分。独立三态字段让旧渠道自动跟随新默认，
+     * 同时保留用户显式关闭的能力。
+     */
+    replayReasoningContent?: boolean;
+
     
     /**
      * 发送历史思考的回合数

@@ -90,6 +90,8 @@ export function buildChannelConfig(
     toolMode: "function_call",
     options,
     optionsEnabled,
+    // reasoning item 是 Responses 协议的标准输入形态，官方 GPT 与 DeepSeek 端点都接受
+    // plain reasoning_text 回传，因此 Responses 默认回传；其余协议仍按签名能力判断。
     sendHistoryThoughts: capability.reasoningSignature === "deepseek",
     sendHistoryThoughtSignatures: capability.reasoningSignature !== "none",
     sendCurrentThoughts: true,

@@ -526,7 +526,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTexts.join('')).toContain('The answer is 42.');
     });
 
-    test('关闭 sendHistoryThoughts 时 content-only reasoning 不回传也不降级', () => {
+    test('显式关闭回传（replayReasoningContent=false）时 content-only reasoning 不回传也不降级', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -551,6 +551,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
                 name: 'Responses Test',
                 preferStream: true,
                 sendHistoryThoughts: false,
+                replayReasoningContent: false,
                 sendHistoryThoughtSignatures: false,
                 options: {
                     stream: true,
@@ -573,9 +574,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTexts.join('')).toContain('继续调用工具。');
     });
 
-    test('非 DeepSeek content-only reasoning 不回传也不降级', () => {
-        // 即使历史 part 同时带有签名，签名开关关闭时也不把 content-only reasoning
-        // 发给非 DeepSeek endpoint。
+    test('content-only reasoning 默认回传，不降级为正文', () => {
+        // 默认（未显式关闭 sendHistoryThoughts）时 reasoning_text 作为标准 reasoning
+        // 输入项回传；签名开关只控制 encrypted_content。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -607,13 +608,18 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             .flatMap((item: any) => item.content)
             .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
             .map((part: any) => part.text);
-        expect(reasoningItems).toHaveLength(0);
+        // 签名开关关闭 → 不回传 encrypted_content；plain reasoning_text 照常回传
+        expect(reasoningItems).toHaveLength(1);
+        expect(reasoningItems[0].content).toEqual([{ type: 'reasoning_text', text: '完整思维链' }]);
+        expect(reasoningItems[0].encrypted_content).toBeUndefined();
+        // 不得降级成普通正文
         expect(assistantTexts.join('')).not.toContain('完整思维链');
         expect(assistantTexts.join('')).toContain('正文。');
     });
 
-    test('非 DeepSeek 裸 thought 不包装且不降级', () => {
-        // 历史来自其他渠道的裸 thought 也不能被非 DeepSeek Responses 请求重新包装。
+    test('裸 thought 默认包装为 reasoning 项回传', () => {
+        // 裸 thought（无为当前 endpoint 保留的签名）默认也回传 reasoning_text，
+        // 不再按模型名判断是否回传。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -639,12 +645,12 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             .flatMap((item: any) => item.content)
             .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
             .map((part: any) => part.text);
-        expect(reasoningItems).toHaveLength(0);
-        expect(assistantTexts.join('')).not.toContain('来自其他渠道的思考');
+        expect(reasoningItems).toHaveLength(1);
+        expect(reasoningItems[0].content).toEqual([{ type: 'reasoning_text', text: '来自其他渠道的思考' }]);
         expect(assistantTexts.join('')).toContain('正文。');
     });
 
-    test('裸 thought + sendHistoryThoughts=false 时按旧语义丢弃（不包装）', () => {
+    test('裸 thought + replayReasoningContent=false 时不回传也不降级', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -662,6 +668,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             createOpenAIResponsesConfig({
                 id: 'responses-test', name: 'Responses Test', preferStream: true,
                 sendHistoryThoughts: false,
+                replayReasoningContent: false,
                 sendHistoryThoughtSignatures: false
             })
         );
@@ -675,8 +682,8 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTexts.join('')).not.toContain('来自其他渠道的思考');
     });
 
-    test('非 DeepSeek 的旧 reasoning 记录不回传也不降级', () => {
-        // 旧格式只有 id/status + text 时，非 DeepSeek 也直接丢弃 thought。
+    test('旧 reasoning 记录（id/status + text）默认回传为 reasoning_text', () => {
+        // 旧格式只有 id/status + text 时，默认也补成 plain reasoning_text 回传。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -706,8 +713,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             .flatMap((item: any) => item.content)
             .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
             .map((part: any) => part.text);
-        expect(reasoningItems).toHaveLength(0);
-        expect(assistantTexts.join('')).not.toContain('旧格式思维链');
+        expect(reasoningItems).toHaveLength(1);
+        expect(reasoningItems[0].id).toBe('rs_legacy_1');
+        expect(reasoningItems[0].content).toEqual([{ type: 'reasoning_text', text: '旧格式思维链' }]);
         expect(assistantTexts.join('')).toContain('正文。');
     });
 
@@ -941,5 +949,55 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         });
         // thinking 不应出现在普通 assistant 文本里（未被降级污染）
         expect(assistantTexts.join('')).not.toContain('我需要先检查文件结构');
+    });
+
+    test('ds 别名同样按 DeepSeek 语义补空 reasoning 占位', () => {
+        // 中转/代理常用 ds-* 作为模型名，与 deepseek-* 同语义，不能因名字不带
+        // deepseek 就跳过空字符串占位（否则带 tools 的后续请求依然 400）。
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '读取文件。' }] },
+            { role: 'model', parts: [{ functionCall: { name: 'read_file', args: { path: 'a.ts' }, id: 'call_ds_1' } }] },
+            { role: 'user', parts: [{ functionResponse: { id: 'call_ds_1', name: 'read_file', response: { ok: true } } }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'ds-v4.1-flash',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        const assistantTurnItems = request.body.input.filter((item: any) =>
+            item.type === 'reasoning' || item.type === 'function_call'
+        );
+        expect(assistantTurnItems).toEqual([
+            { type: 'reasoning', content: [{ type: 'reasoning_text', text: '' }] },
+            { type: 'function_call', name: 'read_file', call_id: 'call_ds_1', arguments: '{"path":"a.ts"}' }
+        ]);
+    });
+
+    test('模型名里普通单词含 ds 时不误判为 DeepSeek', () => {
+        // ds 按独立标识段匹配：words/hands 这类普通词不应把普通端点当成 DeepSeek，
+        // 避免无意义地插入空 reasoning 项。
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '直接回答。' }] },
+            { role: 'model', parts: [{ text: '普通模型文本。' }] },
+            { role: 'user', parts: [{ text: '继续。' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'words-7b',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        expect(request.body.input.filter((item: any) => item.type === 'reasoning')).toHaveLength(0);
     });
 });

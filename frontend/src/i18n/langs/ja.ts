@@ -3123,6 +3123,7 @@ const ja: LanguageMessages = {
                     signatures: '思考署名を送信',
                     signaturesHint: '推論コンテキスト（履歴の署名・サマリー）を回伝して多ターン継続性を維持します。reasoning 入力タイプをサポートしないエンドポイントではオフにして reasoning 項目をスキップしてください',
                     content: '思考内容を送信',
+                    contentHint: '履歴の推論内容（reasoning_text / summary）を回伝し、マルチターンの思考継続性を維持します。オフにすると reasoning 入力項目を送信しなくなり、未対応のエンドポイントと互換になります',
                     currentGroup: '最新ターン',
                     currentSignatures: '最新の思考署名を送信',
                     currentSignaturesHint: '現在のステップの思考継続性を維持',

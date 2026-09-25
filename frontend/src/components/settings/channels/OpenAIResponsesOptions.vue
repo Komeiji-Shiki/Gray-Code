@@ -334,6 +334,19 @@ function onReasoningSignatureModeChange(value: string) {
           <label class="custom-checkbox">
             <input
               type="checkbox"
+              :checked="config.replayReasoningContent !== false"
+              @change="(e: any) => emit('update:field', 'replayReasoningContent', e.target.checked)"
+            />
+            <span class="checkmark"></span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.content') }}</span>
+          </label>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.contentHint') }}</span>
+        </div>
+
+        <div class="option-item checkbox-option">
+          <label class="custom-checkbox">
+            <input
+              type="checkbox"
               :checked="config.sendHistoryThoughtSignatures ?? false"
               @change="onSendThoughtSignaturesChange"
             />

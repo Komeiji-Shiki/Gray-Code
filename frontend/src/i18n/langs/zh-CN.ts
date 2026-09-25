@@ -3125,6 +3125,7 @@ const zhCN = {
                     signatures: '发送思考签名',
                     signaturesHint: '回传推理上下文（含历史思考签名与摘要），保持多轮交互的思考衔接；关闭时不回传 reasoning 项，以兼容不支持 reasoning 输入类型的第三方端点',
                     content: '发送思考内容',
+                    contentHint: '回传历史推理内容（reasoning_text / summary），保持多轮交互的思考衔接；关闭后不再发送 reasoning 输入项，以兼容不支持该输入类型的端点',
                     currentGroup: '当前轮次',
                     currentSignatures: '发送最新思考签名',
                     currentSignaturesHint: '保持当前步骤的思考衔接',
