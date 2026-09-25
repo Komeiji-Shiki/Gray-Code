@@ -28,8 +28,12 @@ export class PlatformPromptService {
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string;
     settingsOverride?: ReturnType<PlatformApplication['product']['runtimeSettings']>; preview?: boolean }) {
     if (!('message' in input.request) && normalizePendingApprovalGate((input.conversation.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) throw new Error('请先确认当前设计、评审或计划文档。');
+    const conversation = input.conversation;
+    const runtime = (conversation.custom ?? {}) as Record<string, unknown>;
+    const botEnvironment = runtime.botEnvironment as CapturedBotEnvironment | undefined;
     const previousRun = (await this.app.storage.listRuns({ conversationId: input.conversation.id, limit: 1 }))[0];
-    const failure = previousRun && botFailureContext(previousRun.status, previousRun.error);
+    // 上一轮失败提示只面向 Bot 频道对话；桌面与 Web 的普通对话不注入这条运行状态，避免模型把它当成任务背景。
+    const failure = botEnvironment?.version === 1 && previousRun ? botFailureContext(previousRun.status, previousRun.error) : undefined;
     // 失败提示属于本轮动态上下文，不写成用户历史消息，也不进入上一轮的缓存快照。
     const failureMessage: PlatformMessage[] = failure ? [{ role: 'user', contextControl: 'run_failure', parts: [{ text: failure }] }] : [];
     const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
@@ -50,9 +54,6 @@ export class PlatformPromptService {
     const conversationMode = (input.conversation.custom as Record<string, unknown> | undefined)?.platformMode;
     const profile = typeof conversationMode === 'string' ? this.app.settings.snapshot().settings.modeProfiles?.[conversationMode as 'chat' | 'code' | 'character'] : undefined;
     const mode = settings.resolvePromptMode(input.request.promptModeId ?? profile?.promptModeId ?? input.agent.promptModeId);
-    const conversation = input.conversation;
-    const runtime = (conversation?.custom ?? {}) as Record<string, unknown>;
-    const botEnvironment = runtime.botEnvironment as CapturedBotEnvironment | undefined;
     const channelWorkspace = botEnvironment?.version === 1 ? this.app.settings.snapshot().settings.workspaces.find(item => item.id === conversation.workspaceId) : undefined;
     const workspace = input.actor.role === 'owner' || input.actor.effects.includes('workspace_read') ? input.workspace : undefined;
     // 共享频道环境描述保持一致；文件读取和动态资料仍使用本轮真实工作区权限。
