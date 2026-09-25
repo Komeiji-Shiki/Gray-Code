@@ -144,14 +144,20 @@ export class ConversationQueryService {
      */
     async getMessageMarkers(
         conversationId: string
-    ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }> }> {
+    ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }>; floorIndices: number[] }> {
         // 与 getMessagesPaged 使用同一显示规范化入口，保证悬空工具响应插入、Bot
         // 来源格式化和稳定 ID 迁移后，marker 的绝对索引仍与前端真实分页一致。
         const history = await this.normalizeHistoryForDisplay(conversationId);
         const markers: Array<{ index: number; id?: string; preview?: string }> = [];
+        const floorIndices: number[] = [];
 
         for (let index = 0; index < history.length; index++) {
             const message = history[index];
+            // 楼层按整段历史编号，工具响应不占楼；前端只加载分页窗口时仍可拿到绝对楼层。
+            // 与前端 isNumberedMessage 同一口径（Content 的 model 对应前端 assistant）。
+            if (message.role === 'model' || (message.role === 'user' && !message.isFunctionResponse)) {
+                floorIndices.push(index);
+            }
             if (message.role !== 'user' || message.isFunctionResponse) continue;
 
             const preview = (message.parts ?? [])
@@ -167,7 +173,7 @@ export class ConversationQueryService {
             });
         }
 
-        return { total: history.length, markers };
+        return { total: history.length, markers, floorIndices };
     }
 
     /** 搜索结果按稳定 ID 解析显示索引，避免旧历史规范化时插入消息造成偏移。 */

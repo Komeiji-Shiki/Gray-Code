@@ -1336,7 +1336,7 @@ export class ConversationManager {
     /** 获取滚动条所需的轻量用户消息索引（实现见 manager/query.ts）。 */
     async getMessageMarkers(
         conversationId: string
-    ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }> }> {
+    ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }>; floorIndices: number[] }> {
         return await this.query.getMessageMarkers(conversationId);
     }
 

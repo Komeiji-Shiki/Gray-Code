@@ -136,19 +136,77 @@ export function computeVirtualRows<T>(rows: T[], options: ComputeVirtualRowsOpti
 /**
  * 计算楼层号映射：用户消息与模型回复各占一楼（按消息顺序依次编号）。
  *
- * tool 消息（工具调用/结果）与内部消息不占楼；总结消息 role 为 user，正常计入，
+ * tool 消息与 functionResponse 工具结果不占楼；总结消息 role 为 user，正常计入，
  * 保证楼层号连续。返回 Map<messageId, floor>。
  */
-export function computeMessageFloorMap<T extends { id: string; role: string }>(messages: T[]): Map<string, number> {
+export function isNumberedMessage(message: { role: string; isFunctionResponse?: boolean }): boolean {
+  return !message.isFunctionResponse && (message.role === 'user' || message.role === 'assistant')
+}
+
+export function computeMessageFloorMap<T extends { id: string; role: string; isFunctionResponse?: boolean }>(messages: T[]): Map<string, number> {
   const map = new Map<string, number>()
   let floor = 0
   for (const message of messages) {
-    if (message.role === 'user' || message.role === 'assistant') {
+    if (isNumberedMessage(message)) {
       floor++
       map.set(message.id, floor)
     }
   }
   return map
+}
+
+/**
+ * 分页窗口的楼层由后端全局索引决定；窗口后新增的消息仅在索引连续时顺延。
+ * 全局索引尚未载入时，只允许从历史起点加载的窗口自行编号，避免尾页错误地从 1 开始。
+ */
+export function computePaginatedMessageFloorMap<T extends { id: string; role: string; isFunctionResponse?: boolean; backendIndex?: number }>(
+  messages: T[], floorIndices: readonly number[] | null, snapshotTotal: number
+): Map<string, number> {
+  if (floorIndices === null) {
+    return messages[0]?.backendIndex === 0 ? computeMessageFloorMap(messages) : new Map()
+  }
+  const floorAt = (index: number): number | undefined => {
+    let low = 0
+    let high = floorIndices.length - 1
+    while (low <= high) {
+      const middle = (low + high) >>> 1
+      if (floorIndices[middle] === index) return middle + 1
+      if (floorIndices[middle] < index) low = middle + 1
+      else high = middle - 1
+    }
+    return undefined
+  }
+  const result = new Map<string, number>()
+  let nextIndex = snapshotTotal
+  let nextFloor = floorIndices.length
+  let contiguous = true
+  let reachedSnapshotTail = snapshotTotal === 0
+  for (const message of messages) {
+    const index = message.backendIndex
+    if (typeof index === 'number' && index < snapshotTotal) {
+      if (index === snapshotTotal - 1) reachedSnapshotTail = true
+      if (isNumberedMessage(message)) {
+        // 快照内的位置以全局索引为准（权威值覆盖之前可能存在的占位编号）。
+        const floor = floorAt(index)
+        if (floor !== undefined) result.set(message.id, floor)
+      }
+      continue
+    }
+    if (typeof index === 'number') {
+      if (index !== nextIndex) contiguous = false
+      if (!contiguous) continue
+      // 同一条消息已按占位编号过时保持原号：消息拿到持久化索引后不该再占一格，
+      // 否则自身号偏大，后续新消息的号也会跟着整体前移。
+      if (isNumberedMessage(message) && !result.has(message.id)) result.set(message.id, ++nextFloor)
+      nextIndex++
+      continue
+    }
+    // 流式本地占位紧跟已知尾部时，沿用即将写入的楼层号。
+    if (contiguous && reachedSnapshotTail && isNumberedMessage(message) && !result.has(message.id)) {
+      result.set(message.id, ++nextFloor)
+    }
+  }
+  return result
 }
 
 /**

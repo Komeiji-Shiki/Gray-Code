@@ -24,7 +24,7 @@ import { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './messageVi
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
 import {
   advanceMessageWindowStart,
-  computeMessageFloorMap,
+  computePaginatedMessageFloorMap,
   computeCheckpointFloorMap
 } from './messageListUtils'
 import { clearLineDiffCache } from '../../utils/lineDiff'
@@ -124,8 +124,10 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
   const messageMarkers = ref<MessageMarker[]>([])
   const markerTotal = ref(0)
-  const messageMarkerCache = new Map<string, { total: number; markers: MessageMarker[]; loadedAt: number }>()
+  const globalFloorIndices = ref<number[] | null>(null)
+  const messageMarkerCache = new Map<string, { total: number; markers: MessageMarker[]; floorIndices: number[] | null; loadedAt: number }>()
   let markerConversationId: string | null = null
+  let markerRequestEpoch = 0
 
   const virtualTotalMessages = computed(() => Math.max(
     markerTotal.value,
@@ -147,7 +149,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     const byIndex = new Map<number, MessageMarker>()
     for (const marker of messageMarkers.value) byIndex.set(marker.index, marker)
     for (const message of props.messages) {
-      if (message.role !== 'user' || typeof message.backendIndex !== 'number') continue
+      if (message.role !== 'user' || message.isFunctionResponse || typeof message.backendIndex !== 'number') continue
       if (byIndex.has(message.backendIndex)) continue
       const preview = message.content.replace(/\s+/g, ' ').trim().slice(0, 80)
       byIndex.set(message.backendIndex, {
@@ -160,31 +162,39 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   })
 
   async function refreshMessageMarkers(conversationId: string | null): Promise<void> {
+    const epoch = ++markerRequestEpoch
     messageMarkers.value = []
     markerTotal.value = 0
+    globalFloorIndices.value = null
     markerConversationId = conversationId
     if (!conversationId) return
     const cached = messageMarkerCache.get(conversationId)
-    if (cached && Date.now() - cached.loadedAt < 60_000) {
+    if (cached && cached.total === chatStore.totalMessages && Date.now() - cached.loadedAt < 60_000) {
       messageMarkers.value = cached.markers
       markerTotal.value = cached.total
+      globalFloorIndices.value = cached.floorIndices
       return
     }
     try {
-      const result = await sendToExtension<{ total?: number; markers?: MessageMarker[] }>(MESSAGE_NAMES['conversation.getMessageMarkers'], {
+      const result = await sendToExtension<{ total?: number; markers?: MessageMarker[]; floorIndices?: number[] }>(MESSAGE_NAMES['conversation.getMessageMarkers'], {
         conversationId
       })
-      if (markerConversationId !== conversationId || chatStore.currentConversationId !== conversationId) return
+      if (epoch !== markerRequestEpoch || markerConversationId !== conversationId || chatStore.currentConversationId !== conversationId) return
       messageMarkers.value = Array.isArray(result?.markers)
         ? result.markers.filter(marker => Number.isFinite(marker.index) && marker.index >= 0)
         : []
       markerTotal.value = Number.isFinite(result?.total) ? Math.max(0, Number(result.total)) : 0
+      globalFloorIndices.value = Array.isArray(result?.floorIndices)
+        ? [...new Set(result.floorIndices.filter(index => Number.isSafeInteger(index) && index >= 0 && index < markerTotal.value))].sort((a, b) => a - b)
+        : null
       messageMarkerCache.set(conversationId, {
         total: markerTotal.value,
         markers: messageMarkers.value,
+        floorIndices: globalFloorIndices.value,
         loadedAt: Date.now()
       })
     } catch (error) {
+      if (epoch !== markerRequestEpoch) return
       // 老宿主没有 marker 接口时保留现有滚动体验，真实消息页仍可正常分页。
       console.warn('[MessageList] Failed to load message markers:', error)
     }
@@ -209,9 +219,11 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     floor?: number
   }
 
-  // 楼层号映射：按对话消息顺序对 user/assistant 消息编号（总结消息也是 user role，计入）。
-  // 基于全部已加载消息（props.messages）计算，窗口内渲染行直接按 message.id 取值。
-  const floorByMessageId = computed(() => computeMessageFloorMap(props.messages))
+  // 楼层号映射：后端一次全局扫描提供绝对位置，分页窗口按 backendIndex 对齐。
+  // 历史缩短后旧快照立即失效；新消息在快照末尾按连续索引顺延。
+  const floorByMessageId = computed(() => computePaginatedMessageFloorMap(
+    props.messages, chatStore.totalMessages < markerTotal.value ? null : globalFloorIndices.value, markerTotal.value
+  ))
 
   // 存档序号：按创建时间升序编号（第 N 次存档）。
   const checkpointFloorByCheckpointId = computed(() => computeCheckpointFloorMap(chatStore.checkpoints))
@@ -730,6 +742,23 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     void refreshMessageMarkers(newId)
   }, { immediate: true })
 
+  // 新消息和删除会改变全局楼层；等当前回合结束后再刷新一次，避免流式期间反复全量扫描。
+  let markerRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  watch(
+    [() => chatStore.currentConversationId, () => chatStore.totalMessages,
+      () => chatStore.isStreaming, () => chatStore.isWaitingForResponse],
+    ([conversationId, total, streaming, waiting]) => {
+      if (markerRefreshTimer) clearTimeout(markerRefreshTimer)
+      markerRefreshTimer = null
+      if (!conversationId || streaming || waiting || globalFloorIndices.value === null || total === markerTotal.value) return
+      markerRefreshTimer = setTimeout(() => {
+        markerRefreshTimer = null
+        if (chatStore.currentConversationId === conversationId && !chatStore.isStreaming && !chatStore.isWaitingForResponse
+          && chatStore.totalMessages !== markerTotal.value) void refreshMessageMarkers(conversationId)
+      }, 150)
+    }
+  )
+
   watch(
     [() => chatStore.currentConversationId, () => props.messages.length, () => messageMarkers.value.length,
       () => chatStore.isLoadingMoreMessages],
@@ -818,6 +847,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
   // 清理监听器
   onBeforeUnmount(() => {
+    markerRequestEpoch++
+    if (markerRefreshTimer) clearTimeout(markerRefreshTimer)
     window.removeEventListener('message', handleExternalMessageJump)
     if (scrollbarRef.value) {
       const container = scrollbarRef.value.getContainer()

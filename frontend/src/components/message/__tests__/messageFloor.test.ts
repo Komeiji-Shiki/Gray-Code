@@ -6,7 +6,7 @@
  * - computeCheckpointFloorMap：按 timestamp 升序编号，同时间戳稳定排序
  */
 import { describe, expect, test } from 'vitest'
-import { computeMessageFloorMap, computeCheckpointFloorMap } from '../messageListUtils'
+import { computeMessageFloorMap, computePaginatedMessageFloorMap, computeCheckpointFloorMap } from '../messageListUtils'
 
 describe('computeMessageFloorMap', () => {
   test('user/assistant 消息依次占楼，tool 消息不占楼', () => {
@@ -45,6 +45,67 @@ describe('computeMessageFloorMap', () => {
 
   test('空列表返回空映射', () => {
     expect(computeMessageFloorMap([]).size).toBe(0)
+  })
+
+  test('工具响应虽然映射为 user 角色，也不占楼层', () => {
+    const map = computeMessageFloorMap([
+      { id: 'user', role: 'user' },
+      { id: 'reply', role: 'user', isFunctionResponse: true },
+      { id: 'model', role: 'assistant' }
+    ])
+    expect([...map.entries()]).toEqual([['user', 1], ['model', 2]])
+  })
+})
+
+describe('computePaginatedMessageFloorMap', () => {
+  const floorIndices = [0, 1, 3, 4, 7]
+  const tail = [
+    { id: 'u4', role: 'user', backendIndex: 4 },
+    { id: 'tool5', role: 'user', isFunctionResponse: true, backendIndex: 5 },
+    { id: 'a7', role: 'assistant', backendIndex: 7 }
+  ]
+
+  test('尾页、补拉较早页和跳转窗口使用相同的全局楼层', () => {
+    expect([...computePaginatedMessageFloorMap(tail, floorIndices, 8).entries()]).toEqual([['u4', 4], ['a7', 5]])
+    expect([...computePaginatedMessageFloorMap([
+      { id: 'u3', role: 'user', backendIndex: 3 }, ...tail
+    ], floorIndices, 8).entries()]).toEqual([['u3', 3], ['u4', 4], ['a7', 5]])
+    expect(computePaginatedMessageFloorMap([tail[2]], floorIndices, 8).get('a7')).toBe(5)
+  })
+
+  test('新消息连续追加时顺延楼层，出现未加载的索引间隙时不猜测', () => {
+    const appended = [
+      tail[2],
+      { id: 'u8', role: 'user', backendIndex: 8 },
+      { id: 'tool9', role: 'user', isFunctionResponse: true, backendIndex: 9 },
+      { id: 'a10', role: 'assistant', backendIndex: 10 }
+    ]
+    expect([...computePaginatedMessageFloorMap(appended, floorIndices, 8).entries()]).toEqual([
+      ['a7', 5], ['u8', 6], ['a10', 7]
+    ])
+    expect(computePaginatedMessageFloorMap([tail[2], appended[3]], floorIndices, 8).has('a10')).toBe(false)
+  })
+
+  test('全局索引未返回时只给从历史起点开始的窗口编号', () => {
+    expect(computePaginatedMessageFloorMap(tail, null, 0).size).toBe(0)
+    expect(computePaginatedMessageFloorMap([
+      { id: 'u0', role: 'user', backendIndex: 0 },
+      { id: 'a1', role: 'assistant', backendIndex: 1 }
+    ], null, 0).get('a1')).toBe(2)
+  })
+
+  test('同一条消息同时以本地占位和持久化形态出现时只占一格', () => {
+    const messages = [
+      tail[2],
+      { id: 'u8', role: 'user' },
+      { id: 'u8', role: 'user', backendIndex: 8 },
+      { id: 'a9', role: 'assistant', backendIndex: 9 }
+    ]
+    const map = computePaginatedMessageFloorMap(messages, floorIndices, 8)
+    expect(map.get('a7')).toBe(5)
+    expect(map.get('u8')).toBe(6)
+    // 已有占位编号时不再多占一格，后续新消息的号也不会被顶到前一位
+    expect(map.get('a9')).toBe(7)
   })
 })
 

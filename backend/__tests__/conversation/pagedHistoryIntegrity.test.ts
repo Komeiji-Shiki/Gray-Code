@@ -60,8 +60,27 @@ describe('getMessagesPaged - 悬空工具调用补齐', () => {
             { index: 0, id: 'u-0', preview: '第一条很长的正文' },
             { index: 2, id: 'u-2', preview: '第二条' },
         ]);
+        expect(result.floorIndices).toEqual([0, 1, 2]);
         expect(await manager.getMessagePosition('conv-markers', 'm-1')).toEqual({ index: 1 });
         expect(await manager.getMessagePosition('conv-markers', 'missing')).toEqual({});
+    });
+
+    test('全局楼层索引跳过工具响应，保留后续模型和用户消息的绝对位置', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await storage.saveHistory('conv-floors', [
+            { role: 'user', id: 'u-0', parts: [{ text: '开始' }] },
+            { role: 'model', id: 'm-1', parts: [{ functionCall: { id: 'call-1', name: 'read_file', args: { path: 'a.ts' } } }] },
+            { role: 'user', id: 'tool-2', isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'call-1', name: 'read_file', response: { success: true } } }] },
+            { role: 'model', id: 'm-3', parts: [{ text: '完成' }] },
+            { role: 'user', id: 'u-4', parts: [{ text: '继续' }] },
+        ] as ConversationHistory);
+
+        const result = await manager.getMessageMarkers('conv-floors');
+        expect(result.total).toBe(5);
+        expect(result.floorIndices).toEqual([0, 1, 3, 4]);
+        expect(result.markers.map(marker => marker.index)).toEqual([0, 4]);
     });
 
     test('分段存储首次加载会补齐悬空 functionCall', async () => {
