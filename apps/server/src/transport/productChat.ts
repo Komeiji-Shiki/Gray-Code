@@ -2,7 +2,8 @@ import { ArtifactApproval } from '../artifacts/approval';
 import { chatRunInput, chatUserMessage } from './chatInput';
 import { StreamAccumulator } from '../../../../backend/modules/channel/StreamAccumulator';
 import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../../../backend/core/streamConstants';
-import type { PlatformMessage, RunRecord } from '@graycode/contracts';
+import { PLACEHOLDER_CONVERSATION_TITLES, deriveConversationTitle } from '../conversations/autoTitles';
+import type { PlatformConversation, PlatformMessage, RunRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
 import type { ProductSettingsDraft } from '../settings/product';
@@ -45,6 +46,7 @@ export class ProductChat {
     const parts = userMessage.parts;
     const vision = typeof data.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: data.deepSeekVisionTileSplit } : {};
     if (mode === 'send' && !parts.length && !data.hiddenFunctionResponse) throw new Error('请输入消息或添加附件。');
+    if (mode === 'send' && !data.hiddenFunctionResponse) await this.applyAutoTitle(conversation, text);
     const stream = this.createStream(conversation.id);
     stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
     const input = chatRunInput(client, data, preferences, conversation, requestKey);
@@ -84,6 +86,26 @@ export class ProductChat {
     const stream = this.createStream(run.conversationId, run.id);
     this.streams.set(run.id, stream);
     this.emit(stream, { type: 'chunk', chunk: { delta: [], done: false } });
+  }
+
+  /**
+   * 首条消息自动命名。
+   *
+   * 独立宿主新建对话时先落库占位标题（ui.mode.new / conversation.createConversation），首条消息
+   * 不再经过「以消息创建对话」的旧流程，标题会一直停在「新对话」。这里在首个回合写入历史前，
+   * 把仍是占位标题（或空标题）的空对话替换为消息摘要，并广播 metadataOnly 变更让侧栏/标签页刷新。
+   */
+  private async applyAutoTitle(conversation: PlatformConversation, text: unknown): Promise<void> {
+    const title = deriveConversationTitle(text);
+    const current = typeof conversation.title === 'string' ? conversation.title.trim() : '';
+    if (!title || (current && !PLACEHOLDER_CONVERSATION_TITLES.has(current))) return;
+    const info = await this.app.storage.historyInfo(conversation.id);
+    if (info.total !== 0) return;
+    // 重读最新元数据再写回：创建与首条消息之间可能已写入 inputModelConfig / promptModeConfig。
+    const latest = await this.app.storage.getConversation(conversation.id) ?? conversation;
+    await this.app.storage.saveMetadata({ ...latest, title, updatedAt: Date.now() });
+    this.app.productUi.conversations.clearMetadataCache();
+    this.app.publish({ type: 'conversation.changed', conversationId: conversation.id, metadataOnly: true });
   }
   async resumeConversationStream(client: ClientSession, conversationId: string): Promise<{ active: boolean; latestMessageId?: string }> {
     await this.app.conversation(client.actorId, conversationId);

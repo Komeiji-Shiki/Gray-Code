@@ -31,6 +31,7 @@ import { DesktopComputerCapture } from './computerCapture';
 import { DesktopPetWindow } from './petWindow';
 import { systemFonts } from "./fonts";
 import { migrateLegacySettings } from './legacySettings';
+import { backfillPlaceholderTitles } from '../../server/src/conversations/autoTitles';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
 import { DesktopOpenFiles, desktopFileArguments, openDesktopPath } from './openFiles';
 import { DesktopEditorRegistration } from './editorRegistration';
@@ -282,6 +283,8 @@ async function main(): Promise<void> {
   await migrateLegacySettings(application, app.getPath('appData')).catch(error => {
     console.error('旧配置自动导入未完成：', error instanceof Error ? error.message : String(error));
   });
+  // 后台补齐历史遗留的占位对话标题（一次性，写入标记后不再扫描）。
+  void backfillPlaceholderTitles(application).catch(error => console.warn('[autoTitles] Backfill failed:', error));
   notifications = desktopNotifications(application, () => window, createWindow);
   const installer = new DesktopInstaller({ executable: process.execPath, userData: app.getPath('userData'), dataDirectory,
     recoveryTemplate: path.resolve(__dirname, '../../../resources/installer/restore-program.ps1'),

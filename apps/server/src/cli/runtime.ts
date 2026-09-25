@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { PlatformApplication } from "../application";
 import { RemoteAccessService } from '../transport/remoteAccess';
+import { backfillPlaceholderTitles } from '../conversations/autoTitles';
 import path from 'node:path';
 import { environmentSecretCodec } from '../settings/environmentSecrets';
 
@@ -15,6 +16,8 @@ export async function runApplicationCommand(
     secretCodec: environmentSecretCodec(typeof values['key-env'] === 'string' ? values['key-env'] : undefined) });
   try {
     if (command === "serve") {
+      // 后台补齐历史遗留的占位对话标题（一次性，写入标记后不再扫描）。
+      void backfillPlaceholderTitles(application).catch(error => console.warn('[autoTitles] Backfill failed:', error));
       const variable =
         typeof values["token-env"] === "string" ? values["token-env"] : "";
       const token = variable ? process.env[variable] : undefined;
