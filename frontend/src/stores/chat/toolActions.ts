@@ -5,7 +5,7 @@
  */
 
 import { MESSAGE_NAMES, type CancelStreamResponse } from '@shared/protocol'
-import type { Message } from '../../types'
+import type { Message, ToolUsage } from '../../types'
 import type { ChatStoreState, ChatStoreComputed } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
@@ -74,6 +74,26 @@ export function getToolResponseById(
   }
 
   return latest
+}
+
+/**
+ * 工具是否已由后端回传业务结果（先于 functionResponse 消息到达前端）。
+ *
+ * 工具执行结束时后端发 toolStatus 携带 result 与最终状态，但含这些响应的 functionResponse
+ * 消息要等整批工具结束的 toolIteration 才写入。同一助手消息里的后续工具仍在执行时，
+ * 已完成工具在历史里暂时没有 functionResponse；用户此时点停止，若只按 functionResponse
+ * 判断，已成功的工具会被归入「未完成」并在界面上改写成「Cancelled by user」——
+ * 模型发起两个 execute_command，只有后一个被停止，两条却双双显示已取消。
+ */
+function hasDeliveredToolResult(tool: ToolUsage): boolean {
+  if (!tool.result || typeof tool.result !== 'object') return false
+  return tool.status === 'success' || tool.status === 'error' || tool.status === 'warning'
+    || tool.status === 'awaiting_apply'
+}
+
+/** 工具是否仍缺少响应：历史里没有 functionResponse，也没有已回传的业务结果。 */
+function isToolMissingResponse(state: ChatStoreState, tool: ToolUsage): boolean {
+  return !hasToolResponse(state, tool.id) && !hasDeliveredToolResult(tool)
 }
 
 /**
@@ -199,8 +219,8 @@ function markIncompleteToolsAsError(
 ): IncompleteToolInfo | null {
   const all = state.allMessages.value
 
-  // 只要工具调用在历史中没有对应 functionResponse，就认为它“未完成”
-  const isToolIncomplete = (toolId: string) => !hasToolResponse(state, toolId)
+  // 只要工具调用在历史中没有对应 functionResponse、也没有已回传的业务结果，就认为它“未完成”
+  const isToolIncomplete = (tool: ToolUsage) => isToolMissingResponse(state, tool)
 
   // 1) 优先定位指定 messageId
   let targetIndex = -1
@@ -212,7 +232,7 @@ function markIncompleteToolsAsError(
     // 此时需要回退到“最近一条包含未完成工具的 assistant 消息”。
     if (targetIndex !== -1) {
       const msg = all[targetIndex]
-      const hasIncomplete = !!msg.tools?.some(t => isToolIncomplete(t.id))
+      const hasIncomplete = !!msg.tools?.some(t => isToolIncomplete(t))
       if (!hasIncomplete) {
         targetIndex = -1
       }
@@ -225,7 +245,7 @@ function markIncompleteToolsAsError(
   if (targetIndex === -1) {
     for (let i = all.length - 1; i >= 0; i--) {
       const msg = all[i]
-      if (msg.role === 'assistant' && msg.tools?.some(t => isToolIncomplete(t.id))) {
+      if (msg.role === 'assistant' && msg.tools?.some(t => isToolIncomplete(t))) {
         targetIndex = i
         break
       }
@@ -239,11 +259,11 @@ function markIncompleteToolsAsError(
   const message = all[targetIndex]
 
   const toolCalls: Array<{ id: string; name: string }> = (message.tools || [])
-    .filter(tool => isToolIncomplete(tool.id))
+    .filter(tool => isToolIncomplete(tool))
     .map(tool => ({ id: tool.id, name: tool.name }))
 
   const updatedTools = message.tools?.map(tool => {
-    if (isToolIncomplete(tool.id)) {
+    if (isToolIncomplete(tool)) {
       return {
         ...tool,
         status: preserveDetachedSubAgents && tool.name === 'subagents'
@@ -405,9 +425,9 @@ export async function cancelStreamAndRejectTools(
     if (messageIndex !== -1) {
       const message = state.allMessages.value[messageIndex]
       
-      // 收集所有未完成的工具（没有 functionResponse 的都算）
+      // 收集所有未完成的工具（没有 functionResponse、也没有已回传结果的都算）
       const incompleteToolIds = message.tools
-        ?.filter(tool => !hasToolResponse(state, tool.id))
+        ?.filter(tool => isToolMissingResponse(state, tool))
         ?.map(tool => tool.id) || []
       
       // 本地先更新工具状态（更健壮：即使 messageIndex 不准确也能 fallback）
