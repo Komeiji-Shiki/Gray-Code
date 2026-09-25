@@ -92,6 +92,36 @@ function sanitizeGeminiContents(contents: Content[]): Content[] {
 }
 
 /**
+ * 合并相邻同角色 content（parts 按原顺序拼接）。
+ *
+ * Gemini generateContent 要求 contents 严格 user/model 交替，官方端点在出现连续同角色时
+ * 直接返回 400「Please ensure that multiturn requests alternate between user and model」。
+ * 历史上有两处会产生连续 user：
+ * - 动态上下文/提示词条目以独立 user content 插在当前用户回合之前（buildRequest 的
+ *   injectPromptContextMessages）；
+ * - 总结消息（role: user）紧随 functionResponse 或真实 user 消息之后。
+ *
+ * 实测危害不只 400：上游把连续同角色归一化成「其中一条才是当前输入」时，插在前面的
+ * 动态上下文会被当成最新用户消息，模型只回答上下文、忽略用户真正的问题。
+ *
+ * 因此按角色合并后再下发，用户真实输入始终位于最后一条 content 的末尾，顺序不变。
+ * 只合并真正相邻的同角色条目：model(functionCall) 与其后的 user(functionResponse)
+ * 角色不同，天然交替，不会跨工具边界错误合并。
+ */
+function mergeAdjacentSameRoleContents(contents: Content[]): Content[] {
+    const merged: Content[] = [];
+    for (const content of contents) {
+        const previous = merged[merged.length - 1];
+        if (previous && previous.role === content.role) {
+            merged[merged.length - 1] = { ...previous, parts: [...previous.parts, ...content.parts] };
+            continue;
+        }
+        merged.push(content);
+    }
+    return merged;
+}
+
+/**
  * Gemini 格式转换器
  * 
  * 支持 Google Gemini API 的完整功能：
@@ -170,6 +200,11 @@ export class GeminiFormatter extends BaseFormatter {
         // 兜底：过滤所有 oneof data 未初始化的空壳 part（含 thought-only 空壳），
         // 并丢弃变空的 content，彻底避免 GenerateContentRequest 400
         processedHistory = sanitizeGeminiContents(processedHistory);
+
+        // 收敛相邻同角色 content：Gemini 要求严格 user/model 交替（见
+        // mergeAdjacentSameRoleContents 注释），动态上下文插入与总结消息都会
+        // 在用户回合前额外产生一条 user content，不合并会被上游误判当前输入。
+        processedHistory = mergeAdjacentSameRoleContents(processedHistory);
 
         // 构建请求体
         const body: any = {
