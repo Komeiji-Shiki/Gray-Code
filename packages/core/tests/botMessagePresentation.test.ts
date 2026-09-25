@@ -5,18 +5,29 @@ import type { Content } from '../../../backend/modules/conversation/types';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
-import { botIdentityText, prependBotIdentityToCurrentMessage } from '../../../apps/server/src/bots/prompt';
+import { botIdentityText, prependBotContextToCurrentMessage, withoutStandaloneBotEnvironment } from '../../../apps/server/src/bots/prompt';
 import { LEGACY_BOT_IDENTITY_TEMPLATE } from '../../../shared/botConversation';
 
-test('旧版 Discord 身份模板只在请求中的发言标记前生成简短角色行', () => {
-  const environment = { version: 1 as const, content: '', identityTemplate: LEGACY_BOT_IDENTITY_TEMPLATE,
-    channel: { platform: 'discord', botId: 'bot', workspace: { directory: 'C:/private' } } };
+test('旧版 Discord 环境和身份合并到当前发言前，移除工作区路径且不改历史', () => {
+  const channel = { platform: 'discord', botId: 'bot', channelId: 'channel', direct: false, workspace: { id: 'old', directory: 'C:/private' } };
+  const environment = { version: 1 as const, content: `当前交流环境：${JSON.stringify(channel)}\n按 Discord 的习惯回复。`, identityTemplate: LEGACY_BOT_IDENTITY_TEMPLATE, channel };
   const original = [{ id: 'm1', role: 'user', isUserInput: true, parts: [{ text: '[Discord 发言 · "Apoieo"]\ntest' }] }];
-  const prepared = prependBotIdentityToCurrentMessage(original, environment, { role: 'owner' });
+  const prepared = prependBotContextToCurrentMessage(original, environment, { role: 'owner' });
   expect(botIdentityText(environment, { role: 'owner' })).toBe('[本轮发言身份：主人]');
-  expect(prepared[0].parts[0].text).toBe('[本轮发言身份：主人]\n[Discord 发言 · "Apoieo"]\ntest');
+  expect(prepared[0].parts[0].text).toBe('当前交流环境：{"platform":"discord","botId":"bot","channelId":"channel","direct":false}\n按 Discord 的习惯回复。\n[本轮发言身份：主人]\n[Discord 发言 · "Apoieo"]\ntest');
   expect(JSON.stringify(prepared)).not.toContain('C:/private');
   expect(original[0].parts[0].text).toBe('[Discord 发言 · "Apoieo"]\ntest');
+  const cached = [{ role: 'user', parts: [{ text: environment.content }] }, { role: 'user', parts: [{ text: '其他缓存提示' }] },
+    { role: 'user', parts: [{ text: environment.content }, { text: '另一段提示' }] }];
+  expect(withoutStandaloneBotEnvironment(cached, environment)).toEqual(cached.slice(1));
+  const current = { ...environment, channel: { platform: 'discord', botId: 'bot', channelId: 'channel', direct: false },
+    content: '当前交流环境：{"platform":"discord","botId":"bot","channelId":"channel","direct":false}\n按 Discord 的习惯回复。' };
+  const otherPrompt = { role: 'user', parts: [{ text: `其他提示：${JSON.stringify(channel)}` }] };
+  expect(withoutStandaloneBotEnvironment([cached[0], otherPrompt], current)).toEqual([otherPrompt]);
+  const qq = { ...environment, content: 'QQ 频道环境', channel: { platform: 'qq', botId: 'bot', channelId: 'group', direct: false } };
+  const qqMessage = [{ role: 'user', isUserInput: true, parts: [{ text: '[QQ 发言 · "访客"]\n你好' }] }];
+  expect(prependBotContextToCurrentMessage(qqMessage, qq, { role: 'guest' })[0].parts[0].text)
+    .toBe('QQ 频道环境\n[本轮发言身份：访客]\n[QQ 发言 · "访客"]\n你好');
 });
 
 test('Bot 发言和引用只展示名称及可读时间，不重复发送平台标识', async () => {

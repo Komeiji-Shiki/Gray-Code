@@ -15,7 +15,7 @@ import { deserializePromptContextCache, serializePromptContextCache } from '../.
 import type { PlatformApplication } from '../application';
 import { formatOpenTabsSection, formatActiveEditorSection } from '../../../../backend/modules/prompt/editorSections';
 import { captureEditorSnapshot, previousEditorSnapshot, type PromptEditorSnapshot } from './editorContext';
-import type { CapturedBotEnvironment } from '../bots/prompt';
+import { withoutStandaloneBotEnvironment, type CapturedBotEnvironment } from '../bots/prompt';
 import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
@@ -53,7 +53,7 @@ export class PlatformPromptService {
     const conversation = input.conversation;
     const runtime = (conversation?.custom ?? {}) as Record<string, unknown>;
     const botEnvironment = runtime.botEnvironment as CapturedBotEnvironment | undefined;
-    const channelWorkspace = botEnvironment?.version === 1 ? this.app.settings.snapshot().settings.workspaces.find(item => item.id === (botEnvironment.channel.workspace as { id?: string } | undefined)?.id) : undefined;
+    const channelWorkspace = botEnvironment?.version === 1 ? this.app.settings.snapshot().settings.workspaces.find(item => item.id === conversation.workspaceId) : undefined;
     const workspace = input.actor.role === 'owner' || input.actor.effects.includes('workspace_read') ? input.workspace : undefined;
     // 共享频道环境描述保持一致；文件读取和动态资料仍使用本轮真实工作区权限。
     const environmentWorkspace = channelWorkspace ?? workspace;
@@ -118,20 +118,15 @@ export class PlatformPromptService {
       workspaceUri: workspace ? pathToFileURL(workspace.directory).toString() : undefined };
     const bundle = assembler.getPromptContextBundle(mode, context, { diffBase: cache ? { sectionValues: cache.sectionValues, templateFingerprint: cache.dynamicTemplateFingerprint } : undefined });
     if (useContextNotes) bundle.beforeHistoryMessages.push({ role: 'user', contextControl: 'reminder', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] });
-    if (botEnvironment?.version === 1) {
-      if (botEnvironment.content.trim()) bundle.beforeHistoryMessages.push({ role: 'user', parts: [{ text: botEnvironment.content }] });
-      bundle.messages = [...bundle.beforeHistoryMessages, ...bundle.afterHistoryMessages];
-      bundle.dynamicSnapshotMessages = [...bundle.dynamicSnapshotBeforeHistoryMessages, ...bundle.dynamicSnapshotAfterHistoryMessages];
-      bundle.text = bundle.messages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
-      bundle.dynamicSnapshotText = bundle.dynamicSnapshotMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
-    }
     const resumed = typeof input.previousTurn?.turnDynamicContext === 'string' ? deserializePromptContextCache(input.previousTurn.turnDynamicContext) : undefined;
+    // 旧回合的缓存可能把频道环境放在独立 user 消息中，续跑时改由当前发言承载。
+    const beforeHistoryMessages = withoutStandaloneBotEnvironment((resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], botEnvironment);
     return {
       systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
       ...(input.preview ? { previewDynamicText: assembler.getDynamicContextText(mode, context) } : {}),
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
-      promptContext: { beforeHistoryMessages: (resumed ?? bundle).beforeHistoryMessages as PlatformMessage[],
+      promptContext: { beforeHistoryMessages,
         afterHistoryMessages: [...((resumed ?? bundle).afterHistoryMessages as PlatformMessage[]).filter(message => botEnvironment?.version !== 1
           || !message.parts.some(part => typeof part.text === 'string' && isLegacyBotIdentityText(part.text))), ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },

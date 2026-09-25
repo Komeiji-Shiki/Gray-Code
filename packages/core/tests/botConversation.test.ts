@@ -113,8 +113,12 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect(generated[0].promptContext!.beforeHistoryMessages).toEqual(generated[1].promptContext!.beforeHistoryMessages);
       expect(generated[0].systemPrompt).toEqual(generated[1].systemPrompt);
       expect(generated.every(input => input.promptContext?.taskContextEmbedded)).toBe(true);
+      expect(generated[0].promptContext!.beforeHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n')).not.toContain('频道固定内容');
+      expect(generated[0].messages.findLast(message => message.isUserInput)?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 主人\n\[Discord 发言/);
       const currentMember = generated[1].messages.findLast(message => message.isUserInput);
-      expect(currentMember?.parts[0]?.text).toMatch(/^认证身份 成员\n\[Discord 发言/);
+      expect(currentMember?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 成员\n\[Discord 发言/);
+      expect(JSON.stringify(generated[1].messages).match(/频道固定内容/g)).toHaveLength(1);
+      expect(JSON.stringify(generated[1].messages)).not.toContain('"workspace":');
       expect(generated[1].promptContext!.afterHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('')).not.toContain('认证身份');
       const saved = (await app.storage.readFullHistory(id)).messages;
       const turns = saved.filter(message => message.isUserInput);

@@ -221,7 +221,7 @@ export class BotSessions {
   private runMetadata(conversation: PlatformConversation, context: BotContext, loaded: LoadedSession, channelWorkspaceId?: string) {
     const channelWorkspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === channelWorkspaceId);
     return { ...conversation, workspaceId: channelWorkspaceId, workspaceUri: channelWorkspace ? pathToFileURL(channelWorkspace.directory).toString() : undefined,
-      custom: { ...conversation.custom as Record<string, unknown>, botEnvironment: captureBotEnvironment(this.app, context, loaded.profile, channelWorkspaceId) } };
+      custom: { ...conversation.custom as Record<string, unknown>, botEnvironment: captureBotEnvironment(context, loaded.profile) } };
   }
   async recordingConversation(context: BotContext) {
     const loaded = await this.load(context, true);
@@ -249,7 +249,7 @@ export class BotSessions {
     let participant: ActorIdentity | undefined; try { participant = this.authorize(context); } catch { /* 群背景消息没有执行权限。 */ }
     const result = await this.app.createConversation(this.owner().id, title, workspaceId, {
       platformMode: character ? 'character' : workspaceId ? 'code' : 'chat', botOrigin: { platform: context.platform, channelId: context.channelId },
-      botEnvironment: captureBotEnvironment(this.app, context, loaded.profile, workspaceId),
+      botEnvironment: captureBotEnvironment(context, loaded.profile),
       ...(loaded.profile.promptModeId ? { promptModeConfig: { modeId: loaded.profile.promptModeId } } : {}), ...(character ? { characterConfig: character } : {}),
     }, greeting ? [greeting] : [], { id, records: [this.mutation(loaded), { namespace: BOT_CHANNEL_ACCESS, id,
       value: { version: 1, context: loaded.value.context, participants: participant ? [{ actorId: participant.id, platformUserId: context.authorId }] : [] } satisfies BotChannelAccess }] });
