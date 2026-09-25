@@ -150,13 +150,13 @@ async function searchAndReplaceInDirectory(
 
             const content = await host.readFile(fileUri);
             const originalText = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
-            const lines = originalText.split('\n');
             
-            // 检查是否有匹配
+            // 检查是否有匹配（先于 split：无命中的文件通常占多数，避免白白拆分整篇文本）
             searchRegex.lastIndex = 0;
             if (!searchRegex.test(originalText)) {
                 continue;
             }
+            const lines = originalText.split('\n');
             
             processedFiles++;
             

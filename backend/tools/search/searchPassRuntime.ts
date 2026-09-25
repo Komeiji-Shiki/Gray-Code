@@ -48,6 +48,17 @@ export interface SearchPathWarningInfo {
     candidates: string[];
     message: string;
 }
+/** 搜索遍历的文件预取并发：单线程下收益来自重叠文件 IO，过大反而增加内存峰值。 */
+const SEARCH_FILE_CONCURRENCY = 8;
+
+/** 并发预取阶段产出的单文件结果；消费端按文件顺序处理。 */
+type PreparedFile =
+    | { kind: 'skipped'; skipped: SkippedFileInfo }
+    | { kind: 'binary' }
+    | { kind: 'failed'; skipped: SkippedFileInfo }
+    | { kind: 'noMatch' }
+    | { kind: 'ready'; relativePath: string; lines: string[] };
+
 export function createSearchPass(host: SearchFileHost) {
 const {tryGetFileSizeBytes,readHeaderBytes}=createTextReader(host);
 
@@ -171,25 +182,38 @@ async function searchInDirectory(
     const maxLinePreviewChars = Math.floor(clampNonNegativeNumber(config.maxLinePreviewChars, 300));
     const maxMatchPreviewChars = Math.floor(clampNonNegativeNumber(config.maxMatchPreviewChars, 220));
     
-    for (const fileUri of files) {
-        if (results.length >= maxResults) {
-            break;
-        }
-        if (budget && budget.remainingChars <= 0) {
-            budget.truncated = true;
-            break;
-        }
-        
+    // 并发预取 + 顺序消费（语义与逐文件串行完全一致）：
+    // 修改原因：旧实现对每个文件串行执行 stat → 读文件头 → 读全文，单线程大量
+    //          时间在等待磁盘；findLimit 上千文件时实测 900 个小文件约 258ms。
+    // 修改方式：最多提前 SEARCH_FILE_CONCURRENCY 个文件并发准备（大小护栏、二进制
+    //          探测、读全文、解码、归一化、全文无命中快速拒绝）；消费端仍按原顺序
+    //          逐行、逐匹配应用预算，结果、截断标志与 skippedFiles 顺序保持不变；
+    //          提前中断时最多多读几个已启动的文件（有界）。
+    // 修改目的：重叠文件 IO 等待，保持原有确定性输出。
+    const probeRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
+    // 全文快速拒绝的适用条件（每次调用只需判定一次）：
+    // - 正则带 m 标志（搜索模式固定 'gm'）：^/$ 才能与逐行语义对齐；
+    // - 源码不含否定断言（(?! / (?<!）：断言可跨行边界读取相邻行，
+    //   逐行有命中而全文 test 无命中是可能的，此时禁用优化、退回逐行扫描
+    //   （仅影响性能）。
+    // 其余构造（含 ^/$、\b、正向环视、跨行模式）已用随机对照验证：逐行命中
+    // 集合是全文 test 的子集，快速拒绝不会漏掉任何真实匹配。
+    const canRejectByFullTextScan = probeRegex.multiline
+        && !probeRegex.source.includes('(?!')
+        && !probeRegex.source.includes('(?<!');
+    const prepareFile = async (fileUri: FileLocation): Promise<PreparedFile> => {
         try {
             // 文件大小护栏（避免读入超大文件）
             if (maxFileSizeBytes > 0) {
                 const size = await tryGetFileSizeBytes(fileUri);
                 if (typeof size === 'number' && size > maxFileSizeBytes) {
-                    skippedFiles.push({
-                        file: host.toRelativePath(fileUri, workspaceName !== null),
-                        reason: `File exceeds the search size limit (${size} > ${maxFileSizeBytes} bytes)`
-                    });
-                    continue;
+                    return {
+                        kind: 'skipped',
+                        skipped: {
+                            file: host.toRelativePath(fileUri, workspaceName !== null),
+                            reason: `File exceeds the search size limit (${size} > ${maxFileSizeBytes} bytes)`
+                        }
+                    };
                 }
             }
 
@@ -200,7 +224,7 @@ async function searchInDirectory(
                     const header = await readHeaderBytes(fileUri, headerSampleBytes);
                     detection = detectTextFromHeader(header);
                     if (!detection.isText) {
-                        continue;
+                        return { kind: 'binary' };
                     }
                 } catch {
                     // header 检测失败时退化为旧行为（仍有大小/输出护栏）
@@ -210,11 +234,72 @@ async function searchInDirectory(
 
             const content = await host.readFile(fileUri);
             const text = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
-            const lines = text.split('\n');
+
+            // 全文快速拒绝：只会跳过确定零命中的文件，不会漏掉真实匹配
+            // （适用条件见上方 canRejectByFullTextScan 注释）。
+            if (canRejectByFullTextScan) {
+                probeRegex.lastIndex = 0;
+                const hasPossibleMatch = probeRegex.test(text);
+                probeRegex.lastIndex = 0;
+                if (!hasPossibleMatch) {
+                    return { kind: 'noMatch' };
+                }
+            }
 
             // 使用支持多工作区的相对路径（每文件只计算一次）
-            const relativePath = host.toRelativePath(fileUri, workspaceName !== null);
-            
+            return {
+                kind: 'ready',
+                relativePath: host.toRelativePath(fileUri, workspaceName !== null),
+                lines: text.split('\n')
+            };
+        } catch (e) {
+            // 处理失败不再静默吞掉：与 replacePass 一致记录原因，
+            // 让模型能区分“没匹配”和“处理失败”（EACCES/IO 等）。
+            return {
+                kind: 'failed',
+                skipped: {
+                    file: host.toRelativePath(fileUri, workspaceName !== null),
+                    reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
+                }
+            };
+        }
+    };
+
+    const prepared: Array<Promise<PreparedFile> | undefined> = new Array(files.length);
+    let nextToPrepare = 0;
+    const startPrepareAhead = (currentIndex: number) => {
+        while (nextToPrepare < files.length && nextToPrepare - currentIndex < SEARCH_FILE_CONCURRENCY) {
+            const index = nextToPrepare++;
+            const task = prepareFile(files[index]);
+            // 兜底：极端情况下（例如路径解析在 catch 中再次抛错）任务可能拒绝，
+            // 提前挂一个空处理，避免在被消费前触发 unhandled rejection；消费端仍会看到拒绝。
+            task.catch(() => { /* 消费端负责处理拒绝 */ });
+            prepared[index] = task;
+        }
+    };
+
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        if (results.length >= maxResults) {
+            break;
+        }
+        if (budget && budget.remainingChars <= 0) {
+            budget.truncated = true;
+            break;
+        }
+
+        startPrepareAhead(fileIndex);
+        const outcome = await (prepared[fileIndex] ?? prepareFile(files[fileIndex]));
+        if (outcome.kind === 'skipped' || outcome.kind === 'failed') {
+            skippedFiles.push(outcome.skipped);
+            continue;
+        }
+        if (outcome.kind === 'binary' || outcome.kind === 'noMatch') {
+            continue;
+        }
+
+        const relativePath = outcome.relativePath;
+        const lines = outcome.lines;
+        try {
             for (let i = 0; i < lines.length; i++) {
                 if (results.length >= maxResults) {
                     break;
@@ -290,11 +375,14 @@ async function searchInDirectory(
             // 处理失败不再静默吞掉：与 replacePass 一致记录原因，
             // 让模型能区分“没匹配”和“处理失败”（EACCES/IO 等）。
             skippedFiles.push({
-                file: host.toRelativePath(fileUri, workspaceName !== null),
+                file: relativePath,
                 reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
             });
         }
     }
+
+    // 提前中断（结果/预算上限）时回收在途预取，避免返回后仍在读取文件
+    await Promise.allSettled(prepared.filter((item): item is Promise<PreparedFile> => item !== undefined));
     
     return { matches: results, filesTruncated, skippedFiles };
 }
