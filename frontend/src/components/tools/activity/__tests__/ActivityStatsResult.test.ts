@@ -31,9 +31,11 @@ function makeData(overrides: Record<string, unknown> = {}) {
     today: {
       date: '2026-08-06',
       totalMinutes: 168,
-      sessionCount: 4,
+      sessionCount: 2,
       firstActiveAt: '02:10',
-      lastActiveAt: '11:11'
+      lastActiveAt: '10:18',
+      sessions: ['02:10-02:40 (30m)', '08:00-10:18 (138m)'],
+      gaps: ['02:40-08:00 (320m)']
     },
     currentSession: { active: true, startedAt: '11:06', minutes: 5 },
     daily: [
@@ -161,6 +163,43 @@ describe('ActivityStatsResult', () => {
     })
     const wrapper = mountStats({ success: true, data })
     expect(wrapper.find('.as-month').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  test('今日工作时段按会话分段列出', () => {
+    const wrapper = mountStats({ success: true, data: makeData() })
+
+    const chips = wrapper.findAll('.as-session')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].text()).toBe('02:10-02:40 (30m)')
+    expect(chips[1].text()).toBe('08:00-10:18 (138m)')
+    // 只有一段时也算明确列出，便于识别中间的空档
+    expect(wrapper.get('.as-block-title').text()).toBe('今日工作时段')
+    wrapper.unmount()
+  })
+
+  test('今日存在会话明细时显示时段区块；缺明细时不显示', () => {
+    const today = makeData().today as Record<string, unknown>
+    delete today.sessions
+    delete today.gaps
+    const wrapper = mountStats({ success: true, data: makeData({ today }) })
+    expect(wrapper.find('.as-sessions').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  test('今日时段超过上限时显示省略条数', () => {
+    const data = makeData({
+      today: {
+        ...(makeData().today as Record<string, unknown>),
+        sessions: ['02:10-02:40 (30m)'],
+        sessionsOmitted: 5
+      }
+    })
+    const wrapper = mountStats({ success: true, data })
+
+    const chips = wrapper.findAll('.as-session')
+    expect(chips).toHaveLength(2)
+    expect(wrapper.get('.as-session.is-muted').text()).toBe('另有 5 段')
     wrapper.unmount()
   })
 })

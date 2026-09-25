@@ -290,6 +290,8 @@ const en: LanguageMessages = {
             today: 'Today',
             currentSession: 'Current session',
             totalInRange: 'Total in range',
+            todayBlocks: 'Work blocks today',
+            moreSessions: '+{count} more',
             range7d: '7 days',
             range30d: '30 days',
             range90d: '90 days',
@@ -2827,7 +2829,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Enable or disable skills for subsequent requests.',
                     subagents: 'Spawn sub-agents to execute tasks with prompts and context.',
                     agent_send_message: 'Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: the recipient sees it appended to its most recent tool result. Address by targetRunId (an active sub-agent run in this conversation) or targetAgentName ("main" reaches the main session). Replies in the same thread increment hopDepth; after 5 hops delivery is rejected (loop protection). You are identified automatically; you cannot impersonate another agent.',
-                    get_activity_stats: 'Get the user\'s IDE usage time statistics: daily usage minutes, recent schedule (hourly heatmap of when the user is active), and how long the user has been continuously working. Use this to understand the user\'s work-rest rhythm, detect long continuous working sessions, or check whether the user is currently active. Data contains timestamps only, no user content. Returned times are in local time (HH:mm, YYYY-MM-DD).',
+                    get_activity_stats: 'Get the user\'s IDE usage time statistics: how long the user has worked, in which blocks of time, and how long they have been working continuously right now. Use this to understand the user\'s work-rest rhythm, detect long continuous working sessions, or check whether the user is currently active. Activity is recorded as discrete sessions: 15+ minutes without activity ends a session and the next activity starts a new one, so a gap means the user left the IDE (break, sleep, away) — never assume the user worked continuously from firstActiveAt to lastActiveAt. "sessions" (most recent 7 days) lists each day\'s actual work blocks as local "HH:mm-HH:mm (Nm)", "gaps" (most recent day) lists the idle intervals between those blocks, and "currentSession.startedAt" is when the ongoing session began (with date, since a session may start before midnight). Data contains timestamps only, no user content. Returned times are in local time (HH:mm or YYYY-MM-DD HH:mm).',
                 },
             },
             tokenCountSettings: {

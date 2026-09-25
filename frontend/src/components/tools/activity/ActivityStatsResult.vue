@@ -25,6 +25,12 @@ interface DayStats {
   sessionCount: number
   firstActiveAt: string | null
   lastActiveAt: string | null
+  /** 该日各段工作时段，形如 "10:00-10:02 (2m)"（仅最近 7 天提供） */
+  sessions?: string[]
+  /** 被省略的时段数（单日时段过多时出现） */
+  sessionsOmitted?: number
+  /** 相邻时段之间的空档，形如 "10:02-12:00 (118m)"（仅最近一天提供） */
+  gaps?: string[]
 }
 
 interface MonthStats {
@@ -74,6 +80,10 @@ const todayDetail = computed(() => {
   }
   return parts.join(' · ')
 })
+
+/** 今日工作时段分段：直接列出会话区间，避免把「首次活跃 → 现在」读成一段连续工作 */
+const todayBlocks = computed(() => data.value?.today?.sessions ?? [])
+const todayBlocksOmitted = computed(() => data.value?.today?.sessionsOmitted ?? 0)
 
 // ─── 每日条形图（最多 31 行） ───
 
@@ -192,6 +202,17 @@ function hourTitle(row: HeatRow, hour: number): string {
         <div class="as-total-item">
           <span class="as-total-value">{{ formatDuration(rangeTotalMinutes) }}</span>
           <span class="as-total-label">{{ t('components.usageTime.totalInRange') }}</span>
+        </div>
+      </div>
+
+      <!-- 今日工作时段：会话分段，时段之间的空档即用户离开编辑器的时间 -->
+      <div v-if="todayBlocks.length > 0" class="as-block">
+        <span class="as-block-title">{{ t('components.usageTime.todayBlocks') }}</span>
+        <div class="as-sessions">
+          <span v-for="(block, index) in todayBlocks" :key="index" class="as-session">{{ block }}</span>
+          <span v-if="todayBlocksOmitted > 0" class="as-session is-muted">
+            {{ t('components.usageTime.moreSessions', { count: todayBlocksOmitted }) }}
+          </span>
         </div>
       </div>
 
@@ -479,5 +500,26 @@ function hourTitle(row: HeatRow, hour: number): string {
   min-width: 4px;
   background: var(--vscode-charts-blue, var(--vscode-foreground));
   border-radius: var(--gc-radius-xs);
+}
+
+/* 今日工作时段 */
+.as-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.as-session {
+  padding: 1px 6px;
+  border-radius: var(--gc-radius-xs);
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border, transparent);
+  font-size: 10px;
+  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--vscode-foreground);
+}
+
+.as-session.is-muted {
+  color: var(--vscode-descriptionForeground);
 }
 </style>
