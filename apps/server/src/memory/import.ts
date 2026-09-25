@@ -6,7 +6,7 @@ import { lstat, open, readdir, realpath, readFile, mkdtemp, rm } from 'node:fs/p
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MigrationIssue } from '@graycode/contracts';
-import { parse, isValidTreeRecord, logHeaderLooksLike, LEGACY_LOG_RECS, LEGACY_TREE_REC } from '../../../../backend/modules/memory/logFormat';
+import { ISO_DATE_RE, parse, isValidTreeRecord, logHeaderLooksLike, LEGACY_LOG_RECS, LEGACY_TREE_REC } from '../../../../backend/modules/memory/logFormat';
 import { LOG_REC, TREE_REC } from '../../../../backend/modules/memory/types';
 import { parseConfigContent } from '../../../../backend/modules/memory/configFile';
 import type { PlatformApplication } from '../application';
