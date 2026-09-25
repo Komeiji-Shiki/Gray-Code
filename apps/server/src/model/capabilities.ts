@@ -96,7 +96,11 @@ export function buildChannelConfig(
     sendHistoryThoughtSignatures: capability.reasoningSignature !== "none",
     sendCurrentThoughts: true,
     reasoningSignatureMode:
-      capability.reasoningSignature === "codex" ? "codex" : "official",
+      capability.reasoningSignature === "codex"
+        ? "codex"
+        : capability.reasoningSignature === "deepseek"
+          ? "deepseek"
+          : "official",
     deepSeekUserIdEnabled: capability.compatibility.deepSeekUserId,
     deepSeekVisionEnabled: capability.compatibility.deepSeekVision,
     openCodeSessionEnabled: capability.compatibility.openCodeSession,

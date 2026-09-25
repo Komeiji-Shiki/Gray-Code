@@ -52,6 +52,11 @@ const reasoningSignatureModeOptions = computed<SelectOption[]>(() => [
     value: 'codex',
     label: t('components.channels.openai-responses.reasoningSignatureMode.codex'),
     description: t('components.channels.openai-responses.reasoningSignatureMode.codexDescription')
+  },
+  {
+    value: 'deepseek',
+    label: t('components.channels.openai-responses.reasoningSignatureMode.deepseek'),
+    description: t('components.channels.openai-responses.reasoningSignatureMode.deepseekDescription')
   }
 ])
 
@@ -140,7 +145,7 @@ function onSendThoughtSignaturesChange(e: any) {
 }
 
 function onReasoningSignatureModeChange(value: string) {
-  if (value === 'official' || value === 'codex') {
+  if (value === 'official' || value === 'codex' || value === 'deepseek') {
     emit('update:field', 'reasoningSignatureMode', value)
   }
 }

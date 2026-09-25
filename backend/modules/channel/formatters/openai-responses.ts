@@ -170,15 +170,21 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // 不能用 `??`：providerReasoningContentEnabled 会被渠道配置显式写成布尔 false，
         // ?? 会短路掉模型名推断（桌面端因此恒为 false，DeepSeek 的空 reasoning_text
         // 占位回传永久失效，带 tools 的后续请求继续 400）。
-        const isDeepSeek = config.providerReasoningContentEnabled === true || isDeepSeekModel(config.model);
+        const reasoningSignatureMode = config.reasoningSignatureMode ?? 'official';
+        // DeepSeek Responses 端点只支持明文 content 形式的 reasoning：官方文档列出
+        // summary、encrypted_content 与 include 均不受支持。该模式强制走明文路径，
+        // 同时打开 useDeepSeekReasoningTextFallback（模型名不认识时也能补空占位）。
+        const deepSeekSignatureCompat = reasoningSignatureMode === 'deepseek';
+        const isDeepSeek = deepSeekSignatureCompat
+            || config.providerReasoningContentEnabled === true
+            || isDeepSeekModel(config.model);
         const input = this.convertToResponsesInput(processedHistory, {
-            // plain reasoning_text/summary 回传不再按模型名门控：reasoning item 是 Responses
-            // 协议的标准输入形态，官方 GPT 与 DeepSeek 端点都接受回传。未设置 = 回传；
-            // 只有渠道显式写下 replayReasoningContent=false 时才停止回传（兼容不支持
-            // reasoning 输入的端点）。旧渠道没有该字段，因此自动跟随新默认。
+            // plain reasoning_text 回传不再按模型名门控：未设置即回传，只有渠道显式写下
+            // replayReasoningContent=false 时才停止回传（兼容不支持 reasoning 输入的端点）。
             allowReasoningContent: config.replayReasoningContent !== false,
-            allowReasoningSignatures: config.sendHistoryThoughtSignatures === true,
-            reasoningSignatureMode: config.reasoningSignatureMode ?? 'official',
+            // DeepSeek 不接受 encrypted_content/summary，该模式下不启用签名回传。
+            allowReasoningSignatures: config.sendHistoryThoughtSignatures === true && !deepSeekSignatureCompat,
+            reasoningSignatureMode,
             useDeepSeekReasoningTextFallback: isDeepSeek
         });
 
@@ -187,7 +193,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             model: config.model,
             instructions: instructions || undefined,
             input: input,
-            include: ["reasoning.encrypted_content"] // 始终包含加密思考内容
+            // DeepSeek 不支持 include；该模式下不声明这个不被识别的能力。
+            ...(deepSeekSignatureCompat ? {} : { include: ["reasoning.encrypted_content"] })
         };
 
         // 添加工具
@@ -409,9 +416,13 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     const reasoningItem: any = {
                         type: 'reasoning'
                     };
-                    if (reasoningMetadata?.id) reasoningItem.id = reasoningMetadata.id;
-                    if (reasoningSignatureMode === 'official' && reasoningMetadata?.status) {
-                        reasoningItem.status = reasoningMetadata.status;
+                    // DeepSeek 兼容模式只回传明文 content：id/status 不是该端点的 reasoning
+                    // 形态，一并省略，保持请求体最小可用。
+                    if (reasoningSignatureMode !== 'deepseek') {
+                        if (reasoningMetadata?.id) reasoningItem.id = reasoningMetadata.id;
+                        if (reasoningSignatureMode === 'official' && reasoningMetadata?.status) {
+                            reasoningItem.status = reasoningMetadata.status;
+                        }
                     }
 
                     if (canReplaySignedReasoning) {

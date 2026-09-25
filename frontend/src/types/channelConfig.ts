@@ -182,7 +182,7 @@ export interface ChannelConfig {
   customBodyEnabled?: boolean
   sendHistoryThoughtSignatures?: boolean
   sendCurrentThoughtSignatures?: boolean
-  reasoningSignatureMode?: 'official' | 'codex'
+  reasoningSignatureMode?: 'official' | 'codex' | 'deepseek'
   sendHistoryThoughts?: boolean
   /** Responses 专用：是否回传 reasoning 输入项（未设置 = 回传，false = 不回传）。 */
   replayReasoningContent?: boolean

@@ -8,7 +8,7 @@
 import type { BaseChannelConfig, ModelInfo } from './base';
 
 /** Responses 历史 reasoning 签名的回传格式。 */
-export type OpenAIResponsesReasoningSignatureMode = 'official' | 'codex';
+export type OpenAIResponsesReasoningSignatureMode = 'official' | 'codex' | 'deepseek';
 
 /**
  * 配置项启用状态
@@ -83,7 +83,12 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
      * 历史 reasoning 签名回传格式。
      *
      * - official：完整保留官方 GPT Responses reasoning item 字段；
-     * - codex：兼容 Codex 反代，省略反代不接受的 status 字段。
+     * - codex：兼容 Codex 反代，省略反代不接受的 status 字段；
+     * - deepseek：兼容 DeepSeek Responses 端点。官方文档明确 reasoning 只支持明文
+     *   content（归并到相邻 assistant 消息），summary、encrypted_content 与 include
+     *   都不支持；多发的签名/摘要字段会让带 tools 的后续请求持续报
+     *   HTTP 400（The reasoning_text in the thinking mode must be passed back to the API）。
+     *   此模式只回传 content[].reasoning_text。
      */
     reasoningSignatureMode?: OpenAIResponsesReasoningSignatureMode;
 

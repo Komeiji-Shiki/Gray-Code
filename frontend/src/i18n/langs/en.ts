@@ -3314,11 +3314,13 @@ const en: LanguageMessages = {
                 reasoningSignatureMode: {
                     label: 'Reasoning Signature Replay Format',
                     placeholder: 'Select replay format',
-                    hint: 'Official keeps the full GPT Responses item; Codex compatibility omits status and keeps encrypted_content.',
+                    hint: 'Official keeps the full GPT Responses item; Codex compatibility omits status; DeepSeek sends plain reasoning_text only.',
                     official: 'Official GPT Responses',
                     officialDescription: 'Keep id, status, summary, and encrypted_content',
                     codex: 'Codex Proxy Compatibility',
-                    codexDescription: 'Keep id, summary, and encrypted_content; omit status'
+                    codexDescription: 'Keep id, summary, and encrypted_content; omit status',
+                    deepseek: 'DeepSeek Compatibility',
+                    deepseekDescription: 'Send plain reasoning_text only; omit summary / encrypted_content / include'
                 },
                 thinkingBackfill: {
                     sendSignaturesHint: 'Maintain reasoning context across turns',

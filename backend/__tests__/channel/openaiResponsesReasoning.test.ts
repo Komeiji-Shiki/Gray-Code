@@ -1001,3 +1001,100 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(request.body.input.filter((item: any) => item.type === 'reasoning')).toHaveLength(0);
     });
 });
+
+describe('Responses 思考签名回传格式：DeepSeek 兼容', () => {
+    const signedReasoningHistory = (): Content[] => [
+        {
+            role: 'model',
+            parts: [{
+                text: '先读文件再回答。',
+                thought: true,
+                thoughtSignatures: { 'openai-responses': 'ENC_DS' },
+                openaiResponsesReasoning: {
+                    id: 'rs_ds_signed_1',
+                    status: 'completed',
+                    content: [{ type: 'reasoning_text', text: '先读文件再回答。' }],
+                    summary: [{ type: 'summary_text', text: '摘要文本' }]
+                }
+            }, { text: '正文。' }]
+        },
+        { role: 'user', parts: [{ text: 'Continue.' }] }
+    ];
+
+    test('deepseek 模式只回传明文 reasoning_text，不发签名/摘要/include', () => {
+        // DeepSeek 官方文档：reasoning 只支持明文 content（归并到相邻 assistant 消息），
+        // summary 与 encrypted_content 均不支持，include 也不支持。此前按 official 路径
+        // 优先发加密形态，带 tools 的后续请求会持续报 400（reasoning_text 未回传）。
+        const formatter = new OpenAIResponsesFormatter();
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history: signedReasoningHistory() },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'deepseek-flash',
+                reasoningSignatureMode: 'deepseek',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: true
+            })
+        );
+
+        expect(request.body.include).toBeUndefined();
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        expect(reasoningItems).toEqual([
+            { type: 'reasoning', content: [{ type: 'reasoning_text', text: '先读文件再回答。' }] }
+        ]);
+        // 不得降级污染正文，也不得带 DeepSeek 不接受的字段
+        const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')
+            .flatMap((item: any) => item.content)
+            .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
+            .map((part: any) => part.text);
+        expect(assistantTexts.join('')).toContain('正文。');
+        expect(assistantTexts.join('')).not.toContain('先读文件再回答。');
+    });
+
+    test('official 模式仍优先回传加密签名与摘要（对照，行为不变）', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history: signedReasoningHistory() },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'gpt-5',
+                reasoningSignatureMode: 'official',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: true
+            })
+        );
+
+        expect(request.body.include).toEqual(['reasoning.encrypted_content']);
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        expect(reasoningItems[0].encrypted_content).toBe('ENC_DS');
+        expect(reasoningItems[0].summary).toEqual([{ type: 'summary_text', text: '摘要文本' }]);
+        expect(reasoningItems[0].id).toBe('rs_ds_signed_1');
+    });
+
+    test('deepseek 模式开启后，模型名不带 deepseek 也启用空占位', () => {
+        // 自建代理常用不带 deepseek 的名字；选了兼容模式就应该享受空字符串
+        // 占位，否则带 tools 的请求仍会 400。
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '读取文件。' }] },
+            { role: 'model', parts: [{ functionCall: { name: 'read_file', args: { path: 'a.ts' }, id: 'call_dsmode_1' } }] },
+            { role: 'user', parts: [{ functionResponse: { id: 'call_dsmode_1', name: 'read_file', response: { ok: true } } }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'my-proxy-v1',
+                reasoningSignatureMode: 'deepseek',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        const assistantTurnItems = request.body.input.filter((item: any) =>
+            item.type === 'reasoning' || item.type === 'function_call'
+        );
+        expect(assistantTurnItems).toEqual([
+            { type: 'reasoning', content: [{ type: 'reasoning_text', text: '' }] },
+            { type: 'function_call', name: 'read_file', call_id: 'call_dsmode_1', arguments: '{"path":"a.ts"}' }
+        ]);
+    });
+});

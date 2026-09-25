@@ -3316,11 +3316,13 @@ const zhCN = {
                 reasoningSignatureMode: {
                     label: '思考签名回传格式',
                     placeholder: '选择回传格式',
-                    hint: '官方模式保留完整 GPT Responses 项；Codex 兼容模式省略 status，保留 encrypted_content。',
+                    hint: '官方模式保留完整 GPT Responses 项；Codex 兼容模式省略 status；DeepSeek 模式只发明文 reasoning_text。',
                     official: '官方 GPT Responses',
                     officialDescription: '保留 id、status、summary、encrypted_content',
                     codex: 'Codex 反代兼容',
-                    codexDescription: '保留 id、summary、encrypted_content，省略 status'
+                    codexDescription: '保留 id、summary、encrypted_content，省略 status',
+                    deepseek: 'DeepSeek 兼容',
+                    deepseekDescription: '只回传明文 reasoning_text，不发 summary / encrypted_content / include'
                 },
                 thinkingBackfill: {
                     sendSignaturesHint: '保持跨多轮交互的思考上下文',
