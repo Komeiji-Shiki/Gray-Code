@@ -19,6 +19,16 @@ import { deserializePromptContextCache } from '../../prompt/promptContextCache';
 import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 
 /**
+ * 相邻同角色消息合并/相邻时，真实用户输入之前的边界标识。
+ *
+ * Gemini / Anthropic 会把连续同角色的 user 消息合并成一条（parts / content 顺序拼接），
+ * 合并后各段之间没有边界，模型会把注入的动态上下文整体当成最新用户输入，
+ * 只回答上下文、忽略用户真正的问题。在真实用户输入（isUserInput）前插入该标识，
+ * 明确标出其后才是本轮用户输入。三家渠道共用同一文案，保持提示词前缀跨渠道一致。
+ */
+export const USER_INPUT_BOUNDARY_MARKER = '\n\n[User Input]\n\n';
+
+/**
  * prompt context 注入选项。
  */
 export interface PromptContextInjectionOptions {
@@ -185,6 +195,21 @@ export abstract class BaseFormatter {
     protected cleanInternalFields(history: Content[]): Content[] {
         // 原生请求只携带消息内容；耗时、用量、界面正文和上下文控制字段均属于宿主。
         return history.map(content => ({ role: content.role, parts: content.parts }));
+    }
+
+    /**
+     * 同 cleanInternalFields，但保留 isUserInput 标记。
+     *
+     * 角色合并发生在清洗之后时，合并逻辑仍需要判断哪一段是真实用户输入（Anthropic
+     * 的 pushMergedMessage）。该标记只用于内部判断，API 请求体由各 formatter 从
+     * parts 重建，不会把标记发给上游。
+     */
+    protected cleanInternalFieldsKeepingUserInput(history: Content[]): Content[] {
+        return history.map(content => ({
+            role: content.role,
+            parts: content.parts,
+            ...(content.isUserInput ? { isUserInput: true } : {})
+        }) as Content);
     }
 
     /**

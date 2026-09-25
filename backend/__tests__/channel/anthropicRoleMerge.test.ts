@@ -15,6 +15,7 @@
 import { AnthropicFormatter } from '../../modules/channel';
 import { ConversationManager } from '../../modules/conversation/ConversationManager';
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { USER_INPUT_BOUNDARY_MARKER } from '../../modules/channel/formatters/base';
 import type { Content, ContentPart } from '../../modules/conversation/types';
 import { createAnthropicConfig } from '../__fixtures__/channelFixtures';
 
@@ -114,6 +115,36 @@ describe('AnthropicFormatter 相邻同角色消息合并（function_call 模式�
         expect(messages[0].content.map((c: any) => c.type)).toEqual(['tool_use', 'tool_use']);
         expect(messages[0].content.map((c: any) => c.id)).toEqual(['toolu_1', 'toolu_2']);
     });
+
+    test('合并到真实用户输入前插入 [User Input] 边界标识', () => {
+        // 合并后模型只看到同 role 的连续 content 块，无法分辨哪一段才是本轮用户输入；
+        // 实测会把动态上下文当成最新输入，只回答上下文、忽略用户真正的问题。
+        const request = buildRequest(formatter, [
+            userTextMessage('【动态上下文】技能与环境'),
+            userTextMessage('吃了吗？', { isUserInput: true })
+        ]);
+
+        const messages = request.body.messages as any[];
+        expect(messages).toHaveLength(1);
+        expect(messages[0].content.map((c: any) => c.text)).toEqual([
+            '【动态上下文】技能与环境',
+            USER_INPUT_BOUNDARY_MARKER,
+            '吃了吗？'
+        ]);
+    });
+
+    test('未被合并的消息不插入边界标识', () => {
+        const request = buildRequest(formatter, [
+            userTextMessage('第一问', { isUserInput: true }),
+            { role: 'model', parts: [{ text: '第一答' }] },
+            userTextMessage('第二问', { isUserInput: true })
+        ]);
+
+        const messages = request.body.messages as any[];
+        expect(messages.map((m: any) => m.role)).toEqual(['user', 'assistant', 'user']);
+        expect(messages[0].content.map((c: any) => c.text)).toEqual(['第一问']);
+        expect(messages[2].content.map((c: any) => c.text)).toEqual(['第二问']);
+    });
 });
 
 describe('AnthropicFormatter 相邻同角色消息合并（XML/JSON 文本模式）', () => {
@@ -143,6 +174,21 @@ describe('AnthropicFormatter 相邻同角色消息合并（XML/JSON 文本模式
         const messages = request.body.messages as any[];
         expect(messages).toHaveLength(1);
         expect(messages[0].content.map((c: any) => c.text)).toEqual(['第一条', '第二条']);
+    });
+
+    test('json 模式：合并到真实用户输入前插入 [User Input] 边界标识', () => {
+        const request = buildRequest(formatter, [
+            userTextMessage('【动态上下文】'),
+            userTextMessage('吃了吗？', { isUserInput: true })
+        ], 'json');
+
+        const messages = request.body.messages as any[];
+        expect(messages).toHaveLength(1);
+        expect(messages[0].content.map((c: any) => c.text)).toEqual([
+            '【动态上下文】',
+            USER_INPUT_BOUNDARY_MARKER,
+            '吃了吗？'
+        ]);
     });
 });
 

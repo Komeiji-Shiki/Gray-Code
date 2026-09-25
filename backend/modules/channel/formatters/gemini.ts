@@ -5,7 +5,7 @@
  */
 
 import { t } from '../../../i18n';
-import { BaseFormatter } from './base';
+import { BaseFormatter, USER_INPUT_BOUNDARY_MARKER } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
 import type { GeminiConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
@@ -113,7 +113,17 @@ function mergeAdjacentSameRoleContents(contents: Content[]): Content[] {
     for (const content of contents) {
         const previous = merged[merged.length - 1];
         if (previous && previous.role === content.role) {
-            merged[merged.length - 1] = { ...previous, parts: [...previous.parts, ...content.parts] };
+            // 合并只是把 parts 顺序拼接，模型看到的是同一个 content 的连续 parts，
+            // 无法分辨哪一段才是真实用户输入：实测动态上下文会被整段当成最新用户
+            // 输入，模型只回答上下文、忽略用户真正的问题。因此在真实用户输入的
+            // 边界插入显式标识，让模型知道其后才是本轮用户输入。
+            const boundaryParts = content.isUserInput
+                ? [{ text: USER_INPUT_BOUNDARY_MARKER }]
+                : [];
+            merged[merged.length - 1] = {
+                ...previous,
+                parts: [...previous.parts, ...boundaryParts, ...content.parts]
+            };
             continue;
         }
         merged.push(content);
@@ -192,10 +202,8 @@ export class GeminiFormatter extends BaseFormatter {
             { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
         
-        // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         // Gemini 不接受中途的 system 消息，保留预设指定的位置并转换为 user。
-        processedHistory = this.cleanInternalFields(processedHistory).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
-
+        processedHistory = processedHistory.map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
 
         // 兜底：过滤所有 oneof data 未初始化的空壳 part（含 thought-only 空壳），
         // 并丢弃变空的 content，彻底避免 GenerateContentRequest 400
@@ -204,7 +212,12 @@ export class GeminiFormatter extends BaseFormatter {
         // 收敛相邻同角色 content：Gemini 要求严格 user/model 交替（见
         // mergeAdjacentSameRoleContents 注释），动态上下文插入与总结消息都会
         // 在用户回合前额外产生一条 user content，不合并会被上游误判当前输入。
+        // 必须在 cleanInternalFields 之前执行：合并要用 isUserInput 判断真实用户
+        // 输入的边界，之后该内部标记会被剥掉。
         processedHistory = mergeAdjacentSameRoleContents(processedHistory);
+
+        // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
+        processedHistory = this.cleanInternalFields(processedHistory);
 
         // 构建请求体
         const body: any = {

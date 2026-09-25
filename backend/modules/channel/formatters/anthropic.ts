@@ -24,7 +24,7 @@ import { resolveConfiguredStream } from '../../config/configs/base';
 
 import { createHash } from 'crypto';
 import { t } from '../../../i18n';
-import { BaseFormatter, ensureStrictSchema } from './base';
+import { BaseFormatter, ensureStrictSchema, USER_INPUT_BOUNDARY_MARKER } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
 import type { AnthropicConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
@@ -137,7 +137,10 @@ export class AnthropicFormatter extends BaseFormatter {
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         // Anthropic 不接受中途的 system 消息，保留预设指定的位置并转换为 user。
-        processedHistory = this.cleanInternalFields(processedHistory).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
+        // 这里保留 isUserInput：紧随其后的 convertToAnthropicMessages 在合并相邻同角色
+        // 消息时要用它判断真实用户输入的边界，插入 [User Input] 标识；该标记不会进入
+        // 请求体（messages 由 parts 重建）。
+        processedHistory = this.cleanInternalFieldsKeepingUserInput(processedHistory).map(message => message.role === 'system' ? { ...message, role: 'user' as const } : message);
         
         // 转换历史消息为 Anthropic 格式
         const messages = this.convertToAnthropicMessages(processedHistory, toolMode);
@@ -311,10 +314,15 @@ export class AnthropicFormatter extends BaseFormatter {
      * 不同，天然交替，不会跨 tool_use 边界错误合并。assistant 连续消息同样合并
      * （防御，很少发生）。
      */
-    private pushMergedMessage(messages: any[], role: string, contentArray: any[]): void {
+    private pushMergedMessage(messages: any[], role: string, contentArray: any[], isUserInput = false): void {
         const last = messages[messages.length - 1];
         if (last && last.role === role) {
-            last.content.push(...contentArray);
+            // 合并相邻同角色消息时，在真实用户输入前插入边界标识：合并后模型只看到
+            // 同一 role 的连续 content 块，无法分辨哪一段才是本轮用户输入。
+            const boundary = isUserInput
+                ? [{ type: 'text', text: USER_INPUT_BOUNDARY_MARKER }]
+                : [];
+            last.content.push(...boundary, ...contentArray);
         } else {
             messages.push({ role, content: contentArray });
         }
@@ -445,7 +453,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 // 避免 functionResponse 分支吞掉 mediaParts。
                 contentArray.push(...this.buildMessageContent([], mediaParts));
 
-                this.pushMergedMessage(messages, 'user', contentArray);
+                this.pushMergedMessage(messages, 'user', contentArray, content.isUserInput === true);
             }
 
             // 普通消息独立生成：必须同时排除 functionCall 与 functionResponse。
@@ -466,7 +474,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 // 添加普通内容
                 contentArray.push(...this.buildMessageContent(textParts, mediaParts));
                 
-                this.pushMergedMessage(messages, role, contentArray);
+                this.pushMergedMessage(messages, role, contentArray, role === 'user' && content.isUserInput === true);
             }
         }
     }
@@ -702,7 +710,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 contentArray.push(...this.buildMessageContent([], mediaParts));
 
-                this.pushMergedMessage(messages, 'user', contentArray);
+                this.pushMergedMessage(messages, 'user', contentArray, content.isUserInput === true);
             } else {
                 // 将 functionCall 转回文本，与 text 合并
                 const textParts: ContentPart[] = [];
@@ -728,7 +736,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 
                 if (textParts.length > 0 || mediaParts.length > 0) {
                     const contentArray = this.buildMessageContent(textParts, mediaParts);
-                    this.pushMergedMessage(messages, role, contentArray);
+                    this.pushMergedMessage(messages, role, contentArray, role === 'user' && content.isUserInput === true);
                 }
             }
         }

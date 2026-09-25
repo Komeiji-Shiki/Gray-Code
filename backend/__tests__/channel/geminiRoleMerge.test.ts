@@ -11,12 +11,18 @@
  * 修复：下发前按角色合并相邻 content（parts 按原顺序拼接），用户输入始终位于最后
  * 一条 content 的末尾；model(functionCall) 与其后的 user(functionResponse) 角色
  * 不同，天然交替，不会跨工具边界错误合并。
+ *
+ * 后续修复：合并后各段 parts 之间没有边界标识，模型仍可能把动态上下文整段当成
+ * 最新用户输入。现在在真实用户输入（isUserInput）前插入 USER_INPUT_MARKER 分隔
+ * 标识，明确标出其后才是本轮用户输入。
  */
 
 import { GeminiFormatter } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
 import type { GeminiConfig } from '../../modules/config/types';
 import type { GenerateRequest, RequestPromptContext } from '../../modules/channel/types';
+
+const USER_INPUT_MARKER = '\n\n[User Input]\n\n';
 
 function createGeminiConfig(): GeminiConfig {
     return {
@@ -71,7 +77,7 @@ describe('GeminiFormatter 相邻同角色 content 合并', () => {
 
         expect(contents.map(content => content.role)).toEqual(['user', 'model', 'user']);
         expectAlternatingRoles(contents);
-        expect(textOf(contents[2])).toBe('【动态上下文】技能与环境|吃了吗？');
+        expect(textOf(contents[2])).toBe(`【动态上下文】技能与环境|${USER_INPUT_MARKER}|吃了吗？`);
     });
 
     test('legacy 单份动态上下文并入当前用户 content', () => {
@@ -83,7 +89,7 @@ describe('GeminiFormatter 相邻同角色 content 合并', () => {
 
         expect(contents.map(content => content.role)).toEqual(['user', 'model', 'user']);
         expectAlternatingRoles(contents);
-        expect(textOf(contents[2])).toBe('【动态上下文】技能与环境|吃了吗？');
+        expect(textOf(contents[2])).toBe(`【动态上下文】技能与环境|${USER_INPUT_MARKER}|吃了吗？`);
     });
 
     test('preserve 模式回插的历史快照同样并入相邻同角色 content', () => {
@@ -100,7 +106,7 @@ describe('GeminiFormatter 相邻同角色 content 合并', () => {
         }, 'preserve');
 
         expectAlternatingRoles(contents);
-        expect(textOf(contents[contents.length - 1])).toBe('本轮快照|第三问');
+        expect(textOf(contents[contents.length - 1])).toBe(`本轮快照|${USER_INPUT_MARKER}|第三问`);
     });
 
     test('工具流程：functionResponse 与后续用户文本合并，工具配对与顺序不变', () => {
@@ -116,7 +122,8 @@ describe('GeminiFormatter 相邻同角色 content 合并', () => {
         // functionResponse 仍在紧随 functionCall 的 content 内，配对关系不破
         expect(contents[1].parts[0].functionCall.id).toBe('call_1');
         expect(contents[2].parts[0].functionResponse.id).toBe('call_1');
-        expect(contents[2].parts[1].text).toBe('顺便看下 B');
+        expect(contents[2].parts[1].text).toBe(USER_INPUT_MARKER);
+        expect(contents[2].parts[2].text).toBe('顺便看下 B');
     });
 
     test('交替历史与单条消息不受影响', () => {
@@ -143,7 +150,7 @@ describe('GeminiFormatter 相邻同角色 content 合并', () => {
         expect(contents.map(content => content.role)).toEqual(['user', 'model', 'user']);
         expectAlternatingRoles(contents);
         expect(textOf(contents[1])).toBe('第一答|【模型侧上下文】');
-        expect(textOf(contents[2])).toBe('【用户侧上下文】|吃了吗？');
+        expect(textOf(contents[2])).toBe(`【用户侧上下文】|${USER_INPUT_MARKER}|吃了吗？`);
     });
 
     test('system 预设条目转为 user 后与相邻用户回合合并', () => {
@@ -156,6 +163,6 @@ describe('GeminiFormatter 相邻同角色 content 合并', () => {
 
         expect(contents.map(content => content.role)).toEqual(['user', 'model', 'user']);
         expectAlternatingRoles(contents);
-        expect(textOf(contents[2])).toBe('预设条目|追问');
+        expect(textOf(contents[2])).toBe(`预设条目|${USER_INPUT_MARKER}|追问`);
     });
 });
