@@ -310,7 +310,7 @@ async function previewAttachment(attachment: Attachment) {
   if (!attachment.data) return
 
   try {
-    await contextService.previewAttachment(attachment)
+    await contextService.previewAttachment(attachment, props.attachments || [])
   } catch (error) {
     console.error('预览附件失败:', error)
   }

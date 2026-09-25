@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import MessageAttachments from '../../components/message/MessageAttachments.vue'
 import { contentToMessageEnhanced } from '../../stores/chat/parsers'
 import type { Attachment, Content } from '../../types'
@@ -23,6 +23,8 @@ function largePngData(): string {
 }
 
 describe('MessageAttachments', () => {
+  afterEach(() => { delete window.__GRAYCODE_HOST })
+
   it('模型回复替换用户消息后，仍显示大图并能打开原图', async () => {
     sendToExtensionMock.mockClear()
     const data = largePngData()
@@ -46,6 +48,23 @@ describe('MessageAttachments', () => {
     await wrapper.get('button.media-preview-wrapper').trigger('click')
     expect(sendToExtensionMock).toHaveBeenCalledWith(MESSAGE_NAMES.previewAttachment, {
       name: 'image.png', mimeType: 'image/png', data
+    })
+    wrapper.unmount()
+  })
+
+  it('独立宿主点击图片时携带同一条消息的图片组，供查看器左右切换', async () => {
+    sendToExtensionMock.mockClear()
+    window.__GRAYCODE_HOST = { postMessage() {}, getState: () => undefined, setState() {} }
+    const first: Attachment = { id: 'img-a', name: 'a.png', type: 'image', size: 4, mimeType: 'image/png', data: 'AAAA' }
+    const second: Attachment = { id: 'img-b', name: 'b.png', type: 'image', size: 4, mimeType: 'image/png', data: 'BBBB' }
+    const wrapper = mount(MessageAttachments, { props: { attachments: [first, second] } })
+    await wrapper.findAll('button.media-preview-wrapper')[1].trigger('click')
+    expect(sendToExtensionMock).toHaveBeenCalledWith(MESSAGE_NAMES.previewAttachment, {
+      gallery: [
+        { name: 'a.png', mimeType: 'image/png', data: 'AAAA' },
+        { name: 'b.png', mimeType: 'image/png', data: 'BBBB' }
+      ],
+      index: 1
     })
     wrapper.unmount()
   })

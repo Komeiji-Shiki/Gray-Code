@@ -5,15 +5,15 @@
  * 复用输入框的附件样式，支持点击预览
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
-import { sendToExtension, showNotification } from '../../utils/vscode'
+import { showNotification } from '../../utils/vscode'
+import { previewAttachment as requestPreviewAttachment } from '../../services/context'
 import { formatFileSize } from '../../utils/file'
 import { useI18n } from '../../i18n'
 import type { Attachment } from '../../types'
 
 const { t } = useI18n()
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   attachments: Attachment[]
   /** 是否为只读模式（不显示删除按钮） */
   readonly?: boolean
@@ -51,16 +51,12 @@ function getImageSource(attachment: Attachment): string | undefined {
   return undefined
 }
 
-// 预览附件（在 VSCode 中打开）
+// 预览附件：桌面 / Web 宿主附带同一条消息的图片组，支持在查看器内左右切换。
 async function previewAttachment(attachment: Attachment) {
   if (!attachment.data) return
   
   try {
-    await sendToExtension(MESSAGE_NAMES.previewAttachment, {
-      name: attachment.name,
-      mimeType: attachment.mimeType,
-      data: attachment.data
-    })
+    await requestPreviewAttachment(attachment, props.attachments)
   } catch (error) {
     console.error('Failed to preview attachment:', error)
     await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
