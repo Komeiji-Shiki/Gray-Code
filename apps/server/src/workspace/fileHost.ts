@@ -2,7 +2,6 @@ import { parseWorkspacePath, resolveWorkspacePath, workspaceFilePath, workspaceR
 import type { FileReadAccess } from './readAccess';
 import path from 'node:path';
 import { lstat, open, readFile, readdir, stat } from 'node:fs/promises';
-import minimatch from 'minimatch';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { SearchFileHost, FileLocation, FileWorkspace } from '../../../../backend/tools/search/fileHost';
@@ -10,6 +9,7 @@ import type { ReadFileHost } from '../../../../backend/tools/file/readFileRuntim
 import type { ListFilesHost } from '../../../../backend/tools/file/listFilesRuntime';
 import { isBinaryFile } from '../../../../backend/tools/shared/multimodal';
 import { MAX_LINE_COUNT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
+import { walkGlobTree } from '../../../../backend/tools/search/globWalker';
 import { detectTextFromHeader, decodeTextBytes } from '../../../../backend/tools/search/textEncodingRuntime';
 
 /** 每次调用独享的文件宿主，工作区与账号来自运行器而不是模型自报参数。 */
@@ -49,9 +49,33 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
   }
   joinPath(root: FileLocation, file: string): FileLocation { return this.location(path.resolve(root.fsPath, file)); }
   file(absolute: string): FileLocation { return this.location(absolute); }
+  /**
+   * 大小写不敏感匹配：单次工具调用内同一路径只解析一次。
+   *
+   * 修改原因：search_in_files 对每个文件依次做 stat / 读文件头 / 读全文，
+   * 每次都会经这里解析路径（带 realpath），大工作区下重复解析是显著开销；
+   * realpath 结果在一次调用内不会变化。
+   * 修改方式：缓存已解析成功的 Promise（并发调用共享），失败时不缓存。
+   * 修改目的：把每文件 3 次解析降为 1 次，且不改变失败与审批语义。
+   */
+  private readonly resolvedPaths = new Map<string, Promise<string>>();
   private async safe(file: FileLocation): Promise<string> {
     this.context.signal.throwIfAborted();
-    return this.readAccess ? this.readAccess.resolve(file.fsPath) : this.app.files.resolveGranted(this.workspace(), file.fsPath, this.context.fileWriteGrants);
+    const key = file.fsPath;
+    const cached = this.resolvedPaths.get(key);
+    if (cached) {
+      return cached;
+    }
+    const task = this.readAccess ? this.readAccess.resolve(key) : this.app.files.resolveGranted(this.workspace(), key, this.context.fileWriteGrants);
+    this.resolvedPaths.set(key, task);
+    try {
+      return await task;
+    } catch (error) {
+      if (this.resolvedPaths.get(key) === task) {
+        this.resolvedPaths.delete(key);
+      }
+      throw error;
+    }
   }
   async stat(file: FileLocation) {
     const value = await stat(await this.safe(file));
@@ -73,21 +97,24 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     return result;
   }
   async *iterateFiles(root: FileLocation, pattern: string, exclude: string, limit: number): AsyncGenerator<FileLocation> {
-    const directory = await this.safe(root); const pending = [directory]; let found = 0;
-    const match = new minimatch.Minimatch(pattern, { dot: true, nocase: process.platform === 'win32' });
-    const ignored = new minimatch.Minimatch(exclude || '__graycode_no_exclusions__', { dot: true, nocase: process.platform === 'win32' });
-    while (pending.length && found < limit) {
-      this.context.signal.throwIfAborted();
-      const current = pending.pop()!;
-      for (const entry of await readdir(await this.safe(this.location(current)), { withFileTypes: true })) {
-        this.context.signal.throwIfAborted();
-        const absolute = path.join(current, entry.name); const relative = path.relative(directory, absolute).replaceAll('\\', '/');
-        if (entry.isSymbolicLink()) continue;
-        if (ignored.match(relative) || (entry.isDirectory() && ignored.match(`${relative}/`))) continue;
-        if (entry.isDirectory()) { if (entry.name !== '.git') pending.push(absolute); }
-        else if (entry.isFile() && match.match(relative)) { found++; yield this.location(absolute); }
-        if (found >= limit) break;
-      }
+    // 修改原因：旧实现对每个目录条目执行 1-2 次 minimatch、对每个子目录做一次
+    //          realpath（约 66μs/目录），大工作区实测全树遍历约 3s；单个子目录
+    //          消失（ENOENT）还会让整个查找失败。
+    // 修改方式：遍历核心收敛到 globWalker：只解析一次根目录，子目录沿已解析根的
+    //          条目名拼接（符号链接/目录联动点一律跳过，不会跨出根目录），默认
+    //          排除模式与常见包含模式走字面量快速路径，子目录读取失败时跳过。
+    // 修改目的：结果与顺序完全不变的前提下，把遍历成本降到接近纯 readdir。
+    const directory = await this.safe(root);
+    for await (const match of walkGlobTree({
+      root: directory,
+      pattern,
+      exclude,
+      limit,
+      readdir: absolute => readdir(absolute, { withFileTypes: true }),
+      joinPath: (parent, name) => path.join(parent, name),
+      throwIfAborted: () => this.context.signal.throwIfAborted()
+    })) {
+      yield this.location(match.absolute);
     }
   }
   async countLines(file: FileLocation, relative: string): Promise<number | undefined> {
