@@ -23,7 +23,9 @@
   - 修复流式回复期间向上翻阅后被贴底拉回：虚拟窗口用「行号 × 估算行高」推算滚动位置，而真实内容高度与行数估算无关，长消息（长思考）下会把窗口尾部误判成仍在底部，scrollHeight 继续增长就把用户拉回底部；滚动条滑块也会在窗口尾部一大段范围内钉住不动。改为按真实滚动几何判断贴底与滑块位置。
   - 修复停止旧回合后立即发送新消息报「该对话已有运行中的任务」：取消只发起中止就返回，新回合在旧任务释放前被拒；现在取消等旧任务退出后再返回，并补上等待对话空闲的接口。
   - 修复模型在同一轮发起多个命令时已完成的那条也显示已取消：工具结果先于 functionResponse 消息到达前端，取消时仅按 functionResponse 判断会把已成功的工具改写成「Cancelled by user」并补写不存在的取消响应。
-  - 修复 Gemini 渠道把动态上下文与用户提问拆成两条相邻 user 消息下发：不符合 generateContent 的用户与模型交替要求，上游会把上下文当成当前输入并忽略用户真正的问题；现在下发前合并相邻同角色内容。
+  - 修复 Gemini / Anthropic 渠道把动态上下文与用户提问拆开导致忽略提问：Gemini 的 generateContent 要求用户与模型严格交替，动态上下文与总结消息会在用户回合前额外产生一条同角色消息，Anthropic 也有端点对相邻同角色敏感；现在下发前合并相邻同角色内容，并在真实用户输入前插入 `[User Input]` 边界标识——合并后各段之间没有边界，模型仍会把动态上下文整段当成最新输入、只回答上下文而忽略用户真正的问题。
+  - 修复 Responses 渠道推理回传被模型名门控永久关闭：桌面端的 `providerReasoningContentEnabled` 总是被写成布尔 `false`，短路掉模型名推断，`allowReasoningContent` 恒为 false，任何模型都不再回传 plain `reasoning_text`，DeepSeek 带工具的后续请求持续报 `HTTP 400: The reasoning_text in the thinking mode must be passed back to the API`。reasoning item 是 Responses 协议的标准输入形态（官方 GPT 与 DeepSeek 端点都接受回传），现改为默认回传，并新增 `replayReasoningContent` 三态字段（未设置即回传）供显式关闭；模型名识别同时接受 `ds` 别名，按独立标识段匹配，不误判 `words`/`hands` 等普通词。
+  - 修复 apply_diff 等工具部分成功时显示为整体失败：响应里仍带着失败块的 error 文本，而 error 判定排在 partial 判定之前，`ToolMessage` 还把 partial 判定挂在 `success` 上，`success` 被 error 拉成 false 后该分支无法进入；现在 partial 与混合成败判定优先于 error，回落为黄色警告，`apply_diff` 面板的 partial 图标同步改为警告图标。
 
 ## [2.0.0-pre.3] - 2026-09-23
 
