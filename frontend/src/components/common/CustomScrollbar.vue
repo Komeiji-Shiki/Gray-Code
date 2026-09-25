@@ -217,7 +217,25 @@ const virtualRowHeight = computed(() => Math.max(1, Number.isFinite(props.virtua
   ? props.virtualEstimatedRowHeight
   : 96))
 
-/** 虚拟模式下把当前真实窗口的局部 scrollTop 映射到全局估算坐标。 */
+/**
+ * 虚拟模式下当前窗口在整段历史中的行进度（0-1）。
+ *
+ * 按「窗口内滚动比例 × 窗口覆盖的行区间」映射，与 marker 位置、轨道点击和拖动 seek
+ * 使用的全局行索引是同一坐标系。不能改用「virtualStart × 估算行高 + 真实 scrollTop」
+ * 的像素估算法：真实内容高度与「行数 × 估算行高」无关，长消息（长思考）会让该估算值
+ * 超过估算总高度而被钳制，滑块会在窗口尾部一大段范围内钉在底部不动。
+ */
+function getVirtualProgress(container: HTMLElement): number {
+  const total = Math.max(1, props.virtualTotal)
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+  const within = maxScrollTop > 0 ? Math.min(1, Math.max(0, container.scrollTop / maxScrollTop)) : 0
+  const span = props.virtualEnd - props.virtualStart
+  // 窗口行区间未知（virtualEnd ≤ virtualStart）时退化为「窗口即全量」，滑块仍随滚动移动。
+  if (span <= 0) return within
+  return Math.min(1, Math.max(0, (props.virtualStart + span * within) / total))
+}
+
+/** 虚拟模式下把当前真实窗口的局部 scrollTop 映射到全局估算坐标（仅用于滑块几何）。 */
 function getVerticalLayoutMetrics(container: HTMLElement): {
   scrollHeight: number
   clientHeight: number
@@ -237,11 +255,10 @@ function getVerticalLayoutMetrics(container: HTMLElement): {
 
   const scrollHeight = Math.max(clientHeight + 1, props.virtualTotal * virtualRowHeight.value)
   const maxScrollTop = Math.max(0, scrollHeight - clientHeight)
-  const globalTop = props.virtualStart * virtualRowHeight.value + container.scrollTop
   return {
     scrollHeight,
     clientHeight,
-    scrollTop: Math.max(0, Math.min(maxScrollTop, globalTop)),
+    scrollTop: getVirtualProgress(container) * maxScrollTop,
     maxScrollTop
   }
 }
@@ -262,10 +279,12 @@ function emitVirtualSeekRatio(ratio: number): void {
 function isAtBottom(): boolean {
   if (!scrollContainer.value) return false
   const container = scrollContainer.value
-  const metrics = getVerticalLayoutMetrics(container)
   // 已加载窗口尚未覆盖全局尾部时，局部 DOM 到底不等于对话到底。
   if (isVirtualScroll.value && props.virtualEnd > 0 && props.virtualEnd < props.virtualTotal) return false
-  return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= props.stickyThreshold
+  // 贴底只取决于真实 DOM 位置：虚拟模式的总高度是按行数估算的，与真实内容高度无关
+  // （长消息下偏差可达数倍），用它计算距底距离会把窗口尾部一大段误判成「仍在底部」。
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+  return maxScrollTop - container.scrollTop <= props.stickyThreshold
 }
 
 // 记录是否在底部（内容变化前检查）
