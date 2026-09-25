@@ -465,6 +465,10 @@ export class ProductUi {
         return { released: false };
       }
       case 'cancelStream': return this.chat.cancel(client, data.conversationId);
+      case 'chat.awaitConversationIdle': {
+        await this.app.conversation(client.actorId, data.conversationId);
+        return this.chat.awaitIdle(data.conversationId);
+      }
       case 'toolConfirmation': return this.chat.confirm(client, data);
       case 'platform.questions.list': {
         const list = await Promise.all(this.app.runtime.pendingQuestions().map(async question =>

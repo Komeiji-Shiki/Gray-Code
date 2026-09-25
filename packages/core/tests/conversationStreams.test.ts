@@ -70,4 +70,28 @@ describe('跨入口的对话实时输出', () => {
     await app.settings.save({ settings: value.settings, expectedRevision: value.revision });
     expect(await received({ actorId: 'guest', clientId: 'other' })).toEqual([]);
   });
+
+  test('停止旧任务返回时对话已释放，紧接着的新回合不会被判为对话忙', async () => {
+    const conversation = await app.createConversation('owner', '替换当前回合');
+    const first = await app.productUi.chat.start(owner, { conversationId: conversation.id, streamId: 'replace-first', configId: 'fixture', message: '开始' }, await app.product.draft()) as { runId: string };
+    await inputReady.promise;
+    await app.productUi.chat.cancel(owner, conversation.id);
+    // 取消返回时旧任务必须已经结算完（工具结果与终态事件都已落盘）
+    expect(app.runtime.activeCount).toBe(0);
+    expect((await app.storage.getRun(first.runId))?.status).toBe('cancelled');
+    // 一个对话同时只允许一个活跃任务：旧任务尚未释放时这里会收到 STORAGE_BUSY
+    const second = await app.productUi.chat.start(owner, { conversationId: conversation.id, streamId: 'replace-second', configId: 'fixture', message: '替换当前回合' }, await app.product.draft()) as { runId: string };
+    expect(second.runId).not.toBe(first.runId);
+  });
+
+  test('等待对话空闲：空闲时立即返回，任务未释放时按时限返回不空闲', async () => {
+    const conversation = await app.createConversation('owner', '空闲探测');
+    expect(await app.productUi.call(owner, 'chat.awaitConversationIdle', { conversationId: conversation.id })).toEqual({ idle: true });
+    const started = await app.productUi.chat.start(owner, { conversationId: conversation.id, streamId: 'idle-probe', configId: 'fixture', message: '开始' }, await app.product.draft()) as { runId: string };
+    await inputReady.promise;
+    expect(await app.productUi.chat.awaitIdle(conversation.id, 200)).toEqual({ idle: false });
+    finish.resolve();
+    expect((await app.runtime.wait(started.runId))?.status).toBe('completed');
+    expect(await app.productUi.chat.awaitIdle(conversation.id, 200)).toEqual({ idle: true });
+  });
 });

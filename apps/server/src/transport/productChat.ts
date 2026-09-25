@@ -1,6 +1,7 @@
 import { ArtifactApproval } from '../artifacts/approval';
 import { chatRunInput, chatUserMessage } from './chatInput';
 import { StreamAccumulator } from '../../../../backend/modules/channel/StreamAccumulator';
+import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../../../backend/core/streamConstants';
 import type { PlatformMessage, RunRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
@@ -111,11 +112,54 @@ export class ProductChat {
     }
     return { active: true };
   }
+  /**
+   * 停止对话内的活跃任务。
+   *
+   * 取消只负责发起中止：任务还要结算工具结果、写下终态事件才算真正退出，而一个对话
+   * 同时只允许一个活跃任务（RunRepository.create 在对话仍有活跃任务时抛 STORAGE_BUSY）。
+   * 共享前端「替换当前回合」的流程——停止后立即发新消息、排队消息在动作边界提前投递、
+   * 后台回执回流——都直接依赖「cancelStream 返回即旧回合已退出」，因此这里等任务退出
+   * 后再返回。等待带超时兜底：任务异常挂死时按既有语义继续，不让停止操作本身卡住。
+   */
   async cancel(client: ClientSession, conversationId: string): Promise<unknown> {
     await this.app.conversation(client.actorId, conversationId);
     const runs = await this.app.storage.listRuns({ conversationId, activeOnly: true });
     for (const run of runs) await this.app.runtime.cancel(run.id, client.actorId);
+    await this.waitForRelease(runs.map(run => run.id));
     return { success: true };
+  }
+  /**
+   * 等待对话空闲。
+   *
+   * 共享前端在旧回合收尾窗口（后台回执回流）或同会话存在其他入口任务时，用它决定何时
+   * 插入新回合，否则新任务会被 STORAGE_BUSY 拒绝。以运行控制器为生命周期事实来源等待，
+   * 达到时限则按「不空闲」返回，由调用方决定后续动作。
+   */
+  async awaitIdle(conversationId: string, timeoutMs = OLD_STREAM_EXIT_WAIT_TIMEOUT_MS): Promise<{ idle: boolean }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const active = await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 });
+      if (!active.length) return { idle: true };
+      if (Date.now() >= deadline) return { idle: false };
+      // 本进程的运行控制器退出时会立即唤醒；不属于本进程的遗留活跃记录由固定间隔退避兜底。
+      await Promise.race([
+        this.app.runtime.wait(active[0].id),
+        new Promise<void>(resolve => { setTimeout(resolve, 100); }),
+      ]);
+    }
+  }
+  /** 等待给定任务退出（超时视同已退出，按调用方既有语义继续）。 */
+  private async waitForRelease(runIds: string[]): Promise<void> {
+    if (!runIds.length) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled(runIds.map(runId => this.app.runtime.wait(runId))),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS); }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
   async confirm(client: ClientSession, data: Record<string, any>): Promise<unknown> {
     await this.app.conversation(client.actorId, data.conversationId);
