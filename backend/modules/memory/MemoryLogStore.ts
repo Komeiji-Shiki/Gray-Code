@@ -13,6 +13,7 @@ import {
     type LogEntry, type MemoryConfig,
 } from './types';
 import { AsyncLock } from './AsyncLock';
+import { readRecordBuffer, readRecordBytes, writeRecordBuffer } from './recordIO';
 import {
     assertRecordFits, die, ISO_DATE_RE, isValidTreeRecord, isValidTreeSummary, logHeaderLooksLike,
     LEGACY_LOG_RECS, LEGACY_TREE_REC, pad, parse, records,
@@ -190,8 +191,7 @@ export class MemoryLogStore {
     ): Promise<boolean | null> {
         if (fileSize < rec * 2) return null;
         const probe = Buffer.alloc(rec * 2);
-        const { bytesRead: probeRead } = await handle.read(probe, 0, probe.length, 0);
-        if (probeRead < rec * 2) return null;
+        await readRecordBuffer(handle, probe, 0);
         return logHeaderLooksLike(probe, rec);
     }
 
@@ -247,8 +247,8 @@ export class MemoryLogStore {
                         for (let base = 0; base < stat.size; base += CHUNK * sourceRec) {
                             const bytes = Math.min(CHUNK * sourceRec, stat.size - base);
                             const buf = Buffer.alloc(bytes);
-                            const { bytesRead } = await handle.read(buf, 0, bytes, base);
-                            const effective = Math.floor(bytesRead / sourceRec);
+                            await readRecordBuffer(handle, buf, base);
+                            const effective = Math.floor(bytes / sourceRec);
                             const kept: Buffer[] = [];
                             for (let i = 0; i < effective; i++) {
                                 const idx = base / sourceRec + i; // 旧格式 id 连续，切片序号即期望 id
@@ -265,7 +265,7 @@ export class MemoryLogStore {
                                 outCount++;
                             }
                             if (!valid) break;
-                            if (kept.length > 0) await outHandle.write(Buffer.concat(kept));
+                            if (kept.length > 0) await writeRecordBuffer(outHandle, Buffer.concat(kept));
                         }
                     } finally {
                         await outHandle.close();
@@ -377,8 +377,7 @@ export class MemoryLogStore {
     ): Promise<boolean | null> {
         if (fileSize < LEGACY_TREE_REC * 2) return null;
         const probe = Buffer.alloc(LEGACY_TREE_REC * 2);
-        const { bytesRead } = await handle.read(probe, 0, probe.length, 0);
-        if (bytesRead < probe.length) return null;
+        await readRecordBuffer(handle, probe, 0);
         for (let i = 0; i < 2; i++) {
             if (!isValidTreeRecord(probe.subarray(i * LEGACY_TREE_REC, (i + 1) * LEGACY_TREE_REC))) return false;
         }
@@ -404,8 +403,8 @@ export class MemoryLogStore {
                     for (let base = 0; base < size; base += CHUNK * LEGACY_TREE_REC) {
                         const bytes = Math.min(CHUNK * LEGACY_TREE_REC, size - base);
                         const buf = Buffer.alloc(bytes);
-                        const { bytesRead } = await handle.read(buf, 0, bytes, base);
-                        const effective = Math.floor(bytesRead / LEGACY_TREE_REC);
+                        await readRecordBuffer(handle, buf, base);
+                        const effective = Math.floor(bytes / LEGACY_TREE_REC);
                         const kept: Buffer[] = [];
                         for (let i = 0; i < effective; i++) {
                             const slice = buf.subarray(i * LEGACY_TREE_REC, (i + 1) * LEGACY_TREE_REC);
@@ -417,7 +416,7 @@ export class MemoryLogStore {
                             kept.push(pad(slice.toString('utf-8').trimEnd(), TREE_REC));
                         }
                         if (!valid) break;
-                        if (kept.length > 0) await outHandle.write(Buffer.concat(kept));
+                        if (kept.length > 0) await writeRecordBuffer(outHandle, Buffer.concat(kept));
                     }
                 } finally {
                     await outHandle.close();
@@ -508,7 +507,7 @@ export class MemoryLogStore {
         const handle = await fs.open(this.logPath(), 'r');
         try {
             const buf = Buffer.alloc((hi - lo) * rec);
-            const { bytesRead } = await handle.read(buf, 0, buf.length, lo * rec);
+            const bytesRead = await readRecordBytes(handle, buf, lo * rec);
             if (bytesRead < buf.length) {
                 // 记录不足，截取实际读取的部分
                 return records(buf.subarray(0, bytesRead), rec);
@@ -542,7 +541,7 @@ export class MemoryLogStore {
         }
         try {
             const buf = Buffer.alloc(rec);
-            const { bytesRead } = await handle.read(buf, 0, rec, i * rec);
+            const bytesRead = await readRecordBytes(handle, buf, i * rec);
             if (bytesRead < rec) return null; // 记录缺失（日志被截断）
             const entry = parse(buf.toString('utf-8').trimEnd());
             return entry ? entry.id : null;
@@ -557,14 +556,17 @@ export class MemoryLogStore {
         let handle: import('fs').promises.FileHandle | null = null;
         try {
             handle = await fs.open(this.logPath(), 'r');
+            // 小记忆库按实际大小分配，分块扫描复用同一缓冲区，避免每页及 EOF 都申请 16 MiB。
+            const size = (await handle.stat()).size;
+            const buf = Buffer.alloc(rec * Math.min(4096, Math.max(1, Math.ceil(size / rec))));
             let offset = 0;
             while (true) {
-                const buf = Buffer.alloc(rec * 4096);
-                const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
+                const bytesRead = await readRecordBytes(handle, buf, offset);
                 if (bytesRead === 0) break;
                 const entries = records(buf.subarray(0, bytesRead), rec);
                 for (const e of entries) yield e;
                 offset += bytesRead;
+                if (bytesRead < buf.length) break;
             }
         } catch (e: any) {
             // 日志不存在视为空扫描；其余 IO 错误上抛（与 count 同口径）
@@ -582,7 +584,7 @@ export class MemoryLogStore {
             const handle = await fs.open(this.treePath(size), 'r');
             try {
                 const buf = Buffer.alloc(TREE_REC);
-                const { bytesRead } = await handle.read(buf, 0, TREE_REC, (lo / size) * TREE_REC);
+                const bytesRead = await readRecordBytes(handle, buf, (lo / size) * TREE_REC);
                 if (bytesRead < TREE_REC) return null;
                 const str = buf.toString('utf-8').trimEnd();
                 // 槽位合法性校验：未迁移/损坏的旧宽度文件按新宽度读会拼入记录尾换行，
@@ -625,10 +627,10 @@ export class MemoryLogStore {
             const handle = await fs.open(p, 'r+');
             try {
                 const buffer = Buffer.alloc(TREE_REC);
-                await handle.read(buffer, 0, TREE_REC, targetIndex * TREE_REC);
+                await readRecordBuffer(handle, buffer, targetIndex * TREE_REC);
                 if (isValidTreeSummary(buffer.toString('utf-8'))) return false;
                 const record = pad(text, TREE_REC);
-                await handle.write(record, 0, record.length, targetIndex * TREE_REC);
+                await writeRecordBuffer(handle, record, targetIndex * TREE_REC);
                 this.treeCacheInvalidate(size);
                 return true;
             } finally {
@@ -724,10 +726,10 @@ export class MemoryLogStore {
                         const emptyRecord = pad('', TREE_REC);
                         for (let i = kStart; i < clearEnd; i++) {
                             const buffer = Buffer.alloc(TREE_REC);
-                            await handle.read(buffer, 0, TREE_REC, i * TREE_REC);
+                            await readRecordBuffer(handle, buffer, i * TREE_REC);
                             if (isValidTreeSummary(buffer.toString('utf-8'))) {
                                 gone.push([i * size, (i + 1) * size]);
-                                await handle.write(emptyRecord, 0, emptyRecord.length, i * TREE_REC);
+                                await writeRecordBuffer(handle, emptyRecord, i * TREE_REC);
                             }
                         }
 
@@ -736,7 +738,7 @@ export class MemoryLogStore {
                         const buffer = Buffer.alloc(TREE_REC);
                         while (trailingCount > 0) {
                             buffer.fill(0);
-                            await handle.read(buffer, 0, TREE_REC, (trailingCount - 1) * TREE_REC);
+                            await readRecordBuffer(handle, buffer, (trailingCount - 1) * TREE_REC);
                             if (isValidTreeSummary(buffer.toString('utf-8'))) break;
                             trailingCount--;
                         }
@@ -836,7 +838,7 @@ export class MemoryLogStore {
             const logPath = this.logPath();
             const handle = await fs.open(logPath, 'r+');
             try {
-                await handle.write(buf, 0, buf.length, id * rec);
+                await writeRecordBuffer(handle, buf, id * rec);
             } finally {
                 await handle.close();
             }
@@ -901,10 +903,9 @@ export class MemoryLogStore {
                 for (let base = 0; base < T; base += CHUNK) {
                     const count = Math.min(CHUNK, T - base);
                     const buf = Buffer.alloc(count * rec);
-                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * rec);
-                    const effective = Math.floor(bytesRead / rec);
+                    await readRecordBuffer(handle, buf, base * rec);
                     const kept: Buffer[] = [];
-                    for (let i = 0; i < effective; i++) {
+                    for (let i = 0; i < count; i++) {
                         const idx = base + i;
                         const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
@@ -926,7 +927,7 @@ export class MemoryLogStore {
                         outCount++;
                     }
                     if (kept.length > 0) {
-                        await outHandle.write(Buffer.concat(kept));
+                        await writeRecordBuffer(outHandle, Buffer.concat(kept));
                     }
                 }
             } finally {
@@ -1027,10 +1028,9 @@ export class MemoryLogStore {
                 for (let base = 0; base < T; base += CHUNK) {
                     const count = Math.min(CHUNK, T - base);
                     const buf = Buffer.alloc(count * rec);
-                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * rec);
-                    const effective = Math.floor(bytesRead / rec);
+                    await readRecordBuffer(handle, buf, base * rec);
                     const kept: Buffer[] = [];
-                    for (let i = 0; i < effective; i++) {
+                    for (let i = 0; i < count; i++) {
                         const idx = base + i;
                         const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
@@ -1051,7 +1051,7 @@ export class MemoryLogStore {
                         outCount++;
                     }
                     if (kept.length > 0) {
-                        await outHandle.write(Buffer.concat(kept));
+                        await writeRecordBuffer(outHandle, Buffer.concat(kept));
                     }
                 }
             } finally {

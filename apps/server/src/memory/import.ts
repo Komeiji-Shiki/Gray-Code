@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { MigrationIssue } from '@graycode/contracts';
 import { ISO_DATE_RE, parse, isValidTreeRecord, logHeaderLooksLike, LEGACY_LOG_RECS, LEGACY_TREE_REC } from '../../../../backend/modules/memory/logFormat';
 import { LOG_REC, TREE_REC } from '../../../../backend/modules/memory/types';
+import { readRecordBuffer } from '../../../../backend/modules/memory/recordIO';
 import { parseConfigContent } from '../../../../backend/modules/memory/configFile';
 import type { PlatformApplication } from '../application';
 
@@ -50,12 +51,7 @@ export class LegacyMemoryImporter {
       while (offset < source.size) {
         signal.throwIfAborted();
         const buffer = Buffer.alloc(Math.min(width * 256, source.size - offset));
-        let read = 0;
-        while (read < buffer.length) {
-          const result = await file.read(buffer, read, buffer.length - read, offset + read);
-          if (!result.bytesRead) throw new Error('记忆源文件在读取期间被截断。');
-          read += result.bytesRead;
-        }
+        await readRecordBuffer(file, buffer, offset);
         for (let position = 0; position < buffer.length; position += width)
           await consume(decoder.decode(buffer.subarray(position, position + width)).trimEnd(), (offset + position) / width);
         offset += buffer.length;
@@ -69,11 +65,11 @@ export class LegacyMemoryImporter {
    */
   private async logWidth(source: SourceFile): Promise<number> {
     if (!source.size) return LOG_REC;
-    const file = await open(source.file, 'r');
+    const file = await open(source.snapshot, 'r');
     try {
       for (const rec of LEGACY_LOG_RECS) {
         if (source.size % rec !== 0 || source.size < rec * 2) continue;
-        const buffer = Buffer.alloc(rec * 2); await file.read(buffer, 0, buffer.length, 0);
+        const buffer = Buffer.alloc(rec * 2); await readRecordBuffer(file, buffer, 0);
         if (logHeaderLooksLike(buffer, rec)) return rec;
       }
     } finally { await file.close(); }
@@ -90,9 +86,9 @@ export class LegacyMemoryImporter {
     if (!source.size) return TREE_REC;
     if (source.size % TREE_REC === 0 && source.size % LEGACY_TREE_REC !== 0) return TREE_REC;
     if (source.size >= LEGACY_TREE_REC * 2) {
-      const file = await open(source.file, 'r');
+      const file = await open(source.snapshot, 'r');
       try {
-        const buffer = Buffer.alloc(LEGACY_TREE_REC * 2); await file.read(buffer, 0, buffer.length, 0);
+        const buffer = Buffer.alloc(LEGACY_TREE_REC * 2); await readRecordBuffer(file, buffer, 0);
         let legacy = true;
         for (let index = 0; index < 2; index++)
           if (!isValidTreeRecord(buffer.subarray(index * LEGACY_TREE_REC, (index + 1) * LEGACY_TREE_REC))) legacy = false;
