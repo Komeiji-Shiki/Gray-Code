@@ -60,9 +60,10 @@ export class MemoryLogStore {
         await fs.mkdir(path.join(this.dir, 'TREE'), { recursive: true });
         const logPath = this.logPath();
         try {
-            await fs.access(logPath);
-        } catch {
-            await fs.writeFile(logPath, '');
+            await fs.writeFile(logPath, '', { flag: 'wx' });
+        } catch (error) {
+            // 创建检查与写入必须是同一个操作，不能覆盖另一实例刚创建的记忆。
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         }
     }
 

@@ -13,12 +13,15 @@ export class MemoryManager extends MemoryEngine {
             store: getConfig => new MemoryLogStore(storagePath, getConfig),
             config: {
                 initialize: async defaults => {
-                    try { await fs.access(configPath); }
-                    catch { await fs.writeFile(configPath, buildConfigContent(defaults), 'utf-8'); }
+                    try { await fs.writeFile(configPath, buildConfigContent(defaults), { encoding: 'utf-8', flag: 'wx' }); }
+                    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
                 },
                 load: async () => {
                     try { return parseConfigContent(await fs.readFile(configPath, 'utf-8')); }
-                    catch { return null; }
+                    catch (error) {
+                        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+                        throw error;
+                    }
                 },
                 save: value => writeConfigAtomic(configPath, buildConfigContent(value)),
             },

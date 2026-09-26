@@ -50,8 +50,7 @@ export function parseConfigContent(content: string): MemoryConfig {
 
 /**
  * Windows 上 rename 到已存在目标偶发 EPERM/EEXIST（文件锁/杀软竞态）：
- * 短暂退避重试（与 BranchGraphRepository.renameWithRetry 同风格）；
- * 重试耗尽后先删旧目标再 rename（与 DiffStorageManager.atomicWriteFile 同语义）。
+ * 短暂退避重试；重试耗尽保留旧配置并报告错误。
  */
 export async function renameConfigOverwrite(tmpPath: string, configPath: string): Promise<void> {
     for (let attempt = 1; ; attempt += 1) {
@@ -65,21 +64,7 @@ export async function renameConfigOverwrite(tmpPath: string, configPath: string)
             if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY' && code !== 'EEXIST') {
                 throw error;
             }
-            if (attempt >= 4) {
-                // 重试耗尽：Windows 上 rename 无法覆盖已存在目标（EEXIST/EPERM）时
-                // 先删旧再最后一次尝试（与 DiffStorageManager.atomicWriteFile 同语义）；
-                // 其余可恢复码（EBUSY 等）原样抛出，避免删旧误伤正在被读的配置。
-                if (code === 'EEXIST' || code === 'EPERM') {
-                    try {
-                        await fs.unlink(configPath);
-                    } catch {
-                        // 目标不存在或删除失败：最后一次 rename 会暴露真实错误
-                    }
-                    await fs.rename(tmpPath, configPath);
-                    return;
-                }
-                throw error;
-            }
+            if (attempt >= 4) throw error;
             await new Promise(resolve => setTimeout(resolve, 30 * attempt));
         }
     }
