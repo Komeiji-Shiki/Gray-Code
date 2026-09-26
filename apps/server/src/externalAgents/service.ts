@@ -29,7 +29,7 @@ export class ExternalAgents {
   private readonly sessions = new Map<string, LiveSession>();
   private readonly operations = new Map<string, { fingerprint: string; promise: Promise<ToolOutcome> }>();
   private readonly unsubscribe: () => void;
-  private closing = false;
+  private readonly shutdown = new AbortController();
   constructor(private readonly app: PlatformApplication) {
     this.unsubscribe = app.subscribe(event => {
       if (event.type === 'settings.changed') this.refreshTools();
@@ -72,7 +72,7 @@ export class ExternalAgents {
     return live;
   }
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
-    if (this.closing) throw new Error('外部代理服务正在关闭。');
+    if (this.shutdown.signal.aborted) throw new Error('外部代理服务正在关闭。');
     const action = String(args.action);
     if (action === 'list') return { success: true, data: {
       profiles: this.profiles().filter(profile => profile.enabled).map(({ id, name }) => ({ id, name })),
@@ -126,7 +126,7 @@ export class ExternalAgents {
     if (live.record.status === 'closed' && action !== 'load' && action !== 'close') throw new Error('代理会话已关闭，请先用 load 明确恢复会话。');
     const operation: Operation = { id, fingerprint, sessionId: live.record.id, runId: context.runId, status: 'running' };
     const cancel = new AbortController();
-    const active: ActiveOperation = { context, cancel, signal: AbortSignal.any([context.signal, cancel.signal]), output: [], images: [],
+    const active: ActiveOperation = { context, cancel, signal: AbortSignal.any([context.signal, cancel.signal, this.shutdown.signal]), output: [], images: [],
       replay: action === 'load' || action === 'fork', writes: Promise.resolve(), permissions: Promise.resolve() };
     live.active = active; live.record.status = 'running'; live.record.lastRunId = context.runId; live.record.error = undefined;
     let outcome: ToolOutcome;
@@ -221,11 +221,17 @@ export class ExternalAgents {
       const params = { sessionId: remoteSessionId, cwd: live.record.directory, mcpServers: [],
         additionalDirectories: live.record.workspace.roots?.slice(1).map(root => root.directory) };
       active.replay = true;
-      if (client.info.agentCapabilities?.sessionCapabilities?.resume)
-        this.configuration(live.record, await this.request(live, active, 'session/resume', params));
-      else if (client.info.agentCapabilities?.loadSession)
-        this.configuration(live.record, await this.request(live, active, 'session/load', params));
-      else throw new Error('这个代理没有提供会话恢复能力，原记录仍然保留。');
+      try {
+        if (client.info.agentCapabilities?.sessionCapabilities?.resume)
+          this.configuration(live.record, await this.request(live, active, 'session/resume', params));
+        else if (client.info.agentCapabilities?.loadSession)
+          this.configuration(live.record, await this.request(live, active, 'session/load', params));
+        else throw new Error('这个代理没有提供会话恢复能力，原记录仍然保留。');
+      } catch (error) {
+        // 握手成功不代表原会话已恢复，失败的连接不能让下次 load 或 prompt 跳过恢复。
+        await this.dispose(live).catch(cause => console.error('外部代理恢复失败后的关闭错误：', cause));
+        throw error;
+      }
     }
     return client;
   }
@@ -351,8 +357,7 @@ export class ExternalAgents {
     this.refreshTools();
   }
   async close() {
-    this.closing = true; this.unsubscribe();
-    for (const live of this.sessions.values()) live.active?.cancel.abort(new Error('应用正在关闭。'));
+    this.shutdown.abort(new Error('应用正在关闭。')); this.unsubscribe();
     const results = await Promise.allSettled([...this.sessions.values()].map(live => this.dispose(live)));
     await Promise.allSettled([...this.operations.values()].map(operation => operation.promise));
     for (const result of results) if (result.status === 'rejected') console.error('外部代理关闭失败：', result.reason);

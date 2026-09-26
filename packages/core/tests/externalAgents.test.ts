@@ -124,3 +124,48 @@ test('ACP cancellation releases owned processes and uncertain operations are not
     for (const pid of new Set((await traces(f.source)).map(event => event.pid))) expect(() => process.kill(pid, 0)).toThrow();
   } finally { await app.close(); await f.cleanup(); }
 }, 25000);
+
+test('ACP 恢复失败释放未恢复的进程，明确重试时重新恢复原会话', async () => {
+  const f = await fixture(); await f.store.close();
+  let app = await PlatformApplication.open({ dataDirectory: f.data });
+  try {
+    const { context } = await configure(app, f.source);
+    const created = await app.externalAgents.execute({ action: 'create' }, context()) as any;
+    expect(created.success).toBe(true);
+    const sessionId = created.data.session.id;
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data });
+    await writeFile(path.join(f.source, 'fail-resume-once'), '1');
+    const failed = await app.externalAgents.execute({ action: 'load', sessionId }, context());
+    expect(failed).toMatchObject({ success: false, code: 'EXTERNAL_AGENT_FAILED', error: expect.stringContaining('Fixture refused') });
+    const firstResume = (await traces(f.source)).find(event => event.method === 'session/resume');
+    expect(() => process.kill(firstResume.pid, 0)).toThrow();
+    expect(await app.externalAgents.execute({ action: 'load', sessionId }, context())).toMatchObject({ success: true });
+    const resumed = (await traces(f.source)).filter(event => event.method === 'session/resume');
+    expect(resumed).toHaveLength(2); expect(resumed[1].pid).not.toBe(resumed[0].pid);
+    expect(resumed[1].params.sessionId).toBe(created.data.session.remoteSessionId);
+    expect((await traces(f.source)).filter(event => event.method === 'session/prompt')).toHaveLength(0);
+  } finally { await app.close(); await f.cleanup(); }
+}, 25000);
+
+test('ACP 关闭覆盖仍在读取操作记录的调用，不会继续启动代理', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  let release!: () => void;
+  let readStarted!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const reading = new Promise<void>(resolve => { readStarted = resolve; });
+  try {
+    const { context } = await configure(app, f.source);
+    const getRecord = app.storage.getRecord.bind(app.storage);
+    const read = jest.spyOn(app.storage, 'getRecord').mockImplementation(async (namespace, id) => {
+      if (namespace === 'external-agent-operations') { readStarted(); await gate; }
+      return getRecord(namespace, id);
+    });
+    const pending = app.externalAgents.execute({ action: 'create' }, context());
+    await reading;
+    const closing = app.externalAgents.close(); release();
+    expect(await pending).toMatchObject({ success: false, code: 'CANCELLED' });
+    await closing; read.mockRestore();
+    expect(await traces(f.source)).toEqual([]);
+  } finally { release(); await app.close(); await f.cleanup(); }
+}, 25000);

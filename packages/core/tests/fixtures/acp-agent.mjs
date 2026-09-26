@@ -2,11 +2,12 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { appendFile, readFile, unlink, writeFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 
 const require = createRequire(new URL('../../../../apps/server/package.json', import.meta.url));
-const { agent, ndJsonStream, PROTOCOL_VERSION } = await import(pathToFileURL(require.resolve('@agentclientprotocol/sdk')).href);
+const { agent, ndJsonStream, PROTOCOL_VERSION, RequestError } = await import(pathToFileURL(require.resolve('@agentclientprotocol/sdk')).href);
 const directory = process.env.ACP_FIXTURE_DIRECTORY;
 const trace = (method, params) => appendFile(path.join(directory, 'trace.jsonl'), JSON.stringify({ method, params, pid: process.pid, cwd: process.cwd() }) + '\n');
 const load = async id => JSON.parse(await readFile(path.join(directory, `${id}.json`), 'utf8'));
@@ -31,6 +32,8 @@ const app = agent({ name: 'Controlled ACP fixture' })
   })
   .onRequest('session/resume', async ({ params, client }) => {
     await trace('session/resume', params);
+    const failure = path.join(directory, 'fail-resume-once');
+    if (existsSync(failure)) { await unlink(failure); throw new RequestError(-32000, 'Fixture refused session resume'); }
     const state = await load(params.sessionId);
     await client.notify('session/update', { sessionId: state.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'REPLAY MUST NOT BE APPENDED' } } });
     return config(state);

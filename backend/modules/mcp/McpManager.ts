@@ -473,9 +473,20 @@ export class McpManager {
      */
     async connect(serverId: string): Promise<void> {
         if (this.options.connections === false) throw new Error('MCP settings drafts cannot start connections.');
+        const inFlight = this.connectPromises.get(serverId);
+        if (inFlight) return inFlight;
+        // 配置读取也属于连接过程，断开或释放时必须能取消这一步之后的启动。
+        const promise = this.prepareConnect(serverId, () => this.connectPromises.get(serverId) === promise);
+        this.connectPromises.set(serverId, promise);
+        try { await promise; }
+        finally { if (this.connectPromises.get(serverId) === promise) this.connectPromises.delete(serverId); }
+    }
+
+    private async prepareConnect(serverId: string, current: () => boolean): Promise<void> {
         // 只读目标服务器配置（支持手动编辑配置文件的情况）：
         // 不再全量 reloadFromStorage（多服务器时避免每次连接都枚举全部配置）
         const storedConfig = await this.storageAdapter.getConfig(serverId);
+        if (!current()) return;
         if (storedConfig) {
             // storage 直载路径校验（同 reloadFromStorage）：手动编辑的配置文件可能含非法
             // serverId（含连续 __ 等），直接纳入会让下游 encodeMcpToolName 抛错。
@@ -495,7 +506,7 @@ export class McpManager {
             }
         }
 
-        let info = this.servers.get(serverId);
+        const info = this.servers.get(serverId);
         if (!info) {
             // 列出所有可用的服务器 ID
             const availableIds = Array.from(this.servers.keys());
@@ -513,26 +524,9 @@ export class McpManager {
             return;
         }
 
-        // 复用 in-flight connect promise（注意：上方检查与下方注册之间没有 await，并发调用会串行化）
-        const inFlight = this.connectPromises.get(serverId);
-        if (inFlight) {
-            return inFlight;
-        }
-
         const generation = this.nextGeneration(serverId);
         this.updateServerStatus(serverId, 'connecting');
-
-        const promise = runConnect(this.connectionDeps, serverId, info, generation);
-        this.connectPromises.set(serverId, promise);
-
-        try {
-            await promise;
-        } finally {
-            // 只清理自己注册的 promise，避免误删新连接注册的 promise
-            if (this.connectPromises.get(serverId) === promise) {
-                this.connectPromises.delete(serverId);
-            }
-        }
+        await runConnect(this.connectionDeps, serverId, info, generation);
     }
 
     /**
@@ -544,7 +538,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
         }
 
-        if (info.status === 'disconnected') {
+        if (info.status === 'disconnected' && !this.connectPromises.has(serverId)) {
             return;
         }
 

@@ -97,6 +97,21 @@ describe('McpManager connect lifecycle races', () => {
         expect(manager.getServerStatus(id)).toBe('error');
     });
 
+    test.each(['disconnect', 'dispose'] as const)('配置读取期间 %s 不会在返回后重新启动连接', async action => {
+        const id = await createStdioServer('reading_config');
+        const config = await storage.getConfig(id);
+        let finish!: (value: typeof config) => void;
+        jest.spyOn(storage, 'getConfig').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const connectSpy = jest.spyOn(McpClient.prototype, 'connect').mockResolvedValue();
+        const opening = manager.connect(id);
+        const concurrent = manager.connect(id);
+        expect(storage.getConfig).toHaveBeenCalledTimes(1);
+        if (action === 'dispose') await manager.dispose(); else await manager.disconnect(id);
+        finish(config); await Promise.all([opening, concurrent]);
+        expect(connectSpy).not.toHaveBeenCalled();
+        expect(manager.getServerStatus(id)).toBe(action === 'dispose' ? null : 'disconnected');
+    });
+
     // ==================== disconnect 期间旧连接失败不覆盖新连接 ====================
 
     test('should not let an old failed connect clobber a newer successful connection', async () => {
