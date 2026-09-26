@@ -269,8 +269,7 @@ export class DiffStorageManager {
     /**
      * 原子写文件：先写 .tmp 再 rename 覆盖（与 storage.ts 同模式），
      * 避免写入中途崩溃留下半截 JSON 被读取侧解析失败。
-     * Windows 的 rename 不覆盖已存在目标（EPERM/EEXIST）：先删旧文件再 rename；
-     * 其它错误（权限等）清理 .tmp 残留后原样抛出，保留旧文件（读取侧只认 .json）。
+     * 替换失败保留旧文件，只清理本次临时文件并报告错误。
      */
     private async atomicWriteFile(filePath: string, data: string): Promise<void> {
         const tmpPath = `${filePath}.tmp`;
@@ -278,34 +277,12 @@ export class DiffStorageManager {
         try {
             await fs.promises.rename(tmpPath, filePath);
         } catch (error) {
-            const code = (error as NodeJS.ErrnoException)?.code;
-            if (code !== 'EEXIST' && code !== 'EPERM') {
-                // 非「目标已存在」类错误（EACCES/EIO 等）：清理 .tmp 残留后原样抛出，
-                // 避免临时文件堆积（读取侧只认 .json，残留 tmp 不会被读到）。
-                try {
-                    await fs.promises.unlink(tmpPath);
-                } catch {
-                    // 清理失败忽略
-                }
-                throw error;
-            }
             try {
-                await fs.promises.unlink(filePath);
+                await fs.promises.unlink(tmpPath);
             } catch {
-                // 目标不存在，无需删除
+                // 临时文件清理失败不能覆盖原始替换错误。
             }
-            try {
-                await fs.promises.rename(tmpPath, filePath);
-            } catch (secondError) {
-                // 删旧后 rename 仍失败：同样清理 .tmp 残留后抛出（旧文件已不可得，
-                // 但至少不遗留半截 JSON 的临时文件）。
-                try {
-                    await fs.promises.unlink(tmpPath);
-                } catch {
-                    // 清理失败忽略
-                }
-                throw secondError;
-            }
+            throw error;
         }
     }
 

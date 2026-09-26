@@ -13,6 +13,7 @@ describe('DiffStorageManager deferred global diff persistence', () => {
     });
 
     afterEach(async () => {
+        jest.restoreAllMocks();
         await fsp.rm(tempDir, { recursive: true, force: true });
     });
 
@@ -47,5 +48,16 @@ describe('DiffStorageManager deferred global diff persistence', () => {
             newContent: 'after\n'
         });
         expect(persisted).not.toContain('\n  "originalContent"');
+    });
+
+    test.each(['EPERM', 'EEXIST'])('替换持续 %s 时原 diff 仍可读取', async code => {
+        const before = { originalContent: '原始内容', newContent: '已保存的修改', filePath: 'a.ts' };
+        await manager.saveDiffContent('conversation', before, 'diff-existing');
+        const error = Object.assign(new Error('fixture rename failed'), { code });
+        const fsPromises = require('fs/promises') as typeof import('fs/promises');
+        jest.spyOn(fsPromises, 'rename').mockRejectedValue(error);
+
+        await expect(manager.saveDiffContent('conversation', { ...before, newContent: '尚未保存的修改' }, 'diff-existing')).rejects.toBe(error);
+        await expect(manager.loadDiffContent('conversation', 'diff-existing')).resolves.toMatchObject(before);
     });
 });
