@@ -1,5 +1,5 @@
 // Run with: electron scripts/smoke-desktop.cjs. All data and screenshots stay in .tmp.
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, webContents } = require('electron');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
@@ -21,9 +21,14 @@ async function until(check, label, timeout = 20000) {
 async function main() {
   fsSync.mkdirSync(path.join(output, 'project'), { recursive: true });
   fsSync.mkdirSync(path.join(output, 'profile'), { recursive: true });
+  fsSync.mkdirSync(path.join(output, 'app-data'), { recursive: true });
+  fsSync.mkdirSync(path.join(output, 'documents'), { recursive: true });
   fsSync.writeFileSync(path.join(output, 'project', 'hello.ts'), 'export const message: string = "Hello GrayCode";\n');
   fsSync.writeFileSync(path.join(output, 'project', 'index.html'), '<!doctype html><title>Preview verified</title><h1>GrayCode preview</h1>');
   app.setPath('userData', path.join(output, 'profile'));
+  // 旧设置自动迁移和普通对话工作区也必须使用夹具目录，避免读取本机账号配置。
+  app.setPath('appData', path.join(output, 'app-data'));
+  app.setPath('documents', path.join(output, 'documents'));
   process.env.GRAYCODE_DESKTOP_SMOKE = '1';
   process.argv.push('--data', path.join(output, 'data'));
   dialog.showErrorBox = (title, message) => { process.stderr.write(`${title}: ${message}\n`); app.exit(1); };
@@ -73,6 +78,10 @@ async function main() {
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
   await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
+  // 选择项目只切换工作台；通过项目新建按钮明确建立绑定该工作区的代码任务。
+  await evaluate('window.__smokeProjectFocused = false; window.graycode.subscribe(event => { if (event.type === "ui.conversation.focused" && event.workspaceId === "smoke" && event.conversationId) window.__smokeProjectFocused = true; }); undefined');
+  await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).closest(".navigation-group-heading").querySelector(".navigation-project-add").click()');
+  await until(() => evaluate('window.__smokeProjectFocused'), 'project conversation focused');
   await until(() => evaluate('Array.from(document.querySelectorAll(".tree-row")).some(node => node.textContent.includes("hello.ts"))'), 'workspace file tree');
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
@@ -140,9 +149,10 @@ async function main() {
   await sleep(150);
   await fs.writeFile(path.join(output, 'settings.png'), paintedFrames.get(window.webContents.id));
   await rpc('browser.openFile', { workspaceId: 'smoke', path: 'index.html' });
-  const preview = await until(() => BrowserWindow.getAllWindows().flatMap(item => item.contentView.children).find(view => view.webContents?.getURL().startsWith('graycode-preview://')), 'embedded browser');
-  await until(() => preview.webContents.getTitle() === 'Preview verified', 'local HTML preview');
-  assert.equal(await preview.webContents.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
+  // 页面也可能挂在后台 BaseWindow 上，按真实 WebContents 查找，不依赖可见窗口层级。
+  const preview = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().startsWith('graycode-preview://')), 'embedded browser');
+  await until(() => preview.getTitle() === 'Preview verified', 'local HTML preview');
+  assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests,
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching'], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
