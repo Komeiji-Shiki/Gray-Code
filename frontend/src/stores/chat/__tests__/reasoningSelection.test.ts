@@ -19,6 +19,9 @@ test('思考选择只保存当前对话，并能恢复或清除覆盖值', async
   await setConfigId(state, 'another-channel'); expect(state.selectedReasoningEffort.value).toBe('high');
   await setSelectedReasoningEffort(state, ''); expect(send.mock.calls.at(-1)![1].value.reasoningEffort).toBeUndefined();
   state.selectedReasoningEffort.value = 'high';
+  // 对齐 switchConversation：只有先切到目标会话，才应用其配置；迟到的其他会话配置应忽略。
+  await applyConversationModelConfig(state, 'second', {}); expect(state.selectedReasoningEffort.value).toBe('high');
+  state.currentConversationId.value = 'second';
   await applyConversationModelConfig(state, 'second', {}); expect(state.selectedReasoningEffort.value).toBe('');
   expect(send.mock.calls.some(([type]) => ['config.updateConfig', 'platform.settings.update'].includes(type))).toBe(false);
 });
