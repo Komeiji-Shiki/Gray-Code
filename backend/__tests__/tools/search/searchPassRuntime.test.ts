@@ -167,6 +167,35 @@ describe('基础输出与顺序', () => {
         expect(result.matches.map(match => match.line)).toEqual([1, 2]);
     });
 
+    test('达到结果上限后只等待已启动的预取，返回时没有残留读取', async () => {
+        const fake = makeHost(Object.fromEntries(
+            Array.from({ length: 20 }, (_, index) => [`${index}.txt`, { content: 'needle' }])
+        ));
+        const readFile = fake.host.readFile.bind(fake.host);
+        let active = 0;
+        let peak = 0;
+        let completed = 0;
+        fake.host.readFile = async file => {
+            active++;
+            peak = Math.max(peak, active);
+            try {
+                await new Promise<void>(resolve => { setImmediate(resolve); });
+                return await readFile(file);
+            } finally {
+                active--;
+                completed++;
+            }
+        };
+
+        const result = await runSearch(fake, /needle/gm, undefined, 1);
+
+        expect(result.matches.map(match => match.file)).toEqual(['0.txt']);
+        expect(peak).toBe(8);
+        expect(completed).toBe(8);
+        expect(active).toBe(0);
+        expect(fake.reads.size).toBe(8);
+    });
+
     test('预算不足按行跳过，后续可容纳的匹配仍加入', async () => {
         const fake = makeHost({ 'f.txt': { content: 'm1\n\nx m2 xxxxx\n\nm3' }, 'g.txt': { content: 'm4' } });
         const budget: SearchBudget = { remainingChars: 200, truncated: false };

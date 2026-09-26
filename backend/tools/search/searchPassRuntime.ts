@@ -289,6 +289,8 @@ async function searchInDirectory(
 
         startPrepareAhead(fileIndex);
         const outcome = await (prepared[fileIndex] ?? prepareFile(files[fileIndex]));
+        // 已完成的 Promise 仍会持有全文和分行数组；消费后解除引用，内存才受预取窗口约束。
+        prepared[fileIndex] = undefined;
         if (outcome.kind === 'skipped' || outcome.kind === 'failed') {
             skippedFiles.push(outcome.skipped);
             continue;
