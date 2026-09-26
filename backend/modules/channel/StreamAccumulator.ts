@@ -39,6 +39,9 @@ export class StreamAccumulator {
     /** 累加的parts */
     private parts: ContentPart[] = [];
 
+    /** 摘要索引只用于当前流内合并，持久化仍使用标准 summary 数组。 */
+    private responsesSummarySegments = new WeakMap<ContentPart, Map<number, string>>();
+
     /**
      * 已通过 getNewCompletedFunctionCalls() 返回过的 functionCall id 集合。
      * 用于流式边执行工具：只返回自上次调用以来新完成（args 解析成功）的 functionCall。
@@ -177,7 +180,7 @@ export class StreamAccumulator {
         // 即使已经 done，也要处理delta（虽然通常 done 后delta 为空）
         if (chunk.delta && chunk.delta.length > 0) {
             for (const part of chunk.delta) {
-                this.addPart(part, { visibleDelta });
+                this.addPart(part, { visibleDelta, reasoningSummaryIndex: chunk.providerEvent?.summaryIndex });
             }
         }
 
@@ -273,6 +276,7 @@ export class StreamAccumulator {
         options?: {
             skipPromptParser?: boolean;
             visibleDelta?: ContentPart[];
+            reasoningSummaryIndex?: number;
         }
     ): void {
         if (!options?.skipPromptParser && this.promptToolParser && part.text && !part.thought) {
@@ -312,6 +316,39 @@ export class StreamAccumulator {
             } else {
                 // 部分兼容端点省略 item_id，只能使用最近的思考 part 作为回退。
                 existingThought = [...thoughtParts].reverse()[0];
+            }
+
+            const summaryIndex = options?.reasoningSummaryIndex;
+            if (typeof summaryIndex === 'number' && Number.isInteger(summaryIndex) && summaryIndex >= 0 && incomingMetadata.summary?.length) {
+                // text.done 只完成 summary_index 指向的一段，并不代表整个 reasoning item。
+                // 各段分别合并，避免第二段完成后遇到中断时覆盖已经展示的第一段。
+                const target = existingThought || { ...part };
+                const previousText = existingThought?.text || '';
+                let segments = this.responsesSummarySegments.get(target);
+                if (!segments) {
+                    segments = new Map((existingThought?.openaiResponsesReasoning?.summary || [])
+                        .map((entry, index) => [index, entry.text]));
+                    this.responsesSummarySegments.set(target, segments);
+                }
+                const incomingText = incomingMetadata.summary.map(entry => entry.text).join('');
+                segments.set(summaryIndex, isReasoningDelta
+                    ? (segments.get(summaryIndex) || '') + incomingText
+                    : incomingText);
+                const summary = [...segments.entries()].sort(([a], [b]) => a - b)
+                    .map(([, text]) => ({ type: 'summary_text' as const, text }));
+                target.openaiResponsesReasoning = {
+                    ...target.openaiResponsesReasoning,
+                    ...incomingMetadata,
+                    summary
+                };
+                target.text = summary.map(entry => entry.text).join('\n');
+                if (!existingThought) this.parts.push(target);
+                const canAppendText = target.text.startsWith(previousText);
+                if (canAppendText && target.text.length > previousText.length) {
+                    options?.visibleDelta?.push({ text: target.text.slice(previousText.length), thought: true });
+                }
+                if (!existingThought || !isReasoningDelta || !canAppendText) this.contentRevision++;
+                return;
             }
 
             if (existingThought) {
@@ -818,6 +855,7 @@ export class StreamAccumulator {
      */
     reset(): void {
         this.parts = [];
+        this.responsesSummarySegments = new WeakMap();
         this.isDone = false;
         // 恢复初始 providerType（构造默认 gemini）：reset 后累加器回到全新状态，
         // 避免上一轮渠道的 provider 语义泄漏到下一轮

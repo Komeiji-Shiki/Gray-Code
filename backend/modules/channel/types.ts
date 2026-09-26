@@ -262,6 +262,7 @@ export interface StreamChunk {
         type: string;
         outputIndex?: number;
         contentIndex?: number;
+        summaryIndex?: number;
         itemId?: string;
         callId?: string;
         isFinalArgs?: boolean;

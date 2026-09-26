@@ -955,6 +955,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 type: chunk.type || 'unknown',
                 outputIndex: chunk.output_index,
                 contentIndex: chunk.content_index,
+                summaryIndex: chunk.summary_index,
                 itemId: chunk.item_id || chunk.item?.id,
                 callId: chunk.item?.call_id,
                 isFinalArgs: chunk.type === 'response.function_call_arguments.done'
