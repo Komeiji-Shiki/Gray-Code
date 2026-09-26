@@ -81,6 +81,7 @@ export interface RuntimeRunScope {
 /** The task owns generation and tool execution; client disconnects never own its lifetime. */
 export class PlatformRuntime {
   private readonly active = new Map<string, ActiveRun>();
+  private readonly starting = new Set<Promise<RunRecord>>();
   get activeCount(): number { return this.active.size; }
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly listeners = new Set<(event: RuntimeNotification) => void>();
@@ -188,8 +189,15 @@ export class PlatformRuntime {
     if (prepared) request.messages = prepared.messages;
     return { input: request, notices: prepared?.notices ?? [] };
   }
-  private async begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
+  private begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
+    const pending = this.beginRun(input, change, scope);
+    this.starting.add(pending);
+    void pending.finally(() => this.starting.delete(pending)).catch(() => undefined);
+    return pending;
+  }
+  private async beginRun(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
     const { workspace, state, catalog, modelSelection, prepared, run, message, selection, configuredAgent } = await this.prepareRun(input, change, scope);
+    if (this.closing) throw new Error('Runtime is closing.');
     const committed = await this.services.storage.commitConversation({ conversationId: input.conversationId,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, ...change?.commit,
       records: [...(change?.commit.records ?? []), { namespace: 'run-configurations', id: run.id, ownerId: run.conversationId,
@@ -199,6 +207,8 @@ export class PlatformRuntime {
     const result = committed.run!;
     if (!result.created) return result.run;
     const controller = new AbortController();
+    // 提交已经开始时仍需结算任务，但关闭后不能启动模型或工具。
+    if (this.closing) controller.abort(new Error('Runtime is shutting down.'));
     // Defer work one microtask so cancellation sees the run even when it arrives immediately.
     const execute = () => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection);
     const done = Promise.resolve().then(() => this.services.runInScope ? this.services.runInScope(run, execute) : execute())
@@ -252,6 +262,8 @@ export class PlatformRuntime {
   async close(): Promise<void> {
     this.closing = true;
     for (const run of this.active.values()) run.controller.abort(new Error('Runtime is shutting down.'));
+    // 启动准备和存储提交都先于 active 注册；关闭存储前必须等它们完成或拒绝。
+    await Promise.allSettled([...this.starting]);
     await Promise.allSettled([...this.active.values()].map(run => run.done));
   }
 
@@ -471,6 +483,8 @@ export class PlatformRuntime {
         progress: payload => this.notify({ type: 'tool.progress', runId: run.id, toolCallId: call.id, payload }),
       };
       await this.services.beforeTool?.(context, call.name, call.args, effects);
+      // 检查点等异步准备期间也能取消，尚未开始的真实工具不能越过这个边界。
+      signal.throwIfAborted();
       return await entry.tool.execute(call.args, context);
     } catch (error) {
       return { success: false, code: signal.aborted ? 'CANCELLED' : 'TOOL_FAILED', error: error instanceof Error ? error.message : String(error) };

@@ -105,7 +105,17 @@ export class ConversationManager {
             storage,
             loadHistory: (conversationId, workspaceUri) => this.loadHistory(conversationId, workspaceUri),
             ensureHistoryNodeIds: conversationId => this.ensureHistoryNodeIds(conversationId),
-            getTranscriptRepository: (conversationId, workspaceUri) => this.getTranscriptRepository(conversationId, workspaceUri),
+            mutateHistoryForDisplay: (conversationId, mutator, workspaceUri) => {
+                const mutate = this.storage.mutateHistoryIfIdle?.bind(this.storage);
+                if (!mutate) return this.getTranscriptRepository(conversationId, workspaceUri).mutateContents(mutator);
+                return this.withConversationWriteLock(conversationId, async () => {
+                    this.assertNotDeleted(conversationId);
+                    const history = await mutate(conversationId, mutator);
+                    this.invalidateCaches(conversationId);
+                    await this.updateUsageIndex(conversationId, history);
+                    return history;
+                });
+            },
         });
         this.toolCalls = new ConversationToolCallService(this);
     }

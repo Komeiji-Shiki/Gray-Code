@@ -64,13 +64,8 @@ export async function scanHistoryForInitialPage(
     const history = result.value;
     if (!history) return { hasUnresolvedCalls: false, hasResponseAnomalies: false, needsNodeIdMigration: false };
 
-    // 活跃任务集合查询失败按"信息不可用"处理：保持旧行为（补齐不跳过）。
-    let activeRunIds: Set<string> | undefined;
-    try {
-        activeRunIds = await storage.listActiveRunIds?.(conversationId);
-    } catch {
-        activeRunIds = undefined;
-    }
+    // 查询失败时无法断言任务已经结束，必须保留原历史，不能按闲置状态补写拒绝结果。
+    const activeRunIds = await storage.listActiveRunIds?.(conversationId);
 
     const respondedToolCallIds = new Set<string>();
     const seenResponseIds = new Set<string>();

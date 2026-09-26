@@ -1,4 +1,4 @@
-import type { ModelInput, PlatformMessage } from '@graycode/contracts';
+import type { ModelInput, PlatformMessage, RunRecord } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
@@ -93,5 +93,15 @@ describe('跨入口的对话实时输出', () => {
     finish.resolve();
     expect((await app.runtime.wait(started.runId))?.status).toBe('completed');
     expect(await app.productUi.chat.awaitIdle(conversation.id, 200)).toEqual({ idle: true });
+  });
+
+  test('没有本进程控制器的活跃记录按固定间隔等待，不忙轮询存储', async () => {
+    const conversation = await app.createConversation('owner', '遗留任务');
+    const run: RunRecord = { id: 'unowned', requestKey: 'unowned', conversationId: conversation.id, actorId: 'owner',
+      agentId: 'default', status: 'queued', createdAt: Date.now(), updatedAt: Date.now(), iteration: 0, catalogVersion: 'fixture' };
+    await app.storage.createRun(run, { role: 'user', parts: [{ text: '遗留输入' }] });
+    const reads = jest.spyOn(app.storage, 'listRuns');
+    expect(await app.productUi.chat.awaitIdle(conversation.id, 220)).toEqual({ idle: false });
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(5);
   });
 });

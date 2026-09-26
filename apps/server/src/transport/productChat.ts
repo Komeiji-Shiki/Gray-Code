@@ -99,11 +99,17 @@ export class ProductChat {
     const title = deriveConversationTitle(text);
     const current = typeof conversation.title === 'string' ? conversation.title.trim() : '';
     if (!title || (current && !PLACEHOLDER_CONVERSATION_TITLES.has(current))) return;
-    const info = await this.app.storage.historyInfo(conversation.id);
-    if (info.total !== 0) return;
-    // 重读最新元数据再写回：创建与首条消息之间可能已写入 inputModelConfig / promptModeConfig。
-    const latest = await this.app.storage.getConversation(conversation.id) ?? conversation;
-    await this.app.storage.saveMetadata({ ...latest, title, updatedAt: Date.now() });
+    const info = await this.app.storage.getConversationInfo(conversation.id);
+    const latestTitle = info?.metadata.title?.trim();
+    if (!info || info.messageCount !== 0 || latestTitle && !PLACEHOLDER_CONVERSATION_TITLES.has(latestTitle)) return;
+    // 自动标题只能修改刚读取的占位元数据，不能覆盖并发重命名或新回合。
+    try {
+      await this.app.storage.commitConversation({ conversationId: conversation.id, expectedRevision: info.historyRevision,
+        expectedMetadataToken: info.metadataToken, metadata: { ...info.metadata, title } });
+    } catch (error) {
+      if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) return;
+      throw error;
+    }
     this.app.productUi.conversations.clearMetadataCache();
     this.app.publish({ type: 'conversation.changed', conversationId: conversation.id, metadataOnly: true });
   }
@@ -164,10 +170,14 @@ export class ProductChat {
       if (!active.length) return { idle: true };
       if (Date.now() >= deadline) return { idle: false };
       // 本进程的运行控制器退出时会立即唤醒；不属于本进程的遗留活跃记录由固定间隔退避兜底。
-      await Promise.race([
-        this.app.runtime.wait(active[0].id),
-        new Promise<void>(resolve => { setTimeout(resolve, 100); }),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const pause = new Promise<void>(resolve => { timer = setTimeout(resolve, Math.min(100, deadline - Date.now())); });
+      try {
+        await Promise.race([
+          this.app.runtime.wait(active[0].id).then(run => run && ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(run.status) ? pause : undefined),
+          pause,
+        ]);
+      } finally { if (timer !== undefined) clearTimeout(timer); }
     }
   }
   /** 等待给定任务退出（超时视同已退出，按调用方既有语义继续）。 */

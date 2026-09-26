@@ -178,6 +178,20 @@ describe('读取路径清理重复响应', () => {
 });
 
 describe('活跃任务的在途调用', () => {
+    test('活跃状态读取失败时保留历史，不误写拒绝响应', async () => {
+        const storage = new ActiveRunStorageAdapter();
+        const manager = new ConversationManager(storage);
+        const history: Array<Content & { runId: string }> = [{ role: 'model', id: 'm1', runId: 'run-live', parts: [
+            { functionCall: { id: 'call_live', name: 'execute_command', args: {} } },
+        ] }];
+        await storage.saveHistory('conv-read-error', history);
+        jest.spyOn(storage, 'listActiveRunIds').mockRejectedValueOnce(new Error('storage temporarily unavailable'));
+        const save = jest.spyOn(storage, 'saveHistory');
+        await expect(manager.getMessages('conv-read-error')).rejects.toThrow('storage temporarily unavailable');
+        expect(save).not.toHaveBeenCalled();
+        expect(await storage.loadHistory('conv-read-error')).toEqual(history);
+    });
+
     test('属于活跃任务的未响应调用不被补齐为拒绝占位；任务结束后恢复补齐', async () => {
         const storage = new ActiveRunStorageAdapter();
         const manager = new ConversationManager(storage);

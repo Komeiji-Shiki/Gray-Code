@@ -182,6 +182,9 @@ export interface IStorageAdapter {
      */
     listActiveRunIds?(conversationId: string): Promise<Set<string> | undefined>;
 
+    /** 读取修复使用：空闲状态和历史版本必须在写入事务内验证，冲突时只返回最新历史。 */
+    mutateHistoryIfIdle?(conversationId: string, mutator: (history: ConversationHistory) => ConversationHistory): Promise<ConversationHistory>;
+
     /**
      * 仅读取历史索引结构（不解析段消息内容，HIS-11）。
      * 可选：未实现时调用方回退 getConversationIntegrity。

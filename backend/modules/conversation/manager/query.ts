@@ -2,7 +2,7 @@
  * 对话只读查询服务（拆分自 ConversationManager.ts 的消息读取/分页/配对规范化方法组）。
  *
  * 通过 ConversationQueryContext 接入 ConversationManager 的私有能力（storage / loadHistory /
- * ensureHistoryNodeIds / getTranscriptRepository），ConversationManager 持有本服务实例并在
+ * ensureHistoryNodeIds / mutateHistoryForDisplay），ConversationManager 持有本服务实例并在
  * 同名 public 方法中委托，方法签名与行为保持不变。
  * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
  */
@@ -10,7 +10,6 @@
 import { t } from '../../../i18n';
 import type { Content, ContentPart, ConversationHistory, MessageFilter, MessagePosition } from '../types';
 import type { IStorageAdapter } from '../storage';
-import type { ITranscriptRepository } from '../TranscriptRepository';
 import { ensureNodeId, needsNodeIdMigration } from './nodeId';
 import { findFunctionResponseInsertIndex, messageRunId, scanHistoryForInitialPage } from './utils';
 import type { InitialPageScan } from './utils';
@@ -22,7 +21,7 @@ export interface ConversationQueryContext {
     storage: IStorageAdapter;
     loadHistory(conversationId: string, workspaceUri?: string): Promise<ConversationHistory>;
     ensureHistoryNodeIds(conversationId: string): Promise<boolean>;
-    getTranscriptRepository(conversationId: string, workspaceUri?: string): ITranscriptRepository;
+    mutateHistoryForDisplay(conversationId: string, mutator: (history: ConversationHistory) => ConversationHistory, workspaceUri?: string): Promise<ConversationHistory>;
 }
 
 export class ConversationQueryService {
@@ -299,7 +298,7 @@ export class ConversationQueryService {
             return await this.ctx.loadHistory(conversationId, workspaceUri);
         }
 
-        return await this.ctx.getTranscriptRepository(conversationId, workspaceUri).mutateContents(history => {
+        return await this.ctx.mutateHistoryForDisplay(conversationId, history => {
             // ① 响应侧自愈：同一调用 ID 只保留一条响应（优先真实结果），并清除真实响应上
             //    残留的 rejected 标记。先于补齐执行：清理后的形态决定调用是否"已响应"。
             const repaired = repairDuplicateFunctionResponses(history);
@@ -394,6 +393,6 @@ export class ConversationQueryService {
 
             // 有新插入：返回新引用触发写回（契约：返回原引用=跳过写回）
             return current === history ? current.slice() : current;
-        });
+        }, workspaceUri);
     }
 }

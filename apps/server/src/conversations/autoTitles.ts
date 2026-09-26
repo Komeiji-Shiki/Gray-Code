@@ -54,23 +54,28 @@ export async function backfillPlaceholderTitles(app: PlatformApplication): Promi
     cursor = page.nextCursor;
   } while (cursor);
   let updated = 0;
+  let failed = false;
   for (const id of placeholders) {
     try {
       const title = await firstUserMessageTitle(app, id);
       if (!title) continue;
-      const conversation = await app.storage.getConversation(id);
+      const info = await app.storage.getConversationInfo(id);
+      const conversation = info?.metadata;
       const current = typeof conversation?.title === 'string' ? conversation.title.trim() : '';
       // 期间可能被用户改名：只回填仍是占位（或空）标题的对话。
-      if (!conversation || (current && !PLACEHOLDER_CONVERSATION_TITLES.has(current))) continue;
-      await app.storage.saveMetadata({ ...conversation, title, updatedAt: Date.now() });
+      if (!info || !conversation || (current && !PLACEHOLDER_CONVERSATION_TITLES.has(current))) continue;
+      await app.storage.commitConversation({ conversationId: id, expectedRevision: info.historyRevision,
+        expectedMetadataToken: info.metadataToken, metadata: { ...conversation, title } });
       app.publish({ type: 'conversation.changed', conversationId: id, metadataOnly: true });
       updated++;
     } catch (error) {
+      failed = true;
       console.warn('[autoTitles] Failed to backfill conversation title:', id, error);
     }
   }
   if (updated) app.productUi.conversations.clearMetadataCache();
-  await app.storage.putRecord({ namespace: MAINTENANCE_NAMESPACE, id: MAINTENANCE_ID, ownerId: MAINTENANCE_ID,
+  // 暂时读取失败或并发修改不能永久跳过补齐，成功改名的对话下次会自然被排除。
+  if (!failed) await app.storage.putRecord({ namespace: MAINTENANCE_NAMESPACE, id: MAINTENANCE_ID, ownerId: MAINTENANCE_ID,
     value: { updated, at: Date.now() } });
   return updated;
 }

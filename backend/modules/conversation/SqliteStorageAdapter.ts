@@ -52,6 +52,21 @@ export class SqliteStorageAdapter implements IStorageAdapter {
       return new Set(runs.map(run => run.id));
   }
 
+  async mutateHistoryIfIdle(id: string, mutator: (history: ConversationHistory) => ConversationHistory): Promise<ConversationHistory> {
+    const page = await this.platform.readFullHistory(id);
+    const history = page.messages as ConversationHistory;
+    const next = mutator(history);
+    if (next === history) return history;
+    try {
+      // 运行器直接写 SQLite，不经过 ConversationManager 的写锁；只有存储事务能保护两者。
+      await this.platform.commitConversation({ conversationId: id, expectedRevision: page.revision, messages: next.map(toPlatform) });
+      return next;
+    } catch (error) {
+      if (!(error instanceof PlatformStorageError) || !['STORAGE_BUSY', 'REVISION_CONFLICT'].includes(error.code)) throw error;
+      return (await this.platform.readFullHistory(id)).messages as ConversationHistory;
+    }
+  }
+
   async loadHistory(id: string): Promise<ConversationHistory | null> {
     try {
       return (await this.platform.readFullHistory(id)).messages as Content[];

@@ -66,4 +66,30 @@ describe('首条消息自动命名', () => {
     // 一次性标记：再次调用直接跳过
     expect(await backfillPlaceholderTitles(app)).toBe(0);
   });
+
+  test('首条消息的自动命名不覆盖读取之后发生的手动改名和其他元数据', async () => {
+    const conversation = await app.createConversation('owner', '新对话');
+    const commit = app.storage.commitConversation.bind(app.storage);
+    jest.spyOn(app.storage, 'commitConversation').mockImplementationOnce(async value => {
+      const latest = (await app.storage.getConversation(conversation.id))!;
+      await app.storage.saveMetadata({ ...latest, title: '主人指定的标题', custom: { concurrentSetting: true } });
+      return commit(value);
+    });
+    const started = await app.productUi.chat.start(owner, { conversationId: conversation.id, streamId: 'title-race',
+      configId: 'fixture', message: '自动标题' }, await app.product.draft()) as { runId: string };
+    await app.runtime.wait(started.runId);
+    expect(await app.storage.getConversation(conversation.id)).toMatchObject({ title: '主人指定的标题', custom: { concurrentSetting: true } });
+  });
+
+  test('历史标题补齐遇到暂时读取失败后，下次仍会重试', async () => {
+    const conversation = await app.createConversation('owner', '新对话');
+    await app.storage.appendHistory(conversation.id, [{ role: 'user', parts: [{ text: '待补齐的标题' }] }]);
+    jest.spyOn(app.storage, 'readHistory').mockRejectedValueOnce(new Error('temporary read failure'));
+    const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(await backfillPlaceholderTitles(app)).toBe(0);
+      expect(await backfillPlaceholderTitles(app)).toBe(1);
+      expect((await app.storage.getConversation(conversation.id))?.title).toBe('待补齐的标题');
+    } finally { warning.mockRestore(); }
+  });
 });
