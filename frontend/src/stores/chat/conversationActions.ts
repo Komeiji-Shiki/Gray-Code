@@ -377,6 +377,8 @@ export async function createAndPersistConversation(
   state: ChatStoreState,
   firstMessage: string
 ): Promise<string | null> {
+  const originTabId = state.activeTabId.value
+  const workspaceUri = state.currentWorkspaceUri.value
   const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   
   // 使用第一句话的前30个字符作为标题
@@ -388,7 +390,7 @@ export async function createAndPersistConversation(
       conversationId: id,
       title: title,
       ...(window.__GRAYCODE_HOST ? { promptModeId: state.currentPromptModeId.value } : {}),
-      workspaceUri: window.__GRAYCODE_HOST ? undefined : state.currentWorkspaceUri.value || undefined
+      workspaceUri: window.__GRAYCODE_HOST ? undefined : workspaceUri || undefined
     })
     
     // 添加到对话列表
@@ -399,15 +401,12 @@ export async function createAndPersistConversation(
       updatedAt: Date.now(),
       messageCount: 0,
       isPersisted: true,
-      workspaceUri: window.__GRAYCODE_HOST ? created?.workspaceUri : state.currentWorkspaceUri.value || undefined
+      workspaceUri: window.__GRAYCODE_HOST ? created?.workspaceUri : workspaceUri || undefined
     }
     
     state.conversations.value.unshift(newConversation)
-    // P1-竞态：创建 await 期间用户可能已切换标签页/会话，currentConversationId 可能已被
-    // 其他会话接管——仅当仍为 null（未被接管）时才写回，避免覆盖切换后的会话导致
-    // 消息发往错误会话、窗口混入他人会话内容（sendMessageFlow 创建分支以固化的
-    // newId 为准，不依赖本赋值；正常路径下 currentConversationId 仍为 null，行为不变）
-    if (state.currentConversationId.value === null) {
+    // 另一空白标签也为 null，必须同时核对发起标签，不能让它接收本次创建的会话。
+    if (state.currentConversationId.value === null && state.activeTabId.value === originTabId) {
       state.currentConversationId.value = id
     }
 

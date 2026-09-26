@@ -548,8 +548,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     // 固化发起时的窗口状态，供加载完成后重定位窗口使用
     const prevLen = props.messages.length
     const prevStart = safeWindowStart.value
-    const needFrontendExpand = prevStart > 0
-    const needBackendLoad = hasMoreHistory.value && !needFrontendExpand
+    const needBackendLoad = hasMoreHistory.value && prevStart === 0
 
     try {
       // 如果后端还有更多消息，先拉取（prepend 会整体右移消息数组）

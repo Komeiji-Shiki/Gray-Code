@@ -1,5 +1,6 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { sendToExtension } from './vscode'
+import { sendToExtension, showNotification } from './vscode'
+import { t } from '../i18n'
 
 export interface ResolvedWorkspaceItem {
   path: string
@@ -10,36 +11,24 @@ export interface ResolvedWorkspaceItem {
  * Resolve a set of uri/path strings into workspace-relative paths.
  * Kept outside InputBox to avoid coupling the editor to VSCode extension APIs.
  */
-export async function resolveWorkspaceItems(inputs: string[]): Promise<ResolvedWorkspaceItem[]> {
+export async function resolveWorkspaceItems(inputs: string[], conversationId?: string | null): Promise<ResolvedWorkspaceItem[]> {
   const resolved = await Promise.all(inputs.map(async (raw): Promise<ResolvedWorkspaceItem | null> => {
     const input = (raw || '').trim()
     if (!input) return null
 
     try {
       const r = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>(MESSAGE_NAMES.getRelativePath, {
-        absolutePath: input
+        absolutePath: input,
+        ...(conversationId ? { conversationId } : {})
       })
       if (r?.relativePath) {
         return { path: r.relativePath, isDirectory: !!r.isDirectory }
       }
-    } catch {
-      // fallback below
+    } catch (error) {
+      // 路径被宿主拒绝时不能猜同名文件，否则可能插入工作区里另一份文件。
+      await showNotification(error instanceof Error ? error.message : t('components.input.promptContext.readFailed'), 'error')
     }
-
-    // Fallback: best-effort file name
-    try {
-      if (input.startsWith('file://') || input.startsWith('vscode-remote://')) {
-        const url = new URL(input)
-        const pathName = decodeURIComponent(url.pathname)
-        const fileName = pathName.split('/').pop()
-        if (fileName) return { path: fileName, isDirectory: false }
-      }
-    } catch {
-      // ignore
-    }
-
-    const fileName = input.split(/[/\\]/).pop()
-    return fileName ? { path: fileName, isDirectory: false } : null
+    return null
   }))
 
   return resolved.filter((item): item is ResolvedWorkspaceItem => item !== null)

@@ -4,6 +4,8 @@ import type { ChatStoreComputed, ConversationSessionSnapshot } from '../types'
 import { createChatState } from '../state'
 import { sendMessage } from '../messageActions/sendMessageFlow'
 import { sendToExtension } from '../../../utils/vscode'
+import { createAndPersistConversation, syncConversationWorkspaceUri } from '../conversationActions'
+import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 
 vi.mock('../../../utils/vscode', () => ({ sendToExtension: vi.fn() }))
 vi.mock('../conversationActions', () => ({
@@ -130,5 +132,40 @@ describe('sendMessage request settlement stays in its origin session', () => {
     expect(send.state.isStreaming.value).toBe(false)
     expect(send.state.isLoading.value).toBe(false)
     expect(send.state.error.value?.message).toBe('send failed')
+  })
+
+  test('创建期间切换会话时不写新会话的配置，原草稿退出等待状态', async () => {
+    const state = createChatState()
+    state.activeTabId.value = 'tab-a'
+    state.openTabs.value = [{ id: 'tab-a', conversationId: null, title: 'A', isStreaming: true }]
+    let finishCreate!: (id: string) => void
+    vi.mocked(createAndPersistConversation).mockImplementationOnce(() => new Promise(resolve => { finishCreate = resolve }))
+    const request = sendMessage(state, { currentModelName: ref('model-a') } as ChatStoreComputed, 'first')
+    const snapshot = switchToB(state)
+    finishCreate('created-a')
+    expect(await request).toBe(false)
+    expect(persistConversationModelConfig).not.toHaveBeenCalled()
+    expect(persistConversationPromptMode).not.toHaveBeenCalled()
+    expect(state.activeStreamId.value).toBe('b-stream')
+    expect(snapshot.isLoading).toBe(false)
+    expect(snapshot.isWaitingForResponse).toBe(false)
+    expect(snapshot.isStreaming).toBe(false)
+  })
+
+  test('发送前工作区同步期间切走，原会话的未发送占位和等待状态一起清理', async () => {
+    const state = createChatState()
+    state.currentConversationId.value = 'a'
+    state.activeTabId.value = 'tab-a'
+    state.openTabs.value = [{ id: 'tab-a', conversationId: 'a', title: 'A', isStreaming: true }]
+    let finishSync!: () => void
+    vi.mocked(syncConversationWorkspaceUri).mockImplementationOnce(() => new Promise(resolve => { finishSync = resolve }))
+    const request = sendMessage(state, { currentModelName: ref('model-a') } as ChatStoreComputed, 'first')
+    const snapshot = switchToB(state)
+    finishSync()
+    expect(await request).toBe(false)
+    expect(snapshot.allMessages).toEqual([])
+    expect(snapshot.isStreaming).toBe(false)
+    expect(snapshot.isWaitingForResponse).toBe(false)
+    expect(state.activeStreamId.value).toBe('b-stream')
   })
 })

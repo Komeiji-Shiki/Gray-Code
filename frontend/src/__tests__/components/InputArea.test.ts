@@ -360,6 +360,44 @@ describe('InputArea 发送失败恢复', () => {
     direct.unmount()
   })
 
+  test('工作区文件读取完成后，附件和徽章只进入发起读取的原会话草稿', async () => {
+    runtime.chatStore.currentConversationId = 'conv-a'
+    runtime.chatStore.storeAttachments = []
+    runtime.sendToExtension.mockImplementation(async type => type === 'getRelativePath'
+      ? { relativePath: 'fixture.png', isDirectory: false } : { success: true })
+    let finishRead!: (result: any) => void
+    runtime.context.readWorkspaceFileForInput.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    wrapper = mountWithParent(vi.fn())
+    await flushPromises()
+    wrapper.findComponent({ name: 'InputBox' }).vm.$emit('drop-file-items', ['fixture.png'], false)
+    await flushPromises()
+    expect(runtime.context.readWorkspaceFileForInput).toHaveBeenCalledWith('fixture.png', 'conv-a')
+    runtime.chatStore.sessionSnapshots.set('tab-a', {
+      conversationId: 'conv-a', editorNodes: [], inputValue: '', attachments: []
+    })
+    runtime.chatStore.activeTabId = 'tab-b'
+    runtime.chatStore.currentConversationId = 'conv-b'
+    runtime.chatStore.editorNodes = makeTextNodes('第二个草稿')
+    finishRead({ success: true, path: 'fixture.png', isText: false,
+      attachment: { name: 'fixture.png', size: 4, mimeType: 'image/png', data: 'AAAA' } })
+    await flushPromises()
+    expect(runtime.chatStore.editorNodes).toEqual(makeTextNodes('第二个草稿'))
+    expect(runtime.chatStore.storeAttachments).toEqual([])
+    const original = runtime.chatStore.sessionSnapshots.get('tab-a')
+    expect(original.editorNodes[0].context.filePath).toBe('fixture.png')
+    expect(original.attachments.map((attachment: Attachment) => attachment.name)).toEqual(['fixture.png'])
+  })
+
+  test('宿主拒绝拖入路径时，不猜测同名工作区文件并发起读取', async () => {
+    runtime.sendToExtension.mockRejectedValueOnce(new Error('文件不属于当前工作区'))
+    wrapper = mountWithParent(vi.fn())
+    await flushPromises()
+    wrapper.findComponent({ name: 'InputBox' }).vm.$emit('drop-file-items', ['C:\\outside\\settings.json'], false)
+    await flushPromises()
+    expect(runtime.context.readWorkspaceFileForInput).not.toHaveBeenCalled()
+    expect(runtime.showNotification).toHaveBeenCalledWith('文件不属于当前工作区', 'error')
+  })
+
   test('监听 channels.configChanged：设置面板变更后重新加载渠道配置（新增模型无需重启扩展）', async () => {
     wrapper = mountWithParent(vi.fn().mockResolvedValue(true))
     await nextTick()

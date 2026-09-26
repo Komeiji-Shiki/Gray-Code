@@ -6,23 +6,38 @@ const props = defineProps<{ conversationId: string | null }>();
 const questions = ref<QuestionRequest[]>([]);
 const answers = ref<Record<string, string[]>>({});
 const error = ref('');
+const submitting = ref(new Set<string>());
+let refreshEpoch = 0;
+let disposed = false;
 async function refresh() {
+  const epoch = ++refreshEpoch;
   const conversationId = props.conversationId;
   if (!conversationId) { questions.value = []; return; }
   try {
     const result = await sendToExtension<QuestionRequest[]>('platform.questions.list', { conversationId });
-    if (props.conversationId !== conversationId) return;
+    if (epoch !== refreshEpoch || props.conversationId !== conversationId) return;
     questions.value = result;
+    error.value = '';
     for (const item of result) answers.value[item.id] ??= item.questions.map(() => '');
-  } catch (e) { error.value = (e as Error).message; }
+  } catch (e) { if (epoch === refreshEpoch && props.conversationId === conversationId) error.value = (e as Error).message; }
 }
 async function answer(id: string) {
-  try { await sendToExtension('platform.questions.answer', { id, answers: answers.value[id] }); await refresh(); }
-  catch (e) { error.value = (e as Error).message; }
+  if (submitting.value.has(id)) return;
+  const conversationId = props.conversationId;
+  submitting.value.add(id); error.value = '';
+  try {
+    await sendToExtension('platform.questions.answer', { id, answers: answers.value[id] });
+    if (!disposed && props.conversationId === conversationId) await refresh();
+  } catch (e) { if (!disposed && props.conversationId === conversationId) error.value = (e as Error).message; }
+  finally { submitting.value.delete(id); }
 }
-watch(() => props.conversationId, () => void refresh(), { immediate: true });
+watch(() => props.conversationId, () => {
+  // 等待新会话列表期间不能继续展示或提交旧会话的问题。
+  questions.value = []; error.value = '';
+  void refresh();
+}, { immediate: true });
 const dispose = onMessageFromExtension(message => { if (message.type === 'platformQuestionsChanged') void refresh(); });
-onBeforeUnmount(dispose);
+onBeforeUnmount(() => { disposed = true; refreshEpoch++; dispose(); });
 </script>
 <template>
   <section v-if="questions.length" class="async-questions">
@@ -32,7 +47,8 @@ onBeforeUnmount(dispose);
         <select v-if="question.options?.length" v-model="answers[request.id][index]"><option value="">选择建议答案…</option><option v-for="option in question.options" :key="option" :value="option">{{ option }}</option></select>
         <input v-model="answers[request.id][index]" placeholder="填写你的回答…" />
       </label>
-      <button :disabled="answers[request.id].some(answer => !answer.trim())" @click="answer(request.id)">提交回答</button>
+      <button :disabled="submitting.has(request.id) || answers[request.id].some(answer => !answer.trim())"
+        :aria-busy="submitting.has(request.id)" @click="answer(request.id)">提交回答</button>
     </div>
     <p v-if="error" role="alert">{{ error }}</p>
   </section>

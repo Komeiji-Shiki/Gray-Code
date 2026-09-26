@@ -13,6 +13,19 @@ const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig'
 
 const DEFAULT_PROMPT_MODE_ID = 'code'
 
+const configOperationByState = new WeakMap<ChatStoreState, symbol>()
+const promptModeOperationByState = new WeakMap<ChatStoreState, symbol>()
+
+/** 同一会话内的新选择也会使旧读取失效，不能只比较会话或渠道 ID。 */
+function beginConfigOperation(state: ChatStoreState, operations: WeakMap<ChatStoreState, symbol>) {
+  const operation = Symbol()
+  operations.set(state, operation)
+  const conversationId = state.currentConversationId.value
+  const tabId = state.activeTabId.value
+  return () => operations.get(state) === operation
+    && state.currentConversationId.value === conversationId && state.activeTabId.value === tabId
+}
+
 export interface ConversationModelConfig {
   configId?: string
   modelId?: string
@@ -34,6 +47,8 @@ function normalizeModelId(modelId: string | null | undefined): string { return (
  */
 export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
   const configIdAtStart = state.configId.value
+  const conversationId = state.currentConversationId.value
+  const tabId = state.activeTabId.value
   if (!configIdAtStart) {
     state.currentConfig.value = null
     state.selectedModelId.value = ''
@@ -43,7 +58,8 @@ export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
     const config = await sendToExtension<any>(MESSAGE_NAMES['config.getConfig'], { configId: configIdAtStart })
     // 归属校验：await 期间 configId 可能已切换（如快速切换标签页触发新的 loadCurrentConfig），
     // 迟到的旧响应直接丢弃，避免把 A 标签页的配置写进 B 标签页
-    if (configIdAtStart !== state.configId.value) return
+    if (configIdAtStart !== state.configId.value || state.currentConversationId.value !== conversationId
+      || state.activeTabId.value !== tabId) return
     if (config) {
       state.currentConfig.value = {
         id: config.id,
@@ -94,33 +110,27 @@ export async function applyConversationModelConfig(
   conversationId: string,
   storedOverride?: ConversationModelConfig
 ): Promise<void> {
+  if (state.currentConversationId.value !== conversationId) return
+  const isCurrent = beginConfigOperation(state, configOperationByState)
+  let stored: ConversationModelConfig | undefined
   try {
-    const stored = storedOverride || await (async () => {
+    stored = storedOverride || await (async () => {
       const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
       return metadata?.custom?.[CONVERSATION_MODEL_CONFIG_KEY] as ConversationModelConfig | undefined
     })()
-
-    const storedConfigId = typeof stored?.configId === 'string' ? stored.configId.trim() : ''
-    const storedModelId = typeof stored?.modelId === 'string' ? stored.modelId.trim() : ''
-    state.selectedReasoningEffort.value = typeof stored?.reasoningEffort === 'string' ? stored.reasoningEffort.trim() : ''
-
-    if (storedConfigId) {
-      state.configId.value = storedConfigId
-      await loadCurrentConfig(state)
-      state.selectedModelId.value = storedModelId || state.currentConfig.value?.model || ''
-      return
-    }
-
-    // 未存储对话级配置：至少确保 currentConfig 与 configId 对齐
-    await loadCurrentConfig(state)
-    state.selectedModelId.value = state.currentConfig.value?.model || ''
   } catch (error) {
-    console.error('Failed to apply conversation model config:', error)
-    state.selectedReasoningEffort.value = ''
-    // 兜底：确保 currentConfig / selectedModelId 不为空
-    await loadCurrentConfig(state)
-    state.selectedModelId.value = state.currentConfig.value?.model || ''
+    if (isCurrent()) console.error('Failed to apply conversation model config:', error)
   }
+  if (!isCurrent()) return
+
+  const storedConfigId = typeof stored?.configId === 'string' ? stored.configId.trim() : ''
+  const storedModelId = typeof stored?.modelId === 'string' ? stored.modelId.trim() : ''
+  state.selectedReasoningEffort.value = typeof stored?.reasoningEffort === 'string' ? stored.reasoningEffort.trim() : ''
+  if (storedConfigId) state.configId.value = storedConfigId
+
+  // 元数据缺失或读取失败都沿用当前渠道，只走一次配置加载与模型恢复。
+  await loadCurrentConfig(state)
+  if (isCurrent()) state.selectedModelId.value = (storedConfigId ? storedModelId : '') || state.currentConfig.value?.model || ''
 }
 
 /**
@@ -129,6 +139,7 @@ export async function applyConversationModelConfig(
  * 仅更新当前会话状态并持久化到对话元数据。
  */
 export async function setCurrentPromptModeId(state: ChatStoreState, modeId: string): Promise<void> {
+  beginConfigOperation(state, promptModeOperationByState)
   state.currentPromptModeId.value = modeId
   await persistConversationPromptMode(state)
 }
@@ -162,15 +173,19 @@ export async function applyConversationPromptMode(
   conversationId: string,
   storedOverride?: ConversationPromptModeConfig
 ): Promise<void> {
+  if (state.currentConversationId.value !== conversationId) return
+  const isCurrent = beginConfigOperation(state, promptModeOperationByState)
   try {
     const stored = storedOverride || await (async () => {
       const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
       return metadata?.custom?.[CONVERSATION_PROMPT_MODE_KEY] as ConversationPromptModeConfig | undefined
     })()
+    if (!isCurrent()) return
     const modeId = typeof stored?.modeId === 'string' ? stored.modeId.trim() : ''
 
     state.currentPromptModeId.value = modeId || DEFAULT_PROMPT_MODE_ID
   } catch (error) {
+    if (!isCurrent()) return
     console.error('Failed to apply conversation prompt mode:', error)
     state.currentPromptModeId.value = DEFAULT_PROMPT_MODE_ID
   }
@@ -181,11 +196,13 @@ export async function applyConversationPromptMode(
  * 设置当前会话模型
  */
 export async function setSelectedModelId(state: ChatStoreState, modelId: string): Promise<void> {
+  beginConfigOperation(state, configOperationByState)
   state.selectedModelId.value = normalizeModelId(modelId)
   await persistConversationModelConfig(state)
 }
 
 export async function setSelectedReasoningEffort(state: ChatStoreState, effort: string): Promise<void> {
+  beginConfigOperation(state, configOperationByState)
   state.selectedReasoningEffort.value = effort.trim()
   await persistConversationModelConfig(state)
 }
@@ -196,8 +213,10 @@ export async function setSelectedReasoningEffort(state: ChatStoreState, effort: 
  * 同时保存到后端持久化存储
  */
 export async function setConfigId(state: ChatStoreState, newConfigId: string): Promise<void> {
+  const isCurrent = beginConfigOperation(state, configOperationByState)
   state.configId.value = newConfigId
   await loadCurrentConfig(state)
+  if (!isCurrent()) return
   state.selectedModelId.value = state.currentConfig.value?.model || ''
   
   // 保存到后端
@@ -207,20 +226,23 @@ export async function setConfigId(state: ChatStoreState, newConfigId: string): P
     console.error('Failed to save active channel ID:', error)
   }
 
-  await persistConversationModelConfig(state)
+  if (isCurrent()) await persistConversationModelConfig(state)
 }
 
 /**
  * 从后端加载保存的配置ID
  */
 export async function loadSavedConfigId(state: ChatStoreState): Promise<void> {
+  const isCurrent = beginConfigOperation(state, configOperationByState)
   try {
     const response = await sendToExtension<{ channelId?: string }>(MESSAGE_NAMES['settings.getActiveChannelId'], {})
+    if (!isCurrent()) return
     if (response?.channelId) {
       state.configId.value = response.channelId
     }
 
     await loadCurrentConfig(state)
+    if (!isCurrent()) return
     state.selectedModelId.value = state.currentConfig.value?.model || ''
   } catch (error) {
     console.error('Failed to load saved config ID:', error)

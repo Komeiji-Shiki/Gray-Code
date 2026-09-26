@@ -347,16 +347,39 @@ function normalizeDirectoryPath(path: string): string {
   return `${normalized}/`
 }
 
-function hasContextWithPath(path: string): boolean {
-  const key = (path || '').replace(/\/+$/g, '')
-  if (!key) return false
-  return getContexts(editorNodes.value).some(item => ((item.filePath || '').replace(/\/+$/g, '') === key))
+type InputDraftTarget = { tabId: string | null; conversationId: string | null }
+
+function captureInputDraft(): InputDraftTarget {
+  return { tabId: chatStore.activeTabId, conversationId: chatStore.currentConversationId }
 }
 
-function addDirectoryContextByPath(path: string) {
+function resolveInputDraft(target: InputDraftTarget) {
+  if (chatStore.activeTabId === target.tabId && chatStore.currentConversationId === target.conversationId) return chatStore
+  const snapshot = target.tabId ? chatStore.sessionSnapshots.get(target.tabId) : undefined
+  return snapshot?.conversationId === target.conversationId ? snapshot : undefined
+}
+
+function insertDraftContext(context: PromptContextItem, target: InputDraftTarget) {
+  const draft = resolveInputDraft(target)
+  if (!draft || getContexts(draft.editorNodes).some(item => item.filePath === context.filePath)) return
+  if (draft === chatStore) inputBoxRef.value?.insertContextAtCaret(context)
+  else {
+    draft.editorNodes = [...draft.editorNodes, { type: 'context', context }]
+    draft.inputValue = getPlainText(draft.editorNodes)
+  }
+}
+
+function hasContextWithPath(path: string, target: InputDraftTarget): boolean {
+  const key = (path || '').replace(/\/+$/g, '')
+  if (!key) return false
+  const draft = resolveInputDraft(target)
+  return !!draft && getContexts(draft.editorNodes).some(item => ((item.filePath || '').replace(/\/+$/g, '') === key))
+}
+
+function addDirectoryContextByPath(path: string, target: InputDraftTarget) {
   const dirPath = normalizeDirectoryPath(path)
   if (!dirPath) return
-  if (hasContextWithPath(dirPath)) return
+  if (hasContextWithPath(dirPath, target)) return
 
   const contextItem: PromptContextItem = {
     id: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -369,7 +392,7 @@ function addDirectoryContextByPath(path: string) {
     addedAt: Date.now()
   }
 
-  inputBoxRef.value?.insertContextAtCaret(contextItem)
+  insertDraftContext(contextItem, target)
 }
 
 const AUTO_UPLOAD_NON_TEXT_MIME_TYPES = new Set([
@@ -388,17 +411,22 @@ function shouldAutoUploadBinaryAttachment(payload?: contextService.WorkspaceInpu
   return false
 }
 
-async function addFileContextByPath(path: string, options?: { autoUploadBinaryAttachment?: boolean }) {
+async function addFileContextByPath(path: string, options?: { autoUploadBinaryAttachment?: boolean }, target = captureInputDraft()) {
   // Skip directories
   if (path.endsWith('/')) return
 
-  const exists = getContexts(editorNodes.value).some(item => item.filePath === path)
-  if (exists) return
+  const draft = resolveInputDraft(target)
+  if (!draft || hasContextWithPath(path, target)) return
+  // 已保存会话由后端按其工作区读取；空白草稿切走后没有会话标识可定位工作区。
+  if (!target.conversationId && draft !== chatStore) return
 
   const addWorkspaceAttachment = (relativePath: string, payload?: contextService.WorkspaceInputFileAttachmentPayload) => {
     if (!payload?.data) return
 
-    const existsAttachment = (props.attachments || []).some(att => att.metadata?.sourcePath === relativePath)
+    const draft = resolveInputDraft(target)
+    if (!draft) return
+    const attachments = 'storeAttachments' in draft ? draft.storeAttachments : draft.attachments
+    const existsAttachment = attachments.some(att => att.metadata?.sourcePath === relativePath)
     if (existsAttachment) return
 
     const attachment: Attachment = {
@@ -413,11 +441,12 @@ async function addFileContextByPath(path: string, options?: { autoUploadBinaryAt
       }
     }
 
-    chatStore.addStoreAttachment(attachment)
+    attachments.push(attachment)
   }
 
   try {
-    const result = await contextService.readWorkspaceFileForInput(path)
+    const result = await contextService.readWorkspaceFileForInput(path, target.conversationId)
+    if (!resolveInputDraft(target)) return
 
     if (!result?.success) {
       await showNotification(result?.error || t('components.input.promptContext.readFailed'), 'error')
@@ -443,7 +472,7 @@ async function addFileContextByPath(path: string, options?: { autoUploadBinaryAt
       addedAt: Date.now()
     }
 
-    inputBoxRef.value?.insertContextAtCaret(contextItem)
+    insertDraftContext(contextItem, target)
   } catch (error: any) {
     console.error('Failed to add file context:', error)
     await showNotification(t('components.input.promptContext.addFailed', { error: error.message || t('common.unknownError') }), 'error')
@@ -451,6 +480,7 @@ async function addFileContextByPath(path: string, options?: { autoUploadBinaryAt
 }
 
 async function handleSelectFile(path: string, asText: boolean = false) {
+  const target = captureInputDraft()
   showFilePicker.value = false
   filePickerQuery.value = ''
 
@@ -461,9 +491,9 @@ async function handleSelectFile(path: string, asText: boolean = false) {
   }
 
   inputBoxRef.value?.replaceAtTriggerWithText('')
-  await addFileContextByPath(path)
+  await addFileContextByPath(path, undefined, target)
 
-  nextTick(() => inputBoxRef.value?.focus())
+  nextTick(() => { if (resolveInputDraft(target) === chatStore) inputBoxRef.value?.focus() })
 }
 
 function handleAtPickerKeydown(key: string) {
@@ -486,10 +516,11 @@ function handleRemovePromptContextItem(id: string) {
   editorNodes.value = editorNodes.value.filter(node => !(node.type === 'context' && node.context.id === id))
 }
 
-async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[], options?: { allowDirectoryBadge?: boolean }) {
+async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[], options: { allowDirectoryBadge?: boolean }, target: InputDraftTarget) {
   const inserted = new Set<string>()
 
   for (const file of files) {
+    if (!resolveInputDraft(target)) return
     const key = file.isDirectory ? normalizeDirectoryPath(file.path) : file.path
     if (!key) continue
     if (inserted.has(key)) continue
@@ -497,15 +528,15 @@ async function handleAddFileContexts(files: { path: string; isDirectory: boolean
 
     if (file.isDirectory) {
       if (options?.allowDirectoryBadge) {
-        addDirectoryContextByPath(file.path)
+        addDirectoryContextByPath(file.path, target)
       }
       continue
     }
 
-    await addFileContextByPath(file.path, { autoUploadBinaryAttachment: true })
+    await addFileContextByPath(file.path, { autoUploadBinaryAttachment: true }, target)
   }
 
-  nextTick(() => inputBoxRef.value?.focus())
+  nextTick(() => { if (resolveInputDraft(target) === chatStore) inputBoxRef.value?.focus() })
 }
 
 async function handleDropFileItems(
@@ -513,17 +544,26 @@ async function handleDropFileItems(
   insertAsTextPath: boolean,
   dragMeta?: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }
 ) {
-  const resolved = await resolveWorkspaceItems(items)
+  const target = captureInputDraft()
+  const resolved = await resolveWorkspaceItems(items, target.conversationId)
   if (resolved.length === 0) return
+  const draft = resolveInputDraft(target)
+  if (!draft) return
 
   if (insertAsTextPath) {
-    inputBoxRef.value?.insertPathsAsAtText(resolved)
-    nextTick(() => inputBoxRef.value?.focus())
+    if (draft === chatStore) {
+      inputBoxRef.value?.insertPathsAsAtText(resolved)
+      nextTick(() => { if (resolveInputDraft(target) === chatStore) inputBoxRef.value?.focus() })
+    } else {
+      const text = resolved.map(file => ` @${file.isDirectory ? normalizeDirectoryPath(file.path) : file.path} `).join('')
+      draft.editorNodes = [...draft.editorNodes, createTextNode(text)]
+      draft.inputValue = getPlainText(draft.editorNodes)
+    }
     return
   }
 
   const allowDirectoryBadge = !!dragMeta?.shiftKey && !insertAsTextPath
-  await handleAddFileContexts(resolved, { allowDirectoryBadge })
+  await handleAddFileContexts(resolved, { allowDirectoryBadge }, target)
 }
 
 async function handleOpenContext(ctx: PromptContextItem) {

@@ -85,7 +85,6 @@ const editorRef = ref<HTMLDivElement>()
 const currentRows = ref(props.minRows)
 
 // 调整高度时的检测状态
-const cachedLineHeight = ref(0)
 const manualEditorHeight = ref<number | null>(null)
 
 // 拖拽状态
@@ -174,14 +173,14 @@ function ensureCaretVisible(editor: HTMLElement, paddingPx: number = 8) {
 }
 
 function getEditorHeightBounds(editor: HTMLElement) {
-  if (!cachedLineHeight.value) {
-    cachedLineHeight.value = parseInt(getComputedStyle(editor).lineHeight) || 20
-  }
-
-  const minRows = props.minRows
-  const minHeight = minRows * cachedLineHeight.value
+  const style = getComputedStyle(editor)
+  const lineHeight = parseFloat(style.lineHeight) || 20
+  const paddingHeight = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+  const borderHeight = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0)
+  // 编辑器使用 border-box；两行正文之外还需要保留内边距和边框，避免第二行被裁掉。
+  const minHeight = props.minRows * lineHeight + paddingHeight + borderHeight
   const maxHeight = Math.max(minHeight, Math.floor(window.innerHeight * 0.72))
-  return { minHeight, maxHeight }
+  return { minHeight, maxHeight, lineHeight, paddingHeight, borderHeight }
 }
 
 function adjustHeight() {
@@ -191,22 +190,16 @@ function adjustHeight() {
   const minRows = props.minRows
   const maxRows = props.maxRows
 
-  if (!cachedLineHeight.value) {
-    cachedLineHeight.value = parseInt(getComputedStyle(editor).lineHeight) || 20
-  }
-
-  const lineHeight = cachedLineHeight.value
-  const minHeight = minRows * lineHeight
+  const { minHeight, maxHeight, lineHeight, paddingHeight, borderHeight } = getEditorHeightBounds(editor)
   const prevScrollTop = editor.scrollTop
   const prevWasAtBottom = editor.scrollTop + editor.clientHeight >= editor.scrollHeight - 2
 
   if (manualEditorHeight.value !== null) {
-    const { minHeight: manualMinHeight, maxHeight } = getEditorHeightBounds(editor)
-    const height = Math.min(Math.max(manualEditorHeight.value, manualMinHeight), maxHeight)
+    const height = Math.min(Math.max(manualEditorHeight.value, minHeight), maxHeight)
     manualEditorHeight.value = height
     editor.style.maxHeight = `${maxHeight}px`
     editor.style.height = `${height}px`
-    currentRows.value = Math.max(minRows, Math.round(height / lineHeight))
+    currentRows.value = Math.max(minRows, Math.round((height - paddingHeight - borderHeight) / lineHeight))
     nextTick(() => {
       updateScrollbar()
       ensureCaretVisible(editor)
@@ -216,13 +209,12 @@ function adjustHeight() {
 
   // 每次先恢复 auto 再测量真实内容高度。固定高度下的 scrollHeight 会掩盖
   // 删除内容后的收缩，导致输入框只能变高、不能变矮。
-  editor.style.maxHeight = `${maxRows * lineHeight}px`
+  editor.style.maxHeight = `${maxRows * lineHeight + paddingHeight + borderHeight}px`
   editor.style.height = 'auto'
 
-  const contentHeight = editor.scrollHeight
-  const targetHeight = Math.max(contentHeight, minHeight)
-  const rows = Math.min(Math.max(Math.ceil(targetHeight / lineHeight), minRows), maxRows)
-  editor.style.height = `${rows * lineHeight}px`
+  const contentHeight = editor.scrollHeight - paddingHeight
+  const rows = Math.min(Math.max(Math.ceil(contentHeight / lineHeight), minRows), maxRows)
+  editor.style.height = `${rows * lineHeight + paddingHeight + borderHeight}px`
   currentRows.value = rows
 
   // Preserve internal scroll position; without this, changing height can reset scrollTop and make

@@ -413,6 +413,29 @@ export async function sendMessage(
       : state.openTabs.value.find(item => item.conversationId === originConvId)
     return tab ? state.sessionSnapshots.value.get(tab.id) : undefined
   }
+  // 发送失败或提交前切走时统一清理原会话；快照和活跃窗口共用归属判断。
+  const cleanupUnsentMessage = (error?: { code: string; message: string }) => {
+    if (isOriginCurrent()) {
+      if (!ownsSend(state.streamingMessageId.value, state.activeStreamId.value)) return
+      if (error && state._lastCancelledStreamId.value?.messageId !== assistantMessageId) state.error.value = error
+      cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
+      resetPendingSendState(state)
+      return
+    }
+    const snapshot = originSnapshot()
+    if (!snapshot || !ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)) return
+    if (error) snapshot.error = error
+    snapshot.allMessages = removeFailedSendPlaceholders(snapshot.allMessages, pendingUserMessageId, assistantMessageId)
+    snapshot.totalMessages = snapshot.windowStartIndex + snapshot.allMessages.length
+    snapshot.streamingMessageId = null
+    snapshot.activeStreamId = null
+    snapshot.isStreaming = false
+    snapshot.isWaitingForResponse = false
+    snapshot.pendingModelOverride = null
+    snapshot.pendingConfigIdOverride = null
+    const tab = state.openTabs.value.find(item => item.id === originTabId || item.conversationId === originConvId)
+    if (tab) tab.isStreaming = false
+  }
   const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
   // 一次性渠道覆盖：仅本次请求生效，不改全局 configId/后端设置
   const effectiveConfigId = (options?.configIdOverride || '').trim() || state.configId.value
@@ -433,6 +456,10 @@ export async function sendMessage(
       }
       createdConversationId = newId
       originConvId = newId
+      if (!isOriginCurrent()) {
+        cleanupUnsentMessage()
+        return false
+      }
       // 更新当前标签页的 conversationId 和标题（仅当用户没有切换走）
       if (tabIdAtSend && state.activeTabId.value === tabIdAtSend) {
         updateTabConversationId(state, tabIdAtSend, newId)
@@ -440,8 +467,7 @@ export async function sendMessage(
         updateTabTitle(state, tabIdAtSend, title)
       }
 
-      await persistConversationModelConfig(state)
-      await persistConversationPromptMode(state)
+      await Promise.all([persistConversationModelConfig(state), persistConversationPromptMode(state)])
     }
 
     // 固化目标会话 ID：此后所有会话标识读写以此为准，避免多次 await 后重读 currentConversationId
@@ -454,14 +480,8 @@ export async function sendMessage(
 
     // 追加/发送前校验会话归属：创建会话期间用户已切换标签页/会话时中止本次发送，
     // 避免把新消息追加到已切换会话的窗口并发送到错误会话（H5 同款：复位流式状态）
-    if (createdConversationId && !validateSessionIdentity(state, createdConversationId)) {
-      // 对齐 H5(a)（474-481 同款守卫）：仅当当前 streamingMessageId 仍是本次发送的占位时才复位。
-      // 本分支尚未创建 assistant 占位（assistantMessageId 仍为 null），守卫等价于
-      // 「当前会话没有进行中的流式消息」——切到的标签页若正在流式（快照恢复
-      // isStreaming=true / streamingMessageId 非空）则不复位，避免误清新会话流式状态。
-      if (state.streamingMessageId.value === assistantMessageId) {
-        resetPendingSendState(state)
-      }
+    if (!isOriginCurrent()) {
+      cleanupUnsentMessage()
       return false
     }
 
@@ -524,13 +544,8 @@ export async function sendMessage(
     await syncConversationWorkspaceUri(state, targetConvId)
 
     // 写入全局状态前校验会话归属，防止跨会话投递
-    if (!validateSessionIdentity(state, targetConvId)) {
-      // H5(a)：会话已切换：复位本次发送设置的流式状态，避免 isStreaming 等永久残留。
-      // 仅当当前 streamingMessageId 仍是本次发送的占位时才复位，
-      // 避免误清新会话自己正在进行的流。
-      if (state.streamingMessageId.value === assistantMessageId) {
-        resetPendingSendState(state)
-      }
+    if (!isOriginCurrent()) {
+      cleanupUnsentMessage()
       return false
     }
 
@@ -605,37 +620,7 @@ export async function sendMessage(
       if (index >= 0) replaceMessageAt(state, index, { ...state.allMessages.value[index], ...contentToMessageEnhanced(streamResult.userContent) })
     }
   } catch (err: any) {
-    // 独立于 isStreaming 判断是否取消：取消瞬间 isStreaming 已被 cancelStream 清除，
-    // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉。
-    // _lastCancelledStreamId 存的是被取消请求的流标记 { conversationId, messageId }（见
-    // toolActions.cancelStream 的写入与 types.ts 声明），比对其 messageId 与本次发送的
-    // 占位消息 id（assistantMessageId）才能命中「用户取消 + 迟到失败」场景；不能与
-    // activeStreamId（streamId）比较——两者类型不同永不相等（原实现导致恒 false）。
-    const error = { code: err.code || 'SEND_ERROR', message: err.message || 'Failed to send message' }
-    if (isOriginCurrent()) {
-      // 同会话也可能已开始下一条流；旧请求只能清理自己拥有的发送状态。
-      if (ownsSend(state.streamingMessageId.value, state.activeStreamId.value)) {
-        const wasStreamCancelled = state._lastCancelledStreamId.value?.messageId === assistantMessageId
-        if (!wasStreamCancelled) state.error.value = error
-        cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
-        resetPendingSendState(state)
-      }
-    } else {
-      const snapshot = originSnapshot()
-      if (snapshot && ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)) {
-        snapshot.error = error
-        snapshot.allMessages = removeFailedSendPlaceholders(snapshot.allMessages, pendingUserMessageId, assistantMessageId)
-        snapshot.totalMessages = snapshot.windowStartIndex + snapshot.allMessages.length
-        snapshot.streamingMessageId = null
-        snapshot.activeStreamId = null
-        snapshot.isStreaming = false
-        snapshot.isWaitingForResponse = false
-        snapshot.pendingModelOverride = null
-        snapshot.pendingConfigIdOverride = null
-        const tab = state.openTabs.value.find(item => item.id === originTabId || item.conversationId === originConvId)
-        if (tab) tab.isStreaming = false
-      }
-    }
+    cleanupUnsentMessage({ code: err.code || 'SEND_ERROR', message: err.message || 'Failed to send message' })
     return false
   } finally {
     if (isOriginCurrent()) {
@@ -680,4 +665,3 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
   setTotalMessagesFromWindow(state)
   return backendIndex
 }
-

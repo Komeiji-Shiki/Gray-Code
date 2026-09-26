@@ -74,9 +74,10 @@ export interface ReadWorkspaceFileForInputResult {
   error?: string
 }
 
-export async function readWorkspaceFileForInput(path: string) {
+export async function readWorkspaceFileForInput(path: string, conversationId?: string | null) {
   return await sendToExtension<ReadWorkspaceFileForInputResult>(MESSAGE_NAMES.readWorkspaceFileForInput, {
-    path
+    path,
+    ...(conversationId ? { conversationId } : {})
   })
 }
 

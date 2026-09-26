@@ -178,6 +178,17 @@ describe('InputBox 尺寸调整', () => {
     await wrapper.get('.input-resize-handle').trigger('dblclick')
     expect(parseFloat(editor.style.height)).toBeLessThanOrEqual(160)
   })
+
+  test('自动高度按 border-box 保留两行正文和内边距，避免占位提示第二行裁剪', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      lineHeight: '19.5px', paddingTop: '8px', paddingBottom: '8px', borderTopWidth: '1px', borderBottomWidth: '1px'
+    } as CSSStyleDeclaration)
+    Object.defineProperty(editor, 'scrollHeight', { configurable: true, value: 36 })
+    await wrapper.get('.input-resize-handle').trigger('dblclick')
+    expect(editor.style.height).toBe('57px')
+    expect(editor.style.maxHeight).toBe('174px')
+  })
 })
 
 describe('InputBox 占位符', () => {
