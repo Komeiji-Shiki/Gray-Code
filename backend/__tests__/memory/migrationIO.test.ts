@@ -82,4 +82,30 @@ describe('旧记忆迁移的部分 IO', () => {
         expect((await manager.listEntries()).map(entry => entry.text)).toEqual(expected);
         expect(limited).toBe(true);
     });
+
+    test.each(['range', 'entries'] as const)('%s 临时文件无法创建时关闭原文件并保留内容', async action => {
+        const logFile = path.join(directory, 'LOG.txt');
+        const original = Buffer.concat(['保留第一条', '保留第二条'].map((text, id) => pad(`#${id} 2026-09-26 ${text}`, LOG_REC)));
+        fs.writeFileSync(logFile, original);
+        const originalOpen = fsPromises.open;
+        const closes: jest.SpyInstance[] = [];
+        const error = Object.assign(new Error('fixture temporary file denied'), { code: 'EACCES' });
+        jest.spyOn(fsPromises, 'open').mockImplementation(async (...args) => {
+            if (String(args[0]) === `${logFile}.tmp`) throw error;
+            const handle = await originalOpen(...args);
+            if (String(args[0]) === logFile) closes.push(jest.spyOn(handle, 'close'));
+            return handle;
+        });
+        const manager = new MemoryManager(directory);
+        await manager.init();
+        await expect(action === 'range' ? manager.deleteRange(0, 0) : manager.deleteEntries([0])).rejects.toBe(error);
+        try {
+            expect(closes.length).toBeGreaterThan(0);
+            expect(closes.every(close => close.mock.calls.length === 1)).toBe(true);
+            expect(fs.readFileSync(logFile)).toEqual(original);
+        } finally {
+            // 失败复现也关闭测试持有的句柄，避免污染后续验证。
+            for (const close of closes) if (!close.mock.calls.length) await close.getMockImplementation()!();
+        }
+    });
 });

@@ -889,12 +889,13 @@ export class MemoryLogStore {
 
             const tmpPath = `${logPath}.tmp`;
             const handle = await fs.open(logPath, 'r');
-            const outHandle = await fs.open(tmpPath, 'w');
+            let outHandle: import('fs').promises.FileHandle | undefined;
             let outCount = 0;
             // 区间内实际被跳过的空/损坏记录数：这些记录本就不存在/不可读，删除条数
             // 与 newT 推演必须扣除它们，否则会与实际写回 tmp 的条数分叉（见下方）
             let skippedInRange = 0;
             try {
+                outHandle = await fs.open(tmpPath, 'w');
                 // B-6: 分块读取（每次至多 CHUNK 条），避免百万条记忆时逐条 1KB read 的百万次系统调用。
                 // 物理索引对齐与空/损坏记录跳过语义与旧实现一致。
                 // 流式写 tmp：不再全量累积 rebuilt 数组，峰值内存从 O(T·LOG_REC) 降为 O(CHUNK·LOG_REC)。
@@ -931,8 +932,7 @@ export class MemoryLogStore {
                     }
                 }
             } finally {
-                await outHandle.close();
-                await handle.close();
+                await Promise.all([outHandle?.close(), handle.close()]);
             }
 
             // 先清树摘要、后原子换 LOG：树是缓存，缺失只触发重建（安全）；
@@ -1015,12 +1015,13 @@ export class MemoryLogStore {
             // 替代原先对每个区间重复全量扫描（多个区间 = 多次 O(T) 扫描）。
             const tmpPath = `${logPath}.tmp`;
             const handle = await fs.open(logPath, 'r');
-            const outHandle = await fs.open(tmpPath, 'w');
+            let outHandle: import('fs').promises.FileHandle | undefined;
             let outCount = 0;
             // 目标 id 集合内实际被跳过的空/损坏记录数（与 deleteRange 同口径）：
             // 删除条数与 newT 推演必须扣除它们，保证与写回 tmp 的条数一致
             let skippedInRange = 0;
             try {
+                outHandle = await fs.open(tmpPath, 'w');
                 const CHUNK = 4096;
                 // 对齐必须按当前记录宽度（旧格式降级 320B/条）进行：按 LOG_REC=1024 对齐
                 // 会读错偏移，重编号后 tmp 近乎全空，rename 会用空文件覆盖 LOG.txt → 全量记忆丢失
@@ -1055,8 +1056,7 @@ export class MemoryLogStore {
                     }
                 }
             } finally {
-                await outHandle.close();
-                await handle.close();
+                await Promise.all([outHandle?.close(), handle.close()]);
             }
 
             // 树摘要清理（与 deleteRange 多区间聚合后的最终语义一致）：
