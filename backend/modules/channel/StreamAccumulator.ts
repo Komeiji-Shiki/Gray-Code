@@ -476,11 +476,11 @@ export class StreamAccumulator {
                         canMerge = fc.id === lastFc.id;
                     }
                     // 兼容流可能省略output_index；此时把参数增量合并到最后一个刚创建的空工具壳。
-                    else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1 && lastIsFreshTool) {
+                    else if (!fc.id && !incomingItemId && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1 && lastIsFreshTool) {
                         canMerge = true;
                     }
                     // 纯增量模式：没有 id 也没有index，但有partialArgs，且是最后一个FC
-                    else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1) {
+                    else if (!fc.id && !incomingItemId && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1) {
                         canMerge = true;
                     }
 

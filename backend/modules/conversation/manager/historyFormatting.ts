@@ -503,8 +503,15 @@ export function formatHistoryForAPI(
                 const keys = Object.keys(part);
                 if (keys.length === 0) return false;
                 if (keys.length === 1 && keys[0] === 'thought' && (part as any).thought === true) return false;
-                // Gemini oneof data 守卫：part 必须至少携带一个 data 成员
-                // thought / thoughtSignature / thoughtSignatures / redactedThinking 不属于 data
+                // Gemini generateContent 的 oneof data 约束不适用于其他协议的推理项。
+                // 签名已在上方按用户配置处理；这里保留当前协议可回放的纯元数据，
+                // 避免无摘要的密文、独立签名和 redacted_thinking 在下一轮静默丢失。
+                const hasProtocolThinking =
+                    (channelType === 'openai-responses' && (
+                        hasResponsesReasoningMetadata(part) || !!part.thoughtSignatures?.['openai-responses']
+                    )) ||
+                    (channelType === 'anthropic' && (!!part.thoughtSignatures?.anthropic || !!part.redactedThinking)) ||
+                    (channelType === 'gemini-interactions' && !!part.thoughtSignatures?.gemini);
                 const hasData = (typeof part.text === 'string' && (part.text.length > 0
                     || (channelType === 'gemini' && !!part.thoughtSignatures?.gemini)))
                     || (!!part.inlineData?.mimeType && !!part.inlineData?.data)
@@ -513,7 +520,7 @@ export function formatHistoryForAPI(
                     || !!part.functionResponse
                     || !!(part as any).executableCode
                     || !!(part as any).codeExecutionResult;
-                if (!hasData) return false;
+                if (!hasData && !hasProtocolThinking) return false;
                 return true;
             });
         

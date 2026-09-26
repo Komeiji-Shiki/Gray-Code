@@ -769,7 +769,9 @@ export class GeminiFormatter extends BaseFormatter {
                         const { redactedThinking, ...rest } = part;
                         return rest;
                     })
-                    .filter(hasGeminiPartData)
+                    // 此预处理也由 Interactions 复用，其仅签名 thought 是有效输入。
+                    // generateContent 的 oneof data 校验统一留给后续 sanitizeGeminiContents。
+                    .filter(part => Object.keys(part).length > 0)
             }))
             .filter(content => content.parts.length > 0);
     }

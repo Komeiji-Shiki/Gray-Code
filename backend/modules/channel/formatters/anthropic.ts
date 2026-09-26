@@ -367,7 +367,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 const contentArray: any[] = [];
                 
                 // 添加思考内容（如果有）- 包括普通思考和加密思考
-                this.addThinkingBlocks(contentArray, thoughtParts, redactedThinkingParts, signatureParts);
+                this.addThinkingBlocks(contentArray, content.parts);
                 
                 // 添加文本内容
                 for (const part of textParts) {
@@ -463,13 +463,13 @@ export class AnthropicFormatter extends BaseFormatter {
             if (
                 functionCallParts.length === 0 &&
                 functionResponseParts.length === 0 &&
-                (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0)
+                (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0 || signatureParts.length > 0)
             ) {
                 // 普通消息（可能包含文本、多媒体和/或思考内容）
                 const contentArray: any[] = [];
                 
                 // 添加思考内容（如果有）- 包括普通思考和加密思考
-                this.addThinkingBlocks(contentArray, thoughtParts, redactedThinkingParts, signatureParts);
+                this.addThinkingBlocks(contentArray, content.parts);
                 
                 // 添加普通内容
                 contentArray.push(...this.buildMessageContent(textParts, mediaParts));
@@ -538,36 +538,35 @@ export class AnthropicFormatter extends BaseFormatter {
      */
     private addThinkingBlocks(
         contentArray: any[],
-        thoughtParts: ContentPart[],
-        redactedThinkingParts: ContentPart[],
-        signatureParts: ContentPart[]
+        parts: ContentPart[]
     ): void {
-        // 添加普通思考内容：按「思考段 ↔ 签名」逐段生成 thinking 块。
-        // 修改原因：Anthropic 每个 thinking 内容块自带 signature（流式 signature_delta 紧跟
-        // 所属块的 thinking_delta，parseStreamChunk 按 思考段 → 签名段 顺序落 parts），
-        // 旧实现把所有思考文本合并成单块、只取第一个签名，多段思考回传时 signature 与
-        // 合并后的 thinking 文本失配 → Anthropic 400（signature mismatch）。
-        // 修改方式：逐段配对；单段思考（最常见形态）输出与旧实现完全一致。
-        for (const [index, part] of thoughtParts.entries()) {
-            const thinkingBlock: any = {
-                type: 'thinking',
-                thinking: part.text ?? ''
-            };
-            // 签名与思考段一一对应；缺签名（如流被截断）时不挂 signature
-            const signature = (signatureParts[index] as any)?.signature;
-            if (signature) {
-                thinkingBlock.signature = signature;
-            }
-            contentArray.push(thinkingBlock);
-        }
-        
-        // 添加加密思考内容
-        for (const part of redactedThinkingParts) {
+        // thinking 和 redacted_thinking 的相对顺序参与上游校验，不能按类型分组。
+        // 旧存储把思考文本与签名分为相邻 parts；无文本的签名代表 omitted thinking。
+        let pendingThinking: any;
+        for (const part of parts) {
+            const signature = (part as any).signature;
             if (part.redactedThinking) {
                 contentArray.push({
                     type: 'redacted_thinking',
                     data: part.redactedThinking
                 });
+                pendingThinking = undefined;
+            } else if (part.thought && typeof part.text === 'string') {
+                pendingThinking = {
+                    type: 'thinking',
+                    thinking: part.text,
+                    ...(signature ? { signature } : {})
+                };
+                contentArray.push(pendingThinking);
+            } else if (signature) {
+                if (pendingThinking && !pendingThinking.signature) {
+                    pendingThinking.signature = signature;
+                } else {
+                    contentArray.push({ type: 'thinking', thinking: '', signature });
+                }
+                pendingThinking = undefined;
+            } else {
+                pendingThinking = undefined;
             }
         }
     }

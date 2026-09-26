@@ -52,8 +52,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
         const { history: rawHistory } = request;
         const toolMode = c.toolMode || 'function_call';
 
-        // 先合并流式历史中的“摘要 part + 仅签名 part”；stripRedactedThinking 会移除
-        // 无正文的孤立 part，合并必须发生在它之前。
+        // 旧流式历史可能把同一个 thought 的摘要和签名拆开保存，回传前恢复成一个 step。
         const history = this.stripRedactedThinking(this.coalesceAdjacentThoughtSignatures(rawHistory));
 
         // 根据模式处理历史记录（复用 GeminiFormatter 的 XML/JSON/function_call 预处理）
@@ -628,7 +627,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
 
     /**
      * 流式累计历史可能把 thought 摘要与最后到达的 signature 保存成相邻 parts。
-     * cleanInternalFields 会删除没有正文的孤立 part，因此必须在清理前把签名并回摘要。
+     * 回传前把签名并回对应摘要，同时保留原本就没有摘要的独立签名 step。
      */
     private coalesceAdjacentThoughtSignatures(history: Content[]): Content[] {
         return history.map(message => {

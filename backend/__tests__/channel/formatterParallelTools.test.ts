@@ -81,5 +81,59 @@ describe('OpenAI Responses 参数完整覆盖', () => {
         const fc = content.parts.find(p => p.functionCall)?.functionCall;
         expect(fc?.name).toBe('read_file');
         expect(fc?.args).toEqual({ paths: ['a.txt'] });
+        expect(fc?.id).toBe('call_1');
+    });
+
+    test('最终 item 补齐 call_id 前不上报，补齐后只执行一次', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const acc = new StreamAccumulator('function_call', makeIdFactory());
+        acc.setProviderType('openai-responses');
+        const feed = (chunk: any) => acc.add(formatter.parseStreamChunk(chunk));
+
+        feed({ type: 'response.output_item.added', output_index: 0, item: { id: 'fc_late', type: 'function_call', name: 'read_file', arguments: '' } });
+        feed({ type: 'response.function_call_arguments.done', output_index: 0, item_id: 'fc_late', arguments: '{"paths":["a.txt"]}' });
+        expect(acc.getNewCompletedFunctionCalls()).toEqual([]);
+
+        const finalItem = { type: 'response.output_item.done', output_index: 0, item: { id: 'fc_late', type: 'function_call', call_id: 'call_late', name: 'read_file', arguments: '{"paths":["a.txt"]}' } };
+        feed(finalItem);
+        expect(acc.getNewCompletedFunctionCalls()).toEqual([
+            { index: 0, id: 'call_late', name: 'read_file', args: { paths: ['a.txt'] } }
+        ]);
+        feed(finalItem);
+        expect(acc.getNewCompletedFunctionCalls()).toEqual([]);
+        expect(acc.getFinalContent().parts).toEqual([
+            { functionCall: { id: 'call_late', name: 'read_file', args: { paths: ['a.txt'] } } }
+        ]);
+    });
+
+    test('省略 output_index 的交错增量按 item_id 匹配对应工具', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const acc = new StreamAccumulator('function_call', makeIdFactory());
+        acc.setProviderType('openai-responses');
+        const feed = (chunk: any) => acc.add(formatter.parseStreamChunk(chunk));
+
+        feed({ type: 'response.output_item.added', item: { id: 'fc_read', type: 'function_call', call_id: 'call_read', name: 'read_file' } });
+        feed({ type: 'response.output_item.added', item: { id: 'fc_write', type: 'function_call', call_id: 'call_write', name: 'write_file' } });
+        feed({ type: 'response.function_call_arguments.delta', item_id: 'fc_read', delta: '{"path":"a.txt"}' });
+        feed({ type: 'response.function_call_arguments.done', item_id: 'fc_write', arguments: '{"path":"b.txt"}' });
+        feed({ type: 'response.function_call_arguments.done', item_id: 'fc_read', arguments: '{"path":"a.txt"}' });
+
+        expect(acc.getFinalContent().parts).toEqual([
+            { functionCall: { id: 'call_read', name: 'read_file', args: { path: 'a.txt' } } },
+            { functionCall: { id: 'call_write', name: 'write_file', args: { path: 'b.txt' } } }
+        ]);
+    });
+
+    test('仅最终 item 提供完整工具参数时仍保留调用', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const acc = new StreamAccumulator('function_call', makeIdFactory());
+        acc.setProviderType('openai-responses');
+        acc.add(formatter.parseStreamChunk({
+            type: 'response.output_item.done', output_index: 0,
+            item: { id: 'fc_final', type: 'function_call', call_id: 'call_final', name: 'read_file', arguments: '{"path":"a.txt"}' }
+        }));
+        expect(acc.getFinalContent().parts).toEqual([
+            { functionCall: { id: 'call_final', name: 'read_file', args: { path: 'a.txt' } } }
+        ]);
     });
 });

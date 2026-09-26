@@ -325,6 +325,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             const role = content.role === 'model' ? 'assistant' : content.role;
             const useDeepSeekReasoningTextFallback =
                 options?.useDeepSeekReasoningTextFallback === true &&
+                options?.allowReasoningContent === true &&
                 role === 'assistant';
             
             // 缓存当前正在构建的 message 类型项的内容
@@ -763,6 +764,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             args: {},
                             partialArgs: '',
                             id: chunk.item.call_id,
+                            itemId: chunk.item.id,
                             index: chunk.output_index
                         } as any
                     });
@@ -770,6 +772,21 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.output_item.done':
+                if (chunk.item?.type === 'function_call') {
+                    // item.id 定位流式输出项，call_id 才是工具结果需要回传的关联 ID。
+                    // 兼容只在最终 item 中给出 call_id 或完整参数的端点。
+                    parts.push({
+                        functionCall: {
+                            name: chunk.item.name,
+                            args: {},
+                            partialArgs: chunk.item.arguments,
+                            id: chunk.item.call_id,
+                            itemId: chunk.item.id,
+                            index: chunk.output_index,
+                            finalArgs: true
+                        } as any
+                    });
+                }
                 // reasoning item 的 id/summary/content/encrypted_content 必须一起持久化，
                 // 才能在 store=false 的后续请求中按官方格式原样回传。
                 if (chunk.item?.type === 'reasoning') {
@@ -867,6 +884,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 parts.push({
                     functionCall: {
                         partialArgs: chunk.delta,
+                        itemId: chunk.item_id,
                         index: chunk.output_index
                     } as any
                 });
@@ -879,7 +897,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         name: chunk.name,
                         args: {}, // arguments 将在 done 之后由 StreamAccumulator 解析
                         partialArgs: chunk.arguments,
-                        id: chunk.item_id,
+                        // arguments.done 的 item_id 不是工具 call_id，不能覆盖已收集的关联 ID。
+                        itemId: chunk.item_id,
                         index: chunk.output_index,
                         // done 事件携带完整 arguments：累加器据此覆盖已累积的增量 JSON 而非继续追加，
                         // 并在此边界解析（否则 delta 半截 JSON + 完整 JSON 会拼成垃圾串，工具全部空参数执行）。
