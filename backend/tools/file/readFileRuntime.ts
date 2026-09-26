@@ -21,7 +21,7 @@ import {
     isPdfFile,
 } from '../shared/multimodal';
 import { mapWithConcurrency } from '../shared/concurrency';
-import { normalizeLineEndingsToLF } from '../shared/textUtils';
+import { splitTextLines } from '../../../shared/textLines';
 import { calculateAspectRatio, type ImageDimensions } from '../shared/imageMath';
 import { formatFileSize } from '../shared/fileSize';
 // 修改原因：read_file 本地副本的 parseImageDimensions 与 media/imageUtils 重复实现且行为漂移
@@ -326,11 +326,7 @@ async function readSingleFile(
         }
         
         // 文本文件：返回带行号的内容
-        const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
-        // 修改原因：text.split('\n') 会把结尾换行产生一个尾部空串（如 'a\n' → ['a','']），
-        // 该幻影空行被编号成一行且 lineCount 虚增（'a\n' 应只有 1 行）。
-        // 修改方式：以换行结尾时先去掉末尾 '\n' 再 split，行数与编辑器/wc 的行数习惯一致。
-        const allLines = text.endsWith('\n') ? text.slice(0, -1).split('\n') : text.split('\n');
+        const allLines = splitTextLines(new TextDecoder().decode(content));
         const totalLines = allLines.length;
         
         // 处理行范围

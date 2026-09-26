@@ -350,7 +350,7 @@ const ja: LanguageMessages = {
             send: 'メッセージを送信',
             sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
             stopGenerating: '生成を停止',
-            sendWhileBusy: '新しいメッセージを送信（実行中のコマンドはバックグラウンドへ、AI が先に応答）',
+            sendWhileBusy: '追加メッセージを送信',
             interruptDelivered: '現在のターンに挿入しました。AI がまもなく処理します',
             attachFile: 'ファイルを添付',
             pinnedFiles: 'ピン留めファイル',
@@ -763,7 +763,7 @@ const ja: LanguageMessages = {
                 dismiss: '閉じる'
             },
             interrupt: {
-                delivered: '「{text}」を送信しました。現在のターン終了後に処理されます',
+                delivered: '「{text}」を受け付けました。処理待ちです',
                 deliverFailed: 'メッセージを送信できませんでした：{detail}'
             },
             tool: {
@@ -3400,6 +3400,9 @@ const ja: LanguageMessages = {
         },
 
         tools: {
+            presentation: sharedJa.components.tools.presentation,
+            automation: sharedJa.components.tools.automation,
+            platform: sharedJa.components.tools.platform,
             executing: '実行中...',
             structured: {
                 statuses: { pending: '未処理', queued: '待機中', in_progress: '進行中', running: '実行中', completed: '完了', done: '完了', success: '成功', failed: '失敗', error: 'エラー', blocked: '条件待ち', cancelled: 'キャンセル済み' },

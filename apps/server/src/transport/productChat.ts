@@ -195,21 +195,36 @@ export class ProductChat {
   }
   async confirm(client: ClientSession, data: Record<string, any>): Promise<unknown> {
     await this.app.conversation(client.actorId, data.conversationId);
-    for (const response of data.toolResponses ?? []) {
-      const approval = this.app.runtime.pendingApprovals().find(item => item.toolCallId === response.id
-        && (response.approvalId === undefined || item.id === response.approvalId));
-      if (!approval) {
-        if (response.approvalId !== undefined) throw new Error('这个确认请求已经结束。');
-        continue;
-      }
-      if (approval.choices && response.approvalId !== approval.id) throw new Error('请选择当前请求的具体选项。');
+    if (!Array.isArray(data.toolResponses) || !data.toolResponses.length) throw new Error('请选择当前工具的确认请求。');
+    const seen = new Set<string>();
+    const requests = data.toolResponses.map((response: Record<string, unknown>) => {
+      // toolCallId 由模型提供，后续运行可能复用；它不能替代这一轮审批的身份。
+      if (!response || typeof response.approvalId !== 'string' || !response.approvalId
+        || typeof response.id !== 'string' || typeof response.name !== 'string') throw new Error('确认请求缺少审批身份，请刷新后重试。');
+      if (typeof response.confirmed !== 'boolean') throw new Error('请明确接受或拒绝操作。');
+      if (response.choiceId !== undefined && typeof response.choiceId !== 'string') throw new Error('请选择这个请求提供的具体选项。');
+      if (seen.has(response.approvalId)) throw new Error('同一审批请求不能重复提交。');
+      seen.add(response.approvalId);
+      const approval = this.app.runtime.pendingApprovals().find(item => item.id === response.approvalId);
+      if (!approval) throw new Error('这个确认请求已经结束，请刷新当前任务状态。');
+      if (approval.toolCallId !== response.id || approval.toolName !== response.name
+        || response.runId !== undefined && response.runId !== approval.runId
+        || data.runId !== undefined && data.runId !== approval.runId) throw new Error('审批不属于当前工具或任务，请刷新后重试。');
+      return { approval, confirmed: response.confirmed, choiceId: response.choiceId };
+    });
+    // 整批先验证归属，不因后一条无效而提前应用前一条确认。
+    for (const { approval } of requests) {
       const run = await this.app.storage.getRun(approval.runId);
       if (run?.conversationId !== data.conversationId) throw new Error('审批不属于当前对话。');
+    }
+    for (const { approval, confirmed, choiceId } of requests) {
+      await this.app.runtime.resolveApproval(approval.id, client.actorId, confirmed, choiceId);
+      // 只有真正消耗原审批的回执才能重绑流。失败、过期和并发重复回执不能抢走终态。
+      // runtime 在发布后续流事件前会等待 approval.resolved 的存储提交。
       const stream = this.streams.get(approval.runId);
-      if (stream && typeof data.streamId === 'string') {
+      if (stream && typeof data.streamId === 'string' && data.streamId) {
         stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
       }
-      await this.app.runtime.resolveApproval(approval.id, client.actorId, response.confirmed === true, response.choiceId);
     }
     return { success: true };
   }

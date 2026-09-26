@@ -84,6 +84,7 @@ import { PlatformPromptService } from './prompt/service';
 import { PlatformMcpService } from './mcp/service';
 import { ExternalAgents } from './externalAgents/service';
 import { ConversationService } from './conversations/service';
+import { settlePendingUserInput } from './conversations/ui';
 import { PlatformContextService } from './context/service';
 import { setProductVersionResolver } from '../../../backend/core/productIdentity';
 import packageMetadata from '../../../package.json';
@@ -351,6 +352,7 @@ export class PlatformApplication {
         return this.automations.afterTools(run);
       },
       deliverFeedback: async run => {
+        await settlePendingUserInput(this, run.conversationId);
         const delivered = await this.subagents.feedback.flush(run.conversationId, run);
         await this.subagents.feedback.continuation.consume(run);
         return delivered;

@@ -2,8 +2,7 @@ import { createGetSymbolsToolDeclaration } from './declarations';
 /**
  * 获取文件符号工具
  *
- * 使用 VSCode LSP 获取文件中的符号列表（类、函数、变量等）
- * 支持批量查询多个文件
+ * 使用 VSCode LSP 获取文件中的简洁符号提纲，支持批量查询和按层级展开。
  */
 
 import * as vscode from 'vscode';
@@ -17,149 +16,29 @@ import {
     executeLspCommandWithRetry
 } from './lspLifecycle';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { getActualLanguage } from '../../i18n';
-import { resolveLocalizationLanguage } from '../localization/types';
+import {
+    createSymbolOutline, parseSymbolOutlineOptions, MAX_SYMBOL_PATHS,
+    type SymbolOutline, type SymbolOutlineOptions
+} from './symbolOutline';
 
 // 兼容别名：既有调用方与测试从 get_symbols 导入这两个常量
 // （超时/中止/瞬时重试的具体实现已上移到共享模块 lspLifecycle）
 export const GET_SYMBOLS_TIMEOUT_MS = LSP_TIMEOUT_MS;
 export const GET_SYMBOLS_RETRY_DELAY_MS = LSP_RETRY_DELAY_MS;
 
-/**
- * 符号类型映射
- */
-const SymbolKindNames: Record<vscode.SymbolKind, string> = {
-    [vscode.SymbolKind.File]: 'file',
-    [vscode.SymbolKind.Module]: 'module',
-    [vscode.SymbolKind.Namespace]: 'namespace',
-    [vscode.SymbolKind.Package]: 'package',
-    [vscode.SymbolKind.Class]: 'class',
-    [vscode.SymbolKind.Method]: 'method',
-    [vscode.SymbolKind.Property]: 'property',
-    [vscode.SymbolKind.Field]: 'field',
-    [vscode.SymbolKind.Constructor]: 'constructor',
-    [vscode.SymbolKind.Enum]: 'enum',
-    [vscode.SymbolKind.Interface]: 'interface',
-    [vscode.SymbolKind.Function]: 'function',
-    [vscode.SymbolKind.Variable]: 'variable',
-    [vscode.SymbolKind.Constant]: 'constant',
-    [vscode.SymbolKind.String]: 'string',
-    [vscode.SymbolKind.Number]: 'number',
-    [vscode.SymbolKind.Boolean]: 'boolean',
-    [vscode.SymbolKind.Array]: 'array',
-    [vscode.SymbolKind.Object]: 'object',
-    [vscode.SymbolKind.Key]: 'key',
-    [vscode.SymbolKind.Null]: 'null',
-    [vscode.SymbolKind.EnumMember]: 'enum_member',
-    [vscode.SymbolKind.Struct]: 'struct',
-    [vscode.SymbolKind.Event]: 'event',
-    [vscode.SymbolKind.Operator]: 'operator',
-    [vscode.SymbolKind.TypeParameter]: 'type_parameter',
-};
-
-/**
- * 符号信息
- */
-interface SymbolInfo {
-    name: string;
-    kind: string;
-    line: number;        // 1-based
-    endLine: number;     // 1-based
-    detail?: string;
-    children?: SymbolInfo[];
-}
-
-/**
- * 单文件符号数量上限：符号提供器对大型/生成文件可能返回海量符号
- *（含层级展开后的总数），超出后截断并在返回 JSON 中置 truncated 标记。
- */
-const MAX_SYMBOLS_PER_FILE = 500;
-
-/**
- * 符号转换预算：跨层级递归共享，超出后停止展开子树并置 truncated。
- */
-interface SymbolBudget {
-    remaining: number;
-    truncated: boolean;
-}
-
-/**
- * 单个文件的符号结果
- */
-interface FileSymbolResult {
+interface FileSymbolResult extends Partial<SymbolOutline> {
     path: string;
     success: boolean;
-    symbolCount?: number;
-    symbols?: SymbolInfo[];
     error?: string;
-    /** 符号数量超过上限被截断（调用方聚合到总结果中） */
-    truncated?: boolean;
 }
 
-/**
- * get_symbols 的规范化参数形状。
- */
 interface GetSymbolsArgs {
     paths: string[];
+    maxDepth?: unknown;
+    kinds?: unknown;
 }
 
-/**
- * 将 VSCode DocumentSymbol 转换为简化的符号信息（受预算约束，超限返回 undefined）。
- */
-function convertDocumentSymbol(symbol: vscode.DocumentSymbol, budget: SymbolBudget): SymbolInfo | undefined {
-    if (budget.remaining <= 0) {
-        budget.truncated = true;
-        return undefined;
-    }
-    budget.remaining--;
-
-    const info: SymbolInfo = {
-        name: symbol.name,
-        kind: SymbolKindNames[symbol.kind] || 'unknown',
-        line: symbol.range.start.line + 1,
-        endLine: symbol.range.end.line + 1,
-    };
-    
-    if (symbol.detail) {
-        info.detail = symbol.detail;
-    }
-    
-    if (symbol.children && symbol.children.length > 0) {
-        const children: SymbolInfo[] = [];
-        for (const child of symbol.children) {
-            const converted = convertDocumentSymbol(child, budget);
-            if (converted) {
-                children.push(converted);
-            }
-            if (budget.remaining <= 0) {
-                budget.truncated = true;
-                break;
-            }
-        }
-        if (children.length > 0) {
-            info.children = children;
-        }
-    }
-    
-    return info;
-}
-
-/**
- * 将 VSCode SymbolInformation 转换为简化的符号信息
- */
-function convertSymbolInformation(symbol: vscode.SymbolInformation): SymbolInfo {
-    return {
-        name: symbol.name,
-        kind: SymbolKindNames[symbol.kind] || 'unknown',
-        line: symbol.location.range.start.line + 1,
-        endLine: symbol.location.range.end.line + 1,
-    };
-}
-
-/**
- * 获取单个文件的符号
- */
-async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): Promise<FileSymbolResult> {
+async function getSymbolsForFile(filePath: string, options: SymbolOutlineOptions, abortSignal?: AbortSignal): Promise<FileSymbolResult> {
     const uri = resolveUri(filePath);
     if (!uri) {
         return {
@@ -168,7 +47,7 @@ async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): P
             error: 'Could not resolve file path. Make sure a workspace is open.'
         };
     }
-    
+
     try {
         // 主动打开文档以激活对应语言服务。未在编辑器中打开的大型 TypeScript 文件尤其需要这一步。
         await openDocumentWithGuard(uri, abortSignal);
@@ -180,50 +59,10 @@ async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): P
             { abortSignal }
         );
 
-        if (!symbols || symbols.length === 0) {
-            return {
-                path: filePath,
-                success: true,
-                symbolCount: 0,
-                symbols: []
-            };
-        }
-        
-        // 转换符号（带数量预算：超限截断并置 truncated）
-        let convertedSymbols: SymbolInfo[];
-        const budget: SymbolBudget = { remaining: MAX_SYMBOLS_PER_FILE, truncated: false };
-        
-        // 检查是 DocumentSymbol 还是 SymbolInformation
-        if ('children' in symbols[0] || 'range' in symbols[0]) {
-            // DocumentSymbol (更新的格式，有层级结构)
-            const rawSymbols = symbols as vscode.DocumentSymbol[];
-            const converted: SymbolInfo[] = [];
-            for (const symbol of rawSymbols) {
-                const convertedSymbol = convertDocumentSymbol(symbol, budget);
-                if (convertedSymbol) {
-                    converted.push(convertedSymbol);
-                }
-                if (budget.remaining <= 0) {
-                    budget.truncated = true;
-                    break;
-                }
-            }
-            convertedSymbols = converted;
-        } else {
-            // SymbolInformation (旧格式，扁平结构)
-            const rawSymbols = symbols as vscode.SymbolInformation[];
-            convertedSymbols = rawSymbols
-                .slice(0, MAX_SYMBOLS_PER_FILE)
-                .map(convertSymbolInformation);
-            budget.truncated = rawSymbols.length > MAX_SYMBOLS_PER_FILE;
-        }
-        
         return {
             path: filePath,
             success: true,
-            symbolCount: countSymbols(convertedSymbols),
-            symbols: convertedSymbols,
-            truncated: budget.truncated
+            ...createSymbolOutline(symbols ?? [], options, 0)
         };
     } catch (error) {
         return {
@@ -239,16 +78,22 @@ async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): P
  */
 export function createGetSymbolsTool(): Tool {
     const workspaces = getAllWorkspaces();
-    const isMultiRoot = workspaces.length > 1;
     return {
         declaration: createGetSymbolsToolDeclaration({ workspaces }),
         handler: async (args, context): Promise<ToolResult> => {
-            const pathList = parseArgs<GetSymbolsArgs>(args).paths;
-            
-            if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
-                return { success: false, error: 'paths is required and must be a non-empty array' };
+            const parsed = parseArgs<GetSymbolsArgs>(args);
+            const pathList = parsed.paths;
+
+            if (!Array.isArray(pathList) || pathList.length === 0 || pathList.some(file => typeof file !== 'string')) {
+                return { success: false, error: 'paths is required and must be a non-empty array of file paths' };
             }
-            
+            let options: SymbolOutlineOptions;
+            try {
+                options = parseSymbolOutlineOptions(parsed);
+            } catch (error) {
+                return { success: false, error: error instanceof Error ? error.message : String(error) };
+            }
+
             // 修改原因：get_symbols 接受绝对路径时可通过 LSP 读取工作区外文件内容，不受读策略管控。
             // 修改方式：与 read_file 一致，入口处校验 outside-workspace 读策略（deny/ask/allow）。
             // 使用真实工具名：服务层白名单（toolCallNeedsOutsideWorkspaceConfirmation）已包含 get_symbols，
@@ -257,27 +102,26 @@ export function createGetSymbolsTool(): Tool {
             if (accessError) {
                 return { success: false, error: accessError };
             }
-            
+
             // 上限保护：每个文件最多 20s LSP 超时，超限文件直接截断并在结果中提示，
             // 避免一次调用把整个工作区几千个文件全部串行扫一遍。
-            const MAX_SYMBOL_PATHS = 20;
             const pathsTruncated = pathList.length > MAX_SYMBOL_PATHS;
             const pathsToProcess = pathsTruncated ? pathList.slice(0, MAX_SYMBOL_PATHS) : pathList;
-            
+
             const results: FileSymbolResult[] = [];
             let successCount = 0;
             let failCount = 0;
             let totalSymbolCount = 0;
-            
+
             // 受控并发（默认 4 个在飞），仍按输入顺序返回结果
             const processed = await mapWithConcurrency(
                 pathsToProcess,
                 4,
-                async (filePath: string) => getSymbolsForFile(filePath, context?.abortSignal)
+                async (filePath: string) => getSymbolsForFile(filePath, options, context?.abortSignal)
             );
             for (const result of processed) {
                 results.push(result);
-                
+
                 if (result.success) {
                     successCount++;
                     totalSymbolCount += result.symbolCount || 0;
@@ -285,7 +129,7 @@ export function createGetSymbolsTool(): Tool {
                     failCount++;
                 }
             }
-            
+
             const allSuccess = failCount === 0;
             const anyTruncated = results.some(result => result.truncated === true) || pathsTruncated;
             const failedDetails = results
@@ -296,6 +140,7 @@ export function createGetSymbolsTool(): Tool {
                 success: allSuccess,
                 data: {
                     results,
+                    ...options,
                     successCount,
                     failCount,
                     totalCount: pathList.length,
@@ -306,19 +151,6 @@ export function createGetSymbolsTool(): Tool {
             };
         }
     };
-}
-
-/**
- * 递归计算符号总数
- */
-function countSymbols(symbols: SymbolInfo[]): number {
-    let count = symbols.length;
-    for (const symbol of symbols) {
-        if (symbol.children) {
-            count += countSymbols(symbol.children);
-        }
-    }
-    return count;
 }
 
 /**

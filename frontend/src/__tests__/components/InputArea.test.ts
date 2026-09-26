@@ -17,6 +17,9 @@ import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import InputArea from '../../components/input/InputArea.vue'
 import type { Attachment } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
+import { markAgentMessageRoundPending, clearAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
+
+const originalHost = window.__GRAYCODE_HOST
 
 const runtime = vi.hoisted(() => ({
   chatStore: undefined as any,
@@ -184,6 +187,8 @@ describe('InputArea 发送失败恢复', () => {
   afterEach(() => {
     wrapper?.unmount()
     wrapper = undefined
+    window.__GRAYCODE_HOST = originalHost
+    clearAgentMessageRoundPending('conv-platform')
     vi.restoreAllMocks()
   })
 
@@ -338,6 +343,69 @@ describe('InputArea 发送失败恢复', () => {
     expect(runtime.chatStore.enqueueMessage).toHaveBeenCalledTimes(1)
     expect(runtime.chatStore.editorNodes).toEqual([])
     expect(runtime.chatStore.inputValue).toBe('')
+  })
+
+  test.each([false, true])('独立端忙时发送截图和长文本（审批=%s），失败恢复并用同一 ID 重试', async pendingApproval => {
+    window.__GRAYCODE_HOST = { kind: 'desktop' } as NonNullable<typeof originalHost>
+    runtime.chatStore.currentConversationId = 'conv-platform'
+    runtime.chatStore.isWaitingForResponse = true
+    runtime.chatStore.hasPendingToolConfirmation = pendingApproval
+    const sendMessage = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true)
+    wrapper = mountWithParent(sendMessage)
+    runtime.chatStore.editorNodes = makeTextNodes('最新用户补充'.repeat(900))
+    ;(wrapper.vm as any).attachments = [makeAttachment()]
+    await nextTick()
+    const draft = runtime.chatStore.editorNodes
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    expect(runtime.chatStore.enqueueMessage).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    expect(sendMessage.mock.calls[0][1]).toEqual([makeAttachment()])
+    const firstId = sendMessage.mock.calls[0][2].messageId
+    expect(firstId).toEqual(expect.any(String))
+    expect(runtime.chatStore.editorNodes).toBe(draft)
+    expect((wrapper.vm as any).attachments).toEqual([makeAttachment()])
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    expect(sendMessage.mock.calls[1][2].messageId).toBe(firstId)
+    expect(runtime.chatStore.editorNodes).toEqual([])
+    expect((wrapper.vm as any).attachments).toEqual([])
+  })
+
+  test('独立端仅附件失败重试保留 ID，修改截图内容后使用新 ID', async () => {
+    window.__GRAYCODE_HOST = { kind: 'web' } as NonNullable<typeof originalHost>
+    runtime.chatStore.isWaitingForResponse = true
+    const sendMessage = vi.fn().mockResolvedValue(false)
+    wrapper = mountWithParent(sendMessage)
+    ;(wrapper.vm as any).attachments = [makeAttachment()]
+    await nextTick()
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    expect(sendMessage.mock.calls[1][2].messageId).toBe(sendMessage.mock.calls[0][2].messageId)
+    ;(wrapper.vm as any).attachments = [makeAttachment({ data: 'changed-image' })]
+    await nextTick()
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    expect(sendMessage.mock.calls[2][2].messageId).not.toBe(sendMessage.mock.calls[0][2].messageId)
+  })
+
+  test.each(['queue', 'claim'])('独立端已有%s时仍保留显式排队次序，不抢先投递或取消审批', async reason => {
+    window.__GRAYCODE_HOST = { kind: 'desktop' } as NonNullable<typeof originalHost>
+    runtime.chatStore.currentConversationId = 'conv-platform'
+    runtime.chatStore.isWaitingForResponse = true
+    runtime.chatStore.hasPendingToolConfirmation = true
+    if (reason === 'queue') runtime.chatStore.messageQueue = [{ id: 'earlier-user' }]
+    else markAgentMessageRoundPending('conv-platform')
+    const sendMessage = vi.fn()
+    wrapper = mountWithParent(sendMessage)
+    runtime.chatStore.editorNodes = makeTextNodes('接在队尾')
+    await nextTick()
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(runtime.chatStore.enqueueMessage).toHaveBeenCalledWith('接在队尾', [], undefined)
   })
 
   test('直接发送事件携带 onResult 回调（第 4 参数）', async () => {

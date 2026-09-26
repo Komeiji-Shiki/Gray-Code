@@ -277,8 +277,22 @@ export function handleAwaitingConfirmation(
   state: ChatStoreState,
   addCheckpoint: (checkpoint: CheckpointRecord) => void
 ): void {
-  // 等待用户确认工具执行
+  // 平台审批快照可能被重放；已离开该工具段/已有结果的请求不能把新占位或已结算工具
+  // 重新变为待确认。旧宿主审批会关闭流，仍沿用它原来的门闸语义。
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
+  const currentTools = messageIndex >= 0 ? state.allMessages.value[messageIndex].tools : undefined
+  const isSettledApproval = (pending: NonNullable<StreamChunk['pendingToolCalls']>[number]) => {
+    const tool = currentTools?.find(item => item.id === pending.id)
+    return !!tool && (!!tool.result || !!tool.error || (
+      !!pending.approvalId && pending.approvalId === tool.approvalId
+      && tool.status !== 'awaiting_approval' && tool.status !== 'streaming' && tool.status !== 'queued'
+    ))
+  }
+  if (chunk.keepStreamOpen) {
+    if (chunk.content?.id && chunk.content.id !== state.streamingMessageId.value
+      && state.allMessages.value.some(message => message.id === chunk.content!.id)) return
+    if ((chunk.pendingToolCalls || []).every(isSettledApproval)) return
+  }
   if (messageIndex !== -1 && chunk.content) {
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 modelVersion
@@ -332,6 +346,7 @@ export function handleAwaitingConfirmation(
         const baseTool = isStreaming ? { ...tool, partialArgs: undefined } : tool
 
         const pending = pendingCalls.get(tool.id)
+        if (pending && chunk.keepStreamOpen && isSettledApproval(pending)) return baseTool
         if (pending) {
           // 轮到该工具，等待用户批准
           return { ...baseTool, status: 'awaiting_approval' as const, approvalId: pending.approvalId,

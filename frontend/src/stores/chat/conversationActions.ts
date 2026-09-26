@@ -88,13 +88,14 @@ export async function ensureConversationSummary(state: ChatStoreState, id: strin
   for (const tab of state.openTabs.value) if (tab.conversationId === id) tab.title = conversation.title
 }
 
-export async function resumeDesktopConversation(state: ChatStoreState, conversationId: string): Promise<void> {
+export async function resumeDesktopConversation(state: ChatStoreState, conversationId: string, options: { preserveWindow?: boolean } = {}): Promise<void> {
   if (!window.__GRAYCODE_HOST || !validateSessionIdentity(state, conversationId) || state.activeStreamId.value || state.isStreaming.value || state.isWaitingForResponse.value) return
   const wasLoading = state.isLoading.value; state.isLoading.value = true
   try {
     const resumed = await sendToExtension<{ active: boolean; latestMessageId?: string }>('chat.resumeConversationStream', { conversationId })
     if (!validateSessionIdentity(state, conversationId)) return
-    if (!resumed.active && resumed.latestMessageId && !state.allMessages.value.some(message => message.id === resumed.latestMessageId)) await loadHistory(state)
+    // 历史阅读窗口本来就可能不含最新 ID；恢复连接不能因此把阅读位置换成尾页。
+    if (!options.preserveWindow && !resumed.active && resumed.latestMessageId && !state.allMessages.value.some(message => message.id === resumed.latestMessageId)) await loadHistory(state)
   } finally { if (validateSessionIdentity(state, conversationId)) state.isLoading.value = wasLoading }
 }
 
@@ -603,13 +604,14 @@ export async function loadHistory(state: ChatStoreState, propagateError = false,
   // 固化会话标识：catch 中校验归属需要（await 失败期间当前会话可能已切换）
   const conversationId = state.currentConversationId.value
 
-  // 摘要正文编辑不改变历史长度，各窗口重新读取原来可见的范围。
+  // 摘要正文编辑/切回历史阅读时重新读取原窗口；迟到刷新不覆盖用户已经换过的页。
   if (options.preserveWindow && state.allMessages.value.length) {
     const offset = state.windowStartIndex.value
+    const windowAtRequest = state.allMessages.value
     const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
       conversationId, offset, limit: state.allMessages.value.length
     })
-    if (state.currentConversationId.value !== conversationId || state.windowStartIndex.value !== offset) return
+    if (state.currentConversationId.value !== conversationId || state.allMessages.value !== windowAtRequest) return
     state.allMessages.value = result.messages.map(content => contentToMessageEnhanced(content))
     state.totalMessages.value = result.total
     rebuildMessageIndexById(state)
@@ -735,9 +737,9 @@ export async function loadOlderMessagesPage(
 export async function loadMessagesAroundIndex(
   state: ChatStoreState,
   targetIndex: number,
-  options: { pageSize?: number } = {}
+  options: { pageSize?: number; signal?: AbortSignal } = {}
 ): Promise<boolean> {
-  if (!state.currentConversationId.value) return false
+  if (!state.currentConversationId.value || options.signal?.aborted) return false
   if (!Number.isFinite(targetIndex) || targetIndex < 0) return false
   if (state.isLoadingMoreMessages.value) return false
 
@@ -745,6 +747,11 @@ export async function loadMessagesAroundIndex(
   const pageSize = Math.max(1, Math.min(options.pageSize ?? MESSAGES_PAGE_SIZE, 1000))
   const requestedIndex = Math.floor(targetIndex)
   state.isLoadingMoreMessages.value = true
+  // 阅读位置恢复可以被切走/新滚动取消；在取消当下释放自己的锁，迟到响应不再写窗口或锁。
+  const releaseLoading = () => {
+    if (validateSessionIdentity(state, originConversationId)) state.isLoadingMoreMessages.value = false
+  }
+  options.signal?.addEventListener('abort', releaseLoading, { once: true })
 
   try {
     const result = await perfMeasureAsync('conversation.loadMessagesAroundIndex', () =>
@@ -755,7 +762,7 @@ export async function loadMessagesAroundIndex(
       })
     )
 
-    if (!validateSessionIdentity(state, originConversationId)) return false
+    if (options.signal?.aborted || !validateSessionIdentity(state, originConversationId)) return false
     const page = result?.messages || []
     if (page.length === 0) return false
 
@@ -769,9 +776,8 @@ export async function loadMessagesAroundIndex(
     console.error('[conversationActions] loadMessagesAroundIndex failed:', err)
     return false
   } finally {
-    if (validateSessionIdentity(state, originConversationId)) {
-      state.isLoadingMoreMessages.value = false
-    }
+    options.signal?.removeEventListener('abort', releaseLoading)
+    if (!options.signal?.aborted) releaseLoading()
   }
 }
 

@@ -1,5 +1,6 @@
 import { insertAtLine, splitContentLines } from './lineMutations';
 import { createInsertCodeDeclaration } from './createInsertCodeDeclaration';
+import { countSplitTextLines } from '../../../shared/textLines';
 /**
  * 插入代码工具
  *
@@ -125,7 +126,7 @@ async function insertSingleFile(
         // 首次打开 diff 视图时读盘 + 语言服务初始化不再阻塞 UI。
         getDiffManager()?.prewarmDocument?.(uri);
         const originalLines = originalContent.split('\n');
-        const totalLines = originalLines.length;
+        const totalLines = countSplitTextLines(originalLines);
 
         // line 范围校验：1 ~ totalLines + 1
         if (line > totalLines + 1) {

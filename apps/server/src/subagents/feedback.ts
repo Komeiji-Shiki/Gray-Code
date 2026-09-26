@@ -24,8 +24,10 @@ export class SubagentFeedback {
   async enqueue(child: PlatformSubagent, response: string): Promise<void> {
     const id = `subagent-${child.taskId ?? child.id}`;
     if (await this.app.storage.getRecord('subagent-deliveries', id)) return;
+    const report = child.status === 'completed' ? response
+      : [child.error, response !== child.error ? response : undefined].filter(Boolean).join('\n\n');
     const pending: PendingFeedback = { id, conversationId: child.parentConversationId, actorId: child.actorId, sourceRunId: child.parentRunId, parentConfiguration: child.parentConfiguration,
-      message: { id, role: 'user', parts: [{ text: `[Background task ${child.status}]\n${child.agentName}\n\n${response}` }],
+      message: { id, role: 'user', parts: [{ text: `[Background task ${child.status}]\n${child.agentName}\n\n${report}` }],
         timestamp: Date.now(), isUserInput: false, source: 'background_task', backgroundTask: { kind: 'subagent', taskId: child.id, runId: child.id, conversationId: child.parentConversationId, name: child.agentName, status: child.status }, userFeedback: { kind: 'subagent', subagentId: child.id } } };
     await this.enqueueMessage(pending);
   }

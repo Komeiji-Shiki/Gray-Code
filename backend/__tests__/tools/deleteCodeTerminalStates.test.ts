@@ -196,13 +196,28 @@ describe('delete_code 终态语义（diff 审阅）', () => {
         expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
     });
 
+    test.each(['line1\nline2\n', 'line1\r\nline2\r\n', 'line1\rline2\r', 'line1\nline2'])('删除真实末行并保留前行分隔符：%j', async text => {
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(text);
+        mockDiffManager.waitForDiffResolution.mockResolvedValue('none');
+        mockDiffManager.getDiff.mockReturnValue({ id: 'pending-diff-1', status: 'accepted' });
+        const result = await runDeleteCode([{ path: 'sample.ts', start_line: 2, end_line: 2 }]);
+        expect(result.success).toBe(true);
+        expect(mockDiffManager.createPendingDiff.mock.calls[0][3]).toBe(text.endsWith('\n') || text.endsWith('\r') ? 'line1\n' : 'line1');
+    });
+
+    test('不允许删除最终换行产生的幻影行', async () => {
+        const result = await runDeleteCode([{ path: 'sample.ts', start_line: 5, end_line: 5 }]);
+        expect(result.success).toBe(false);
+        expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
+    });
+
     test('异常路径：start_line 越界返回可读错误', async () => {
         const result = await runDeleteCode([{ path: 'sample.ts', start_line: 99, end_line: 99 }]);
         expect(result.success).toBe(false);
         expect(result.data.results[0]).toMatchObject({
             path: 'sample.ts',
             success: false,
-            error: 'start_line 99 is out of range. File has 5 lines.'
+            error: 'start_line 99 is out of range. File has 4 lines.'
         });
         expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
     });

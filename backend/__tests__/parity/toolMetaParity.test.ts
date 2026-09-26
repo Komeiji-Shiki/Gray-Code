@@ -101,6 +101,14 @@ describe('跨端 parity：工具元数据镜像（toolMeta.ts vs backend/tools �
         }
     });
 
+    test('导入的符号类型枚举无法静态展开时省略，不生成假的空枚举', () => {
+        const content = fs.readFileSync(GENERATED_FILE, 'utf8');
+        const block = content.match(/  'get_symbols': \{[\s\S]*?\n  \},/)?.[0];
+        expect(block).toContain('"maxDepth": {"type":"integer","default":1}');
+        expect(block).not.toContain('"enum":[]');
+        expect(block).toContain('parametersDynamic: true');
+    });
+
     test('关键工具元数据样例：静态描述与动态标记符合预期', () => {
         const content = fs.readFileSync(GENERATED_FILE, 'utf8');
         // 静态可提取的工具应带 description

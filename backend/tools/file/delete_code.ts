@@ -1,5 +1,6 @@
 import { deleteLineRange } from './lineMutations';
 import { createDeleteCodeDeclaration } from './createDeleteCodeDeclaration';
+import { countSplitTextLines } from '../../../shared/textLines';
 /**
  * 删除代码工具
  *
@@ -122,7 +123,7 @@ async function deleteSingleFile(
         // 首次打开 diff 视图时读盘 + 语言服务初始化不再阻塞 UI。
         getDiffManager()?.prewarmDocument?.(uri);
         const originalLines = originalContent.split('\n');
-        const totalLines = originalLines.length;
+        const totalLines = countSplitTextLines(originalLines);
 
         // 范围校验
         if (startLine > totalLines) {

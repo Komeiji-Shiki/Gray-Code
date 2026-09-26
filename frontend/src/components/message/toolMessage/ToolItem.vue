@@ -10,7 +10,7 @@ import type { ToolUsage } from '../../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../../utils/toolRegistry'
 import { getToolDisplayName, getToolDescription as localizeToolDescription } from '../../../utils/toolLocalization'
 import { useChatStore } from '../../../stores'
-import { showNotification, sendToExtension } from '../../../utils/vscode'
+import { showNotification } from '../../../utils/vscode'
 import { useI18n } from '../../../i18n'
 import DiffActionList from './DiffActionList.vue'
 import type { PendingDiffView } from './types'
@@ -43,14 +43,8 @@ const instanceId = getCurrentInstance()?.uid ?? 0
 const contentId = `gc-tool-content-${instanceId}`
 const streamingPreviewId = `gc-tool-streaming-${instanceId}`
 
-async function activateTool() {
-  if (window.__GRAYCODE_HOST && props.tool.name === 'subagents') {
-    const result = props.tool.result as { data?: { runId?: string } } | undefined;
-    try { await sendToExtension('subagents.openMonitor', { runId: result?.data?.runId, toolId: props.tool.id, conversationId: chatStore.currentConversationId }); }
-    catch (error) { await showNotification((error as Error).message, 'warning'); }
-    return;
-  }
-  if (props.isExpandable) emit('toggle');
+function activateTool() {
+  if (props.isExpandable) emit('toggle')
 }
 
 function getToolStatusLabel(tool: ToolUsage): string {

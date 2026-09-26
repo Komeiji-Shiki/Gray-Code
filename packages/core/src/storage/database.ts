@@ -145,6 +145,7 @@ export class PlatformDatabase {
       searchConversationIds: ({ query }) => this.searchConversationIds(query),
       listUsageConversations: options => this.listUsageConversations(options),
       readHistory: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }),
+      readHistoryWithFloors: ({ id, options }) => ({ conversationId: id, ...this.histories.pageWithFloors(this.conversation(id).history_id, options) }),
       historyInfo: ({ id }) => {
         const info = this.histories.info(this.conversation(id).history_id);
         return { total: info.message_count, revision: info.revision };

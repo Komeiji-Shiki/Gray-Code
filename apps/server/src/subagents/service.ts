@@ -8,7 +8,7 @@ import { DEFAULT_SUBAGENTS_CONFIG } from '../../../../backend/modules/settings/t
 import { SubagentFeedback } from './feedback';
 import { PlatformAgentMessages } from './messages';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
-import { createSubagentRecord } from './profile';
+import { createSubagentRecord, subagentInvocationForDisplay } from './profile';
 import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
 import { LegacySubagents } from './legacy';
 import { SubagentRuntimeTimer } from './runtimeTimer';
@@ -23,6 +23,8 @@ interface LiveSubagent {
   detach: (result: ToolOutcome) => void;
   acceptingMessages: boolean;
   coreRunId?: string;
+  /** Model phase only; never persisted with the subagent record. */
+  streamingContentIndex?: number;
   pauseRequested: boolean;
   runtimeTimer?: SubagentRuntimeTimer;
   resume?: () => void;
@@ -82,7 +84,9 @@ export class SubagentExecutionService {
       this.records.set(record.id, record);
     }
     // 完整恢复父子关系后再接收结果，使嵌套任务沿用同一个主会话序号。
-    for (const record of this.records.values()) if (record.background) await this.feedback.enqueue(record, await this.output(record));
+    for (const record of this.records.values()) if (record.background) {
+      await this.feedback.enqueue(record, await this.output(record, record.status === 'completed' ? record.coreRunIds.at(-1) : undefined));
+    }
   }
   async get(actorId: string, id: string): Promise<PlatformSubagent | null> {
     const record = this.records.get(id) ?? await this.app.storage.getRecord(namespace, id) as PlatformSubagent | null;
@@ -113,7 +117,11 @@ export class SubagentExecutionService {
     return structuredClone(record.profile);
   }
   private manifest(record: PlatformSubagent) {
+    const live = this.live.get(record.id);
+    const streamingContentIndex = record.status === 'running' && !live?.controller.signal.aborted
+      ? live?.streamingContentIndex ?? null : null;
     return { runId: record.id, sourceToolCallId: record.sourceToolCallId, agentName: record.agentName, status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt,
+      streamingContentIndex,
       conversationId: record.parentConversationId, contentCount: record.contentCount, eventCount: record.eventSequence,
       contentRevision: record.contentRevision, eventSequence: record.eventSequence, canRetry: terminal(record.status) || record.status === 'awaiting_monitor_action',
       ...(record.legacyOrigin ? { continuedFromRunId: record.legacyOrigin.runId } : {}) };
@@ -236,20 +244,22 @@ export class SubagentExecutionService {
     const limited = { ...options, limit: Math.min(200, options.limit ?? 20) };
     let range = getRunContentRange(info.total + 1, limited);
     let count = Math.max(0, range.endIndex - Math.max(1, range.startIndex));
-    let page = count ? await this.app.storage.readHistory(record.conversationId, { offset: Math.max(0, range.startIndex - 1), limit: count }) : undefined;
-    // 读取边界时刚好追加消息，按同一修订号重新取得尾部窗口。
-    if (page && page.revision !== info.revision) {
+    let page = await this.app.storage.readHistoryWithFloors(record.conversationId, count ? { offset: Math.max(0, range.startIndex - 1), limit: count } : undefined);
+    // 读取边界时刚好追加或删除消息，重新取得窗口；楼层元数据始终与正文来自同一存储快照。
+    if (page.revision !== info.revision) {
       info = { ...info, revision: page.revision, total: page.total };
       range = getRunContentRange(info.total + 1, limited); count = Math.max(0, range.endIndex - Math.max(1, range.startIndex));
-      page = count ? await this.app.storage.readHistory(record.conversationId, { offset: Math.max(0, range.startIndex - 1), limit: count }) : undefined;
+      page = await this.app.storage.readHistoryWithFloors(record.conversationId, count ? { offset: Math.max(0, range.startIndex - 1), limit: count } : undefined);
     }
-    const totalCount = (page?.total ?? info.total) + 1;
-    const contents = [...(range.startIndex === 0 && range.endIndex > 0 ? [record.invocation] : []), ...page?.messages ?? []]
-      .map((content, index) => ({ ...content, index: range.startIndex + index }));
-    const endIndex = range.startIndex + contents.length;
-    record.contentRevision = page?.revision ?? info.revision; record.contentCount = totalCount;
-    return { manifest: this.manifest(record), activeRunIds: this.activeIds(), window: { runId: id, contents, startIndex: range.startIndex, endIndex, totalCount,
-      contentRevision: record.contentRevision, eventSequence: record.eventSequence, contextCompactions: [], hasMoreBefore: range.startIndex > 0, hasMoreAfter: endIndex < totalCount } };
+    const totalCount = page.total + 1;
+    const startIndex = count && range.startIndex > 0 ? page.startIndex + 1 : Math.min(range.startIndex, totalCount);
+    const contents = [...(startIndex === 0 && range.endIndex > 0 ? [subagentInvocationForDisplay(record)] : []), ...page.messages]
+      .map((content, index) => ({ ...content, index: startIndex + index }));
+    const endIndex = startIndex + contents.length;
+    record.contentRevision = page.revision; record.contentCount = totalCount;
+    return { manifest: this.manifest(record), activeRunIds: this.activeIds(), window: { runId: id, contents, startIndex, endIndex, totalCount,
+      floorIndices: page.floorIndices.map(index => index + 1),
+      contentRevision: record.contentRevision, eventSequence: record.eventSequence, contextCompactions: [], hasMoreBefore: startIndex > 0, hasMoreAfter: endIndex < totalCount } };
   }
   async requests(actorId: string, id: string) {
     const record = await this.get(actorId, id);
@@ -424,7 +434,7 @@ export class SubagentExecutionService {
     } catch (error) { record.status = signal.aborted && !(signal.reason instanceof SubagentTimeoutError) ? 'cancelled' : 'failed'; record.error = (error as Error).message; record.updatedAt = Date.now(); }
     finally { live.runtimeTimer?.dispose(); live.acceptingMessages = false; signal.removeEventListener('abort', abort); if (live.hasSlot) this.limiter.release(record.id); }
     await this.save(record); this.emit(record, `run_${record.status}`);
-    const response = await this.output(record);
+    const response = await this.output(record, live.coreRunId);
     if (record.background) {
       try { await this.feedback.enqueue(record, response); }
       catch { this.app.publish({ type: 'notification', message: '子代理已结束，结果尚未同步到主对话，可以先从监视器查看。' }); }
@@ -433,10 +443,12 @@ export class SubagentExecutionService {
     return { success: record.status === 'completed', cancelled: record.status === 'cancelled', error: record.error,
       data: { agentName: record.agentName, runId: record.id, response, status: record.status, duration: record.updatedAt - record.createdAt } };
   }
-  private async output(record: PlatformSubagent): Promise<string> {
-    if (!await this.app.storage.getConversation(record.conversationId)) return record.error || '子代理会话未完成创建。';
+  private async output(record: PlatformSubagent, coreRunId: string | undefined): Promise<string> {
+    if (!coreRunId || !await this.app.storage.getConversation(record.conversationId)) return record.error || '子代理本次运行没有返回正文。';
     const history = await this.app.storage.readFullHistory(record.conversationId);
-    const last = [...history.messages].reverse().find(message => message.role === 'model' && message.parts.some(part => typeof part.text === 'string' && !part.thought));
+    // 接续会话含以往交付；失败/超时只能报告本次执行，不能拿上一轮成功报告冒充本次结果。
+    const last = [...history.messages].reverse().find(message => message.runId === coreRunId && message.role === 'model'
+      && message.parts.some(part => typeof part.text === 'string' && !part.thought));
     return last?.parts.filter(part => !part.thought).map(part => typeof part.text === 'string' ? part.text : '').join('') || record.error || '子代理没有返回正文。';
   }
   private async notification(event: Record<string, any>): Promise<void> {
@@ -453,8 +465,14 @@ export class SubagentExecutionService {
       record ??= [...this.records.values()].find(record => record.profile.id === run.agentId);
     }
     if (!record) return; this.byCoreRun.set(runId, record);
+    const live = this.live.get(record.id);
+    if (live && event.type === 'event') {
+      if (event.event.type === 'model.started') live.streamingContentIndex = record.contentCount;
+      else if (event.event.type.startsWith('run.') && terminal(event.event.type.slice(4))) live.streamingContentIndex = undefined;
+    }
     if (event.type === 'model.delta') { this.emit(record, 'llm_delta', { delta: event.parts, done: false }); return; }
     if (event.type === 'message.persisted' || event.type === 'event' && event.event.type === 'run.started') {
+      if (live) live.streamingContentIndex = undefined;
       const info = await this.app.storage.historyInfo(record.conversationId); record.contentRevision = info.revision; record.contentCount = info.total + 1;
       if (event.type === 'event') record.status = 'running';
       await this.save(record); this.emit(record, 'content_snapshot', { contentCount: record.contentCount }); return;

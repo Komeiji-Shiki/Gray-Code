@@ -105,6 +105,8 @@ export class PlatformStorage {
   searchConversationIds(query: string) { return this.request('searchConversationIds', { query }); }
   listUsageConversations(options: StorageOperations['listUsageConversations']['input'] = {}) { return this.request('listUsageConversations', options); }
   readHistory(id: string, options: PageOptions = {}) { return this.request('readHistory', { id, options }); }
+  /** Omit options to read only global floor metadata; supplied options fetch a bounded page in the same revision. */
+  readHistoryWithFloors(id: string, options?: PageOptions) { return this.request('readHistoryWithFloors', { id, options }); }
   historyInfo(id: string) { return this.request('historyInfo', { id }); }
   /** Explicit full reads use one worker operation; UI callers should use readHistory pages. */
   readUsageState(id: string, records: StorageOperations['readUsageState']['input']['records'] = []) { return this.request('readUsageState', { id, records }); }

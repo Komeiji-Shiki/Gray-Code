@@ -468,7 +468,8 @@ class ValueParser {
                 return { ok: false, i: this.i };
             }
             const v = this.parseValue();
-            if (v.ok) {
+            // 动态数组展开的已知子集不是完整值；尤其不能把导入的枚举生成成 enum: []。
+            if (v.ok && !(Array.isArray(v.value) && v.spreadDynamic)) {
                 out[key] = v.value;
             } else {
                 dynamicKeys.add(key);

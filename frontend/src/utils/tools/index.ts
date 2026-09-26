@@ -38,6 +38,9 @@ import './skills/read_skill'
 
 // SubAgents 工具
 import './subagents/subagents'
+import './context'
+import './automation'
+import './platform'
 
 // TODO 工具
 import './todo/todo_write'

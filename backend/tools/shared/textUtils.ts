@@ -4,20 +4,7 @@
 
 export const IS_WINDOWS = process.platform === 'win32';
 
-/**
- * 统一换行符为 LF（\n）。
- *
- * - Windows CRLF (\r\n) -> \n
- * - legacy CR (\r) -> \n
- */
-export function normalizeLineEndingsToLF(text: string): string {
-    // 无 \r 的文本（绝大多数源码文件）直接返回：省掉一次全文替换扫描；
-    // 有 \r 时单次扫描同时处理 CRLF 与孤立 CR，避免两次全量 replace 各复制一遍字符串。
-    if (!text.includes('\r')) {
-        return text;
-    }
-    return text.replace(/\r\n?/g, '\n');
-}
+export { normalizeLineEndingsToLF } from '../../../shared/textLines';
 
 /**
  * 转义正则表达式特殊字符。

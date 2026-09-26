@@ -1,8 +1,74 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
-import { USER_INTERRUPT_MAX_LENGTH, USER_INTERRUPT_MIN_INTERVAL_MS, AGENT_INBOX_MAX_MESSAGES } from '../../../../backend/core/services/agentMailbox';
+import { chatUserMessage } from '../transport/chatInput';
+import { USER_INTERRUPT_MIN_INTERVAL_MS, AGENT_INBOX_MAX_MESSAGES } from '../../../../backend/core/services/agentMailbox';
+
+interface InterruptReceipt { success: true; queued: true; messageId: string; runId: string }
+const interruptQueues = new WeakMap<PlatformApplication, Map<string, Promise<unknown>>>();
+
+/** 同一会话的重试先查持久回执，再检查频率；两窗口不能把同一输入各保存一次。 */
+function serializeInterrupt<T>(app: PlatformApplication, conversationId: string, operation: () => Promise<T>): Promise<T> {
+  let queues = interruptQueues.get(app);
+  if (!queues) { queues = new Map(); interruptQueues.set(app, queues); }
+  const next = (queues.get(conversationId) ?? Promise.resolve()).catch(() => {}).then(operation);
+  queues.set(conversationId, next);
+  void next.finally(() => { if (queues.get(conversationId) === next) queues.delete(conversationId); }).catch(() => {});
+  return next;
+}
+
+/** 模型边界等待已开始的用户入队事务，不等待审批，也不提前写入飞行中请求的历史。 */
+export async function settlePendingUserInput(app: PlatformApplication, conversationId: string): Promise<void> {
+  for (;;) {
+    const pending = interruptQueues.get(app)?.get(conversationId);
+    if (!pending) return;
+    await pending.catch(() => {}); // 接收失败由原请求报告，不能把它变成模型运行失败。
+  }
+}
+
+async function sendInterruptMessage(app: PlatformApplication, client: ClientSession, data: Record<string, any>) {
+  app.requireOwner(client.actorId); await app.conversation(client.actorId, data.conversationId);
+  if (typeof data.text !== 'string') throw new Error('输入正文必须是文本。');
+  const text = data.text;
+  if (data.attachments !== undefined && !Array.isArray(data.attachments)) throw new Error('附件内容无效。');
+  if (!text.trim() && !data.attachments?.length) throw new Error('请输入消息或添加附件。');
+  if (data.messageId !== undefined && (typeof data.messageId !== 'string' || !data.messageId)) throw new Error('输入请求标识无效。');
+  const input = chatUserMessage(data, text);
+  const id = `interrupt-${createHash('sha256').update(JSON.stringify([data.conversationId, client.actorId, data.messageId ?? randomUUID()])).digest('hex')}`;
+  const fingerprint = createHash('sha256').update(JSON.stringify({ parts: input.parts, deepSeekVisionTileSplit: input.deepSeekVisionTileSplit })).digest('hex');
+  const result = await serializeInterrupt(app, data.conversationId, async () => {
+    const saved = await app.storage.getRecord('user-interrupt-receipts', id) as { fingerprint: string; receipt: InterruptReceipt } | null;
+    if (saved) {
+      if (saved.fingerprint !== fingerprint) throw new Error('同一输入请求不能改写已保存的消息。');
+      return saved.receipt;
+    }
+    const run = (await app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true, limit: 1 }))[0];
+    if (!run) return { success: false, error: { code: 'INTERRUPT_NO_ACTIVE_RUN', message: '当前任务已经结束，请直接发送。' } };
+    const rate = await app.storage.getVersionedRecord('user-interrupt-rate', data.conversationId);
+    const lastAt = Number((rate.value as { timestamp?: number } | null)?.timestamp ?? 0);
+    if (Date.now() - lastAt < USER_INTERRUPT_MIN_INTERVAL_MS) throw new Error('追加消息过于频繁，请稍后再发。');
+    if ((await app.storage.listRecords('subagent-feedback', data.conversationId)).length >= AGENT_INBOX_MAX_MESSAGES) throw new Error('待处理消息已达到上限，请等待当前任务处理。');
+    const timestamp = Date.now();
+    const receipt: InterruptReceipt = { success: true, queued: true, messageId: id, runId: run.id };
+    // 与普通发送共用 parts 构建。消息和回执一起保存，只在既有模型边界交付；不取消/确认工具。
+    await app.subagents.feedback.enqueueMessages([{ id, conversationId: data.conversationId, actorId: client.actorId, sourceRunId: run.id,
+      message: { ...input, id, timestamp, source: 'user', actorId: client.actorId, isUserInput: true, userFeedback: { kind: 'interrupt' } } }], [
+      { namespace: 'user-interrupt-rate', id: data.conversationId, ownerId: data.conversationId, expectedRevision: rate.revision, value: { timestamp } },
+      { namespace: 'user-interrupt-receipts', id, ownerId: data.conversationId, expectedRevision: null, value: { fingerprint, receipt } },
+    ]);
+    return receipt;
+  });
+  // 入队事务先释放边界等待，再尝试空闲交付；不能让两者相互等待。
+  if (result.success) {
+    try { await app.subagents.feedback.flush(data.conversationId); }
+    catch (error) {
+      // 持久接收已成功，交付失败不能返回“未发送”让前端以新身份再发一份。
+      app.publish({ type: 'notification', severity: 'error', message: `用户输入已保存，等待后续交付：${String(error)}` });
+    }
+  }
+  return result;
+}
 
 export function conversationUiHandlers(app: PlatformApplication, client: ClientSession) {
   return {
@@ -38,21 +104,6 @@ export function conversationUiHandlers(app: PlatformApplication, client: ClientS
       finally { if (timer) clearTimeout(timer); }
       return { idle: !(await app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true })).length };
     },
-    'chat.sendInterruptMessage': async (data: Record<string, any>) => {
-      app.requireOwner(client.actorId); await app.conversation(client.actorId, data.conversationId);
-      const text = typeof data.text === 'string' ? data.text.trim() : '';
-      if (!text || text.length > USER_INTERRUPT_MAX_LENGTH) throw new Error(`追加消息需要 1 至 ${USER_INTERRUPT_MAX_LENGTH} 个字符。`);
-      const run = (await app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true, limit: 1 }))[0];
-      if (!run) return { success: false, error: { code: 'CONVERSATION_IDLE', message: '当前任务已经结束，请直接发送。' } };
-      const rate = await app.storage.getVersionedRecord('user-interrupt-rate', data.conversationId);
-      const lastAt = Number((rate.value as { timestamp?: number } | null)?.timestamp ?? 0);
-      if (Date.now() - lastAt < USER_INTERRUPT_MIN_INTERVAL_MS) throw new Error('追加消息过于频繁，请稍后再发。');
-      if ((await app.storage.listRecords('subagent-feedback', data.conversationId)).length >= AGENT_INBOX_MAX_MESSAGES) throw new Error('待处理消息已达到上限，请等待当前任务处理。');
-      const id = `interrupt-${randomUUID()}`; const timestamp = Date.now();
-      await app.subagents.feedback.enqueueMessage({ id, conversationId: data.conversationId, actorId: client.actorId, sourceRunId: run.id,
-        message: { id, role: 'user', parts: [{ text }], timestamp, actorId: client.actorId, isUserInput: true, userFeedback: { kind: 'interrupt' } } },
-        [{ namespace: 'user-interrupt-rate', id: data.conversationId, ownerId: data.conversationId, expectedRevision: rate.revision, value: { timestamp } }]);
-      return { success: true };
-    },
+    'chat.sendInterruptMessage': (data: Record<string, any>) => sendInterruptMessage(app, client, data),
   };
 }

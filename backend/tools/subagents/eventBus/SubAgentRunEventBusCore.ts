@@ -270,6 +270,11 @@ export abstract class SubAgentRunEventBusCore {
             snapshot.status = 'interrupted';
         }
 
+        if (stamped.type === 'model_started' && snapshot.status === 'running') {
+            snapshot.streamingContentIndex = snapshot.contents.length;
+        } else if (stamped.type === 'model_finished' || snapshot.status !== 'running') {
+            snapshot.streamingContentIndex = null;
+        }
         this.notify(stamped, snapshot);
         if (stamped.type.startsWith('run_')) {
             // run 状态变更是低频且关键的（尤其终态），不参与内容写入的节流窗口

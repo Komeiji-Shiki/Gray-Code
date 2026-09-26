@@ -425,6 +425,7 @@ function isDiffExpanded(path: string): boolean {
         <span v-else class="stat">{{ t('components.tools.search.searchInFilesPanel.matchCount', { count: matchCount }) }}</span>
         <span v-if="!isReplaceMode" class="stat">{{ t('components.tools.search.searchInFilesPanel.fileCount', { count: fileCount }) }}</span>
         <span v-if="truncated" class="stat truncated">{{ t('components.tools.search.searchInFilesPanel.truncated') }}</span>
+        <span v-if="!isReplaceMode && typeof resultData?.nextOffset === 'number'" class="stat search-next-offset">{{ t('components.tools.platform.nextOffset', { offset: resultData.nextOffset }) }}</span>
       </div>
     </div>
     
@@ -448,7 +449,10 @@ function isDiffExpanded(path: string): boolean {
       </div>
     </div>
 
-    <div v-if="queryFallback || pathWarning" class="diagnostic-box">
+    <div v-if="queryFallback || pathWarning || resultData?.continuationHint" class="diagnostic-box">
+      <div v-if="resultData?.continuationHint" class="diagnostic-row info search-continuation">
+        <span class="codicon codicon-info"></span><span>{{ resultData.continuationHint }}</span>
+      </div>
       <div v-if="queryFallback?.reason === 'suspected_regex'" class="diagnostic-row warning">
         <span class="codicon codicon-warning"></span>
         <span>{{ queryFallback.suggestion }}</span>

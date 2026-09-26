@@ -153,7 +153,7 @@ function truncate(s: string, max: number): string {
           <i class="codicon codicon-output"></i>
           <span>Result</span>
         </div>
-        <pre class="memory-text"><code><template v-for="(line, i) in textContent.split('\n')" :key="i"><span :class="getBlockClass(line)">{{ line }}</span>
+        <pre class="memory-text" tabindex="0" role="region" :aria-label="toolTitle"><code><template v-for="(line, i) in textContent.split('\n')" :key="i"><span :class="getBlockClass(line)">{{ line }}</span>
 </template></code></pre>
       </div>
     </div>
@@ -161,7 +161,19 @@ function truncate(s: string, max: number): string {
 </template>
 
 <style scoped>
+.memory-result,
+.section,
+.args-section,
+.args-body,
+.arg-row,
+.result-body {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .memory-result {
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -310,7 +322,14 @@ function truncate(s: string, max: number): string {
   color: var(--vscode-foreground);
   white-space: pre;
   tab-size: 2;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
+
+.memory-text::-webkit-scrollbar { height: 8px; }
+.memory-text::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); }
+.memory-text:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
 .memory-text code {
   font-family: inherit;

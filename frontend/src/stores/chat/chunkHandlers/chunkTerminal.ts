@@ -404,8 +404,18 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
       // 供 retryAfterError 在重试前清理本地占位。
       // 与 handleCancelled 的保留路径一致，结束其流式渲染标志——
       // 否则 loading 指示器/光标永久闪烁（无后续 chunk 会再置它）。
-      if (messageToRemove.streaming) {
-        replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false })
+      // run.failed / run.interrupted 也是运行终态。审批流不一定再有 toolStatus，
+      // 不能只停正文动画而让已经结束的运行继续显示可批准的黄色工具卡。
+      const tools = messageToRemove.tools?.map(tool => {
+        if (tool.result) return tool
+        if (['streaming', 'queued', 'awaiting_approval', 'executing', 'awaiting_apply'].includes(tool.status || '')) {
+          return { ...tool, status: 'error' as const, awaitingConfirmation: false,
+            error: tool.error || state.error.value?.message }
+        }
+        return tool
+      })
+      if (messageToRemove.streaming || tools?.some((tool, index) => tool !== messageToRemove!.tools?.[index])) {
+        replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false, tools })
       }
       state._failedStreamMessageId.value = messageToRemove.localOnly === true && !chunk.content?.incompleteReason ? messageToRemove.id : null
     } else {

@@ -2,8 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_SUBAGENTS_CONFIG } from '../../../../backend/modules/settings/types/subAgentsTypes';
 import { MAX_SUBAGENT_NESTING_DEPTH } from '../../../../backend/tools/subagents/types';
 import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
+import { SUBAGENT_COMPLETION_NOTICE } from '../../../../backend/tools/subagents/executor/prompts';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
+
+/** 监控中的第 0 项只展示系统配置；Context/Task 已在真实用户历史中，不能再拼一份。 */
+export function subagentInvocationForDisplay(record: Pick<PlatformSubagent, 'invocation' | 'profile'>) {
+  return { ...record.invocation, parts: [{ text: `# SubAgent Invocation\n\n## Agent System Prompt\n${record.profile.systemPrompt ?? ''}` }] };
+}
 
 /** 新派发和旧记录接续共用配置捕获，不通过模型参数扩大工具与账号权限。 */
 export function createSubagentRecord(app: PlatformApplication, args: Record<string, unknown>, context: SubagentLaunchContext, depth: number): PlatformSubagent {
@@ -26,9 +32,9 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
     return true;
   });
   const id = randomUUID(); const now = Date.now();
-  const systemPrompt = general
+  const systemPrompt = (general
     ? 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.'
-    : config!.systemPrompt;
+    : config!.systemPrompt) + SUBAGENT_COMPLETION_NOTICE;
   const environment = context.workspace ? `工作区：${context.workspace.directory}` : '当前任务没有绑定工作区。';
   return { id, parentConversationId: context.conversationId, parentRunId: context.runId, sourceToolCallId: context.toolCallId, conversationId: randomUUID(), actorId: context.actorId,
     agentName: general ? 'General Worker' : config!.name, workspace: structuredClone(context.workspace ?? null), depth, background: args.background === true,

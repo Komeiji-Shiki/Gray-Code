@@ -1,4 +1,5 @@
 import type { SubAgentContextCompactionRecord } from '../../../../shared/subAgentContextCompaction';
+import { isSubagentInvocationContent } from '../../../../shared/subagentInvocation';
 import { cloneContentsForWindow } from './transcript';
 import { ensureSnapshotProtocolFields } from './protocol';
 import { DEFAULT_CONTENT_WINDOW_LIMIT, type SubAgentRunSnapshot, type SubAgentRunContentWindow, type SubAgentRunContentWindowOptions } from './types';
@@ -33,7 +34,10 @@ export function createRunContentWindow(snapshot: SubAgentRunSnapshot, options: S
   const totalCount = contents.length;
   const { startIndex, endIndex } = getRunContentRange(totalCount, options);
   ensureSnapshotProtocolFields(snapshot);
-  return { runId: snapshot.runId, contents: cloneContentsForWindow(contents.slice(startIndex, endIndex)), startIndex, endIndex, totalCount,
+  const floorIndices = contents.flatMap((content, index) =>
+    (content.role === 'user' || content.role === 'model') && !content.isFunctionResponse
+      && !content.parts.some(part => part.functionResponse) && !isSubagentInvocationContent(content) ? [index] : []);
+  return { runId: snapshot.runId, contents: cloneContentsForWindow(contents.slice(startIndex, endIndex)), startIndex, endIndex, totalCount, floorIndices,
     contentRevision: snapshot.contentRevision, eventSequence: snapshot.eventSequence,
     contextCompactions: JSON.parse(JSON.stringify(snapshot.contextCompactions || [])) as SubAgentContextCompactionRecord[],
     hasMoreBefore: startIndex > 0, hasMoreAfter: endIndex < totalCount };

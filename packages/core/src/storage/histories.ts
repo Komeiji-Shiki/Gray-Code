@@ -106,6 +106,25 @@ export class HistoryStore {
     return { total: info.message_count, startIndex: start, revision: info.revision, messages: rows.map(row => this.decode(row)) };
   }
 
+  /** A bounded page and its global floor metadata share one snapshot. No options means metadata only. */
+  pageWithFloors(id: string, options?: PageOptions) {
+    return this.db.transaction(() => {
+      const info = this.info(id);
+      const page = options ? this.page(id, options)
+        : { total: info.message_count, startIndex: 0, revision: info.revision, messages: [] as PlatformMessage[] };
+      const rows = this.db.prepare(`SELECT e.body_hash,s.start_index+e.ordinal-s.segment_offset AS position
+        FROM history_spans s JOIN segment_entries e ON e.segment_id=s.segment_id
+        AND e.ordinal>=s.segment_offset AND e.ordinal<s.segment_offset+s.count
+        WHERE s.history_id=? AND e.role IN ('user','model') ORDER BY s.start_index,e.ordinal`).all(id) as { body_hash: Buffer; position: number }[];
+      const floorIndices = rows.flatMap(row => {
+        // Runtime tool results and adopted legacy histories persist this flag; never restore parts or attachments for floors.
+        const body = this.objects.getValue<Pick<PlatformMessage, 'isFunctionResponse'>>(row.body_hash, { fields: ['isFunctionResponse'] });
+        return body.isFunctionResponse ? [] : [row.position];
+      });
+      return { ...page, floorIndices };
+    })();
+  }
+
   append(id: string, messages: PlatformMessage[]): void {
     if (!Array.isArray(messages)) invalid('Messages must be an array.');
     if (!messages.length) return;

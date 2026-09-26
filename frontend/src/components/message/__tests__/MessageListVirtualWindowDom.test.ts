@@ -18,6 +18,9 @@ const CustomScrollbarStub = defineComponent({
     expose({
       getContainer: () => container.value ?? undefined,
       scrollToBottom: vi.fn(),
+      scrollToPosition: (top: number) => { if (container.value) container.value.scrollTop = top },
+      pauseBottomFollow: vi.fn(),
+      isFollowingBottom: () => false,
       update: vi.fn()
     })
     return { container }

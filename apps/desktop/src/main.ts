@@ -5,6 +5,7 @@ import { DesktopPortableProfile, portableProfileDirectory } from './portableProf
 import { ApplicationBackups } from '../../server/src/backups/service';
 import { BackupRestoreState } from '../../server/src/backups/restore';
 import { desktopNotifications } from './notifications';
+import { activateDesktopWindow } from './windowActivation';
 import {
   app,
   BrowserWindow,
@@ -178,9 +179,7 @@ async function confirmQuit(): Promise<void> {
 async function createWindow(): Promise<void> {
   closePending = false;
   if (window && !window.isDestroyed()) {
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
+    activateDesktopWindow(window);
     return;
   }
   const colors = resolveAppearancePalette(application.settings.snapshot().settings.appearance.theme);
@@ -285,7 +284,6 @@ async function main(): Promise<void> {
   });
   // 后台补齐历史遗留的占位对话标题（一次性，写入标记后不再扫描）。
   void backfillPlaceholderTitles(application).catch(error => console.warn('[autoTitles] Backfill failed:', error));
-  notifications = desktopNotifications(application, () => window, createWindow);
   const installer = new DesktopInstaller({ executable: process.execPath, userData: app.getPath('userData'), dataDirectory,
     recoveryTemplate: path.resolve(__dirname, '../../../resources/installer/restore-program.ps1'),
     currentVersion: app.getVersion(), restartArgs: process.argv.slice(app.isPackaged ? 1 : 2).filter(value => !value.startsWith('--veloapp-')),
@@ -312,6 +310,14 @@ async function main(): Promise<void> {
   });
   const updates = new DesktopUpdates(application, installer);
   const router = new ApplicationRouter(application);
+  notifications = desktopNotifications(application, () => window, async conversationId => {
+    // Foreground synchronously in createWindow before awaiting conversation access/navigation.
+    await createWindow();
+    if (conversationId) {
+      await application.conversation(client.actorId, conversationId);
+      await router.call(client, 'ui.command', { command: 'platform.openModeConversation', data: { conversationId } });
+    }
+  });
   petWindowController = new DesktopPetWindow(application, client, preload, trust);
   const webPortIndex = argumentsList.indexOf('--web-port');
   if (webPortIndex >= 0) {

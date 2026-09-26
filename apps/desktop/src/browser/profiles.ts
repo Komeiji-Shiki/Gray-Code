@@ -15,7 +15,8 @@ export class BrowserProfiles {
     return values.sort((left, right) => Number(right.id === `default:${actorId}`) - Number(left.id === `default:${actorId}`) || left.name.localeCompare(right.name));
   }
   async get(actorId: string, id?: string): Promise<BrowserProfile> {
-    const value = (await this.list(actorId)).find(item => item.id === (id ?? `default:${actorId}`));
+    const selectedId = id == null || typeof id === 'string' && !id.trim() ? `default:${actorId}` : id;
+    const value = (await this.list(actorId)).find(item => item.id === selectedId);
     if (!value) throw new Error('登录配置不存在或不属于当前账号。');
     return value;
   }
@@ -25,8 +26,8 @@ export class BrowserProfiles {
   }
   async rename(actorId: string, id: string, name: unknown): Promise<void> {
     const value = await this.get(actorId, id);
-    const record = await this.app.storage.getVersionedRecord(namespace, id);
-    await this.app.storage.commitRecords([{ namespace, id, expectedRevision: record.revision, value: { ...value, name: this.name(name) } }]);
+    const record = await this.app.storage.getVersionedRecord(namespace, value.id);
+    await this.app.storage.commitRecords([{ namespace, id: value.id, expectedRevision: record.revision, value: { ...value, name: this.name(name) } }]);
   }
   partition(profile: BrowserProfile): string {
     // 沿用主人的默认分区，保留已经登录的网站。

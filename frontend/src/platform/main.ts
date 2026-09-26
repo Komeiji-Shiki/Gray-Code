@@ -74,8 +74,11 @@ defaultPromptModeId = startupPresets.currentModeId || 'code';
 window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.settings?.ui?.appearance?.splashEnabled !== false;
 applyDesktopAppearance(platformSettings.appearance);
 desktop.subscribe(event => {
-  if (event.type === 'settings.changed') void desktop.call('ui.request', { type: 'getPromptModes', data: {} })
-    .then(result => { defaultPromptModeId = result.currentModeId || 'code'; }).catch(() => {});
+  if (event.type === 'settings.changed') {
+    dispatch({ type: 'settingsChanged' });
+    void desktop.call('ui.request', { type: 'getPromptModes', data: {} })
+      .then(result => { defaultPromptModeId = result.currentModeId || 'code'; }).catch(() => {});
+  }
   if (event.type === 'ui.conversation.focused' && event.defaultPromptModeId) defaultPromptModeId = event.defaultPromptModeId;
   if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain))
     dispatch({ type: 'platformTransportResumed', data: { authenticatedAgain: event.authenticatedAgain === true } });

@@ -261,6 +261,27 @@ describe('App 开屏动画启动偏好', () => {
     expect(onResult).toHaveBeenCalledWith(false)
   })
 
+  test('独立端审批等待期间的真实文字和截图只投递，不替用户拒绝工具', async () => {
+    const host = window.__GRAYCODE_HOST
+    window.__GRAYCODE_HOST = { kind: 'desktop' } as NonNullable<typeof host>
+    runtime.chatStore.hasPendingToolConfirmation = true
+    runtime.chatStore.getConversationViews = vi.fn().mockReturnValue([])
+    runtime.chatStore.sendMessage.mockResolvedValue(true)
+    try {
+      wrapper = mount(App)
+      settingsRequest.resolve(makeSettingsResponse(true))
+      await flushPromises()
+      const attachment = { id: 'screenshot', name: 'screen.png', type: 'image', mimeType: 'image/png', size: 1, data: 'AAAA' }
+      const onResult = vi.fn()
+      wrapper.getComponent({ name: 'InputArea' }).vm.$emit('send', '请看最新截图', [attachment], { messageId: 'input-request-1' }, onResult)
+      await flushPromises()
+      expect(runtime.chatStore.cancelStreamAndRejectTools).not.toHaveBeenCalled()
+      expect(runtime.chatStore.cancelStream).not.toHaveBeenCalled()
+      expect(runtime.chatStore.sendMessage).toHaveBeenCalledWith('请看最新截图', [attachment], { messageId: 'input-request-1' })
+      expect(onResult).toHaveBeenCalledWith(true)
+    } finally { window.__GRAYCODE_HOST = host }
+  })
+
   test('等待拒绝工具期间切换标签，不向新标签发送旧正文', async () => {
     const cancel = deferred<void>()
     runtime.chatStore.activeTabId = 'tab-a'

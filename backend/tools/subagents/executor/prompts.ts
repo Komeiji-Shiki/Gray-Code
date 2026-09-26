@@ -24,6 +24,8 @@ export const SUBAGENT_NESTING_PROMPT_NOTICE = [
  * 代码层已忽略"工具调用之后的尾巴文本"兜底；提示词从源头约束降低触发概率。
  * 修改目的：一句话轻量引导，不越俎代庖——详细的工具纪律交给用户自定义 systemPrompt。
  */
+export const SUBAGENT_COMPLETION_NOTICE = '\n\nFinal delivery: finish the requested work, verification and cleanup, then end with one plain-text assistant report and no tool calls in that final turn. Use agent_send_message only for interim coordination, not as a substitute for the final report. Once fully finished, do not keep calling tools, polling or waiting; return the report so the runtime can mark the task completed.';
+
 export const SUBAGENT_TOOL_DISCIPLINE_NOTICE = [
     '',
     'Before tool results return, do not state content facts you have not verified — plan first, call tools, then describe what the results actually show.'

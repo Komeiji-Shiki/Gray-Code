@@ -11,6 +11,7 @@ import { isBinaryFile } from '../../../../backend/tools/shared/multimodal';
 import { MAX_LINE_COUNT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
 import { walkGlobTree } from '../../../../backend/tools/search/globWalker';
 import { detectTextFromHeader, decodeTextBytes } from '../../../../backend/tools/search/textEncodingRuntime';
+import { TextLineCounter } from '../../../../shared/textLines';
 
 /** 每次调用独享的文件宿主，工作区与账号来自运行器而不是模型自报参数。 */
 export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost {
@@ -124,12 +125,15 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
       if ((await stat(absolute)).size > MAX_LINE_COUNT_FILE_BYTES) return undefined;
       const handle = await open(absolute, 'r');
       try {
-        let lines = 1; const buffer = Buffer.alloc(64 * 1024);
+        const counter = new TextLineCounter(); const buffer = Buffer.alloc(64 * 1024);
+        let totalBytes = 0;
         for (;;) {
           this.context.signal.throwIfAborted();
           const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-          if (!bytesRead) return lines;
-          for (let index = 0; index < bytesRead; index++) if (buffer[index] === 10) lines++;
+          if (!bytesRead) return counter.lineCount;
+          totalBytes += bytesRead;
+          if (totalBytes > MAX_LINE_COUNT_FILE_BYTES) return undefined;
+          counter.push(buffer, bytesRead);
         }
       } finally { await handle.close(); }
     } catch (error) { this.context.signal.throwIfAborted(); return undefined; }

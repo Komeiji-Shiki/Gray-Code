@@ -6,7 +6,7 @@ import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
 import {escapeRegExp,detectSuspectedRegexIntent,createSuspectedRegexSuggestion} from '../shared/textUtils';
 import type {SearchFileHost,FileLocation} from './fileHost';
-import {createSearchPass,type SearchMatch,type SearchBudget,type SearchPassResult,type SearchQueryFallbackInfo,type SearchPathWarningInfo} from './searchPassRuntime';
+import {createSearchPass,type SearchMatch,type SearchBudget,type SearchPageState,type SearchPassResult,type SearchQueryFallbackInfo,type SearchPathWarningInfo} from './searchPassRuntime';
 import {createReplacePass,type ReplaceResult,type SkippedFileInfo} from './replacePassRuntime';
 interface SearchInFilesArgs {
     mode?: 'search' | 'replace';
@@ -16,6 +16,7 @@ interface SearchInFilesArgs {
     isRegex?: boolean;
     caseSensitive?: boolean;
     maxResults?: number;
+    offset?: number;
     replace?: string;
     maxFiles?: number;
 }
@@ -84,13 +85,15 @@ function createSearchInFilesTool(): Tool {
         declaration: {
             name: 'search_in_files',
             strict: true,  // API 端强制 schema 校验
-            description: isMultiRoot
+            description: (isMultiRoot
                 ? isZh
                     ? `在工作区多个文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "workspace_name/dir/"（尾部斜杠），单个文件使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
                     : `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
                 : isZh
                     ? '在工作区文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。返回匹配的文件和上下文。'
-                    : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
+                    : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.') + (isZh
+                        ? '\n搜索结果含 nextOffset 时，保持查询条件不变，将它作为 offset 续查。truncationReasons 区分匹配数、输出预算与文件扫描上限；不能续查时按 continuationHint 缩小范围。'
+                        : '\nWhen search results include nextOffset, pass it as offset with unchanged query parameters. truncationReasons distinguishes match, output-budget and file-discovery limits; follow continuationHint when pagination cannot recover omitted results.'),
             category: 'search',
             parameters: {
                 type: 'object',
@@ -139,11 +142,17 @@ function createSearchInFilesTool(): Tool {
                         description: isZh ? '[搜索模式] 最大匹配结果数' : '[Search mode] Maximum number of match results',
                         default: 100
                     },
+                    offset: {
+                        type: 'integer', minimum: 0, default: 0,
+                        description: isZh
+                            ? '[搜索模式] 跳过的匹配数。续查时传上次返回的 nextOffset，并保持 query/path/pattern/isRegex/caseSensitive 不变。每页重新搜索，文件变化后应从 0 重查。'
+                            : '[Search mode] Matches to skip. Continue with the returned nextOffset and unchanged query/path/pattern/isRegex/caseSensitive. Each page rescans live files; restart at 0 after files change.'
+                    },
                     replace: {
                         type: 'string',
                         description: isZh
-                            ? '[替换模式] 替换字符串。mode 为 "replace" 时必须提供；省略会静默把所有匹配替换为空字符串。isRegex=true 时支持 $1、$2 等捕获组。'
-                            : '[Replace mode] Replacement string. REQUIRED when mode is "replace"; omitting it would silently replace all matches with empty string. Supports regex capture groups like $1, $2 when isRegex is true.'
+                            ? '[替换模式] 必须显式提供替换字符串；省略会报错，不会修改文件。显式传空字符串表示删除匹配内容。isRegex=true 时支持 $1、$2 等捕获组。'
+                            : '[Replace mode] Replacement string must be explicitly provided; omitting it returns an error without modifying files. An explicit empty string deletes matches. Supports $1, $2 capture groups when isRegex=true.'
                     },
                     maxFiles: {
                         type: 'number',
@@ -164,6 +173,13 @@ function createSearchInFilesTool(): Tool {
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
             const mode = typed.mode || 'search';
             const isReplaceMode = mode === 'replace';
+            const offset = typed.offset ?? 0;
+            if (!Number.isSafeInteger(offset) || offset < 0) {
+                return { success: false, error: 'offset must be a non-negative safe integer' };
+            }
+            if (isReplaceMode && offset !== 0) {
+                return { success: false, error: 'offset is only supported in search mode; replacement is not paginated' };
+            }
 
             // replace 模式下 replace 参数必须显式提供：漏传时替换串为空会静默删除所有匹配内容
             if (isReplaceMode && typeof typed.replace !== 'string') {
@@ -181,7 +197,8 @@ function createSearchInFilesTool(): Tool {
                 : isReplaceMode;
             
             // 搜索模式参数（0/负值/非数字语义混乱：统一回退默认 100 并取整，参照 find_files）
-            const maxResults = typeof typed.maxResults === 'number' && typed.maxResults > 0 ? Math.floor(typed.maxResults) : 100;
+            const maxResults = typeof typed.maxResults === 'number' && Number.isFinite(typed.maxResults) && typed.maxResults > 0
+                ? Math.max(1, Math.floor(typed.maxResults)) : 100;
             
             // 替换模式参数（仅在替换模式下使用）。
             // isRegex=false 时 query 按字面量匹配，替换串也必须按字面量写入：
@@ -391,11 +408,10 @@ function createSearchInFilesTool(): Tool {
                     const maxTotalChars = (typeof configuredMaxTotal === 'number' && Number.isFinite(configuredMaxTotal))
                         ? Math.floor(configuredMaxTotal)
                         : 200000;
-                    const budget: SearchBudget | undefined = maxTotalChars > 0
-                        ? { remainingChars: maxTotalChars, truncated: false }
-                        : undefined;
-                    
+                    let budget: SearchBudget | undefined;
                     const runSearchPass = async (regex: RegExp): Promise<SearchPassResult> => {
+                        budget = maxTotalChars > 0 ? { remainingChars: maxTotalChars, truncated: false } : undefined;
+                        const page: SearchPageState = { remaining: offset, matchesSeen: 0 };
                         const results: SearchMatch[] = [];
                         const skippedFiles: SkippedFileInfo[] = [];
                         let filesTruncated = false;
@@ -424,7 +440,8 @@ function createSearchInFilesTool(): Tool {
                                 workspaces.length > 1 ? targetWorkspace.name : null,
                                 excludePattern,
                                 searchConfig,
-                                budget
+                                budget,
+                                page
                             );
                             results.push(...pass.matches);
                             filesTruncated = pass.filesTruncated;
@@ -444,7 +461,8 @@ function createSearchInFilesTool(): Tool {
                                     ws.name,
                                     excludePattern,
                                     searchConfig,
-                                    budget
+                                    budget,
+                                    page
                                 );
                                 results.push(...wsPass.matches);
                                 filesTruncated = filesTruncated || wsPass.filesTruncated;
@@ -471,7 +489,8 @@ function createSearchInFilesTool(): Tool {
                                 workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
                                 excludePattern,
                                 searchConfig,
-                                budget
+                                budget,
+                                page
                             );
                             results.push(...pass.matches);
                             filesTruncated = filesTruncated || pass.filesTruncated;
@@ -486,6 +505,7 @@ function createSearchInFilesTool(): Tool {
 
                         return {
                             results,
+                            matchesSeen: page.matchesSeen,
                             matchesTruncated,
                             budgetTruncated: !!budget?.truncated,
                             filesTruncated,
@@ -499,7 +519,7 @@ function createSearchInFilesTool(): Tool {
                     let fallbackInfo: SearchQueryFallbackInfo | undefined;
 
                     const fallbackKeywords = !isRegex ? splitWhitespaceFallbackKeywords(query) : [];
-                    if (allResults.length === 0 && !searchPass.budgetTruncated && fallbackKeywords.length > 0) {
+                    if (searchPass.matchesSeen === 0 && !searchPass.budgetTruncated && fallbackKeywords.length > 0) {
                         const fallbackRegex = createFallbackKeywordRegex(fallbackKeywords, flags);
                         searchPass = await runSearchPass(fallbackRegex);
                         allResults = searchPass.results;
@@ -511,7 +531,7 @@ function createSearchInFilesTool(): Tool {
                         };
                     }
 
-                    if (allResults.length === 0 && !searchPass.budgetTruncated && !isRegex) {
+                    if (searchPass.matchesSeen === 0 && !searchPass.budgetTruncated && !isRegex) {
                         const regexIntent = detectSuspectedRegexIntent(query);
                         if (regexIntent.suspected) {
                             fallbackInfo = {
@@ -525,11 +545,28 @@ function createSearchInFilesTool(): Tool {
                         }
                     }
 
+                    const truncationReasons = [
+                        ...(searchPass.matchesTruncated ? ['maxResults'] : []),
+                        ...(searchPass.budgetTruncated ? ['outputBudget'] : []),
+                        ...(searchPass.filesTruncated ? ['maxFindFiles'] : [])
+                    ];
+                    // 预算可能跳过中间的长匹配；不能用简单 offset 冒充无遗漏续查。
+                    const nextOffset = searchPass.matchesTruncated && !searchPass.budgetTruncated
+                        ? offset + allResults.length : undefined;
+                    const continuationHint = [
+                        ...(nextOffset !== undefined ? [`Continue with offset=${nextOffset} and unchanged search parameters; restart at offset=0 if files changed.`] : []),
+                        ...(searchPass.budgetTruncated ? ['Output budget omitted matches: narrow query/path/pattern or reduce context in search settings, then restart at offset=0.'] : []),
+                        ...(searchPass.filesTruncated ? ['File discovery reached maxFindFiles: narrow path/pattern or increase that setting; offset cannot reach undiscovered files.'] : [])
+                    ].join(' ');
                     return {
                         success: true,
                         data: {
                             results: allResults,
                             count: allResults.length,
+                            offset,
+                            nextOffset,
+                            truncationReasons: truncationReasons.length ? truncationReasons : undefined,
+                            continuationHint: continuationHint || undefined,
                             // 修改原因：allResults.length >= maxResults 在「恰好 maxResults 条」时误报 truncated；
                             // 修改方式：改用 runSearchPass 的 maxResults+1 探测结果（matchesTruncated），
                             //          与 find_files 的探测语义一致。

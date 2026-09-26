@@ -12,8 +12,8 @@ import { applyLegacyDiffsBestEffort } from '../../../../backend/tools/file/diff/
 import type { StructuredDiffHunk, LegacyDiffBlock } from '../../../../backend/tools/file/diff/types';
 import { insertAtLine, splitContentLines, deleteLineRange } from '../../../../backend/tools/file/lineMutations';
 import { MAX_EDIT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
+import { countSplitTextLines, normalizeLineEndingsToLF as normalize } from '../../../../shared/textLines';
 
-const normalize = (text: string) => text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 /** 原文件工具只负责参数和提案；文件效果统一交给宿主事务与审阅服务。 */
 export function mutationTools(app: PlatformApplication, format: 'unified' | 'search_replace'): RuntimeTool[] {
   const declarationOptions = { language: 'zh-CN' as const, precreateEmptyFile: false };
@@ -74,7 +74,7 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
         const before = await read(context, entry.path, MAX_EDIT_FILE_BYTES);
         if (before.hash === null) throw new Error('文件不存在，请使用 write_file 创建。');
         const lines = normalize(before.text).split('\n');
-        if (!Number.isInteger(entry.line) || entry.line < 1 || entry.line > lines.length + 1 || typeof entry.content !== 'string') throw new Error('插入行号或内容无效。');
+        if (!Number.isInteger(entry.line) || entry.line < 1 || entry.line > countSplitTextLines(lines) + 1 || typeof entry.content !== 'string') throw new Error('插入行号或内容无效。');
         const content = normalize(entry.content);
         return { ...await review(context, entry.path, before, insertAtLine(lines, entry.line, content)), line: entry.line, insertedLines: splitContentLines(content).length };
       }) },
@@ -84,7 +84,7 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
         const before = await read(context, entry.path, MAX_EDIT_FILE_BYTES);
         if (before.hash === null) throw new Error('文件不存在。');
         const lines = normalize(before.text).split('\n');
-        if (!Number.isInteger(entry.start_line) || !Number.isInteger(entry.end_line) || entry.start_line < 1 || entry.end_line < entry.start_line || entry.end_line > lines.length) throw new Error('删除行范围无效。');
+        if (!Number.isInteger(entry.start_line) || !Number.isInteger(entry.end_line) || entry.start_line < 1 || entry.end_line < entry.start_line || entry.end_line > countSplitTextLines(lines)) throw new Error('删除行范围无效。');
         return { ...await review(context, entry.path, before, deleteLineRange(lines, entry.start_line, entry.end_line)),
           start_line: entry.start_line, end_line: entry.end_line, deletedLines: entry.end_line - entry.start_line + 1 };
       }) },

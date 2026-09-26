@@ -287,6 +287,29 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
     expect(store.activeStreamId).toBe('stream_other_tool')
   })
 
+  test.each([false, true])('独立端审批中收到 agent 唤醒（interrupt=%s），空 claim 不取消审批或另开回合', async interruptMainRound => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = true
+    store.activeStreamId = 'approval-stream'
+    store.allMessages = [{ id: 'approval-message', role: 'assistant', content: '', timestamp: 1,
+      tools: [{ id: 'delete-call', name: 'delete_file', args: { paths: ['fixture.txt'] }, status: 'awaiting_approval', approvalId: 'approval-1' }] }]
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => type === 'chat.claimAgentMessages'
+      ? { claimId: null, conversationId: 'conv_1', message: null, messageCount: 0 }
+      : { success: true })
+    const bgStore = useBackgroundTaskStore()
+    const event = { taskId: 'agentmsg:platform', taskType: 'agent_message', type: 'progress' as const,
+      data: { conversationId: 'conv_1', toRunId: '__main__', interruptMainRound }, createdAt: Date.now() }
+    bgStore.handleTaskEvent(event)
+    bgStore.handleTaskEvent(event)
+    await settle()
+    expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => ['cancelStream', 'chatStream', 'toolConfirmation'].includes(type))).toBe(false)
+    expect(store.activeStreamId).toBe('approval-stream')
+    expect(store.isWaitingForResponse).toBe(true)
+    expect(store.allMessages[0].tools?.[0]).toMatchObject({ status: 'awaiting_approval', approvalId: 'approval-1' })
+  })
+
   test('Webview 缺席期间没有终态事件时，initialize 仍主动领取后端保留的完成结果', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'

@@ -55,6 +55,47 @@ describe('独立代理消息的持久化与调度', () => {
     expect(configuredAgent(app, agent).toolNames).not.toContain('agent_send_message');
   });
 
+  test.each(['completed', 'cancelled'] as const)('首delta前提供真实模型阶段位置，%s后明确清空且不写入记录', async ending => {
+    const root = await app.createConversation('owner', 'streaming phase');
+    const parent = await start(root.id); await app.runtime.wait(parent.id);
+    const entered = hold(), release = hold();
+    generate = async input => {
+      if (textOf(input).includes('phase fixture')) { entered.resolve(); await release.promise; }
+      return answer('done');
+    };
+    const result = await app.subagents.dispatch({ agentName: 'General Worker', prompt: 'phase fixture', background: true }, context(parent, 'phase-child'));
+    const id = String((result.data as any).runId);
+    await entered.promise;
+    const manifest = async () => (await app.subagents.manifests('owner', root.id)).find(item => item.runId === id)!;
+    await waitUntil(async () => (await manifest()).streamingContentIndex === 2);
+    const window = await app.subagents.window('owner', id);
+    expect(window!.window.contents.map(content => content.role)).toEqual(['user', 'user']);
+    expect(window!.manifest.streamingContentIndex).toBe(2);
+    expect(await app.storage.getRecord('platform-subagents', id)).not.toHaveProperty('streamingContentIndex');
+    if (ending === 'cancelled') {
+      await app.subagents.control('owner', id, 'exit');
+      expect((await manifest()).streamingContentIndex).toBeNull();
+    }
+    release.resolve();
+    await waitUntil(() => !app.subagents.activeIds().includes(id));
+    expect(await manifest()).toMatchObject({ status: ending, streamingContentIndex: null });
+    expect(await app.storage.getRecord('platform-subagents', id)).not.toHaveProperty('streamingContentIndex');
+  });
+
+  test('接续失败只回报本次错误，不复用上一轮成功交付', async () => {
+    const root = await app.createConversation('owner', 'attempt scoped output');
+    const parent = await start(root.id); await app.runtime.wait(parent.id);
+    generate = async () => answer('EARLIER_DELIVERY');
+    const first = await app.subagents.dispatch({ agentName: 'General Worker', prompt: 'first attempt' }, context(parent, 'first-attempt'));
+    expect(first.success).toBe(true); expect((first.data as any).response).toBe('EARLIER_DELIVERY');
+    generate = async () => { throw new Error('LATEST_RUN_FAILURE'); };
+    const second = await app.subagents.dispatch({ agentName: 'General Worker', prompt: 'second attempt', continueFromRunId: (first.data as any).runId }, context(parent, 'second-attempt'));
+    expect(second.success).toBe(false);
+    expect(second.error).toContain('LATEST_RUN_FAILURE');
+    expect((second.data as any).response).toContain('LATEST_RUN_FAILURE');
+    expect((second.data as any).response).not.toContain('EARLIER_DELIVERY');
+  });
+
   test('通用 Worker 使用可保存的默认时长，并允许单次派发和接续覆盖', async () => {
     const root = await app.createConversation('owner', '时长配置');
     const parent = await start(root.id);
@@ -66,6 +107,7 @@ describe('独立代理消息的持久化与调度', () => {
     };
     const initial = await dispatch();
     expect(initial.maxRuntime).toBe(2400);
+    expect(initial.profile.systemPrompt).toContain('no tool calls in that final turn');
     const draft = await app.product.draft();
     const handlers = subagentSettingsHandlers(draft, app);
     await handlers['subagents.updateGlobalConfig']({ generalWorkerMaxRuntimeSeconds: 7200 });

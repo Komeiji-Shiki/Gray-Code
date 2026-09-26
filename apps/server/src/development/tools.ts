@@ -5,10 +5,9 @@ import type { RuntimeTool, ToolContext } from '@graycode/core';
 import type { DocumentSymbol, SymbolInformation, Location, LocationLink } from 'vscode-languageserver-protocol';
 import { createGetSymbolsToolDeclaration, createGotoDefinitionToolDeclaration, createFindReferencesToolDeclaration } from '../../../../backend/tools/lsp/declarations';
 import { findBlockEnd } from '../../../../backend/tools/lsp/definitionRange';
+import { createSymbolOutline, parseSymbolOutlineOptions, MAX_SYMBOL_PATHS } from '../../../../backend/tools/lsp/symbolOutline';
 import { FileReadAccess } from '../workspace/readAccess';
 import type { PlatformApplication } from '../application';
-const symbolKinds = ['unknown', 'file', 'module', 'namespace', 'package', 'class', 'method', 'property', 'field', 'constructor', 'enum', 'interface', 'function', 'variable', 'constant', 'string', 'number', 'boolean', 'array', 'object', 'key', 'null', 'enum_member', 'struct', 'event', 'operator', 'type_parameter'];
-interface SymbolInfo { name: string; kind: string; line: number; endLine: number; detail?: string; children?: SymbolInfo[] }
 /** 保留原声明、批量限制、定义代码范围和按文件分组的引用结果。 */
 export function languageTools(app: PlatformApplication): RuntimeTool[] {
   return [createGetSymbolsToolDeclaration(), createGotoDefinitionToolDeclaration(), createFindReferencesToolDeclaration()].map(declaration => ({
@@ -37,7 +36,8 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
   };
   if (name === 'get_symbols') {
     if (!Array.isArray(args.paths) || !args.paths.length || args.paths.some(file => typeof file !== 'string')) throw new Error('paths 必须包含文件路径。');
-    const results: Array<Record<string, any>> = new Array(Math.min(args.paths.length, 20));
+    const options = parseSymbolOutlineOptions(args);
+    const results: Array<Record<string, any>> = new Array(Math.min(args.paths.length, MAX_SYMBOL_PATHS));
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, results.length) }, async () => {
       while (next < results.length) {
@@ -45,22 +45,13 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
         try {
           const source = await read(file);
           const raw = await app.languages.toolRequest(context, source.absolute, source.text, 'textDocument/documentSymbol') as Array<DocumentSymbol | SymbolInformation> | null;
-          let count = 0; let truncated = false;
-          const convert = (symbol: DocumentSymbol | SymbolInformation): SymbolInfo | undefined => {
-            if (count >= 500) { truncated = true; return; } count++;
-            const range = 'range' in symbol ? symbol.range : symbol.location.range;
-            return { name: symbol.name, kind: symbolKinds[symbol.kind] ?? 'unknown', line: range.start.line + 1, endLine: range.end.line + 1,
-              ...('detail' in symbol && symbol.detail ? { detail: symbol.detail } : {}),
-              ...('children' in symbol && symbol.children?.length ? { children: symbol.children.map(convert).filter((value): value is SymbolInfo => !!value) } : {}) };
-          };
-          const symbols = (raw ?? []).map(convert).filter((value): value is SymbolInfo => !!value);
-          results[index] = { path: file, success: true, symbols, symbolCount: count, truncated };
+          results[index] = { path: file, success: true, ...createSymbolOutline(raw ?? [], options, 1) };
         } catch (error) { context.signal.throwIfAborted(); results[index] = { path: file, success: false, error: String(error) }; }
       }
     }));
     const failCount = results.filter(value => !value.success).length;
-    return { success: failCount === 0, data: { results, successCount: results.length - failCount, failCount, totalCount: args.paths.length,
-      totalSymbolCount: results.reduce((sum, value) => sum + (value.symbolCount ?? 0), 0), truncated: args.paths.length > 20 || results.some(value => value.truncated) },
+    return { success: failCount === 0, data: { results, ...options, successCount: results.length - failCount, failCount, totalCount: args.paths.length,
+      totalSymbolCount: results.reduce((sum, value) => sum + (value.symbolCount ?? 0), 0), truncated: args.paths.length > MAX_SYMBOL_PATHS || results.some(value => value.truncated) },
       ...(failCount ? { error: results.filter(value => !value.success).map(value => `${value.path}: ${value.error}`).join('; ') } : {}) };
   }
   const file = String(args.path); const line = Number(args.line); const column = Number.isInteger(args.column) && Number(args.column) > 0 ? Number(args.column) : 1;

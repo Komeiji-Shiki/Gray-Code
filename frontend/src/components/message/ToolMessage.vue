@@ -401,6 +401,8 @@ async function sendToolConfirmation(
   toolResponses: Array<{ id: string; name: string; confirmed: boolean; approvalId?: string; choiceId?: string }>
 ): Promise<boolean> {
   let submittedStreamId: string | undefined
+  let submittedConversationId: string | undefined
+  let startedConfirmationRound = false
   try {
     const currentConversationId = chatStore.currentConversationId
     const currentConfig = chatStore.currentConfig
@@ -412,16 +414,22 @@ async function sendToolConfirmation(
       return false
     }
 
-    // 为本次工具确认流绑定 streamId，避免流式过滤器把后端返回的 chunk 当作“未知流”丢弃
-    const streamId = generateId()
+    // 独立宿主 keepStreamOpen 的审批仍属于原运行，不能在回执到达前换绑：
+    // 其他入口可能已批准/取消，此时原流的工具结果和终态必须继续接收。
+    // 只有旧宿主已经结束审批前的流（activeStreamId 为空）才开启确认流。
+    const streamId = chatStore.activeStreamId || generateId()
     submittedStreamId = streamId
-    chatStore.beginToolConfirmationRound({
-      conversationId: currentConversationId,
-      configId: confirmationConfigId,
-      modelOverride: chatStore.pendingModelOverride || undefined,
-      promptModeId: chatStore.currentPromptModeId,
-      streamId
-    })
+    submittedConversationId = currentConversationId
+    startedConfirmationRound = !chatStore.activeStreamId
+    if (startedConfirmationRound) {
+      chatStore.beginToolConfirmationRound({
+        conversationId: currentConversationId,
+        configId: confirmationConfigId,
+        modelOverride: chatStore.pendingModelOverride || undefined,
+        promptModeId: chatStore.currentPromptModeId,
+        streamId
+      })
+    }
 
     await sendToExtension(MESSAGE_NAMES.toolConfirmation, {
       conversationId: currentConversationId,
@@ -435,8 +443,9 @@ async function sendToolConfirmation(
   } catch (error) {
     console.error('Failed to send tool confirmation:', error)
 
-    // 请求未发出时回滚 stream 绑定，避免阻塞后续有效流
-    if (chatStore.activeStreamId === submittedStreamId) chatStore.abortToolConfirmationRound()
+    // 只回滚本请求新建的确认流；失败回执不等于原运行终结，也不能清掉后来切入的会话。
+    if (startedConfirmationRound && chatStore.currentConversationId === submittedConversationId
+      && chatStore.activeStreamId === submittedStreamId) chatStore.abortToolConfirmationRound()
     return false
   }
 }

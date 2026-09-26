@@ -9,13 +9,14 @@ import type { PlatformApplication } from '../../server/src/application';
 import type { BrowserHost } from '../../server/src/browser/port';
 import { BrowserPage } from './browser/page';
 import { BrowserProfiles } from './browser/profiles';
+import { isActiveMouseInput } from './browser/input';
 import { BrowserTransfers } from './browser/transfers';
 
 interface OwnedTab {
   id: string; actorId: string; profileId: string; view: WebContentsView; page: BrowserPage;
   loading: boolean; error?: string; source?: { workspaceId: string; path: string };
   lease?: { runId: string; conversationId?: string; controller: AbortController };
-  userControlled: boolean; queue: Promise<unknown>; modelInput: boolean;
+  userControlled: boolean; takeoverSource?: string; queue: Promise<unknown>; modelInput: boolean;
   blockedDownload?: { filename: string; url: string };
 }
 interface BrowserOperation {
@@ -141,8 +142,13 @@ export class DesktopBrowser implements BrowserHost {
       if (this.allowed(url, tab.profileId)) void this.popup(tab, url).catch(error => tab.page.log('error', String(error)));
       return { action: 'deny' };
     });
-    wc.on('before-input-event', () => { if (tab.page.automated && !tab.modelInput) this.takeover(tab); });
-    wc.on('before-mouse-event', () => { if (tab.page.automated && !tab.modelInput) this.takeover(tab); });
+    // before-input-event only emits keyboard input; showing/focusing a tab is not a takeover.
+    wc.on('before-input-event', (_event, input) => {
+      if (tab.page.automated && !tab.modelInput) this.takeover(tab, `before-input-event: ${input.type}`);
+    });
+    wc.on('before-mouse-event', (_event, mouse) => {
+      if (tab.page.automated && !tab.modelInput && isActiveMouseInput(mouse)) this.takeover(tab, `before-mouse-event: ${mouse.type}`);
+    });
     tab.queue = wc.loadURL('about:blank').then(() => {
       if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
       return tab.page.connect();
@@ -188,8 +194,9 @@ export class DesktopBrowser implements BrowserHost {
     }
     this.changed(tab.actorId);
   }
-  private takeover(tab: OwnedTab): void {
-    tab.userControlled = true; tab.lease?.controller.abort(new Error('用户已接管此网页标签。')); tab.lease = undefined;
+  private takeover(tab: OwnedTab, source?: string): void {
+    tab.userControlled = true; tab.takeoverSource = source;
+    tab.lease?.controller.abort(new Error(`用户已接管此网页标签${source ? `（${source}）` : ''}。`)); tab.lease = undefined;
     tab.page.invalidate(); tab.page.allowManualInput(); this.changed(tab.actorId);
     this.pauseIdleCapture();
   }
@@ -258,7 +265,7 @@ export class DesktopBrowser implements BrowserHost {
     else tab = this.tab(actorId, selectedId);
     if (method === 'browser.select') { this.show(tab); return this.describe(tab); }
     if (method === 'browser.takeover') { this.takeover(tab); return this.describe(tab); }
-    if (method === 'browser.allowAutomation') { tab.userControlled = false; this.changed(actorId); return this.describe(tab); }
+    if (method === 'browser.allowAutomation') { tab.userControlled = false; tab.takeoverSource = undefined; this.changed(actorId); return this.describe(tab); }
     if (method === 'browser.closeTab') { this.closeTab(tab); return this.state(actorId); }
     if (method === 'browser.open' || method === 'browser.control') {
       if (tab.page.automated) this.takeover(tab);
@@ -277,7 +284,7 @@ export class DesktopBrowser implements BrowserHost {
   }
   private claim(tab: OwnedTab, context: ToolContext): AbortSignal {
     this.actor(context.actorId); context.signal.throwIfAborted();
-    if (tab.userControlled) throw new Error('用户已接管此标签，请等待用户允许模型操作，或新建自己的标签。');
+    if (tab.userControlled) throw new Error(`用户已接管此标签${tab.takeoverSource ? `（${tab.takeoverSource}）` : ''}，请等待用户允许模型操作，或新建自己的标签。`);
     if (tab.lease && tab.lease.runId !== context.runId) throw new Error('此标签正在由另一个任务操作，请使用其他标签。');
     if (!tab.lease) {
       tab.lease = { runId: context.runId, conversationId: context.conversationId, controller: new AbortController() };

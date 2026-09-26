@@ -25,7 +25,7 @@ import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError, SubAgentQueueT
 import { fileWriteLockManager } from '../../../core/fileWriteLockManager';
 import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../../../core/services/agentMailbox';
 import { markAiActive } from '../../../modules/activity';
-import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
+import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE, SUBAGENT_COMPLETION_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
 import {
     ensureSubAgentTranscriptTracking,
@@ -647,7 +647,7 @@ export function createDefaultExecutor(
             // 引导模型只在确实需要独立复查或主模型明确指示时才派生子子 agent。
             // L-9（R4 复查）：config.systemPrompt 可能为 undefined，拼接前兜底为空串。
             // 工具纪律一句话提示无条件追加；详细约束由用户自定义 systemPrompt 补充。
-            const systemPrompt = `${config.systemPrompt ?? ''}${SUBAGENT_TOOL_DISCIPLINE_NOTICE}${allowedToolNames.has('subagents') ? SUBAGENT_NESTING_PROMPT_NOTICE : ''}`;
+            const systemPrompt = `${config.systemPrompt ?? ''}${SUBAGENT_TOOL_DISCIPLINE_NOTICE}${SUBAGENT_COMPLETION_NOTICE}${allowedToolNames.has('subagents') ? SUBAGENT_NESTING_PROMPT_NOTICE : ''}`;
             
             // 构建用户提示词
             let userPrompt = request.prompt;
@@ -854,77 +854,82 @@ export function createDefaultExecutor(
                     //          只覆盖响应处理时间，遗漏完整请求时长。
                     // 修改方式：generate 前取值，让耗时统计覆盖完整请求周期。
                     const requestStartTime = Date.now();
-                    const result = await context.channelManager.generate(generateRequest);
-                    const streamProcessor = new StreamResponseProcessor({
-                        requestStartTime,
-                        providerType,
-                        toolMode,
-                        abortSignal: operationSignal,
-                        conversationId: runId
-                    });
+                    subAgentRunEventBus.emit({ runId, agentName: config.name, type: 'model_started' });
+                    try {
+                        const result = await context.channelManager.generate(generateRequest);
+                        const streamProcessor = new StreamResponseProcessor({
+                            requestStartTime,
+                            providerType,
+                            toolMode,
+                            abortSignal: operationSignal,
+                            conversationId: runId
+                        });
                     
-                    if (isAsyncGenerator(result)) {
-                        // 修改原因：SubAgent 不应直接 new StreamAccumulator，否则主窗口流式解析升级时 Monitor 不会同步升级。
-                        // 修改方式：复用 StreamResponseProcessor，并把处理后的 chunk 原样通过事件总线转给 Monitor。
-                        // 修改目的：SubAgent Monitor 与主窗口共享流式解析、contentSnapshot 和取消语义。
-                        for await (const chunkData of streamProcessor.processStream(result as AsyncGenerator<any>)) {
-                            // 子代理正在生成：视为用户在场（主人在 Monitor/主窗口查看）
-                            markAiActive();
-                            if (operationSignal?.aborted || checkTimeout().exceeded) {
-                                break;
+                        if (isAsyncGenerator(result)) {
+                            // 修改原因：SubAgent 不应直接 new StreamAccumulator，否则主窗口流式解析升级时 Monitor 不会同步升级。
+                            // 修改方式：复用 StreamResponseProcessor，并把处理后的 chunk 原样通过事件总线转给 Monitor。
+                            // 修改目的：SubAgent Monitor 与主窗口共享流式解析、contentSnapshot 和取消语义。
+                            for await (const chunkData of streamProcessor.processStream(result as AsyncGenerator<any>)) {
+                                // 子代理正在生成：视为用户在场（主人在 Monitor/主窗口查看）
+                                markAiActive();
+                                if (operationSignal?.aborted || checkTimeout().exceeded) {
+                                    break;
+                                }
+                                subAgentRunEventBus.emit({
+                                    runId,
+                                    agentName: config.name,
+                                    type: 'llm_delta',
+                                    payload: chunkData.chunk
+                                });
                             }
+                            if (operationSignal?.aborted && isControlInterruption()) {
+                                // 修改原因：暂停/退出会中止当前 LLM 流，旧逻辑会继续把 partial content 当作成功响应并可能发 run_completed。
+                                // 修改方式：流循环结束后立即检查 run control state，交给 waitForControlIfNeeded 处理 pause/resume/exit 语义。
+                                // 修改目的：SubAgent pause 不让主工具失败，exit 才按用户意图让主工具失败，避免 partial stream 被误判完成。
+                                const controlResult = await waitForControlIfNeeded();
+                                if (controlResult) return controlResult;
+                                continue;
+                            }
+                            if (parentAbort()?.aborted || timeoutController?.signal.aborted || checkTimeout().exceeded) {
+                                // 修改原因：流式循环因超时/父取消 abort 中断后，partial response 过去仍被
+                                //          当作本轮模型输出解析工具调用（可能执行半截工具调用）、写入 history
+                                //          与 transcript，超时边界下产生半截工具调用记录。
+                                // 修改方式：控制中断（pause/exit/awaiting_monitor_action）已由上方分支处理；
+                                //          此处识别「超时或父取消」直接丢弃 partial response 并走终态，
+                                //          只有完整流才继续进入下方的工具解析/转录路径。
+                                // 修改目的：超时/取消边界下不再产生半截工具调用与转录残留。
+                                const timeoutCheck = checkTimeout();
+                                const isTimeout = timeoutCheck.exceeded;
+                                return finalizeRun({
+                                    success: false,
+                                    response: lastResponse,
+                                    modelVersion,
+                                    steps,
+                                    toolCalls,
+                                    error: isTimeout
+                                        ? `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
+                                        : 'Cancelled during execution',
+                                    cancelled: !isTimeout
+                                });
+                            }
+                            response = {
+                                content: streamProcessor.getContent()
+                            };
+                        } else {
+                            const processed = streamProcessor.processNonStream(result as any);
+                            response = {
+                                ...(result as any),
+                                content: processed.content
+                            };
                             subAgentRunEventBus.emit({
                                 runId,
                                 agentName: config.name,
                                 type: 'llm_delta',
-                                payload: chunkData.chunk
+                                payload: processed.chunkData.chunk
                             });
                         }
-                        if (operationSignal?.aborted && isControlInterruption()) {
-                            // 修改原因：暂停/退出会中止当前 LLM 流，旧逻辑会继续把 partial content 当作成功响应并可能发 run_completed。
-                            // 修改方式：流循环结束后立即检查 run control state，交给 waitForControlIfNeeded 处理 pause/resume/exit 语义。
-                            // 修改目的：SubAgent pause 不让主工具失败，exit 才按用户意图让主工具失败，避免 partial stream 被误判完成。
-                            const controlResult = await waitForControlIfNeeded();
-                            if (controlResult) return controlResult;
-                            continue;
-                        }
-                        if (parentAbort()?.aborted || timeoutController?.signal.aborted || checkTimeout().exceeded) {
-                            // 修改原因：流式循环因超时/父取消 abort 中断后，partial response 过去仍被
-                            //          当作本轮模型输出解析工具调用（可能执行半截工具调用）、写入 history
-                            //          与 transcript，超时边界下产生半截工具调用记录。
-                            // 修改方式：控制中断（pause/exit/awaiting_monitor_action）已由上方分支处理；
-                            //          此处识别「超时或父取消」直接丢弃 partial response 并走终态，
-                            //          只有完整流才继续进入下方的工具解析/转录路径。
-                            // 修改目的：超时/取消边界下不再产生半截工具调用与转录残留。
-                            const timeoutCheck = checkTimeout();
-                            const isTimeout = timeoutCheck.exceeded;
-                            return finalizeRun({
-                                success: false,
-                                response: lastResponse,
-                                modelVersion,
-                                steps,
-                                toolCalls,
-                                error: isTimeout
-                                    ? `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
-                                    : 'Cancelled during execution',
-                                cancelled: !isTimeout
-                            });
-                        }
-                        response = {
-                            content: streamProcessor.getContent()
-                        };
-                    } else {
-                        const processed = streamProcessor.processNonStream(result as any);
-                        response = {
-                            ...(result as any),
-                            content: processed.content
-                        };
-                        subAgentRunEventBus.emit({
-                            runId,
-                            agentName: config.name,
-                            type: 'llm_delta',
-                            payload: processed.chunkData.chunk
-                        });
+                    } finally {
+                        subAgentRunEventBus.emit({ runId, agentName: config.name, type: 'model_finished' });
                     }
                     // 修改原因：本轮模型输出过去被写入 transcript 三次（流结束一次、裸 content_snapshot 一次、解析后再一次），
                     //          每次都递增 contentRevision、广播事件、入队全量落盘，并让 Monitor 前端强制重拉一次窗口。

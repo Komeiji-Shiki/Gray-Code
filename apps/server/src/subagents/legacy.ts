@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isSubagentInvocationContent as invocation } from '../../../../shared/subagentInvocation';
 import type { PlatformMessage, RecordMutation } from '@graycode/contracts';
 import type { Content } from '../../../../backend/modules/conversation/types';
 import { truncateFrom } from '../../../../backend/modules/conversation/TranscriptMutation';
@@ -13,8 +14,6 @@ import type { SubagentExecutionService } from './service';
 
 type LegacySource = Awaited<ReturnType<typeof readLegacySubagent>>;
 const linkNamespace = 'legacy-subagent-links';
-const invocation = (content: Content) => content.role === 'user' && content.parts.length === 1 && typeof content.parts[0].text === 'string'
-  && /^# SubAgent Invocation\n+## Agent System Prompt\n/.test(content.parts[0].text);
 
 /** 只在明确接续或重试时转换为独立任务，旧记录继续作为原始历史查看。 */
 export class LegacySubagents {

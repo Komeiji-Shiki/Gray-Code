@@ -142,6 +142,8 @@ export interface HiddenFunctionResponsePayload {
 }
 
 export interface SendMessageOptions {
+  /** 客户端提交身份；失败恢复原稿后重试沿用，防止已接收但回执丢失时重复入队。 */
+  messageId?: string
   modelOverride?: string
   /**
    * 一次性渠道覆盖：仅本次请求（及同一回合内的工具确认）使用该 configId，
@@ -168,26 +170,45 @@ export interface SendMessageOptions {
   foregroundWorkTransition?: ForegroundWorkTransition
 }
 
+/** 普通发送与忙时输入使用同一份附件负载，不能在投递边界丢图或改变顺序。 */
+function serializeAttachments(attachments?: Attachment[]): AttachmentData[] | undefined {
+  return attachments?.length ? attachments.map(att => ({
+    id: att.id, name: att.name, type: att.type, size: att.size,
+    mimeType: att.mimeType, data: att.data || '', thumbnail: att.thumbnail
+  })) : undefined
+}
+
+// RPC 失败不证明宿主未保存输入。原稿重试即使跨过运行收尾，也先以同一 ID
+// 查询/补投原接收请求，不能直接改走 chatStream 造成一次输入落两次历史。
+const unacknowledgedInterrupts = new WeakMap<ChatStoreState, Map<string, string>>()
+
 /**
  * 忙时投递（U1）：把用户消息改走 chat.sendInterruptMessage（主会话收件箱）。
  *
- * - 不排队、不乐观插入窗口、不创建 assistant 占位、不修改流式状态；
- * - 带附件/超长文本不回退插入（附件无法随 inbox 文本投递），返回 false 保持既有队列语义；
- * - 投递失败（会话不存在、频率限制等）不打断进行中的回合，仅告警并返回 false。
- *
- * @returns true 表示已投递到主会话 inbox（由注入点在最近一次工具调用完成后带出）
+ * 独立宿主持久接收完整正文/附件，在下一模型边界交付；旧扩展仍仅支持短文本。
+ * 回执只代表接收，不代表模型已读；失败恢复输入，不取消运行或替用户处理审批。
  */
 async function deliverInterruptMessage(
   state: ChatStoreState,
   messageText: string,
-  attachments?: Attachment[]
+  attachments?: Attachment[],
+  options?: SendMessageOptions
 ): Promise<boolean> {
   const conversationId = state.currentConversationId.value
   if (!conversationId) return false
-  if (attachments && attachments.length > 0) return false
+  const platform = typeof window !== 'undefined' && !!window.__GRAYCODE_HOST
+  const hasAttachments = !!attachments?.length
+  if (!platform && hasAttachments) return false
 
   const text = messageText.trim()
-  if (!text || text.length > INTERRUPT_MESSAGE_MAX_LENGTH) return false
+  if ((!text && !hasAttachments) || (!platform && text.length > INTERRUPT_MESSAGE_MAX_LENGTH)) return false
+  const noticeText = text || attachments?.map(attachment => attachment.name).join(', ') || ''
+  const messageId = platform ? options?.messageId || generateId() : undefined
+  const pending = unacknowledgedInterrupts.get(state) ?? new Map<string, string>()
+  if (messageId) {
+    pending.set(messageId, conversationId)
+    unacknowledgedInterrupts.set(state, pending)
+  }
 
   try {
     const result = await sendToExtension<{
@@ -195,11 +216,13 @@ async function deliverInterruptMessage(
       error?: { code?: string; message?: string }
     }>(MESSAGE_NAMES['chat.sendInterruptMessage'], {
       conversationId,
-      text
+      text,
+      ...(platform ? { messageId, attachments: serializeAttachments(attachments),
+        deepSeekVisionTileSplit: options?.deepSeekVisionTileSplit } : {})
     })
+    if (messageId) pending.delete(messageId)
     if (result?.success) {
-      // M3-1 ①：投递成功 -> 记录轻量回显（MessageList 消息区提示「已投递」）
-      recordInterruptDelivery({ conversationId, text, kind: 'delivered' })
+      recordInterruptDelivery({ conversationId, text: noticeText, kind: 'delivered' })
       return true
     }
     // M3-1 ③：投递被拒绝（如 INTERRUPT_MESSAGE_RATE_LIMITED）-> 可见反馈，
@@ -207,7 +230,7 @@ async function deliverInterruptMessage(
     console.warn('[messageActions] chat.sendInterruptMessage rejected:', result)
     recordInterruptDelivery({
       conversationId,
-      text,
+      text: noticeText,
       kind: 'error',
       errorCode: result?.error?.code,
       errorMessage: result?.error?.message
@@ -217,7 +240,7 @@ async function deliverInterruptMessage(
     console.warn('[messageActions] chat.sendInterruptMessage failed:', error)
     recordInterruptDelivery({
       conversationId,
-      text,
+      text: noticeText,
       kind: 'error',
       errorCode: undefined,
       errorMessage: error instanceof Error ? error.message : String(error)
@@ -367,15 +390,18 @@ export async function sendMessage(
   // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
   // 让主模型在工具循环中尽快感知用户输入。
-  // 隐藏发送（计划确认等 functionResponse）与带附件消息不走插入路径，保持既有语义。
+  // 隐藏发送（计划确认等 functionResponse）不走插入路径。独立端附件沿现有负载一起投递。
   // A-COMM 接管窗口例外：后台结果领取后内部回流流即将启动，窗口内的插话会被内部流
   // 在工具边界 drain 消费——既不落历史又被处理一次，用户重发会重复处理。此时返回
   // false 让调用方走排队/输入恢复（InputArea 已按同一标记分流入队，这里是其他入口的兜底）。
-  if (!isHiddenSend && (state.isStreaming.value || state.isWaitingForResponse.value)) {
-    if (isAgentMessageRoundPending(state.currentConversationId.value)) {
+  const retryUnacknowledgedInput = options?.messageId
+    && unacknowledgedInterrupts.get(state)?.get(options.messageId) === state.currentConversationId.value
+  if (!isHiddenSend && (state.isStreaming.value || state.isWaitingForResponse.value || retryUnacknowledgedInput)) {
+    if (isAgentMessageRoundPending(state.currentConversationId.value)
+      || (options?.source && options.source !== 'user')) {
       return false
     }
-    return deliverInterruptMessage(state, messageText, attachments)
+    return deliverInterruptMessage(state, messageText, attachments, options)
   }
 
   // hidden 发送流式守卫：主会话流仍在活跃输出（isStreaming 与 activeStreamId 同时成立）时，
@@ -490,7 +516,7 @@ export async function sendMessage(
       upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
     } else {
       const userMessage: Message = {
-        id: generateId(),
+        id: options?.messageId || generateId(),
         role: 'user',
         content: messageText,
         timestamp: Date.now(),
@@ -560,18 +586,7 @@ export async function sendMessage(
 
     state._lastCancelledStreamId.value = null
 
-    const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
-      ? attachments.map(att => ({
-          // 隐藏模式默认不带附件（这里保留原有结构以兼容调用）
-          id: att.id,
-          name: att.name,
-          type: att.type,
-          size: att.size,
-          mimeType: att.mimeType,
-          data: att.data || '',
-          thumbnail: att.thumbnail
-        }))
-      : undefined
+    const attachmentData = hiddenFunctionResponse ? undefined : serializeAttachments(attachments)
 
     const streamResult = await sendToExtension<{ success?: boolean; userContent?: Content }>(MESSAGE_NAMES.chatStream, {
       conversationId: targetConvId,

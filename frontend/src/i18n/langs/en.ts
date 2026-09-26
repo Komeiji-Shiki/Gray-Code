@@ -350,7 +350,7 @@ const en: LanguageMessages = {
             send: 'Send message',
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
-            sendWhileBusy: 'Send new message (a running command moves to background, AI responds first)',
+            sendWhileBusy: 'Send a follow-up message',
             interruptDelivered: 'Inserted into the current turn — AI will handle it shortly',
             attachFile: 'Attach file',
             pinnedFiles: 'Pinned files',
@@ -763,7 +763,7 @@ const en: LanguageMessages = {
                 dismiss: 'Dismiss'
             },
             interrupt: {
-                delivered: 'Delivered "{text}" — will be processed after the current round ends',
+                delivered: 'Received "{text}" — queued for processing',
                 deliverFailed: 'Message not delivered: {detail}'
             },
             tool: {
@@ -3400,6 +3400,9 @@ const en: LanguageMessages = {
         },
 
         tools: {
+            presentation: sharedEn.components.tools.presentation,
+            automation: sharedEn.components.tools.automation,
+            platform: sharedEn.components.tools.platform,
             executing: 'Executing...',
             structured: {
                 statuses: { pending: 'Pending', queued: 'Queued', in_progress: 'In progress', running: 'Running', completed: 'Completed', done: 'Done', success: 'Success', failed: 'Failed', error: 'Error', blocked: 'Blocked', cancelled: 'Cancelled' },

@@ -1,24 +1,29 @@
 import type { ToolDeclaration } from '../types';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
+import { SYMBOL_KIND_NAMES } from './symbolOutline';
 
 export function createGetSymbolsToolDeclaration(options: { workspaces?: Array<{ name: string }>; language?: string } = {}): ToolDeclaration {
 const workspaces = (options.workspaces ?? []);
 const isMultiRoot = workspaces.length > 1;
 const isZh = resolveLocalizationLanguage((options.language ?? getActualLanguage())) === 'zh-CN';
 let description = isZh
-        ? `获取一个或多个文件中的全部符号（类、函数、变量等）。适用于：
+        ? `获取一个或多个文件的简洁符号提纲（类、函数、变量等）。适用于：
 - 在读取特定代码段之前先了解文件结构
 - 查找你想查看的函数/类的行号
 - 在不读取全部内容的情况下概览多个文件
 
-返回带名称、类型和行号的分层符号列表。`
-        : `Get all symbols (classes, functions, variables, etc.) in one or more files. This is useful for:
+默认 maxDepth=1，仅返回顶层符号；设为 2 可展开直接成员，更大值继续展开。按源位置排序，行列为 1-based。kinds 在深度限制内筛选，不会自动展开；未匹配父节点省略，匹配后代保留原始 depth 并挂到最近的已返回祖先。
+SymbolInformation 平列表无可靠层级，返回 hierarchyAvailable=false，全部按第 1 层处理；可用 kinds 精简，不根据范围或 containerName 猜测父子关系。
+每次最多 20 个文件、每文件最多返回 500 个符号（含子级）。symbolCount/totalSymbolCount 为实际返回数；availableSymbolCount 为提供器总数，collapsedSymbolCount 为深度折叠数，filteredSymbolCount 为深度内被类型筛掉的数量。节点 childCount 表示直接子符号总数，childrenCollapsed 表示可增加 maxDepth 展开。truncated 仅表示预算截断，不表示主动折叠或筛选。`
+        : `Get a concise symbol outline (classes, functions, variables, etc.) in one or more files. This is useful for:
 - Understanding file structure before reading specific sections
 - Finding the line numbers of functions/classes you want to examine
 - Getting an overview of multiple files without reading all content
 
-Returns hierarchical symbol list with name, kind, and line numbers.`;
+Default maxDepth=1 returns only top-level symbols; 2 expands direct members, and larger values expand further. Results follow source order with 1-based lines/columns. kinds filters within that depth, never auto-expands; unmatched ancestors are omitted and matching descendants attach to the nearest returned ancestor while keeping their original depth.
+Flat SymbolInformation has no reliable hierarchy: hierarchyAvailable=false and every symbol is treated as depth 1. Use kinds to narrow it; neither ranges nor containerName are used to guess parentage.
+At most 20 files and 500 returned symbols per file (including children). symbolCount/totalSymbolCount count returned symbols; availableSymbolCount counts all provider symbols, collapsedSymbolCount counts depth-hidden symbols, and filteredSymbolCount counts kind exclusions within the depth limit. A node's childCount counts direct children; childrenCollapsed indicates that maxDepth can reveal more. truncated means budget exhaustion only, not deliberate folding or filtering.`;
 const arrayFormatNote = isZh
         ? '\n\n**重要**：`paths` 参数必须是数组，即使只传一个文件。示例：`{"paths": ["file.ts"]}`，不要写成 `{"path": "file.ts"}`。'
         : '\n\n**IMPORTANT**: The `paths` parameter MUST be an array, even for a single file. Example: `{"paths": ["file.ts"]}`, NOT `{"path": "file.ts"}`.';
@@ -50,6 +55,21 @@ return {
                             type: 'string'
                         },
                         description: pathsDescription
+                    },
+                    maxDepth: {
+                        type: 'integer',
+                        minimum: 1,
+                        default: 1,
+                        description: isZh
+                            ? '最大原始符号层级。默认 1 仅顶层，2 含直接子级，依此类推；仍受每文件 500 个返回符号的总预算约束。'
+                            : 'Maximum original symbol depth. Default 1 = top-level only, 2 includes direct children, etc.; the 500-symbol per-file output budget still applies.'
+                    },
+                    kinds: {
+                        type: 'array',
+                        items: { type: 'string', enum: [...SYMBOL_KIND_NAMES] },
+                        description: isZh
+                            ? '可选类型白名单；省略或 [] 表示所有类型。在 maxDepth 内筛选，不自动展开；省略未匹配父节点，但保留符合条件的后代及原始 depth。'
+                            : 'Optional kind allowlist; omitted or [] means all kinds. Filters within maxDepth without expanding it; unmatched ancestors are omitted but matching descendants retain their original depth.'
                     }
                 },
                 required: ['paths']

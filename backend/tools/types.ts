@@ -20,7 +20,7 @@ export interface ToolProgressEvent {
     type: 'run_created' | 'run_queued' | 'run_started' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
         | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted' | 'run_detached'
         | 'retrying' | 'retrySuccess' | 'retryFailed'
-        | 'llm_delta' | 'content_snapshot'
+        | 'model_started' | 'model_finished' | 'llm_delta' | 'content_snapshot'
         | 'context_compaction_running' | 'context_compaction_completed' | 'context_compaction_failed'
         | 'context_compaction_fallback' | 'context_compaction_usage_updated'
         | 'tool_started' | 'tool_progress' | 'tool_completed' | 'tool_failed';

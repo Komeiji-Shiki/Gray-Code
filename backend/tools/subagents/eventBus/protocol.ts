@@ -53,7 +53,8 @@ export function toManifest(snapshot: SubAgentRunSnapshot): SubAgentRunManifest {
         contentRevision: snapshot.contentRevision,
         eventSequence: snapshot.eventSequence,
         preview: transcriptLoaded ? extractContentPreview(lastContent) : snapshot.preview,
-        lastMessageRole: transcriptLoaded ? lastContent?.role : snapshot.lastMessageRole
+        lastMessageRole: transcriptLoaded ? lastContent?.role : snapshot.lastMessageRole,
+        streamingContentIndex: snapshot.status === 'running' ? snapshot.streamingContentIndex ?? null : null
     };
 }
 

@@ -123,17 +123,16 @@ const { languageLoaded, loadLanguageSettings } = useLanguageSettings(settingsSto
 const handleAttachFile = openFilePicker
 
 // 处理发送消息
-async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }, onSendResult?: (ok: boolean) => void) {
+async function handleSend(content: string, messageAttachments: Attachment[], options?: { messageId?: string; dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean }, onSendResult?: (ok: boolean) => void) {
   const originTabId = chatStore.activeTabId
   if (!content.trim() && messageAttachments.length === 0) {
     onSendResult?.(false)
     return
   }
 
-  // 有待确认工具时：发送即中断——先拒绝待确认工具并结束当前回合，
-  // 再走正常发送路径把消息作为新回合发出。此前的"批注+批量拒绝"语义
-  // （把输入栏文字当作批注随 toolConfirmation 发送）已移除。
-  if (chatStore.hasPendingToolConfirmation) {
+  // 旧扩展保留显式发送即中断的交互。独立端忙时输入（含图片）交给运行收件队列，
+  // 无论来自用户还是后台，消息到达都不代表审批决定；只能由工具卡选择/停止结算审批。
+  if (!window.__GRAYCODE_HOST && chatStore.hasPendingToolConfirmation) {
     try {
       await chatStore.cancelStreamAndRejectTools()
     } catch (err) {

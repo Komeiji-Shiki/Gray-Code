@@ -14,11 +14,17 @@ export interface RestoreNoticeState {
 
 export interface MessageListUiState {
   scrollTop: number
+  /** 同一标签页被复用时，不把上一会话的阅读位置应用到新会话。 */
+  conversationId?: string | null
+  /** 保存跟随意图，而不是由新窗口的 scrollTop 推断是否贴底。 */
+  followingBottom?: boolean
   visibleCount: number
   /** 滑动窗口起点；旧记录缺失时回退尾部窗口。 */
   windowStart?: number
   /** 顶部可见消息锚点，用于消息 prepend/append 后恢复同一阅读位置。 */
   anchorMessageId?: string | null
+  /** 仅在稳定 ID 已删除时定位相邻消息；这是完整历史索引，不是可见数组下标。 */
+  anchorBackendIndex?: number
   anchorOffset?: number
   anchorWindowOffset?: number
   buildExpanded: boolean

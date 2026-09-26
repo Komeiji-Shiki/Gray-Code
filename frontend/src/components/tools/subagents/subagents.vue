@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { sendToExtension, showNotification } from '../../../utils/vscode'
-import { useChatStore } from '../../../stores/chatStore'
 import { computed } from 'vue'
 import { useI18n } from '@/composables'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../../common'
 import { extractPreviewText, formatSubAgentRuntimeBadge } from '../../../utils/taskCards'
 import { useBackgroundTaskStore } from '../../../stores/backgroundTaskStore'
 import { computeTaskCardStatus } from '../../../utils/tools/subagents/backgroundStatus'
+import ToolResultValue from '../common/ToolResultValue.vue'
 
 const { t } = useI18n()
 const backgroundStore = useBackgroundTaskStore()
-const chatStore = useChatStore()
 
 const props = defineProps<{
   toolId?: string
@@ -21,6 +19,7 @@ const props = defineProps<{
 const agentName = computed(() => (props.args.agentName as string) || ((props.result as any)?.data?.agentName as string) || 'Sub-Agent')
 const prompt = computed(() => (props.args.prompt as string) || '')
 const context = computed(() => (props.args.context as string) || '')
+const invocationOptions = computed(() => Object.fromEntries(Object.entries(props.args).filter(([key]) => key !== 'prompt' && key !== 'context')))
 
 const resultData = computed(() => ((props.result as any)?.data || {}) as any)
 
@@ -89,24 +88,30 @@ const chips = computed(() => {
   return list
 })
 
-const preview = computed(() => {
-  const src = responseText.value || prompt.value
-  return extractPreviewText(src, { maxLines: 10, maxChars: 1200 })
-})
-async function openRun() {
-  try { await sendToExtension('subagents.openMonitor', { runId: resultData.value.runId || backgroundTask.value?.runId, toolId: props.toolId, conversationId: chatStore.currentConversationId }); }
-  catch (error) { await showNotification((error as Error).message, 'warning'); }
-}
+const preview = computed(() => extractPreviewText(responseText.value, { maxLines: 10, maxChars: 1200 }))
 </script>
 
 <template>
+  <div class="subagent-call-content">
+    <section class="call-parameters" :aria-label="t('components.tools.parameters')">
+      <div class="label">{{ t('components.tools.parameters') }}</div>
+      <ToolResultValue :value="invocationOptions" />
+      <div v-if="prompt" class="block">
+        <div class="label">{{ t('components.tools.subagents.task') }}</div>
+        <CustomScrollbar :max-height="260"><pre class="pre">{{ prompt }}</pre></CustomScrollbar>
+      </div>
+      <div v-if="context" class="block">
+        <div class="label">{{ t('components.tools.subagents.context') }}</div>
+        <CustomScrollbar :max-height="260"><pre class="pre">{{ context }}</pre></CustomScrollbar>
+      </div>
+    </section>
   <TaskCard
-    :openable="!!(toolId || resultData.runId || backgroundTask?.runId)"
-    @open="openRun"
+    v-if="result || errorMessage || responseText"
+    :openable="false"
     :title="`Sub-Agent · ${agentName}`"
     icon="codicon-hubot"
     :status="cardStatus"
-    :subtitle="prompt ? prompt : undefined"
+    :subtitle="undefined"
     :preview="preview"
     :preview-is-markdown="true"
     :meta-chips="chips"
@@ -114,20 +119,6 @@ async function openRun() {
   >
     <template #expanded>
       <div class="expanded">
-        <div class="block">
-          <div class="label">{{ t('components.tools.subagents.task') }}</div>
-          <CustomScrollbar :max-height="200">
-            <pre class="pre">{{ prompt }}</pre>
-          </CustomScrollbar>
-        </div>
-
-        <div v-if="context" class="block">
-          <div class="label">{{ t('components.tools.subagents.context') }}</div>
-          <CustomScrollbar :max-height="200">
-            <pre class="pre">{{ context }}</pre>
-          </CustomScrollbar>
-        </div>
-
         <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
         <div v-if="responseText" class="response-block">
           <CustomScrollbar :max-height="500">
@@ -137,9 +128,12 @@ async function openRun() {
       </div>
     </template>
   </TaskCard>
+  </div>
 </template>
 
 <style scoped>
+.subagent-call-content,.call-parameters{display:flex;flex-direction:column;gap:12px;min-width:0}
+.call-parameters{padding-bottom:12px}
 .expanded {
   display: flex;
   flex-direction: column;

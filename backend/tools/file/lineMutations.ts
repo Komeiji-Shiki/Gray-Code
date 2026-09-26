@@ -1,4 +1,6 @@
-/** 两个宿主共用原行插入与删除算法。 */
+import { splitTextLines } from '../../../shared/textLines';
+
+/** 两个宿主共用原行插入与删除算法；lines 保留 split 的尾分隔符，避免编辑丢失最终换行。 */
 export function insertAtLine(lines: string[], line: number, content: string): string {
     const insertLines = splitContentLines(content);
     const idx = line - 1; // 转为 0-based
@@ -11,14 +13,7 @@ export function insertAtLine(lines: string[], line: number, content: string): st
 }
 
 export function splitContentLines(content: string): string[] {
-    if (content === '') {
-        return [];
-    }
-    const lines = content.split('\n');
-    if (content.length > 0 && lines[lines.length - 1] === '') {
-        lines.pop();
-    }
-    return lines;
+    return content === '' ? [] : splitTextLines(content);
 }
 
 export function deleteLineRange(lines: string[], startLine: number, endLine: number): string {

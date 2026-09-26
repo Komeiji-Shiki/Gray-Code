@@ -242,6 +242,7 @@ export class PlatformRuntime {
   async resolveApproval(approvalId: string, actorId: string, accepted: boolean, choiceId?: string): Promise<void> {
     const actor = await this.services.actor(actorId);
     if (!actor || actor.revoked || (actor.role !== 'owner' && !actor.effects.includes('administration'))) throw new Error('This account cannot approve operations.');
+    if (typeof accepted !== 'boolean') throw new Error('Explicit approval or rejection is required.');
     const pending = this.approvals.get(approvalId);
     if (!pending) throw new Error('Approval has expired or was already resolved.');
     if (pending.request.choices) {
@@ -365,6 +366,7 @@ export class PlatformRuntime {
             await this.event(run.id, 'run.started', { resumedAfterQuestion: true }, { status: 'running' });
             await this.drainFeedback(run); continue;
           }
+          signal.throwIfAborted();
           await this.event(run.id, 'run.completed', {}, { status: 'completed' }); return;
         }
         for (let index = 0; index < calls.length;) {
@@ -411,9 +413,11 @@ export class PlatformRuntime {
 
   private parallelRead(call: FunctionCall, agent: AgentDefinition, catalog: ToolCatalog): boolean {
     const entry = catalog.entries.get(call.name);
-    if (!entry?.tool.parallelRead || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
+    if (!entry || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
     try {
       const args = normalizeToolArguments(call.args, entry.tool.declaration.parameters);
+      const readOnly = typeof entry.tool.parallelRead === 'function' ? entry.tool.parallelRead(args) : entry.tool.parallelRead;
+      if (!readOnly) return false;
       const effects = entry.tool.effects(args);
       return effects.every(effect => effect === 'public_read' || effect === 'workspace_read') && !needsApproval(agent, call.name, effects);
     } catch { return false; }
@@ -500,15 +504,19 @@ export class PlatformRuntime {
     const request: ApprovalRequest = { id: randomUUID(), runId: run.id, actorId: run.actorId,
       toolCallId: call.id, toolName: call.name, args: call.args, effects, workspaceId: run.workspaceId,
       ...(reason ? { reason } : {}), ...(choices ? { choices: structuredClone(choices) } : {}) };
-    let settle!: (decision: ApprovalDecision) => void;
-    const accepted = new Promise<ApprovalDecision>(resolve => { settle = resolve; });
-    const abort = () => settle({ accepted: false });
+    let settle!: (decision: ApprovalDecision & { cancelled?: true }) => void;
+    const accepted = new Promise<ApprovalDecision & { cancelled?: true }>(resolve => { settle = resolve; });
+    const abort = () => {
+      // 取消不是用户拒绝；同步消耗原请求，不能让迟到/重复确认抢占已取消的审批。
+      if (this.approvals.delete(request.id)) settle({ accepted: false, cancelled: true });
+    };
     this.approvals.set(request.id, { request, resolve: settle });
     signal.addEventListener('abort', abort, { once: true });
     try {
       await this.event(run.id, 'approval.requested', { ...request, ...(reason ? { reason } : {}) }, { status: 'awaiting_approval' });
       const result = await accepted;
       await this.event(run.id, 'approval.resolved', { approvalId: request.id, toolCallId: call.id, toolName: call.name, ...result }, { status: 'running' });
+      signal.throwIfAborted();
       return result;
     } finally { signal.removeEventListener('abort', abort); this.approvals.delete(request.id); }
   }

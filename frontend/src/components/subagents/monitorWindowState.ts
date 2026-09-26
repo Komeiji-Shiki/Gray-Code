@@ -16,6 +16,8 @@ export interface SubAgentRunContentWindowState {
   startIndex: number
   endIndex: number
   totalCount: number
+  /** 同一 transcript 快照中所有占楼消息的全局 content index；旧宿主可缺省。 */
+  floorIndices?: number[]
   /**
    * 修改原因：Monitor window 是后端 transcript 的投影，异步请求返回时必须能判断自己是否落后于最新 manifest。
    * 修改方式：随窗口保存后端 contentRevision；旧测试/旧协议未提供时按 0 处理。
@@ -78,6 +80,8 @@ export function prependRunContentWindow(
 ): SubAgentRunContentWindowState | undefined {
   if (!older?.runId) return current
   if (!current || current.runId !== older.runId) return older
+  // 删除/重试改变了索引含义；不能把不同修订的页面拼成一份历史。
+  if (revisionOf(current) !== revisionOf(older)) return current
 
   const nonOverlappingOlder = (older.contents || []).filter((content, offset) => {
     const backendIndex = typeof content.index === 'number' ? content.index : older.startIndex + offset
@@ -89,12 +93,13 @@ export function prependRunContentWindow(
     contents: [...nonOverlappingOlder, ...(current.contents || [])],
     startIndex: Math.min(current.startIndex, older.startIndex),
     endIndex: Math.max(current.endIndex, older.endIndex),
-    totalCount: older.totalCount,
-    contentRevision: Math.max(revisionOf(current), revisionOf(older)),
+    totalCount: Math.max(current.totalCount, older.totalCount),
+    floorIndices: current.totalCount > older.totalCount ? current.floorIndices : older.floorIndices ?? current.floorIndices,
+    contentRevision: revisionOf(current),
     eventSequence: Math.max(sequenceOf(current), sequenceOf(older)),
     contextCompactions: older.contextCompactions ?? current.contextCompactions,
     hasMoreBefore: older.hasMoreBefore,
-    hasMoreAfter: current.hasMoreAfter || older.hasMoreAfter
+    hasMoreAfter: Math.max(current.endIndex, older.endIndex) < Math.max(current.totalCount, older.totalCount)
   }
 }
 
@@ -146,6 +151,7 @@ export function replaceRunContentWindowPreservingPrefix(
   if (!shouldApplyRunContentWindow(current, incoming)) return current
   if (!incoming) return current
   if (!current || current.runId !== incoming.runId) return incoming
+  if (incoming.totalCount < current.totalCount && revisionOf(incoming) > revisionOf(current)) return incoming
 
   // 计算当前窗口中严格早于 incoming.startIndex 的前缀（“加载更早消息”prepend 的部分）
   const prefix = (current.contents || []).filter((content, offset) => {

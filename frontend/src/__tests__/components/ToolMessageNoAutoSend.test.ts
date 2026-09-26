@@ -139,6 +139,8 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     await wrapper.findAll('.permission-options button')[0].trigger('click')
     expect(confirmations()[0].toolResponses[0]).toMatchObject({ approvalId: 'first', choiceId: 'once', confirmed: true })
     await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'second', approvalChoices: choices }] as any })
+    // 旧宿主的新审批门闸关闭上一条确认流，再由下一次选择建立新流。
+    runtime.chatStore.activeStreamId = null
     await flushPromises()
     expect(wrapper.findAll('.permission-options button')).toHaveLength(2)
     await wrapper.findAll('.permission-options button')[1].trigger('click')
@@ -150,6 +152,59 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
       expect(runtime.chatStore.abortToolConfirmationRound).not.toHaveBeenCalled()
       expect(confirmations()[1].toolResponses[0]).toMatchObject({ approvalId: 'second', choiceId: 'always', confirmed: true })
       finishSecond(); await flushPromises()
+    } finally { log.mockRestore() }
+  })
+
+  test.each(['confirm', 'reject'])('独立运行 %s 复用开放流，消息抵达与失败回执不会清掉审批流', async decision => {
+    runtime.chatStore.activeStreamId = 'live-run-stream'
+    runtime.chatStore.isWaitingForResponse = true
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'live-approval' }] as any })
+    let rejectRequest!: (error: Error) => void
+    runtime.sendToExtension.mockImplementation((channel: string) => channel === 'toolConfirmation'
+      ? new Promise((_resolve, reject) => { rejectRequest = reject }) : Promise.resolve())
+
+    await wrapper.find(`button.${decision}-btn`).trigger('click')
+    const requests = () => runtime.sendToExtension.mock.calls.filter(([channel]) => channel === 'toolConfirmation')
+    expect(requests()).toHaveLength(1)
+    expect(requests()[0][1]).toMatchObject({ streamId: 'live-run-stream', toolResponses: [
+      { id: 'tool-1', approvalId: 'live-approval', confirmed: decision === 'confirm' }
+    ] })
+    expect(runtime.chatStore.beginToolConfirmationRound).not.toHaveBeenCalled()
+    expect(runtime.chatStore.activeStreamId).toBe('live-run-stream')
+
+    // 同审批快照/代理消息引起重绘不能重复提交选择。
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'live-approval' }] as any })
+    expect(wrapper.find('button.confirm-btn').exists()).toBe(false)
+    expect(requests()).toHaveLength(1)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      rejectRequest(new Error('transport unavailable')); await flushPromises()
+      expect(runtime.chatStore.abortToolConfirmationRound).not.toHaveBeenCalled()
+      expect(runtime.chatStore.activeStreamId).toBe('live-run-stream')
+      expect(runtime.chatStore.isWaitingForResponse).toBe(true)
+      expect(wrapper.find('button.confirm-btn').exists()).toBe(true)
+      expect(wrapper.find('button.reject-btn').exists()).toBe(true)
+    } finally { log.mockRestore() }
+  })
+
+  test('旧审批失败晚于原流的拒绝终态时，不能复活按钮或影响新运行', async () => {
+    runtime.chatStore.activeStreamId = 'live-run-stream'
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'live-approval' }] as any })
+    let rejectRequest!: (error: Error) => void
+    runtime.sendToExtension.mockImplementation((channel: string) => channel === 'toolConfirmation'
+      ? new Promise((_resolve, reject) => { rejectRequest = reject }) : Promise.resolve())
+    await wrapper.find('button.confirm-btn').trigger('click')
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'live-approval', status: 'error',
+      result: { success: false, error: 'Operation was declined', code: 'PERMISSION_DENIED' } }] as any })
+    runtime.chatStore.activeStreamId = 'new-run-stream'
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      rejectRequest(new Error('approval already ended')); await flushPromises()
+      expect(runtime.chatStore.activeStreamId).toBe('new-run-stream')
+      expect(runtime.chatStore.abortToolConfirmationRound).not.toHaveBeenCalled()
+      expect(wrapper.find('button.confirm-btn').exists()).toBe(false)
+      expect(wrapper.find('button.reject-btn').exists()).toBe(false)
+      expect(wrapper.find('.status-error').exists()).toBe(true)
     } finally { log.mockRestore() }
   })
 

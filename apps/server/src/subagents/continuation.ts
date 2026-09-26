@@ -79,6 +79,15 @@ export class BackgroundContinuation {
       if (origin?.conversationId !== conversationId || origin.actorId !== source.actorId)
         origin = (await this.app.storage.listRuns({ conversationId, actorId: source.actorId, limit: 1 }))[0] ?? null;
       if (!origin && !source.parentConfiguration) throw new Error('原任务配置不可用，结果已保留，请在对话中选择模型后继续。');
+      if (origin?.status === 'cancelled') {
+        // 用户停止优先。迟到的用户/代理输入照常保留历史，但不能借后台回流复活已取消任务。
+        await this.app.storage.commitRecords(pending.flatMap(({ record, value }) => [
+          { namespace: pendingNamespace, id: value.id, delete: true },
+          { namespace, id: value.id, ownerId: conversationId, expectedRevision: record.revision,
+            value: { ...value, status: 'obsolete', error: '原任务已取消；输入已保留，等待用户手动继续。' } },
+        ] as RecordMutation[]));
+        return;
+      }
       const configuration = source.parentConfiguration?.configuration ?? await this.app.storage.getRecord('run-configurations', origin!.id) as SavedRunConfiguration | null;
       if (!configuration) throw new Error('旧任务未保存模型选择，结果已保留，请在对话中选择模型后继续。');
       const automationId = origin?.automationId ?? configuration.automationId;

@@ -218,6 +218,8 @@ export const toolMeta: Record<string, ToolMeta> = {
     descriptionDynamic: true,
     parameters: {
       "paths": {"type":"array","items":{"type":"string"},"required":true},
+      "maxDepth": {"type":"integer","default":1},
+      "kinds": {"type":"array","items":{"type":"string"}},
     },
     parametersDynamic: true,
     source: "backend/tools/lsp/declarations.ts",
@@ -430,6 +432,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "isRegex": {"type":"boolean","default":false},
       "caseSensitive": {"type":"boolean"},
       "maxResults": {"type":"number","default":100},
+      "offset": {"type":"integer","default":0},
       "replace": {"type":"string"},
       "maxFiles": {"type":"number","default":50},
     },

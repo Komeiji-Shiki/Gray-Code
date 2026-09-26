@@ -262,7 +262,7 @@ export class SubAgentMonitorPanel {
      *           长时间运行下面板缓存无界增长；超上限按插入序 FIFO 淘汰最旧条目。
      */
     private static readonly MANIFEST_CACHE_MAX = 64;
-    private readonly manifestCache = new Map<string, { manifest: SubAgentRunManifest; updatedAt: number }>();
+    private readonly manifestCache = new Map<string, { manifest: SubAgentRunManifest; eventSequence: number }>();
 
     /**
      * llm_delta 节流合并队列。
@@ -511,7 +511,7 @@ export class SubAgentMonitorPanel {
         });
     }
 
-    /** 获取（并按需重建）指定 run 的轻量 manifest：updatedAt 未变化时直接复用缓存（F20） */
+    /** 同一毫秒也可开始/结束模型请求，缓存必须随正式事件序号更新。 */
     private getCachedManifest(runId: string): SubAgentRunManifest | undefined {
         const manifest = subAgentRunEventBus.getManifest(runId);
         // manifest 可能为 undefined（run 尚未加载/已被清理）：不走缓存，直接返回（F21）
@@ -521,10 +521,10 @@ export class SubAgentMonitorPanel {
             return undefined;
         }
         const cached = this.manifestCache.get(runId);
-        if (cached && cached.updatedAt === manifest.updatedAt) {
+        if (cached && cached.eventSequence === manifest.eventSequence) {
             return cached.manifest;
         }
-        this.manifestCache.set(runId, { manifest, updatedAt: manifest.updatedAt });
+        this.manifestCache.set(runId, { manifest, eventSequence: manifest.eventSequence });
         // 容量上限：超出时按插入序淘汰最旧条目（Map 迭代序 = 插入序）
         if (this.manifestCache.size > SubAgentMonitorPanel.MANIFEST_CACHE_MAX) {
             const oldestRunId = this.manifestCache.keys().next().value;

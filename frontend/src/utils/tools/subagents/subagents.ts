@@ -74,7 +74,8 @@ registerTool('subagents', {
         const runId = getSubAgentRunId(tool)
         if (!runId) return
         await sendToExtension(MESSAGE_NAMES['subagents.openMonitor'], {
-          runId,
+          runId: window.__GRAYCODE_HOST ? (getSubAgentResultRunId(tool.result) || (typeof tool.args.continueFromRunId === 'string' ? tool.args.continueFromRunId.trim() : '') || undefined) : runId,
+          ...(window.__GRAYCODE_HOST ? { toolId: tool.id } : {}),
           conversationId: context.conversationId || undefined
         })
       }

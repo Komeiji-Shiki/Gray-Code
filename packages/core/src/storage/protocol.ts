@@ -86,6 +86,7 @@ export interface StorageOperations {
   searchConversationIds: { input: { query: string }; output: { matches: Array<{ id: string; messageIndex?: number; messageId?: string; excerpt?: string }>; indexing: boolean } };
   listUsageConversations: { input: Pick<ConversationListOptions, 'limit' | 'cursor'>; output: { items: UsageConversation[]; nextCursor?: ConversationList['nextCursor'] } };
   readHistory: { input: { id: string; options?: PageOptions }; output: HistoryPage };
+  readHistoryWithFloors: { input: { id: string; options?: PageOptions }; output: HistoryPage & { floorIndices: number[] } };
   historyInfo: { input: { id: string }; output: HistoryWriteResult };
   readUsageState: { input: { id: string; records?: { namespace: string; id: string; projection?: ValueProjection }[] }; output: { revision: number; messages: PlatformMessage[]; records: { namespace: string; id: string; record: VersionedRecord }[] } };
   recordRevisions: { input: { records: { namespace: string; id: string }[] }; output: (number | null)[] };

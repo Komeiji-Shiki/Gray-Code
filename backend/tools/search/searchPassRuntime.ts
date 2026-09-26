@@ -18,8 +18,14 @@ export interface SearchBudget {
     remainingChars: number;
     truncated: boolean;
 }
+export interface SearchPageState {
+    /** 跨文件/工作区共享；跳过的命中不占本页输出预算。 */
+    remaining: number;
+    matchesSeen: number;
+}
 export interface SearchPassResult {
     results: SearchMatch[];
+    matchesSeen: number;
     /** 结果条数达到 maxResults 上限（maxResults+1 探测判定，恰好等于 maxResults 时不置位） */
     matchesTruncated: boolean;
     budgetTruncated: boolean;
@@ -160,7 +166,8 @@ async function searchInDirectory(
     workspaceName: string | null,
     excludePattern: string,
     config: Readonly<SearchInFilesToolConfig>,
-    budget?: SearchBudget
+    budget?: SearchBudget,
+    page?: SearchPageState
 ): Promise<{ matches: SearchMatch[]; filesTruncated: boolean; skippedFiles: SkippedFileInfo[] }> {
     // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
     // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
@@ -324,6 +331,15 @@ async function searchInDirectory(
                         break;
                     }
                     
+                    if (page) {
+                        page.matchesSeen++;
+                        if (page.remaining > 0) {
+                            page.remaining--;
+                            // 空匹配在跳过页内也必须推进，否则 offset 会改变结果集合。
+                            if ((match[0] ?? '').length === 0) searchRegex.lastIndex++;
+                            continue;
+                        }
+                    }
                     const rawMatchText = match[0] ?? '';
                     const matchText = rawMatchText.length > maxMatchPreviewChars
                         ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)

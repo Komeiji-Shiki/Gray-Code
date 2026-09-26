@@ -276,11 +276,15 @@ function emitVirtualSeekRatio(ratio: number): void {
 }
 
 // 检查是否在底部（用于粘性底部）
+function hasGlobalTail(): boolean {
+  return !isVirtualScroll.value || props.virtualEnd >= props.virtualTotal
+}
+
 function isAtBottom(): boolean {
   if (!scrollContainer.value) return false
   const container = scrollContainer.value
   // 已加载窗口尚未覆盖全局尾部时，局部 DOM 到底不等于对话到底。
-  if (isVirtualScroll.value && props.virtualEnd > 0 && props.virtualEnd < props.virtualTotal) return false
+  if (!hasGlobalTail()) return false
   // 贴底只取决于真实 DOM 位置：虚拟模式的总高度是按行数估算的，与真实内容高度无关
   // （长消息下偏差可达数倍），用它计算距底距离会把窗口尾部一大段误判成「仍在底部」。
   const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
@@ -309,7 +313,7 @@ let programmaticScrollTop: number | null = null
  */
 const USER_SCROLL_COOLDOWN_MS = 250
 /** 最近一次用户滚动输入的时间（performance.now 时间轴） */
-let lastUserScrollInputAt = 0
+let lastUserScrollInputAt = Number.NEGATIVE_INFINITY
 
 /** 贴底跟随写入阈值（px）：与目标位置差值小于该值时跳过写 scrollTop，避免每帧赋值 */
 const STICKY_FOLLOW_THRESHOLD = 2
@@ -636,7 +640,7 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
   if (!scrollContainer.value) return
 
   const container = scrollContainer.value
-  if (options.preserveBottom && props.stickyBottom && wasAtBottom) {
+  if (options.preserveBottom && props.stickyBottom && wasAtBottom && hasGlobalTail()) {
     // 用户滚动输入冷静期内不贴底：让滚动真正生效（内容增长可能抵消滚动距离）
     const inUserScrollCooldown = performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS
     if (!inUserScrollCooldown) {
@@ -684,14 +688,30 @@ const markerBaseColor = computed(() => {
 // 避免同帧稍后执行的 updateLayout 读到陈旧 wasAtBottom 把用户拉回底部；
 // 滚动条 UI 更新仍 rAF 合帧。
 let scrollRafId: number | null = null
+let lastScrollObservation: { top: number; height: number; viewport: number; start: number; end: number } | undefined
 function handleScroll() {
   const container = scrollContainer.value
-  if (container && programmaticScrollTop !== null && container.scrollTop === programmaticScrollTop) {
-    // 程序贴底写入触发的 scroll 事件：写入即贴底，状态保持（不因 scrollHeight 增长误判）
+  if (!container) return
+  const observation = {
+    top: container.scrollTop, height: container.scrollHeight, viewport: container.clientHeight,
+    start: props.virtualStart, end: props.virtualEnd
+  }
+  const previous = lastScrollObservation
+  const layoutChanged = !previous || previous.height !== observation.height || previous.viewport !== observation.viewport
+    || previous.start !== observation.start || previous.end !== observation.end
+  const userInput = isDragging.value || performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS
+  if (userInput) {
+    wasAtBottom = isAtBottom()
     programmaticScrollTop = null
-  } else {
+  } else if (programmaticScrollTop !== null && Math.abs(container.scrollTop - programmaticScrollTop) < 1) {
+    programmaticScrollTop = null
+  } else if (!previous || !layoutChanged && previous.top !== observation.top) {
     wasAtBottom = isAtBottom()
   }
+  // 裁掉渲染窗口首行时 Chromium 会自行调 scrollTop；同位置事件也可能晚于高度增长。
+  // 这些不是用户滚离，不能清掉 follow。必要时由同一个布局帧完成贴尾，不递归分页。
+  lastScrollObservation = observation
+  if (layoutChanged && wasAtBottom) scheduleLayoutUpdate({ preserveBottom: true })
   if (scrollRafId !== null) return
   scrollRafId = requestAnimationFrame(() => {
     scrollRafId = null
@@ -700,7 +720,8 @@ function handleScroll() {
 }
 
 /** 用户滚动输入（wheel/触摸板）：标记冷静期。输入事件同步派发、早于 scroll 事件与 rAF */
-function handleUserScrollInput(): void {
+function handleUserScrollInput(event: Event): void {
+  if (event instanceof KeyboardEvent && !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return
   lastUserScrollInputAt = performance.now()
 }
 
@@ -1025,6 +1046,8 @@ onMounted(() => {
     if (scrollContainer.value) {
       scrollContainer.value.addEventListener('scroll', handleScroll, { passive: true })
       scrollContainer.value.addEventListener('wheel', handleUserScrollInput, { passive: true })
+      scrollContainer.value.addEventListener('touchmove', handleUserScrollInput, { passive: true })
+      scrollContainer.value.addEventListener('keydown', handleUserScrollInput)
     }
     
     window.addEventListener('resize', updateScrollbar)
@@ -1032,9 +1055,12 @@ onMounted(() => {
     // 使用 ResizeObserver 监听容器尺寸变化
     if (window.ResizeObserver && scrollContainer.value) {
       resizeObserver = new ResizeObserver(() => {
-        scheduleLayoutUpdate({ updateMarkers: true })
+        scheduleLayoutUpdate({ preserveBottom: true, updateMarkers: true })
       })
       resizeObserver.observe(scrollContainer.value)
+      // 图片加载/折叠和外部任务条会改变内容或视口高度，但未必产生 DOM mutation。
+      const content = scrollContainer.value.firstElementChild
+      if (content) resizeObserver.observe(content)
     }
     
     // 使用 MutationObserver 监听内容变化
@@ -1065,6 +1091,8 @@ onBeforeUnmount(() => {
   if (scrollContainer.value) {
     scrollContainer.value.removeEventListener('scroll', handleScroll)
     scrollContainer.value.removeEventListener('wheel', handleUserScrollInput)
+    scrollContainer.value.removeEventListener('touchmove', handleUserScrollInput)
+    scrollContainer.value.removeEventListener('keydown', handleUserScrollInput)
   }
   window.removeEventListener('resize', updateScrollbar)
   if (resizeObserver) {
@@ -1134,12 +1162,31 @@ function scrollToBottom(options?: { instant?: boolean }) {
   }
 }
 
+// 虚拟窗口换页与粘性贴底共用同一滚动写入口，避免两者在下一帧各自纠正对方。
+function pauseBottomFollow() {
+  wasAtBottom = false
+  programmaticScrollTop = null
+}
+
+function scrollToPosition(top: number) {
+  const container = scrollContainer.value
+  if (!container || isUnmounted) return
+  const target = Math.max(0, Math.min(top, container.scrollHeight - container.clientHeight))
+  if (Math.abs(container.scrollTop - target) > 0.5) container.scrollTop = target
+  programmaticScrollTop = container.scrollTop
+  wasAtBottom = isAtBottom()
+  scheduleLayoutUpdate()
+}
+
 // 暴露方法供外部调用
 defineExpose({
   update: updateScrollbar,
   updateMarkers,
   scrollToTop,
   scrollToBottom,
+  scrollToPosition,
+  pauseBottomFollow,
+  isFollowingBottom: () => wasAtBottom && hasGlobalTail(),
   getContainer: () => scrollContainer.value
 })
 </script>

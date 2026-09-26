@@ -352,7 +352,7 @@ const zhCN = {
             send: '发送消息',
             sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
             stopGenerating: '停止生成',
-            sendWhileBusy: '发送新消息（正在运行的命令将转入后台，AI 优先响应）',
+            sendWhileBusy: '发送补充消息',
             interruptDelivered: '已插入到当前回合，AI 将尽快处理',
             attachFile: '添加附件',
             pinnedFiles: '固定文件',
@@ -765,7 +765,7 @@ const zhCN = {
                 dismiss: '关闭'
             },
             interrupt: {
-                delivered: '已投递「{text}」，将在当前回合结束后处理',
+                delivered: '已接收「{text}」，排队等待处理',
                 deliverFailed: '消息未能投递：{detail}'
             },
             tool: {
@@ -3402,6 +3402,9 @@ const zhCN = {
         },
 
         tools: {
+            presentation: sharedZhCN.components.tools.presentation,
+            automation: sharedZhCN.components.tools.automation,
+            platform: sharedZhCN.components.tools.platform,
             executing: '执行中...',
             structured: {
                 statuses: { pending: '待处理', queued: '排队中', in_progress: '进行中', running: '运行中', completed: '已完成', done: '已完成', success: '成功', failed: '失败', error: '错误', blocked: '等待条件', cancelled: '已取消' },

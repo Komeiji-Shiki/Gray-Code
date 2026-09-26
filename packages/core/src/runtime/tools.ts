@@ -32,8 +32,8 @@ export interface RuntimeTool {
   declaration: ToolDeclaration;
   /** 模型声明经过兼容转换时，执行前仍使用原始 Schema 校验参数。 */
   validationSchema?: ToolDeclaration['parameters'];
-  /** 明确独立的读取允许同批并行；实际效果仍须全部属于只读。该标记不进入模型声明。 */
-  parallelRead?: boolean;
+  /** 明确独立的读取允许同批并行；混合工具可按参数纯分类，实际效果与审批仍限制并行。 */
+  parallelRead?: boolean | ((args: Record<string, unknown>) => boolean);
   /** Pure classification. Must not read files, contact a service, or create a snapshot. */
   effects: (args: Record<string, unknown>) => ToolEffect[];
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolOutcome>;

@@ -50,7 +50,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [content: string, attachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean }, onResult?: (ok: boolean) => void]
+  send: [content: string, attachments: Attachment[], options?: { messageId?: string; dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean }, onResult?: (ok: boolean) => void]
   cancel: []
   clearAttachments: []
   attachFile: []
@@ -217,28 +217,44 @@ const canSend = computed(() => {
   const hasContexts = getContexts(editorNodes.value).length > 0
   const hasContent = plainText.length > 0 || hasContexts || (props.attachments?.length || 0) > 0
 
-  // 允许在 AI 响应期间输入（会入队）；有待确认工具时同样允许发送（发送即中断当前回合）。
+  // 允许在 AI 响应期间输入；独立端投递到运行收件队列，不替用户批准/拒绝工具。
   // 注意：上传中（props.uploading）一律禁用，含待确认工具场景。
   return hasContent && !props.uploading
 })
+
+// 原稿在失败后会原样恢复（含跨标签页快照）。以原稿引用保留提交 ID，
+// 回执丢失后的重试由宿主去重；编辑内容/附件后是新提交，废弃原稿可自动回收。
+const draftSubmissions = new WeakMap<EditorNode[], { id: string; content: string; attachments: Attachment[] }>()
+const attachmentPayloadKeys = ['id', 'name', 'type', 'size', 'mimeType', 'data', 'thumbnail'] as const
 
 function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!canSend.value) return
 
   const content = serializeNodes(editorNodes.value).trim()
   const currentAttachments = props.attachments || []
-  const sendOptions = options?.dynamicContextStrategyOverride ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride } : undefined
+  const pendingNodes = editorNodes.value
+  const platform = !!window.__GRAYCODE_HOST
+  const previous = draftSubmissions.get(pendingNodes)
+  const sameSubmission = previous?.content === content && previous.attachments.length === currentAttachments.length
+    && currentAttachments.every((attachment, index) => attachmentPayloadKeys.every(key => attachment[key] === previous.attachments[index][key]))
+  const messageId = platform ? (sameSubmission ? previous!.id : generateId()) : undefined
+  if (messageId) draftSubmissions.set(pendingNodes, { id: messageId, content, attachments: currentAttachments.map(attachment => ({ ...attachment })) })
+  const sendOptions = messageId || options?.dynamicContextStrategyOverride
+    ? { ...(messageId ? { messageId } : {}), ...(options?.dynamicContextStrategyOverride ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride } : {}) }
+    : undefined
 
   // 备份本次发送的正文节点：直接发送是异步的（父组件 await sendMessage 后才回报结果），
-  // 发送失败（忙时投递拒绝带附件消息 / IPC 异常）时用备份恢复输入，避免正文静默丢失。
-  const pendingNodes = editorNodes.value
+  // 发送失败时用备份恢复输入，避免正文静默丢失。
   const originTabId = chatStore.activeTabId
 
   // 发送结果回调：仅处理失败恢复。成功/清空仍走下方同步路径（点击即清空，
   // 避免发送窗口内重复点击双发）；失败且用户尚未开始输入新内容时把正文节点恢复回输入框
   // （附件由父组件在失败分支恢复；inputValue 由下方 editorNodes 反向同步 watch 自动更新）。
   const onSendResult = (ok: boolean) => {
-    if (ok) return
+    if (ok) {
+      if (draftSubmissions.get(pendingNodes)?.id === messageId) draftSubmissions.delete(pendingNodes)
+      return
+    }
     if (chatStore.activeTabId === originTabId) {
       if (editorNodes.value.length === 0) editorNodes.value = pendingNodes
     } else if (originTabId) {
@@ -250,20 +266,22 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
     }
   }
 
-  // 智能决策：AI 空闲且队列为空时直接发送，否则入队。
-  // A-COMM 接管窗口（后台结果领取后内部回流流即将启动）：视为忙碌入队——
-  // 窗口内的插话会被内部回流流误消费且不落历史，用户消息应走正常回合排队。
+  // 独立端普通忙时发送（含截图）直接交给持久收件队列，在下一模型边界处理，
+  // 不在前端等 toolIteration 后才投递。已有显式队列/旧宿主 claim 接管窗口仍保持排队次序。
   const agentMessageRoundPending = isAgentMessageRoundPending(chatStore.currentConversationId)
-  if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0 && !agentMessageRoundPending) {
+  if ((!chatStore.isWaitingForResponse || platform) && chatStore.messageQueue.length === 0 && !agentMessageRoundPending) {
     // 直接发送
     emit('send', content, currentAttachments, sendOptions, onSendResult)
   } else {
     // 加入候选区队列
-    // 如果有工具待确认，仍走直接发送路径（发送即中断当前回合，不入队滞留）
-    if (chatStore.hasPendingToolConfirmation) {
+    // 旧扩展保留待确认时显式发送即中断的交互；独立端发送从不替用户决定审批。
+    if (!platform && chatStore.hasPendingToolConfirmation) {
       emit('send', content, currentAttachments, sendOptions, onSendResult)
     } else {
-      chatStore.enqueueMessage(content, currentAttachments, sendOptions)
+      // 显式候选队列仍按原回合发送语义处理，编辑队列正文不复用忙时接收凭据。
+      const queuedOptions = options?.dynamicContextStrategyOverride
+        ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride } : undefined
+      chatStore.enqueueMessage(content, currentAttachments, queuedOptions)
       // 入队后清空附件（通知父组件）
       emit('clearAttachments')
     }

@@ -88,6 +88,8 @@ export interface SubAgentRunSnapshot extends SubAgentRunPersistedRecord {
     contentRevision: number;
     eventSequence: number;
     /** false 表示只恢复了轻量 metadata，完整 transcript 尚未从独立文件读取。 */
+    /** 仅内存运行阶段；历史恢复不得显示未完成的 Loading。 */
+    streamingContentIndex?: number | null;
     transcriptLoaded?: boolean;
 }
 
@@ -104,6 +106,7 @@ export interface SubAgentRunManifest {
     eventSequence: number;
     preview?: string;
     lastMessageRole?: Content['role'];
+    streamingContentIndex?: number | null;
 }
 
 export interface SubAgentRunContentWindow {
@@ -112,6 +115,8 @@ export interface SubAgentRunContentWindow {
     startIndex: number;
     endIndex: number;
     totalCount: number;
+    /** Global numbered content indices for this entire revision, not just the returned page. */
+    floorIndices?: number[];
     contentRevision: number;
     eventSequence: number;
     contextCompactions: SubAgentContextCompactionRecord[];

@@ -53,7 +53,7 @@ describe('insert_code 终态语义（diff 审阅）', () => {
             uri: vscode.Uri.file('/workspace/project')
         }];
 
-        // 模拟已存在文件：4 行内容，第 2 行前插入一行
+        // 模拟已存在文件：3 行内容，第 2 行前插入一行
         (fs.promises as any).stat.mockResolvedValue({ size: 64 });
         (fs.promises as any).readFile.mockResolvedValue('line1\nline2\nline3\n');
 
@@ -192,13 +192,34 @@ describe('insert_code 终态语义（diff 审阅）', () => {
         expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
     });
 
+    test.each([
+        ['line1\nline2\n', 3, 'line1\nline2\nX\n'],
+        ['line1\r\nline2\r\n', 3, 'line1\nline2\nX\n'],
+        ['line1\rline2\r', 3, 'line1\nline2\nX\n'],
+        ['line1\nline2', 3, 'line1\nline2\nX'],
+    ] as Array<[string, number, string]>)('用真实末行 + 1 追加且不引入空行：%j', async (text, line, expected) => {
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(text);
+        mockDiffManager.waitForDiffResolution.mockResolvedValue('none');
+        mockDiffManager.getDiff.mockReturnValue({ id: 'pending-diff-1', status: 'accepted' });
+        const result = await runInsertCode([{ path: 'sample.ts', line, content: 'X\r\n' }]);
+        expect(result.success).toBe(true);
+        expect(result.data.results[0].insertedLines).toBe(1);
+        expect(mockDiffManager.createPendingDiff.mock.calls[0][3]).toBe(expected);
+    });
+
+    test('不允许在最终换行之后再跳过一个幻影行插入', async () => {
+        const result = await runInsertCode([{ path: 'sample.ts', line: 5, content: 'X' }]);
+        expect(result.success).toBe(false);
+        expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
+    });
+
     test('异常路径：插入行号越界返回可读错误', async () => {
         const result = await runInsertCode([{ path: 'sample.ts', line: 99, content: 'X' }]);
         expect(result.success).toBe(false);
         expect(result.data.results[0]).toMatchObject({
             path: 'sample.ts',
             success: false,
-            error: 'Line 99 is out of range. File has 4 lines. Use 1~5.'
+            error: 'Line 99 is out of range. File has 3 lines. Use 1~4.'
         });
         expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
     });

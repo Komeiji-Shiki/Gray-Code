@@ -1,7 +1,10 @@
 import type { RuntimeTool, ToolContext } from "@graycode/core";
 import { WorkspaceFiles } from "./files";
+import { getActualLanguage } from '../../../../backend/i18n';
+import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
 import { WorkspaceProcesses, commandEffects } from "./processes";
 import type { WorkspaceChanges } from './changes';
+import { splitTextLines } from '../../../../shared/textLines';
 
 function workspace(context: ToolContext) {
   if (!context.workspace)
@@ -14,12 +17,14 @@ export function workspaceTools(
   processes: WorkspaceProcesses,
   changes: WorkspaceChanges,
 ): RuntimeTool[] {
+  const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
   return [
     {
       declaration: {
         name: "workspace_files",
-        description:
-          "List, read, write, edit or delete a workspace text file. Read returns its hash; writing requires expectedHash (null for a new file). Edit replaces exactly one oldText occurrence. Unsaved editor drafts and external modifications produce conflicts.",
+        description: isZh
+          ? '对工作区文本文件进行哈希校验读写。read 返回原文哈希；write/edit/delete 必须传 expectedHash（新文件为 null），存在未保存草稿或文件变化时拒绝修改。edit 只替换唯一的 oldText。普通代码阅读、批量读取和图片/PDF 使用 read_file；需要 Diff 审阅的局部修改使用 apply_diff，新建或重写使用 write_file。仅在需要显式哈希校验写入时选择本工具，并先用本工具 read 获取哈希。'
+          : 'Hash-checked workspace text-file access. Read returns the original-text hash; write/edit/delete require expectedHash (null for a new file). Dirty drafts or external changes cause conflicts. Edit replaces exactly one oldText occurrence. Prefer read_file for ordinary code reading, batches and images/PDFs; apply_diff for targeted Diff edits and write_file for creation/rewrites. Choose this tool when explicit hash-checked writes are needed, and read here first to obtain the hash.',
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -59,13 +64,20 @@ export function workspaceTools(
               code: "NOT_FOUND",
               error: "File does not exist.",
             };
-          const lines = value.text.split("\n");
+          const lines = splitTextLines(value.text, true);
           const start = Math.max(0, Number(args.startLine ?? 1) - 1);
-          const end = Math.min(
+          if (start >= lines.length)
+            return {
+              success: false,
+              code: "INVALID_LINE_RANGE",
+              error: `startLine (${start + 1}) exceeds total lines (${lines.length})`,
+              data: { totalLines: lines.length },
+            };
+          const end = Math.max(start + 1, Math.min(
             lines.length,
             Number(args.endLine ?? start + 300),
             start + 1200,
-          );
+          ));
           return {
             success: true,
             data: {
@@ -73,7 +85,7 @@ export function workspaceTools(
               startLine: start + 1,
               endLine: end,
               totalLines: lines.length,
-              content: lines.slice(start, end).join("\n"),
+              content: lines.slice(start, end).join("").replace(/(?:\r\n|\r|\n)$/, ""),
             },
           };
         }
@@ -122,8 +134,9 @@ export function workspaceTools(
     {
       declaration: {
         name: "search_files",
-        description:
-          "Search literal text in workspace UTF-8 files. Skips symlinks, .git, node_modules and binary/large files. Returns bounded matching lines.",
+        description: isZh
+          ? '轻量、严格字面量搜索 UTF-8 文本，每个匹配行返回一次，不自动拆分关键词。跳过符号链接、.git、node_modules、二进制和大文件。需要正则、文件 glob、上下文或替换时使用 search_in_files。结果有 nextOffset 时保持查询参数不变并传入 offset 续查；文件变化后从 0 重查。'
+          : 'Lightweight strict literal search in UTF-8 files, returning each matching line once without keyword fallback. Skips symlinks, .git, node_modules and binary/large files. Use search_in_files for regex, file globs, context or replacement. Continue with nextOffset as offset and unchanged query parameters; restart at 0 after files change.',
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -132,58 +145,68 @@ export function workspaceTools(
             directory: optionalText,
             caseSensitive: { type: "boolean" },
             limit: { type: "integer", minimum: 1, maximum: 200 },
+            offset: { type: "integer", minimum: 0, default: 0,
+              description: isZh ? '跳过的匹配行数；续查时使用上次返回的 nextOffset。' : 'Matching lines to skip; use the previous nextOffset to continue.' },
           },
           required: ["query"],
         },
       },
+      parallelRead: true,
       effects: () => ["workspace_read"],
       execute: async (args, context) => {
         const target = workspace(context);
         const pending = [String(args.directory ?? ".")];
         const matches: { path: string; line: number; text: string }[] = [];
         const limit = Number(args.limit ?? 100);
-        const query = args.caseSensitive
-          ? String(args.query)
-          : String(args.query).toLowerCase();
+        const offset = args.offset ?? 0;
+        if (!Number.isSafeInteger(offset) || Number(offset) < 0) throw new Error('offset must be a non-negative safe integer');
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('limit must be an integer between 1 and 200');
+        if (typeof args.query !== 'string' || !args.query.length) throw new Error('query must be nonempty text');
+        const query = args.caseSensitive ? args.query : args.query.toLowerCase();
+        const probeLimit = limit + 1;
+        let remaining = Number(offset);
         let scanned = 0;
-        while (pending.length && matches.length < limit && scanned < 20_000) {
+        let filesTruncated = false;
+        search: while (pending.length && matches.length < probeLimit) {
           context.signal.throwIfAborted();
           for (const entry of await files.list(target, pending.pop()!)) {
             if (entry.kind === "directory") {
-              if (![".git", "node_modules"].includes(entry.name))
-                pending.push(entry.path);
+              if (![".git", "node_modules"].includes(entry.name)) pending.push(entry.path);
               continue;
             }
             if (entry.kind !== "file") continue;
+            if (scanned >= 20_000) { filesTruncated = true; break search; }
             scanned++;
             let text: string;
             try {
               text = (await files.read(target, entry.path)).text;
             } catch {
+              context.signal.throwIfAborted();
               continue;
             }
-            for (const [line, value] of text.split("\n").entries()) {
-              if (
-                (args.caseSensitive ? value : value.toLowerCase()).includes(
-                  query,
-                )
-              )
-                matches.push({
-                  path: entry.path,
-                  line: line + 1,
-                  text: value.slice(0, 1200),
-                });
-              if (matches.length >= limit) break;
+            for (const [line, value] of splitTextLines(text).entries()) {
+              if (!(args.caseSensitive ? value : value.toLowerCase()).includes(query)) continue;
+              if (remaining > 0) { remaining--; continue; }
+              matches.push({ path: entry.path, line: line + 1, text: value.slice(0, 1200) });
+              if (matches.length >= probeLimit) break search;
             }
-            if (matches.length >= limit || scanned >= 20_000) break;
           }
         }
+        const matchesTruncated = matches.length > limit;
+        if (matchesTruncated) matches.length = limit;
+        const nextOffset = matchesTruncated ? Number(offset) + matches.length : undefined;
         return {
           success: true,
           data: {
             matches,
             scanned,
-            truncated: matches.length >= limit || scanned >= 20_000,
+            offset,
+            nextOffset,
+            truncated: matchesTruncated || filesTruncated,
+            truncationReasons: matchesTruncated ? ['limit'] : filesTruncated ? ['scanLimit'] : undefined,
+            continuationHint: nextOffset !== undefined
+              ? `Continue with offset=${nextOffset} and unchanged query/directory/caseSensitive; restart at 0 if files changed.`
+              : filesTruncated ? 'File scan limit reached; narrow directory. Offset cannot reach unscanned files.' : undefined,
           },
         };
       },
@@ -191,8 +214,9 @@ export function workspaceTools(
     {
       declaration: {
         name: "run_command",
-        description:
-          "Start an executable with an argument array in the selected workspace. No implicit shell. Use an explicit shell executable for shell syntax. Configured approval rules apply, with deletion and identified high-risk operations classified separately. Returns a session ID for ongoing work.",
+        description: isZh
+          ? '直接启动可执行文件并传入 args 数组，不经过 Shell，也不展开管道、重定向和环境变量。已有独立参数时优先用它，避免命令字符串转义。需要 Shell 语法、选择 Shell、cwd 或后台完成通知时使用 execute_command。返回的会话 ID 由 process_session 读取、输入或停止。'
+          : 'Start an executable directly with an args array: no shell, pipe/redirection parsing or environment expansion. Prefer this for already-separated arguments to avoid shell quoting. Use execute_command for shell syntax, shell selection, cwd or background completion notifications. Use process_session with the returned session ID to read, send input or stop.',
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -218,8 +242,9 @@ export function workspaceTools(
     {
       declaration: {
         name: "process_session",
-        description:
-          "Read output, send input, or stop a process session created by this task. Stopping affects its managed process tree only.",
+        description: isZh
+          ? '读取输出、发送输入或停止本任务通过 run_command 创建的会话。id 必须来自 run_command，不适用于 execute_command 的后台 taskId；停止仅作用于该会话受管的进程树。'
+          : 'Read output, send input or stop a session created by this task through run_command. The id must come from run_command, not an execute_command background taskId. Stopping affects only the session managed process tree.',
         parameters: {
           type: "object",
           additionalProperties: false,

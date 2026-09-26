@@ -24,11 +24,14 @@ const waiting = computed(() => !hasResult.value && !failure.value && ['queued', 
 <template>
   <div class="tool-result-panel">
     <div v-if="failure" class="result-error" role="alert"><span class="codicon codicon-error" aria-hidden="true" /><span>{{ failure }}</span></div>
+    <slot />
     <section v-if="hasResult" class="result-section" :aria-label="t('components.tools.result')">
       <div class="result-heading"><span class="codicon codicon-output" aria-hidden="true" /><span>{{ t('components.tools.result') }}</span><span v-if="envelope?.success !== undefined" class="result-outcome" :class="{ failed: envelope.success === false }">{{ t(`components.tools.${envelope.success === false ? 'failed' : 'executed'}`) }}</span></div>
-      <ToolResultValue v-if="!resultEmpty" :value="payload" />
-      <p v-else-if="!failure && !media.length" class="result-empty">{{ t(envelope?.success === false ? 'components.tools.failed' : 'components.tools.structured.noOutput') }}</p>
-      <ToolResultValue v-if="hasData && Object.keys(metadata).length" :value="metadata" />
+      <slot name="result" :payload="payload" :metadata="metadata">
+        <ToolResultValue v-if="!resultEmpty" :value="payload" />
+        <p v-else-if="!failure && !media.length" class="result-empty">{{ t(envelope?.success === false ? 'components.tools.failed' : 'components.tools.structured.noOutput') }}</p>
+        <ToolResultValue v-if="hasData && Object.keys(metadata).length" :value="metadata" />
+      </slot>
       <div v-if="media.length" class="result-media"><ToolResultValue v-for="(item, index) in media" :key="index" :value="item" /></div>
     </section>
     <p v-if="waiting" class="result-waiting" role="status"><span class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true" />{{ t('components.tools.structured.waiting') }}</p>

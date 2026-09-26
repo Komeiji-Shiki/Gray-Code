@@ -32,6 +32,7 @@ import { computed as vueComputed, watch } from 'vue'
 import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { t } from '../composables/useI18n'
+import { messageListUiStateByTab } from '../components/message/messageListUiState'
 import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
@@ -477,7 +478,7 @@ export const useChatStore = defineStore('chat', () => {
   const refreshConversationSummary = (id: string) => ensureConversationSummary(state, id, true)
   const loadMoreConversations = () => loadMoreConvsAction(state)
   const loadOlderMessagesPage = (options?: { pageSize?: number }) => loadOlderMessagesPageAction(state, options)
-  const loadMessagesAroundIndex = (index: number, options?: { pageSize?: number }) => loadMessagesAroundIndexAction(state, index, options)
+  const loadMessagesAroundIndex = (index: number, options?: { pageSize?: number; signal?: AbortSignal }) => loadMessagesAroundIndexAction(state, index, options)
 
   /**
    * 切换对话 - 标签页感知
@@ -758,9 +759,14 @@ export const useChatStore = defineStore('chat', () => {
     const conversationId = state.currentConversationId.value
     if (window.__GRAYCODE_HOST && conversationId && staleRemoteViews.has(conversationId)) { void restoreRemoteView(conversationId); return }
     if (window.__GRAYCODE_HOST && hasSnapshot && conversationId && !state.isStreaming.value && !state.isWaitingForResponse.value) {
+      const savedView = messageListUiStateByTab.get(tabId)
+      const preserveWindow = savedView?.followingBottom === false && savedView.conversationId === conversationId
       state.isLoading.value = true
       void (async () => {
-        try { await loadHistory(state); await resumeDesktopConversation(state, conversationId) }
+        try {
+          await loadHistory(state, false, { preserveWindow })
+          await resumeDesktopConversation(state, conversationId, { preserveWindow })
+        }
         catch (error) { if (state.currentConversationId.value === conversationId) state.error.value = { code: 'RESUME_ERROR', message: (error as Error).message } }
         finally { if (state.currentConversationId.value === conversationId) state.isLoading.value = false }
       })()

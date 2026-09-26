@@ -56,7 +56,7 @@ export interface WindowsAgentStopNotificationServiceOptions {
   onDidChangeWindowState: (
     listener: (state: { focused: boolean }) => void
   ) => { dispose: () => void }
-  executeCommand: (command: string) => PromiseLike<unknown>
+  executeCommand: (command: string, conversationId?: string) => PromiseLike<unknown>
   focusWindow: FocusWindowFunction
   logger?: Pick<Console, 'warn' | 'error'>
   dedupeTtlMs?: number
@@ -109,7 +109,7 @@ export class WindowsAgentStopNotificationService {
   private readonly onDidChangeWindowState: (
     listener: (state: { focused: boolean }) => void
   ) => { dispose: () => void }
-  private readonly executeCommand: (command: string) => PromiseLike<unknown>
+  private readonly executeCommand: WindowsAgentStopNotificationServiceOptions['executeCommand']
   private readonly focusWindow: FocusWindowFunction
   private readonly logger: Pick<Console, 'warn' | 'error'>
   private readonly dedupeTtlMs: number
@@ -300,10 +300,10 @@ export class WindowsAgentStopNotificationService {
     }
   }
 
-  private async handleNotificationClick(): Promise<void> {
+  private async handleNotificationClick(conversationId?: string): Promise<void> {
     try {
       log.debug('notification_click_execute_open_chat')
-      await this.executeCommand('graycode.openChat')
+      await this.executeCommand('graycode.openChat', conversationId)
       await this.focusWindow()
       log.debug('open_chat_executed')
     } catch (error) {
@@ -314,7 +314,8 @@ export class WindowsAgentStopNotificationService {
   private async showToast(
     title: string,
     message: string,
-    onAsyncFailure?: () => void
+    onAsyncFailure?: () => void,
+    conversationId?: string
   ): Promise<AgentStopNotificationDispatchResult> {
     log.debug('show_toast_invoked', {
       title,
@@ -329,7 +330,7 @@ export class WindowsAgentStopNotificationService {
         message,
         silent: true,
         waitForAction: true,
-        onClick: () => this.handleNotificationClick(),
+        onClick: () => this.handleNotificationClick(conversationId),
         // 通知 API 异步 reject 无法在 show() 返回前感知：经回调通知服务侧（回滚去重键）
         onError: () => onAsyncFailure?.()
       })
@@ -468,7 +469,7 @@ export class WindowsAgentStopNotificationService {
       // 避免滞留导致后续同 key 通知被误判为 duplicate 而收不到
       this.dedupeByKey.delete(dedupeKey)
       log.debug('dedupe_key_rolled_back_async', { dedupeKey })
-    })
+    }, payload.conversationId)
     if (!result.shown) {
       // 回滚去重键：toast 未显示（权限/失败）时不应占住去重键，
       // 否则后续通知被误判为 duplicate，用户永远收不到
