@@ -53,7 +53,8 @@ describe('LifeBook 独立导入资料库', () => {
   });
   test('关闭召回时隔离，明确开启后仅加入私人真实范围，角色和群聊保持隔离', async () => {
     await source(); const result = await importLifeBook(f.store, f.source, { actorId: 'owner' });
-    const app = { storage: f.store, conversation: async () => {}, workspace: () => {} } as any;
+    const app = { storage: f.store, conversation: async () => {},
+      subagents: { rootConversationId: (id: string) => id } } as any;
     const actor = { id: 'owner', role: 'owner' } as any;
     expect((await conversationMemoryScopes(app, actor))).toHaveLength(1);
     expect((await listImportLibraries(f.store, 'owner'))[0].recallEnabled).toBe(false);
