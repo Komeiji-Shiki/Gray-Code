@@ -1402,6 +1402,7 @@ onBeforeUnmount(() => {
 
 .monitor-header {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
@@ -1438,15 +1439,15 @@ onBeforeUnmount(() => {
 
 .run-tabs {
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   overflow-x: hidden;
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--vscode-panel-border);
-  /* 修改原因：子 agent 数量多时单行横向滚动不好翻，改为多行换行。
-     修改方式：flex-wrap 自动折行；限制最大高度，run 极多时退化为纵向滚动而不是占满整个面板。 */
-  max-height: 172px;
+  /* 列表独立滚动；短窗口限制占用比例，把剩余高度留给消息区。 */
+  max-height: min(172px, 30vh);
   overflow-y: auto;
 }
 
@@ -1477,6 +1478,7 @@ onBeforeUnmount(() => {
 
 .run-name,
 .run-meta {
+  flex-shrink: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;

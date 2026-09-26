@@ -62,7 +62,16 @@ html.platform-host { --gc-radius-xs: 0; --gc-radius-sm: 0; --gc-radius-md: 0; --
 .platform-host body .monitor-header { margin-bottom: 14px; }
 .platform-host body .monitor-header h1 { font-size: 20px; font-weight: 550; }
 .platform-host body .monitor-header p { font-size: 12px; line-height: 1.6; }
-.platform-host body .run-tabs { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 7px; max-height: 180px; overflow: auto; }
+.platform-host body .run-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  /* 卡片含两行文字，隐式行不能在 max-height 内被压缩；超出的行交给列表滚动。 */
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 7px;
+  max-height: min(180px, 30vh);
+  overflow: auto;
+}
 .platform-host body .run-tab,.platform-host body .run-count,.platform-host body .control-btn { border-radius: 0; }
 .platform-host body .run-tab { padding: 9px 11px; text-align: left; }
 @media (max-width: 900px) {
