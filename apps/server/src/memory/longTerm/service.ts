@@ -32,7 +32,8 @@ export class PlatformLongMemory {
     const conversation=draft?options.capturedConversation:options.conversationId?await this.app.conversation(actorId,options.conversationId):undefined;
     // 已建立的任务以本轮捕获的工作区为准；没有工作区也不能回退到对话中可能已失效的旧绑定。
     const workspaceId=run?run.workspaceId:options.workspaceId??(typeof conversation?.workspaceId==='string'?conversation.workspaceId:undefined);
-    const workspace=workspaceId?this.app.workspace(actorId,workspaceId,['workspace_read']):undefined;
+    const workspace=workspaceId?this.app.settings.snapshot().settings.workspaces.find(item=>item.id===workspaceId):undefined;
+    if(workspaceId&&!workspace)throw new Error('Workspace or account is unavailable.');
     const scopes=await conversationMemoryScopes(this.app,actor,conversation,workspace,draft);
     return {actor,scopes,conversation,workspace};
   }

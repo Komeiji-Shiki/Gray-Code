@@ -40,7 +40,7 @@ export function resolveBotGuestActor(settings: AppSettings, id: string): ActorId
 
 /** 每次模型与工具执行都重新检查 Bot 发言人的准入，包含其派发的子任务。 */
 export async function actorForBotRun(app: PlatformApplication, actorId: string, scope?: RunRecord | Pick<RunRecord, 'conversationId' | 'workspaceId'>): Promise<ActorIdentity | null> {
-  const actor = app.actor(actorId);
+  let actor = app.actor(actorId);
   if (!actor || !scope) return actor;
   if ('id' in scope) {
     for (const platform of ['discord', 'onebot'] as const) {
@@ -51,13 +51,19 @@ export async function actorForBotRun(app: PlatformApplication, actorId: string, 
         break;
       }
     }
+    actor = app.actor(actorId);
+    if (!actor) return null;
   }
   if (actor.botWorkspaceAccess !== false && actor.workspaceIds !== '*') {
-    const conversation = await app.storage.getConversation(scope.conversationId);
+    const conversationId = app.subagents.rootConversationId(scope.conversationId);
+    const conversation = await app.storage.getConversation(conversationId);
+    // 路由和会话查询都可能让出执行权，不能把查询前的账号副本当作当前授权。
+    actor = app.actor(actorId);
+    if (!actor) return null;
     const platform = (conversation?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
     const workspaceId = scope.workspaceId ?? conversation?.workspaceId;
-    // 仅按当前 Bot 对话的受控标识匹配，不按路径前缀开放其他频道或普通项目。
-    if (['discord', 'onebot'].includes(platform ?? '') && workspaceId === `workspace-${scope.conversationId}`
+    // 子代理沿可信父子关系继承根频道目录，仍只匹配这一个受控工作区。
+    if (actor.botWorkspaceAccess !== false && actor.workspaceIds !== '*' && ['discord', 'onebot'].includes(platform ?? '') && workspaceId === `workspace-${conversationId}`
       && app.settings.snapshot().settings.workspaces.some(workspace => workspace.id === workspaceId))
       return { ...actor, workspaceIds: [...new Set([...actor.workspaceIds, workspaceId])] };
   }

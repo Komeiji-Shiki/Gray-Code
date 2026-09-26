@@ -483,8 +483,12 @@ export class PlatformRuntime {
         progress: payload => this.notify({ type: 'tool.progress', runId: run.id, toolCallId: call.id, payload }),
       };
       await this.services.beforeTool?.(context, call.name, call.args, effects);
-      // 检查点等异步准备期间也能取消，尚未开始的真实工具不能越过这个边界。
+      // 宿主准备会等待检查点或用户确认，工具执行必须使用这段等待之后的账号授权。
+      const latest = await this.services.actor(run.actorId, run);
       signal.throwIfAborted();
+      const revoked = latest ? authorizeEffects(latest, effects, workspace, call.name) : 'Run account no longer exists.';
+      if (revoked) return { success: false, code: 'PERMISSION_DENIED', error: revoked };
+      context.actor = latest ?? undefined;
       return await entry.tool.execute(call.args, context);
     } catch (error) {
       return { success: false, code: signal.aborted ? 'CANCELLED' : 'TOOL_FAILED', error: error instanceof Error ? error.message : String(error) };
