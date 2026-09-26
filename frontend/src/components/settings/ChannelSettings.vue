@@ -670,7 +670,12 @@ async function commitPendingApiKeyUrlPatch(configId: string): Promise<void> {
 }
 
 function handleApiKeyUrlInput(field: 'url' | 'apiKey', value: string) {
-  if (field === 'apiKey' && showApiKey.value) revealedApiKey.value = value
+  if (field === 'apiKey') {
+    // 用户正在编辑时，迟到的已保存密钥不能覆盖输入框中的新值。
+    apiKeyRevealEpoch++
+    apiKeyRevealError.value = ''
+    if (showApiKey.value) revealedApiKey.value = value
+  }
   // 输入时快照渠道 ID：防抖窗口内用户可能切换渠道；回调触发时若渠道已切换则丢弃本次输入
   const configId = currentConfigId.value
   // 渠道切换后重置补丁：新渠道的输入不应与旧渠道残留补丁合并

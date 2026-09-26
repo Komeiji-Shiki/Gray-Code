@@ -114,6 +114,28 @@ describe('ChannelSettings url/apiKey 防抖保存', () => {
     expect(input().value).toBe('••••••••')
   })
 
+  test('读取已保存密钥途中开始编辑时，迟到结果不能覆盖新输入', async () => {
+    ;(window as any).__GRAYCODE_HOST = {}
+    setChannelConfigsCache([{ ...makeConfig('cfg-1'), apiKey: '••••••••' }])
+    chatStoreMock.configId = 'cfg-1'
+    let finishReveal!: (value: { apiKey: string }) => void
+    mockSend.mockImplementation((type: string) => type === 'config.revealApiKey'
+      ? new Promise(resolve => { finishReveal = resolve }) : Promise.resolve(undefined))
+    wrapper = mountSettings()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
+
+    await wrapper.find('[data-search-anchor="api-key"] button').trigger('click')
+    await wrapper.find('[data-search-anchor="api-key"] input').setValue('new-key')
+    finishReveal({ apiKey: 'old-key' })
+    await flushPromises()
+    const input = wrapper.find('[data-search-anchor="api-key"] input').element as HTMLInputElement
+    expect(input.type).toBe('password')
+    expect(input.value).toBe('new-key')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(updateConfigCalls()[0][1].updates).toEqual({ apiKey: 'new-key' })
+  })
+
   test('同一防抖窗口内输入 url 与 apiKey：聚合为一次 updateConfig 提交', async () => {
     setChannelConfigsCache([makeConfig('cfg-1')])
     chatStoreMock.configId = 'cfg-1'

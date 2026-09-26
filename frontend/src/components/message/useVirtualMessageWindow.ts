@@ -386,6 +386,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
       localIndex - Math.floor(Math.max(1, viewportHeight.value / ESTIMATED_MESSAGE_ROW_HEIGHT) / 2)
     ))
     await nextTick()
+    if (chatStore.currentConversationId !== conversationId) return false
 
     const container = scrollbarRef.value?.getContainer() as HTMLElement | null | undefined
     if (!container) return false
@@ -401,7 +402,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   }
 
   async function handleVirtualSeek(index: number): Promise<void> {
-    await jumpToMessage({ index })
+    requestMessageJump({ conversationId: chatStore.currentConversationId || undefined, index })
+    await consumePendingMessageJump()
   }
 
   let consumingMessageJump = false
@@ -413,7 +415,14 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     consumingMessageJump = true
     try {
       if (await jumpToMessage(pending) && peekMessageJump(conversationId) === pending) takeMessageJump(conversationId)
-    } finally { consumingMessageJump = false }
+    } catch (error) {
+      console.warn('[MessageList] Failed to locate message:', error)
+    } finally {
+      consumingMessageJump = false
+      // 请求在途时只保留最后一个定位目标；旧请求结束后接着消费，避免被分页锁吞掉。
+      const latest = peekMessageJump(chatStore.currentConversationId)
+      if (latest && latest !== pending) void consumePendingMessageJump()
+    }
   }
 
   function handleExternalMessageJump(event: MessageEvent): void {
@@ -498,6 +507,30 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     }
   }
 
+  /** 定位到历史中段后继续下读：复用居中分页，重叠区保留完整旧渲染窗口。 */
+  async function loadNewerWindow() {
+    if (isShiftingWindow.value || isLoadingMore.value || chatStore.isLoadingMoreMessages) return
+    const lastIndex = props.messages.at(-1)?.backendIndex
+    if (typeof lastIndex !== 'number' || lastIndex + 1 >= chatStore.totalMessages) return
+    const container = scrollbarRef.value?.getContainer()
+    if (!container) return
+    const originConversationId = chatStore.currentConversationId
+    const originTabId = props.tabId
+    const anchor = captureTopAnchor(container)
+    isShiftingWindow.value = true
+    try {
+      const loaded = await chatStore.loadMessagesAroundIndex(lastIndex + 1, { pageSize: MAX_RENDERED_ROWS * 2 })
+      if (!loaded || chatStore.currentConversationId !== originConversationId || props.tabId !== originTabId
+        || peekMessageJump(originConversationId)) return
+      const anchorIndex = props.messages.findIndex(message => message.id === anchor.messageId)
+      if (anchorIndex < 0) return
+      windowStart.value = anchorIndex
+      await restoreTopAnchor(container, anchor)
+    } finally {
+      isShiftingWindow.value = false
+    }
+  }
+
   // 加载更多历史消息（先展示已加载的，再按需从后端拉更早一页）
   async function loadMore() {
     if (isLoadingMore.value || !hasMore.value) return
@@ -515,8 +548,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     // 固化发起时的窗口状态，供加载完成后重定位窗口使用
     const prevLen = props.messages.length
     const prevStart = safeWindowStart.value
-    const needBackendLoad = hasMoreHistory.value
     const needFrontendExpand = prevStart > 0
+    const needBackendLoad = hasMoreHistory.value && !needFrontendExpand
 
     try {
       // 如果后端还有更多消息，先拉取（prepend 会整体右移消息数组）
@@ -553,14 +586,16 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
         }
       }
 
-      // 加载完成后增长窗口或向上滑动窗口，并保持顶部阅读锚点。
-      // 达到上限后 clampVisibleCount 会裁掉底部等量最新行。
-      const added = props.messages.length - prevLen
-      const frontendStep = needFrontendExpand ? VISIBLE_INCREMENT : 0
+      if (props.tabId !== originTabId || chatStore.currentConversationId !== originConversationId) return
 
-      visibleCount.value = clampVisibleCount(visibleCount.value + frontendStep + added)
-      // 当前操作由顶部触发，直接贴尾会把阅读锚点移出窗口。
-      windowStart.value = Math.max(0, prevStart - frontendStep)
+      // 加载完成后增长窗口或向上滑动窗口，并保持顶部阅读锚点。
+      // 后端一页可能大于渲染上限，只展开一个步长，不能把原锚点裁出窗口。
+      const added = Math.max(0, props.messages.length - prevLen)
+      const previousStart = prevStart + added
+      const step = Math.min(VISIBLE_INCREMENT, previousStart)
+
+      visibleCount.value = clampVisibleCount(visibleCount.value + step)
+      windowStart.value = previousStart - step
     } catch (error) {
       // 拉取失败：记录日志，加载标记在 finally 中复位
       console.error('[MessageList] Failed to load older messages:', error)
@@ -606,8 +641,9 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
     // 窗口底部：只向后移动一个步长，继续展示已加载的中间历史。
     // 只有窗口已经覆盖 props.messages 尾部时，才由 CustomScrollbar 负责贴底跟随。
-    if (!isShiftingWindow.value && windowEnd.value < props.messages.length && isNearRenderedWindowBottom(container)) {
-      void advanceWindow()
+    if (!isShiftingWindow.value && isNearRenderedWindowBottom(container)) {
+      if (windowEnd.value < props.messages.length) void advanceWindow()
+      else void loadNewerWindow()
     }
   }
 
@@ -761,7 +797,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
   watch(
     [() => chatStore.currentConversationId, () => props.messages.length, () => messageMarkers.value.length,
-      () => chatStore.isLoadingMoreMessages],
+      () => chatStore.isLoadingMoreMessages, () => peekMessageJump(chatStore.currentConversationId)],
     () => { void consumePendingMessageJump() },
     { immediate: true }
   )
@@ -870,6 +906,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   return {
     scrollbarRef,
     hasMore,
+    isLoadingMore,
     loadMore,
     jumpToMessage,
     handleVirtualSeek,

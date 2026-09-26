@@ -161,6 +161,7 @@ const {
 const {
   scrollbarRef,
   hasMore,
+  isLoadingMore,
   loadMore,
   jumpToMessage,
   handleVirtualSeek,
@@ -268,11 +269,13 @@ function handleContinue() {
       >
       <div class="messages-container">
         <!-- 自动加载更多指示器：点击可手动触发加载（自动补载的兜底入口） -->
-        <button v-if="hasMore" type="button" class="load-more-container" @click="loadMore()">
-          <i class="codicon codicon-loading codicon-modifier-spin"></i>
+        <button v-if="hasMore" type="button" class="load-more-container" :disabled="isLoadingMore"
+          :aria-busy="isLoadingMore" @click="loadMore()">
+          <i class="codicon" :class="isLoadingMore ? 'codicon-loading codicon-modifier-spin' : 'codicon-chevron-up'" aria-hidden="true"></i>
           <span v-if="chatStore.historyFolded" class="load-more-text">
             {{ t('components.message.historyFolded', { count: chatStore.foldedMessageCount }) }}
           </span>
+          <span v-else class="load-more-text">{{ isLoadingMore ? t('common.loading') : t('components.subagents.monitor.loadOlder') }}</span>
         </button>
 
         <template v-for="row in messageRenderRows" :key="row.key">
@@ -841,11 +844,28 @@ function handleContinue() {
   gap: 8px;
   padding: 12px;
   width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  border-radius: 0;
+  background: transparent;
   color: var(--vscode-descriptionForeground);
-  opacity: 0.7;
   /* 点击可手动触发加载更多 */
   cursor: pointer;
   font: inherit;
+}
+
+.load-more-container:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.load-more-container:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+.load-more-container:disabled {
+  cursor: progress;
 }
 
 .load-more-container .codicon {

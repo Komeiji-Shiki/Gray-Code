@@ -119,7 +119,7 @@ function handleRemove(attachmentId: string) {
         :class="['codicon', getAttachmentIconClass(attachment.type), 'attachment-icon']"
         aria-hidden="true"
       ></i>
-      <span class="attachment-name">{{ attachment.name }}</span>
+      <span class="attachment-name" :title="attachment.name">{{ attachment.name }}</span>
       <span class="attachment-size">{{ formatFileSize(attachment.size) }}</span>
       <!-- 删除按钮（仅在非只读模式显示） -->
       <button
@@ -143,18 +143,20 @@ function handleRemove(attachmentId: string) {
   flex-direction: column;
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-list-hoverBackground);
-  border-radius: var(--radius-sm, 2px);
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 0;
   margin-bottom: var(--spacing-sm, 8px);
 }
 
 .attachment-item {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   background: var(--vscode-editor-background);
-  border-radius: var(--radius-sm, 2px);
+  border-radius: 0;
   transition: background-color var(--transition-fast, 0.1s);
 }
 
@@ -173,19 +175,23 @@ function handleRemove(attachmentId: string) {
   width: 32px;
   height: 32px;
   object-fit: cover;
-  border-radius: var(--gc-radius-sm);
+  border-radius: 0;
   flex-shrink: 0;
 }
 
 /* 可点击的预览 */
 .clickable {
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.15s;
 }
 
 .clickable:hover {
   opacity: 0.8;
-  transform: scale(1.05);
+}
+
+.media-preview-wrapper:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .attachment-item.has-preview {
@@ -201,7 +207,7 @@ function handleRemove(attachmentId: string) {
   padding: 0;
   flex-shrink: 0;
   border: 0;
-  border-radius: var(--gc-radius-sm);
+  border-radius: 0;
   overflow: hidden;
   background: transparent;
 }

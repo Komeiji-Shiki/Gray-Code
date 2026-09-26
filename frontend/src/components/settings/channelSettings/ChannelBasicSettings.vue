@@ -79,6 +79,8 @@ const emit = defineEmits<{
         type="button"
         class="input-action-btn"
         :title="showApiKey ? t('components.settings.channelSettings.form.apiKey.hide') : t('components.settings.channelSettings.form.apiKey.show')"
+        :aria-label="showApiKey ? t('components.settings.channelSettings.form.apiKey.hide') : t('components.settings.channelSettings.form.apiKey.show')"
+        :aria-pressed="showApiKey"
         @click="emit('toggle-show-api-key')"
       >
         <i :class="['codicon', showApiKey ? 'codicon-eye-closed' : 'codicon-eye']"></i>
