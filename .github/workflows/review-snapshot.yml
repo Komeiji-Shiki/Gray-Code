@@ -1,0 +1,37 @@
+name: Review source snapshot
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    if: github.head_ref == 'feat/provider-desktop-browser-review'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: git archive --format=tar.gz HEAD -o "$RUNNER_TEMP/gray-code-source.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gray-code-review-source
+          path: ${{ runner.temp }}/gray-code-source.tar.gz
+          retention-days: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install locked test dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix frontend ci --no-audit --no-fund
+          npm --prefix fast-tavern-main/npm-fast-tavern ci --no-audit --no-fund
+      - name: Archive dependencies (no credentials or user data)
+        run: tar -czf "$RUNNER_TEMP/gray-code-test-deps.tar.gz" node_modules frontend/node_modules fast-tavern-main/npm-fast-tavern/node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gray-code-review-test-deps
+          path: ${{ runner.temp }}/gray-code-test-deps.tar.gz
+          retention-days: 1
