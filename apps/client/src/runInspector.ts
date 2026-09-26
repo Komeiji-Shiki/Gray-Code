@@ -19,8 +19,18 @@ const statusLabels: Record<RunRecord['status'], string> = {
 export function runActivity(run: RunRecord | undefined, events: RunEvent[]) {
   if (!run) return '可以开始对话';
   if (run.status !== 'running') return statusLabels[run.status];
-  const last = [...events].reverse().find(event => event.type !== 'model.request');
-  return last ? eventLabels[last.type] ?? statusLabels[run.status] : statusLabels[run.status];
+  for (let index = events.length - 1; index >= 0; index--)
+    if (events[index].type !== 'model.request') return eventLabels[events[index].type] ?? statusLabels[run.status];
+  return statusLabels[run.status];
+}
+/** 实时事件通常按序追加，只有历史补读或重复推送才需要重新合并完整列表。 */
+export function mergeRunEvents(current: RunEvent[], incoming: RunEvent[]): RunEvent[] {
+  if (!incoming.length) return current;
+  if ((!current.length || incoming[0].sequence > current[current.length - 1].sequence)
+    && incoming.every((event, index) => index === 0 || event.sequence > incoming[index - 1].sequence)) {
+    current.push(...incoming); return current;
+  }
+  return [...new Map([...current, ...incoming].map(event => [event.sequence, event])).values()].sort((a, b) => a.sequence - b.sequence);
 }
 export function eventLane(type: string) {
   if (type.startsWith('tool.')) return '工具';

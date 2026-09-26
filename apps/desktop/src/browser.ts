@@ -30,6 +30,7 @@ export class DesktopBrowser implements BrowserHost {
   private readonly sessions = new Map<string, Promise<Session>>();
   private readonly previewRoots = new Map<string, { workspaceId: string; actorId: string; profileId: string; tabId: string; directory: string; files: Set<string> }>();
   private readonly active = new Map<string, string>();
+  private readonly unsubscribe: () => void;
   private lastLayout?: BrowserLayout;
   private closing = false;
   private captureWindow?: BaseWindow;
@@ -39,7 +40,7 @@ export class DesktopBrowser implements BrowserHost {
     private readonly notify: (event: Record<string, unknown>) => void) {
     this.profiles = new BrowserProfiles(application);
     this.transfers = new BrowserTransfers(application);
-    application.subscribe(event => {
+    this.unsubscribe = application.subscribe(event => {
       if (event.type !== 'file.changed') return;
       for (const tab of this.tabs.values()) {
         if (!tab.lease && [...this.previewRoots.values()].some(root => root.tabId === tab.id && root.workspaceId === event.workspaceId && root.files.has(String(event.absolute)))) tab.view.webContents.reloadIgnoringCache();
@@ -110,7 +111,9 @@ export class DesktopBrowser implements BrowserHost {
     return { session: await this.sessions.get(profile.id)!, profileId: profile.id };
   }
   private async create(actorId: string, profileId?: string, foreground = false): Promise<OwnedTab> {
+    if (this.closing) throw new Error('浏览器正在关闭。');
     this.actor(actorId); const selected = await this.browserSession(actorId, profileId); this.actor(actorId);
+    if (this.closing) throw new Error('浏览器正在关闭。');
     const parent = this.getWindow();
     const view = new WebContentsView({ webPreferences: { session: selected.session, nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false,
       // 离屏宿主中的子页面也使用离屏合成，不依赖屏幕上存在原生显示表面。
@@ -140,8 +143,18 @@ export class DesktopBrowser implements BrowserHost {
     });
     wc.on('before-input-event', () => { if (tab.page.automated && !tab.modelInput) this.takeover(tab); });
     wc.on('before-mouse-event', () => { if (tab.page.automated && !tab.modelInput) this.takeover(tab); });
-    tab.queue = wc.loadURL('about:blank').then(() => tab.page.connect());
-    await tab.queue;
+    tab.queue = wc.loadURL('about:blank').then(() => {
+      if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
+      return tab.page.connect();
+    });
+    try {
+      await tab.queue;
+      if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
+    } catch (error) {
+      // 初始化失败的标签没有交给调用方，也必须释放已经挂载的原生页面。
+      if (this.tabs.has(id)) this.closeTab(tab);
+      throw error;
+    }
     if (foreground || !this.active.has(actorId)) this.active.set(actorId, id);
     this.changed(actorId); if (foreground) this.show(tab);
     return tab;
@@ -418,7 +431,7 @@ export class DesktopBrowser implements BrowserHost {
     this.pauseIdleCapture();
   }
   close(): void {
-    this.closing = true; for (const tab of [...this.tabs.values()]) this.closeTab(tab);
+    this.closing = true; this.unsubscribe(); for (const tab of [...this.tabs.values()]) this.closeTab(tab);
     this.displayWindow?.off('show', this.restoreLayout); this.displayWindow?.off('restore', this.restoreLayout);
     if (this.captureWindow && !this.captureWindow.isDestroyed()) this.captureWindow.close();
   }

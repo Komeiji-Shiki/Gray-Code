@@ -83,7 +83,7 @@ async function click(entry: DirectoryEntry) {
   selected.value = entry;
   if (entry.kind === 'directory') {
     if (expanded.value.has(entry.path)) expanded.value.delete(entry.path);
-    else { const epoch = treeEpoch; if (await load(entry.path) && epoch === treeEpoch) expanded.value.add(entry.path); }
+    else { expanded.value.add(entry.path); await load(entry.path); }
   } else emit('open', entry.path, state.workspaceId);
 }
 async function navigate(event: KeyboardEvent, entry: DirectoryEntry) {
@@ -152,8 +152,13 @@ watch(() => nodes.value.length, () => {
 const unsubscribe = subscribe(event => {
   if (event.type === 'workspace.entry.changed' && event.workspaceId === state.workspaceId) {
     if (event.kind === 'move' || event.kind === 'remove') {
+      // 已派发的目录读取也必须失效，防止移动或删除后迟到的旧路径内容重新出现。
+      for (const [directory, version] of loadVersions) if (directory === event.from || directory.startsWith(event.from + '/'))
+        loadVersions.set(directory, version + 1);
+      for (const directory of Object.keys(children.value)) if (directory === event.from || directory.startsWith(event.from + '/'))
+        delete children.value[directory];
       for (const directory of [...expanded.value]) if (directory === event.from || directory.startsWith(event.from + '/')) {
-        expanded.value.delete(directory); delete children.value[directory];
+        expanded.value.delete(directory); refreshDirectories.delete(directory);
         if (event.to) expanded.value.add(event.to + directory.slice(event.from.length));
       }
       if (selected.value && (selected.value.path === event.from || selected.value.path.startsWith(event.from + '/'))) {
@@ -183,7 +188,7 @@ onUnmounted(() => {
     <div class="file-tree-spacer" :style="{ height: nodes.length * rowHeight + 'px' }">
     <div class="file-tree-visible" :style="{ transform: `translateY(${startRow * rowHeight}px)` }">
     <div v-for="entry in visibleNodes" :key="entry.path" :data-path="entry.path" class="file-tree-entry" :class="{ selected: selected?.path === entry.path }" @contextmenu.prevent="showMenu($event, entry)">
-      <button class="tree-row" :style="{ paddingLeft: `${12 + entry.depth * 15}px` }" :title="entry.path" @click="guard(() => click(entry))" @keydown="guard(() => navigate($event, entry))"><span class="file-glyph">{{ entry.kind === 'directory' ? expanded.has(entry.path) ? '⌄' : '›' : entry.kind === 'symlink' ? '↗' : '·' }}</span><span class="file-name">{{ entry.name }}</span></button>
+      <button class="tree-row" :style="{ paddingLeft: `${12 + entry.depth * 15}px` }" :title="entry.path" :aria-expanded="entry.kind === 'directory' ? expanded.has(entry.path) : undefined" @click="guard(() => click(entry))" @keydown="guard(() => navigate($event, entry))"><span class="file-glyph">{{ entry.kind === 'directory' ? expanded.has(entry.path) ? '⌄' : '›' : entry.kind === 'symlink' ? '↗' : '·' }}</span><span class="file-name">{{ entry.name }}</span></button>
       <button v-if="!isRoot(entry) || !isWeb" class="file-entry-more" :aria-label="`操作 ${entry.name}`" title="文件操作" @click="showMenu($event, entry)">⋯</button>
     </div>
     </div>
@@ -197,5 +202,6 @@ onUnmounted(() => {
 </template>
 <style scoped>
 .file-tree{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}.file-tree-viewport{flex:1;min-height:0;overflow:auto;overflow-anchor:none}.file-tree-spacer{position:relative}.file-tree-visible{position:absolute;inset:0 0 auto}.file-tree-entry{height:var(--file-row-height)}.file-tree .panel-heading,.file-tree-actions,.file-tree-location{flex-shrink:0}
+.file-tree-viewport{scrollbar-width:thin;scrollbar-color:var(--border) transparent}.file-tree-entry{box-shadow:inset 2px 0 transparent}.file-tree-entry:hover{background:var(--hover)}.file-tree .file-tree-entry.selected{box-shadow:inset 2px 0 var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--background))}.file-tree-entry .tree-row{height:100%}.file-tree-entry .tree-row:focus-visible,.file-entry-more:focus-visible{outline:1px solid var(--accent);outline-offset:-2px}.file-entry-more:hover{color:var(--accent)}
 .file-tree-actions{display:flex;gap:4px;padding:7px 8px}.file-tree-actions button{font-size:11px;padding:5px;white-space:nowrap}.file-tree-location{font-size:11px;padding:3px 12px 8px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-tree-entry{display:flex;min-width:0}.file-tree-entry.selected{background:var(--hover)}.file-tree-entry .tree-row{min-width:0;flex:1}.file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-entry-more{padding:0 7px;min-width:28px;background:transparent;border:0;flex-shrink:0;opacity:0}.file-tree-entry:hover .file-entry-more,.file-tree-entry:focus-within .file-entry-more{opacity:1}.file-menu-backdrop{position:fixed;inset:0;z-index:10038}.file-entry-menu{position:fixed;z-index:10039;width:200px;padding:5px;background:var(--panel);border:1px solid var(--border);box-shadow:0 8px 28px #0006}.file-entry-menu button{display:block;text-align:left;width:100%;border:0;background:transparent;padding:10px}.file-entry-menu .danger{color:#ef9494}@media(hover:none){.file-entry-more{opacity:1}}@media(max-width:600px){.file-entry-more{opacity:1;min-width:36px}.file-tree-actions button{min-height:36px;font-size:12px;padding:6px 9px}.file-tree-entry .tree-row{min-height:38px}}
 </style>

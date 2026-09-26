@@ -2,7 +2,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import ConversationSidebar from '../../../../apps/client/src/components/ConversationSidebar.vue';
 import FileTree from '../../../../apps/client/src/components/FileTree.vue';
-const mocks = vi.hoisted(() => ({ call: vi.fn(), subscribe: vi.fn(() => () => {}), state: {
+const mocks = vi.hoisted(() => ({ call: vi.fn(), subscribe: vi.fn((_listener: (event: any) => void) => () => {}), listeners: new Set<(event: any) => void>(), state: {
   conversationId: 'a1', conversationViews: [] as any[], workspaceId: 'project-a', chatFocused: false, settingsOpen: false, navigationDialogOpen: false, fileDialogOpen: false,
 } }));
 vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call, subscribe: mocks.subscribe }));
@@ -15,6 +15,7 @@ let backend: any;
 beforeEach(() => {
   document.body.innerHTML = '<div class="application"></div>';
   mocks.call.mockReset(); mocks.state.workspaceId = 'project-a';
+  mocks.listeners.clear(); mocks.subscribe.mockImplementation(listener => { mocks.listeners.add(listener); return () => { mocks.listeners.delete(listener); }; });
   mocks.state.conversationViews = ['d1', 'd2'].map(id => ({ id, conversationId: null, title: id, hasDraft: true, active: false, isStreaming: false }));
   window.graycode = { kind: 'desktop', call: mocks.call, subscribe: mocks.subscribe };
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -42,7 +43,7 @@ beforeEach(() => {
     return { success: true };
   });
 });
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals(); document.body.innerHTML = ''; });
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); document.body.innerHTML = ''; });
 async function openSidebar() {
   const wrapper = mount(ConversationSidebar, { props: { collapsed: false }, attachTo: '.application', global: { stubs: { Teleport: true } } });
   wrappers.push(wrapper); await flushPromises(); return wrapper;
@@ -123,4 +124,39 @@ test('文件树和侧边栏菜单提供资源管理器入口并传递实际目�
   await tree.get('[data-path="note.ts"]').trigger('contextmenu', { clientX: 30, clientY: 50 });
   await tree.findAll('[role="menuitem"]').find(button => button.text() === '在资源管理器中显示')!.trigger('click');
   expect(mocks.call).toHaveBeenCalledWith('files.reveal', { workspaceId: 'project-a', path: 'note.ts' });
+});
+
+test('目录读取过程中再次点击会收起，迟到的内容不会重新展开', async () => {
+  let finish!: (entries: object[]) => void;
+  mocks.call.mockImplementation(async (method, params) => method === 'files.list'
+    ? params.path === '.' ? [{ path: 'folder', name: 'folder', kind: 'directory' }]
+      : new Promise(resolve => { finish = resolve; }) : {});
+  const tree = mount(FileTree, { attachTo: '.application', global: { stubs: { Teleport: true } } }); wrappers.push(tree); await flushPromises();
+  const folder = tree.get('[data-path="folder"] .tree-row');
+  await folder.trigger('click'); await folder.trigger('click');
+  expect(mocks.call.mock.calls.filter(([method, params]) => method === 'files.list' && params.path === 'folder')).toHaveLength(1);
+  finish([{ path: 'folder/late.ts', name: 'late.ts', kind: 'file' }]); await flushPromises();
+  expect(folder.attributes('aria-expanded')).toBe('false');
+  expect(tree.find('[data-path="folder/late.ts"]').exists()).toBe(false);
+});
+
+test('目录移动使旧的展开请求失效，并沿新路径继续读取', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  let moved = false; let finish!: (entries: object[]) => void;
+  mocks.call.mockImplementation(async (method, params) => {
+    if (method !== 'files.list') return {};
+    if (params.path === '.') return [{ path: moved ? 'renamed' : 'folder', name: moved ? 'renamed' : 'folder', kind: 'directory' }];
+    if (params.path === 'folder') return new Promise(resolve => { finish = resolve; });
+    return [{ path: 'renamed/current.ts', name: 'current.ts', kind: 'file' }];
+  });
+  const tree = mount(FileTree, { attachTo: '.application', global: { stubs: { Teleport: true } } }); wrappers.push(tree); await flushPromises();
+  await tree.get('[data-path="folder"] .tree-row').trigger('click'); moved = true;
+  for (const listener of mocks.listeners) listener({ type: 'workspace.entry.changed', workspaceId: 'project-a', kind: 'move', from: 'folder', to: 'renamed' });
+  await vi.advanceTimersByTimeAsync(16); await flushPromises();
+  finish([{ path: 'folder/late.ts', name: 'late.ts', kind: 'file' }]); await flushPromises();
+  expect(tree.get('[data-path="renamed"] .tree-row').attributes('aria-expanded')).toBe('true');
+  expect(tree.find('[data-path="renamed/current.ts"]').exists()).toBe(true);
+  expect(tree.find('[data-path="folder/late.ts"]').exists()).toBe(false);
+  await tree.get('[title="刷新文件"]').trigger('click'); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method, params]) => method === 'files.list' && params.path === 'folder')).toHaveLength(1);
 });

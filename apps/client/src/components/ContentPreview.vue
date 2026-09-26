@@ -48,6 +48,7 @@ const imageStyle = computed(() => ({
 /** 组内图片数据缓存：preview id → ObjectURL，切回看过的图片不重复请求核心。 */
 const urls = new Map<string, string>();
 let generation = 0;
+let requestedPreviewId: string | undefined;
 
 function releaseUrls() {
   for (const cached of urls.values()) URL.revokeObjectURL(cached);
@@ -242,6 +243,7 @@ onMounted(() => window.addEventListener('resize', onResize));
 
 async function close() {
   generation++;
+  requestedPreviewId = undefined; state.contentPreviewOpen = false;
   const previous = value.value;
   value.value = undefined;
   releaseUrls();
@@ -254,8 +256,14 @@ async function close() {
 const unsubscribe = subscribe(event => {
   if (event.type !== 'workspace.preview') return;
   const request = ++generation;
+  requestedPreviewId = event.previewId;
   void call<Preview>('ui.request', { type: 'preview.get', data: { id: event.previewId } }).then(next => {
-    if (request !== generation) return;
+    if (request !== generation) {
+      // 请求完成前被替换或关闭的预览也占用宿主内存；当前仍在使用的图片组继续保留。
+      const ids = next.group?.items.map(item => item.id) ?? [next.id];
+      if (!ids.includes(requestedPreviewId ?? '') && !ids.includes(value.value?.id ?? '')) closePreviews(next);
+      return;
+    }
     const previous = value.value;
     if (previous) closePreviews(previous);
     releaseUrls();
@@ -264,7 +272,7 @@ const unsubscribe = subscribe(event => {
     if (created) urls.set(next.id, created);
     url.value = created;
     value.value = next;
-  }).catch(report);
+  }).catch(error => { if (request === generation) report(error); });
 });
 onUnmounted(() => { unsubscribe(); window.removeEventListener('resize', onResize); void close(); });
 </script>

@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import RunInspector from '../../../../apps/client/src/components/RunInspector.vue';
 import JsonDetails from '../../../../apps/client/src/components/JsonDetails.vue';
 import { state } from '../../../../apps/client/src/state';
+import { mergeRunEvents, runActivity } from '../../../../apps/client/src/runInspector';
+import type { RunEvent, RunRecord } from '@graycode/contracts';
 const mocks = vi.hoisted(() => ({ call: vi.fn(), notify: undefined as ((event: Record<string, unknown>) => void) | undefined }));
 vi.mock('../../../../apps/client/src/api', () => ({ rpc: mocks.call, subscribe: (listener: typeof mocks.notify) => { mocks.notify = listener; return () => { mocks.notify = undefined; }; } }));
 vi.mock('../../../../apps/client/src/state', async () => {
@@ -38,6 +40,20 @@ test('卸载后不会继续已经合并的补读', async () => {
   wrapper.unmount(); wrappers.splice(wrappers.indexOf(wrapper), 1); finish([]); await flushPromises();
   expect(mocks.call.mock.calls.filter(([method]) => method === 'runs.list')).toHaveLength(1);
 });
+test('实时追加只访问历史末尾，补读与重复事件仍按序合并', () => {
+  const record = (sequence: number, type = 'tool.completed') => ({ runId: 'run', sequence, type, timestamp: sequence, payload: {} }) as RunEvent;
+  const history = Array.from({ length: 5000 }, (_, index) => record(index));
+  let sequenceReads = 0;
+  for (const event of history) { const sequence = event.sequence; Object.defineProperty(event, 'sequence', { get: () => { sequenceReads++; return sequence; } }); }
+  expect(mergeRunEvents(history, [record(5000)])).toBe(history);
+  expect(sequenceReads).toBeLessThan(5);
+  expect(history).toHaveLength(5001);
+  const merged = mergeRunEvents([record(3), record(5)], [record(1), record(3, 'model.started'), record(4)]);
+  expect(merged.map(event => event.sequence)).toEqual([1, 3, 4, 5]);
+  expect(merged[1].type).toBe('model.started');
+  expect(runActivity({ status: 'running' } as RunRecord, [record(1, 'model.streaming'), record(2, 'model.request')])).toBe('正在生成回复');
+});
+
 test('收起详情不序列化大正文，展开后显示完整内容并随值更新', async () => {
   const serialize = vi.fn(() => ({ text: '完整正文'.repeat(10000) }));
   const wrapper = mount(JsonDetails, { props: { label: '详情', value: { toJSON: serialize } } }); wrappers.push(wrapper);

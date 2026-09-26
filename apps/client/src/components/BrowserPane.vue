@@ -10,9 +10,11 @@ const selectedProfile = ref(''); const profileName = ref(''); const editingProfi
 const activeTab = computed(() => browser.value.tabs.find(tab => tab.id === browser.value.activeTabId));
 const isWeb = window.graycode?.kind === 'web';
 let observer: ResizeObserver | undefined; let frame = 0; let last = ''; let refreshPromise: Promise<void> | undefined; let refreshAgain = false;
+let disposed = false;
 function layout() {
+  if (disposed) return;
   cancelAnimationFrame(frame); frame = requestAnimationFrame(() => {
-    if (isWeb || !viewport.value) return;
+    if (disposed || isWeb || !viewport.value) return;
     const rect = viewport.value.getBoundingClientRect();
     const input = { x: rect.x, y: rect.y, width: rect.width, height: rect.height,
       visible: props.active && !!activeTab.value && !state.chatFocused && !state.settingsOpen && !state.panelResizing && !state.panelObscured && !state.contentPreviewOpen && !state.inspectorOpen };
@@ -21,19 +23,20 @@ function layout() {
   });
 }
 async function refresh(): Promise<void> {
-  if (isWeb) return;
+  if (disposed || isWeb) return;
   if (refreshPromise) { refreshAgain = true; return refreshPromise; }
   refreshPromise = (async () => {
     do {
       refreshAgain = false;
-      const result = await call('browser.state');
+      const result = await call('browser.state').catch(error => { if (!disposed) throw error; });
+      if (disposed || !result) return;
       browser.value = result;
       if (!selectedProfile.value || !result.profiles.some(profile => profile.id === selectedProfile.value)) selectedProfile.value = result.profiles[0]?.id ?? '';
       const current = result.tabs.find(tab => tab.id === result.activeTabId);
       const url = current?.url || 'about:blank';
       if (loaded.value !== url) { address.value = url === 'about:blank' ? '' : url; loaded.value = url; }
       await nextTick(layout);
-    } while (refreshAgain);
+    } while (refreshAgain && !disposed);
   })().finally(() => { refreshPromise = undefined; });
   return refreshPromise;
 }
@@ -69,8 +72,9 @@ onMounted(() => {
   window.addEventListener('resize', layout); void guard(refresh); layout();
 });
 onUnmounted(() => {
+  disposed = true; refreshAgain = false;
   observer?.disconnect(); unsubscribe(); cancelAnimationFrame(frame); window.removeEventListener('resize', layout);
-  if (!isWeb) void call('browser.layout', { x: 0, y: 0, width: 0, height: 0, visible: false });
+  if (!isWeb) void call('browser.layout', { x: 0, y: 0, width: 0, height: 0, visible: false }).catch(() => {});
 });
 </script>
 <template>

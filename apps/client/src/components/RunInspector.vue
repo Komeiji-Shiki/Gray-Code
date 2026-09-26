@@ -5,7 +5,7 @@ import { rpc as call, subscribe } from '../api';
 import { state } from '../state';
 import JsonDetails from './JsonDetails.vue';
 import { webUi } from '../webBridge';
-import { eventLabels, eventLane, requestGroups, runActivity, type RequestSnapshot } from '../runInspector';
+import { eventLabels, eventLane, mergeRunEvents, requestGroups, runActivity, type RequestSnapshot } from '../runInspector';
 
 const open = ref(false);
 watch(open, value => { state.inspectorOpen = value; if (value) void loadDiagnostics(); });
@@ -49,7 +49,7 @@ async function loadDiagnostics() {
   catch (cause) { error.value = (cause as Error).message; }
 }
 function mergeEvents(incoming: RunEvent[]) {
-  events.value = [...new Map([...events.value, ...incoming].map(event => [event.sequence, event])).values()].sort((a, b) => a.sequence - b.sequence);
+  events.value = mergeRunEvents(events.value, incoming);
 }
 function loadRuns(): Promise<void> {
   if (disposed) return Promise.resolve();
