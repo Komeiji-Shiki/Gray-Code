@@ -173,6 +173,8 @@ async function main() {
   await ui('config.updateConfig', { configId, updates: { url: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'smoke-only', model: 'smoke-model',
     models: [{ id: 'smoke-model', name: 'smoke-model' }], preferStream: false, timeout: 10000 } });
   await ui('settings.setActiveChannelId', { channelId: configId });
+  // 夹具按中文标签操作设置；显式保存语言，避免英文 runner 的自动检测改变控件文案。
+  await ui('updateUISettings', { ui: { language: 'zh-CN' } });
   const saved = await ui('ui.settings.save');
   assert(!JSON.stringify(saved).includes('smoke-only'));
   await ui('ui.settings.end');
