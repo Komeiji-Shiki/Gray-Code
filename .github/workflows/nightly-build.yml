@@ -279,7 +279,8 @@ jobs:
   # path.win32 归一化、通知聚焦）此前无任何 CI 覆盖。这里只跑 typecheck + jest 后端测试
   # （跳过 fast-tavern-py 的 venv 重建，成本可控；ubuntu 主 job 已跑全量）。
   test-windows:
-    runs-on: windows-latest
+    # 与日常桌面验收使用相同的 VS 2022 原生编译工具链。
+    runs-on: windows-2022
     needs: build
     if: needs.build.outputs.build == 'true'
     steps:
@@ -293,12 +294,11 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: |
-          npm ci
-          # 前端有独立 package.json（非 workspaces），需单独安装其依赖
-          npm --prefix frontend ci --no-audit --no-fund
+        run: npm ci
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
 
-      - name: Typecheck & backend tests (Windows)
-        run: |
-          npm run typecheck:all
-          npm test
+      - name: Typecheck (Windows)
+        run: npm run typecheck:all
+      - name: Backend tests (Windows)
+        run: npm test

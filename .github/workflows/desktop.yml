@@ -9,7 +9,8 @@ permissions:
 
 jobs:
   package:
-    runs-on: windows-latest
+    # 与日常桌面验收使用相同的 VS 2022 原生编译工具链。
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,16 +21,17 @@ jobs:
         with:
           dotnet-version: 9.0.x
       - name: Install locked dependencies
-        run: |
-          npm ci --no-audit --no-fund
-          npm --prefix frontend ci --no-audit --no-fund
-          dotnet tool restore
+        run: npm ci --no-audit --no-fund
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
+      - name: Restore installer tools
+        run: dotnet tool restore
       - name: Validate application before packaging
         run: npm run ci
-      - name: Package Windows application and installer
-        run: |
-          npm run package:desktop
-          npm run package:installer
+      - name: Package Windows application
+        run: npm run package:desktop
+      - name: Package Windows installer
+        run: npm run package:installer
       - uses: actions/upload-artifact@v4
         with:
           name: GrayCode-Windows-${{ github.sha }}

@@ -33,7 +33,8 @@ jobs:
         run: npm run ci
 
   windows-desktop:
-    runs-on: windows-latest
+    # Node 22 自带的 node-gyp 尚不能识别 VS 2026，原生依赖使用 VS 2022 工具链。
+    runs-on: windows-2022
     timeout-minutes: 20
     permissions:
       contents: read
@@ -47,9 +48,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
       - name: Install locked dependencies
-        run: |
-          npm ci --no-audit --no-fund
-          npm --prefix frontend ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+      # PowerShell 多行脚本只保留最后一个外部命令的退出码，独立步骤才能保留安装失败。
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
       - name: Build Windows desktop
         run: npm run build:desktop
       - name: Verify Windows process and language service lifecycle
