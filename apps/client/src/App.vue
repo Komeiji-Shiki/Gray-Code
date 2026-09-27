@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { appearance, guard, initialize, loadSettings, state } from './state';
+import { appearance, guard, initialize, loadSettings, report, state } from './state';
 import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
@@ -63,7 +63,8 @@ if (compactViewport.value) state.chatFocused = true;
 function updateViewport() { compactViewport.value = compactQuery.matches; viewportHeight.value = window.visualViewport?.height ?? window.innerHeight; viewportWidth.value = window.innerWidth; }
 function finishNavigation(panel?: 'workbench') { if (compactViewport.value) { mobileNavigationOpen.value = false; state.chatFocused = panel !== 'workbench'; } }
 watch(() => state.settingsOpen, value => { if (value) mobileNavigationOpen.value = false; });
-let unsubscribe: (() => void) | undefined;
+// 初始化包含多次请求，卸载时解除监听并忽略迟到的结果。
+const lifetime = new AbortController();
 let unsubscribeHost: (() => void) | undefined;
 const split = ref(Number(localStorage.getItem('graycode.chatWidth')) || 48);
 const resizing = ref(false);
@@ -124,24 +125,27 @@ const variables = computed(() => {
 });
 useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
-onMounted(() => void guard(async () => {
+onMounted(() => { void (async () => {
   window.addEventListener('message', openWorkspacePanel);
   compactQuery.addEventListener('change', updateViewport);
   window.addEventListener('resize', updateViewport);
   window.visualViewport?.addEventListener('resize', updateViewport);
-  unsubscribe = await initialize();
+  await initialize(lifetime.signal);
+  if (lifetime.signal.aborted) return;
   await call('ui.context.set', { workspaceId: state.workspaceId, mode: state.mode });
+  if (lifetime.signal.aborted) return;
   unsubscribeHost = subscribe(event => {
+    if (lifetime.signal.aborted) return;
     if (event.type === 'ui.ready') chatReady.value = true;
     if (event.type === 'pets.open') petManagerOpen.value = true;
     if (event.type === 'screenSense.open') screenSenseOpen.value = true;
     if (event.type === 'ui.view.changed') state.settingsOpen = event.view === 'settings';
     if (event.type === 'settings.open') void call('ui.command', { command: 'showSettings' });
-    if (event.type === 'ui.message' && event.message?.command === 'channels.configChanged') void guard(loadSettings);
+    if (event.type === 'ui.message' && event.message?.command === 'channels.configChanged') void guard(() => loadSettings(lifetime.signal));
   });
-  if (!isWeb) { await nextTick(); await call('desktop.files.ready'); }
-}));
-onUnmounted(() => { window.removeEventListener('message', openWorkspacePanel); unsubscribe?.(); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
+  if (!isWeb) { await nextTick(); if (!lifetime.signal.aborted) await call('desktop.files.ready'); }
+})().catch(error => { if (!lifetime.signal.aborted) report(error); }); });
+onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', openWorkspacePanel); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
 </script>
 <template>
   <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="resolvedTheme" :data-density="appearance?.density">
