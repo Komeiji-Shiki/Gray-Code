@@ -84,12 +84,49 @@ async function verifyRegexCancellation(rpc) {
   assert.deepEqual(edits, []);
   assert.equal(await fs.readFile(file, 'utf8'), text);
 }
+async function verifyLatestFileFocus(evaluate) {
+  const target = await fs.realpath(path.join(output, 'project', 'slow-open.ts'));
+  const originalOpen = fs.open;
+  let waiting = false, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  fs.open = async (file, ...args) => {
+    if (typeof file === 'string' && path.resolve(file).toLowerCase() === target.toLowerCase()) { waiting = true; await gate; }
+    return originalOpen(file, ...args);
+  };
+  try {
+    // 只延迟本夹具的文件读取，保留实际 IPC、工作台和 Monaco 生命周期。
+    await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node => node.textContent.includes("slow-open.ts")).click()');
+    await until(() => waiting, 'delayed editor read');
+    await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node => node.textContent.includes("hello.ts")).click()');
+    release();
+    await until(() => evaluate('Array.from(document.querySelectorAll(".workbench-tab")).some(node => node.textContent.includes("slow-open.ts"))'), 'background file tab');
+    assert(await evaluate('document.querySelector(".workbench-tab [aria-selected=true]").textContent.includes("hello.ts")'));
+  } finally { release(); fs.open = originalOpen; }
+}
+async function verifyProjectReplace(evaluate) {
+  await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, shiftKey: true, bubbles: true }))');
+  await until(() => evaluate('!!document.querySelector(".search-panel")'), 'project search panel');
+  await evaluate('document.querySelector(".search-panel header button").click()');
+  await until(() => evaluate('!!document.querySelector(".search-panel input[aria-label=替换内容]")'), 'replacement input');
+  await evaluate('for (const [label, value] of [["项目搜索内容", "needle"], ["搜索包含文件", "replace-ui.txt"], ["替换内容", "updated"]]) { const input = document.querySelector(".search-panel input[aria-label=" + label + "]"); input.value = value; input.dispatchEvent(new Event("input", { bubbles: true })); } document.querySelector(".search-panel form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));');
+  await until(() => evaluate('!!document.querySelector(".search-panel .search-file")'), 'project search result');
+  await evaluate('Array.from(document.querySelectorAll(".search-panel button")).find(button => button.textContent === "替换所选文件").click()');
+  await until(() => evaluate('document.querySelector(".search-panel").textContent.includes("已修改 1 个文件")'), 'replacement applied to drafts');
+  assert(await evaluate('document.querySelector(".workbench-tab [aria-selected=true]").textContent.includes("搜索")'));
+  const file = path.join(output, 'project', 'replace-ui.txt');
+  assert.equal(await fs.readFile(file, 'utf8'), 'needle target\n');
+  await evaluate('document.querySelectorAll(".search-panel .search-batch button")[2].click()');
+  await until(() => evaluate('document.querySelector(".search-panel").textContent.includes("已保存打开文件的修改")'), 'replacement saved');
+  assert.equal(await fs.readFile(file, 'utf8'), 'updated target\n');
+}
 async function main() {
   fsSync.mkdirSync(path.join(output, 'project'), { recursive: true });
   fsSync.mkdirSync(path.join(output, 'profile'), { recursive: true });
   fsSync.mkdirSync(path.join(output, 'app-data'), { recursive: true });
   fsSync.mkdirSync(path.join(output, 'documents'), { recursive: true });
   fsSync.writeFileSync(path.join(output, 'project', 'hello.ts'), 'export const message: string = "Hello GrayCode";\n');
+  fsSync.writeFileSync(path.join(output, 'project', 'slow-open.ts'), 'export const delayed = true;\n');
+  fsSync.writeFileSync(path.join(output, 'project', 'replace-ui.txt'), 'needle target\n');
   fsSync.writeFileSync(path.join(output, 'project', 'index.html'), '<!doctype html><title>Preview verified</title><h1>GrayCode preview</h1>');
   app.setPath('userData', path.join(output, 'profile'));
   // 旧设置自动迁移和普通对话工作区也必须使用夹具目录，避免读取本机账号配置。
@@ -151,6 +188,7 @@ async function main() {
   await until(() => evaluate('Array.from(document.querySelectorAll(".tree-row")).some(node => node.textContent.includes("hello.ts"))'), 'workspace file tree');
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
+  await verifyLatestFileFocus(evaluate);
   const terminal = await rpc('terminal.create', { workspaceId: 'smoke' });
   await evaluate(`window.__smokeTerminalOutput = ''; window.graycode.subscribe(event => { if(event.type==='terminal.data' && event.id===${JSON.stringify(terminal.id)}) window.__smokeTerminalOutput += event.data; }); undefined`);
   await rpc('terminal.input', { id: terminal.id, data: "Write-Output ('native-' + 'terminal-ok')\r" });
@@ -242,9 +280,10 @@ async function main() {
   const preview = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().startsWith('graycode-preview://')), 'embedded browser');
   await until(() => preview.getTitle() === 'Preview verified', 'local HTML preview');
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
+  await verifyProjectReplace(evaluate);
   await verifyRegexCancellation(rpc);
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
-  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true,
+  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
