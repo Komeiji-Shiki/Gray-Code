@@ -6,13 +6,17 @@ import { normalizePendingApprovalGate } from '../../../../backend/modules/conver
 import type { PlatformApplication } from '../application';
 import { AutomationModelMeter } from './meter';
 import { nextScheduledTime, validateSchedule } from './schedule';
-import { AutomationEventSources, automationEventReceipts, automationEventCauses, type EventSourceChange } from './events';
+import { AutomationEventSources, automationEventReceipts, automationEventCauses, eventSourceKey, type EventSourceChange } from './events';
 
 export const automationNamespace = 'automations';
 const emptyUsage = (): AutomationUsage => ({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, requests: 0, estimatedRequests: 0, unknownRequests: 0 });
 
 function traceEvent(record: AutomationRecord, event: AutomationEventOccurrence) {
   record.recentEvents = [...(record.recentEvents ?? []).filter(item => item.key !== event.key), structuredClone(event)].slice(-30);
+}
+
+function matchesEventSource(record: AutomationRecord, change: EventSourceChange) {
+  return !!record.event && record.eventSourceState === change.previous && eventSourceKey(record.event.trigger) === eventSourceKey(change.trigger);
 }
 
 /** 自动任务只负责触发与进度；会话、执行、审批、工具和结果仍由现有运行器持有。 */
@@ -29,11 +33,13 @@ export class ApplicationAutomations {
   constructor(private readonly app: PlatformApplication) {
     this.eventSources = new AutomationEventSources(app, {
       records: () => [...this.records.values()], receive: (id, event, change) => this.receiveEvent(id, event, change),
-      baseline: (id, next) => this.mutate(id, record => { record.eventSourceState = next; }).then(() => {}),
-      fail: (id, error) => this.mutate(id, record => {
+      baseline: (id, change) => this.mutate(id, record => { record.eventSourceState = change.next; }, record => !this.closing
+        && record.kind === 'event' && record.status === 'active' && matchesEventSource(record, change) && record.eventSourceState !== change.next).then(() => {}),
+      fail: (id, error, trigger) => this.mutate(id, record => {
         record.status = 'paused'; record.pauseReason = 'error'; record.error = `事件监听失败：${String(error)}`;
         if (record.pendingEvent) { traceEvent(record, { ...record.pendingEvent, status: 'cancelled', reason: record.error }); delete record.pendingEvent; delete record.nextRunAt; }
-      }).then(() => {}).catch(error => { if (!this.closing && this.records.has(id)) this.reportError(error); }),
+      }, record => !this.closing && record.kind === 'event' && record.status === 'active' && !!record.event && eventSourceKey(record.event.trigger) === eventSourceKey(trigger))
+        .then(() => {}).catch(error => { if (!this.closing && this.records.has(id)) this.reportError(error); }),
     });
     this.meter = new AutomationModelMeter({ read: id => this.read(id), add: (id, delta) => this.mutate(id, record => {
       for (const key of Object.keys(delta) as Array<keyof AutomationUsage>) record.usage[key] += delta[key];
@@ -72,11 +78,13 @@ export class ApplicationAutomations {
     this.records.set(record.id, record); this.arm();
     if (this.ready && !this.closing) void this.eventSources.sync().catch(error => this.reportError(error));
   }
-  private async mutate(id: string, operation: (record: AutomationRecord) => void | Promise<void>) {
+  private async mutate(id: string, operation: (record: AutomationRecord) => void | Promise<void>, matches?: (record: AutomationRecord) => boolean) {
     return this.serial(id, async () => {
       const stored = await this.app.storage.getVersionedRecord(automationNamespace, id);
       if (!stored.value) throw new Error('自动任务已移除。');
       const record = structuredClone(stored.value) as AutomationRecord;
+      // 来源校验放在任务写入队列内，迟到结果不能改写已经切换或暂停的配置。
+      if (matches && !matches(record)) return record;
       await operation(record); record.updatedAt = Date.now();
       await this.app.storage.commitRecords([{ namespace: automationNamespace, id, ownerId: record.conversationId, expectedRevision: stored.revision, value: record }]);
       this.changed(record); return record;
@@ -260,16 +268,16 @@ export class ApplicationAutomations {
     const existing = await this.read(id); if (!existing || existing.status !== 'active') return;
     await this.mutate(id, record => { if (record.status === 'active') { record.awaitingBackground = false; record.followupPending = true; record.nextRunAt = Date.now(); } });
   }
-  private async receiveEvent(id: string, event: AutomationEventOccurrence, change?: EventSourceChange) {
+  private async receiveEvent(id: string, event: AutomationEventOccurrence, change: EventSourceChange) {
     if (this.closing || !this.ready) return;
     await this.serial(id, async () => {
       const stored = await this.app.storage.getVersionedRecord(automationNamespace, id);
       const record = stored.value as AutomationRecord | null;
       if (!record || record.kind !== 'event' || record.status !== 'active' || !record.event || this.closing) return;
-      if (change && (record.eventSourceState !== change.previous || event.type !== 'run_completed' && record.eventSourceState === change.next)) return;
+      if (!matchesEventSource(record, change) || change.next !== undefined && record.eventSourceState === change.next) return;
       const receiptId = `${id}:${event.key}`;
       if (await this.app.storage.getRecord(automationEventReceipts, receiptId)) return;
-      if (change) record.eventSourceState = change.next;
+      if (change.next !== undefined) record.eventSourceState = change.next;
       const busy = !!(record.currentRequestKey || record.pendingEvent || record.awaitingBackground || record.followupPending);
       if (event.ancestry.includes(id)) { event.status = 'skipped'; event.reason = '触发来源包含本任务，已阻止循环。'; }
       else if (busy && record.event.busyPolicy === 'skip') { event.status = 'skipped'; event.reason = '任务正在执行或已有待执行事件，按设置跳过。'; }

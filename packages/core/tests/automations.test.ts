@@ -157,6 +157,67 @@ describe('持久目标和定时触发', () => {
     expect(new Set(paged).size).toBe(3);
   });
 
+  test('补发读取期间切换来源，旧来源游标不能覆盖新配置或重放新来源的旧任务', async () => {
+    for (const id of ['source-before', 'source-after']) await app.createConversation('owner', id, undefined, { platformMode: 'chat' }, undefined, { id });
+    const event = { trigger: { type: 'run_completed', conversationId: 'source-before' }, busyPolicy: 'latest', restartPolicy: 'resume' };
+    const created = await create({ kind: 'event', event });
+    for (const conversationId of ['source-before', 'source-after']) {
+      await app.storage.createRun({ id: 'completed-' + conversationId, requestKey: 'replay-' + conversationId, conversationId, actorId: 'owner',
+        agentId: 'default', status: 'queued', createdAt: now, updatedAt: now, iteration: 0, catalogVersion: 'fixture' }, { role: 'user', parts: [{ text: '来源记录' }] });
+      await app.storage.appendRunEvent({ runId: 'completed-' + conversationId, type: 'run.started', payload: {}, update: { status: 'running' } });
+      await app.storage.appendRunEvent({ runId: 'completed-' + conversationId, type: 'run.completed', payload: {}, update: { status: 'completed' } });
+    }
+    let entered!: () => void, release!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    const list = app.storage.listRuns.bind(app.storage);
+    const reads = jest.spyOn(app.storage, 'listRuns').mockImplementationOnce(async options => {
+      const rows = await list(options); entered(); await gate; return rows;
+    });
+    const events = (app.automations as any).eventSources;
+    const replay = events.replayCompleted();
+    let pausing: Promise<AutomationRecord> | undefined;
+    try {
+      await waiting; now += 1000;
+      // 暂停已写入状态后仍在等待监听队列；另一个客户端可以继续编辑并恢复任务。
+      pausing = app.automations.pause('owner', created.id); void pausing.catch(() => {});
+      await until(created.id, record => record.status === 'paused');
+      await app.automations.update('owner', created.id, { ...created, providerId, promptModeId: 'automation-test',
+        event: { ...created.event!, trigger: { type: 'run_completed', conversationId: 'source-after' } } });
+      await app.automations.resume('owner', created.id);
+    } finally { release(); await Promise.all([replay, pausing]); reads.mockRestore(); }
+    expect((await app.storage.getRecord('automations', created.id) as AutomationRecord).eventSourceState).toBe(String(now));
+    await events.replayCompleted();
+    expect((await app.storage.getRecord('automations', created.id) as AutomationRecord).pendingEvent).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  test.each(['变化结果', '读取失败'])('文件校验期间切换到相同内容的新来源，旧来源的%s不影响新配置', async outcome => {
+    const workspace = { id: 'switch-files', name: '切换来源', directory: f.source, deviceId: 'local' };
+    const settings = app.settings.snapshot(); settings.settings.workspaces.push(workspace);
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    await Promise.all(['before.txt', 'after.txt'].map(file => writeFile(path.join(f.source, file), '相同的初始内容')));
+    const created = await create({ kind: 'event', event: { trigger: { type: 'file_changed', workspaceId: workspace.id, path: 'before.txt', debounceMs: 100 }, busyPolicy: 'latest', restartPolicy: 'resume' } });
+    const events = (app.automations as any).eventSources;
+    let entered!: () => void, release!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    const reads = jest.spyOn(events, 'sourceState').mockImplementationOnce(async () => {
+      entered(); await gate;
+      if (outcome === '读取失败') throw new Error('旧来源读取失败');
+      return 'f'.repeat(64);
+    });
+    const checking = events.reconcile(); let pausing: Promise<AutomationRecord> | undefined;
+    try {
+      await waiting; pausing = app.automations.pause('owner', created.id); void pausing.catch(() => {});
+      await until(created.id, record => record.status === 'paused');
+      await app.automations.update('owner', created.id, { ...created, providerId, promptModeId: 'automation-test',
+        event: { ...created.event!, trigger: { type: 'file_changed', workspaceId: workspace.id, path: 'after.txt', debounceMs: 100 } } });
+      await app.automations.resume('owner', created.id);
+    } finally { release(); await Promise.all([checking, pausing]); reads.mockRestore(); }
+    const current = await app.storage.getRecord('automations', created.id) as AutomationRecord;
+    expect(current.status).toBe('active'); expect(current.error).toBeUndefined(); expect(current.pendingEvent).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
   test('真实文件合并、原子替换、同任务写入防循环，暂停取消和重启后继续监听', async () => {
     const workspace = { id: 'event-files', name: '事件文件', directory: f.source, deviceId: 'local' };
     const settings = app.settings.snapshot(); settings.settings.workspaces.push(workspace, { ...workspace, id: 'event-execution', name: '独立执行目录', directory: f.root }); await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });

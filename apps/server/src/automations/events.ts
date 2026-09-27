@@ -7,7 +7,15 @@ import type { PlatformApplication } from '../application';
 
 export const automationEventReceipts = 'automation-event-receipts';
 export const automationEventCauses = 'automation-event-causes';
-export type EventSourceChange = { previous?: string; next: string };
+export type EventSourceChange = { trigger: AutomationEventConfiguration['trigger']; previous?: string; next?: string };
+/** 来源身份只取契约字段，不受字段顺序及跨线程对象原型影响。 */
+export function eventSourceKey(trigger: AutomationEventConfiguration['trigger']): string {
+  switch (trigger.type) {
+    case 'run_completed': return JSON.stringify([trigger.type, trigger.conversationId]);
+    case 'file_changed': return JSON.stringify([trigger.type, trigger.workspaceId, trigger.path, trigger.debounceMs]);
+    case 'node_online': return JSON.stringify([trigger.type, trigger.peerId]);
+  }
+}
 interface FileListener { watcher: FSWatcher; signature: string; timer?: ReturnType<typeof setTimeout>; causes: Set<string> }
 
 /** 原生通知只唤醒校验；内容指纹和事务中的来源状态决定是否产生新事件。 */
@@ -21,9 +29,9 @@ export class AutomationEventSources {
   private closed = false;
   constructor(private readonly app: PlatformApplication, private readonly host: {
     records(): AutomationRecord[];
-    receive(id: string, event: AutomationEventOccurrence, change?: EventSourceChange): Promise<void>;
-    baseline(id: string, next: string): Promise<void>;
-    fail(id: string, error: unknown): Promise<void>;
+    receive(id: string, event: AutomationEventOccurrence, change: EventSourceChange): Promise<void>;
+    baseline(id: string, change: EventSourceChange & { next: string }): Promise<void>;
+    fail(id: string, error: unknown, trigger: AutomationEventConfiguration['trigger']): Promise<void>;
   }) {}
   async validate(actorId: string, value: AutomationEventConfiguration | undefined) {
     if (!value || !['skip', 'latest'].includes(value.busyPolicy) || !['pause', 'resume'].includes(value.restartPolicy))
@@ -67,9 +75,9 @@ export class AutomationEventSources {
       return hash.digest('hex');
     } catch (error) { this.lifetime.signal.throwIfAborted(); if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'; throw error; }
   }
-  private async reportFailure(id: string, error: unknown) {
+  private async reportFailure(id: string, error: unknown, trigger: AutomationEventConfiguration['trigger']) {
     // 正常退出中止校验时保持任务状态，下一次启动仍按用户配置恢复监听。
-    if (!this.closed) await this.host.fail(id, error);
+    if (!this.closed) await this.host.fail(id, error, trigger);
   }
   private enqueue(operation: () => Promise<void>) {
     const next = this.queue.then(() => this.closed ? undefined : operation()); this.queue = next.catch(() => {}); return next;
@@ -84,7 +92,7 @@ export class AutomationEventSources {
     const active = this.records();
     for (const [id, entry] of this.files) {
       const record = active.find(row => row.id === id);
-      if (record?.event?.trigger.type === 'file_changed' && entry.signature === JSON.stringify(record.event.trigger)) continue;
+      if (record?.event?.trigger.type === 'file_changed' && entry.signature === eventSourceKey(record.event.trigger)) continue;
       entry.watcher.close(); clearTimeout(entry.timer); this.files.delete(id);
     }
     for (const record of active) {
@@ -93,19 +101,19 @@ export class AutomationEventSources {
         const file = await this.file(record.actorId, record.event!);
         if (this.closed) return;
         const trigger = record.event!.trigger;
-        const listener: FileListener = { watcher: undefined!, signature: JSON.stringify(trigger), causes: new Set() };
+        const listener: FileListener = { watcher: undefined!, signature: eventSourceKey(trigger), causes: new Set() };
         listener.watcher = watch(path.dirname(file), { persistent: false }, (_kind, name) => {
           if (this.closed) return;
           if (name && path.basename(String(name)).toLocaleLowerCase() !== path.basename(file).toLocaleLowerCase()) return;
           for (const id of this.causes()) listener.causes.add(id);
           clearTimeout(listener.timer);
-          listener.timer = setTimeout(() => { listener.timer = undefined; void this.scan(record.id).catch(error => this.reportFailure(record.id, error)); }, trigger.debounceMs);
+          listener.timer = setTimeout(() => { listener.timer = undefined; void this.scan(record.id).catch(error => this.reportFailure(record.id, error, trigger)); }, trigger.debounceMs);
           listener.timer.unref();
         });
-        listener.watcher.on('error', error => { void this.reportFailure(record.id, error); });
+        listener.watcher.on('error', error => { void this.reportFailure(record.id, error, trigger); });
         this.files.set(record.id, listener);
         await this.scanNow(record.id);
-      } catch (error) { await this.reportFailure(record.id, error); }
+      } catch (error) { await this.reportFailure(record.id, error, record.event!.trigger); }
     }
     if (active.length && !this.poll) { this.poll = setInterval(() => { void this.reconcile().catch(error => this.app.publish({ type: 'notification', severity: 'error', message: `事件恢复失败：${String(error)}` })); }, 30_000); this.poll.unref(); }
     if (!active.length && this.poll) { clearInterval(this.poll); this.poll = undefined; }
@@ -117,14 +125,14 @@ export class AutomationEventSources {
     const next = await this.sourceState(record.actorId, record.event);
     if (next === record.eventSourceState) return;
     await this.host.receive(id, { key: `file:${randomUUID()}`, type: 'file_changed', observedAt: Date.now(), status: 'pending', ancestry: [...causes],
-      summary: `${record.event.trigger.path}：${next === 'missing' ? '文件已删除' : record.eventSourceState === 'missing' ? '文件已创建' : '内容已改变'}` }, { previous: record.eventSourceState, next });
+      summary: `${record.event.trigger.path}：${next === 'missing' ? '文件已删除' : record.eventSourceState === 'missing' ? '文件已创建' : '内容已改变'}` }, { trigger: record.event.trigger, previous: record.eventSourceState, next });
   }
   scan(id: string) { return this.enqueue(() => this.scanNow(id)); }
   reconcile(): Promise<void> {
     // 慢文件校验期间复用正在执行的定期检查，避免每次计时器唤醒再排一整轮读取。
     return this.reconciling ??= (async () => {
       for (const record of this.records()) {
-        if (record.event?.trigger.type === 'file_changed') await this.scan(record.id).catch(error => this.reportFailure(record.id, error));
+        if (record.event?.trigger.type === 'file_changed') await this.scan(record.id).catch(error => this.reportFailure(record.id, error, record.event!.trigger));
       }
       await this.nodesChanged();
       await this.replayCompleted();
@@ -135,31 +143,46 @@ export class AutomationEventSources {
       if (record.event?.trigger.type !== 'node_online') continue;
       const next = await this.sourceState(record.actorId, record.event);
       if (next === record.eventSourceState) continue;
-      if (next === 'missing' || next === 'revoked') { await this.reportFailure(record.id, new Error('来源设备已经移除或撤销，请重新选择事件来源。')); continue; }
-      if (next !== 'online') { await this.host.baseline(record.id, next); continue; }
+      if (next === 'missing' || next === 'revoked') { await this.reportFailure(record.id, new Error('来源设备已经移除或撤销，请重新选择事件来源。'), record.event.trigger); continue; }
+      if (next !== 'online') { await this.host.baseline(record.id, { trigger: record.event.trigger, previous: record.eventSourceState, next }); continue; }
       const peer = this.app.nodes.status(record.actorId).peers.find(row => row.id === (record.event!.trigger as { peerId: string }).peerId);
       await this.host.receive(record.id, { key: `node:${randomUUID()}`, type: 'node_online', observedAt: Date.now(), status: 'pending', ancestry: [],
-        summary: `${peer?.name ?? '所选设备'}已上线或恢复连接` }, { previous: record.eventSourceState, next });
+        summary: `${peer?.name ?? '所选设备'}已上线或恢复连接` }, { trigger: record.event.trigger, previous: record.eventSourceState, next });
     }
   }); }
-  completed(runId: string) { return this.enqueue(() => this.completedNow(runId)); }
-  private async completedNow(runId: string, onlyId?: string) {
-    const run = await this.app.storage.getRun(runId); if (!run || run.status !== 'completed') return;
+  completed(runId: string) { return this.enqueue(async () => {
+    if (!this.records().some(record => record.event?.trigger.type === 'run_completed')) return;
+    const run = await this.app.storage.getRun(runId); if (run) await this.deliverCompleted(run);
+  }); }
+  private async deliverCompleted(run: RunRecord, onlyId?: string) {
+    if (run.status !== 'completed') return;
+    const recipients = this.records().filter(record => (!onlyId || record.id === onlyId) && record.event?.trigger.type === 'run_completed'
+      && record.event.trigger.conversationId === run.conversationId && run.actorId === record.actorId
+      && run.updatedAt >= Number(record.eventSourceState ?? record.createdAt));
+    if (!recipients.length) return;
     const cause = await this.app.storage.getRecord(automationEventCauses, run.requestKey) as { ancestry: string[] } | null;
     const ancestry = [...new Set([...cause?.ancestry ?? [], ...run.automationId ? [run.automationId] : []])];
-    for (const record of this.records()) if ((!onlyId || record.id === onlyId) && record.event?.trigger.type === 'run_completed' && record.event.trigger.conversationId === run.conversationId && run.actorId === record.actorId
-      && run.updatedAt >= Number(record.eventSourceState ?? record.createdAt)) {
+    for (const record of recipients) {
       await this.host.receive(record.id, { key: `run:${run.id}`, type: 'run_completed', observedAt: Date.now(), summary: `来源对话的一次任务已完成（${run.id}）`,
-        sourceRunId: run.id, ancestry, status: 'pending' });
+        sourceRunId: run.id, ancestry, status: 'pending' }, { trigger: record.event!.trigger, previous: record.eventSourceState });
     }
   }
   replayCompleted() { return this.enqueue(async () => {
     for (const record of this.records()) if (record.event?.trigger.type === 'run_completed') {
+      const trigger = record.event.trigger;
+      let sourceState = record.eventSourceState;
       let cursor = { timestamp: Number(record.eventSourceState ?? record.createdAt), runId: '' };
       for (;;) {
-        const runs = await this.app.storage.listRuns({ actorId: record.actorId, conversationId: record.event.trigger.conversationId, completedAfter: cursor, limit: 100 });
-        for (const run of runs) await this.completedNow(run.id, record.id);
-        if (runs.length) await this.host.baseline(record.id, String(runs.at(-1)!.updatedAt));
+        const current = this.records().find(row => row.id === record.id);
+        if (this.closed || !current?.event || current.eventSourceState !== sourceState || eventSourceKey(current.event.trigger) !== eventSourceKey(trigger)) break;
+        const runs = await this.app.storage.listRuns({ actorId: record.actorId, conversationId: trigger.conversationId, completedAfter: cursor, limit: 100 });
+        for (const run of runs) await this.deliverCompleted(run, record.id);
+        if (runs.length) {
+          const next = String(runs.at(-1)!.updatedAt);
+          // 同毫秒仍需重读以接收后来完成的任务，收据负责去重；游标不变时无需再写入。
+          if (next !== sourceState) await this.host.baseline(record.id, { trigger, previous: sourceState, next });
+          sourceState = next;
+        }
         if (runs.length < 100) break;
         const last = runs.at(-1)!; cursor = { timestamp: last.updatedAt, runId: last.id };
       }
@@ -168,7 +191,7 @@ export class AutomationEventSources {
   async settleFiles(run: RunRecord) {
     if (!run.automationId) return;
     for (const record of this.records()) if (record.event?.trigger.type === 'file_changed')
-      await this.scan(record.id).catch(error => this.reportFailure(record.id, error));
+      await this.scan(record.id).catch(error => this.reportFailure(record.id, error, record.event!.trigger));
   }
   async close() {
     this.closed = true; clearInterval(this.poll);
