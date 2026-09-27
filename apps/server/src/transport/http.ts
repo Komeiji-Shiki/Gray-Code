@@ -33,7 +33,7 @@ export async function startHttpServer(application: PlatformApplication, options:
   const writable = (response: ServerResponse, identity: { valid(): boolean }) => !response.destroyed && !response.writableEnded && identity.valid();
   const closeInvalidStreams = () => { for (const [stream, identity] of streams) if (!identity.valid()) { stream.end(); streams.delete(stream); } };
   const epoch = randomUUID(); let sequence = 0; let bufferedBytes = 0; let backlogResets = 0;
-  const recent: { id: string; event: Record<string, unknown>; frame: string; bytes: number }[] = [];
+  const recent: { id: string; event: Record<string, unknown>; frame: Buffer; bytes: number }[] = [];
   const host = new WebHost(application, router);
   const failures = new Map<string, { count: number; until: number }>();
   const server = createServer(async (request, response) => {
@@ -137,7 +137,7 @@ export async function startHttpServer(application: PlatformApplication, options:
             const replay = recent.slice(index + 1);
             identity.queue = (async () => {
               for (const entry of replay) if (writable(response, identity) && await router.mayReceive(identity.client, entry.event) && writable(response, identity)) response.write(entry.frame);
-            })().catch(() => { response.destroy(); });
+            })().catch(() => { identity.accepting = false; response.end(); });
           }
         }
         // 补发完成后再通知客户端同步快照，避免快照与旧事件相互覆盖。
@@ -167,8 +167,9 @@ export async function startHttpServer(application: PlatformApplication, options:
   });
   const unsubscribe = application.subscribe(event => {
     const id = `${epoch}:${++sequence}`;
-    const frame = `id: ${id}\ndata: ${JSON.stringify(event)}\n\n`;
-    const bytes = Buffer.byteLength(frame);
+    // 编码后的字节只读复用，多个订阅和断线补发不必反复把同一帧转换为 UTF-8。
+    const frame = Buffer.from(`id: ${id}\ndata: ${JSON.stringify(event)}\n\n`);
+    const bytes = frame.length;
     recent.push({ id, event, frame, bytes }); bufferedBytes += bytes;
     while (recent.length > 2000 || bufferedBytes > 8 * 1024 * 1024) bufferedBytes -= recent.shift()!.bytes;
     for (const [stream, identity] of streams) {
@@ -187,7 +188,11 @@ export async function startHttpServer(application: PlatformApplication, options:
       identity.queue = identity.queue.then(async () => {
         if (!writable(stream, identity) || !await router.mayReceive(identity.client, event) || !writable(stream, identity)) return;
         stream.write(frame);
-      }).catch(() => undefined).finally(() => { identity.queuedBytes -= bytes; });
+      }).catch(() => {
+        // 先完整发完已接受的帧，再断开补发；后续事件不能让游标越过本次失败。
+        identity.accepting = false;
+        stream.end();
+      }).finally(() => { identity.queuedBytes -= bytes; });
     }
   });
   try { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 0, '127.0.0.1', resolve); }); }
