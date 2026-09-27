@@ -350,6 +350,12 @@
     "typescript": "^5.9.3",
     "undici-types": "^6.21.0"
   },
+  "overrides": {
+    "node-notifier": {
+      "uuid": "11.1.1"
+    },
+    "svelte": "5.57.1"
+  },
   "keywords": [
     "agent",
     "ai",
