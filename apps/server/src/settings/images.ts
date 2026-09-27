@@ -31,11 +31,18 @@ export class AppearanceImages {
       thumbnail: /^data:image\/(png|jpeg|webp);base64,/.test(input.thumbnail) && input.thumbnail.length < 500_000 ? input.thumbnail : '',
       width: input.width, height: input.height };
   }
-  // fragment 保留草稿图片身份；两张内容相同但名称不同的图片不能在保存时互相替换。
-  previewUrl(image: BackgroundImage) { return `data:${image.mimeType};base64,${Buffer.from(image.bytes).toString('base64')}#${image.id}`; }
+  previewUrl(image: BackgroundImage) {
+    // 只读取当前视图的字节，避免复制整张图片，也不能把底层缓冲区中视图外的内容带入预览。
+    const bytes = Buffer.from(image.bytes.buffer, image.bytes.byteOffset, image.bytes.byteLength);
+    // fragment 保留草稿图片身份；两张内容相同但名称不同的图片不能在保存时互相替换。
+    return `data:${image.mimeType};base64,${bytes.toString('base64')}#${image.id}`;
+  }
   savedUrl(url: string, pending?: PendingBackgroundImages) {
-    const image = pending?.images.find(image => this.previewUrl(image) === url);
-    return image ? `graycode://app/assets/background/${image.id}` : url;
+    if (!pending || !url.startsWith('data:')) return url;
+    const id = url.slice(url.lastIndexOf('#') + 1);
+    // 先定位身份再验证正文，保存普通网址或检查其他草稿时不用遍历编码整个图库。
+    const image = pending.images.find(image => image.id === id);
+    return image && this.previewUrl(image) === url ? `graycode://app/assets/background/${image.id}` : url;
   }
   records(pending?: PendingBackgroundImages): RecordMutation[] {
     const records: RecordMutation[] = [];
