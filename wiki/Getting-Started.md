@@ -77,11 +77,15 @@ npm run desktop -- --data .tmp/desktop-local
 GrayCode 的核心服务层可以独立于桌面端在服务器或命令行运行：
 
 ```powershell
-# 编译平台核心
+# 编译平台核心与共享界面
 npm run build:platform
+npm --workspace @graycode/client run build
+npm --prefix frontend run build:platform
 
-# 启动 CLI 或本地 Web 服务
-npm run platform -- serve --web --port 3000
+# 先设置下述两个环境变量，再启动独立 Web 服务
+npm run platform -- --data .tmp/web-local serve --web --port 3000 --token-env GRAYCODE_WEB_TOKEN --key-env GRAYCODE_STORAGE_KEY
 ```
 
-关于 Web 模式的认证、HTTPS 代理与多用户配置，请参考 [Web 服务文档](../apps/server/WEB.md)。
+`GRAYCODE_WEB_TOKEN` 是至少 32 个字符的随机访问令牌；`GRAYCODE_STORAGE_KEY` 用 64 个十六进制字符表示 32 字节加密密钥。同一数据目录后续启动须沿用该加密密钥。浏览器打开 `http://127.0.0.1:3000/`，使用访问令牌登录。
+
+关于凭据保存、数据目录和 HTTPS 代理，请参考 [Web 服务文档](../apps/server/WEB.md)。
