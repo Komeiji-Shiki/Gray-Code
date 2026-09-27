@@ -117,3 +117,14 @@ test('组内单张关闭后组信息同步收缩，其他入口仍可读取', as
     await expect(f.call('preview.get', { id: secondId })).rejects.toThrow('预览已经过期');
   } finally { await f.finish(); }
 });
+
+test('应用关闭会释放仍在有效期内的内容预览', async () => {
+  const f = await open();
+  try {
+    await f.call('showContextContent', { content: '关闭前的临时正文' });
+    expect((f.app.previews as any).values.size).toBe(1);
+    await f.app.close();
+    expect((f.app.previews as any).values.size).toBe(0);
+    expect(() => f.app.previews.show({ actorId: 'owner', clientId: 'preview-ui' }, { content: '迟到请求' }, false)).toThrow('预览服务已经关闭');
+  } finally { await f.finish(); }
+});

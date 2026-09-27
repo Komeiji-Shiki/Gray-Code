@@ -15,9 +15,12 @@ const PREVIEW_TTL_MS = 600_000;
 /** 临时预览不写入会话；事件只携带标识，大附件按请求读取，避免撑大重连事件缓存。 */
 export class ContentPreviews {
   private readonly values = new Map<string, Preview>();
+  private expiryTimer?: ReturnType<typeof setTimeout>;
+  private disposed = false;
   constructor(private readonly app: PlatformApplication) {}
   show(client: ClientSession, data: Record<string, any>, attachment: boolean) {
     this.app.requireOwner(client.actorId);
+    if (this.disposed) throw new Error('预览服务已经关闭。');
     if (attachment && Array.isArray(data.gallery)) this.registerGallery(client, data);
     else if (attachment) this.registerSingle(client, data);
     else this.registerText(client, data);
@@ -40,7 +43,22 @@ export class ContentPreviews {
     }
     return { ...value, group: { index, items } };
   }
-  close(client: ClientSession, id: string) { if (this.values.get(id)?.clientId === client.clientId) this.values.delete(id); return { success: true }; }
+  close(client: ClientSession, id: string) {
+    if (this.values.get(id)?.clientId === client.clientId) { this.values.delete(id); this.armExpiry(); }
+    return { success: true };
+  }
+  dispose() { this.disposed = true; clearTimeout(this.expiryTimer); this.expiryTimer = undefined; this.values.clear(); }
+
+  private armExpiry() {
+    clearTimeout(this.expiryTimer); this.expiryTimer = undefined;
+    let next = Infinity;
+    for (const item of this.values.values()) next = Math.min(next, item.expiresAt);
+    if (next === Infinity) return;
+    // 沿用 expiresAt < now 的有效期边界；一个计时器清理最近到期项，避免闲置时保留大附件。
+    const delay = Math.max(1, Math.min(PREVIEW_TTL_MS + 1, next - Date.now() + 1));
+    this.expiryTimer = setTimeout(() => { this.expiryTimer = undefined; this.evict(); }, delay);
+    this.expiryTimer.unref();
+  }
 
   /** 单个附件：文件名做标题，校验 base64 与 50 MiB 上限。 */
   private registerSingle(client: ClientSession, data: Record<string, any>) {
@@ -111,5 +129,6 @@ export class ContentPreviews {
       for (const id of group.ids) this.values.delete(id);
       groups.delete(key); total -= group.size;
     }
+    this.armExpiry();
   }
 }

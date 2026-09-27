@@ -625,6 +625,7 @@ export class PlatformApplication {
       ['上下文', () => this.context?.close()],
       ['运行器', () => this.runtime?.close()],
       ['长期记忆', () => this.longMemory?.close()],
+      ['内容预览', () => this.previews?.dispose()],
       ['文件操作', () => this.fileActions?.close()],
       ['浏览器', () => this.browser?.close()],
       ['角色任务', () => this.characterPipeline?.close()],
