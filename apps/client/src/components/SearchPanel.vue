@@ -35,11 +35,14 @@ async function search() {
 async function replace() {
   if (!result.value || result.value.truncated || stale.value || busy.value) return;
   const workspaceId = props.workspaceId, current = generation;
+  // 点击时固定这一批操作，等待编辑器同步期间的新输入只用于后续查询。
+  const input = { workspaceId, options: structuredClone({ ...options }), replacement: replacement.value,
+    files: result.value.files.filter(file => selected.value.includes(file.path)).map(({ path, hash }) => ({ path, hash })) };
   busy.value = true; error.value = ''; notice.value = '';
   try {
     await props.flush();
-    const edits = await call<ProjectReplacement[]>('files.replacePreview', { workspaceId, options: { ...options }, replacement: replacement.value,
-      files: result.value.files.filter(file => selected.value.includes(file.path)).map(({ path, hash }) => ({ path, hash })) });
+    if (current !== generation) return;
+    const edits = await call<ProjectReplacement[]>('files.replacePreview', input);
     if (current !== generation) return;
     const applied = await props.apply(workspaceId, edits);
     if (current !== generation) return;
@@ -51,16 +54,21 @@ async function replace() {
 }
 async function batch(undo: boolean) {
   if (!lastBatch || busy.value) return;
+  const current = generation, batch = lastBatch;
   busy.value = true; error.value = '';
-  try { await (undo ? lastBatch.undo() : lastBatch.redo()); await props.flush(); notice.value = undo ? '已撤销整批替换。' : '已重做整批替换。'; }
-  catch (cause) { error.value = String(cause); }
-  finally { busy.value = false; }
+  try {
+    await (undo ? batch.undo() : batch.redo()); await props.flush();
+    if (current === generation) notice.value = undo ? '已撤销整批替换。' : '已重做整批替换。';
+  } catch (cause) { if (current === generation) error.value = String(cause); }
+  finally { if (current === generation) busy.value = false; }
 }
 async function save() {
+  if (busy.value) return;
+  const current = generation;
   busy.value = true; error.value = '';
-  try { await props.saveAll(); notice.value = '已保存打开文件的修改。'; }
-  catch (cause) { error.value = String(cause); }
-  finally { busy.value = false; }
+  try { await props.saveAll(); if (current === generation) notice.value = '已保存打开文件的修改。'; }
+  catch (cause) { if (current === generation) error.value = String(cause); }
+  finally { if (current === generation) busy.value = false; }
 }
 watch(() => props.workspaceId, () => { cancel(); result.value = undefined; lastBatch = undefined; batchAvailable.value = false; notice.value = ''; error.value = ''; });
 onUnmounted(cancel);
