@@ -225,11 +225,14 @@ test('Node fork 创建真实子会话，根会话停止后回收父子目标', a
     await writeFile(path.join(t.f.root, 'parent.js'), "require('node:fs').writeFileSync(__dirname + '/parent.pid', String(process.pid)); require('node:child_process').fork(require('node:path').join(__dirname, 'child.js'));\nsetInterval(() => {}, 100);\n");
     await writeFile(path.join(t.f.root, 'child.js'), "require('node:fs').writeFileSync(__dirname + '/child.pid', String(process.pid)); const left = 2;\nconst right = 3;\nconst result = left + right;\nconsole.log(result);\nsetInterval(() => {}, 100);\n");
     await t.rpc('debug.breakpoints.set', { expectedRevision: null, breakpoints: [{ id: 'child', path: 'child.js', line: 4, enabled: true }] });
-    const stopped = t.session(value => value.status === 'stopped' && value.name.includes('child.js'));
+    // 子目标初始化时也可能短暂停在入口，必须等真正命中正文断点后再读取夹具 PID。
+    const stopped = t.session(value => value.status === 'stopped' && value.reason === 'breakpoint' && value.name.includes('child.js'));
     const root = await t.rpc('debug.start', { configuration: { id: 'fork', name: '父子进程', adapterId: 'node', request: 'launch', program: 'parent.js' } });
     const child = await stopped; const sessions = await t.rpc('debug.list');
     const parent = sessions.find((value: any) => value.id === child.parentId);
     expect(parent.parentId).toBe(root.id); expect(child.rootId).toBe(root.id);
+    const stack = await t.rpc('debug.request', { id: child.id, command: 'stackTrace', arguments: { threadId: child.threadId } });
+    expect({ reason: child.reason, line: stack.stackFrames[0]?.line }).toEqual({ reason: 'breakpoint', line: 4 });
     const pids = await Promise.all(['parent.pid', 'child.pid'].map(file => fixturePid(t.f.root, file)));
     expect(new Set(pids).size).toBe(2);
     await t.rpc('debug.stop', { id: child.id });
