@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import type { ActorIdentity, ApprovalRequest, DiscordOutputSettings, DiscordReplyProfile, PlatformConversation, RecordMutation, RunRecord } from '@graycode/contracts';
+import type { ActorIdentity, ApprovalRequest, ConversationSummary, DiscordOutputSettings, DiscordReplyProfile, PlatformConversation, RecordMutation, RunRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { BotInbound } from './gateway';
 import { discordAdmitted, discordOutput, botProfile } from './config';
@@ -9,7 +9,7 @@ import { BOT_CHANNEL_ACCESS, addBotParticipant, sameBotChannel, type BotChannelA
 import { BotInbox, type BotInboxItem } from './inbox';
 import { captureBotEnvironment } from './prompt';
 import { actorForBotRun, isBotUserBlocked, resolveBotUser } from './permissions';
-import { authorizeEffects } from '@graycode/core';
+import { authorizeEffects, type ConversationListOptions } from '@graycode/core';
 import { distributionSourceNotice } from '../../../../shared/distribution';
 
 export type BotPlatform = 'discord' | 'onebot';
@@ -161,15 +161,22 @@ export class BotSessions {
   }
   async conversations(actorId: string, context: BotContext) {
     const hidden = this.app.subagents.childConversationIds();
-    const page = await this.app.storage.listConversations({ limit: 200 });
-    const values = await Promise.all(page.items.filter(item => !hidden.has(item.id)).map(async item => {
-      try {
-        await this.app.conversation(actorId, item.id);
+    const values: ConversationSummary[] = [];
+    let cursor: ConversationListOptions['cursor'];
+    do {
+      const page = await this.app.storage.listConversations({ limit: 200, cursor });
+      const visible = await Promise.all(page.items.filter(item => !hidden.has(item.id)).map(async item => {
+        // 先筛频道，减少无关的权限元数据读取；频道记录读取失败应向上传递。
         const access = await this.app.storage.getRecord(BOT_CHANNEL_ACCESS, item.id) as BotChannelAccess | null;
-        return access && sameBotChannel(access.context, context) ? item : null;
-      } catch { return null; }
-    }));
-    return values.filter((value): value is NonNullable<typeof value> => value !== null);
+        if (!access || !sameBotChannel(access.context, context)) return null;
+        try { await this.app.conversation(actorId, item.id); return item; }
+        catch { return null; }
+      }));
+      values.push(...visible.filter((value): value is ConversationSummary => value !== null).slice(0, 200 - values.length));
+      cursor = page.nextCursor;
+      // 上限针对本频道可见的对话，不能在授权和频道筛选前被全局列表占满。
+    } while (cursor && values.length < 200);
+    return values;
   }
   async routeForRun(platform: BotPlatform, run: RunRecord): Promise<BotRoute | null> {
     let current: RunRecord | null = run;
