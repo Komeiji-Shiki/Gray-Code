@@ -9,6 +9,18 @@ interface HistoryRow { id: string; message_count: number; revision: number; sear
 interface SpanRow { start_index: number; segment_id: number; segment_offset: number; count: number }
 interface EntryRow { body_hash: Buffer; message_id: string | null; role: string; timestamp: number | null }
 
+/** 段内条目不可变；段身份、偏移和长度即可确定共享前缀，无需解压旧消息。 */
+function sharedSpanPrefix(previous: readonly SpanRow[], current: readonly SpanRow[]): number {
+  let length = 0;
+  for (let index = 0; index < Math.min(previous.length, current.length); index++) {
+    const before = previous[index], after = current[index];
+    if (before.segment_id !== after.segment_id || before.segment_offset !== after.segment_offset || before.start_index !== after.start_index) break;
+    length += Math.min(before.count, after.count);
+    if (before.count !== after.count) break;
+  }
+  return length;
+}
+
 function searchableText(message: Pick<PlatformMessage, 'parts'>): string {
   return Array.isArray(message.parts) ? message.parts.flatMap(part => typeof part?.text === 'string' && part.thought !== true ? [part.text] : []).join('\n') : '';
 }
@@ -16,25 +28,18 @@ function searchableText(message: Pick<PlatformMessage, 'parts'>): string {
 /** Sequence spans are small indexes. Forks share spans; message content is immutable. */
 export class HistoryStore {
   private readonly cursorSnapshots = new Map<string, { historyId: string; revision: number; spans: SpanRow[] }>();
+  // 仅保留最近一次楼层窗口，避免随着浏览过的会话数量积累派生元数据。
+  private floorSnapshot?: { historyId: string; revision: number; spans: SpanRow[]; floorIndices: number[] };
   constructor(private readonly db: SqliteConnection, private readonly objects: ObjectStore) {}
 
   releaseCursor(runId: string): void { this.cursorSnapshots.delete(runId); }
-  clearCursors(): void { this.cursorSnapshots.clear(); }
+  clearSnapshots(): void { this.cursorSnapshots.clear(); this.floorSnapshot = undefined; }
 
   readIncremental(id: string, cursor: RuntimeHistoryCursor) {
     const info = this.info(id);
     const spans = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index').all(id) as SpanRow[];
     const previous = this.cursorSnapshots.get(cursor.runId);
-    let startIndex = 0;
-    if (previous?.historyId === id && previous.revision === cursor.revision) {
-      // 段内条目不可变；段身份、偏移和长度即可确定共享前缀，无需解压旧消息。
-      for (let index = 0; index < Math.min(previous.spans.length, spans.length); index++) {
-        const before = previous.spans[index], after = spans[index];
-        if (before.segment_id !== after.segment_id || before.segment_offset !== after.segment_offset || before.start_index !== after.start_index) break;
-        startIndex += Math.min(before.count, after.count);
-        if (before.count !== after.count) break;
-      }
-    }
+    const startIndex = previous?.historyId === id && previous.revision === cursor.revision ? sharedSpanPrefix(previous.spans, spans) : 0;
     const rows = this.rows(id, startIndex, info.message_count);
     if (rows.length !== info.message_count - startIndex) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
     const messages = rows.map(row => this.decode(row));
@@ -112,16 +117,21 @@ export class HistoryStore {
       const info = this.info(id);
       const page = options ? this.page(id, options)
         : { total: info.message_count, startIndex: 0, revision: info.revision, messages: [] as PlatformMessage[] };
-      const rows = this.db.prepare(`SELECT e.body_hash,s.start_index+e.ordinal-s.segment_offset AS position
-        FROM history_spans s JOIN segment_entries e ON e.segment_id=s.segment_id
-        AND e.ordinal>=s.segment_offset AND e.ordinal<s.segment_offset+s.count
-        WHERE s.history_id=? AND e.role IN ('user','model') ORDER BY s.start_index,e.ordinal`).all(id) as { body_hash: Buffer; position: number }[];
-      const floorIndices = rows.flatMap(row => {
-        // Runtime tool results and adopted legacy histories persist this flag; never restore parts or attachments for floors.
+      const previous = this.floorSnapshot;
+      if (previous?.historyId === id && previous.revision === info.revision) return { ...page, floorIndices: [...previous.floorIndices] };
+      const spans = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index').all(id) as SpanRow[];
+      const startIndex = previous ? sharedSpanPrefix(previous.spans, spans) : 0;
+      const floorIndices = previous?.floorIndices.filter(index => index < startIndex) ?? [];
+      const rows = this.rows(id, startIndex, info.message_count);
+      if (rows.length !== info.message_count - startIndex) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+      rows.forEach((row, offset) => {
+        if (row.role !== 'user' && row.role !== 'model') return;
+        // 楼层只依赖工具结果标记，历史正文、工具载荷和附件继续留在请求页之外。
         const body = this.objects.getValue<Pick<PlatformMessage, 'isFunctionResponse'>>(row.body_hash, { fields: ['isFunctionResponse'] });
-        return body.isFunctionResponse ? [] : [row.position];
+        if (!body.isFunctionResponse) floorIndices.push(startIndex + offset);
       });
-      return { ...page, floorIndices };
+      this.floorSnapshot = { historyId: id, revision: info.revision, spans, floorIndices };
+      return { ...page, floorIndices: [...floorIndices] };
     })();
   }
 

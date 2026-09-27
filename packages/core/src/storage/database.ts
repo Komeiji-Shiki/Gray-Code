@@ -273,7 +273,7 @@ export class PlatformDatabase {
       checkpoint: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); },
       backupSnapshot: () => ({ ...captureStorageSnapshot(this.db, this.databasePath, this.objectPath), statistics: this.statistics() }),
       backupInventory: () => backupInventory(this.db, this.objects),
-      mergeBackupUnits: input => { this.histories.clearCursors(); return mergeBackupUnits(this.db, this.objects, this.objectPath, input); },
+      mergeBackupUnits: input => { this.histories.clearSnapshots(); return mergeBackupUnits(this.db, this.objects, this.objectPath, input); },
       close: () => { this.db.close(); },
     };
     if (!Object.hasOwn(operations, method)) invalid('Unknown storage operation.');
@@ -592,7 +592,7 @@ export class PlatformDatabase {
 
   private collectGarbage(): StorageOperations['collectGarbage']['output'] {
     // 回收会删除未引用的段，后续 SQLite 可能复用编号，已有运行下次重新取得完整快照。
-    this.histories.clearCursors();
+    this.histories.clearSnapshots();
     const result = this.db.transaction(() => {
       this.db.prepare(`DELETE FROM histories WHERE id NOT IN (
         SELECT history_id FROM conversations UNION SELECT history_id FROM snapshots
