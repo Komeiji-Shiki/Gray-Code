@@ -19,6 +19,7 @@ test('重复捕获相同工具目录复用校验器，并保持声明和版本�
 
 test('工具替换与卸载不会改变已捕获目录的参数校验', () => {
   const registry = new RuntimeToolRegistry(); registry.register(tool());
+  const names = registry.names();
   const previous = registry.catalog(['mcp__sample']);
   registry.replaceNamespace('mcp__', [tool('number')]);
   const next = registry.catalog(['mcp__sample']);
@@ -26,6 +27,8 @@ test('工具替换与卸载不会改变已捕获目录的参数校验', () => {
   expect(next.entries.get('mcp__sample')!.validate({ value: 2 })).toBe(true);
   expect(next.entries.get('mcp__sample')!.validate({ value: '2' })).toBe(false);
   registry.replaceNamespace('mcp__', []);
+  expect(names).toEqual(['mcp__sample']);
+  expect(registry.names()).toEqual([]);
   expect(() => registry.catalog(['mcp__sample'])).toThrow('unavailable');
   expect(previous.entries.get('mcp__sample')!.validate({ value: '旧任务' })).toBe(true);
   expect(previous.entries.get('mcp__sample')!.validate({ value: 2 })).toBe(false);

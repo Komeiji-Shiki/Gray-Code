@@ -95,6 +95,8 @@ export class RuntimeToolRegistry {
     return { declarations, entries, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex') };
   }
 
+  /** 配置默认工具清单时只需要名称，避免复制随后不会使用的完整参数声明。 */
+  names(): string[] { return [...this.tools.keys()]; }
   declarations(): ToolDeclaration[] { return [...this.tools.values()].map(tool => structuredClone(tool.declaration)); }
 
   /** New runs see refreshed discovery; existing runs retain their captured declarations. */
