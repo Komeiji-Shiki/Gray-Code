@@ -163,6 +163,7 @@ const sharedEn = {
                     other: backendEn.tools.reviewDocument.values.category.other,
                 },
             },
+            backgroundGalleryPolicy: backendEn.modules.settings.backgroundGalleryPolicy,
             channelSettings: {
                 dialog: {
                     delete: {
@@ -607,6 +608,12 @@ const sharedEn = {
                     restartAfterFailure: backendEn.tools.presentation.findFiles.restartAfterFailure,
                     returnedFiles: backendEn.tools.presentation.findFiles.returnedFiles,
                     workspaceErrors: backendEn.tools.presentation.findFiles.workspaceErrors,
+                },
+                gotoDefinition: {
+                    contentTruncated: backendEn.tools.presentation.gotoDefinition.contentTruncated,
+                    emptyPage: backendEn.tools.presentation.gotoDefinition.emptyPage,
+                    nextPage: backendEn.tools.presentation.gotoDefinition.nextPage,
+                    pageSummary: backendEn.tools.presentation.gotoDefinition.pageSummary,
                 },
                 historyMessages: backendEn.tools.presentation.historyMessages,
                 invalidatedNote: backendEn.tools.presentation.invalidatedNote,

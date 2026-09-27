@@ -104,6 +104,7 @@ const zhCN = {
         },
 
         settings: {
+            backgroundGalleryPolicy: 'JPG、PNG、WebP，每张不超过 10 MB。导入的图片随设置一起保存或撤销；上传和管理已保存的图库图片会立即生效。',
             errors: {
                 loadFailed: '加载设置失败',
                 saveFailed: '保存设置失败',
@@ -631,6 +632,12 @@ const zhCN = {
             }
         },
         presentation: {
+            gotoDefinition: {
+                pageSummary: '本页显示 {returned} 个定义，共 {total} 个',
+                nextPage: '继续查看下一页时，使用 offset={offset} 并保持查询条件不变。',
+                contentTruncated: '这个定义的正文已截断，可按显示的路径和行号范围读取剩余代码。',
+                emptyPage: '本页没有定义'
+            },
             // Responses 由渠道开关决定 strict；说明不能再暗示未勾选时也默认启用。
             strictToolsOpenaiResponses: 'OpenAI Responses：默认关闭；启用后可选参数允许 null',
             messageBody: '发送内容', recipient: '收件方', mainAgent: '主模型',

@@ -102,6 +102,7 @@ const ja: BackendLanguageMessages = {
         },
 
         settings: {
+            backgroundGalleryPolicy: 'JPG・PNG・WebP、1 枚最大 10 MB。インポート画像は設定と一緒に保存・破棄されます。アップロードと保存済み画像の管理はすぐに反映されます。',
             errors: {
                 loadFailed: '設定の読み込みに失敗しました',
                 saveFailed: '設定の保存に失敗しました',
@@ -629,6 +630,12 @@ const ja: BackendLanguageMessages = {
             }
         },
         presentation: {
+            gotoDefinition: {
+                pageSummary: 'このページに {returned} 件の定義、合計 {total} 件',
+                nextPage: '検索条件を変えずに offset={offset} で続きを取得してください。',
+                contentTruncated: 'この定義の本文は省略されています。表示されたパスと行範囲で残りのコードを読み取れます。',
+                emptyPage: 'このページに定義はありません'
+            },
             // Responses の strict はチャネル設定に従い、暗黙には有効化されない。
             strictToolsOpenaiResponses: 'OpenAI Responses：既定では無効。有効にすると任意パラメータに null を指定可能',
             messageBody: '送信内容', recipient: '宛先', mainAgent: 'メインエージェント',

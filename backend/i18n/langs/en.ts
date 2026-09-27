@@ -102,6 +102,7 @@ const en: BackendLanguageMessages = {
         },
 
         settings: {
+            backgroundGalleryPolicy: 'JPG, PNG or WebP, up to 10 MB each. Imported images are saved or discarded with settings; uploads and changes to saved gallery images take effect immediately.',
             errors: {
                 loadFailed: 'Failed to load settings',
                 saveFailed: 'Failed to save settings',
@@ -629,6 +630,12 @@ Output content directly without any prefix.`
             }
         },
         presentation: {
+            gotoDefinition: {
+                pageSummary: '{returned} definitions on this page, {total} total',
+                nextPage: 'Continue with offset={offset} and unchanged query parameters.',
+                contentTruncated: 'This definition is truncated. Read the displayed path and line range for the remaining code.',
+                emptyPage: 'No definitions on this page'
+            },
             // Responses strict follows the channel switch, rather than being enabled implicitly.
             strictToolsOpenaiResponses: 'OpenAI Responses: Off by default; optional parameters allow null when enabled',
             messageBody: 'Message content', recipient: 'Recipient', mainAgent: 'Main agent',

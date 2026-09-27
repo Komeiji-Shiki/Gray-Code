@@ -1029,6 +1029,7 @@ const en: LanguageMessages = {
         },
 
         settings: {
+            backgroundGalleryPolicy: sharedEn.components.settings.backgroundGalleryPolicy,
             title: 'Settings',
             tabs: {
                 channel: 'Channel',

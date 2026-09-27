@@ -163,6 +163,7 @@ const sharedZhCN = {
                     other: backendZhCN.tools.reviewDocument.values.category.other,
                 },
             },
+            backgroundGalleryPolicy: backendZhCN.modules.settings.backgroundGalleryPolicy,
             channelSettings: {
                 dialog: {
                     delete: {
@@ -607,6 +608,12 @@ const sharedZhCN = {
                     restartAfterFailure: backendZhCN.tools.presentation.findFiles.restartAfterFailure,
                     returnedFiles: backendZhCN.tools.presentation.findFiles.returnedFiles,
                     workspaceErrors: backendZhCN.tools.presentation.findFiles.workspaceErrors,
+                },
+                gotoDefinition: {
+                    contentTruncated: backendZhCN.tools.presentation.gotoDefinition.contentTruncated,
+                    emptyPage: backendZhCN.tools.presentation.gotoDefinition.emptyPage,
+                    nextPage: backendZhCN.tools.presentation.gotoDefinition.nextPage,
+                    pageSummary: backendZhCN.tools.presentation.gotoDefinition.pageSummary,
                 },
                 historyMessages: backendZhCN.tools.presentation.historyMessages,
                 invalidatedNote: backendZhCN.tools.presentation.invalidatedNote,

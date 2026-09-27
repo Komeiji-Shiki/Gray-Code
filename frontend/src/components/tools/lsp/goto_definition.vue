@@ -7,6 +7,8 @@
 
 import { computed } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import { useI18n } from '../../../i18n'
+const { t } = useI18n()
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -23,6 +25,7 @@ interface DefinitionLocation {
   endLine: number
   content: string
   lineCount: number
+  contentTruncated?: boolean
 }
 
 // 解析定义数据
@@ -34,6 +37,9 @@ const definitionData = computed(() => {
     column?: number
     symbol?: string
     definitionCount?: number
+    totalCount?: number
+    nextOffset?: number
+    truncated?: boolean
     definitions?: DefinitionLocation[]
     message?: string
   }
@@ -61,7 +67,8 @@ const definitionData = computed(() => {
       <!-- 定义列表 -->
       <CustomScrollbar v-if="definitionData.definitions && definitionData.definitions.length > 0" :max-height="400" class="definitions-list">
         <div class="list-header">
-          找到 {{ definitionData.definitionCount }} 个定义
+          <template v-if="definitionData.totalCount !== undefined">{{ t('components.tools.presentation.gotoDefinition.pageSummary', { returned: definitionData.definitionCount ?? definitionData.definitions.length, total: definitionData.totalCount }) }}</template>
+          <template v-else>找到 {{ definitionData.definitionCount }} 个定义</template>
         </div>
         <div 
           v-for="(def, index) in definitionData.definitions" 
@@ -76,14 +83,16 @@ const definitionData = computed(() => {
           <CustomScrollbar v-if="def.content" :horizontal="true" class="code-content">
             <pre>{{ def.content }}</pre>
           </CustomScrollbar>
+          <p v-if="def.contentTruncated" class="pagination-info">{{ t('components.tools.presentation.gotoDefinition.contentTruncated') }}</p>
         </div>
       </CustomScrollbar>
       
       <!-- 未找到定义 -->
       <div v-else class="no-definitions">
         <span class="codicon codicon-info"></span>
-        <span>{{ definitionData.message || '未找到定义' }}</span>
+        <span>{{ definitionData.message || (definitionData.totalCount ? t('components.tools.presentation.gotoDefinition.emptyPage') : '未找到定义') }}</span>
       </div>
+      <p v-if="definitionData.nextOffset !== undefined" class="pagination-info">{{ t('components.tools.presentation.gotoDefinition.nextPage', { offset: definitionData.nextOffset }) }}</p>
     </div>
     
     <!-- 加载中 -->
@@ -94,6 +103,7 @@ const definitionData = computed(() => {
 </template>
 
 <style scoped>
+.pagination-info { margin: 0; padding: 4px 8px; color: var(--vscode-descriptionForeground); font-size: 11px; }
 .goto-definition-content {
   font-size: 12px;
   font-family: var(--vscode-editor-font-family);

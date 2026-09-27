@@ -2,6 +2,8 @@
 import { ref, watch } from 'vue';
 import { sendToExtension } from '../../utils/vscode';
 import { resourceUrl } from '../../platform/resources';
+import { useI18n } from '../../i18n';
+const { t } = useI18n();
 const props = defineProps<{ visible: boolean; value: string; opacity: number }>();
 const emit = defineEmits<{ close: []; apply: [url: string, opacity: number] }>();
 interface ImageItem { id: string; name: string; url: string; thumbnail: string; width: number; height: number }
@@ -51,7 +53,7 @@ async function rename(image: ImageItem, event: Event) {
         <label class="strength-row"><strong>背景强度</strong><input v-model.number="strength" type="range" min="0" max="1" step=".01" /><span>{{ Math.round(strength * 100) }}%</span></label>
         <p class="gallery-note">0% 完全隐藏背景，100% 显示原图强度。数值越大，背景越明显，也更容易影响文字对比度，可结合上方预览调整。</p>
         <div class="gallery-heading"><strong>我的图片 <small>{{ images.length }} 张</small></strong><label class="upload-button">{{ uploading ? '正在上传…' : '上传图片' }}<input type="file" accept="image/jpeg,image/png,image/webp" hidden :disabled="uploading" @change="upload" /></label></div>
-        <p class="gallery-note">JPG、PNG、WebP，每张不超过 10 MB。图库管理立即保存，应用背景后再统一保存设置。</p>
+        <p class="gallery-note">{{ t('components.settings.backgroundGalleryPolicy') }}</p>
         <div class="image-grid">
           <button class="image-none" :class="{ selected: selected === '' }" @click="selected = ''"><span>∅</span>无背景</button>
           <article v-for="image in images" :key="image.id" class="image-tile"><button class="image-thumb" :class="{ selected: selected === image.url }" @click="selected = image.url"><img :src="resourceUrl(image.thumbnail || image.url)" :alt="image.name" /><span v-if="selected === image.url">✓</span></button><div class="image-caption"><input :value="image.name" aria-label="图片名称" @change="rename(image, $event)" /><button title="删除图片" @click="remove(image)">删除</button></div><small>{{ image.width }} × {{ image.height }}</small></article>

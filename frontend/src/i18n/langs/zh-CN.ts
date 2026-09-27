@@ -1031,6 +1031,7 @@ const zhCN = {
         },
 
         settings: {
+            backgroundGalleryPolicy: sharedZhCN.components.settings.backgroundGalleryPolicy,
             title: '设置',
             tabs: {
                 channel: '渠道',
