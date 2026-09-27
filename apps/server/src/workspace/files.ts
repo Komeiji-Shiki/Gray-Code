@@ -380,21 +380,24 @@ export class WorkspaceFiles {
     clientId: string,
   ): Promise<DocumentState> {
     const absolute = await this.resolve(workspace, file);
-    const key = this.documentKey(clientId, absolute);
-    const existing = this.documents.get(key);
-    if (existing) return structuredClone(existing);
-    const value = await this.readAbsolute(absolute);
-    const document: DocumentState = {
-      workspaceId: workspace.id,
-      path: workspaceFilePath(workspace, absolute),
-      text: value.text,
-      baseHash: value.hash,
-      version: 1,
-      dirty: false,
-      clientId,
-    };
-    this.documents.set(key, document);
-    return structuredClone(document);
+    // 后到的打开请求先读取已建立的草稿，不能用迟到的磁盘结果覆盖新输入。
+    return this.locked(absolute, async () => {
+      const key = this.documentKey(clientId, absolute);
+      const existing = this.documents.get(key);
+      if (existing) return structuredClone(existing);
+      const value = await this.readAbsolute(absolute);
+      const document: DocumentState = {
+        workspaceId: workspace.id,
+        path: workspaceFilePath(workspace, absolute),
+        text: value.text,
+        baseHash: value.hash,
+        version: 1,
+        dirty: false,
+        clientId,
+      };
+      this.documents.set(key, document);
+      return structuredClone(document);
+    });
   }
   async updateDocument(
     workspace: WorkspaceDefinition,

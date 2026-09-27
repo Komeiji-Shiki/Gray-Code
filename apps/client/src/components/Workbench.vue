@@ -38,6 +38,9 @@ const DiffPanel = defineAsyncComponent(() => import("./DiffPanel.vue"));
 const documents = reactive<DocumentState[]>([]);
 const current = ref("");
 const pane = ref('empty');
+let openSequence = 0;
+// 项目切换先使旧打开请求失效，同一事件随后发起的新打开仍能取得焦点。
+watch(() => state.workspaceId, () => { openSequence++; }, { flush: 'sync' });
 const openedPanels = ref<string[]>([]);
 const treeVisible = ref(localStorage.getItem('graycode.fileTreeVisible') !== 'false');
 const mobileTreeVisible = ref(true);
@@ -55,6 +58,7 @@ function endTreeResize() { treeResizing.value = false; state.panelResizing = fal
 watch(treeVisible, value => localStorage.setItem('graycode.fileTreeVisible', String(value)));
 watch(pane, value => { if (!['editor', 'empty'].includes(value) && !openedPanels.value.includes(value)) openedPanels.value.push(value); });
 function activatePanel(id: string) {
+  openSequence++;
   if (!openedPanels.value.includes(id) && (id !== 'editor' || !documents.length)) openedPanels.value.push(id);
   pane.value = id; state.chatFocused = false;
   if (id === 'editor') showingTree.value = true;
@@ -72,6 +76,7 @@ watch(pane, value => { if (value === 'browser' && !browserCreated) {
 const isWeb = window.graycode?.kind === 'web';
 const monitorQuery = ref('');
 function openMonitor(runId?: string, conversationId?: string) {
+  openSequence++;
   const query = new URLSearchParams({ view: 'subagents' });
   if (runId) query.set('runId', runId);
   if (conversationId) query.set('conversationId', conversationId);
@@ -81,7 +86,7 @@ function openMonitor(runId?: string, conversationId?: string) {
 const selections = reactive<Record<string, IRange>>({});
 const closing = ref<DocumentState | null>(null);
 const queues = new Map<string, Promise<unknown>>();
-const closingDocuments = new Set<string>();
+const closingDocuments = new Set<DocumentState>();
 function flushDocument(doc: DocumentState) { return queues.get(key(doc)) ?? Promise.resolve(); }
 async function flushDocuments() { await Promise.all(documents.map(flushDocument)); }
 const editorModels = new Map<string, MonacoEditor.ITextModel>();
@@ -144,6 +149,7 @@ const activeTab = computed(() => pane.value === 'empty' ? '' : pane.value === 'e
 const breadcrumb = computed(() => active.value?.path.split(/[\\/]/).filter(Boolean) ?? []);
 const documentWorkspace = computed(() => state.snapshot?.settings.workspaces.find(workspace => workspace.id === active.value?.workspaceId));
 function selectTab(id: string) {
+  openSequence++;
   if (id.startsWith('file:')) { current.value = id.slice(5); pane.value = 'editor'; }
   else pane.value = id.slice(6);
 }
@@ -158,26 +164,31 @@ async function copyPath() {
   else await call('desktop.clipboard.writeText', { text: active.value.path });
 }
 async function open(path: string, workspaceId = state.workspaceId, selection?: IRange, focus = true) {
-  if (/\.(png|jpe?g|gif|webp|bmp|svg|ico|pdf|mp3|wav|ogg|mp4|webm)$/i.test(path)) {
-    await call('browser.openFile', { workspaceId, path }); if (props.compact && focus) mobileTreeVisible.value = false; return;
+  const sequence = focus ? ++openSequence : undefined;
+  try {
+    if (/\.(png|jpe?g|gif|webp|bmp|svg|ico|pdf|mp3|wav|ogg|mp4|webm)$/i.test(path)) {
+      await call('browser.openFile', { workspaceId, path }); if (props.compact && focus && sequence === openSequence) mobileTreeVisible.value = false; return;
+    }
+    let doc = documents.find(item => item.workspaceId === workspaceId && item.path === path);
+    if (!doc) {
+      const opened = await call<DocumentState>('documents.open', { workspaceId, path });
+      doc = documents.find(item => key(item) === key(opened));
+      if (!doc) { documents.push(opened); doc = opened; }
+    }
+    const id = key(doc);
+    if (focus && sequence === openSequence) { pane.value = 'editor'; openedPanels.value = openedPanels.value.filter(item => item !== 'editor'); if (props.compact) mobileTreeVisible.value = false; if (selection) markdownPreview.value = false; current.value = id; if (selection) selections[id] = { ...selection }; }
+    await nextTick();
+  } catch (error) {
+    if (!focus || sequence === openSequence) throw error;
   }
-  let doc = documents.find(item => item.workspaceId === workspaceId && item.path === path);
-  if (!doc) {
-    const opened = await call<DocumentState>('documents.open', { workspaceId, path });
-    doc = documents.find(item => key(item) === key(opened));
-    if (!doc) { documents.push(opened); doc = opened; }
-  }
-  const id = key(doc);
-  if (focus) { pane.value = 'editor'; openedPanels.value = openedPanels.value.filter(item => item !== 'editor'); if (props.compact) mobileTreeVisible.value = false; if (selection) markdownPreview.value = false; current.value = id; if (selection) selections[id] = { ...selection }; }
-  await nextTick();
 }
 // 聊天仍可保留当前代码标签，发起任务时由核心捕获此客户端的选择。
 watch(() => [active.value?.workspaceId, active.value?.path], () => {
   const doc = active.value;
-  if (doc && closingDocuments.has(key(doc))) return;
+  if (doc && closingDocuments.has(doc)) return;
   void call('documents.focus', { workspaceId: doc?.workspaceId, path: doc?.path ?? null }).catch(error => {
     // 连续关闭标签时，旧焦点请求可能晚于文档关闭返回，只报告当前文档的错误。
-    if (active.value === doc && (!doc || !closingDocuments.has(key(doc)))) report(error);
+    if (active.value === doc && (!doc || !closingDocuments.has(doc))) report(error);
   });
 }, { immediate: true });
 function markdownLink(event: MouseEvent) {
@@ -222,32 +233,34 @@ async function save(doc: DocumentState) {
   });
 }
 async function close(doc: DocumentState, discard = false) {
+  if (current.value === key(doc)) openSequence++;
   if (doc.dirty && !discard) {
     closing.value = doc;
     return;
   }
-  if (closingDocuments.has(key(doc))) return;
-  closingDocuments.add(key(doc));
+  if (closingDocuments.has(doc)) return;
+  closingDocuments.add(doc);
   try {
   await (queues.get(key(doc)) ?? Promise.resolve()).catch(() => undefined);
-  await call("documents.close", {
+  if (documents.includes(doc)) await call("documents.close", {
     workspaceId: doc.workspaceId,
     path: doc.path,
     discard,
   });
   const index = documents.indexOf(doc);
-  documents.splice(index, 1);
-  queues.delete(key(doc));
-  editorModels.delete(key(doc));
-  closing.value = null;
-  if (current.value === key(doc))
+  if (index >= 0) documents.splice(index, 1);
+  const reopened = documents.some(item => key(item) === key(doc));
+  // 删除通知或重新打开可先于关闭回执到达，只释放原文档仍拥有的界面状态。
+  if (!reopened) { queues.delete(key(doc)); editorModels.delete(key(doc)); }
+  if (closing.value === doc) closing.value = null;
+  if (!reopened && current.value === key(doc))
     current.value = documents[index]
       ? key(documents[index])
       : documents.at(-1)
         ? key(documents.at(-1)!)
         : "";
   if (!documents.length && pane.value === 'editor') pane.value = openedPanels.value.at(-1) ?? 'empty';
-  } finally { closingDocuments.delete(key(doc)); }
+  } finally { closingDocuments.delete(doc); }
 }
 watch(
   () => documents.filter((doc) => doc.dirty).length,
@@ -276,10 +289,10 @@ const unsubscribe = subscribe((event) => {
     return;
   }
   if (event.type === 'workspace.terminal.open') { activatePanel('terminal'); return; }
-  if (event.type === 'browser.opened') { browserCreated = true; state.chatFocused = false; pane.value = 'browser'; return; }
+  if (event.type === 'browser.opened') { browserCreated = true; activatePanel('browser'); return; }
   if (event.type === 'workspace.file.open') { state.chatFocused = false; pane.value = 'editor'; void guard(() => open(event.path, event.workspaceId, event.selection)); return; }
   if (event.type === 'workspace.subagents.open') { openMonitor(event.runId, event.conversationId); return; }
-  if (event.type === 'workspace.diff.open') { pane.value = 'diff'; state.chatFocused = false; return; }
+  if (event.type === 'workspace.diff.open') { activatePanel('diff'); return; }
   if (event.type !== "file.changed") return;
   const doc = documents.find(
     (doc) => doc.workspaceId === event.workspaceId && doc.path === event.path,
@@ -306,7 +319,7 @@ function projectSearchShortcut(event: KeyboardEvent) {
   }
 }
 window.addEventListener('keydown', projectSearchShortcut);
-onUnmounted(() => { unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
+onUnmounted(() => { openSequence++; unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
 </script>
 <template>
   <section ref="panel" class="workbench side-panel" :class="{ 'tree-hidden': !showingTree || pane !== 'editor', 'tree-resizing': treeResizing, 'compact-workbench': compact }" :style="{ '--tree-width': treeWidth + 'px' }">
