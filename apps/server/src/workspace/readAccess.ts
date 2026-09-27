@@ -12,11 +12,13 @@ export class FileReadAccess {
     this.context.signal.throwIfAborted();
     const workspace = this.context.workspace;
     const absolute = resolveWorkspacePath(workspace, requested);
-    const roots = workspace ? await (this.roots ??= Promise.all(workspaceRoots(workspace).map(root => realpath(root.directory)))) : [];
+    const declaredRoots = workspace ? workspaceRoots(workspace) : [];
+    const roots = await (this.roots ??= Promise.all(declaredRoots.map(root => realpath(root.directory))));
     const actor = this.context.actor ?? this.app.actor(this.context.actorId);
     const policy = this.app.product.runtimeSettings().getReadFileConfig().outsideWorkspaceAccess;
-    // 明显在范围外的拒绝不需要先访问该文件；真实路径还会识别链接指向的目标。
-    if (!roots.some(root => contains(root, absolute)) && (actor?.role !== 'owner' || policy === 'deny'))
+    // 工作区根本身可以是目录联接；先接受登记路径或真实路径，再核对目标是否确实在根内。
+    if (!roots.some(root => contains(root, absolute)) && !declaredRoots.some(root => contains(root.directory, absolute))
+      && (actor?.role !== 'owner' || policy === 'deny'))
       throw new Error('当前账号或读取设置不允许访问工作区外的文件。');
     const actual = await realpath(absolute);
     if (roots.some(root => contains(root, actual))) return actual;
