@@ -67,6 +67,23 @@ async function verifyShutdownRetry(rpc, window) {
       .catch(error => { errors.push(`Shutdown fixture cleanup: ${String(error)}`); });
   }
 }
+async function verifyRegexCancellation(rpc) {
+  const file = path.join(output, 'project', 'regex-worker.txt'), text = 'a'.repeat(24000);
+  await fs.writeFile(file, text);
+  const pending = assert.rejects(rpc('files.search', { workspaceId: 'smoke', requestId: 'regex-cancel',
+    options: { query: 'a+a+a+a+b', regex: true, include: 'regex-worker.txt' } }), /搜索已取消/);
+  await sleep(150);
+  await rpc('files.searchCancel', { requestId: 'regex-cancel' });
+  await pending;
+  const result = await rpc('files.search', { workspaceId: 'smoke', requestId: 'regex-next',
+    options: { query: '^(a+)$', regex: true, include: 'regex-worker.txt' } });
+  assert.equal(result.count, 1);
+  assert.equal(result.files[0].matches[0].range.end.character, text.length);
+  const edits = await rpc('files.replacePreview', { workspaceId: 'smoke', options: { query: '^(a+)$', regex: true },
+    replacement: '$1', files: result.files });
+  assert.deepEqual(edits, []);
+  assert.equal(await fs.readFile(file, 'utf8'), text);
+}
 async function main() {
   fsSync.mkdirSync(path.join(output, 'project'), { recursive: true });
   fsSync.mkdirSync(path.join(output, 'profile'), { recursive: true });
@@ -225,8 +242,9 @@ async function main() {
   const preview = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().startsWith('graycode-preview://')), 'embedded browser');
   await until(() => preview.getTitle() === 'Preview verified', 'local HTML preview');
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
+  await verifyRegexCancellation(rpc);
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
-  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests,
+  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true,
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);

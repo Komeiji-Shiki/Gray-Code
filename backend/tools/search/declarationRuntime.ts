@@ -8,6 +8,7 @@ import {escapeRegExp,detectSuspectedRegexIntent,createSuspectedRegexSuggestion} 
 import type {SearchFileHost,FileLocation} from './fileHost';
 import {createSearchPass,type SearchMatch,type SearchBudget,type SearchPageState,type SearchPassResult,type SearchQueryFallbackInfo,type SearchPathWarningInfo} from './searchPassRuntime';
 import {createReplacePass,type ReplaceResult,type SkippedFileInfo} from './replacePassRuntime';
+import { TextSearchWorker } from './textSearchWorker';
 interface SearchInFilesArgs {
     mode?: 'search' | 'replace';
     query?: string;
@@ -233,12 +234,12 @@ function createSearchInFilesTool(): Tool {
                 return { success: false, error: 'No workspace folder open' };
             }
 
+            let computation: TextSearchWorker | undefined;
             try {
                 // 创建搜索正则表达式（均为全局匹配）
                 // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
                 const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
-                // ReDoS 防护：长度上限 + 嵌套量词危险模式检测 + 构造异常捕获（共享 regexGuard），
-                // 避免灾难性回溯阻塞扩展宿主
+                // 启发式先拒绝明显危险的模式；实际正则仍交给线程执行，取消不依赖主线程完成匹配。
                 const regexSource = isRegex ? query : escapeRegExp(query);
                 const guardedRegex = validateRegexPattern(regexSource, flags);
                 if (!guardedRegex.ok) {
@@ -248,6 +249,7 @@ function createSearchInFilesTool(): Tool {
                     };
                 }
                 const searchRegex = guardedRegex.regex;
+                if (isRegex) computation = new TextSearchWorker({ signal: context?.abortSignal });
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();
@@ -297,7 +299,8 @@ function createSearchInFilesTool(): Tool {
                             context?.abortSignal,
                             context?.conversationId,
                             context?.checkpointReady as Promise<unknown> | undefined,
-                            context?.lockHolder as LockHolder | undefined
+                            context?.lockHolder as LockHolder | undefined,
+                            computation
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
@@ -324,7 +327,8 @@ function createSearchInFilesTool(): Tool {
                                 context?.abortSignal,
                                 context?.conversationId,
                                 context?.checkpointReady as Promise<unknown> | undefined,
-                                context?.lockHolder as LockHolder | undefined
+                                context?.lockHolder as LockHolder | undefined,
+                                computation
                             );
                             allMatches.push(...result.matches);
                             allReplacements.push(...result.replacements);
@@ -365,7 +369,8 @@ function createSearchInFilesTool(): Tool {
                             context?.abortSignal,
                             context?.conversationId,
                             context?.checkpointReady as Promise<unknown> | undefined,
-                            context?.lockHolder as LockHolder | undefined
+                            context?.lockHolder as LockHolder | undefined,
+                            computation
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
@@ -453,7 +458,8 @@ function createSearchInFilesTool(): Tool {
                                 excludePattern,
                                 searchConfig,
                                 budget,
-                                page
+                                page,
+                                { computation, signal: context?.abortSignal }
                             );
                             results.push(...pass.matches);
                             filesTruncated = pass.filesTruncated;
@@ -474,7 +480,8 @@ function createSearchInFilesTool(): Tool {
                                     excludePattern,
                                     searchConfig,
                                     budget,
-                                    page
+                                    page,
+                                    { computation, signal: context?.abortSignal }
                                 );
                                 results.push(...wsPass.matches);
                                 filesTruncated = filesTruncated || wsPass.filesTruncated;
@@ -502,7 +509,8 @@ function createSearchInFilesTool(): Tool {
                                 excludePattern,
                                 searchConfig,
                                 budget,
-                                page
+                                page,
+                                { computation, signal: context?.abortSignal }
                             );
                             results.push(...pass.matches);
                             filesTruncated = filesTruncated || pass.filesTruncated;
@@ -604,6 +612,8 @@ function createSearchInFilesTool(): Tool {
                     success: false,
                     error: `Search failed: ${error instanceof Error ? error.message : String(error)}`
                 };
+            } finally {
+                await computation?.close();
             }
         }
     };

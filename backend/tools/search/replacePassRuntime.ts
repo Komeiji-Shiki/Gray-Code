@@ -1,3 +1,6 @@
+import { expandReplacementTemplate } from '../../../shared/regexReplacement';
+import { evaluateTextSearch, presentToolMatch, type TextSearchInput } from '../../../shared/textSearch';
+import type { TextSearchWorker } from './textSearchWorker';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 import type { SearchMatch, SkippedFileInfo } from './searchPassRuntime';
@@ -20,39 +23,6 @@ export interface ReplaceResult {
 export function createReplacePass(host: SearchFileHost) {
 const {tryGetFileSizeBytes,readHeaderBytes}=createTextReader(host);
 const {clampNonNegativeNumber,truncateWithEllipsis}=createSearchPass(host);
-function expandReplacementTemplate(
-    replacement: string,
-    matchText: string,
-    matchIndex: number,
-    fullText: string,
-    captureGroups: Array<string | undefined>,
-    namedGroups?: Record<string, string | undefined>
-): string {
-    return replacement.replace(/\$(\$|&|`|'|\d{1,2}|<[^>]+>)/g, (token, ref: string) => {
-        switch (ref) {
-            case '$': return '$';
-            case '&': return matchText;
-            case '`': return fullText.slice(0, matchIndex);
-            case "'": return fullText.slice(matchIndex + matchText.length);
-        }
-
-        if (ref.startsWith('<')) {
-            // 原生替换仅在整个表达式没有命名组时保留字面量；有命名组但名称缺失时取空串。
-            const name = ref.slice(1, -1);
-            return namedGroups ? namedGroups[name] ?? '' : token;
-        }
-
-        // $01 可以引用第一组；两位编号不存在时，仍须尝试首位编号并保留第二位数字。
-        const n = Number(ref);
-        if (n > 0 && n <= captureGroups.length) return captureGroups[n - 1] ?? '';
-        if (ref.length === 2) {
-            const first = Number(ref[0]);
-            if (first > 0 && first <= captureGroups.length) return (captureGroups[first - 1] ?? '') + ref[1];
-        }
-        return token;
-    });
-}
-
 const MAX_REPLACE_MATCHES = 20000;
 
 async function searchAndReplaceInDirectory(
@@ -68,7 +38,8 @@ async function searchAndReplaceInDirectory(
     abortSignal?: AbortSignal,
     conversationId?: string,
     checkpointReady?: Promise<unknown>,
-    lockHolder?: LockHolder
+    lockHolder?: LockHolder,
+    computation?: TextSearchWorker
 ): Promise<{
     matches: SearchMatch[];
     replacements: ReplaceResult[];
@@ -144,11 +115,10 @@ async function searchAndReplaceInDirectory(
             const content = await host.readFile(fileUri);
             const originalText = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
             
-            // 检查是否有匹配（先于 split：无命中的文件通常占多数，避免白白拆分整篇文本）
-            searchRegex.lastIndex = 0;
-            if (!searchRegex.test(originalText)) {
-                continue;
-            }
+            const input: TextSearchInput = { kind: 'replace', source: searchRegex.source, flags: searchRegex.flags,
+                text: originalText, replacement, limit: MAX_REPLACE_MATCHES - matches.length, previewChars: maxMatchPreviewChars };
+            const computed = computation ? await computation.run(input) : evaluateTextSearch(input, expandReplacementTemplate, presentToolMatch);
+            if (!computed.count) continue;
             const lines = originalText.split('\n');
             
             processedFiles++;
@@ -184,61 +154,17 @@ async function searchAndReplaceInDirectory(
                 return { line: lo + 1, column: index - lineOffsets[lo] + 1 };
             };
 
-            let fileReplacementCount = 0;
-            // 实际内容发生变化的替换数（发现 06）：逐匹配展开替换模板比对原文，
-            // “替换文本与原文相同”的无变化匹配不计入，与 filesModified 语义一致。
-            let fileChangedReplacementCount = 0;
-            let match;
-            searchRegex.lastIndex = 0;
-
-            while ((match = searchRegex.exec(originalText)) !== null) {
-                const rawMatchText = match[0] ?? '';
-                if (matches.length < MAX_REPLACE_MATCHES) {
-                    const matchText = rawMatchText.length > maxMatchPreviewChars
-                        ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
-                        : rawMatchText;
-                    const pos = offsetToLineCol(match.index);
-
-                    matches.push({
-                        file: relativePath,
-                        workspace: workspaceName || undefined,
-                        line: pos.line,
-                        column: pos.column,
-                        match: matchText,
-                        // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
-                        context: ''
-                    });
-                } else {
-                    // 达到收集预算上限：停止收集匹配，但继续计数与执行替换
-                    matchesTruncated = true;
-                }
-
-                fileReplacementCount++;
-
-                // 计数用展开：与下方实际执行的 String.prototype.replace 使用同一 replacement，
-                // 展开结果与原文一致说明该匹配不会产生任何内容变化。
-                const expanded = expandReplacementTemplate(
-                    replacement,
-                    rawMatchText,
-                    match.index,
-                    originalText,
-                    match.slice(1) as Array<string | undefined>,
-                    match.groups as Record<string, string | undefined> | undefined
-                );
-                if (expanded !== rawMatchText) {
-                    fileChangedReplacementCount++;
-                }
-
-                // 防止空匹配导致死循环
-                if (rawMatchText.length === 0) {
-                    searchRegex.lastIndex++;
-                }
+            const fileReplacementCount = computed.count;
+            const fileChangedReplacementCount = computed.changed;
+            matchesTruncated ||= computed.truncated;
+            for (const match of computed.matches) {
+                const pos = offsetToLineCol(match.index);
+                matches.push({ file: relativePath, workspace: workspaceName || undefined, line: pos.line, column: pos.column,
+                    match: truncateWithEllipsis(match.text, maxMatchPreviewChars), context: '' });
             }
-            
-            // 执行替换
-            searchRegex.lastIndex = 0;
-            const newText = originalText.replace(searchRegex, replacement);
-            
+            // 匹配、变化计数和替换一次完成，避免对同一文件重复运行可能回溯的正则。
+            const newText = computed.text!;
+
             if (newText !== originalText) {
                 totalReplacements += fileChangedReplacementCount;
 
@@ -281,6 +207,7 @@ async function searchAndReplaceInDirectory(
                 });
             }
         } catch (e) {
+            if (abortSignal?.aborted) { cancelledBySignal = true; break; }
             // 文件处理失败不再静默吞掉，记录原因让模型能区分“没匹配”和“处理失败”
             skippedFiles.push({
                 file: host.toRelativePath(fileUri, workspaceName !== null),
