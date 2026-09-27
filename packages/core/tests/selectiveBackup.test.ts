@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import path from 'node:path';
+import Database from 'better-sqlite3';
 import { PlatformStorage } from '@graycode/core';
 import type { BackupMergeGroup, BackupUnit, LongMemoryRecordInput, LongMemoryScope } from '@graycode/contracts';
 import { fixture, message, metadata } from './fixtures';
@@ -9,10 +11,86 @@ function group(source: BackupUnit[], current: BackupUnit[], selected: (unit: Bac
     expected: Object.fromEntries(units.map(unit => [unit.key, current.find(row => row.key === unit.key)?.fingerprint ?? null])) };
 }
 
+async function markSearchIndexPending(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.store.close();
+  const db = new Database(path.join(f.data, 'platform.sqlite'));
+  try {
+    // 模拟旧库尚未补建的索引，正文和历史版本保持不变。
+    db.exec('DELETE FROM history_search; UPDATE histories SET search_revision=-1,search_position=0;');
+  } finally { db.close(); }
+  f.store = await PlatformStorage.open(f.data);
+}
+
 describe('选择性恢复的真实 SQLite 合并', () => {
   let source: Awaited<ReturnType<typeof fixture>>, target: Awaited<ReturnType<typeof fixture>>;
   beforeEach(async () => { source = await fixture(); target = await fixture(); });
   afterEach(async () => { await source.cleanup(); await target.cleanup(); });
+
+  test('恢复已索引会话后正文仍可搜索，消息位置准确且后续追加保持索引', async () => {
+    await source.store.createConversation(metadata('searchable'));
+    await source.store.appendHistory('searchable', [message(0, '备份里的星图坐标'), message(1, '备份里的后续说明')]);
+    await target.store.createConversation(metadata('searchable'));
+    await target.store.appendHistory('searchable', [message(0, '替换前的旧正文')]);
+    expect((await source.store.searchConversationIds('星图坐标')).matches).toHaveLength(1);
+    const selection = group(await source.store.backupInventory(), await target.store.backupInventory(), unit => unit.kind === 'conversation');
+    const snapshot = await source.store.backupSnapshot();
+    await target.store.mergeBackupUnits({ sourceDirectory: snapshot.directory, groups: [selection] });
+    expect(await target.store.searchConversationIds('星图坐标')).toEqual({ indexing: false,
+      matches: [{ id: 'searchable', messageIndex: 0, messageId: 'message_0', excerpt: '备份里的星图坐标' }] });
+    expect((await target.store.searchConversationIds('替换前的旧正文')).matches).toEqual([]);
+    await target.store.appendHistory('searchable', [message(2, '恢复后的新消息')]);
+    expect((await target.store.searchConversationIds('新消息')).matches[0]).toMatchObject({ id: 'searchable', messageIndex: 2 });
+    expect((await target.store.searchConversationIds('星图坐标')).matches).toHaveLength(1);
+  });
+
+  test('补建正文索引不使恢复预览过期，真实历史修改仍拒绝旧预览', async () => {
+    await source.store.createConversation(metadata('alpha'));
+    await source.store.appendHistory('alpha', [message(0, '备份正文')]);
+    await target.store.createConversation(metadata('alpha'));
+    await target.store.appendHistory('alpha', Array.from({ length: 600 }, (_, index) => message(index, '待补建索引 ' + index)));
+    await markSearchIndexPending(target);
+    const inventory = await target.store.backupInventory();
+    const selection = group(await source.store.backupInventory(), inventory, unit => unit.kind === 'conversation');
+    const snapshot = await source.store.backupSnapshot();
+    expect((await target.store.searchConversationIds('待补建索引')).indexing).toBe(true);
+    expect(await target.store.backupInventory()).toEqual(inventory);
+    await expect(target.store.mergeBackupUnits({ sourceDirectory: snapshot.directory, groups: [selection] })).resolves.toMatchObject({ restored: [expect.any(String)] });
+    const next = group(await source.store.backupInventory(), await target.store.backupInventory(), unit => unit.kind === 'conversation');
+    await target.store.appendHistory('alpha', [message(1, '确认前继续输入')]);
+    await expect(target.store.mergeBackupUnits({ sourceDirectory: snapshot.directory, groups: [next] })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  });
+
+  test('恢复部分索引时保留已索引前缀，并从原进度继续补建', async () => {
+    await source.store.createConversation(metadata('partial'));
+    await source.store.appendHistory('partial', Array.from({ length: 1100 }, (_, index) => message(index,
+      index === 0 ? '已索引前缀标识' : index === 1099 ? '尚未索引末尾标识' : '中间消息 ' + index)));
+    await markSearchIndexPending(source);
+    expect((await source.store.searchConversationIds('已索引前缀标识')).indexing).toBe(true);
+    const selection = group(await source.store.backupInventory(), await target.store.backupInventory(), unit => unit.kind === 'conversation');
+    const snapshot = await source.store.backupSnapshot();
+    await target.store.mergeBackupUnits({ sourceDirectory: snapshot.directory, groups: [selection] });
+    const prefix = await target.store.searchConversationIds('已索引前缀标识');
+    expect(prefix.indexing).toBe(true);
+    expect(prefix.matches[0]).toMatchObject({ id: 'partial', messageIndex: 0 });
+    const tail = await target.store.searchConversationIds('尚未索引末尾标识');
+    expect(tail.indexing).toBe(false);
+    expect(tail.matches[0]).toMatchObject({ id: 'partial', messageIndex: 1099 });
+  });
+
+  test('未选会话向共享段追加消息不会使所选前缀的恢复预览过期', async () => {
+    await source.store.createConversation(metadata('prefix'));
+    await source.store.appendHistory('prefix', [message(0, '备份中的前缀会话')]);
+    await target.store.createConversation(metadata('original'));
+    await target.store.appendHistory('original', [message(0, '原会话共享前缀')]);
+    await target.store.forkConversation('original', metadata('prefix'), { beforeIndex: 1 });
+    const selection = group(await source.store.backupInventory(), await target.store.backupInventory(), unit => unit.id === 'prefix');
+    const snapshot = await source.store.backupSnapshot();
+    await target.store.appendHistory('original', [message(1, '未选会话继续输入')]);
+    expect((await target.store.readHistory('prefix')).messages).toHaveLength(1);
+    await expect(target.store.mergeBackupUnits({ sourceDirectory: snapshot.directory, groups: [selection] })).resolves.toMatchObject({ restored: [expect.any(String)] });
+    expect((await target.store.readHistory('prefix')).messages[0].parts[0].text).toBe('备份中的前缀会话');
+    expect((await target.store.readHistory('original')).messages[1].parts[0].text).toBe('未选会话继续输入');
+  });
 
   test('重映射共享历史与附件，保留未选择会话，恢复运行事件和归属记录', async () => {
     const bytes = randomBytes(1_200_000);

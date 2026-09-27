@@ -25,9 +25,12 @@ export function backupInventory(db: SqliteConnection, objects: ObjectStore): Bac
       ['SELECT * FROM conversations WHERE id=?', [row.id]], ['SELECT * FROM snapshots WHERE conversation_id=? ORDER BY id', [row.id]],
       ['SELECT * FROM records WHERE owner_id=? ORDER BY namespace,id', [row.id]], ['SELECT * FROM migrations WHERE conversation_id=? ORDER BY source_key', [row.id]],
       ['SELECT * FROM runs WHERE conversation_id=? ORDER BY id', [row.id]], ['SELECT * FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE conversation_id=?) ORDER BY run_id,sequence', [row.id]],
-      [`SELECT * FROM histories WHERE id IN (${histories}) ORDER BY id`, historyArgs],
+      // 索引进度是可重建状态；共享段中未被本会话引用的条目也不代表本会话发生修改。
+      [`SELECT id,message_count,revision FROM histories WHERE id IN (${histories}) ORDER BY id`, historyArgs],
       [`SELECT * FROM history_spans WHERE history_id IN (${histories}) ORDER BY history_id,start_index`, historyArgs],
-      [`SELECT * FROM segment_entries WHERE segment_id IN (SELECT segment_id FROM history_spans WHERE history_id IN (${histories})) ORDER BY segment_id,ordinal`, historyArgs],
+      [`SELECT DISTINCT e.* FROM history_spans s JOIN segment_entries e ON e.segment_id=s.segment_id
+        AND e.ordinal>=s.segment_offset AND e.ordinal<s.segment_offset+s.count
+        WHERE s.history_id IN (${histories}) ORDER BY e.segment_id,e.ordinal`, historyArgs],
     ]);
     const records = (db.prepare('SELECT count(*) n FROM records WHERE owner_id=?').get(row.id) as { n: number }).n;
     const metadata = objects.getValue<{ actorId?: string; workspaceId?: string }>(row.metadata_hash);

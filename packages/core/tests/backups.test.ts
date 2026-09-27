@@ -134,6 +134,9 @@ describe('application data backup and restore', () => {
       await importer.restore.confirm(); await target.close(); await importer.restore.apply();
       target = await PlatformStorage.open(targetPath);
       expect((await target.readHistory('source-chat')).messages[0].parts[0].text).toBe('来源会话');
+      expect((await target.searchConversationIds('来源会话')).matches).toEqual([
+        { id: 'source-chat', messageIndex: 0, messageId: 'message_0', excerpt: '来源会话' },
+      ]);
       expect((await target.readHistory('keep-chat')).messages.map(item => item.parts[0].text)).toEqual(['选择之前', '最终预览后的新消息']);
       expect(await target.getConversation('new-after-preview')).not.toBeNull();
       expect((await importer.restore.get()).pending).toBeUndefined();

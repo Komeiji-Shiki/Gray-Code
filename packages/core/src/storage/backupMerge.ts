@@ -120,6 +120,11 @@ class BackupUnitCopier {
       }
       this.insert('history_spans', { ...span, history_id: next, segment_id: segment });
     }
+    // 索引绑定历史 ID；内容和进度一起迁移，索引记录 ID 由目标库分配，不能只保留“已完成”标记。
+    const insertSearch = this.target.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+    for (const entry of this.source.prepare('SELECT position,message_id,text,normalized FROM history_search WHERE history_id=? ORDER BY position').iterate(id) as Iterable<Row>) {
+      insertSearch.run(next, entry.position, entry.message_id, entry.text, entry.normalized);
+    }
     return next;
   }
   private conversation(id: string) {
