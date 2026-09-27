@@ -250,54 +250,57 @@ async function searchInDirectory(
         }
     };
 
-    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-        if (results.length >= maxResults) {
-            break;
-        }
-        if (budget && budget.remainingChars <= 0) {
-            budget.truncated = true;
-            break;
-        }
+    try {
+        for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+            if (results.length >= maxResults) {
+                break;
+            }
+            if (budget && budget.remainingChars <= 0) {
+                budget.truncated = true;
+                break;
+            }
 
-        startPrepareAhead(fileIndex);
-        execution?.signal?.throwIfAborted();
-        const outcome = await (prepared[fileIndex] ?? prepareFile(files[fileIndex]));
-        execution?.signal?.throwIfAborted();
-        // 已完成的 Promise 仍会持有全文和分行数组；消费后解除引用，内存才受预取窗口约束。
-        prepared[fileIndex] = undefined;
-        if (outcome.kind === 'skipped' || outcome.kind === 'failed') {
-            skippedFiles.push(outcome.skipped);
-            continue;
-        }
-        if (outcome.kind === 'binary' || outcome.kind === 'noMatch') {
-            continue;
-        }
-
-        const relativePath = outcome.relativePath;
-        const lines = outcome.lines;
-        try {
-            const input: TextSearchInput = { kind: 'fileSearch', source: searchRegex.source, flags: searchRegex.flags,
-                fragments: lines, path: relativePath, offset: page?.remaining, limit: maxResults - results.length,
-                remainingChars: budget?.remainingChars, previewChars: maxMatchPreviewChars, linePreviewChars: maxLinePreviewChars,
-                contextBefore, contextAfter };
-            const computed = execution?.computation ? await execution.computation.run(input) : evaluateTextSearch(input, expandReplacementTemplate, presentToolMatch);
-            if (page) { page.remaining -= computed.skipped; page.matchesSeen += computed.seen!; }
-            if (budget) { budget.remainingChars = computed.remainingChars!; budget.truncated ||= computed.budgetTruncated === true; }
-            for (const match of computed.matches) results.push({ file: relativePath, workspace: workspaceName || undefined,
-                line: match.fragment + 1, column: match.index + 1, match: match.text, context: match.context! });
-        } catch (e) {
             execution?.signal?.throwIfAborted();
-            // 处理失败不再静默吞掉：与 replacePass 一致记录原因，
-            // 让模型能区分“没匹配”和“处理失败”（EACCES/IO 等）。
-            skippedFiles.push({
-                file: relativePath,
-                reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
-            });
-        }
-    }
+            startPrepareAhead(fileIndex);
+            const outcome = await prepared[fileIndex]!;
+            execution?.signal?.throwIfAborted();
+            // 已完成的 Promise 仍会持有全文和分行数组；消费后解除引用，内存才受预取窗口约束。
+            prepared[fileIndex] = undefined;
+            if (outcome.kind === 'skipped' || outcome.kind === 'failed') {
+                skippedFiles.push(outcome.skipped);
+                continue;
+            }
+            if (outcome.kind === 'binary' || outcome.kind === 'noMatch') {
+                continue;
+            }
 
-    // 提前中断（结果/预算上限）时回收在途预取，避免返回后仍在读取文件
-    await Promise.allSettled(prepared.filter((item): item is Promise<PreparedFile> => item !== undefined));
+            const relativePath = outcome.relativePath;
+            const lines = outcome.lines;
+            try {
+                const input: TextSearchInput = { kind: 'fileSearch', source: searchRegex.source, flags: searchRegex.flags,
+                    fragments: lines, path: relativePath, offset: page?.remaining, limit: maxResults - results.length,
+                    remainingChars: budget?.remainingChars, previewChars: maxMatchPreviewChars, linePreviewChars: maxLinePreviewChars,
+                    contextBefore, contextAfter };
+                const computed = execution?.computation ? await execution.computation.run(input) : evaluateTextSearch(input, expandReplacementTemplate, presentToolMatch);
+                if (page) { page.remaining -= computed.skipped; page.matchesSeen += computed.seen!; }
+                if (budget) { budget.remainingChars = computed.remainingChars!; budget.truncated ||= computed.budgetTruncated === true; }
+                for (const match of computed.matches) results.push({ file: relativePath, workspace: workspaceName || undefined,
+                    line: match.fragment + 1, column: match.index + 1, match: match.text, context: match.context! });
+            } catch (e) {
+                execution?.signal?.throwIfAborted();
+                // 处理失败不再静默吞掉：与 replacePass 一致记录原因，
+                // 让模型能区分“没匹配”和“处理失败”（EACCES/IO 等）。
+                skippedFiles.push({
+                    file: relativePath,
+                    reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
+                });
+            }
+        }
+
+    } finally {
+        // 取消和异常也必须等待预取释放句柄，工具返回后才不会遗留正在读取的文件。
+        await Promise.allSettled(prepared.filter((item): item is Promise<PreparedFile> => item !== undefined));
+    }
     
     return { matches: results, filesTruncated, skippedFiles };
 }

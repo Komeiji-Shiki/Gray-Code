@@ -209,6 +209,38 @@ describe('基础输出与顺序', () => {
         expect(budget.remainingChars).toBe(8);
         expect(budget.truncated).toBe(true);
     });
+
+    test('取消搜索也等待已启动的预取结束，且不继续读取后面的文件', async () => {
+        const fake = makeHost(Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`${index}.txt`, { content: 'needle' }])));
+        const readFile = fake.host.readFile.bind(fake.host), controller = new AbortController();
+        let releaseFirst!: () => void, releaseRest!: () => void, started!: () => void;
+        const first = new Promise<void>(resolve => { releaseFirst = resolve; });
+        const rest = new Promise<void>(resolve => { releaseRest = resolve; });
+        const ready = new Promise<void>(resolve => { started = resolve; });
+        let active = 0, count = 0, settled = false;
+        fake.host.readFile = async file => {
+            active++;
+            if (++count === 8) started();
+            try {
+                await ((file as FileLocation).fsPath === '0.txt' ? first : rest);
+                return await readFile(file);
+            } finally { active--; }
+        };
+        const failure = new Error('fixture cancelled');
+        const pending = createSearchPass(fake.host).searchInDirectory({ fsPath: '/root', scheme: 'file' }, '**/*', /needle/gm,
+            100, null, '', DEFAULT_SEARCH_IN_FILES_CONFIG, undefined, undefined, { signal: controller.signal })
+            .then(value => { settled = true; return value; }, error => { settled = true; return error; });
+        try {
+            await ready;
+            controller.abort(failure); releaseFirst();
+            await new Promise<void>(resolve => { setImmediate(resolve); });
+            expect(settled).toBe(false);
+            releaseRest();
+            expect(await pending).toBe(failure);
+            expect(active).toBe(0);
+            expect(count).toBe(8);
+        } finally { releaseFirst(); releaseRest(); await pending; }
+    });
 });
 
 describe('跳过与失败路径', () => {
