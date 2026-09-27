@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createReadStream } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { UI_FILE_UPLOAD_LIMIT } from '@graycode/contracts';
@@ -36,25 +36,32 @@ export async function serveWorkspaceFile(app: PlatformApplication, auth: { clien
   }
   if (route[1] === 'upload' || !['GET', 'HEAD'].includes(request.method ?? '')) throw new Error('文件传输请求方法无效。');
   const fileInfo = await app.fileActions.download(auth.client.actorId, workspaceId, file);
-  let start = 0; let end = fileInfo.size - 1; let partial = false;
-  if (request.headers.range) {
-    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
-    if (range && (range[1] || range[2])) {
-      start = range[1] ? Number(range[1]) : Math.max(0, fileInfo.size - Number(range[2]));
-      end = range[1] && range[2] ? Math.min(end, Number(range[2])) : end;
-      partial = Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && start <= end && start < fileInfo.size;
+  const handle = await open(fileInfo.absolute, 'r');
+  try {
+    // 响应头和正文使用同一句柄，路径随后被替换或更名也不会混用两个版本的长度与内容。
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error('请选择要下载的普通文件。');
+    if (!auth.valid()) { response.writeHead(401); response.end(JSON.stringify({ error: '登录已失效，文件未传输。' })); return true; }
+    let start = 0; let end = info.size - 1; let partial = false;
+    if (request.headers.range) {
+      const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
+      if (range && (range[1] || range[2])) {
+        start = range[1] ? Number(range[1]) : Math.max(0, info.size - Number(range[2]));
+        end = range[1] && range[2] ? Math.min(end, Number(range[2])) : end;
+        partial = Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && start <= end && start < info.size;
+      }
+      if (!partial) { response.writeHead(416, { 'Content-Range': `bytes */${info.size}` }); response.end(); return true; }
     }
-    if (!partial) { response.writeHead(416, { 'Content-Range': `bytes */${fileInfo.size}` }); response.end(); return true; }
-  }
-  response.setHeader('Content-Type', route[1] === 'content' ? fileInfo.mimeType : 'application/octet-stream');
-  response.setHeader('Content-Disposition', `${route[1] === 'content' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodedName(fileInfo.name)}`);
-  response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'self'; base-uri 'none'");
-  response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Content-Length', Math.max(0, end - start + 1));
-  if (partial) response.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${fileInfo.size}` });
-  if (request.method === 'HEAD' || !fileInfo.size) { response.end(); return true; }
-  const authorized = new Transform({ transform(chunk, _encoding, callback) {
-    if (!auth.valid()) callback(new Error('文件传输期间登录已失效。')); else callback(null, chunk);
-  } });
-  await pipeline(createReadStream(fileInfo.absolute, { start, end }), authorized, response);
-  return true;
+    response.setHeader('Content-Type', route[1] === 'content' ? fileInfo.mimeType : 'application/octet-stream');
+    response.setHeader('Content-Disposition', `${route[1] === 'content' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodedName(fileInfo.name)}`);
+    response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'self'; base-uri 'none'");
+    response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Content-Length', Math.max(0, end - start + 1));
+    if (partial) response.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${info.size}` });
+    if (request.method === 'HEAD' || !info.size) { response.end(); return true; }
+    const authorized = new Transform({ transform(chunk, _encoding, callback) {
+      if (!auth.valid()) callback(new Error('文件传输期间登录已失效。')); else callback(null, chunk);
+    } });
+    await pipeline(handle.createReadStream({ start, end, autoClose: false }), authorized, response);
+    return true;
+  } finally { await handle.close(); }
 }
