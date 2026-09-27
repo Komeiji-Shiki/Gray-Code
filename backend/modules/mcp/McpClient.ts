@@ -26,22 +26,22 @@ class ManagedStdioTransport extends StdioClientTransport {
     close(): Promise<void> {
         if (this.stopping) return this.stopping;
         this.stopping = (async () => {
-            try {
-                if (this.pid) {
-                    const pid = this.pid;
-                    await new Promise<void>((resolve, reject) => {
-                        const timer = setTimeout(() => reject(new Error('MCP 进程树关闭超时。')), 5000);
-                        const done = (error?: Error | null) => {
-                            clearTimeout(timer);
-                            if (error && this.pid === pid) reject(error); else resolve();
-                        };
-                        if (process.platform === 'win32') execFile(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
-                            ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, done);
-                        else treeKill(pid, 'SIGTERM', done);
-                    });
-                }
-            } finally { await super.close(); }
-        })();
+            if (this.pid) {
+                const pid = this.pid;
+                await new Promise<void>((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('MCP 进程树关闭超时。')), 5000);
+                    const done = (error?: Error | null) => {
+                        clearTimeout(timer);
+                        if (error && this.pid === pid) reject(error); else resolve();
+                    };
+                    if (process.platform === 'win32') execFile(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
+                        ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, done);
+                    else treeKill(pid, 'SIGTERM', done);
+                });
+            }
+            // 进程树停止失败时必须保留 SDK 持有的父进程，不能先用父进程强杀兜底丢掉后续清理身份。
+            await super.close();
+        })().catch(error => { this.stopping = undefined; throw error; });
         return this.stopping;
     }
 }
@@ -164,13 +164,11 @@ export class McpClient extends EventEmitter {
         this.connected = false;
         const client = this.client, transport = this.transport;
         const close = async () => {
-            try {
-                await transport?.close();
-            } finally {
-                await client?.close();
-                if (transport instanceof StdioClientTransport) transport.stderr?.removeAllListeners('data');
-                if (this.client === client) { this.client = undefined; this.transport = undefined; }
-            }
+            // 只有传输真正关闭后才释放客户端引用，失败调用可重试同一个受管进程。
+            await transport?.close();
+            await client?.close();
+            if (transport instanceof StdioClientTransport) transport.stderr?.removeAllListeners('data');
+            if (this.client === client) { this.client = undefined; this.transport = undefined; }
         };
         this.closing = close().finally(() => { this.closing = undefined; });
         return this.closing;

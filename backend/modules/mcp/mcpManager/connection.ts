@@ -11,6 +11,12 @@ export interface McpConnectionDeps {
     handleServerNotification(info: McpServerInfo, client: McpClient, generation: number, method: string, params?: unknown): Promise<void>;
 }
 
+async function releaseClient(deps: McpConnectionDeps, serverId: string, client: McpClient): Promise<void> {
+    await client.disconnect();
+    // 关闭失败保留实际客户端供重试；迟到的清理不能删除新一代连接。
+    if (deps.clients.get(serverId) === client) deps.clients.delete(serverId);
+}
+
 /** 所有传输共用代际与连接状态，旧连接的异步结果不能覆盖新连接。 */
 export async function runConnect(deps: McpConnectionDeps, serverId: string, info: McpServerInfo, generation: number): Promise<void> {
     let client: McpClient | undefined;
@@ -25,12 +31,11 @@ export async function runConnect(deps: McpConnectionDeps, serverId: string, info
             info.lastError = error.message;
             deps.updateServerStatus(serverId, 'error');
             deps.emitEvent({ type: 'server:error', serverId, data: { error: error.message }, timestamp: Date.now() });
-            deps.clients.delete(serverId);
-            void activeClient.disconnect().catch(error => console.error('[MCP] 关闭失败的连接：', error));
+            void releaseClient(deps, serverId, activeClient).catch(error => console.error('[MCP] 关闭失败的连接：', error));
         });
         client.on('exit', () => {
             if (!current() || info.status === 'connecting') return;
-            deps.clients.delete(serverId);
+            void releaseClient(deps, serverId, activeClient).catch(error => console.error('[MCP] 关闭已退出的连接：', error));
             deps.updateServerStatus(serverId, 'disconnected');
             deps.emitEvent({ type: 'server:disconnected', serverId, timestamp: Date.now() });
         });
@@ -50,8 +55,7 @@ export async function runConnect(deps: McpConnectionDeps, serverId: string, info
         deps.emitEvent({ type: 'server:connected', serverId, timestamp: Date.now() });
     } catch (error) {
         if (client) {
-            if (deps.clients.get(serverId) === client) deps.clients.delete(serverId);
-            await client.disconnect().catch(closeError => console.error('[MCP] 关闭失败的连接：', closeError));
+            await releaseClient(deps, serverId, client).catch(closeError => console.error('[MCP] 关闭失败的连接：', closeError));
         }
         if (deps.isCurrentGeneration(serverId, generation)) {
             info.lastError = error instanceof Error ? error.message : String(error);

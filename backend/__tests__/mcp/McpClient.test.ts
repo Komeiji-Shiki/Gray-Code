@@ -47,6 +47,27 @@ async function httpFixture(mode: 'modern' | 'legacy') {
 }
 
 describe('SDK MCP client', () => {
+    (process.platform === 'win32' ? test : test.skip)('停止失败保留真实 stdio 进程，恢复条件后可重试关闭', async () => {
+        const client = new McpClient({ type: 'stdio', command: process.execPath, args: [script, 'modern'] }, 2000);
+        const systemRoot = process.env.SystemRoot;
+        let pid = 0;
+        try {
+            await client.connect();
+            const result = await client.callTool('echo', {});
+            pid = Number((result.structuredContent as { pid: number }).pid);
+            const transport = (client as any).transport;
+            // 仅改变本测试进程的查找路径，模拟系统终止命令失败，不修改系统目录或其他进程。
+            process.env.SystemRoot = path.join(process.cwd(), '.tmp', 'missing-mcp-system-root');
+            await expect(client.disconnect()).rejects.toThrow();
+            expect((client as any).transport).toBe(transport);
+            expect(() => process.kill(pid, 0)).not.toThrow();
+        } finally {
+            if (systemRoot === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = systemRoot;
+            await client.disconnect();
+        }
+        expect(() => process.kill(pid, 0)).toThrow();
+    });
+
     test.each(['modern', 'legacy', 'exit-legacy'])('stdio %s 完整目录、中文图片、变更通知及进程关闭', async mode => {
         const client = new McpClient({ type: 'stdio', command: process.execPath, args: [script, mode] }, 2000);
         let pid = 0;

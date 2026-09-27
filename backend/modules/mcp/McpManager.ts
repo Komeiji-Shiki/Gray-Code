@@ -67,6 +67,8 @@ export class McpManager {
     
     /** 是否已初始化 */
     private initialized: boolean = false;
+    private closing = false;
+    private disposeOperation?: Promise<void>;
 
     /** 创建服务器串行队列：校验-保存非原子，并发同 customId 会互相覆盖（M4），整段串行避免 last-writer-wins */
     private createQueue: Promise<unknown> = Promise.resolve();
@@ -106,12 +108,16 @@ export class McpManager {
      * 初始化管理器
      */
     async initialize(): Promise<void> {
+        if (this.disposeOperation || this.closing && this.initialized) throw new Error('MCP manager is closing.');
         if (this.initialized) {
             return;
         }
+        this.closing = false;
         
         // 从文件加载配置并初始化运行时状态
         await this.reloadFromStorage();
+
+        if (this.closing) return;
 
         this.initialized = true;
 
@@ -152,13 +158,13 @@ export class McpManager {
             const newConfig = configMap.get(serverId);
             if (newConfig) {
                 if ((!newConfig.enabled || transportConfigChanged(info.config.transport, newConfig.transport)) &&
-                    (info.status === 'connected' || info.status === 'connecting')) await this.disconnect(serverId);
+                    (info.status === 'connected' || info.status === 'connecting' || this.clients.has(serverId))) await this.disconnect(serverId);
                 info.config = newConfig;
                 configMap.delete(serverId);
             } else {
                 // 服务器已被删除，断开连接
-                if (info.status === 'connected' || info.status === 'connecting') {
-                    await this.disconnect(serverId).catch(() => {});
+                if (info.status === 'connected' || info.status === 'connecting' || this.clients.has(serverId)) {
+                    await this.disconnect(serverId);
                 }
                 this.servers.delete(serverId);
             }
@@ -195,15 +201,17 @@ export class McpManager {
     /**
      * 释放资源
      */
-    async dispose(): Promise<void> {
-        // 断开所有连接
-        for (const [serverId] of this.servers) {
-            try {
-                await this.disconnect(serverId);
-            } catch {
-                // 忽略断开失败
-            }
-        }
+    dispose(): Promise<void> {
+        this.closing = true;
+        return this.disposeOperation ??= Promise.resolve().then(() => this.disposeConnections())
+            .finally(() => { this.disposeOperation = undefined; });
+    }
+    private async disposeConnections(): Promise<void> {
+        const results = await Promise.allSettled([...this.servers.keys()].map(serverId => this.disconnect(serverId)));
+        const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+        // 共享模块沿用扩展端的编译目标，通过显式 errors 保留每个关闭原因。
+        if (failures.length) throw Object.assign(new Error(`MCP shutdown failed: ${failures.map(result => String(result.reason)).join('; ')}`),
+            { errors: failures.map(result => result.reason) });
 
         // 统一清空全部状态 map：dispose 后实例不再持有任何连接/代际/刷新链残留
         this.servers.clear();
@@ -410,7 +418,7 @@ export class McpManager {
         }
 
         // 先断开连接
-        if (info.status === 'connected' || info.status === 'connecting') {
+        if (info.status === 'connected' || info.status === 'connecting' || this.clients.has(serverId)) {
             await this.disconnect(serverId);
         }
 
@@ -455,7 +463,7 @@ export class McpManager {
         // 如果禁用，断开连接
         if (!enabled) {
             const info = this.servers.get(serverId);
-            if (info && (info.status === 'connected' || info.status === 'connecting')) {
+            if (info && (info.status === 'connected' || info.status === 'connecting' || this.clients.has(serverId))) {
                 await this.disconnect(serverId);
             }
         }
@@ -472,11 +480,12 @@ export class McpManager {
      * - 每次连接分配递增代际号，旧连接的 catch/exit/error 回调不会影响新连接
      */
     async connect(serverId: string): Promise<void> {
+        if (this.closing) throw new Error('MCP manager is closing.');
         if (this.options.connections === false) throw new Error('MCP settings drafts cannot start connections.');
         const inFlight = this.connectPromises.get(serverId);
         if (inFlight) return inFlight;
         // 配置读取也属于连接过程，断开或释放时必须能取消这一步之后的启动。
-        const promise = this.prepareConnect(serverId, () => this.connectPromises.get(serverId) === promise);
+        const promise = this.prepareConnect(serverId, () => !this.closing && this.connectPromises.get(serverId) === promise);
         this.connectPromises.set(serverId, promise);
         try { await promise; }
         finally { if (this.connectPromises.get(serverId) === promise) this.connectPromises.delete(serverId); }
@@ -538,7 +547,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
         }
 
-        if (info.status === 'disconnected' && !this.connectPromises.has(serverId)) {
+        if (info.status === 'disconnected' && !this.connectPromises.has(serverId) && !this.clients.has(serverId)) {
             return;
         }
 
@@ -553,8 +562,13 @@ export class McpManager {
 
         try {
             await performDisconnect(this.connectionDeps, info);
-        } catch {
-            // 忽略断开连接错误
+        } catch (error) {
+            if (this.connectGenerations.get(serverId) === disconnectGeneration) {
+                info.lastError = error instanceof Error ? error.message : String(error);
+                this.updateServerStatus(serverId, 'error');
+                this.emitEvent({ type: 'server:error', serverId, data: { error: info.lastError }, timestamp: Date.now() });
+            }
+            throw error;
         }
 
         // 断开期间若已启动新连接（代际已变），不重复发 disconnected 事件
