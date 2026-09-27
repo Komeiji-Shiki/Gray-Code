@@ -22,7 +22,7 @@ import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
 import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId, decodeUnicodeEscapes } from '../../utils/format'
 import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
@@ -410,8 +410,9 @@ async function sendToolConfirmation(
     const confirmationConfigId = chatStore.pendingConfigIdOverride || currentConfig?.id || ''
 
     if (!currentConversationId || !confirmationConfigId) {
-      console.error('No conversation or config ID')
-      return false
+      throw new Error(t(!currentConversationId
+        ? 'stores.chatStore.errors.noConversationSelected'
+        : 'stores.chatStore.errors.noConfigSelected'))
     }
 
     // 独立宿主 keepStreamOpen 的审批仍属于原运行，不能在回执到达前换绑：
@@ -446,6 +447,11 @@ async function sendToolConfirmation(
     // 只回滚本请求新建的确认流；失败回执不等于原运行终结，也不能清掉后来切入的会话。
     if (startedConfirmationRound && chatStore.currentConversationId === submittedConversationId
       && chatStore.activeStreamId === submittedStreamId) chatStore.abortToolConfirmationRound()
+    // 审批过期/传输失败不能只写控制台再恢复按钮，否则用户看到的就是“点击无反应”。
+    // 只反馈提交失败，不伪造工具终态，也不重试或绕过宿主的审批身份校验。
+    const message = error instanceof Error && error.message.trim()
+      ? error.message : t('stores.chatStore.errors.unknownError')
+    void showNotification(message, 'error')
     return false
   }
 }

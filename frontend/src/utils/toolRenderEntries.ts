@@ -82,6 +82,11 @@ export function buildFunctionCallToolRenderEntry(options: {
     args: functionCall.args,
     partialArgs: functionCall.partialArgs,
     status: existingTool?.status,
+    // 审批身份/选项来自宿主运行态，必须一起穿过 parts → 卡片投影；只复制 status
+    // 会显示可点按钮却发送无 approvalId 的请求。不能从模型 functionCall 推造授权字段。
+    approvalId: existingTool?.approvalId,
+    approvalReason: existingTool?.approvalReason,
+    approvalChoices: existingTool?.approvalChoices,
     result: existingTool?.result,
     error: existingTool?.error,
     duration: existingTool?.duration,

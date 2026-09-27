@@ -1,3 +1,6 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { buildFunctionCallToolRenderEntry } from '../../../frontend/src/utils/toolRenderEntries';
 import type { AgentDefinition, ApprovalRequest, ModelInput, PlatformMessage, RunRecord } from '@graycode/contracts';
 import type { ToolContext } from '@graycode/core';
 import { PlatformApplication } from '../../../apps/server/src/application';
@@ -128,6 +131,43 @@ describe('独立平台代理消息与原审批的运行边界', () => {
     childGate.resolve(); await idle();
     expect(executions).toBe(action === 'approve' || action === 'fail' ? 1 : 0);
     expect((await app.storage.readFullHistory(root.id)).messages.filter(message => message.source === 'agent_message')).toHaveLength(1);
+  });
+
+  test.each([true, false])('真实删除卡投影后的审批可以 confirmed=%s，缺失身份不能执行', async confirmed => {
+    const file = path.join(f.source, 'delete-approval-fixture.txt');
+    await writeFile(file, 'only this isolated fixture may be deleted');
+    const snapshot = app.settings.snapshot();
+    snapshot.settings.workspaces.push({ id: 'delete-project', name: '删除测试', directory: f.source, deviceId: 'local' });
+    snapshot.settings.agents.find(value => value.id === agent.id)!.toolNames = ['delete_file'];
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    const root = await app.createConversation('owner', '真实删除审批', 'delete-project');
+    const tool = { id: 'delete-fixture-call', name: 'delete_file', args: { paths: ['delete-approval-fixture.txt'] } };
+    let calls = 0;
+    generate = async () => ++calls === 1 ? { role: 'model', parts: [{ functionCall: tool }] } : answer('done');
+    const run = await app.runtime.start({ actorId: 'owner', conversationId: root.id, agentId: agent.id,
+      workspaceId: 'delete-project', requestKey: 'delete-fixture', message: { role: 'user', parts: [{ text: 'test approval' }] } });
+    const approval = await pending(run.id);
+    await call('chat.resumeConversationStream', { conversationId: root.id });
+    const awaiting = chunks(run.id).find(chunk => chunk.type === 'awaitingConfirmation')!;
+    const pendingTool = awaiting.pendingToolCalls.find((value: { id: string }) => value.id === tool.id);
+    expect(pendingTool.approvalId).toBe(approval.id);
+    // 使用 MessageContent 的实际渲染投影，不直接将原始 pendingTool 当作最终卡片，防止再次漏过身份丢失。
+    const rendered = buildFunctionCallToolRenderEntry({ messageId: 'fixture-message', functionCall: tool,
+      messageTools: [{ ...pendingTool, status: 'awaiting_approval' }], functionCallOrdinal: 0 });
+    await expect(confirm(root.id, { id: rendered.id, name: rendered.name, confirmed })).rejects.toThrow('审批身份');
+    expect(await readFile(file, 'utf8')).toBe('only this isolated fixture may be deleted');
+    expect(app.runtime.pendingApprovals()).toContainEqual(approval);
+    await confirm(root.id, { id: rendered.id, name: rendered.name, approvalId: rendered.approvalId, confirmed });
+    expect((await app.runtime.wait(run.id))?.status).toBe('completed');
+    if (confirmed) await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+    else expect(await readFile(file, 'utf8')).toBe('only this isolated fixture may be deleted');
+    const results = (await app.storage.readFullHistory(root.id)).messages.flatMap(message => message.parts)
+      .map(part => part.functionResponse as { id?: string; response?: { success?: boolean } } | undefined)
+      .filter(result => result?.id === tool.id);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.response?.success).toBe(confirmed);
+    expect(app.runtime.pendingApprovals()).toEqual([]);
+    await expect(confirm(root.id, { id: rendered.id, name: rendered.name, approvalId: rendered.approvalId, confirmed: true })).rejects.toThrow('已经结束');
   });
 
   test('过期、缺失和不匹配的审批身份不能落到复用 toolCallId 的后续运行', async () => {
