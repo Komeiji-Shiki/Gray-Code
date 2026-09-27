@@ -39,7 +39,7 @@ GrayCode 提供了一整套专为本地工程开发设计的编码工具链，�
 ## 3. 终端与命令执行
 
 - **命令执行控制**：需要 Shell 管道、重定向、Shell 选择或后台完成通知时，使用 `execute_command`。已有可执行文件和独立参数时，优先用 `run_command(command, args)`，不经过 Shell，也不会展开管道或环境变量，避免多层转义。`run_command` 可传 `cwd` 选择工作区内目录；省略、空字符串或 `.` 沿用当前主根目录，多根工作区的其他相对路径使用 `@根名称/目录` 前缀。越界路径、指向工作区外的符号链接和文件路径会被拒绝。
-- **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。同一账号、对话及工作区的后续运行可继续使用原 ID，RPC 客户端仍按客户端身份隔离；没有对话上下文时仅允许原运行。错误码区分 `NOT_FOUND`、`FORBIDDEN`、`EXITED`、`INVALID_CURSOR`，已退出的会话仍可读取。
+- **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。同一账号、对话及工作区的后续运行可继续使用原 ID，RPC 客户端仍按客户端身份隔离；没有对话上下文时仅允许原运行。错误码区分 `NOT_FOUND`、`FORBIDDEN`、`EXITED`、`INPUT_CLOSED`、`INVALID_CURSOR`，已退出的会话仍可读取。输入会等待管道写入结果；`INPUT_CLOSED` 表示输入管道不可用，进程可能仍在运行，其输出仍可读取。
 - **增量输出**：`process_session(action: "read")` 可传上次返回的 `nextCursor` 和本次 `maxChars`，游标按 UTF-16 绝对字符位置计算。`outputOffset` 是本次输出起点，`hasMore` 表示还有已产生但未读的内容，`running` 表示进程是否仍在运行，两者含义不同。最多保留最近 256,000 个字符；游标早于保留区时返回剩余内容并标记 `outputLost`。省略游标仍返回全部保留输出，兼容旧调用。
 - **安全审批策略**：对删除、安装或高风险系统命令提供拦截和明确的手动确认提示。
 - **多 Shell 支持**：在 Windows 上支持 PowerShell、CMD、Git Bash 与 WSL，可根据实际开发环境在设置中切换。

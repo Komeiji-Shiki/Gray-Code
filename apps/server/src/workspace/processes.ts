@@ -11,7 +11,7 @@ import { stopOwnedProcess } from './processLifecycle';
 export type ProcessOwner = string | { actorId: string; conversationId?: string; runId: string; workspaceId?: string };
 export interface ProcessReadOptions { cursor?: number; maxChars?: number }
 export class ProcessSessionError extends Error {
-  constructor(readonly code: 'NOT_FOUND' | 'FORBIDDEN' | 'EXITED' | 'INVALID_CURSOR', message: string) {
+  constructor(readonly code: 'NOT_FOUND' | 'FORBIDDEN' | 'EXITED' | 'INPUT_CLOSED' | 'INVALID_CURSOR', message: string) {
     super(message);
     this.name = 'ProcessSessionError';
   }
@@ -32,6 +32,7 @@ type ProcessOutput = Pick<ProcessResult, 'id' | 'output' | 'outputOffset' | 'tru
 interface ManagedProcess extends ProcessOutput {
   owner: ProcessOwner;
   child?: ChildProcess;
+  inputError?: Error;
   done: Promise<void>;
 }
 type SavedProcess = Omit<ProcessOutput, 'outputOffset'> & { outputOffset?: number; ownerId: string; owner?: ProcessOwner };
@@ -109,6 +110,9 @@ export class WorkspaceProcesses {
     const stderr = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stderrDecoder.write(chunk));
     child.stdout!.on("data", stdout);
     child.stderr!.on("data", stderr);
+    // 子进程可在继续运行时关闭 stdin；Writable 的 error 不会转发到 ChildProcess。
+    const onInputError = (error: Error) => { entry.inputError = error; };
+    child.stdin!.on('error', onInputError);
     const onError = (error: Error) => {
       output(error.message);
       entry.exitCode = -1;
@@ -121,6 +125,7 @@ export class WorkspaceProcesses {
       entry.running = false;
       child.stdout?.off('data', stdout);
       child.stderr?.off('data', stderr);
+      child.stdin?.off('error', onInputError);
       child.off('error', onError);
       entry.child = undefined;
       // 不改记录表：ownerId 仍供旧索引使用，value.owner 保留身份类型，避免 RPC 与模型互认。
@@ -202,7 +207,15 @@ export class WorkspaceProcesses {
     // 完成记录先授权再报告退出；不能把本任务已完成的命令误报为不存在或无权限。
     if (!entry.running || !('child' in entry) || !entry.child || entry.child.exitCode !== null || entry.child.signalCode !== null)
       throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
-    entry.child.stdin!.write(text);
+    const input = entry.child.stdin;
+    if (entry.inputError || !input || input.destroyed || input.writableEnded || !input.writable)
+      throw new ProcessSessionError('INPUT_CLOSED', '命令输入管道已关闭，进程输出仍可读取。');
+    // 等待实际写入回调，避免提前报告成功；检查之后关闭管道的竞态也必须回到工具回执。
+    await new Promise<void>((resolve, reject) => {
+      input.write(text, error => error
+        ? reject(new ProcessSessionError('INPUT_CLOSED', `命令输入写入失败：${error.message}`))
+        : resolve());
+    });
   }
   async stop(id: string, owner: ProcessOwner): Promise<void> {
     const entry = await this.get(id, owner);

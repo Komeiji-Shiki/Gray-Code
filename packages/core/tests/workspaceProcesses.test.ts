@@ -56,6 +56,40 @@ test('启动失败保留错误输出和退出状态', async () => {
   expect(await pending).toMatchObject({ exitCode: -1, running: false, output: '找不到可执行文件' });
 });
 
+test('输入等待管道写入完成，异步写入失败会返回给调用方', async () => {
+  const { processes, child, result } = await running(modelOwner);
+  jest.useRealTimers();
+  let acknowledge!: (error?: Error | null) => void;
+  child.stdin._write = (_chunk, _encoding, callback) => { acknowledge = callback; };
+  // 观察真实 Writable 的异步 error，断言之外也避免失败版本终止整个 Jest 工作进程。
+  const errors: Error[] = [];
+  child.stdin.on('error', error => errors.push(error));
+  let settled = false;
+  const write = processes.input(result.id, modelOwner, 'hello');
+  void write.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  const settledBeforeWrite = settled;
+  const rejected = expect(write).rejects.toThrow('EPIPE');
+  acknowledge(new Error('EPIPE: pipe closed'));
+  await rejected;
+  await new Promise(resolve => setImmediate(resolve));
+  expect(settledBeforeWrite).toBe(false);
+  expect(errors).toHaveLength(1);
+  expect(await processes.read(result.id, modelOwner)).toMatchObject({ running: true });
+  child.emit('close', 0);
+  await processes.close();
+});
+
+test('进程仍在运行但输入管道已关闭时拒绝输入，管道错误不会成为未处理异常', async () => {
+  const { processes, child, result } = await running(modelOwner);
+  expect(() => child.stdin.emit('error', new Error('EPIPE: pipe closed'))).not.toThrow();
+  child.stdin.destroy();
+  await expect(processes.input(result.id, modelOwner, 'hello')).rejects.toThrow('输入');
+  expect(await processes.read(result.id, modelOwner)).toMatchObject({ running: true });
+  child.emit('close', 0);
+  await processes.close();
+});
+
 test('跨 stdout/stderr 字节块的 UTF-8 中文和 emoji 不产生替换字符', async () => {
   const processes = new WorkspaceProcesses(storage()); const child = childProcess();
   (crossSpawn as unknown as jest.Mock).mockReturnValueOnce(child);
