@@ -224,19 +224,28 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: true } });
         return result;
       }
-      case 'appearance.images.list': return this.app.images.list();
+      case 'appearance.images.list': return this.app.images.list(ui.preferences.value.pendingBackgroundImages);
       case 'appearance.images.add': return this.app.images.add(data as any);
-      case 'appearance.images.rename': await this.app.images.rename(data.id, data.name); return { success: true };
+      case 'appearance.images.rename': {
+        const staged = ui.preferences.value.pendingBackgroundImages?.images.find(image => image.id === data.id);
+        if (staged) { staged.name = data.name.trim().slice(0, 160) || staged.name; ui.preferences.dirty = true; }
+        else await this.app.images.rename(data.id, data.name);
+        return { success: true };
+      }
       case 'appearance.images.remove': {
         const url = `graycode://app/assets/background/${data.id}`;
         if (this.app.settings.snapshot().settings.appearance.backgroundImage === url)
           throw new Error('这张图片正在作为背景使用，请先选择其他背景并保存设置。');
         for (const pending of this.clients.values()) {
           const session = await pending;
-          if (session.preferences.app.appearance.backgroundImage === url)
+          if (this.app.images.savedUrl(session.preferences.app.appearance.backgroundImage, session.preferences.value.pendingBackgroundImages) === url)
             throw new Error('设置草稿仍在使用这张图片，请先应用其他背景。');
         }
-        await this.app.images.remove(data.id); return { success: true };
+        const pending = ui.preferences.value.pendingBackgroundImages;
+        if (pending?.images.some(image => image.id === data.id)) {
+          pending.images = pending.images.filter(image => image.id !== data.id); ui.preferences.dirty = true;
+        } else await this.app.images.remove(data.id);
+        return { success: true };
       }
       case 'activity.getStats': return this.app.activity.stats(client.actorId, data);
       case 'activity.pulse': await this.app.activity.pulse(client.actorId); return { success: true };

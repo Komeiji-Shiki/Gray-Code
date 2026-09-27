@@ -1,6 +1,6 @@
 import { migrateLimCodeExport } from '../../../../backend/modules/settings/legacyExport';
 import { branchRetentionDays } from '../conversations/retention';
-import type { BackgroundImageSummary } from './images';
+import type { BackgroundImageSummary, PendingBackgroundImages } from './images';
 import type { PlatformApplication } from '../application';
 import type { ProductSettingsDraft } from './product';
 import type { GlobalSettings } from '../../../../backend/modules/settings/types';
@@ -21,8 +21,8 @@ export class SettingsTransfer {
       if (typeof value === 'string') credentials[reference] = value;
     }
     const backgrounds: Array<BackgroundImageSummary & { dataUrl: string }> = [];
-    for (const image of await this.app.images.list()) {
-      const original = await this.app.images.get(image.id);
+    for (const image of await this.app.images.list(draft.value.pendingBackgroundImages)) {
+      const original = await this.app.images.get(image.id, draft.value.pendingBackgroundImages);
       if (original) backgrounds.push({ ...image, dataUrl: `data:${original.mimeType};base64,${Buffer.from(original.bytes).toString('base64')}` });
     }
     return { format: 'graycode-platform', version: 1, exportedAt: Date.now(), settings: draft.app,
@@ -77,9 +77,17 @@ export class SettingsTransfer {
       imported.mcpServers++;
     }
     if (imported.mcpServers || replaceUserPreferences) { draft.mcp = createMcpSettingsDraft(draft.value, () => { draft.dirty = true; }); await draft.mcp.initialize(); }
-    for (const image of data.backgrounds ?? []) {
-      const restored = await this.app.images.add(image, replaceUserPreferences ? image.id : undefined);
-      if (draft.app.appearance.backgroundImage === image.url) draft.app.appearance.backgroundImage = restored.url;
+    // 先校验整批图片，再加入当前草稿；图片正文和删除操作由设置的同一个事务提交。
+    const backgrounds = (data.backgrounds ?? []).map((image: BackgroundImageSummary & { dataUrl: string }) => ({
+      sourceUrl: image.url, image: this.app.images.prepare(image, replaceUserPreferences ? image.id : undefined)
+    }));
+    if (backgrounds.length || replaceUserPreferences) {
+      const pending: PendingBackgroundImages = replaceUserPreferences ? { images: [], removeIds: [] } : draft.value.pendingBackgroundImages ?? { images: [], removeIds: [] };
+      for (const { sourceUrl, image } of backgrounds) {
+        pending.images.push(image);
+        if (draft.app.appearance.backgroundImage === sourceUrl) draft.app.appearance.backgroundImage = this.app.images.previewUrl(image);
+      }
+      draft.value.pendingBackgroundImages = pending;
     }
     for (const skill of data.skills ?? []) {
       try {
@@ -92,7 +100,7 @@ export class SettingsTransfer {
     }
     if (replaceUserPreferences && !errors.length) {
       const retained = new Set((data.backgrounds ?? []).map((image: BackgroundImageSummary) => image.id));
-      for (const image of await this.app.images.list()) if (!retained.has(image.id)) await this.app.images.remove(image.id);
+      draft.value.pendingBackgroundImages!.removeIds = (await this.app.images.list()).filter(image => !retained.has(image.id)).map(image => image.id);
     }
     draft.dirty = true;
     return { success: errors.length === 0, imported, errors, draft: true };

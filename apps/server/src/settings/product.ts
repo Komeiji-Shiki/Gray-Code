@@ -15,8 +15,9 @@ import type { PreparedSettingsProjection } from './service';
 import { channelProfile, projectChannels } from './providers';
 import { revealSettingsFields, sealSettingsFields } from './sealedFields';
 import { isDeepStrictEqual } from 'node:util';
+import type { PendingBackgroundImages } from './images';
 
-export interface ProductPreferences { branchRetentionDays?: number; pendingConfigurationImports?: PendingConfigurationImport[]; pendingMemoryConfig?: { scopeId: string; value: MemoryConfig; expectedRevision: number | null }; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: ChannelConfig[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
+export interface ProductPreferences { branchRetentionDays?: number; pendingBackgroundImages?: PendingBackgroundImages; pendingConfigurationImports?: PendingConfigurationImport[]; pendingMemoryConfig?: { scopeId: string; value: MemoryConfig; expectedRevision: number | null }; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: ChannelConfig[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
 export interface ProductSettingsDraft {
   memoryConfig?: { scopeId: string; value: MemoryConfig; expectedRevision: number | null; dirty: boolean };
   settings: SettingsManager;
@@ -113,6 +114,8 @@ export class ProductConfiguration {
     }
     const channels = structuredClone(draft.value.channels);
     const next = structuredClone(draft.app);
+    // 草稿用 data URL 预览尚未保存的图片，提交时恢复原有资源引用格式。
+    next.appearance.backgroundImage = this.application.images.savedUrl(next.appearance.backgroundImage, draft.value.pendingBackgroundImages);
     const credentials = { ...draft.credentials };
     const profiles = new Map(next.providers.map(profile => [profile.id, profile]));
     next.providers = channels.map(channel => {
@@ -136,6 +139,7 @@ export class ProductConfiguration {
     draft.memoryConfig = undefined;
     delete draft.value.pendingSkillBundles;
     delete draft.value.pendingConfigurationImports;
+    delete draft.value.pendingBackgroundImages;
     draft.revision = snapshot.revision; draft.app = snapshot.settings; draft.credentials = {}; draft.dirty = false;
     draft.baseApp = structuredClone(snapshot.settings); draft.basePreferences = structuredClone(this.saved);
     for (const channel of draft.value.channels) channel.apiKey = snapshot.settings.providers.find(profile => profile.id === channel.id)?.credentialRef ? secretPlaceholder : '';
@@ -150,6 +154,8 @@ export class ProductConfiguration {
     delete saved.pendingConfigurationImports;
     const skillBundles = saved.pendingSkillBundles ?? {};
     delete saved.pendingSkillBundles;
+    const backgroundImages = saved.pendingBackgroundImages;
+    delete saved.pendingBackgroundImages;
     saved.channels = projectChannels(next.providers, saved.channels, previous.providers);
     const credentials: Record<string, string | null> = {};
     const mcp = sealMcpSettings(saved.mcpServers ?? [], this.saved.mcpSecrets ?? {}, credentials);
@@ -159,6 +165,7 @@ export class ProductConfiguration {
     const sealed = sealSettingsFields({ ...saved, mcpServers: mcp.configs }, 'settings_product_fields');
     return {
       records: [{ namespace: 'product-settings', id: 'main', value: sealed.value },
+        ...this.application.images.records(backgroundImages),
         ...Object.entries(skillBundles).map(([id, value]) => ({ namespace: 'skill-bundles', id, value })),
         ...configurationImports.map(value => ({ namespace: 'migration-configurations', id: value.id, value: { ...value, importedAt: Date.now() } })),
         ...(memoryConfig ? [{ namespace: 'memory-config', id: memoryConfig.scopeId, value: memoryConfig.value, expectedRevision: memoryConfig.expectedRevision }] : [])], credentials: { ...credentials, ...sealed.credentials },
