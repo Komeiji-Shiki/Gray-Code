@@ -97,17 +97,22 @@ async function main() {
   await chat('const field=document.querySelector(".async-question input"); field.value="已验证"; field.dispatchEvent(new Event("input",{bubbles:true}));');
   await chat('document.querySelector(".async-question button").click()');
   const approval = await until(async () => (await rpc('approvals.list'))[0], 'operation approval');
-  await rpc('approvals.resolve', { id: approval.id, accepted: false });
+  // 通过真实工具卡提交审批，才能覆盖审批身份在 parts 与界面投影之间的传递。
+  await until(() => chat('!!document.querySelector(".reject-btn:not([disabled])")'), 'tool-card reject button');
+  await chat('document.querySelector(".reject-btn:not([disabled])").click()');
+  await until(async () => !(await rpc('approvals.list')).some(value => value.id === approval.id), 'UI approval acknowledgement');
   await until(async () => (await rpc('runs.list'))[0]?.status === 'completed', 'task completed');
   await until(() => chat('document.body.innerText.includes("文件已生成，已收到回答，高危命令已按选择拒绝。")'), 'final reply rendered after external approval');
   assert.equal(await fs.readFile(path.join(output, 'project', 'generated.txt'), 'utf8'), 'Desktop model/tool integration verified.');
   const conversationId = (await rpc('runs.list'))[0].conversationId;
   const beforeReroll = await rpc('conversations.history', { id: conversationId });
   const oldReplyId = beforeReroll.messages.at(-1).id;
+  const requestsBeforeReroll = requests;
   await chat('Array.from(document.querySelectorAll(".message-actions .codicon-refresh")).at(-1).closest("button").click()');
   await until(() => chat('!!document.querySelector(".dialog-btn.confirm")'), 'reroll confirmation dialog');
   await chat('document.querySelector(".dialog-btn.confirm").click()');
-  await until(async () => requests === 6 && (await rpc('runs.list'))[0]?.status === 'completed', 'reroll from original UI');
+  // 可选问题的交付时机会影响前一轮请求数；重生成本身必须恰好新增一次模型调用。
+  await until(async () => requests === requestsBeforeReroll + 1 && (await rpc('runs.list'))[0]?.status === 'completed', 'reroll from original UI');
   await until(() => chat('Array.from(document.querySelectorAll(".branch-switcher-position-text")).some(node => node.textContent.replace(/\\s/g, "") === "2/2")'), 'branch candidate switcher');
   const rerolled = await rpc('conversations.history', { id: conversationId });
   assert.notEqual(rerolled.messages.at(-1).id, oldReplyId);
