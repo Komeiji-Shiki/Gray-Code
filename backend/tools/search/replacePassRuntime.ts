@@ -28,35 +28,28 @@ function expandReplacementTemplate(
     captureGroups: Array<string | undefined>,
     namedGroups?: Record<string, string | undefined>
 ): string {
-    const preceding = fullText.slice(0, matchIndex);
-    const following = fullText.slice(matchIndex + matchText.length);
-
     return replacement.replace(/\$(\$|&|`|'|\d{1,2}|<[^>]+>)/g, (token, ref: string) => {
         switch (ref) {
             case '$': return '$';
             case '&': return matchText;
-            case '`': return preceding;
-            case "'": return following;
+            case '`': return fullText.slice(0, matchIndex);
+            case "'": return fullText.slice(matchIndex + matchText.length);
         }
 
         if (ref.startsWith('<')) {
-            // 命名组：存在但未参与匹配 → 空串；不存在 → 保留字面 $<name>
+            // 原生替换仅在整个表达式没有命名组时保留字面量；有命名组但名称缺失时取空串。
             const name = ref.slice(1, -1);
-            if (namedGroups && Object.prototype.hasOwnProperty.call(namedGroups, name)) {
-                return namedGroups[name] ?? '';
-            }
-            return token;
+            return namedGroups ? namedGroups[name] ?? '' : token;
         }
 
-        // 数字引用：按规范，首数字为 0 或捕获组少于 10 时只消费一位
-        const consumeOne = ref[0] === '0' || captureGroups.length < 10;
-        const digits = consumeOne ? ref[0] : ref;
-        const rest = consumeOne && ref.length > 1 ? ref.slice(1) : '';
-        const n = Number(digits);
-        if (n === 0 || n > captureGroups.length) {
-            return `$${digits}${rest}`;
+        // $01 可以引用第一组；两位编号不存在时，仍须尝试首位编号并保留第二位数字。
+        const n = Number(ref);
+        if (n > 0 && n <= captureGroups.length) return captureGroups[n - 1] ?? '';
+        if (ref.length === 2) {
+            const first = Number(ref[0]);
+            if (first > 0 && first <= captureGroups.length) return (captureGroups[first - 1] ?? '') + ref[1];
         }
-        return (captureGroups[n - 1] ?? '') + rest;
+        return token;
     });
 }
 
