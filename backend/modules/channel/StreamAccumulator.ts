@@ -43,6 +43,9 @@ export class StreamAccumulator {
     /** 摘要索引只用于当前流内合并，持久化仍使用标准 summary 数组。 */
     private responsesSummarySegments = new WeakMap<ContentPart, Map<number, string>>();
 
+    /** 提示词工具的原始 message 用于比较 done 全文，工具 ID 仍由同一个增量解析器维护。 */
+    private responsesPromptParts: ContentPart[] = [];
+
     /**
      * 已通过 getNewCompletedFunctionCalls() 返回过的 functionCall id 集合。
      * 用于流式边执行工具：只返回自上次调用以来新完成（args 解析成功）的 functionCall。
@@ -185,13 +188,21 @@ export class StreamAccumulator {
             }
         }
 
-        if (this.providerType === 'openai-responses' && chunk.done && chunk.contentSnapshot && !this.promptToolParser) {
-            const reconciled = reconcileResponsesOutput(this.parts, chunk.contentSnapshot.parts);
-            this.parts = reconciled.parts;
-            visibleDelta.push(...reconciled.delta);
-            this.thoughtSignatures = {};
-            for (const part of this.parts) Object.assign(this.thoughtSignatures, part.thoughtSignatures);
-            this.contentRevision++;
+        if (this.providerType === 'openai-responses' && chunk.done && chunk.contentSnapshot) {
+            if (this.promptToolParser) {
+                // 代理可能只在结束事件补正文；仅喂入未处理的后缀，不能重建已经发出的工具调用。
+                const rawText = chunk.contentSnapshot.parts.filter(part => !part.thought && typeof part.text === 'string');
+                const reconciled = reconcileResponsesOutput(this.responsesPromptParts, rawText);
+                for (const part of reconciled.delta) this.addPart(part, { visibleDelta });
+                this.responsesPromptParts = reconciled.parts;
+            } else {
+                const reconciled = reconcileResponsesOutput(this.parts, chunk.contentSnapshot.parts);
+                this.parts = reconciled.parts;
+                visibleDelta.push(...reconciled.delta);
+                this.thoughtSignatures = {};
+                for (const part of this.parts) Object.assign(this.thoughtSignatures, part.thoughtSignatures);
+                this.contentRevision++;
+            }
         }
 
         if (chunk.done && this.promptToolParser) {
@@ -295,8 +306,18 @@ export class StreamAccumulator {
             responsesEventType?: string;
         }
     ): void {
-        // XML/JSON 提示词工具解析器已消费 text delta，不能再消费 message.done 的同一全文。
-        if (this.promptToolParser && part.openaiResponsesMessage && !options?.responsesEventType?.endsWith('.delta')) return;
+        if (this.promptToolParser && !options?.skipPromptParser && this.providerType === 'openai-responses') {
+            if (part.openaiResponsesMessage) {
+                const merged = mergeResponsesMessagePart(this.responsesPromptParts, part, options?.responsesEventType);
+                if (!merged.delta.length) return;
+                part = merged.delta[0];
+            } else if (part.text && !part.thought) {
+                // 没有 item 定位符的旧文本事件仍归入最近的 message，与普通累加路径保持一致。
+                const last = this.responsesPromptParts.at(-1);
+                if (last) last.text = (last.text ?? '') + part.text;
+                else this.responsesPromptParts.push({ text: part.text });
+            }
+        }
         if (!options?.skipPromptParser && this.promptToolParser && part.text && !part.thought) {
             const parsedParts = this.promptToolParser.appendText(part.text);
             for (const parsedPart of parsedParts) {
@@ -885,6 +906,7 @@ export class StreamAccumulator {
     reset(): void {
         this.parts = [];
         this.responsesSummarySegments = new WeakMap();
+        this.responsesPromptParts = [];
         this.isDone = false;
         // 恢复初始 providerType（构造默认 gemini）：reset 后累加器回到全新状态，
         // 避免上一轮渠道的 provider 语义泄漏到下一轮

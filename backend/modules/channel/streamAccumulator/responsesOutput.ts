@@ -17,9 +17,11 @@ export function mergeResponsesMessagePart(parts: ContentPart[], incoming: Conten
     target.openaiResponsesMessage = { ...target.openaiResponsesMessage, ...metadata };
     target.text = isDelta && existing ? previous + (incoming.text ?? '') : incoming.text ?? previous;
     if (!existing) parts.push(target);
-    // done 是权威全文，不再次追加相同正文；修正/缩短由结构快照校准。
-    const delta = target.text.startsWith(previous) && target.text.length > previous.length
-        ? [{ text: target.text.slice(previous.length) }] : [];
+    // delta 已知是追加，不能每个 token 都扫描已累积全文；只在 done 校准时比较前缀。
+    // done 修正/缩短由结构快照校准，不再次追加相同正文。
+    const appended = isDelta ? incoming.text ?? ''
+        : target.text.startsWith(previous) ? target.text.slice(previous.length) : '';
+    const delta = appended ? [{ text: appended }] : [];
     return { delta, structural: !existing || !isDelta };
 }
 
