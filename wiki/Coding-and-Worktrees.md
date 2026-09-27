@@ -26,6 +26,7 @@ GrayCode 提供了一整套专为本地工程开发设计的编码工具链，�
 - **`read_file`**：普通代码阅读的默认选择，支持批量、行号范围及图片/PDF（取决于模型能力）；`find_files`、`list_files` 和读取工具使用一致的文本行数约定：末尾换行不额外计一行，空文本保留一个可读取的空行。
 - **语言服务（LSP）集成**：支持符号跳转（`goto_definition`）、查找引用（`find_references`）与结构大纲（`get_symbols`）。结构大纲默认 `maxDepth: 1` 只展示顶层，按源码位置排列；按需增大 `maxDepth` 或用 `kinds` 筛选。主动折叠与达到输出上限的截断分别说明。若语言服务只提供平面列表，会返回 `hierarchyAvailable: false`，不猜测父子关系，可用 `kinds` 精简。
 - **`find_references`**：默认每页最多 500 条，可用 `maxResults` 缩小页面、`offset` / `nextOffset` 续查，或用 `countOnly: true` 只获取总引用数与总文件数。引用按路径、行列稳定分页，每页代码片段预算为 60,000 字符；达到预算时把下一条完整留给下一页，不跳过引用。单条片段超长会标记 `contentTruncated`，可按其路径和行号另用 `read_file`；文件或语言索引变化后从 0 重查。
+- **`goto_definition`**：沿用每页最多 500 个位置、正文合计最多 60,000 字符的预算，保留语言服务的定义顺序；用 `maxResults` 缩小页面、`offset` / `nextOffset` 续查。`definitionCount` 是当前页数量，`totalCount` 是全部数量。超长单个定义标记 `contentTruncated`，其 `path` / `line` / `endLine` 仍指向源码范围，可据此读取剩余代码；文件或语言索引变化后从 0 重查。新增分页参数会使升级后的工具请求前缀改变一次。
 
 ### 安全修改与 Diff 审阅
 - **工具选择**：局部修改默认使用 `apply_diff`，新建或完整重写使用 `write_file`。需要显式哈希校验时，先用 `workspace_files` 的 `read` 获取原文哈希，再将其作为 `expectedHash` 写入；新文件显式传 `null`。这套接口不是 Diff 工具的别名。

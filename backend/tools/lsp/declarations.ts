@@ -82,16 +82,16 @@ const workspaces = (options.workspaces ?? []);
 const isMultiRoot = workspaces.length > 1;
 const isZh = resolveLocalizationLanguage((options.language ?? getActualLanguage())) === 'zh-CN';
 let description = isZh
-        ? `跳转到符号的定义位置并返回完整的定义代码。适用于：
+        ? `跳转到符号的定义位置并返回带行号的定义代码。适用于：
 - 查找函数/类/变量的定义位置并查看完整实现
-- 无需额外的 read_file 调用即可了解符号的实现方式
+- 在输出预算内直接了解符号的实现方式
 
-返回带行号的完整定义代码。`
-        : `Go to the definition of a symbol and return the complete definition code. This is useful for:
+返回带行号的定义代码，保留语言服务的返回顺序。默认 maxResults=500、offset=0，每页正文最多 60000 字符；有 nextOffset 时保持查询条件不变续查，文件或索引变化后从 0 重查。单条超长定义标记 contentTruncated，可用 read_file 按 path/line/endLine 查看省略部分。definitionCount 是本页数量，totalCount 是全部定义数量。`
+        : `Go to the definition of a symbol and return definition code with line numbers. This is useful for:
 - Finding where a function/class/variable is defined and seeing its full implementation
-- Understanding how a symbol is implemented without additional read_file calls
+- Understanding the implementation directly within the output budget
 
-Returns the complete definition code with line numbers.`;
+Returns definition code with line numbers in provider order. Defaults: maxResults=500, offset=0, at most 60000 code-content characters per page. Continue with nextOffset and unchanged query parameters; restart at 0 if files or the index change. An oversized definition has contentTruncated=true; use read_file at path/line/endLine for omitted code. definitionCount counts this page; totalCount counts all definitions.`;
 if (isMultiRoot) {
         description += isZh
             ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
@@ -132,6 +132,14 @@ return {
                     symbol: {
                         type: 'string',
                         description: isZh ? '要查找的符号名称（可选，仅用于说明）' : 'The symbol name to find (optional, for documentation purposes)'
+                    },
+                    maxResults: {
+                        type: 'integer', minimum: 1, maximum: 500, default: 500,
+                        description: isZh ? '每页最多返回的定义数；正文预算可能使实际返回数更少。' : 'Maximum definitions per page; the code-content budget may return fewer.'
+                    },
+                    offset: {
+                        type: 'integer', minimum: 0, default: 0,
+                        description: isZh ? '跳过的定义数；续查使用 nextOffset，文件或语言索引变化后从 0 重查。' : 'Definitions to skip; continue with nextOffset and restart at 0 if files or the language index change.'
                     }
                 },
                 required: ['path', 'line']
@@ -222,4 +230,3 @@ return {
             }
         };
 }
-

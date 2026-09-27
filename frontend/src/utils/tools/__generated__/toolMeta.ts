@@ -235,6 +235,8 @@ export const toolMeta: Record<string, ToolMeta> = {
       "line": {"type":"integer","required":true},
       "column": {"type":"integer"},
       "symbol": {"type":"string"},
+      "maxResults": {"type":"integer","default":500},
+      "offset": {"type":"integer","default":0},
     },
     parametersDynamic: true,
     source: "backend/tools/lsp/declarations.ts",

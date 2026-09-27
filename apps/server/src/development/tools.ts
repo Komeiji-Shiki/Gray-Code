@@ -7,6 +7,7 @@ import { createGetSymbolsToolDeclaration, createGotoDefinitionToolDeclaration, c
 import { findBlockEnd } from '../../../../backend/tools/lsp/definitionRange';
 import { createSymbolOutline, parseSymbolOutlineOptions, MAX_SYMBOL_PATHS } from '../../../../backend/tools/lsp/symbolOutline';
 import { createReferencePage, parseReferencePageOptions, referenceSnippet } from '../../../../backend/tools/lsp/referencePage';
+import { createDefinitionPage, definitionSnippet, parseDefinitionPageOptions } from '../../../../backend/tools/lsp/definitionPage';
 import { FileReadAccess } from '../workspace/readAccess';
 import type { PlatformApplication } from '../application';
 /** 保留原声明、批量限制、定义代码范围和按文件分组的引用结果。 */
@@ -58,6 +59,7 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
   const file = String(args.path); const line = Number(args.line); const column = Number.isInteger(args.column) && Number(args.column) > 0 ? Number(args.column) : 1;
   // 先校验分页参数，避免非法 offset 触发无意义的语言服务请求。
   const referenceOptions = name === 'find_references' ? parseReferencePageOptions(args) : undefined;
+  const definitionOptions = name === 'goto_definition' ? parseDefinitionPageOptions(args) : undefined;
   const source = await read(file);
   if (!Number.isInteger(line) || line < 1 || line > source.lines.length) throw new Error('行号超出文件范围。');
   const raw = await app.languages.toolRequest(context, source.absolute, source.text, name === 'goto_definition' ? 'textDocument/definition' : 'textDocument/references',
@@ -65,8 +67,7 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
   const locations = (Array.isArray(raw) ? raw : raw ? [raw] : []) as Array<Location | LocationLink>;
   const base = { path: file, line, column, symbol: args.symbol };
   if (name === 'goto_definition') {
-    const definitions: Array<{ path: string; line: number; endLine: number; content: string; lineCount: number }> = [];
-    for (const item of locations) {
+    const page = await createDefinitionPage(locations, definitionOptions!, async item => {
       context.signal.throwIfAborted();
       const uri = 'targetUri' in item ? item.targetUri : item.uri; const range = 'targetRange' in item ? item.targetRange : item.range;
       let targetPath = uri;
@@ -75,11 +76,10 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
         const start = range.start.line; let end = range.end.line;
         if (end - start < 2) end = Math.max(end, findBlockEnd({ lineCount: target.lines.length, lineAt: index => ({ text: target.lines[index] }) }, start));
         end = Math.min(end, target.lines.length - 1);
-        const lines = target.lines.slice(start, end + 1).map((text, index) => `${String(start + index + 1).padStart(4)} | ${text}`);
-        definitions.push({ path: targetPath, line: start + 1, endLine: end + 1, content: lines.join('\n'), lineCount: lines.length });
-      } catch (error) { context.signal.throwIfAborted(); definitions.push({ path: targetPath, line: range.start.line + 1, endLine: range.end.line + 1, content: `(Unable to read file content: ${String(error)})`, lineCount: 0 }); }
-    }
-    return { success: true, data: { ...base, definitionCount: definitions.length, definitions } };
+        return { path: targetPath, line: start + 1, endLine: end + 1, ...definitionSnippet(index => target.lines[index], start, end) };
+      } catch (error) { context.signal.throwIfAborted(); return { path: targetPath, line: range.start.line + 1, endLine: range.end.line + 1, content: `(Unable to read file content: ${String(error)})`, lineCount: 0 }; }
+    });
+    return { success: true, data: { ...base, ...page } };
   }
   const contextLines = typeof args.context === 'number' && Number.isFinite(args.context) ? Math.min(10, Math.max(0, Math.floor(args.context))) : 2;
   const referenceLocations = locations.filter((item): item is Location => 'uri' in item).map(item => {

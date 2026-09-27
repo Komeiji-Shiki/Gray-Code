@@ -1,4 +1,5 @@
 import { findBlockEnd } from './definitionRange';
+import { createDefinitionPage, definitionSnippet, parseDefinitionPageOptions } from './definitionPage';
 import { createGotoDefinitionToolDeclaration } from './declarations';
 /**
  * 跳转到定义工具
@@ -28,6 +29,7 @@ interface DefinitionLocation {
     endLine: number;    // 1-based
     content: string;    // 定义处的代码内容（带行号）
     lineCount: number;  // 返回的代码行数
+    contentTruncated?: boolean;
 }
 
 /**
@@ -71,6 +73,7 @@ export function createGotoDefinitionTool(): Tool {
             }
             
             try {
+                const options = parseDefinitionPageOptions(args);
                 // 创建位置（转换为 0-based）
                 const position = new vscode.Position(line - 1, column - 1);
                 // 主动打开文档以激活对应语言服务（带超时/中止保护）
@@ -92,15 +95,15 @@ export function createGotoDefinitionTool(): Tool {
                             column,
                             symbol: symbolName,
                             definitions: [],
+                            definitionCount: 0, totalCount: 0, ...options, truncated: false,
                             message: 'No definition found. The symbol may not have a definition, or no language server is available.'
                         }
                     };
                 }
                 
                 // 转换定义位置并获取完整定义代码
-                const convertedDefinitions: DefinitionLocation[] = [];
-                
-                for (const def of definitions) {
+                const page = await createDefinitionPage(definitions, options, async (def): Promise<DefinitionLocation> => {
+                    context?.abortSignal?.throwIfAborted();
                     let targetUri: vscode.Uri;
                     let targetRange: vscode.Range;
                     
@@ -153,32 +156,24 @@ export function createGotoDefinitionTool(): Tool {
                             endLine = totalLines - 1;
                         }
                         
-                        // 提取代码并添加行号
-                        const lines: string[] = [];
-                        for (let i = startLine; i <= endLine; i++) {
-                            const lineText = doc.lineAt(i).text;
-                            const lineNum = i + 1; // 转换为 1-based
-                            lines.push(`${lineNum.toString().padStart(4)} | ${lineText}`);
-                        }
-                        
-                        convertedDefinitions.push({
+                        return {
                             path: relativePath,
                             line: startLine + 1,     // 1-based
                             endLine: endLine + 1,    // 1-based
-                            content: lines.join('\n'),
-                            lineCount: lines.length
-                        });
+                            ...definitionSnippet(index => doc.lineAt(index).text, startLine, endLine)
+                        };
                     } catch (e) {
                         // 无法读取文件，返回基本信息
-                        convertedDefinitions.push({
+                        context?.abortSignal?.throwIfAborted();
+                        return {
                             path: relativePath,
                             line: targetRange.start.line + 1,
                             endLine: targetRange.end.line + 1,
                             content: '(Unable to read file content)',
                             lineCount: 0
-                        });
+                        };
                     }
-                }
+                });
                 
                 return {
                     success: true,
@@ -187,8 +182,7 @@ export function createGotoDefinitionTool(): Tool {
                         line,
                         column,
                         symbol: symbolName,
-                        definitionCount: convertedDefinitions.length,
-                        definitions: convertedDefinitions
+                        ...page
                     }
                 };
             } catch (error) {

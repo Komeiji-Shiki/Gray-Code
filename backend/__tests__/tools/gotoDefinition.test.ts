@@ -53,6 +53,41 @@ describe('goto_definition LSP lifecycle', () => {
         jest.useRealTimers();
     });
 
+    test('分页保持提供器顺序，只读取当前页，越界页不会反复续查', async () => {
+        const first = vscode.Uri.file(path.resolve('workspace/project/z.ts'));
+        const second = vscode.Uri.file(path.resolve('workspace/project/a.ts'));
+        executeCommandMock.mockResolvedValue([location(first, 0, 2), location(second, 4, 6)]);
+        openTextDocumentMock.mockResolvedValue(makeDoc(LINES));
+        const tool = createGotoDefinitionTool();
+        const page = await tool.handler({ path: 'source.ts', line: 1, maxResults: 1 }, {} as any);
+        expect(page.data).toMatchObject({ definitionCount: 1, totalCount: 2, nextOffset: 1, truncated: true });
+        expect(openTextDocumentMock).toHaveBeenCalledTimes(2);
+        expect(openTextDocumentMock).toHaveBeenLastCalledWith(first);
+        const tail = await tool.handler({ path: 'source.ts', line: 1, offset: 1 }, {} as any);
+        expect(tail.data).toMatchObject({ definitionCount: 1, totalCount: 2, truncated: false });
+        expect(openTextDocumentMock).toHaveBeenLastCalledWith(second);
+        const beyond = await tool.handler({ path: 'source.ts', line: 1, offset: 9 }, {} as any);
+        expect(beyond.data).toMatchObject({ definitionCount: 0, totalCount: 2, truncated: false });
+        expect(beyond.data.nextOffset).toBeUndefined();
+    });
+
+    test('超长定义最多输出60000字符，保留源码范围和明确的补读说明', async () => {
+        const uri = vscode.Uri.file(path.resolve('workspace/project/long.ts'));
+        executeCommandMock.mockResolvedValue([location(uri, 0, 0)]);
+        openTextDocumentMock.mockResolvedValue(makeDoc(['x'.repeat(70000)]));
+        const result = await createGotoDefinitionTool().handler({ path: 'source.ts', line: 1 }, {} as any);
+        expect(result.data).toMatchObject({ definitionCount: 1, totalCount: 1, truncated: true, truncationReasons: ['outputBudget'] });
+        expect(result.data.definitions[0]).toMatchObject({ line: 1, endLine: 1, contentTruncated: true });
+        expect(result.data.definitions[0].content).toHaveLength(60000);
+        expect(result.data.continuationHint).toContain('read_file');
+    });
+
+    test.each([{ offset: -1 }, { offset: 1.5 }, { maxResults: 0 }, { maxResults: 501 }])('无效分页不调用语言服务：%j', async options => {
+        expect((await createGotoDefinitionTool().handler({ path: 'source.ts', line: 1, ...options }, {} as any)).success).toBe(false);
+        expect(executeCommandMock).not.toHaveBeenCalled();
+        expect(openTextDocumentMock).not.toHaveBeenCalled();
+    });
+
     test('正常路径返回定义位置与完整代码', async () => {
         const targetUri = vscode.Uri.file(path.resolve('workspace/project/src/target.ts'));
         executeCommandMock.mockResolvedValue([
