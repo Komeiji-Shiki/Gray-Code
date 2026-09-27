@@ -1,6 +1,7 @@
 import type { DiscordReplyProfile, PlatformMessage, ActorIdentity } from '@graycode/contracts';
 import type { BotContext } from './sessions';
 import { DEFAULT_BOT_ENVIRONMENT, LEGACY_BOT_IDENTITY_TEMPLATE, renderBotTemplate } from '../../../../shared/botConversation';
+import { deserializePromptContextCache } from '../../../../backend/modules/prompt/promptContextCache';
 
 export interface CapturedBotEnvironment { version: 1; content: string; identityTemplate: string; channel: Record<string, unknown> }
 /** 频道环境不混入当前时间、昵称或当前发言人，只有用户修改配置时才改变固定前缀。 */
@@ -38,19 +39,23 @@ export function withoutStandaloneBotEnvironment(messages: PlatformMessage[], env
     return text !== environment.content && text !== content && !(oldPrefix && text.startsWith(oldPrefix) && text.endsWith(oldSuffix));
   });
 }
-/** 只改模型请求副本，不改变 Bot 历史消息和页面上的原文。 */
-export function prependBotContextToCurrentMessage(messages: PlatformMessage[], environment: CapturedBotEnvironment | undefined,
+export function botContextPrefix(environment: CapturedBotEnvironment, actor: Pick<ActorIdentity, 'role'>): string {
+  return [botEnvironmentText(environment), botIdentityText(environment, actor)].filter(Boolean).join('\n');
+}
+/** 只改模型请求副本；每条历史发言复用当时捕获的来源，界面仍显示原文。 */
+export function applyBotContextPrefixes(messages: PlatformMessage[], environment: CapturedBotEnvironment | undefined,
   actor: Pick<ActorIdentity, 'role'> | undefined): PlatformMessage[] {
-  if (environment?.version !== 1 || !actor) return messages;
-  const identity = botIdentityText(environment, actor);
-  const prefix = [botEnvironmentText(environment), identity].filter(Boolean).join('\n');
-  if (!prefix) return messages;
-  const sourceLabel = environment.channel.platform === 'discord' ? 'Discord' : String(environment.channel.platform ?? 'QQ');
-  const index = messages.findLastIndex(message => message.isUserInput && message.role === 'user'
-    && typeof message.parts[0]?.text === 'string' && String(message.parts[0].text).toLowerCase().startsWith(`[${sourceLabel.toLowerCase()} 发言`));
-  if (index < 0) return messages;
-  const next = [...messages];
-  const message = next[index];
-  next[index] = { ...message, parts: [{ ...message.parts[0], text: `${prefix}\n${message.parts[0].text}` }, ...message.parts.slice(1)] };
-  return next;
+  const currentPrefix = environment?.version === 1 && actor ? botContextPrefix(environment, actor) : undefined;
+  const sourceLabel = environment?.channel.platform === 'discord' ? 'Discord' : String(environment?.channel.platform ?? 'QQ');
+  const index = currentPrefix ? messages.findLastIndex(message => message.isUserInput && message.role === 'user'
+    && typeof message.parts[0]?.text === 'string' && String(message.parts[0].text).toLowerCase().startsWith(`[${sourceLabel.toLowerCase()} 发言`))
+    : -1;
+  return messages.map((message, position) => {
+    if (message.role !== 'user' || typeof message.parts[0]?.text !== 'string') return message;
+    const captured = message.botTaskContextEmbedded === true && typeof message.turnDynamicContext === 'string'
+      ? deserializePromptContextCache(message.turnDynamicContext).inputPrefix : undefined;
+    // 旧记录只按原规则处理当前发言，不猜测历史成员当时的权限或频道配置。
+    const prefix = captured ?? (position === index ? currentPrefix : undefined);
+    return prefix ? { ...message, parts: [{ ...message.parts[0], text: `${prefix}\n${message.parts[0].text}` }, ...message.parts.slice(1)] } : message;
+  });
 }

@@ -337,8 +337,8 @@ export class OpenAIFormatter extends BaseFormatter {
                 for (const part of functionCallParts) pendingCalls.add(part.functionCall!.id!);
                 // assistant 消息包含 tool_calls
                 // 所有 functionCall 放到末尾作为 tool_calls
-                const toolCalls = functionCallParts.map((p, index) => ({
-                    id: p.functionCall!.id || `call_${Date.now()}_${index}`,
+                const toolCalls = functionCallParts.map(p => ({
+                    id: p.functionCall!.id!,
                     type: 'function',
                     function: {
                         name: p.functionCall!.name,

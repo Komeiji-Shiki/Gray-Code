@@ -8,6 +8,17 @@
 import { deserializePromptContextCache, serializePromptContextCache } from '../../modules/prompt/promptContextCache';
 
 describe('promptContextCache thought preservation', () => {
+    test('保留多内容块、空白、图片和思考签名，恢复后与首次请求一致', () => {
+        const message = { role: 'model' as const, parts: [
+            { text: '  first\n', thought: true, thoughtSignatures: { 'openai-responses': 'fixture-signature' } },
+            { text: 'second thought', thought: true },
+            { text: '  body\n' }, { inlineData: { mimeType: 'image/png', data: 'fixture-image' } }, { text: 'tail  ' },
+        ] };
+        const cache = serializePromptContextCache({ messages: [message], dynamicSnapshotMessages: [message], inputPrefix: 'Captured source' });
+        expect(deserializePromptContextCache(cache).beforeHistoryMessages).toEqual([message]);
+        expect(deserializePromptContextCache(cache).dynamicSnapshotMessages).toEqual([message]);
+        expect(deserializePromptContextCache(cache).inputPrefix).toBe('Captured source');
+    });
     test('preserves thought parts through serialize/deserialize round-trip', () => {
         const cache = serializePromptContextCache({
             beforeHistoryMessages: [
@@ -51,7 +62,7 @@ describe('promptContextCache thought preservation', () => {
         expect(restored.beforeHistoryMessages[0].parts).toEqual([{ text: 'only thinking', thought: true }]);
     });
 
-    test('merges multiple thought parts into one thoughtText that re-emits identical joined text', () => {
+    test('preserves multiple thought parts without changing block boundaries', () => {
         const cache = serializePromptContextCache({
             messages: [
                 {
@@ -67,9 +78,9 @@ describe('promptContextCache thought preservation', () => {
         });
 
         const restored = deserializePromptContextCache(cache);
-        // 与 formatter 的 thoughtParts.map(text).join('\n') 语义一致
         expect(restored.beforeHistoryMessages[0].parts).toEqual([
-            { text: 'part A\npart B', thought: true },
+            { text: 'part A', thought: true },
+            { text: 'part B', thought: true },
             { text: 'body' }
         ]);
     });

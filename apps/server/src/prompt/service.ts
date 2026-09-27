@@ -15,7 +15,7 @@ import { deserializePromptContextCache, serializePromptContextCache } from '../.
 import type { PlatformApplication } from '../application';
 import { formatOpenTabsSection, formatActiveEditorSection } from '../../../../backend/modules/prompt/editorSections';
 import { captureEditorSnapshot, previousEditorSnapshot, type PromptEditorSnapshot } from './editorContext';
-import { withoutStandaloneBotEnvironment, type CapturedBotEnvironment } from '../bots/prompt';
+import { botContextPrefix, withoutStandaloneBotEnvironment, type CapturedBotEnvironment } from '../bots/prompt';
 import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
@@ -31,11 +31,13 @@ export class PlatformPromptService {
     const conversation = input.conversation;
     const runtime = (conversation.custom ?? {}) as Record<string, unknown>;
     const botEnvironment = runtime.botEnvironment as CapturedBotEnvironment | undefined;
-    const previousRun = (await this.app.storage.listRuns({ conversationId: input.conversation.id, limit: 1 }))[0];
     // 上一轮失败提示只面向 Bot 频道对话；桌面与 Web 的普通对话不注入这条运行状态，避免模型把它当成任务背景。
-    const failure = botEnvironment?.version === 1 && previousRun ? botFailureContext(previousRun.status, previousRun.error) : undefined;
+    const previousRun = botEnvironment?.version === 1
+      ? (await this.app.storage.listRuns({ conversationId: conversation.id, limit: 1 }))[0] : undefined;
+    const failure = previousRun ? botFailureContext(previousRun.status, previousRun.error) : undefined;
     // 失败提示属于本轮动态上下文，不写成用户历史消息，也不进入上一轮的缓存快照。
-    const failureMessage: PlatformMessage[] = failure ? [{ role: 'user', contextControl: 'run_failure', parts: [{ text: failure }] }] : [];
+    const failureSnapshot = failure ? [{ role: 'user' as const, parts: [{ text: failure }] }] : [];
+    const failureMessage: PlatformMessage[] = failureSnapshot.map(message => ({ ...message, contextControl: 'run_failure' }));
     const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
     const contextManagementMethod = this.app.context.configuration(input.conversation, contextChannel ?? undefined).method;
     const useContextNotes = contextManagementMethod === 'notes';
@@ -52,9 +54,10 @@ export class PlatformPromptService {
     };
     const settings = input.settingsOverride ?? this.app.product.runtimeSettings();
     const conversationMode = (input.conversation.custom as Record<string, unknown> | undefined)?.platformMode;
-    const profile = typeof conversationMode === 'string' ? this.app.settings.snapshot().settings.modeProfiles?.[conversationMode as 'chat' | 'code' | 'character'] : undefined;
+    const profile = typeof conversationMode === 'string' ? this.app.settings.read('modeProfiles').modeProfiles?.[conversationMode as 'chat' | 'code' | 'character'] : undefined;
     const mode = settings.resolvePromptMode(input.request.promptModeId ?? profile?.promptModeId ?? input.agent.promptModeId);
-    const channelWorkspace = botEnvironment?.version === 1 ? this.app.settings.snapshot().settings.workspaces.find(item => item.id === conversation.workspaceId) : undefined;
+    const channelWorkspace = botEnvironment?.version === 1 && typeof conversation.workspaceId === 'string'
+      ? this.app.settings.find('workspaces', conversation.workspaceId) : undefined;
     const workspace = input.actor.role === 'owner' || input.actor.effects.includes('workspace_read') ? input.workspace : undefined;
     // 共享频道环境描述保持一致；文件读取和动态资料仍使用本轮真实工作区权限。
     const environmentWorkspace = channelWorkspace ?? workspace;
@@ -110,7 +113,7 @@ export class PlatformPromptService {
       getContext: () => ({ workspaceRoot: workspace?.directory, os: os.platform(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, currentTime: new Date().toISOString() }),
     };
     const assembler = new PromptAssembler({ settings: () => settings, workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [], sections });
-    const previous = [...input.history].reverse().find(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
+    const previous = input.history.findLast(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
     const cache = previous ? deserializePromptContextCache(previous.turnDynamicContext as string) : undefined;
     const skills = input.agent.toolNames.includes('read_skill') && (input.actor.role === 'owner' || input.actor.effects.includes('workspace_read'))
       ? (await this.app.skills.items(input.actor.id, conversation.id, workspace?.id, undefined, { workspace, actor: input.actor })).filter(skill => skill.enabled)
@@ -134,7 +137,13 @@ export class PlatformPromptService {
       messageParts: characterSource?.parts,
       turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod },
       messageMetadata: { turnPlatformMode: input.previousTurn?.turnPlatformMode ?? conversationMode ?? 'chat', ...(companionTurn ? { companionTurn } : {}), ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterTurn, characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
-        characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve', turnDynamicContext: serializePromptContextCache(bundle) },
+        characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve',
+        turnDynamicContext: serializePromptContextCache({ ...bundle,
+          // 失败提示也是本轮已经发送的上下文；以后回插时保留原位置，不改写旧回合。
+          afterHistoryMessages: [...bundle.afterHistoryMessages, ...failureSnapshot],
+          dynamicSnapshotAfterHistoryMessages: [...bundle.dynamicSnapshotAfterHistoryMessages, ...failureSnapshot],
+          text: undefined, dynamicSnapshotText: undefined,
+          ...(botEnvironment?.version === 1 ? { inputPrefix: botContextPrefix(botEnvironment, input.actor) } : {}) }) },
     };
   }
   async count(actorId: string, draft: ProductSettingsDraft, data: Record<string, any>, workspaceId?: string, clientId?: string) {

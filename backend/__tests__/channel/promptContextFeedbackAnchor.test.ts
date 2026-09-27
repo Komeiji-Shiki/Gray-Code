@@ -17,6 +17,34 @@ const toolBatch = (id: string): Content[] => [
     { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id, name: 'read_file', response: { text: `result ${id}` } } }] }
 ];
 
+describe.each<[string, BaseFormatter, ChannelConfig, 'input' | 'messages']>([
+    ['Responses', new OpenAIResponsesFormatter(), createOpenAIResponsesConfig(), 'input'],
+    ['Chat Completions', new OpenAIFormatter(), createOpenAIConfig(), 'messages'],
+    ['Anthropic', new AnthropicFormatter(), createAnthropicConfig(), 'messages'],
+])('%s 恢复上下文保持请求前缀', (_name, formatter, config, field) => {
+    test.each([true, false])('新回合回插时保留多块文本、空白和原图片的位置（已有模型回复：%s）', withReply => {
+        const dynamic: Content = { role: 'user', parts: [{ text: '  first\n' },
+            { inlineData: { mimeType: 'image/png', data: 'fixture-image' } }, { text: 'second  ' }] };
+        const promptContext: RequestPromptContext = { historyPlacement: 'entry', beforeHistoryMessages: [], afterHistoryMessages: [dynamic] };
+        const cache = serializePromptContextCache({ ...promptContext, messages: [], dynamicSnapshotMessages: [],
+            dynamicSnapshotBeforeHistoryMessages: [], dynamicSnapshotAfterHistoryMessages: [dynamic] });
+        const history = [user('first turn', { turnDynamicContext: cache, turnDynamicContextStrategy: 'preserve' })];
+        const build = (messages: Content[], context: RequestPromptContext) => formatter.buildRequest({ configId: config.id,
+            history: messages, promptContext: context, dynamicContextStrategy: 'preserve' }, config, tools).body;
+        const before = build(history, promptContext);
+        const after = build([...history, ...(withReply ? toolBatch('read') : []), user('second turn')], { ...promptContext, afterHistoryMessages: [] });
+        if (!withReply && _name === 'Anthropic') {
+            // Anthropic 将相邻 user 消息合并到尾部；已有内容块必须仍是完整前缀。
+            const previous = before.messages.at(-1);
+            expect(after.messages.slice(0, before.messages.length - 1)).toEqual(before.messages.slice(0, -1));
+            expect(after.messages[before.messages.length - 1]).toMatchObject({ role: previous.role });
+            expect(after.messages[before.messages.length - 1].content.slice(0, previous.content.length)).toEqual(previous.content);
+            return;
+        }
+        expect(JSON.stringify(after[field].slice(0, before[field].length))).toBe(JSON.stringify(before[field]));
+    });
+});
+
 function fixture(historyPlacement: 'entry' | 'legacy', strategy: 'single' | 'preserve') {
     const formatter = new OpenAIResponsesFormatter();
     const config = createOpenAIResponsesConfig({ systemInstruction: 'Stable system instructions', promptCacheKeyEnabled: true });

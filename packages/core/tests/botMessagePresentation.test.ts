@@ -5,14 +5,14 @@ import type { Content } from '../../../backend/modules/conversation/types';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
-import { botIdentityText, prependBotContextToCurrentMessage, withoutStandaloneBotEnvironment } from '../../../apps/server/src/bots/prompt';
+import { botIdentityText, applyBotContextPrefixes, withoutStandaloneBotEnvironment } from '../../../apps/server/src/bots/prompt';
 import { LEGACY_BOT_IDENTITY_TEMPLATE } from '../../../shared/botConversation';
 
 test('旧版 Discord 环境和身份合并到当前发言前，移除工作区路径且不改历史', () => {
   const channel = { platform: 'discord', botId: 'bot', channelId: 'channel', direct: false, workspace: { id: 'old', directory: 'C:/private' } };
   const environment = { version: 1 as const, content: `当前交流环境：${JSON.stringify(channel)}\n按 Discord 的习惯回复。`, identityTemplate: LEGACY_BOT_IDENTITY_TEMPLATE, channel };
   const original = [{ id: 'm1', role: 'user', isUserInput: true, parts: [{ text: '[Discord 发言 · "Apoieo"]\ntest' }] }];
-  const prepared = prependBotContextToCurrentMessage(original, environment, { role: 'owner' });
+  const prepared = applyBotContextPrefixes(original, environment, { role: 'owner' });
   expect(botIdentityText(environment, { role: 'owner' })).toBe('[本轮发言身份：主人]');
   expect(prepared[0].parts[0].text).toBe('当前交流环境：{"platform":"discord","botId":"bot","channelId":"channel","direct":false}\n按 Discord 的习惯回复。\n[本轮发言身份：主人]\n[Discord 发言 · "Apoieo"]\ntest');
   expect(JSON.stringify(prepared)).not.toContain('C:/private');
@@ -26,7 +26,7 @@ test('旧版 Discord 环境和身份合并到当前发言前，移除工作区�
   expect(withoutStandaloneBotEnvironment([cached[0], otherPrompt], current)).toEqual([otherPrompt]);
   const qq = { ...environment, content: 'QQ 频道环境', channel: { platform: 'qq', botId: 'bot', channelId: 'group', direct: false } };
   const qqMessage = [{ role: 'user', isUserInput: true, parts: [{ text: '[QQ 发言 · "访客"]\n你好' }] }];
-  expect(prependBotContextToCurrentMessage(qqMessage, qq, { role: 'guest' })[0].parts[0].text)
+  expect(applyBotContextPrefixes(qqMessage, qq, { role: 'guest' })[0].parts[0].text)
     .toBe('QQ 频道环境\n[本轮发言身份：访客]\n[QQ 发言 · "访客"]\n你好');
 });
 

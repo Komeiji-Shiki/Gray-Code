@@ -13,6 +13,8 @@ export interface SerializedPromptContextMessage {
     promptAnchor?: Content['promptAnchor'];
     role: PromptContextCacheRole;
     text: string;
+    /** 旧文本表示不能无损还原时保存原始块，保留空白、边界、媒体及供应方签名。 */
+    parts?: Content['parts'];
     /**
      * 思考内容（fakeThought 等 thought part 的文本）。
      * 与正文分离保存，反序列化时恢复为 thought part，
@@ -33,6 +35,8 @@ interface SerializedPromptContextCacheV1 {
 
 export interface SerializedPromptContextCache {
     version: 2;
+    /** 随本回合用户消息捕获的来源前缀，后续请求不能按当前身份重算旧消息。 */
+    inputPrefix?: string;
     /** 当前回合中位于真实聊天历史之前的 prompt context。 */
     beforeHistoryMessages: SerializedPromptContextMessage[];
     /** 当前回合中位于真实聊天历史之后的 prompt context。 */
@@ -54,6 +58,7 @@ export interface SerializedPromptContextCache {
 }
 
 export interface PromptContextBundleLike {
+    inputPrefix?: string;
     beforeHistoryMessages?: Content[];
     afterHistoryMessages?: Content[];
     dynamicSnapshotBeforeHistoryMessages?: Content[];
@@ -70,6 +75,7 @@ export interface PromptContextBundleLike {
 }
 
 export interface DeserializedPromptContextCache {
+    inputPrefix?: string;
     beforeHistoryMessages: Content[];
     afterHistoryMessages: Content[];
     dynamicSnapshotBeforeHistoryMessages: Content[];
@@ -107,34 +113,34 @@ function messageToSerialized(message: Content): SerializedPromptContextMessage |
         return null;
     }
 
-    // 正文与思考分离保存：thought part 的文本进 thoughtText，反序列化时恢复为
-    // 「单 thought part + 单 text part」，保证回插路径与直发路径字节一致。
-    // 多条 text part 用 '\n' 连接（与 OpenAI formatter 的 textParts.join('\n') 一致），
-    // 多条 thought part 合并为单条 thoughtText（与 formatter 的 thoughtParts.join('\n') 一致）；
-    // 用 '\n' 而非无分隔 join，避免相邻 part 边界被静默抹掉。
-    // 反序列化不再按 '\n' 拆分：动态上下文消息实际至多一个 text part，而单 part 内嵌换行
-    // （模板多行内容）按 '\n' 拆分会在 Anthropic 侧拆成多个文本块，破坏前缀缓存字节稳定。
-    // 非文本 part（media/functionCall/functionResponse 等）不进入动态上下文缓存，序列化不保留。
+    // 常见的单正文/单思考沿用紧凑表示；复杂内容额外保留原始块，不能按某一种协议拍平。
     const textParts = (message.parts ?? []).filter(part => part.text && part.thought !== true);
     const thoughtParts = (message.parts ?? []).filter(part => part.text && part.thought === true);
     const text = textParts.map(part => part.text || '').join('\n').trim();
     const thoughtText = thoughtParts.map(part => part.text || '').join('\n').trim();
-    if (!text && !thoughtText) {
+    if (!message.parts?.length) {
         return null;
     }
 
-    return {
+    const serialized: SerializedPromptContextMessage = {
         role: message.role,
         ...(message.promptAnchor ? { promptAnchor: message.promptAnchor } : {}),
         text,
         ...(thoughtText ? { thoughtText } : {})
     };
+    if (JSON.stringify(serializedToContent(serialized)?.parts) !== JSON.stringify(message.parts)) {
+        serialized.parts = structuredClone(message.parts);
+    }
+    return serialized;
 }
 
 function serializedToContent(message: SerializedPromptContextMessage): Content | null {
     if (message.role !== 'user' && message.role !== 'model' && message.role !== 'system') {
         return null;
     }
+
+    if (message.parts) return { role: message.role, ...(message.promptAnchor ? { promptAnchor: message.promptAnchor } : {}),
+        parts: structuredClone(message.parts) };
 
     const text = typeof message.text === 'string' ? message.text.trim() : '';
     const thoughtText = typeof message.thoughtText === 'string' ? message.thoughtText.trim() : '';
@@ -170,14 +176,18 @@ function normalizeSerializedMessages(value: unknown): SerializedPromptContextMes
         const role = (item as any).role;
         const text = (item as any).text;
         const thoughtText = (item as any).thoughtText;
+        const rawParts = (item as any).parts;
+        const parts = Array.isArray(rawParts) && rawParts.length > 0 && rawParts.every(part => part && typeof part === 'object' && !Array.isArray(part))
+            ? rawParts as Content['parts'] : undefined;
         const normalizedText = typeof text === 'string' ? text.trim() : '';
         const normalizedThoughtText = typeof thoughtText === 'string' ? thoughtText.trim() : '';
-        if ((role !== 'user' && role !== 'model' && role !== 'system') || (!normalizedText && !normalizedThoughtText)) {
+        if ((role !== 'user' && role !== 'model' && role !== 'system') || (!parts && !normalizedText && !normalizedThoughtText)) {
             continue;
         }
         messages.push({
             role,
             text: normalizedText,
+            ...(parts ? { parts } : {}),
             ...((item as any).promptAnchor ? { promptAnchor: (item as any).promptAnchor } : {}),
             ...(normalizedThoughtText ? { thoughtText: normalizedThoughtText } : {})
         });
@@ -218,6 +228,7 @@ export function serializePromptContextCache(bundle: PromptContextBundleLike): st
 
     const cache: SerializedPromptContextCache = {
         version: 2,
+        ...(bundle.inputPrefix !== undefined ? { inputPrefix: bundle.inputPrefix } : {}),
         beforeHistoryMessages: contentMessagesToSerialized(beforeHistoryMessages),
         afterHistoryMessages: contentMessagesToSerialized(afterHistoryMessages),
         dynamicSnapshotBeforeHistoryMessages: contentMessagesToSerialized(dynamicSnapshotBeforeHistoryMessages),
@@ -258,6 +269,7 @@ function deserializeV2(parsed: Partial<SerializedPromptContextCache>): Deseriali
     ];
 
     return {
+        ...(typeof parsed.inputPrefix === 'string' ? { inputPrefix: parsed.inputPrefix } : {}),
         beforeHistoryMessages,
         afterHistoryMessages,
         dynamicSnapshotBeforeHistoryMessages,

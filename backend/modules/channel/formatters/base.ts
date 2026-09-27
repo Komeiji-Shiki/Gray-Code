@@ -135,9 +135,12 @@ export abstract class BaseFormatter {
         // 从后向前查找
         for (let i = history.length - 1; i >= 0; i--) {
             if (this.isPromptContextTurnInput(history[i])) {
+                // 失败可能没有留下模型消息，两次独立输入因此相邻；已捕获的快照仍是回合边界。
+                if (foundMarkedMessage && history[i].turnDynamicContext) break;
                 // 找到用户输入消息，记录索引，继续向前查找连续的用户输入消息
                 firstIndex = i;
                 foundMarkedMessage = true;
+                if (history[i].turnDynamicContext) break;
             } else if (foundMarkedMessage) {
                 // 已找到用户输入消息，但当前消息不是，说明连续组结束
                 break;

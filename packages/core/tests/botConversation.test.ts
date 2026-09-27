@@ -48,6 +48,32 @@ describe('Bot 频道上下文、附件与定时总结', () => {
   });
   afterEach(async () => { delete process.env.GRAYCODE_CONTEXT_TEST_TOKEN; await app.close(); await f.cleanup(); });
 
+  test('后续成员发言和频道模板修改不改写已发送的 Bot 历史前缀', async () => {
+    await app.discord.receive(inbound('prefix-owner', '10', true));
+    const id = (await app.discord.sessions.snapshot(context())).conversation!.id;
+    const firstRun = (await app.storage.listRuns({ conversationId: id, limit: 1 }))[0];
+    expect((await app.runtime.wait(firstRun.id))?.status).toBe('completed');
+    const before = (await app.modelAdapter.preview(generated[0])).body;
+    expect(JSON.stringify(before.messages)).toContain('认证身份 主人');
+    const saved = app.settings.snapshot();
+    saved.settings.discord!.defaultProfile!.environmentEntry!.content = '更新后的频道 {{$BOT_CONTEXT}}';
+    await app.settings.save({ settings: saved.settings, expectedRevision: saved.revision });
+    await app.discord.receive(inbound('prefix-member', '20', true));
+    const secondRun = (await app.storage.listRuns({ conversationId: id, limit: 1 }))[0];
+    expect((await app.runtime.wait(secondRun.id))?.status).toBe('completed');
+    const after = (await app.modelAdapter.preview(generated[1])).body;
+    const { messages: _beforeMessages, ...beforeOptions } = before;
+    const { messages: _afterMessages, ...afterOptions } = after;
+    expect(afterOptions).toEqual(beforeOptions);
+    expect(after.messages.slice(0, before.messages.length)).toEqual(before.messages);
+    expect(JSON.stringify(after.messages)).toContain('认证身份 成员');
+    expect(JSON.stringify(after.messages)).toContain('更新后的频道');
+    // 捕获信息只参与模型请求，界面中的原始发言保持原样。
+    const history = await app.storage.readFullHistory(id);
+    expect(history.messages.filter(message => message.isUserInput).flatMap(message => message.parts).map(part => part.text).join('\n'))
+      .not.toContain('认证身份');
+  });
+
   test.each([
     ['安全错误', 'Workspace or account is unavailable.', 'Workspace or account is unavailable.'],
     ['未知敏感错误', 'Bearer private-value at C:\\Users\\secret\\config.json', '失败详情可在桌面端查看'],
@@ -72,6 +98,12 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect(contextText).toContain(failure === visible ? failure : '具体错误未提供给模型');
       expect(contextText).not.toContain('private-value');
       expect((await app.storage.readFullHistory(id)).messages.filter(message => message.isUserInput)).toHaveLength(2);
+      const recovered = (await app.modelAdapter.preview(generated[1])).body;
+      await app.discord.receive(inbound('after-recovery', '10', true));
+      const next = (await app.storage.listRuns({ conversationId: id, limit: 1 }))[0];
+      expect((await app.runtime.wait(next.id))?.status).toBe('completed');
+      const after = (await app.modelAdapter.preview(generated[2])).body;
+      expect(after.messages.slice(0, recovered.messages.length)).toEqual(recovered.messages);
     } finally { send.mockRestore(); }
   });
 
@@ -117,7 +149,10 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect(generated[0].messages.findLast(message => message.isUserInput)?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 主人\n\[Discord 发言/);
       const currentMember = generated[1].messages.findLast(message => message.isUserInput);
       expect(currentMember?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 成员\n\[Discord 发言/);
-      expect(JSON.stringify(generated[1].messages).match(/频道固定内容/g)).toHaveLength(1);
+      const sentText = generated[1].messages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
+      expect(sentText.match(/频道固定内容/g)).toHaveLength(2);
+      expect(sentText.match(/认证身份 主人/g)).toHaveLength(1);
+      expect(sentText.match(/认证身份 成员/g)).toHaveLength(1);
       expect(JSON.stringify(generated[1].messages)).not.toContain('"workspace":');
       expect(generated[1].promptContext!.afterHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('')).not.toContain('认证身份');
       const saved = (await app.storage.readFullHistory(id)).messages;

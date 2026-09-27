@@ -59,7 +59,10 @@ describe('当前完整提示词的只读预览', () => {
 
   test('包含历史、当前草稿、固定文件、工具和预设位置，实际发送复用同一内容', async () => {
     const before = await app.storage.readConversationState('preview-chat');
+    const runs = jest.spyOn(app.storage, 'listRuns');
     const result = await preview();
+    expect(runs).not.toHaveBeenCalled();
+    runs.mockRestore();
     expect(await app.storage.readConversationState('preview-chat')).toEqual(before);
     expect(await app.storage.listRuns({})).toEqual([]); expect(generated).toEqual([]);
     const text = JSON.stringify(result.body);
