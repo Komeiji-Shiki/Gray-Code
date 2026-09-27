@@ -328,7 +328,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "cross-spawn": "^7.0.6",
     "fast-xml-parser": "^5.10.1",
     "ignore": "^7.0.5",
