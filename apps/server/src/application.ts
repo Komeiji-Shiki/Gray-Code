@@ -119,6 +119,10 @@ export interface ApplicationOptions {
 }
 export class PlatformApplication {
   private configurationReady = false;
+  private shutdownRequested = false;
+  private shutdownOperation?: Promise<void>;
+  private readonly closedServices = new Set<string>();
+  get isClosing(): boolean { return this.shutdownRequested; }
   private readonly configurationPersistence?: ApplicationOptions['configurationPersistence'];
   readonly browser?: BrowserHost;
   readonly computer: ComputerService;
@@ -183,9 +187,12 @@ export class PlatformApplication {
   private constructor(
     readonly storage: PlatformStorage,
     options: ApplicationOptions,
+    acquired: (application: PlatformApplication) => void,
   ) {
     this.configurationPersistence = options.configurationPersistence;
-    this.processes = new WorkspaceProcesses(storage);
+    // 宿主工厂可能在构造中抛错，先登记实例，才能释放此前已经取得的服务。
+    acquired(this);
+    this.processes = new WorkspaceProcesses(storage, () => this.publish({ type: 'processes.changed' }));
     this.botWorkspaces = new BotWorkspaces(this, options.documentsDirectory);
     this.conversationWorkspaces = new ConversationWorkspaces(this, options.documentsDirectory);
     this.dependencies = new DependencyRuntimeManager(join(storage.directory, 'dependencies'));
@@ -443,8 +450,9 @@ export class PlatformApplication {
   }
   static async open(options: ApplicationOptions): Promise<PlatformApplication> {
     const storage = await PlatformStorage.open(options.dataDirectory);
+    let acquired: PlatformApplication | undefined;
     try {
-      const application = new PlatformApplication(storage, options);
+      const application = new PlatformApplication(storage, options, instance => { acquired = instance; });
       await application.settings.initialize();
       await upgradeImportedMemoryGraphs(storage);
       await application.nodes.initialize();
@@ -476,8 +484,13 @@ export class PlatformApplication {
       await application.longMemory.background.initialize();
       return application;
     } catch (error) {
-      await options.configurationPersistence?.close?.().catch(() => {});
-      await storage.close();
+      try {
+        // 初始化可能已经启动子进程和后台任务；失败实例不会交给调用方，必须在这里完整释放。
+        if (acquired) await acquired.beginShutdown(true);
+        else await storage.close();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], `应用启动失败：${String(error)}；资源清理失败：${String(cleanupError)}`);
+      }
       throw error;
     }
   }
@@ -589,36 +602,60 @@ export class PlatformApplication {
     this.publish({ type: 'conversation.changed', conversationId: conversation.id });
     return conversation;
   }
-  async close(): Promise<void> {
-    this.screenSense.close();
-    this.pets.close();
-    await this.nodes.close();
-    await this.computer.close();
-    this.workspaceSearch.close();
-    await this.automations.close();
-    await this.remoteAccess?.close();
-    await this.discord.summaries.stop();
-    await this.onebot.summaries.stop();
-    await this.subagents.feedback.continuation.close();
-    await this.externalAgents.close();
-    await this.teams.close();
-    await this.subagents.close();
-    await this.context.close();
-    await this.runtime.close();
-    await this.longMemory.close();
-    await this.fileActions.close();
-    this.browser?.close();
-    await this.characterPipeline.close();
-    await this.discord.close();
-    await this.onebot.close();
-    await this.mcp.close();
-    await this.terminals.close();
-    await this.debugging.close();
-    await this.interactiveTerminals.close();
-    await this.languages.close();
-    await this.processes.close();
-    await this.dependencies.close();
-    await this.configurationPersistence?.close?.();
-    await this.storage.close();
+  close(): Promise<void> { return this.beginShutdown(); }
+  private beginShutdown(failedStartup = false): Promise<void> {
+    this.shutdownRequested = true;
+    // 并发退出共用一次清理；失败后只重试未关闭的组件，避免再次触发已完成的保存或进程停止。
+    return this.shutdownOperation ??= Promise.resolve().then(() => this.releaseServices(failedStartup)).catch(error => {
+      this.shutdownOperation = undefined;
+      throw error;
+    });
+  }
+  private async releaseServices(failedStartup: boolean): Promise<void> {
+    const services: Array<[string, () => void | Promise<void>]> = [
+      // 构造失败时只会取得其中一部分资源；正常启动后的关闭顺序仍保持原有依赖关系。
+      ['屏幕感知', () => this.screenSense?.close()],
+      ['桌宠', () => this.pets?.close()],
+      ['执行节点', () => this.nodes?.close()],
+      ['电脑操作', () => this.computer?.close()],
+      ['工作区搜索', () => this.workspaceSearch?.close()],
+      ['自动任务', () => this.automations?.close()],
+      ['远程入口', () => this.remoteAccess?.close()],
+      ['Discord 总结', () => this.discord?.summaries.stop()],
+      ['OneBot 总结', () => this.onebot?.summaries.stop()],
+      ['任务接续', () => this.subagents?.feedback.continuation.close()],
+      ['外部代理', () => this.externalAgents?.close()],
+      ['团队任务', () => this.teams?.close()],
+      ['子代理', () => this.subagents?.close()],
+      ['上下文', () => this.context?.close()],
+      ['运行器', () => this.runtime?.close()],
+      ['长期记忆', () => this.longMemory?.close()],
+      ['文件操作', () => this.fileActions?.close()],
+      ['浏览器', () => this.browser?.close()],
+      ['角色任务', () => this.characterPipeline?.close()],
+      ['Discord', () => this.discord?.close()],
+      ['OneBot', () => this.onebot?.close()],
+      ['MCP', () => this.mcp?.close()],
+      ['终端任务', () => this.terminals?.close()],
+      ['调试器', () => this.debugging?.close()],
+      ['交互终端', () => this.interactiveTerminals?.close()],
+      ['语言服务', () => this.languages?.close()],
+      ['受管进程', () => this.processes?.close()],
+      ['运行依赖', () => this.dependencies?.close()],
+      ['配置副本', () => this.configurationPersistence?.close?.()],
+    ];
+    const failures: Array<{ name: string; error: unknown }> = [];
+    for (const [name, close] of services) {
+      if (this.closedServices.has(name)) continue;
+      try { await close(); this.closedServices.add(name); }
+      catch (error) { failures.push({ name, error }); }
+    }
+    // 正常退出失败时仍需要数据库完成重试；启动失败的实例已无法重用，最后释放其存储线程。
+    if ((!failures.length || failedStartup) && !this.closedServices.has('存储')) {
+      try { await this.storage.close(); this.closedServices.add('存储'); }
+      catch (error) { failures.push({ name: '存储', error }); }
+    }
+    if (failures.length) throw new AggregateError(failures.map(value => value.error),
+      `应用关闭未完成：${failures.map(value => `${value.name}：${value.error instanceof Error ? value.error.message : String(value.error)}`).join('；')}`);
   }
 }

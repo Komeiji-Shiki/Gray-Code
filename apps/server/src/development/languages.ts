@@ -410,7 +410,11 @@ export class LanguageServices {
   }
   async close(): Promise<void> {
     this.closing = true;
+    // 启动请求可以因关闭而被取消；等待其结束后，以实际持有的会话判断清理是否成功。
     await Promise.allSettled([...this.sessionStarts.values()]);
-    await Promise.allSettled([...this.sessions.values()].map(session => this.stopSession(session)));
+    const results = await Promise.allSettled([...this.sessions.values()].map(session => this.stopSession(session)));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+      `语言服务关闭失败：${failures.map(result => String(result.reason)).join('；')}`);
   }
 }

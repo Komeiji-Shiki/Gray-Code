@@ -360,6 +360,8 @@ export class ExternalAgents {
     this.shutdown.abort(new Error('应用正在关闭。')); this.unsubscribe();
     const results = await Promise.allSettled([...this.sessions.values()].map(live => this.dispose(live)));
     await Promise.allSettled([...this.operations.values()].map(operation => operation.promise));
-    for (const result of results) if (result.status === 'rejected') console.error('外部代理关闭失败：', result.reason);
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+      `外部代理关闭失败：${failures.map(result => String(result.reason)).join('；')}`);
   }
 }

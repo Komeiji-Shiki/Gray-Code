@@ -46,7 +46,7 @@ export function commandEffects(args: Record<string, unknown>): ToolEffect[] {
 export class WorkspaceProcesses {
   private readonly entries = new Map<string, ManagedProcess>();
   private closing = false;
-  constructor(private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord' | 'getRun'>) {}
+  constructor(private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord' | 'getRun'>, private readonly changed?: () => void) {}
   get activeCount(): number { return [...this.entries.values()].filter(entry => entry.running).length; }
   async start(
     workspace: WorkspaceDefinition,
@@ -128,20 +128,24 @@ export class WorkspaceProcesses {
       child.stdin?.off('error', onInputError);
       child.off('error', onError);
       entry.child = undefined;
-      // 不改记录表：ownerId 仍供旧索引使用，value.owner 保留身份类型，避免 RPC 与模型互认。
-      const ownerId = typeof entry.owner === 'string' ? entry.owner : entry.owner.runId;
-      void this.storage.putRecord({ namespace: 'workspace-processes', id: entry.id,
-        ownerId, value: { ...this.result(entry), ownerId, owner: entry.owner } }).then(() => {
-        this.entries.delete(entry.id);
-        finish();
-      }, fail);
+      void this.persistCompleted(entry).then(finish, fail);
+      this.changed?.();
     });
     void entry.done.catch(error => console.error('命令结果保存失败：', entry.id, error));
+    // 只发布运行状态边界，输出分块继续走原来的 progress 通道。
+    this.changed?.();
     let timer: ReturnType<typeof setTimeout>;
     try {
       await Promise.race([entry.done, new Promise(resolve => { timer = setTimeout(resolve, 300); timer.unref(); })]);
     } finally { clearTimeout(timer!); }
     return this.result(entry);
+  }
+  private async persistCompleted(entry: ManagedProcess): Promise<void> {
+    // ownerId 保留旧索引用途，owner 的类型继续隔离 RPC 客户端与模型运行身份。
+    const ownerId = typeof entry.owner === 'string' ? entry.owner : entry.owner.runId;
+    await this.storage.putRecord({ namespace: 'workspace-processes', id: entry.id,
+      ownerId, value: { ...this.result(entry), ownerId, owner: entry.owner } });
+    this.entries.delete(entry.id);
   }
   private result(entry: ProcessOutput, options: ProcessReadOptions = {}): ProcessResult {
     const end = entry.outputOffset + entry.output.length;
@@ -221,14 +225,26 @@ export class WorkspaceProcesses {
     const entry = await this.get(id, owner);
     // 只停止仍持有的 ChildProcess；历史记录不按持久化 PID 杀进程，避免 PID 重用误伤。
     if ('child' in entry && entry.child) await stopOwnedProcess(entry.child);
-    if ('done' in entry) await entry.done;
+    if ('done' in entry) {
+      const done = entry.done;
+      try { await done; }
+      catch (error) {
+        if (entry.running) throw error;
+        // 已退出进程只需重试提交同一份终态记录；并发关闭复用更新后的保存 Promise。
+        if (entry.done === done) entry.done = this.persistCompleted(entry);
+        await entry.done;
+      }
+    }
   }
   async close(): Promise<void> {
     this.closing = true;
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       [...this.entries.values()].map((entry) =>
         this.stop(entry.id, entry.owner),
       ),
     );
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+      `受管进程关闭失败：${failures.map(result => String(result.reason)).join('；')}`);
   }
 }

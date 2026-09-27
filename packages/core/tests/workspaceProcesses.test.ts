@@ -320,3 +320,33 @@ test('宿主 close 保留模型和 RPC 两种原 owner 并停止自己持有的�
   expect(await processes.read(results[1].id, modelOwner)).toMatchObject({ running: false });
   await expect(processes.start(workspace, 'client', 'fixture', [])).rejects.toThrow('宿主正在关闭');
 });
+
+test('关闭保留停止失败的受管对象并返回错误，允许下一次关闭重试', async () => {
+  const { processes, child } = await running(modelOwner);
+  termination((_child, done) => done(new Error('fixture kill failure')), child);
+  await expect(processes.close()).rejects.toMatchObject({ errors: [expect.objectContaining({ message: 'fixture kill failure' })] });
+  expect(processes.activeCount).toBe(1);
+  successfulTermination(child);
+  await processes.close();
+  expect(processes.activeCount).toBe(0);
+});
+
+test('退出结果保存失败后可重试保存，并发关闭不会重新停止进程或重复写入', async () => {
+  const saved = storage();
+  const failure = new Error('fixture storage unavailable');
+  saved.putRecord.mockRejectedValueOnce(failure);
+  const logging = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const changed: number[] = [];
+  const processes = new WorkspaceProcesses(saved, () => changed.push(processes.activeCount));
+  const child = childProcess(); (crossSpawn as unknown as jest.Mock).mockReturnValueOnce(child);
+  try {
+    const pending = processes.start(workspace, modelOwner, 'fixture', []);
+    child.stdout!.emit('data', Buffer.from('finished output')); child.emit('close', 0);
+    await expect(pending).rejects.toBe(failure);
+    await Promise.all([processes.close(), processes.close()]);
+    expect(saved.putRecord).toHaveBeenCalledTimes(2);
+    expect((await processes.read([...saved.records.keys()][0], modelOwner)).output).toBe('finished output');
+    expect(execFile).not.toHaveBeenCalled(); expect(treeKill).not.toHaveBeenCalled();
+    expect(changed).toEqual([1, 0]);
+  } finally { logging.mockRestore(); await processes.close(); }
+});

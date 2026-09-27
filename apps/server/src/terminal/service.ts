@@ -196,7 +196,12 @@ export class PlatformTerminals {
   }
   async close() {
     this.closing = true;
-    await Promise.allSettled([...this.active.values()].map(({ record, runner }) => runner.killTerminalProcess(record.id)));
+    const entries = [...this.active.values()];
+    const results = await Promise.allSettled(entries.map(({ record, runner }) => runner.killTerminalProcess(record.id)));
     await this.events;
+    const failures = results.flatMap((result, index) => result.status === 'rejected' ? [result.reason]
+      // runner 用结构化结果报告停止失败；终态事件可能已移除自然结束的任务，不能把它误报为失败。
+      : !result.value.success && this.active.has(entries[index].record.id) ? [new Error(result.value.error)] : []);
+    if (failures.length) throw new AggregateError(failures, `终端任务关闭失败：${failures.map(String).join('；')}`);
   }
 }

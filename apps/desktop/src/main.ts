@@ -80,7 +80,8 @@ let backups: ApplicationBackups | undefined;
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let browser: DesktopBrowser;
-let exiting = false;
+let exitPhase: 'idle' | 'confirming' | 'closing' | 'ready' = 'idle';
+let exitOperation: Promise<void> | undefined;
 let closePending = false;
 let dirtyDocuments = 0;
 let dirtySettings = false;
@@ -117,24 +118,36 @@ function trust(item: BrowserWindow): void {
   item.on("closed", () => trustedWindows.delete(contentsId));
 }
 async function activeTasks(): Promise<boolean> {
+  // 退出已获确认后只重试清理，不能再向正在关闭或已关闭的存储查询运行状态。
+  if (application.isClosing) return false;
   const hasRuns = (await application.storage.listRuns({ activeOnly: true, limit: 1 })).length > 0;
   // 在异步查询后读取连接状态，避免连接中的 Bot 被当作空闲程序退出。
   return hasRuns || application.pets.keepsAlive || application.screenSense.keepsAlive || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
     || application.nodes.keepsAlive || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
-    || application.interactiveTerminals.hasRunning || !!application.subagents.backgroundTasks().length;
+    || application.interactiveTerminals.hasRunning || application.processes.activeCount > 0 || !!application.subagents.backgroundTasks().length;
 }
-async function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
-  if (exiting) return;
-  exiting = true;
-  notifications?.dispose();
-  petWindowController?.dispose();
-  tray?.destroy();
-  browser?.close();
-  await backups?.close();
-  await application?.close();
-  beforeExit?.();
-  if (relaunch) app.relaunch();
-  app.quit();
+function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
+  if (exitOperation) return exitOperation;
+  exitPhase = 'closing';
+  closePending = false;
+  exitOperation = Promise.resolve().then(async () => {
+    await backups?.close();
+    notifications?.dispose();
+    petWindowController?.dispose();
+    browser?.close();
+    await application?.close();
+    beforeExit?.();
+    // 保留托盘到清理成功，失败时仍可重试；只有此时才允许 Electron 真正关闭窗口。
+    tray?.destroy();
+    if (relaunch) app.relaunch();
+    exitPhase = 'ready';
+    app.quit();
+  }).catch(error => {
+    exitPhase = 'idle';
+    exitOperation = undefined;
+    throw error;
+  });
+  return exitOperation;
 }
 function ensureTray(): void {
   if (tray) return;
@@ -162,19 +175,27 @@ function minimizeToTray(): void {
   window.hide();
 }
 async function confirmQuit(): Promise<void> {
-  const active = await activeTasks();
-  if (dirtyDocuments || dirtySettings || active) {
-    const result = await dialog.showMessageBox({
-      type: "question",
-      buttons: ["继续工作", "退出应用"],
-      defaultId: 0,
-      cancelId: 0,
-      title: "退出 GrayCode",
-      message: "退出应用会停止后台任务，并放弃尚未保存的编辑和设置。",
-    });
-    if (result.response !== 1) return;
+  if (exitPhase !== 'idle') return;
+  exitPhase = 'confirming';
+  try {
+    const active = await activeTasks();
+    if (!application.isClosing && (dirtyDocuments || dirtySettings || active)) {
+      const result = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["继续工作", "退出应用"],
+        defaultId: 0,
+        cancelId: 0,
+        title: "退出 GrayCode",
+        message: "退出应用会停止后台任务，并放弃尚未保存的编辑和设置。",
+      });
+      if (result.response !== 1) return;
+    }
+    await quit();
+  } catch (error) {
+    dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error));
+  } finally {
+    if (exitPhase === 'confirming') exitPhase = 'idle';
   }
-  await quit();
 }
 async function createWindow(): Promise<void> {
   closePending = false;
@@ -210,10 +231,12 @@ async function createWindow(): Promise<void> {
   window.webContents.on('render-process-gone', () => { void application.computer.clientClosed(client.clientId); void application.nodes.clientClosed(client.clientId); });
   window.on('closed', () => { void application.computer.clientClosed(client.clientId); void application.nodes.clientClosed(client.clientId); });
   window.on("close", (event) => {
-    if (exiting) return;
+    if (exitPhase === 'ready') return;
     event.preventDefault();
+    if (exitPhase !== 'idle') return;
+    exitPhase = 'confirming';
     void (async () => {
-      if (dirtyDocuments || dirtySettings) {
+      if (!application.isClosing && (dirtyDocuments || dirtySettings)) {
         const result = await dialog.showMessageBox(window!, {
           type: "question",
           buttons: ["继续编辑", "放弃修改并关闭"],
@@ -228,7 +251,8 @@ async function createWindow(): Promise<void> {
         ensureTray();
         window!.hide();
       } else await quit();
-    })().catch((error) => dialog.showErrorBox("GrayCode", error.message));
+    })().catch((error) => dialog.showErrorBox("GrayCode", error.message))
+      .finally(() => { if (exitPhase === 'confirming') exitPhase = 'idle'; });
   });
   await window.loadURL("graycode://app/index.html");
 }
@@ -289,7 +313,7 @@ async function main(): Promise<void> {
     currentVersion: app.getVersion(), restartArgs: process.argv.slice(app.isPackaged ? 1 : 2).filter(value => !value.startsWith('--veloapp-')),
     backup: destination => backups!.export(destination),
     assertCanRestart: async restoreId => {
-      if (exiting || dirtySettings || dirtyDocuments || await application.productUi.hasDirtyPreferences())
+      if (exitPhase !== 'idle' || application.isClosing || dirtySettings || dirtyDocuments || await application.productUi.hasDirtyPreferences())
         throw new Error('请先保存或放弃编辑器与设置中的修改，再安装或回退。');
       const pendingRestore = (await backups!.status()).pending;
       if (restoreId && pendingRestore?.id !== restoreId) throw new Error('本次回退的恢复准备已经改变，请重新操作。');
@@ -304,7 +328,6 @@ async function main(): Promise<void> {
       setTimeout(() => { void quit(false, apply).catch(async error => {
         await backups!.cancelRestore().catch(() => {});
         dialog.showErrorBox('GrayCode 更新器未能启动', `当前程序包未被替换。请重新启动后重试。\n${String(error)}`);
-        app.exit(1);
       }); }, 150);
     },
   });
@@ -333,12 +356,12 @@ async function main(): Promise<void> {
   await application.nodes.activate();
   application.subscribe((event) => {
     notify(event);
-    if (closePending && (event.type === "file.activity" || event.type === 'nodes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
+    if (closePending && exitPhase === 'idle' && (event.type === "file.activity" || event.type === 'nodes.changed' || event.type === 'processes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
       void activeTasks()
         .then((active) => {
-          if (!active && closePending) return quit();
+          if (!active && closePending && exitPhase === 'idle') return quit();
         })
-        .catch(() => undefined);
+        .catch(error => dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error)));
   });
   ipcMain.handle(
     "graycode:rpc",
@@ -365,7 +388,7 @@ async function main(): Promise<void> {
         method = params.type;
         params = params.data ?? {};
       }
-      if (exiting) throw new Error('应用正在关闭，请稍后重新打开。');
+      if (exitPhase === 'closing' || exitPhase === 'ready' || application.isClosing) throw new Error('应用正在关闭，请稍后重新打开。');
       if (method === 'files.reveal') return revealWorkspaceFile(application, shell, client.actorId, params as { workspaceId: string; path: string });
       if (method === 'workspace.openInExplorer') return openWorkspaceInExplorer(application, shell, client.actorId, params);
       if (method === 'desktop.pet.expand') return petWindowController!.expand(params.expanded === true);
@@ -579,17 +602,17 @@ else {
     if (application) void createWindow();
   });
   app.on("before-quit", (event) => {
-    if (!exiting && application) {
+    if (exitPhase !== 'ready' && application) {
       event.preventDefault();
-      void confirmQuit();
+      if (exitPhase === 'idle') void confirmQuit();
     }
   });
   app.on("window-all-closed", () => {
     /* Lifetime is controlled by the close policy and running tasks. */
   });
-  void main().catch((error) => {
+  void main().catch(async (error) => {
     dialog.showErrorBox("GrayCode 启动失败", error.message);
-    exiting = true;
-    app.quit();
+    try { await quit(); }
+    catch (cleanupError) { dialog.showErrorBox('GrayCode 关闭失败', String(cleanupError)); }
   });
 }

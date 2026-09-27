@@ -120,7 +120,7 @@ export class InteractiveTerminals {
       const graceful = await Promise.race([session.closed.then(() => true), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); })]);
       clearTimeout(timer);
       if (!graceful) await stopOwnedProcess(session.host);
-    })();
+    })().catch(error => { session.stopping = undefined; throw error; });
     return session.stopping;
   }
   async remove(id: string): Promise<void> {
@@ -136,7 +136,10 @@ export class InteractiveTerminals {
   private changed() { this.application.publish({ type: 'terminal.changed' }); }
   async close(): Promise<void> {
     this.closed = true;
-    await Promise.all([...this.sessions.values()].map(session => this.stopSession(session)));
+    const results = await Promise.allSettled([...this.sessions.values()].map(session => this.stopSession(session)));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+      `交互终端关闭失败：${failures.map(result => String(result.reason)).join('；')}`);
     this.sessions.clear();
   }
 }

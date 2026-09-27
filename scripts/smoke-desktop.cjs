@@ -18,6 +18,55 @@ async function until(check, label, timeout = 20000) {
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
   throw new Error(`Timed out: ${label}`);
 }
+async function verifyShutdownRetry(rpc, window) {
+  if (process.platform !== 'win32') return false;
+  const originalQuit = app.quit.bind(app), originalError = dialog.showErrorBox, originalQuestion = dialog.showMessageBox;
+  const childProcesses = require('node:child_process'), originalExecFile = childProcesses.execFile;
+  const systemRoot = process.env.SystemRoot;
+  let quitRequested = false, prematureExit = false, failed = '', completed = false, questions = 0, exitDuringStop = false, probe;
+  const holdExit = event => { event.preventDefault(); prematureExit = true; };
+  try {
+    // 只创建本夹具的有界进程；异常中断夹具时它也会自行结束，不留下常驻后台程序。
+    probe = await rpc('processes.start', { workspaceId: 'smoke', command: 'node.exe',
+      args: ['-e', 'console.log("shutdown-probe:" + process.pid); setTimeout(() => {}, 30000)'] });
+    const identity = /shutdown-probe:(\d+)/.exec(probe.output); assert(identity);
+    const pid = Number(identity[1]); assert(pid > 0);
+    app.on('will-quit', holdExit);
+    // 发起真实 before-quit；截住成功清理后的最终退出，先验证自己持有的进程已经消失。
+    app.quit = () => { quitRequested = true; };
+    dialog.showMessageBox = async () => { questions++; return { response: 1, checkboxChecked: false }; };
+    dialog.showErrorBox = (_title, message) => { failed = message; };
+    childProcesses.execFile = (file, args, ...options) => {
+      // 真实停止命令发出时再请求一次退出，验证清理期间也会拦截原生退出。
+      if (!exitDuringStop && path.basename(file) === 'taskkill.exe' && args[1] === String(pid)) {
+        exitDuringStop = true; originalQuit();
+      }
+      return originalExecFile(file, args, ...options);
+    };
+    process.env.SystemRoot = path.join(output, 'missing-system-root');
+    originalQuit();
+    originalQuit();
+    await until(() => failed || prematureExit, 'shutdown failure reported');
+    assert(exitDuringStop); assert(!prematureExit); assert(!quitRequested); assert(!window.isDestroyed());
+    assert.equal(questions, 1); assert(failed.includes('受管进程关闭失败'));
+    assert.doesNotThrow(() => process.kill(pid, 0));
+    if (systemRoot === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = systemRoot;
+    originalQuit();
+    await until(() => quitRequested || prematureExit, 'shutdown retry completed');
+    assert(quitRequested && !prematureExit);
+    assert.equal(questions, 1);
+    assert.throws(() => process.kill(pid, 0));
+    completed = true;
+    return true;
+  } finally {
+    if (systemRoot === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = systemRoot;
+    app.quit = originalQuit; dialog.showErrorBox = originalError; dialog.showMessageBox = originalQuestion;
+    childProcesses.execFile = originalExecFile;
+    app.removeListener('will-quit', holdExit);
+    if (!completed && probe && !window.isDestroyed()) await rpc('processes.stop', { id: probe.id })
+      .catch(error => { errors.push(`Shutdown fixture cleanup: ${String(error)}`); });
+  }
+}
 async function main() {
   fsSync.mkdirSync(path.join(output, 'project'), { recursive: true });
   fsSync.mkdirSync(path.join(output, 'profile'), { recursive: true });
@@ -176,8 +225,9 @@ async function main() {
   const preview = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().startsWith('graycode-preview://')), 'embedded browser');
   await until(() => preview.getTitle() === 'Preview verified', 'local HTML preview');
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
+  const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests,
-    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save'], fontCount: fonts.length, errors, output };
+    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
   server.closeAllConnections(); server.close();
