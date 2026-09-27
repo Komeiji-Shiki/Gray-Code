@@ -98,7 +98,7 @@ export interface ToolDeclaration {
      * 各渠道行为：
      * - Anthropic: 工具定义中加 strict: true，请求头加 beta header
      * - OpenAI Chat Completions: 工具定义中加 strict: true
-     * - OpenAI Responses: 默认即 strict，不需要额外设置
+     * - OpenAI Responses: 默认显式 strict: false 保留可选参数；渠道启用后使用 nullable strict schema
      * - Gemini: 不支持，此字段无效
      */
     strict?: boolean;

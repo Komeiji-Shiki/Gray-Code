@@ -965,6 +965,21 @@ export interface OpenAIResponsesReasoningMetadata {
  * 结构在 backend/modules/conversation/types.ts 与 frontend/src/types/index.ts 统一
  * （T16 起以本文件为单一来源，两端 re-export）。
  */
+export interface OpenAIResponsesMessageMetadata {
+    /** 每个 assistant output item 的边界，不等同于宿主对话消息 ID。 */
+    id?: string;
+    status?: 'in_progress' | 'completed' | 'incomplete';
+    /** 只保存供应方实际返回的 phase；旧历史不能猜测为 final_answer。 */
+    phase?: 'commentary' | 'final_answer' | null;
+    /** 同一 message 的 content 分段定位；不直接发送给 API。 */
+    contentIndex?: number;
+    /** 无 item_id 的兼容流使用 output_index 定位；不直接发送给 API。 */
+    outputIndex?: number;
+    contentType?: 'output_text' | 'refusal';
+    annotations?: unknown[];
+    logprobs?: unknown[];
+}
+
 export interface ContentPart {
     /** 文本内容 */
     text?: string;
@@ -1047,6 +1062,9 @@ export interface ContentPart {
 
     /** OpenAI Responses reasoning item 的标准元数据，用于无状态多轮原样回传 */
     openaiResponsesReasoning?: OpenAIResponsesReasoningMetadata;
+
+    /** Responses assistant 输出项元数据；text 仍是唯一正文，避免编辑历史后回放旧正文。 */
+    openaiResponsesMessage?: OpenAIResponsesMessageMetadata;
 
     /**
      * 是否为思考内容标志

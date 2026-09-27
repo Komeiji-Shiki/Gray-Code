@@ -290,7 +290,7 @@ export interface BaseChannelConfig {
      * 各渠道行为：
      * - Anthropic: 自动注入 anthropic-beta: structured-outputs-2025-12-15 头部
      * - OpenAI: 将工具定义中的 strict 从 false 改为 true
-     * - OpenAI Responses: 默认即 strict，此设置无额外效果
+     * - OpenAI Responses: 默认显式关闭上游自动 strict；开启后为标记工具生成保留 optional 语义的 nullable schema
      * - Gemini: 不支持，设置无效
      *
      * 默认值：false（兼容反代/代理网关不支持 strict 字段的场景）

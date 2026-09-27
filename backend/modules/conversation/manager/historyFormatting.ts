@@ -518,6 +518,8 @@ export function formatHistoryForAPI(
                     || !!part.fileData?.fileUri
                     || !!part.functionCall
                     || !!part.functionResponse
+                    // Responses 原生空 message 也可能携带 phase，不能当作无效文本空壳删除。
+                    || (channelType === 'openai-responses' && !!part.openaiResponsesMessage)
                     || !!(part as any).executableCode
                     || !!(part as any).codeExecutionResult;
                 if (!hasData && !hasProtocolThinking) return false;
@@ -540,6 +542,11 @@ export function formatHistoryForAPI(
         if (message.isUserInput) {
             result.isUserInput = true;
         }
+        // 插话/ask_user 回答仍是用户输入，但复用运行开始时捕获的 promptContext。
+        // 必须把可信宿主边界带到 formatter，否则只剩 isUserInput 会让旧上下文移到反馈前。
+        // 这些字段不进入上游请求（formatter 仍只序列化 role/parts），也不由正文推断。
+        if (message.userFeedback !== undefined) result.userFeedback = message.userFeedback;
+        if (message.source) result.source = message.source;
         // 内部回合边界必须保留到 formatter，避免把摘要和提醒误判为新用户输入。
         if (message.isSummary) result.isSummary = true;
         if (message.contextMethod) result.contextMethod = message.contextMethod;

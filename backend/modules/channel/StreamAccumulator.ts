@@ -16,6 +16,7 @@ import {
 } from './streamAccumulator/streamContentBuilder';
 import { mergeUsageMetadata } from './streamAccumulator/streamUsageMerger';
 import { collectNewCompletedFunctionCalls } from './streamAccumulator/streamFunctionCallReporter';
+import { mergeResponsesMessagePart, reconcileResponsesOutput } from './streamAccumulator/responsesOutput';
 
 export interface StreamingContentOptions {
     includeInternalFields?: boolean;
@@ -180,8 +181,17 @@ export class StreamAccumulator {
         // 即使已经 done，也要处理delta（虽然通常 done 后delta 为空）
         if (chunk.delta && chunk.delta.length > 0) {
             for (const part of chunk.delta) {
-                this.addPart(part, { visibleDelta, reasoningSummaryIndex: chunk.providerEvent?.summaryIndex });
+                this.addPart(part, { visibleDelta, reasoningSummaryIndex: chunk.providerEvent?.summaryIndex, responsesEventType: chunk.providerEvent?.type });
             }
+        }
+
+        if (this.providerType === 'openai-responses' && chunk.done && chunk.contentSnapshot && !this.promptToolParser) {
+            const reconciled = reconcileResponsesOutput(this.parts, chunk.contentSnapshot.parts);
+            this.parts = reconciled.parts;
+            visibleDelta.push(...reconciled.delta);
+            this.thoughtSignatures = {};
+            for (const part of this.parts) Object.assign(this.thoughtSignatures, part.thoughtSignatures);
+            this.contentRevision++;
         }
 
         if (chunk.done && this.promptToolParser) {
@@ -245,6 +255,11 @@ export class StreamAccumulator {
         if (chunk.done) {
             this.isDone = true;
         }
+        if (this.providerType === 'openai-responses' && chunk.done && chunk.contentSnapshot && this.promptToolParser) {
+            // XML/JSON 模式的原生终态仍是工具标记文本，不能直接交给前端权威替换。
+            // 即使结构修订号未变化，也用已经解析的累加内容覆盖，保持工具卡和调用 ID 不变。
+            chunk.contentSnapshot = this.getStreamingContent({ parsePartialArgs: true });
+        }
 
         return visibleDelta;
     }
@@ -277,8 +292,11 @@ export class StreamAccumulator {
             skipPromptParser?: boolean;
             visibleDelta?: ContentPart[];
             reasoningSummaryIndex?: number;
+            responsesEventType?: string;
         }
     ): void {
+        // XML/JSON 提示词工具解析器已消费 text delta，不能再消费 message.done 的同一全文。
+        if (this.promptToolParser && part.openaiResponsesMessage && !options?.responsesEventType?.endsWith('.delta')) return;
         if (!options?.skipPromptParser && this.promptToolParser && part.text && !part.thought) {
             const parsedParts = this.promptToolParser.appendText(part.text);
             for (const parsedPart of parsedParts) {
@@ -287,6 +305,17 @@ export class StreamAccumulator {
                     visibleDelta: options?.visibleDelta
                 });
             }
+            return;
+        }
+
+        if (this.providerType === 'openai-responses' && part.openaiResponsesMessage) {
+            if (part.text && this.thinkingStartTime !== undefined && !this.hasReceivedNormalText) {
+                this.hasReceivedNormalText = true;
+                this.thinkingDuration = Date.now() - this.thinkingStartTime;
+            }
+            const merged = mergeResponsesMessagePart(this.parts, part, options?.responsesEventType);
+            options?.visibleDelta?.push(...merged.delta);
+            if (merged.structural) this.contentRevision++;
             return;
         }
 

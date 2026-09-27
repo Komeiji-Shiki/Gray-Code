@@ -629,6 +629,8 @@ const ja: BackendLanguageMessages = {
             }
         },
         presentation: {
+            // Responses の strict はチャネル設定に従い、暗黙には有効化されない。
+            strictToolsOpenaiResponses: 'OpenAI Responses：既定では無効。有効にすると任意パラメータに null を指定可能',
             messageBody: '送信内容', recipient: '宛先', mainAgent: 'メインエージェント',
             contentUnavailable: 'この履歴には本文が保存されていません。受領情報は詳細で確認できます。',
             messageSaved: 'メッセージを保存しました。受信側の次の実行区切りで読み込まれます。',
@@ -636,7 +638,25 @@ const ja: BackendLanguageMessages = {
             historyMessages: '履歴', characters: '{count} 文字',
             invalidatedNote: 'このノートは無効です。有効な情報源から整理し直してください。',
             partialContent: '本文の一部を表示しています。返された範囲を使って続きを読むことができます。',
-            moreHistory: '返された履歴位置を使って、さらに古い記録を読み込めます。'
+            moreHistory: '返された履歴位置を使って、さらに古い記録を読み込めます。',
+            // ページの続行とローカル展開を区別し、除外元は今回の結果に記録された情報だけを表示する。
+            findFiles: {
+                returnedFiles: '{count} 件のファイルを取得',
+                pageFiles: 'このページに {count} 件',
+                pageOffset: 'このページは {offset} 件をスキップ',
+                nextPage: '次のページは再呼び出しが必要：offset={offset}、このパターンと除外条件を維持',
+                expandPage: 'このページの残り {count} 件を表示',
+                restartAfterFailure: '検索は未完了です。エラーを解消して offset=0 から再検索してください。このページから確実に続行することはできません。',
+                continuationDetails: '続行の案内',
+                workspaceErrors: 'ワークスペースの検索失敗',
+                exclusions: '適用された除外規則',
+                excludeSources: {
+                    argument: '呼び出し引数（設定を置換）',
+                    settings: 'ツール設定',
+                    fallback: '既定のフォールバック',
+                    unknown: '適用元の記録なし'
+                }
+            }
         },
         errors: {
             toolNotFound: 'ツールが見つかりません: {toolName}',

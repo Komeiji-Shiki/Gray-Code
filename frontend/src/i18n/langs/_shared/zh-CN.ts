@@ -173,6 +173,11 @@ const sharedZhCN = {
                     multimodal: {
                         document: backendZhCN.tools.reviewDocument.values.category.docs,
                     },
+                    strictTools: {
+                        support: {
+                            openaiResponses: backendZhCN.tools.presentation.strictToolsOpenaiResponses,
+                        },
+                    },
                 },
                 selector: {
                     confirm: backendZhCN.notifications.windowsAgentStop.actionLabels.genericConfirmation,
@@ -586,6 +591,23 @@ const sharedZhCN = {
                 appendedContent: backendZhCN.tools.presentation.appendedContent,
                 characters: backendZhCN.tools.presentation.characters,
                 contentUnavailable: backendZhCN.tools.presentation.contentUnavailable,
+                findFiles: {
+                    continuationDetails: backendZhCN.tools.presentation.findFiles.continuationDetails,
+                    excludeSources: {
+                        argument: backendZhCN.tools.presentation.findFiles.excludeSources.argument,
+                        fallback: backendZhCN.tools.presentation.findFiles.excludeSources.fallback,
+                        settings: backendZhCN.tools.presentation.findFiles.excludeSources.settings,
+                        unknown: backendZhCN.tools.presentation.findFiles.excludeSources.unknown,
+                    },
+                    exclusions: backendZhCN.tools.presentation.findFiles.exclusions,
+                    expandPage: backendZhCN.tools.presentation.findFiles.expandPage,
+                    nextPage: backendZhCN.tools.presentation.findFiles.nextPage,
+                    pageFiles: backendZhCN.tools.presentation.findFiles.pageFiles,
+                    pageOffset: backendZhCN.tools.presentation.findFiles.pageOffset,
+                    restartAfterFailure: backendZhCN.tools.presentation.findFiles.restartAfterFailure,
+                    returnedFiles: backendZhCN.tools.presentation.findFiles.returnedFiles,
+                    workspaceErrors: backendZhCN.tools.presentation.findFiles.workspaceErrors,
+                },
                 historyMessages: backendZhCN.tools.presentation.historyMessages,
                 invalidatedNote: backendZhCN.tools.presentation.invalidatedNote,
                 mainAgent: backendZhCN.tools.presentation.mainAgent,

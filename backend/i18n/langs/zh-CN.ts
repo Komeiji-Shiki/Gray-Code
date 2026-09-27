@@ -631,6 +631,8 @@ const zhCN = {
             }
         },
         presentation: {
+            // Responses 由渠道开关决定 strict；说明不能再暗示未勾选时也默认启用。
+            strictToolsOpenaiResponses: 'OpenAI Responses：默认关闭；启用后可选参数允许 null',
             messageBody: '发送内容', recipient: '收件方', mainAgent: '主模型',
             contentUnavailable: '这条历史记录未保存消息正文，可在详情中查看现有回执。',
             messageSaved: '消息已保存，等待接收方在运行边界读取。',
@@ -638,7 +640,25 @@ const zhCN = {
             historyMessages: '历史记录', characters: '{count} 字符',
             invalidatedNote: '这份笔记已失效，需要根据有效来源重新整理。',
             partialContent: '当前只显示部分正文，可按工具返回的范围继续读取。',
-            moreHistory: '还有更早记录，可使用返回的历史位置继续读取。'
+            moreHistory: '还有更早记录，可使用返回的历史位置继续读取。',
+            // 分页属于工具续查，不是卡片的本地展开；排除来源只反映本次回执，不推测当前设置。
+            findFiles: {
+                returnedFiles: '本次返回 {count} 个文件',
+                pageFiles: '本页 {count} 个文件',
+                pageOffset: '本页已跳过 {offset} 个文件',
+                nextPage: '下一页需重新调用：offset={offset}，保持此模式及排除条件不变',
+                expandPage: '展开本页剩余 {count} 个文件',
+                restartAfterFailure: '搜索未完整完成；修复错误后从 offset=0 重查，不能依赖本页继续翻页。',
+                continuationDetails: '续查说明',
+                workspaceErrors: '工作区搜索失败',
+                exclusions: '实际排除规则',
+                excludeSources: {
+                    argument: '本次参数（替换设置）',
+                    settings: '工具设置',
+                    fallback: '默认回退',
+                    unknown: '来源未记录'
+                }
+            }
         },
         errors: {
             toolNotFound: '工具未找到: {toolName}',

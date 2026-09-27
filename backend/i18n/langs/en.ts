@@ -629,6 +629,8 @@ Output content directly without any prefix.`
             }
         },
         presentation: {
+            // Responses strict follows the channel switch, rather than being enabled implicitly.
+            strictToolsOpenaiResponses: 'OpenAI Responses: Off by default; optional parameters allow null when enabled',
             messageBody: 'Message content', recipient: 'Recipient', mainAgent: 'Main agent',
             contentUnavailable: 'This history entry has no saved message body. Existing receipt details remain available.',
             messageSaved: 'Message saved, awaiting delivery at the recipient’s next run boundary.',
@@ -636,7 +638,25 @@ Output content directly without any prefix.`
             historyMessages: 'History', characters: '{count} characters',
             invalidatedNote: 'This note is no longer valid. Rebuild it from valid sources.',
             partialContent: 'Only part of the content is shown. Continue reading using the returned range.',
-            moreHistory: 'Earlier records are available using the returned history position.'
+            moreHistory: 'Earlier records are available using the returned history position.',
+            // Pagination requires another tool call; exclusion sources describe this receipt, not current settings.
+            findFiles: {
+                returnedFiles: '{count} files returned',
+                pageFiles: '{count} files on this page',
+                pageOffset: 'This page skips {offset} files',
+                nextPage: 'Call again for the next page: offset={offset}, with this pattern and exclusions unchanged',
+                expandPage: 'Show {count} more files on this page',
+                restartAfterFailure: 'Search is incomplete. Resolve errors and restart at offset=0; this page cannot provide reliable continuation.',
+                continuationDetails: 'Continuation guidance',
+                workspaceErrors: 'Workspace search failures',
+                exclusions: 'Effective exclusions',
+                excludeSources: {
+                    argument: 'Call argument (replaces settings)',
+                    settings: 'Tool settings',
+                    fallback: 'Default fallback',
+                    unknown: 'Source not recorded'
+                }
+            }
         },
         errors: {
             toolNotFound: 'Tool not found: {toolName}',

@@ -51,7 +51,7 @@ describe('provider protocol boundaries', () => {
         const responses = new OpenAIResponsesFormatter();
         expect(chat.parseResponse({ choices: [{ message: { refusal: 'Unable to comply.' }, finish_reason: 'stop' }] }).content.parts).toEqual([{ text: 'Unable to comply.' }]);
         expect(chat.parseStreamChunk({ choices: [{ delta: { refusal: 'Unable to comply.' } }] }).delta).toEqual([{ text: 'Unable to comply.' }]);
-        expect(responses.parseResponse({ status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'Unable to comply.' }] }] }).content.parts).toEqual([{ text: 'Unable to comply.' }]);
+        expect(responses.parseResponse({ status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'Unable to comply.' }] }] }).content.parts).toEqual([{ text: 'Unable to comply.', openaiResponsesMessage: { contentIndex: 0, contentType: 'refusal' } }]);
         expect(responses.parseStreamChunk({ type: 'response.refusal.delta', delta: 'Unable to comply.' }).delta).toEqual([{ text: 'Unable to comply.' }]);
     });
 

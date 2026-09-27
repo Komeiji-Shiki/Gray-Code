@@ -110,9 +110,19 @@ export abstract class BaseFormatter {
     abstract convertTools(tools: ToolDeclaration[]): any;
     
     /**
+     * 这里只识别 prompt 捕获边界，而不是“是否为真实用户指令”。
+     * sendInterruptMessage / ask_user 回答保留 isUserInput 和 user 角色，但属于当前
+     * 运行已捕获的上下文；将它们当作新锚点会移动旧前缀，preserve 下还会重复回插快照。
+     * 仅使用宿主持久化的 userFeedback，不猜测正文，也不改全局 isRealUserMessage 语义。
+     */
+    private isPromptContextTurnInput(message: Content): boolean {
+        return message.role === 'user' && !!message.isUserInput && !message.userFeedback;
+    }
+
+    /**
      * 查找动态提示词插入点的索引
      *
-     * 查找连续的最后一组带有 isUserInput 标记的消息
+     * 查找连续的最后一组启动新 prompt 捕获的用户输入（不包含运行内反馈）
      * 返回这组消息的第一条索引，动态提示词会被插入到该消息之前
      *
      * @param history 处理后的历史消息
@@ -124,7 +134,7 @@ export abstract class BaseFormatter {
         
         // 从后向前查找
         for (let i = history.length - 1; i >= 0; i--) {
-            if (history[i].isUserInput) {
+            if (this.isPromptContextTurnInput(history[i])) {
                 // 找到用户输入消息，记录索引，继续向前查找连续的用户输入消息
                 firstIndex = i;
                 foundMarkedMessage = true;
@@ -141,7 +151,7 @@ export abstract class BaseFormatter {
     /**
      * 查找当前回合的动态上下文稳定插入点。
      *
-     * 当前回合永远以“最后一组用户主动输入”的第一条消息为锚点。
+     * 当前回合以“最后一组非反馈用户主动输入”的第一条消息为锚点。
      * 新用户消息刚写入历史、尚未写入 turnDynamicContext 时，旧实现会回头找到上一轮缓存，
      * 并把上一轮误判为当前回合，导致 preserve 模式下旧动态上下文不再插回原位。
      *
@@ -158,6 +168,7 @@ export abstract class BaseFormatter {
             const message = history[i];
             if (
                 message.role === 'user' &&
+                !message.userFeedback &&
                 !!message.turnDynamicContext
             ) {
                 return i;
@@ -175,8 +186,7 @@ export abstract class BaseFormatter {
         let endIndex = startIndex + 1;
         while (
             endIndex < history.length &&
-            history[endIndex].role === 'user' &&
-            history[endIndex].isUserInput
+            this.isPromptContextTurnInput(history[endIndex])
         ) {
             endIndex++;
         }
@@ -325,8 +335,7 @@ export abstract class BaseFormatter {
             const isHistoricalPreservedTurn =
                 currentTurnStartIndex >= 0 &&
                 i !== currentTurnStartIndex &&
-                message.role === 'user' &&
-                message.isUserInput &&
+                this.isPromptContextTurnInput(message) &&
                 !!message.turnDynamicContext;
 
             if (isHistoricalPreservedTurn) {

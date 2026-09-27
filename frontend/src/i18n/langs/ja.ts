@@ -1180,7 +1180,7 @@ const ja: LanguageMessages = {
                         support: {
                             anthropic: 'Anthropic：beta ヘッダーを自動注入、strict ツール最大 20 個',
                             openai: 'OpenAI：全パラメータ required + additionalProperties: false が必要',
-                            openaiResponses: 'OpenAI Responses：デフォルトで strict が有効',
+                            openaiResponses: sharedJa.components.settings.channelSettings.form.strictTools.support.openaiResponses,
                             gemini: 'Gemini：サポートなし'
                         }
                     },

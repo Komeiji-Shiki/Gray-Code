@@ -1,3 +1,4 @@
+import { responsesMessageFields, responsesMessageParts, responsesMessageStart, responsesTextPart, sameResponsesMessage } from './responsesMessage';
 import { parseToolArguments } from './toolArguments';
 import { resolveConfiguredStream } from '../../config/configs/base';
 /**
@@ -9,7 +10,7 @@ import { resolveConfiguredStream } from '../../config/configs/base';
 
 import { createHash } from 'crypto';
 import { t } from '../../../i18n';
-import { BaseFormatter } from './base';
+import { BaseFormatter, ensureStrictSchema } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
 import type {
     OpenAIResponsesConfig,
@@ -199,7 +200,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
 
         // 添加工具
         if (tools && tools.length > 0) {
-            body.tools = this.convertTools(tools);
+            body.tools = this.convertTools(tools, config.strictToolsEnabled === true);
         }
 
         // 添加 prompt_cache_key（会话缓存透传）
@@ -330,21 +331,37 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             
             // 缓存当前正在构建的 message 类型项的内容
             let messageParts: any[] = [];
+            let messageMetadata: ContentPart['openaiResponsesMessage'];
             
             // 辅助函数：将积攒的文本/图片内容作为一个 message 项提交
             const flushMessage = () => {
-                if (messageParts.length > 0) {
+                if (messageParts.length > 0 || messageMetadata) {
                     input.push({
                         type: 'message',
                         role,
+                        ...responsesMessageFields(messageMetadata),
                         content: messageParts
                     });
                     messageParts = [];
+                    messageMetadata = undefined;
                 }
             };
             
             for (let partIndex = 0; partIndex < content.parts.length; partIndex++) {
                 const part = content.parts[partIndex];
+                // 每个原生 assistant message 保持自身 phase/item 边界；不能与相邻输出项合并。
+                if (role === 'assistant' && part.openaiResponsesMessage) {
+                    if (!sameResponsesMessage(messageMetadata, part.openaiResponsesMessage)) flushMessage();
+                    messageMetadata = part.openaiResponsesMessage;
+                    // content:[] 与 content:[{type:'output_text',text:''}] 是不同原生输出。
+                    if (messageMetadata.contentType || part.text) messageParts.push(messageMetadata.contentType === 'refusal'
+                        ? { type: 'refusal', refusal: part.text ?? '' }
+                        : { type: 'output_text', text: part.text ?? '',
+                            ...(messageMetadata.annotations ? { annotations: messageMetadata.annotations } : {}),
+                            ...(messageMetadata.logprobs ? { logprobs: messageMetadata.logprobs } : {}) });
+                    continue;
+                }
+                if (messageMetadata) flushMessage();
                 const encryptedContent = part.thoughtSignatures?.['openai-responses'];
                 const reasoningMetadata = part.openaiResponsesReasoning;
                 const previousPart = partIndex > 0 ? content.parts[partIndex - 1] : undefined;
@@ -651,18 +668,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // 遍历 output 数组
         for (const item of response.output) {
             if (item.type === 'message') {
-                // 处理消息内容
-                if (item.content && Array.isArray(item.content)) {
-                    for (const contentPart of item.content) {
-                        if (contentPart.type === 'output_text') {
-                            parts.push({
-                                text: contentPart.text
-                            });
-                        } else if (contentPart.type === 'refusal' && typeof contentPart.refusal === 'string') {
-                            parts.push({ text: contentPart.refusal });
-                        }
-                    }
-                }
+                parts.push(...responsesMessageParts(item));
             } else if (item.type === 'reasoning') {
                 const summary = normalizeReasoningSummary(item);
                 const reasoningContent = normalizeReasoningContent(item);
@@ -752,10 +758,17 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         let done = false;
         let usage: any;
         let finishReason: string | undefined;
+        let contentSnapshot: Content | undefined;
 
         // 根据事件类型处理
         switch (chunk.type) {
             case 'response.output_item.added':
+                if (chunk.item?.type === 'message') {
+                    parts.push(responsesMessageStart(chunk.item, chunk.output_index));
+                } else if (chunk.item?.type === 'reasoning' && typeof chunk.item.id === 'string') {
+                    // 空摘要的 reasoning 也先占据 output 顺序，密文可能晚于后续 message 到达。
+                    parts.push({ thought: true, openaiResponsesReasoning: { id: chunk.item.id } });
+                }
                 // 当函数调用被添加时
                 if (chunk.item?.type === 'function_call') {
                     parts.push({
@@ -772,6 +785,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.output_item.done':
+                if (chunk.item?.type === 'message') {
+                    parts.push(...responsesMessageParts(chunk.item, chunk.output_index));
+                }
                 if (chunk.item?.type === 'function_call') {
                     // item.id 定位流式输出项，call_id 才是工具结果需要回传的关联 ID。
                     // 兼容只在最终 item 中给出 call_id 或完整参数的端点。
@@ -815,13 +831,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 }
                 break;
             
+            case 'response.refusal.done':
+            case 'response.output_text.done':
             case 'response.refusal.delta':
             case 'response.output_text.delta':
             case 'response.text.delta': // 兼容旧版本
-                // 文本增量
-                parts.push({
-                    text: chunk.delta
-                });
+                // 按 item/content 定位；done 全文交由累加器覆盖，不重复追加。
+                if (chunk.type.endsWith('.done') && typeof chunk.item_id !== 'string' && typeof chunk.output_index !== 'number') break;
+                parts.push(responsesTextPart(chunk));
                 break;
             
             case 'response.reasoning_text.done':
@@ -912,6 +929,12 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             case 'response.done': // 兼容旧版本
                 // 响应完成
                 done = true;
+                // output 是最终有序快照；有些上游只在此处补 encrypted_content/phase。
+                // 无 output 或空数组的兼容流仍使用已累加内容，不把已有正文清空。
+                if (Array.isArray(chunk.response?.output) && chunk.response.output.length > 0) {
+                    const snapshot = this.parseResponse(chunk.response).content;
+                    if (snapshot.parts.length > 0) contentSnapshot = snapshot;
+                }
                 if (chunk.response?.usage) {
                     const u = chunk.response.usage;
                     const outputTokens = u.output_tokens || 0;
@@ -950,6 +973,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             done,
             usage,
             finishReason,
+            ...(contentSnapshot ? { contentSnapshot } : {}),
             modelVersion: chunk.response?.model,
             providerEvent: {
                 type: chunk.type || 'unknown',
@@ -1013,17 +1037,24 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
     /**
      * 转换工具声明
      */
-    convertTools(tools: ToolDeclaration[]): any {
+    convertTools(tools: ToolDeclaration[], strictEnabled = false): any {
         if (!tools || tools.length === 0) {
             return undefined;
         }
-        
-        return tools.map(tool => ({
-            type: 'function',
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters
-        }));
+
+        return tools.map(tool => {
+            // Responses 会在省略 strict 时自动把 optional 属性改为必填，且不补 null。
+            // 这会迫使模型为 cursor 等参数编造占位值；默认显式保留声明的可选语义，
+            // 只有渠道和工具都开启 strict 时才使用与运行器 null 清理配套的 nullable schema。
+            const strict = strictEnabled && tool.strict === true;
+            return {
+                type: 'function',
+                name: tool.name,
+                description: tool.description,
+                parameters: strict ? ensureStrictSchema(tool.parameters, true) : tool.parameters,
+                strict,
+            };
+        });
     }
 
     /**

@@ -1182,7 +1182,7 @@ const zhCN = {
                         support: {
                             anthropic: 'Anthropic：自动注入 beta header，最多 20 个 strict 工具',
                             openai: 'OpenAI：要求参数全部 required + additionalProperties: false',
-                            openaiResponses: 'OpenAI Responses：默认已启用 strict',
+                            openaiResponses: sharedZhCN.components.settings.channelSettings.form.strictTools.support.openaiResponses,
                             gemini: 'Gemini：不支持'
                         }
                     },

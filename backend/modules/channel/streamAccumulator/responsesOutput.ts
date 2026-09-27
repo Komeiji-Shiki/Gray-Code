@@ -1,0 +1,57 @@
+import type { ContentPart } from '../../conversation/types';
+import { sameResponsesMessage } from '../formatters/responsesMessage';
+
+/** 不把两个 assistant output item（尤其 commentary/final_answer）拼成同一段。 */
+export function mergeResponsesMessagePart(parts: ContentPart[], incoming: ContentPart, eventType?: string): { delta: ContentPart[]; structural: boolean } {
+    const metadata = incoming.openaiResponsesMessage!;
+    let existing = parts.find(part => sameResponsesMessage(part.openaiResponsesMessage, metadata)
+        && (part.openaiResponsesMessage?.contentIndex ?? 0) === (metadata.contentIndex ?? 0));
+    // 兼容旧 text.delta 省略 item_id 的流：done 只接管最后一段尚未归属原生 item 的正文。
+    if (!existing && eventType === 'response.output_item.done') {
+        const last = parts.at(-1);
+        if (last && typeof last.text === 'string' && !last.thought && !last.openaiResponsesMessage && !last.functionCall) existing = last;
+    }
+    const previous = existing?.text ?? '';
+    const isDelta = eventType?.endsWith('.delta') === true;
+    const target = existing ?? { ...incoming };
+    target.openaiResponsesMessage = { ...target.openaiResponsesMessage, ...metadata };
+    target.text = isDelta && existing ? previous + (incoming.text ?? '') : incoming.text ?? previous;
+    if (!existing) parts.push(target);
+    // done 是权威全文，不再次追加相同正文；修正/缩短由结构快照校准。
+    const delta = target.text.startsWith(previous) && target.text.length > previous.length
+        ? [{ text: target.text.slice(previous.length) }] : [];
+    return { delta, structural: !existing || !isDelta };
+}
+
+/**
+ * completed/incomplete.output 是有序终态快照，不是新的增量。
+ * 用它回填只在流末出现的密文/phase，避免再次追加全文与并发工具。
+ * 对兼容端点省略的 reasoning 元数据仍保留 item.done 已取得的值。
+ */
+export function reconcileResponsesOutput(previous: ContentPart[], snapshot: ContentPart[]): { parts: ContentPart[]; delta: ContentPart[] } {
+    const parts = snapshot.map(part => {
+        if (part.openaiResponsesMessage) {
+            const old = previous.find(candidate => sameResponsesMessage(candidate.openaiResponsesMessage, part.openaiResponsesMessage)
+                && (candidate.openaiResponsesMessage?.contentIndex ?? 0) === (part.openaiResponsesMessage?.contentIndex ?? 0));
+            return { ...part, openaiResponsesMessage: { ...old?.openaiResponsesMessage, ...part.openaiResponsesMessage } };
+        }
+        const id = part.openaiResponsesReasoning?.id;
+        const old = id ? previous.find(candidate => candidate.openaiResponsesReasoning?.id === id) : undefined;
+        if (!old) return part;
+        return { ...old, ...part,
+            openaiResponsesReasoning: { ...old.openaiResponsesReasoning, ...part.openaiResponsesReasoning },
+            ...(old.thoughtSignatures || part.thoughtSignatures ? {
+                thoughtSignatures: { ...old.thoughtSignatures, ...part.thoughtSignatures }
+            } : {})
+        };
+    });
+    const delta: ContentPart[] = [];
+    // 某些代理只在 completed 返回正文；已有增量的正常流绝不重复播放全文。
+    for (const thought of [true, false]) {
+        const text = (values: ContentPart[]) => values.filter(part => !!part.thought === thought).map(part => part.text ?? '').join('');
+        const before = text(previous), after = text(parts);
+        if (after.startsWith(before) && after.length > before.length) delta.push({ text: after.slice(before.length), ...(thought ? { thought: true } : {}) });
+    }
+    for (const part of parts) if (part.functionCall && !previous.some(old => old.functionCall?.id === part.functionCall?.id)) delta.push(part);
+    return { parts, delta };
+}

@@ -173,6 +173,11 @@ const sharedJa = {
                     multimodal: {
                         document: backendJa.tools.reviewDocument.values.category.docs,
                     },
+                    strictTools: {
+                        support: {
+                            openaiResponses: backendJa.tools.presentation.strictToolsOpenaiResponses,
+                        },
+                    },
                 },
                 selector: {
                     confirm: backendJa.notifications.windowsAgentStop.actionLabels.genericConfirmation,
@@ -586,6 +591,23 @@ const sharedJa = {
                 appendedContent: backendJa.tools.presentation.appendedContent,
                 characters: backendJa.tools.presentation.characters,
                 contentUnavailable: backendJa.tools.presentation.contentUnavailable,
+                findFiles: {
+                    continuationDetails: backendJa.tools.presentation.findFiles.continuationDetails,
+                    excludeSources: {
+                        argument: backendJa.tools.presentation.findFiles.excludeSources.argument,
+                        fallback: backendJa.tools.presentation.findFiles.excludeSources.fallback,
+                        settings: backendJa.tools.presentation.findFiles.excludeSources.settings,
+                        unknown: backendJa.tools.presentation.findFiles.excludeSources.unknown,
+                    },
+                    exclusions: backendJa.tools.presentation.findFiles.exclusions,
+                    expandPage: backendJa.tools.presentation.findFiles.expandPage,
+                    nextPage: backendJa.tools.presentation.findFiles.nextPage,
+                    pageFiles: backendJa.tools.presentation.findFiles.pageFiles,
+                    pageOffset: backendJa.tools.presentation.findFiles.pageOffset,
+                    restartAfterFailure: backendJa.tools.presentation.findFiles.restartAfterFailure,
+                    returnedFiles: backendJa.tools.presentation.findFiles.returnedFiles,
+                    workspaceErrors: backendJa.tools.presentation.findFiles.workspaceErrors,
+                },
                 historyMessages: backendJa.tools.presentation.historyMessages,
                 invalidatedNote: backendJa.tools.presentation.invalidatedNote,
                 mainAgent: backendJa.tools.presentation.mainAgent,

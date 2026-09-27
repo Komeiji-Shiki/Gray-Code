@@ -1180,7 +1180,7 @@ const en: LanguageMessages = {
                         support: {
                             anthropic: 'Anthropic: Auto-injects beta header, max 20 strict tools',
                             openai: 'OpenAI: Requires all params required + additionalProperties: false',
-                            openaiResponses: 'OpenAI Responses: Strict is enabled by default',
+                            openaiResponses: sharedEn.components.settings.channelSettings.form.strictTools.support.openaiResponses,
                             gemini: 'Gemini: Not supported'
                         }
                     },

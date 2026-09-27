@@ -173,6 +173,11 @@ const sharedEn = {
                     multimodal: {
                         document: backendEn.tools.reviewDocument.values.category.docs,
                     },
+                    strictTools: {
+                        support: {
+                            openaiResponses: backendEn.tools.presentation.strictToolsOpenaiResponses,
+                        },
+                    },
                 },
                 selector: {
                     confirm: backendEn.notifications.windowsAgentStop.actionLabels.genericConfirmation,
@@ -586,6 +591,23 @@ const sharedEn = {
                 appendedContent: backendEn.tools.presentation.appendedContent,
                 characters: backendEn.tools.presentation.characters,
                 contentUnavailable: backendEn.tools.presentation.contentUnavailable,
+                findFiles: {
+                    continuationDetails: backendEn.tools.presentation.findFiles.continuationDetails,
+                    excludeSources: {
+                        argument: backendEn.tools.presentation.findFiles.excludeSources.argument,
+                        fallback: backendEn.tools.presentation.findFiles.excludeSources.fallback,
+                        settings: backendEn.tools.presentation.findFiles.excludeSources.settings,
+                        unknown: backendEn.tools.presentation.findFiles.excludeSources.unknown,
+                    },
+                    exclusions: backendEn.tools.presentation.findFiles.exclusions,
+                    expandPage: backendEn.tools.presentation.findFiles.expandPage,
+                    nextPage: backendEn.tools.presentation.findFiles.nextPage,
+                    pageFiles: backendEn.tools.presentation.findFiles.pageFiles,
+                    pageOffset: backendEn.tools.presentation.findFiles.pageOffset,
+                    restartAfterFailure: backendEn.tools.presentation.findFiles.restartAfterFailure,
+                    returnedFiles: backendEn.tools.presentation.findFiles.returnedFiles,
+                    workspaceErrors: backendEn.tools.presentation.findFiles.workspaceErrors,
+                },
                 historyMessages: backendEn.tools.presentation.historyMessages,
                 invalidatedNote: backendEn.tools.presentation.invalidatedNote,
                 mainAgent: backendEn.tools.presentation.mainAgent,

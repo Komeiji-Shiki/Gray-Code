@@ -87,7 +87,11 @@ function hasGeminiPartData(part: ContentPart): boolean {
 
 function sanitizeGeminiContents(contents: Content[]): Content[] {
     return contents
-        .map(c => ({ ...c, parts: c.parts.filter(hasGeminiPartData) }))
+        .map(c => ({ ...c, parts: c.parts.filter(hasGeminiPartData).map(part => {
+            // 切换渠道后正文可重用，但 Responses phase/item 元数据不是 Gemini Part 字段。
+            const { openaiResponsesMessage, ...nativePart } = part;
+            return nativePart;
+        }) }))
         .filter(c => c.parts.length > 0);
 }
 

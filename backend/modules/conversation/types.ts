@@ -294,6 +294,13 @@ export interface Content {
      */
     isUserInput?: boolean;
     
+    /**
+     * 运行内交付的可信反馈标记（插话、ask_user 回答及后台回流）。
+     * 正文/角色仍是真实历史；此宿主元数据只区分 prompt 捕获边界，不改变用户指令语义。
+     * 保留旧 boolean 形态，具体反馈载荷由平台生产者解释。
+     */
+    userFeedback?: boolean | Record<string, unknown>;
+
     /** 消息来源：真实用户输入或系统生成的后台/代理消息。仅用于内部历史语义与前端展示。 */
     source?: 'user' | 'background_task' | 'agent_message';
 
