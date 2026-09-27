@@ -1,8 +1,9 @@
 import type { RuntimeTool, ToolContext } from "@graycode/core";
+import { stat } from 'node:fs/promises';
 import { WorkspaceFiles } from "./files";
 import { getActualLanguage } from '../../../../backend/i18n';
 import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
-import { WorkspaceProcesses, commandEffects } from "./processes";
+import { WorkspaceProcesses, commandEffects, ProcessSessionError, type ProcessOwner } from "./processes";
 import type { WorkspaceChanges } from './changes';
 import { splitTextLines } from '../../../../shared/textLines';
 
@@ -10,6 +11,11 @@ function workspace(context: ToolContext) {
   if (!context.workspace)
     throw new Error("Select a workspace before using local tools.");
   return context.workspace;
+}
+// 身份只来自运行器，不能让模型参数选择账号、对话或工作区来接管其他进程。
+function processOwner(context: ToolContext): ProcessOwner {
+  return { actorId: context.actorId, conversationId: context.conversationId,
+    runId: context.runId, workspaceId: context.workspace?.id };
 }
 const optionalText = { type: "string" };
 export function workspaceTools(
@@ -215,36 +221,41 @@ export function workspaceTools(
       declaration: {
         name: "run_command",
         description: isZh
-          ? '直接启动可执行文件并传入 args 数组，不经过 Shell，也不展开管道、重定向和环境变量。已有独立参数时优先用它，避免命令字符串转义。需要 Shell 语法、选择 Shell、cwd 或后台完成通知时使用 execute_command。返回的会话 ID 由 process_session 读取、输入或停止。'
-          : 'Start an executable directly with an args array: no shell, pipe/redirection parsing or environment expansion. Prefer this for already-separated arguments to avoid shell quoting. Use execute_command for shell syntax, shell selection, cwd or background completion notifications. Use process_session with the returned session ID to read, send input or stop.',
+          ? '直接启动可执行文件并传入 args 数组，不经过 Shell，也不展开管道、重定向和环境变量。已有独立参数时优先用它，避免命令字符串转义。cwd 可指定工作区内目录；需要 Shell 语法、选择 Shell 或后台完成通知时使用 execute_command。返回的会话 ID 由 process_session 读取、输入或停止，同一账号、对话和工作区继续运行后仍可使用。'
+          : 'Start an executable directly with an args array: no shell, pipe/redirection parsing or environment expansion. Prefer this for already-separated arguments to avoid shell quoting. cwd may select a directory within the workspace. Use execute_command for shell syntax, shell selection or background completion notifications. Use process_session with the returned session ID, including later runs in the same account, conversation and workspace.',
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
             command: { type: "string", minLength: 1 },
             args: { type: "array", items: { type: "string" } },
+            cwd: { type: "string", description: isZh ? '工作区内启动目录，省略时为根目录；不允许越界路径或指向工作区外的符号链接。' : 'Working directory within the workspace; defaults to its root. Outside paths or symlink targets outside the workspace are rejected.' },
           },
           required: ["command", "args"],
         },
       },
       effects: commandEffects,
-      execute: async (args, context) => ({
-        success: true,
-        data: await processes.start(
-          workspace(context),
-          context.runId,
-          String(args.command),
-          args.args as string[],
-          (text) => context.progress({ text }),
-        ),
-      }),
+      execute: async (args, context) => {
+        const target = workspace(context);
+        // 与文件工具共用真实路径授权，不能仅拼接 cwd 后交给 spawn；文件路径也不能当目录启动。
+        // 多根的相对路径必须带根前缀，但默认启动位置仍沿用旧版 workspace.directory。
+        // 先展开默认值再校验，避免省略 cwd 时把 '.' 误判为缺少工作区前缀。
+        const requestedCwd = String(args.cwd ?? '');
+        const cwd = await files.resolve(target, requestedCwd === '' || requestedCwd === '.' ? target.directory : requestedCwd);
+        if (!(await stat(cwd)).isDirectory()) throw new Error('cwd must be a directory within the workspace.');
+        return {
+          success: true,
+          data: await processes.start(target, processOwner(context), String(args.command), args.args as string[],
+            (text) => context.progress({ text }), { cwd }),
+        };
+      },
     },
     {
       declaration: {
         name: "process_session",
         description: isZh
-          ? '读取输出、发送输入或停止本任务通过 run_command 创建的会话。id 必须来自 run_command，不适用于 execute_command 的后台 taskId；停止仅作用于该会话受管的进程树。'
-          : 'Read output, send input or stop a session created by this task through run_command. The id must come from run_command, not an execute_command background taskId. Stopping affects only the session managed process tree.',
+          ? '读取输出、发送输入或停止同一账号、对话和工作区通过 run_command 创建的会话，继续运行后仍可使用原 id。id 必须来自 run_command，不适用于 execute_command 的后台 taskId；停止仅作用于该会话受管的进程树。read 可传 cursor/maxChars 按 UTF-16 绝对字符位置增量读取，省略时返回全部保留输出；outputOffset 为本次输出起点，nextCursor 为下次游标，hasMore 表示仍有未读输出，outputLost 表示游标早于保留区。'
+          : 'Read output, send input or stop a run_command session in the same account, conversation and workspace, even after continuing in a new run. The id must come from run_command, not an execute_command background taskId. Stopping affects only the session managed process tree. For read, cursor/maxChars page by absolute UTF-16 character position; omit them to return all retained output. outputOffset is the returned output start, nextCursor is the next position, hasMore indicates unread output, and outputLost means the cursor predates the retained buffer.',
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -252,6 +263,8 @@ export function workspaceTools(
             action: { type: "string", enum: ["read", "input", "stop"] },
             id: { type: "string" },
             text: optionalText,
+            cursor: { type: 'integer', minimum: 0, description: isZh ? '仅 read：上次的 nextCursor；早于保留区时返回剩余输出并标记 outputLost。' : 'Read only: previous nextCursor; an expired cursor returns retained output with outputLost.' },
+            maxChars: { type: 'integer', minimum: 1, maximum: 256000, description: isZh ? '仅 read：本次最多返回的 UTF-16 字符数。' : 'Read only: maximum UTF-16 characters to return.' },
           },
           required: ["action", "id"],
         },
@@ -263,17 +276,24 @@ export function workspaceTools(
             ? ["process_execute", "high_risk"]
             : ["process_execute"],
       execute: async (args, context) => {
-        if (args.action === "input") {
-          if (typeof args.text !== "string")
-            throw new Error("Supply process input.");
-          processes.input(String(args.id), context.runId, args.text);
+        const owner = processOwner(context);
+        try {
+          if (args.action === "input") {
+            if (typeof args.text !== "string") throw new Error("Supply process input.");
+            // 授权可能查询旧运行记录，必须等待 input 完成，不能把异步拒绝丢到工具结果之后。
+            await processes.input(String(args.id), owner, args.text);
+          }
+          if (args.action === "stop") await processes.stop(String(args.id), owner);
+          return {
+            success: true,
+            data: await processes.read(String(args.id), owner, args.action === 'read'
+              ? { cursor: args.cursor as number | undefined, maxChars: args.maxChars as number | undefined } : undefined),
+          };
+        } catch (error) {
+          // 运行器会把普通异常统一成 TOOL_FAILED；这些可恢复状态需要保留明确错误码供模型决策。
+          if (error instanceof ProcessSessionError) return { success: false, code: error.code, error: error.message };
+          throw error;
         }
-        if (args.action === "stop")
-          await processes.stop(String(args.id), context.runId);
-        return {
-          success: true,
-          data: await processes.read(String(args.id), context.runId),
-        };
       },
     },
   ];

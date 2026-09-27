@@ -149,13 +149,15 @@ let description = isZh
 - 重构时找出所有需要修改的位置
 - 了解改动的影响范围
 
-返回按文件分组的引用，带行号和代码内容。`
+返回按文件分组的引用，带行号和代码内容。默认 maxResults=500、offset=0；每页最多 500 条、代码片段合计最多 60000 字符。先按路径/行/列排序后分页，返回 nextOffset 时保持查询条件不变并作为 offset 续查；每页重新请求语言服务，文件或索引变化后从 0 重查。
+countOnly=true 只返回统计、不读取引用正文（仍需读取源文件并请求语言服务）。totalCount/totalFileCount 为提供器返回的全部引用/文件数；returnedCount/fileCount 为当前页返回数。truncated 仅表示数量或内容预算截断，统计模式主动省略正文不算截断。单条超长片段标记 contentTruncated，可用 read_file 按该路径/行号查看。`
         : `Find all references to a symbol at a specific position in a file. This is useful for:
 - Understanding how a function/class/variable is used across the codebase
 - Finding all places that need to be updated when refactoring
 - Understanding the impact of changes
 
-Returns references grouped by file, with line numbers and code content.`;
+Returns references grouped by file, with line numbers and code content. Defaults: maxResults=500, offset=0; at most 500 references and 60000 code-content characters per page. Pagination follows path/line/column order. Continue with nextOffset as offset and unchanged query parameters; each page requests the language service again, so restart at 0 after files or the index change.
+countOnly=true returns statistics without reading reference content (the source file and language-service request are still required). totalCount/totalFileCount count all provider references/files; returnedCount/fileCount count this page. truncated means a count or content budget limit, not deliberate omission in count-only mode. An oversized snippet is marked contentTruncated; use read_file at its path/line to inspect the omitted code.`;
 if (isMultiRoot) {
         description += isZh
             ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
@@ -202,6 +204,18 @@ return {
                         description: isZh
                             ? '每个引用前后要包含的上下文行数。默认：2。0 表示仅单行。最大：10（超过会被截断）。'
                             : 'Number of context lines to include before and after each reference. Default: 2. Use 0 for single line only. Max: 10 (values above are clamped).'
+                    },
+                    maxResults: {
+                        type: 'integer', minimum: 1, maximum: 500, default: 500,
+                        description: isZh ? '每页最多返回的引用数；代码内容预算可能使实际返回数更少。' : 'Maximum references per page; the code-content budget may return fewer.'
+                    },
+                    offset: {
+                        type: 'integer', minimum: 0, default: 0,
+                        description: isZh ? '按路径/行/列排序后跳过的引用数。续查使用 nextOffset；文件或索引变化后从 0 重查。' : 'References to skip in path/line/column order. Continue with nextOffset; restart at 0 after files or the index change.'
+                    },
+                    countOnly: {
+                        type: 'boolean', default: false,
+                        description: isZh ? '只统计全部引用数和文件数，不读取引用正文；忽略分页范围，references 为空。' : 'Count all references and files without reading reference content; ignores the page range and returns an empty references array.'
                     }
                 },
                 required: ['path', 'line']

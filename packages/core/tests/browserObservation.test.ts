@@ -95,3 +95,31 @@ test('日志游标只读取新增记录，缓冲丢失和条数限制均报告�
   for (let index = 0; index < 200; index++) f.page.log('console', index);
   expect(f.page.logs({ since: 0, maxEntries: 200 }).truncated).toBe(true);
 });
+
+// 不只验证错误码：同一“截图超时”必须说明卡在绘制同步还是 native capture，且不要求 reload。
+test.each(['frame', 'capture'] as const)('截图超时注明阶段并允许下一次独立读取（%s）', async stage => {
+  jest.useFakeTimers();
+  const f = fixture([]);
+  const picture = { isEmpty: () => false, getSize: () => ({ width: 1280, height: 800 }), toPNG: () => Buffer.from('fixture') };
+  f.contents.capturePage.mockResolvedValue(picture);
+  const command = f.sendCommand.getMockImplementation()!;
+  f.sendCommand.mockImplementation((method, ...args) => stage === 'frame' && method === 'Runtime.evaluate'
+    ? new Promise(() => {}) : command(method, ...args));
+  if (stage === 'capture') f.contents.capturePage.mockImplementationOnce(() => new Promise(() => {}));
+  try {
+    const capturing = f.page.screenshot(signal(), { width: 1280, height: 800 });
+    const failed = expect(capturing).rejects.toMatchObject({ code: 'BROWSER_CAPTURE_TIMEOUT', message: expect.stringContaining(stage === 'frame' ? '等待页面绘制帧' : '采集页面图像') });
+    await jest.advanceTimersByTimeAsync(stage === 'frame' ? 15000 : 5000); await failed;
+    f.sendCommand.mockImplementation(command);
+    await expect(f.page.screenshot(signal(), { width: 1280, height: 800 })).resolves.toMatchObject({ attachment: { mimeType: 'image/png' } });
+  } finally { jest.useRealTimers(); }
+});
+
+test('原生绘制表面不可用时建议读快照，不要求可能重复提交的 reload', async () => {
+  const f = fixture([]);
+  f.contents.capturePage.mockRejectedValueOnce(new Error('Current display surface not available for capture'));
+  await expect(f.page.screenshot(signal(), { width: 1280, height: 800 })).rejects.toMatchObject({
+    code: 'BROWSER_VIEW_REQUIRED', message: expect.stringContaining('snapshot'),
+  });
+  await expect(f.page.snapshot(signal())).resolves.toMatchObject({ format: 'compact' });
+});

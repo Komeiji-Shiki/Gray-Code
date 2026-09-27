@@ -69,6 +69,51 @@ describe('search_in_files 续查', () => {
         expect(result.data.nextOffset).toBe(2);
     });
 
+    test('显式禁止关键词回退后严格匹配完整短语，默认与显式 true 仍兼容旧行为', async () => {
+        const tool = fixture({ '/one/a.ts': 'get_symbols\nother' });
+        const query = 'get_symbols __graycode_tool_ux_nonexistent__';
+        for (const args of [{}, { keywordFallback: true }]) {
+            const result = await tool.handler({ query, isRegex: false, ...args });
+            expect(result.data.count).toBe(1);
+            expect(result.data.queryFallback).toMatchObject({ applied: true, reason: 'whitespace_keyword_or' });
+        }
+        const strict = await tool.handler({ query, isRegex: false, keywordFallback: false });
+        expect(strict.data).toMatchObject({ count: 0, truncated: false });
+        expect(strict.data.queryFallback).toBeUndefined();
+        expect(strict.data.nextOffset).toBeUndefined();
+    });
+
+    test('严格字面量分页不放宽成 OR，保留大小写与正则独立语义', async () => {
+        const tool = fixture({ '/one/a.ts': 'Alpha Beta\nalpha\nbeta\nalpha beta\nALPHA BETA' });
+        const first = await tool.handler({ query: 'alpha beta', keywordFallback: false, maxResults: 2 });
+        expect(first.data.results.map((item: any) => item.line)).toEqual([1, 4]);
+        expect(first.data.nextOffset).toBe(2);
+        const second = await tool.handler({ query: 'alpha beta', keywordFallback: false, maxResults: 2, offset: 2 });
+        expect(second.data.results.map((item: any) => item.line)).toEqual([5]);
+        expect(second.data.queryFallback).toBeUndefined();
+        const sensitive = await tool.handler({ query: 'alpha beta', keywordFallback: false, caseSensitive: true });
+        expect(sensitive.data.results.map((item: any) => item.line)).toEqual([4]);
+        const regex = await tool.handler({ query: 'alpha|beta', keywordFallback: false, isRegex: true });
+        const regexDefault = await tool.handler({ query: 'alpha|beta', isRegex: true });
+        expect(regex.data.results).toEqual(regexDefault.data.results);
+    });
+
+    test('严格字面量仍可提示疑似正则但不自动执行，也不会扩大替换范围', async () => {
+        const tool = fixture({ '/one/a.ts': 'alpha\nbeta' });
+        const suspected = await tool.handler({ query: 'alpha|beta', keywordFallback: false });
+        expect(suspected.data.count).toBe(0);
+        expect(suspected.data.queryFallback).toMatchObject({ applied: false, reason: 'suspected_regex' });
+        for (const keywordFallback of [true, false]) {
+            const replacement = await tool.handler({ query: 'alpha beta', mode: 'replace', replace: '', keywordFallback });
+            expect(replacement.data).toMatchObject({ isReplaceMode: true, totalReplacements: 0 });
+        }
+    });
+
+    test.each(['false', 0])('无效 keywordFallback %s 不被静默误解', async keywordFallback => {
+        const tool = fixture({ '/one/a.ts': 'alpha' });
+        expect((await tool.handler({ query: 'alpha beta', keywordFallback })).error).toContain('keywordFallback must be a boolean');
+    });
+
     test('跳过页不消耗本页输出预算', async () => {
         const tool = fixture({ '/one/a.ts': 'hit\nhit\nhit' }, { maxTotalResultChars: 230, contextLinesBefore: 0, contextLinesAfter: 0 });
         const first = await tool.handler({ query: 'hit', maxResults: 1 });

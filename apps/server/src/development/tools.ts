@@ -6,6 +6,7 @@ import type { DocumentSymbol, SymbolInformation, Location, LocationLink } from '
 import { createGetSymbolsToolDeclaration, createGotoDefinitionToolDeclaration, createFindReferencesToolDeclaration } from '../../../../backend/tools/lsp/declarations';
 import { findBlockEnd } from '../../../../backend/tools/lsp/definitionRange';
 import { createSymbolOutline, parseSymbolOutlineOptions, MAX_SYMBOL_PATHS } from '../../../../backend/tools/lsp/symbolOutline';
+import { createReferencePage, parseReferencePageOptions, referenceSnippet } from '../../../../backend/tools/lsp/referencePage';
 import { FileReadAccess } from '../workspace/readAccess';
 import type { PlatformApplication } from '../application';
 /** 保留原声明、批量限制、定义代码范围和按文件分组的引用结果。 */
@@ -55,6 +56,8 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
       ...(failCount ? { error: results.filter(value => !value.success).map(value => `${value.path}: ${value.error}`).join('; ') } : {}) };
   }
   const file = String(args.path); const line = Number(args.line); const column = Number.isInteger(args.column) && Number(args.column) > 0 ? Number(args.column) : 1;
+  // 先校验分页参数，避免非法 offset 触发无意义的语言服务请求。
+  const referenceOptions = name === 'find_references' ? parseReferencePageOptions(args) : undefined;
   const source = await read(file);
   if (!Number.isInteger(line) || line < 1 || line > source.lines.length) throw new Error('行号超出文件范围。');
   const raw = await app.languages.toolRequest(context, source.absolute, source.text, name === 'goto_definition' ? 'textDocument/definition' : 'textDocument/references',
@@ -79,17 +82,18 @@ async function executeNavigation(app: PlatformApplication, name: string, args: R
     return { success: true, data: { ...base, definitionCount: definitions.length, definitions } };
   }
   const contextLines = typeof args.context === 'number' && Number.isFinite(args.context) ? Math.min(10, Math.max(0, Math.floor(args.context))) : 2;
-  const groups = new Map<string, { line: number; column: number; content: string }[]>();
-  for (const item of locations.slice(0, 500)) {
-    if (!('uri' in item)) continue;
-    let targetPath = item.uri; let content = '(Unable to read file content)';
+  const referenceLocations = locations.filter((item): item is Location => 'uri' in item).map(item => {
+    // 路径只做 URI 转换，不为统计/排序打开引用文件；真正的正文读取仍经过 FileReadAccess。
+    let targetPath = item.uri;
+    try { targetPath = relative(fileURLToPath(item.uri)); } catch { /* 非 file URI 保留 provider 标识供定位。 */ }
+    return { path: targetPath, line: item.range.start.line + 1, column: item.range.start.character + 1, uri: item.uri };
+  });
+  const page = await createReferencePage(referenceLocations, referenceOptions!, async item => {
+    context.signal.throwIfAborted();
     try {
-      const target = await read(fileURLToPath(item.uri)); targetPath = relative(target.absolute);
-      const start = Math.max(0, item.range.start.line - contextLines); const end = Math.min(target.lines.length - 1, item.range.start.line + contextLines);
-      content = target.lines.slice(start, end + 1).map((text, index) => `${start + index === item.range.start.line ? '>' : ' '}${String(start + index + 1).padStart(4)} | ${text}`).join('\n');
-    } catch (error) { context.signal.throwIfAborted(); content = `(Unable to read file content: ${String(error)})`; }
-    const references = groups.get(targetPath) ?? []; references.push({ line: item.range.start.line + 1, column: item.range.start.character + 1, content }); groups.set(targetPath, references);
-  }
-  const references = [...groups].map(([path, values]) => ({ path, count: values.length, references: values.sort((left, right) => left.line - right.line) })).sort((left, right) => right.count - left.count);
-  return { success: true, data: { ...base, totalCount: locations.length, fileCount: references.length, references, truncated: locations.length > 500 } };
+      const target = await read(fileURLToPath(item.uri));
+      return referenceSnippet(target.lines.length, index => target.lines[index], item.line - 1, contextLines);
+    } catch (error) { context.signal.throwIfAborted(); return { content: `(Unable to read file content: ${String(error)})` }; }
+  });
+  return { success: true, data: { ...base, ...page } };
 }

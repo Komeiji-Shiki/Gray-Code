@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { createFindReferencesTool } from '../../tools/lsp/find_references';
 import { LSP_TIMEOUT_MS, LSP_RETRY_DELAY_MS } from '../../tools/lsp/lspLifecycle';
+import { MAX_REFERENCE_CONTENT_CHARS } from '../../tools/lsp/referencePage';
 
 const executeCommandMock = vscode.commands.executeCommand as jest.Mock;
 const openTextDocumentMock = vscode.workspace.openTextDocument as jest.Mock;
@@ -95,6 +96,71 @@ describe('find_references LSP lifecycle', () => {
         expect(result.data.references[0].references[0].content).toContain('line 6 content');
         // 打开文档两次：一次激活语言服务（guard），一次读取引用文档（其余走缓存）
         expect(openTextDocumentMock).toHaveBeenCalledTimes(2);
+    });
+
+    test('跨页使用稳定路径/行列顺序，统计总量与当前页数量分离', async () => {
+        const a = vscode.Uri.file(path.resolve('workspace/project/a.ts'));
+        const b = vscode.Uri.file(path.resolve('workspace/project/b.ts'));
+        (vscode.workspace.asRelativePath as jest.Mock).mockImplementation(uri => path.basename(uri.fsPath));
+        const values = [reference(b, 3, 0), reference(a, 10, 2), reference(a, 10, 1), reference(a, 1, 0)];
+        executeCommandMock.mockResolvedValueOnce(values).mockResolvedValueOnce([...values].reverse());
+        openTextDocumentMock.mockResolvedValue(makeDoc(LINES));
+        const tool = createFindReferencesTool();
+        const first = await tool.handler({ path: 'source.ts', line: 1, maxResults: 2, context: 0 }, {} as any);
+        const second = await tool.handler({ path: 'source.ts', line: 1, maxResults: 2, offset: first.data.nextOffset, context: 0 }, {} as any);
+        expect(first.data).toMatchObject({ totalCount: 4, totalFileCount: 2, fileCount: 1, returnedCount: 2, offset: 0, nextOffset: 2, truncated: true, truncationReasons: ['maxResults'] });
+        expect(first.data.references[0].references.map((item: any) => [item.line, item.column])).toEqual([[2, 1], [11, 2]]);
+        expect(second.data).toMatchObject({ totalCount: 4, totalFileCount: 2, fileCount: 2, returnedCount: 2, offset: 2, truncated: false });
+        expect(second.data.nextOffset).toBeUndefined();
+        expect(second.data.references.map((group: any) => [group.path, group.references[0].line, group.references[0].column])).toEqual([['a.ts', 11, 3], ['b.ts', 4, 1]]);
+    });
+
+    test('countOnly 只激活源文档，不读取引用正文，且主动省略不算截断', async () => {
+        const uri = vscode.Uri.file(path.resolve('workspace/project/use.ts'));
+        executeCommandMock.mockResolvedValue(Array.from({ length: 601 }, (_, index) => reference(uri, index, 0)));
+        const result = await createFindReferencesTool().handler({ path: 'source.ts', line: 1, countOnly: true, offset: 9999 }, {} as any);
+        expect(result.data).toMatchObject({ totalCount: 601, totalFileCount: 1, returnedCount: 0, fileCount: 0, references: [], truncated: false });
+        expect(result.data.nextOffset).toBeUndefined();
+        expect(openTextDocumentMock).toHaveBeenCalledTimes(1);
+    });
+
+    test('默认最多500条且可取剩余引用，越界 offset 返回空页不反复续页', async () => {
+        const uri = vscode.Uri.file(path.resolve('workspace/project/use.ts'));
+        executeCommandMock.mockResolvedValue(Array.from({ length: 501 }, (_, index) => reference(uri, index, 0)));
+        openTextDocumentMock.mockResolvedValue(makeDoc(Array.from({ length: 501 }, () => 'x')));
+        const tool = createFindReferencesTool();
+        const first = await tool.handler({ path: 'source.ts', line: 1, context: 0 }, {} as any);
+        expect(first.data).toMatchObject({ totalCount: 501, returnedCount: 500, nextOffset: 500, maxResults: 500, truncated: true });
+        const last = await tool.handler({ path: 'source.ts', line: 1, offset: 500, context: 0 }, {} as any);
+        expect(last.data).toMatchObject({ returnedCount: 1, truncated: false });
+        const beyond = await tool.handler({ path: 'source.ts', line: 1, offset: 999 }, {} as any);
+        expect(beyond.data).toMatchObject({ totalCount: 501, returnedCount: 0, references: [], truncated: false });
+        expect(beyond.data.nextOffset).toBeUndefined();
+    });
+
+    test('代码预算不跳过中间引用，单条超长内容明确截断且分页继续前进', async () => {
+        const uri = vscode.Uri.file(path.resolve('workspace/project/use.ts'));
+        executeCommandMock.mockResolvedValue([reference(uri, 0, 0), reference(uri, 1, 0), reference(uri, 2, 0)]);
+        openTextDocumentMock.mockResolvedValue(makeDoc(['short', 'x'.repeat(MAX_REFERENCE_CONTENT_CHARS + 10), 'last']));
+        const tool = createFindReferencesTool();
+        const first = await tool.handler({ path: 'source.ts', line: 1, context: 0 }, {} as any);
+        expect(first.data).toMatchObject({ returnedCount: 1, nextOffset: 1, truncationReasons: ['outputBudget'] });
+        const second = await tool.handler({ path: 'source.ts', line: 1, context: 0, offset: 1 }, {} as any);
+        expect(second.data).toMatchObject({ returnedCount: 1, nextOffset: 2, truncationReasons: ['outputBudget'] });
+        expect(second.data.references[0].references[0]).toMatchObject({ line: 2, contentTruncated: true });
+        expect(second.data.references[0].references[0].content).toHaveLength(MAX_REFERENCE_CONTENT_CHARS);
+        expect(second.data.continuationHint).toContain('read_file');
+        const third = await tool.handler({ path: 'source.ts', line: 1, context: 0, offset: 2 }, {} as any);
+        expect(third.data).toMatchObject({ returnedCount: 1, truncated: false });
+        expect(third.data.references[0].references[0].line).toBe(3);
+    });
+
+    test.each([{ maxResults: 0 }, { maxResults: 501 }, { maxResults: 1.5 }, { maxResults: '2' }, { offset: -1 }, { offset: NaN }, { offset: Infinity }, { offset: Number.MAX_SAFE_INTEGER + 1 }, { countOnly: 'true' }])('拒绝无效分页参数而不启动语言服务：%j', async options => {
+        const result = await createFindReferencesTool().handler({ path: 'source.ts', line: 1, ...options }, {} as any);
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/maxResults|offset|countOnly/);
+        expect(executeCommandMock).not.toHaveBeenCalled();
+        expect(openTextDocumentMock).not.toHaveBeenCalled();
     });
 
     test('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {

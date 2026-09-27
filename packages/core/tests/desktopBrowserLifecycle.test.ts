@@ -33,11 +33,16 @@ jest.mock('electron', () => {
       getBounds() { return this.bounds; } setBounds(value: any) { this.bounds = value; } setVisible() {}
     },
     BaseWindow: class {
-      visible = false; destroyed = false;
-      contentView = { children: [] as any[], addChildView: (view: any) => { this.contentView.children.push(view); },
+      visible = false; minimized = false; destroyed = false;
+      // Electron 会自动从原宿主移除 view；模拟这一边界才能测试最小化后的后台重挂载。
+      contentView = { children: [] as any[], addChildView: (view: any) => {
+        for (const host of mockHosts) host.contentView.children = host.contentView.children.filter((item: any) => item !== view);
+        this.contentView.children.push(view);
+      },
         removeChildView: (view: any) => { this.contentView.children = this.contentView.children.filter(item => item !== view); } };
+      webContents = { getZoomFactor: () => 1 }; on() {} off() {}
       constructor() { mockHosts.push(this); }
-      isDestroyed() { return this.destroyed; } isVisible() { return this.visible; }
+      isDestroyed() { return this.destroyed; } isVisible() { return this.visible; } isMinimized() { return this.minimized; }
       getContentSize() { return [1100, 800]; } setIgnoreMouseEvents() {} setContentSize() {}
       showInactive() { this.visible = true; } hide() { this.visible = false; } close() { this.destroyed = true; }
     },
@@ -200,4 +205,47 @@ test('普通手动标签输入不创建模型接管状态', async () => {
     expect(mockPages[0].allowManualInput).not.toHaveBeenCalled();
     expect((await browser.state('owner')).tabs[0].userControlled).toBe(false);
   } finally { browser.close(); }
+});
+
+// 超时可以安全补读截图，但必须保留已完成动作的回执，不能鼓励重新派发点击。
+test('截图超时允许安全重读，动作后的观察错误明确禁止重复动作', async () => {
+  const f = await automatedTab();
+  const timeout = () => Object.assign(new Error('fixture capture timeout'), { code: 'BROWSER_CAPTURE_TIMEOUT' });
+  try {
+    f.page.screenshot.mockRejectedValueOnce(timeout());
+    await expect(f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context)).resolves.toMatchObject({
+      success: false, code: 'BROWSER_CAPTURE_TIMEOUT', retryable: true, data: { id: f.tab.id },
+    });
+    await expect(f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context)).resolves.toMatchObject({
+      success: true, attachments: [{ mimeType: 'image/png', data: 'fixture' }],
+    });
+    f.page.screenshot.mockRejectedValueOnce(timeout());
+    const action = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', observationId: 'fixture-observation', x: 20, y: 30 }, f.context);
+    expect(action).toMatchObject({ success: true, data: { status: 'completed', observationError: {
+      code: 'BROWSER_CAPTURE_TIMEOUT', message: expect.stringContaining('不要重复刚才的动作'),
+    } } });
+    expect(action.retryable).toBeUndefined(); expect(f.page.action).toHaveBeenCalledTimes(1);
+  } finally { f.browser.close(); }
+});
+
+// 主窗隐藏/最小化只改变绘制宿主；自动观察不应显示或恢复用户的工作台窗口。
+test.each(['hidden', 'minimized'] as const)('后台截图在主窗 %s 时挂到透明宿主，恢复布局后回到工作台', async mode => {
+  const f = await automatedTab();
+  const { BaseWindow } = jest.requireMock('electron');
+  const parent = new BaseWindow();
+  parent.visible = true;
+  (f.browser as any).getWindow = () => parent;
+  const layout = { x: 20, y: 30, width: 700, height: 500, visible: true };
+  try {
+    f.browser.layout(layout);
+    expect(parent.contentView.children).toContain(mockViews[0]);
+    parent.visible = mode !== 'hidden'; parent.minimized = mode === 'minimized';
+    await expect(f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context)).resolves.toMatchObject({ success: true });
+    expect(mockHosts[0].contentView.children).toContain(mockViews[0]);
+    expect(parent.contentView.children).not.toContain(mockViews[0]);
+    expect(parent.visible).toBe(mode !== 'hidden'); expect(parent.minimized).toBe(mode === 'minimized');
+    expect(f.page.screenshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { x: 0, y: 0, width: 700, height: 500 }, 1280);
+    parent.visible = true; parent.minimized = false; f.browser.layout(layout);
+    expect(parent.contentView.children).toContain(mockViews[0]);
+  } finally { f.browser.close(); }
 });

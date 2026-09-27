@@ -328,8 +328,9 @@ export class DesktopBrowser implements BrowserHost {
       const captured = await this.capture(tab, signal, dimension);
       return { ...outcome, data: { ...outcome.data as Record<string, unknown>, observation: captured.data }, attachments: captured.attachments };
     } catch (error) {
+      // 已派发动作的状态保持不变；明确只补读观察，避免模型因截图失败重复点击或提交。
       return { ...outcome, data: { ...outcome.data as Record<string, unknown>, observationError: {
-        code: (error as { code?: string }).code ?? 'BROWSER_CAPTURE_FAILED', message: (error as Error).message } } };
+        code: (error as { code?: string }).code ?? 'BROWSER_CAPTURE_FAILED', message: `${(error as Error).message} 截图失败不代表动作失败；请用 browser_read 重新观察，不要重复刚才的动作。` } } };
     }
   }
   private async performAction(tab: OwnedTab, args: Record<string, unknown>, context: ToolContext, signal: AbortSignal): Promise<ToolOutcome> {
@@ -412,7 +413,8 @@ export class DesktopBrowser implements BrowserHost {
         throw new Error('不支持的浏览器工具操作。');
       } catch (error) {
         const code = (error as { code?: string }).code;
-        if (code === 'BROWSER_VIEW_REQUIRED' || code === 'BROWSER_CAPTURE_TIMEOUT') return { success: false, code, error: String((error as Error).message), retryable: false, data: this.describe(tab) };
+        // 纯观察的暂时超时可以安全重读；不要把这个标记加到 browser_action 上，动作可能已经完成。
+        if (code === 'BROWSER_VIEW_REQUIRED' || code === 'BROWSER_CAPTURE_TIMEOUT') return { success: false, code, error: String((error as Error).message), retryable: code === 'BROWSER_CAPTURE_TIMEOUT', data: this.describe(tab) };
         throw error;
       } finally { tab.modelInput = false; }
     });

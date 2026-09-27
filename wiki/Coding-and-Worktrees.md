@@ -19,11 +19,13 @@ GrayCode 提供了一整套专为本地工程开发设计的编码工具链，�
 ### 智能代码检索
 模型内置了轻量级、针对工程优化的检索工具：
 - **批量与并行**：独立文件的读取、查找、搜索，以及笔记读取和历史查询，可在同一模型批次内最多四路执行，结果按原始调用顺序保存。混合工具按参数识别读取动作，其余调用按顺序执行。多个独立文件的修改放在同一批提交，减少模型往返。
-- **`search_in_files`**：代码检索的默认选择，支持正则、文件 glob、上下文及审阅后替换。搜索返回 `nextOffset` 时，将其作为下一次 `offset`，其余查询参数保持不变。每页重新搜索当前文件，文件变更后从 `offset: 0` 重查。
+- **`search_in_files`**：代码检索的默认选择，支持正则、文件 glob、上下文及审阅后替换。搜索返回 `nextOffset` 时，将其作为下一次 `offset`，其余查询参数保持不变。每页重新搜索当前文件，文件变更后从 `offset: 0` 重查。非正则模式默认保留“完整短语零命中后按关键词 OR 重试”的行为；需要严格字面量匹配时传 `keywordFallback: false`，续查时也保持该值不变。
 - **`search_files`**：只需要轻量、严格字面量 UTF-8 搜索时使用，每个匹配行返回一次，不自动拆分关键词；同样支持 `offset` / `nextOffset`。
 - **截断原因**：`truncationReasons` 区分匹配数上限、输出预算与文件扫描上限。输出预算可能遗漏中间的长匹配，扫描上限之外的文件尚未检查；这些情况不会给出假装完整的续查位置，而是通过 `continuationHint` 提示缩小目录、文件模式或查询范围。
+- **`find_files`**：每个模式独立返回 `offset` / `nextOffset`，按宿主发现顺序取页，只对本页结果排序；续查某个模式时单独传入该模式及其游标。文件或排除设置变化后从 0 重查。`effectiveExclude` 和 `excludeSource` 说明实际排除模式及其来自配置还是显式参数；非空 `exclude` 整体覆盖配置，省略或空字符串使用配置，并不保证遵循 `.gitignore`。多个工作区中有根目录失败时，保留其他根的文件和 `workspaceErrors`，但不提供可能漏项的续查游标。
 - **`read_file`**：普通代码阅读的默认选择，支持批量、行号范围及图片/PDF（取决于模型能力）；`find_files`、`list_files` 和读取工具使用一致的文本行数约定：末尾换行不额外计一行，空文本保留一个可读取的空行。
 - **语言服务（LSP）集成**：支持符号跳转（`goto_definition`）、查找引用（`find_references`）与结构大纲（`get_symbols`）。结构大纲默认 `maxDepth: 1` 只展示顶层，按源码位置排列；按需增大 `maxDepth` 或用 `kinds` 筛选。主动折叠与达到输出上限的截断分别说明。若语言服务只提供平面列表，会返回 `hierarchyAvailable: false`，不猜测父子关系，可用 `kinds` 精简。
+- **`find_references`**：默认每页最多 500 条，可用 `maxResults` 缩小页面、`offset` / `nextOffset` 续查，或用 `countOnly: true` 只获取总引用数与总文件数。引用按路径、行列稳定分页，每页代码片段预算为 60,000 字符；达到预算时把下一条完整留给下一页，不跳过引用。单条片段超长会标记 `contentTruncated`，可按其路径和行号另用 `read_file`；文件或语言索引变化后从 0 重查。
 
 ### 安全修改与 Diff 审阅
 - **工具选择**：局部修改默认使用 `apply_diff`，新建或完整重写使用 `write_file`。需要显式哈希校验时，先用 `workspace_files` 的 `read` 获取原文哈希，再将其作为 `expectedHash` 写入；新文件显式传 `null`。这套接口不是 Diff 工具的别名。
@@ -36,8 +38,9 @@ GrayCode 提供了一整套专为本地工程开发设计的编码工具链，�
 
 ## 3. 终端与命令执行
 
-- **命令执行控制**：需要 Shell 管道、重定向、Shell 选择、工作目录或后台完成通知时，使用 `execute_command`。已有可执行文件和独立参数时，优先用 `run_command(command, args)`，不经过 Shell，也不会展开管道或环境变量，避免多层转义。
-- **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。
+- **命令执行控制**：需要 Shell 管道、重定向、Shell 选择或后台完成通知时，使用 `execute_command`。已有可执行文件和独立参数时，优先用 `run_command(command, args)`，不经过 Shell，也不会展开管道或环境变量，避免多层转义。`run_command` 可传 `cwd` 选择工作区内目录；省略、空字符串或 `.` 沿用当前主根目录，多根工作区的其他相对路径使用 `@根名称/目录` 前缀。越界路径、指向工作区外的符号链接和文件路径会被拒绝。
+- **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。同一账号、对话及工作区的后续运行可继续使用原 ID，RPC 客户端仍按客户端身份隔离；没有对话上下文时仅允许原运行。错误码区分 `NOT_FOUND`、`FORBIDDEN`、`EXITED`、`INVALID_CURSOR`，已退出的会话仍可读取。
+- **增量输出**：`process_session(action: "read")` 可传上次返回的 `nextCursor` 和本次 `maxChars`，游标按 UTF-16 绝对字符位置计算。`outputOffset` 是本次输出起点，`hasMore` 表示还有已产生但未读的内容，`running` 表示进程是否仍在运行，两者含义不同。最多保留最近 256,000 个字符；游标早于保留区时返回剩余内容并标记 `outputLost`。省略游标仍返回全部保留输出，兼容旧调用。
 - **安全审批策略**：对删除、安装或高风险系统命令提供拦截和明确的手动确认提示。
 - **多 Shell 支持**：在 Windows 上支持 PowerShell、CMD、Git Bash 与 WSL，可根据实际开发环境在设置中切换。
 

@@ -14,6 +14,7 @@ interface SearchInFilesArgs {
     path?: string;
     pattern?: string;
     isRegex?: boolean;
+    keywordFallback?: boolean;
     caseSensitive?: boolean;
     maxResults?: number;
     offset?: number;
@@ -109,8 +110,8 @@ function createSearchInFilesTool(): Tool {
                     query: {
                         type: 'string',
                         description: isZh
-                            ? '搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 isRegex=true。搜索模式先尝试完整字面短语；isRegex=false 时可能改用空格分隔的关键词重试。'
-                            : 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode first tries the full literal phrase and may retry space-separated keywords when isRegex=false.'
+                            ? '搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 isRegex=true。搜索模式先尝试完整字面短语；isRegex=false 时默认可能改用空格分隔的关键词重试，严格字面量搜索须传 keywordFallback=false。'
+                            : 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode first tries the full literal phrase and by default may retry space-separated keywords when isRegex=false; pass keywordFallback=false for strict literal matching.'
                     },
                     path: {
                         type: 'string',
@@ -131,6 +132,12 @@ function createSearchInFilesTool(): Tool {
                             : 'Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally; zero-result searches may return suspected_regex diagnostics instead of silently changing semantics.',
                         default: false
                     },
+                    keywordFallback: {
+                        type: 'boolean', default: true,
+                        description: isZh
+                            ? '[仅 search 且 isRegex=false] 完整短语零命中时，是否按空白拆成关键词并以 OR 重试。默认 true 保留原有行为；false 保证严格字面量查询，不拆词。isRegex=true 或 replace 模式忽略此项。'
+                            : '[Only search with isRegex=false] Retry whitespace-separated keywords with OR when the full phrase has no matches. Default true preserves existing behavior; false keeps strict literal matching without splitting. Ignored for isRegex=true or replace mode.'
+                    },
                     caseSensitive: {
                         type: 'boolean',
                         description: isZh
@@ -145,8 +152,8 @@ function createSearchInFilesTool(): Tool {
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
                         description: isZh
-                            ? '[搜索模式] 跳过的匹配数。续查时传上次返回的 nextOffset，并保持 query/path/pattern/isRegex/caseSensitive 不变。每页重新搜索，文件变化后应从 0 重查。'
-                            : '[Search mode] Matches to skip. Continue with the returned nextOffset and unchanged query/path/pattern/isRegex/caseSensitive. Each page rescans live files; restart at 0 after files change.'
+                            ? '[搜索模式] 跳过的匹配数。续查时传上次返回的 nextOffset，并保持 query/path/pattern/isRegex/keywordFallback/caseSensitive 不变。每页重新搜索，文件变化后应从 0 重查。'
+                            : '[Search mode] Matches to skip. Continue with the returned nextOffset and unchanged query/path/pattern/isRegex/keywordFallback/caseSensitive. Each page rescans live files; restart at 0 after files change.'
                     },
                     replace: {
                         type: 'string',
@@ -169,6 +176,11 @@ function createSearchInFilesTool(): Tool {
             const searchPath = typed.path || '.';
             const filePattern = typed.pattern || '**/*';
             const isRegex = typed.isRegex || false;
+            // 新开关只控制搜索的空白 OR 回退；默认保留原语义，不影响正则和保守替换路径。
+            const keywordFallback = typed.keywordFallback !== false;
+            if (typed.keywordFallback !== undefined && typeof typed.keywordFallback !== 'boolean') {
+                return { success: false, error: 'keywordFallback must be a boolean' };
+            }
             
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
             const mode = typed.mode || 'search';
@@ -518,7 +530,7 @@ function createSearchInFilesTool(): Tool {
                     let allResults = searchPass.results;
                     let fallbackInfo: SearchQueryFallbackInfo | undefined;
 
-                    const fallbackKeywords = !isRegex ? splitWhitespaceFallbackKeywords(query) : [];
+                    const fallbackKeywords = !isRegex && keywordFallback ? splitWhitespaceFallbackKeywords(query) : [];
                     if (searchPass.matchesSeen === 0 && !searchPass.budgetTruncated && fallbackKeywords.length > 0) {
                         const fallbackRegex = createFallbackKeywordRegex(fallbackKeywords, flags);
                         searchPass = await runSearchPass(fallbackRegex);

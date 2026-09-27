@@ -1,10 +1,7 @@
 import { createFindReferencesToolDeclaration } from './declarations';
 /**
- * 查找引用工具
- *
- * 使用 VSCode LSP 查找符号的所有引用
+ * 查找引用工具：使用 VSCode LSP 查找符号引用，分页仅限制读取和输出，不限制 provider 查询。
  */
-
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
@@ -15,44 +12,12 @@ import {
     withTimeoutAndAbort
 } from './lspLifecycle';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { getActualLanguage } from '../../i18n';
-import { resolveLocalizationLanguage } from '../localization/types';
+import { createReferencePage, parseReferencePageOptions, referenceSnippet } from './referencePage';
 
 /** context 参数允许的最大上下文行数（防止引用多时响应体暴涨） */
 const MAX_CONTEXT_LINES = 10;
 
-/**
- * 引用结果数量上限：LSP 对高频符号（如 Object/console）可能返回海量引用，
- * 超出后截断收集并在返回 JSON 中置 truncated 标记，防止响应体与内存暴涨。
- */
-const MAX_REFERENCES = 500;
-
-/**
- * 引用位置信息
- */
-interface ReferenceLocation {
-    path: string;
-    line: number;       // 1-based
-    column: number;     // 1-based
-    content: string;    // 该行的内容（或带上下文）
-}
-
-/**
- * 按文件分组的引用
- */
-interface GroupedReferences {
-    path: string;
-    count: number;
-    references: {
-        line: number;
-        column: number;
-        content: string;
-    }[];
-}
-
-/**
- * 创建查找引用工具
- */
+/** 创建查找引用工具。 */
 export function createFindReferencesTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
@@ -67,179 +32,78 @@ export function createFindReferencesTool(): Tool {
                 ? rawColumn
                 : 1;
             const symbolName = args.symbol as string | undefined;
-            // 修改原因：context 无上限时，模型传大值会让每个引用携带近乎整文件上下文，
-            // 引用多时响应体暴涨。
-            // 修改方式：clamp 到 [0, MAX_CONTEXT_LINES]；NaN/Infinity 等非法值回退默认 2。
+            // context 仍沿用旧的 clamp 语义；分页参数独立校验，不能把无效 offset 当第一页。
             const rawContextLines = typeof args.context === 'number' ? args.context : 2;
             const contextLines = Number.isFinite(rawContextLines)
                 ? Math.min(MAX_CONTEXT_LINES, Math.max(0, Math.floor(rawContextLines)))
                 : 2;
-            
+
             if (!filePath) {
                 return { success: false, error: 'path is required' };
             }
-            // line 校验：仅接受有限正整数（NaN/小数/Infinity 会穿透旧的 line < 1 检查）
             if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
                 return { success: false, error: 'line must be a positive integer (1-based)' };
             }
-            
-            // 修改原因：find_references 接受绝对路径时可通过 LSP 读取工作区外文件内容，不受读策略管控。
-            // 修改方式：与 read_file 一致，入口处校验 outside-workspace 读策略（deny/ask/allow）。
-            // 使用真实工具名：服务层白名单已包含 find_references，ask 策略下确认弹窗可正常放行。
+
+            // 与 read_file 一致，入口校验 outside-workspace 读策略（deny/ask/allow）。
             const accessError = ensureOutsideWorkspaceAccessApproved('find_references', { path: filePath }, context);
             if (accessError) {
                 return { success: false, error: accessError };
             }
-            
             const uri = resolveUri(filePath);
             if (!uri) {
                 return { success: false, error: 'Could not resolve file path. Make sure a workspace is open.' };
             }
-            
-            try {
-                // 创建位置（转换为 0-based）
-                const position = new vscode.Position(line - 1, column - 1);
-                // 主动打开文档以激活对应语言服务（带超时/中止保护）
-                await openDocumentWithGuard(uri, context?.abortSignal);
 
-                // 使用 VSCode 的 executeReferenceProvider 命令（超时/中止保护 + 瞬时重试）
+            try {
+                const options = parseReferencePageOptions(args);
+                const position = new vscode.Position(line - 1, column - 1);
+                await openDocumentWithGuard(uri, context?.abortSignal);
                 const references = await executeLspCommandWithRetry<vscode.Location[]>(
                     'vscode.executeReferenceProvider',
                     [uri, position],
                     { abortSignal: context?.abortSignal }
-                );
-                
-                if (!references || references.length === 0) {
-                    return {
-                        success: true,
-                        data: {
-                            path: filePath,
-                            line,
-                            column,
-                            symbol: symbolName,
-                            totalCount: 0,
-                            fileCount: 0,
-                            references: [],
-                            truncated: false,
-                            message: 'No references found. The symbol may not be used, or no language server is available.'
-                        }
-                    };
-                }
-                
-                // 按文件分组引用
-                const groupedMap = new Map<string, ReferenceLocation[]>();
-                // 缓存已打开的文档
+                ) ?? [];
+                const locations = references.map(ref => ({
+                    path: vscode.workspace.getWorkspaceFolder(ref.uri)
+                        ? vscode.workspace.asRelativePath(ref.uri, isMultiRoot) : ref.uri.fsPath,
+                    line: ref.range.start.line + 1,
+                    column: ref.range.start.character + 1,
+                    uri: ref.uri
+                }));
                 const docCache = new Map<string, vscode.TextDocument>();
-                let collectedCount = 0;
-
-                for (const ref of references) {
-                    // 结果上限：超出后停止读取内容与分组，避免海量引用撑爆响应体
-                    if (collectedCount >= MAX_REFERENCES) {
-                        break;
-                    }
-                    collectedCount++;
-
-                    // 获取相对路径
-                    const workspaceFolder = vscode.workspace.getWorkspaceFolder(ref.uri);
-                    let relativePath: string;
-                    if (workspaceFolder) {
-                        relativePath = vscode.workspace.asRelativePath(ref.uri, isMultiRoot);
-                    } else {
-                        relativePath = ref.uri.fsPath;
-                    }
-                    
-                    const refLine = ref.range.start.line; // 0-based
-                    
-                    // 获取代码内容
-                    let content = '';
+                const page = await createReferencePage(locations, options, async ref => {
                     try {
-                        // 使用缓存（文档读取带超时/中止保护）
+                        // countOnly 不会调用本回调；分页仅打开当前页需要的引用文档。
                         let doc = docCache.get(ref.uri.toString());
                         if (!doc) {
                             doc = await withTimeoutAndAbort(
-                                vscode.workspace.openTextDocument(ref.uri),
-                                LSP_TIMEOUT_MS,
-                                context?.abortSignal
+                                vscode.workspace.openTextDocument(ref.uri), LSP_TIMEOUT_MS, context?.abortSignal
                             );
                             docCache.set(ref.uri.toString(), doc);
                         }
-                        
-                        const totalLines = doc.lineCount;
-                        const startLine = Math.max(0, refLine - contextLines);
-                        const endLine = Math.min(totalLines - 1, refLine + contextLines);
-                        
-                        const lines: string[] = [];
-                        for (let i = startLine; i <= endLine; i++) {
-                            const lineText = doc.lineAt(i).text;
-                            const lineNum = i + 1; // 1-based
-                            // 标记引用所在行
-                            const marker = (i === refLine) ? '>' : ' ';
-                            lines.push(`${marker}${lineNum.toString().padStart(4)} | ${lineText}`);
-                        }
-                        content = lines.join('\n');
-                    } catch {
-                        content = '(Unable to read file content)';
+                        return referenceSnippet(doc.lineCount, index => doc!.lineAt(index).text, ref.line - 1, contextLines);
+                    } catch (error) {
+                        // 用户中止不是“文件不可读”，不可吞掉后继续遍历后续引用。
+                        if (context?.abortSignal?.aborted) throw error;
+                        return { content: '(Unable to read file content)' };
                     }
-                    
-                    const location: ReferenceLocation = {
-                        path: relativePath,
-                        line: refLine + 1,
-                        column: ref.range.start.character + 1,
-                        content
-                    };
-                    
-                    if (!groupedMap.has(relativePath)) {
-                        groupedMap.set(relativePath, []);
-                    }
-                    groupedMap.get(relativePath)!.push(location);
-                }
-                
-                // 转换为分组数组
-                const groupedReferences: GroupedReferences[] = [];
-                for (const [path, refs] of groupedMap) {
-                    // 按行号排序
-                    refs.sort((a, b) => a.line - b.line);
-                    
-                    groupedReferences.push({
-                        path,
-                        count: refs.length,
-                        references: refs.map(r => ({
-                            line: r.line,
-                            column: r.column,
-                            content: r.content
-                        }))
-                    });
-                }
-                
-                // 按引用数量排序（多的在前）
-                groupedReferences.sort((a, b) => b.count - a.count);
-                
+                });
                 return {
                     success: true,
                     data: {
-                        path: filePath,
-                        line,
-                        column,
-                        symbol: symbolName,
-                        totalCount: references.length,
-                        fileCount: groupedReferences.length,
-                        references: groupedReferences,
-                        truncated: references.length > MAX_REFERENCES
+                        path: filePath, line, column, symbol: symbolName, ...page,
+                        ...(references.length === 0 ? { message: 'No references found. The symbol may not be used, or no language server is available.' } : {})
                     }
                 };
             } catch (error) {
-                return {
-                    success: false,
-                    error: error instanceof Error ? error.message : String(error)
-                };
+                return { success: false, error: error instanceof Error ? error.message : String(error) };
             }
         }
     };
 }
 
-/**
- * 注册查找引用工具
- */
+/** 注册查找引用工具。 */
 export function registerFindReferences(): Tool {
     return createFindReferencesTool();
 }

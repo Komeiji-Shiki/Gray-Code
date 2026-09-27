@@ -24,6 +24,10 @@ interface FindResult {
     fileDetails?: FoundFileDetail[];
     count?: number;
     truncated?: boolean;
+    offset?: number;
+    nextOffset?: number;
+    continuationHint?: string;
+    workspaceErrors?: { workspace: string; error: string }[];
     error?: string;
 }
 interface FindFilesArgs {
@@ -31,29 +35,27 @@ interface FindFilesArgs {
     pattern?: string;
     exclude?: string;
     maxResults?: number;
+    offset?: number;
 }
 export function createFindFilesRuntime(host: SearchFileHost) {
-function getExcludePattern(): string {
-    const config = {excludePatterns:host.findExcludePatterns()};
-    return buildExcludePattern(config?.excludePatterns, DEFAULT_EXCLUDE_PATTERN);
-}
 
 async function findInWorkspace(
     workspace: { name: string; uri: FileLocation },
     pattern: string,
     exclude: string,
     maxResults: number,
-    includeWorkspacePrefix: boolean
+    includeWorkspacePrefix: boolean,
+    page: { remaining: number }
 ): Promise<FindResult> {
     try {
-        // 创建相对于工作区的模式
-        
-        // 多取 1 个用于精确判定截断：findFiles 达到 maxResults 即停止，无法区分
-        // “恰好 maxResults 个”与“超过 maxResults 个”；取 maxResults+1 后若多出 1 个
-        // 才说明真的被截断，避免恰好等于时误报 truncated
-        const files = await host.findFiles(workspace.uri, pattern, exclude, maxResults + 1);
-        const truncated = files.length > maxResults;
-        const cappedFiles = truncated ? files.slice(0, maxResults) : files;
+        // offset 先按宿主发现顺序跳过，再保持旧的页内排序；不能先全局排序，
+        // 否则会改变首批结果与已有遍历预算。只统计本页行数，不重读已跳过文件。
+        // 多取 1 个仅用于精确判定截断，跨工作区共享剩余 offset。
+        const skip = page.remaining;
+        const files = await host.findFiles(workspace.uri, pattern, exclude, skip + maxResults + 1);
+        page.remaining = Math.max(0, skip - files.length);
+        const truncated = files.length > skip + maxResults;
+        const cappedFiles = files.slice(skip, skip + maxResults);
         
         // 受控并发：以前用裸 Promise.all 对最多 500 个文件无上限并发全量读取，
         // 同时打开数百文件句柄且内存峰值不可控；行数统计本身也已改为字节流。
@@ -89,8 +91,10 @@ async function findInWorkspace(
 async function findWithPattern(
     pattern: string,
     exclude: string,
-    maxResults: number
+    maxResults: number,
+    offset: number
 ): Promise<FindResult> {
+    const page = { remaining: offset };
     const workspaces = host.getAllWorkspaces();
     if (workspaces.length === 0) {
         return {
@@ -102,13 +106,14 @@ async function findWithPattern(
     
     // 单工作区模式
     if (workspaces.length === 1) {
-        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false);
+        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false, page);
     }
     
     // 多工作区模式：在所有工作区中查找
     let allFiles: string[] = [];
     let allFileDetails: FoundFileDetail[] = [];
     let truncated = false;
+    const workspaceErrors: { workspace: string; error: string }[] = [];
     
     for (const ws of workspaces) {
         // 修改原因：前置 allFiles.length >= maxResults 判断会在「后续工作区可能根本没有匹配文件」
@@ -116,7 +121,11 @@ async function findWithPattern(
         // 修改方式：删除前置判断，每个工作区都走 maxResults+1 探测精确判定截断；
         //           remaining<=0 时探测仍能区分「该工作区还有文件（真截断）」与「没有文件（未截断）」。
         const remaining = maxResults - allFiles.length;
-        const result = await findInWorkspace(ws, pattern, exclude, remaining, true);
+        const result = await findInWorkspace(ws, pattern, exclude, remaining, true, page);
+        if (!result.success) {
+            // 某根失败不能伪装成「全库无匹配」；保留其他根的结果，但不给出可能漏项的续查游标。
+            workspaceErrors.push({ workspace: ws.name, error: result.error || 'File discovery failed' });
+        }
         
         if (result.success && result.files) {
             allFiles.push(...result.files);
@@ -142,7 +151,9 @@ async function findWithPattern(
     }
     return {
         pattern,
-        success: true,
+        success: workspaceErrors.length === 0,
+        workspaceErrors: workspaceErrors.length ? workspaceErrors : undefined,
+        error: workspaceErrors.length ? `${workspaceErrors.length} workspace(s) failed to search` : undefined,
         files: allFiles,
         fileDetails: allFileDetails,
         count: allFiles.length,
@@ -162,6 +173,10 @@ function createFindFilesTool(): Tool {
         ? '\n\n重要：patterns 参数必须是数组，即使只有一个模式也要写成 {"patterns": ["*.ts"]}，不要写成 {"pattern": "*.ts"}。'
         : '\n\nImportant: the patterns parameter must be an array, even for a single pattern, e.g., {"patterns": ["*.ts"]}, NOT {"pattern": "*.ts"}.';
 
+    const paginationNote = isZh
+        ? '\n每个模式含 nextOffset 时可作为 offset 续查。offset 按宿主发现顺序跳过，结果仅页内排序；不同宿主顺序可能不同，每页重新遍历，文件或排除设置变化后从 0 重查。排除策略见 effectiveExclude/excludeSource；不保证遵循 .gitignore。'
+        : '\nContinue each pattern with its nextOffset as offset. Offset skips host discovery order; only each page is sorted. Host order may differ and each page rescans live files; restart at 0 after files or exclusion settings change. See effectiveExclude/excludeSource for exclusions; .gitignore filtering is not guaranteed.';
+
     return {
         declaration: {
             name: 'find_files',
@@ -169,13 +184,13 @@ function createFindFilesTool(): Tool {
             // 修改原因：用户要求 find_files 与 list_files 的新工具描述统一改为中文，并强调新增 lineCount 元数据。
             // 修改方式：主描述说明 glob、fileDetails.lineCount、数组参数和多根工作区规则，参数描述也同步中文化。
             // 修改目的：减少中文会话中模型误用 pattern 单字符串或忽略行数元数据的概率。
-            description: isMultiRoot
+            description: (isMultiRoot
                 ? isZh
                     ? `根据一个或多个 glob 模式查找文件。结果会保留 files 字符串数组，并额外返回 fileDetails；其中可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。当前是多根工作区，结果会带工作区前缀。可用工作区：${workspaces.map(w => w.name).join(', ')}。${arrayFormatNote}`
                     : `Find files by one or more glob patterns. The result keeps the files string array and additionally returns fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range. This is a multi-root workspace, so results are prefixed with the workspace name. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.${arrayFormatNote}`
                 : isZh
                     ? `根据一个或多个 glob 模式查找文件。结果会保留 files 字符串数组，并额外返回 fileDetails；其中可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。${arrayFormatNote}`
-                    : `Find files by one or more glob patterns. The result keeps the files string array and additionally returns fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range.${arrayFormatNote}`,
+                    : `Find files by one or more glob patterns. The result keeps the files string array and additionally returns fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range.${arrayFormatNote}`) + paginationNote,
             category: 'search',
             parameters: {
                 type: 'object',
@@ -191,15 +206,21 @@ function createFindFilesTool(): Tool {
                     },
                     exclude: {
                         type: 'string',
+                        // 非空 exclude 一直是覆盖而非追加；不能用 schema default 诱导模型覆盖用户配置。
                         description: isZh
-                            ? '排除模式，例如："**/node_modules/**"。'
-                            : 'Exclude pattern, e.g., "**/node_modules/**".',
-                        default: '**/node_modules/**'
+                            ? '非空 glob 整体替换设置中的排除列表（不是追加），例如："**/node_modules/**"。省略或传空字符串沿用设置；未配置/空列表时回退排除 node_modules。不会自动合并 .gitignore。'
+                            : 'A nonempty glob replaces the configured exclusions (not appended), e.g., "**/node_modules/**". Omitted or empty string uses settings; missing/empty settings fall back to excluding node_modules. Does not automatically merge .gitignore.'
                     },
                     maxResults: {
                         type: 'number',
-                        description: isZh ? '每个模式最多返回多少个结果。' : 'Maximum number of results returned per pattern.',
+                        description: isZh ? '每个模式每页最多返回多少个结果。' : 'Maximum number of results returned per pattern per page.',
                         default: 500
+                    },
+                    offset: {
+                        type: 'integer', minimum: 0, default: 0,
+                        description: isZh
+                            ? '每个模式按发现顺序跳过的文件数（多根累计，不是排序后的索引）。续查建议只传对应的单个模式及其 nextOffset，保持 exclude 不变；文件/设置变化后从 0 重查。'
+                            : 'Files to skip in discovery order per pattern (across roots, not a sorted index). Continue one pattern with its nextOffset and unchanged exclude; restart at 0 after files/settings change.'
                     }
                 },
                 required: ['patterns']
@@ -221,10 +242,26 @@ function createFindFilesTool(): Tool {
                 return { success: false, error: 'patterns is required' };
             }
 
-            // 如果用户指定了 exclude 参数则使用，否则使用配置的默认值
-            const exclude = typed.exclude || getExcludePattern();
-            // 0/负值/非数字语义混乱（负值会原样传入 findFiles）：统一回退到默认 500，并取整
-            const maxResults = typeof typed.maxResults === 'number' && typed.maxResults > 0 ? Math.floor(typed.maxResults) : 500;
+            if (patternList.some(pattern => typeof pattern !== 'string' || !pattern.trim())) {
+                return { success: false, error: 'patterns must contain non-empty strings' };
+            }
+            if (typed.exclude !== undefined && typeof typed.exclude !== 'string') {
+                return { success: false, error: 'exclude must be a string' };
+            }
+            const offset = typed.offset ?? 0;
+            if (!Number.isSafeInteger(offset) || offset < 0) {
+                return { success: false, error: 'offset must be a non-negative safe integer' };
+            }
+            // 保留 exclude='' 回退配置、非空值整体覆盖的旧约定，只补实际策略供模型核对。
+            const configuredExcludes = host.findExcludePatterns();
+            const exclude = typed.exclude || buildExcludePattern(configuredExcludes, DEFAULT_EXCLUDE_PATTERN);
+            const excludeSource = typed.exclude ? 'argument' : configuredExcludes?.length ? 'settings' : 'fallback';
+            // 小于 1 的正小数不能归零；Infinity/NaN 也不能传给宿主变成空结果或无界扫描。
+            const maxResults = typeof typed.maxResults === 'number' && Number.isFinite(typed.maxResults) && typed.maxResults > 0
+                ? Math.max(1, Math.floor(typed.maxResults)) : 500;
+            if (!Number.isSafeInteger(offset + maxResults + 1)) {
+                return { success: false, error: 'offset + maxResults + 1 must be a safe integer' };
+            }
 
             const results: FindResult[] = [];
             let successCount = 0;
@@ -232,12 +269,20 @@ function createFindFilesTool(): Tool {
             let totalFiles = 0;
 
             for (const pattern of patternList) {
-                const result = await findWithPattern(pattern, exclude, maxResults);
+                const result = await findWithPattern(pattern, exclude, maxResults, offset);
+                result.offset = offset;
+                if (result.success && result.truncated) {
+                    result.nextOffset = offset + (result.count || 0);
+                    result.continuationHint = `Continue this pattern with offset=${result.nextOffset} and unchanged exclude. Pages follow host discovery order, then sort within each page; restart at offset=0 if files or settings changed.`;
+                } else if (!result.success) {
+                    result.continuationHint = 'Resolve the reported search errors, then restart this pattern at offset=0; partial results cannot provide a reliable continuation offset.';
+                }
                 results.push(result);
+                // 部分工作区失败仍可能返回文件，汇总不能丢掉这些已展示结果。
+                totalFiles += result.count || 0;
                 
                 if (result.success) {
                     successCount++;
-                    totalFiles += result.count || 0;
                 } else {
                     failCount++;
                 }
@@ -251,7 +296,9 @@ function createFindFilesTool(): Tool {
                     successCount,
                     failCount,
                     totalCount: patternList.length,
-                    totalFiles
+                    totalFiles,
+                    effectiveExclude: exclude,
+                    excludeSource
                 },
                 error: allSuccess ? undefined : `${failCount} patterns failed to search`
             };

@@ -157,15 +157,20 @@ export class BrowserPage {
   }
   async screenshot(signal: AbortSignal, bounds: { width: number; height: number }, maxImageDimension = 1280) {
     await this.connect(); signal.throwIfAborted();
+    // 区分等待绘制帧与采集超时，便于定位后台渲染条件；失败仍只重试观察，不能据此重做页面动作。
+    let stage = '等待页面绘制帧';
     try {
       // 输入派发完成时合成线程可能尚未提交滚动；等新帧后再采集，避免返回操作前的画面。
       await this.command('Runtime.evaluate', {
         expression: 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))))',
         awaitPromise: true, returnByValue: true,
       }, signal);
+      stage = '读取截图前布局';
       await this.command('Page.getLayoutMetrics', {}, signal);
       const epoch = this.epoch, zoomFactor = this.contents.getZoomFactor();
+      stage = '采集页面图像';
       const picture = await this.pending(this.contents.capturePage(undefined, { stayHidden: false, stayAwake: false }), signal, 5000);
+      stage = '读取截图后布局';
       const metrics = await this.command('Page.getLayoutMetrics', {}, signal);
       signal.throwIfAborted();
       if (epoch !== this.epoch) throw new Error('页面在截图时发生导航，请重新截图。');
@@ -184,8 +189,9 @@ export class BrowserPage {
       return { observation, attachment: { mimeType: 'image/png', data: image.toPNG().toString('base64'), name: 'browser.png' } };
     } catch (error) {
       signal.throwIfAborted();
-      if (/display surface.*not available|UnknownVizError/i.test(String(error))) throw Object.assign(new Error('当前网页的绘制表面不可用，请重新加载标签后观察。'), { code: 'BROWSER_VIEW_REQUIRED' });
-      if ((error as { code?: string }).code === 'BROWSER_OPERATION_TIMEOUT') throw Object.assign(new Error('网页截图未及时完成，请稍后重新观察。'), { code: 'BROWSER_CAPTURE_TIMEOUT' });
+      // 观察失败不要求 reload：重新加载可能重复提交网页表单，snapshot 可独立用于检查当前状态。
+      if (/display surface.*not available|UnknownVizError/i.test(String(error))) throw Object.assign(new Error('当前网页的绘制表面不可用。可先用 browser_read 的 snapshot 读取页面状态，再用 screenshot 重新观察。'), { code: 'BROWSER_VIEW_REQUIRED' });
+      if ((error as { code?: string }).code === 'BROWSER_OPERATION_TIMEOUT') throw Object.assign(new Error(`网页截图超时（${stage}）。可稍后用 browser_read 的 screenshot 重试，或用 snapshot 读取页面状态。`), { code: 'BROWSER_CAPTURE_TIMEOUT' });
       throw error;
     }
   }
