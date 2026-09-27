@@ -15,12 +15,13 @@ import { createUpdateProgressTool } from '../../../../backend/tools/progress/upd
 import { createValidateProgressDocumentTool } from '../../../../backend/tools/progress/validate_progress_documentRuntime';
 import { randomUUID } from 'node:crypto';
 import type { RuntimeTool, ToolContext } from '@graycode/core';
+import type { ConversationState } from '@graycode/contracts';
 import type { ToolContext as LegacyToolContext } from '../../../../backend/tools/types';
 import { withArtifactHost, type ArtifactDocumentHost } from '../../../../backend/tools/shared/artifactHost';
 import { classifyApprovalGateForToolResult } from '../../../../backend/modules/api/chat/services/approvalGateRules';
 import { normalizePendingApprovalGate } from '../../../../backend/modules/conversation/pendingApprovalGate';
 import type { PlatformApplication } from '../application';
-import { fileHash, type FileChange } from '../workspace/fileTransaction';
+import { fileHash, type FileChange, type FileVersion } from '../workspace/fileTransaction';
 
 export class PlatformArtifacts {
   constructor(private readonly app: PlatformApplication) {}
@@ -37,10 +38,19 @@ export class PlatformArtifacts {
   private async execute(tool: ReturnType<typeof createCreatePlanTool>, args: Record<string, unknown>, context: ToolContext, readOnly: boolean) {
     if (!context.workspace || !context.conversationId) throw new Error('文档工具需要对话绑定工作区。');
     this.app.workspace(context.actorId, context.workspace.id, readOnly ? ['workspace_read'] : ['workspace_write']);
-    const workspace = context.workspace;
-    await this.app.conversation(context.actorId, context.conversationId);
+    const workspace = context.workspace, conversationId = context.conversationId;
+    await this.app.conversation(context.actorId, conversationId);
     return this.app.files.transaction(workspace, async transaction => {
-      const state = await this.app.storage.readConversationState(context.conversationId!);
+      let snapshot: Promise<ConversationState> | undefined;
+      const readState = () => snapshot ??= this.app.storage.readConversationState(conversationId);
+      // 写入仍在操作开始时捕获对话版本；只读校验没有使用历史时不恢复正文和附件。
+      if (!readOnly) await readState();
+      const captured = new Map<string, Promise<FileVersion>>();
+      const capture = (key: string) => {
+        let value = captured.get(key);
+        if (!value) { value = transaction.capture(key); captured.set(key, value); }
+        return value;
+      };
       const staged = new Map<string, FileChange>();
       let metadataChanged = false;
       const relative = (absolute: string) => {
@@ -57,13 +67,13 @@ export class PlatformArtifacts {
         read: async target => {
           context.signal.throwIfAborted();
           const key = relative(target.fsPath);
-          const bytes = staged.get(key)?.after.bytes ?? (await transaction.capture(key)).bytes;
+          const bytes = staged.get(key)?.after.bytes ?? (await capture(key)).bytes;
           if (bytes === null) throw missing();
           return bytes;
         },
         stat: async target => {
           const key = relative(target.fsPath);
-          const bytes = staged.get(key)?.after.bytes ?? (await transaction.capture(key)).bytes;
+          const bytes = staged.get(key)?.after.bytes ?? (await capture(key)).bytes;
           if (bytes === null) throw missing();
           return { size: bytes.byteLength };
         },
@@ -71,39 +81,51 @@ export class PlatformArtifacts {
           if (readOnly) throw new Error('只读文档工具不能写入文件。');
           context.signal.throwIfAborted();
           const key = relative(target.fsPath);
-          const before = staged.get(key)?.before ?? await transaction.capture(key);
+          const stagedBefore = staged.get(key)?.before;
+          const observed = stagedBefore ?? await captured.get(key);
+          const current = await transaction.capture(key);
+          // 读取后发生的外部修改不能被重新取版本掩盖；在建立恢复记录前拒绝过期写入。
+          if (observed && observed.hash !== current.hash) throw new Error(`FILE_CONFLICT: ${key} 在读取后发生变化，请重新读取。`);
+          const before = stagedBefore ?? current;
           staged.set(key, { path: key, before, after: { bytes: new Uint8Array(bytes), hash: fileHash(bytes), mode: before.mode } });
         },
         // 父目录随文件事务一同创建；这里仅检查路径，失败时不遗留空目录。
         prepareParent: async absolute => { await this.app.files.resolve(workspace, relative(absolute)); },
       };
-      const requireConversation = (id: string) => { if (id !== state.metadata.id) throw new Error('不能访问其他对话。'); context.signal.throwIfAborted(); };
+      const requireConversation = (id: string) => { if (id !== conversationId) throw new Error('不能访问其他对话。'); context.signal.throwIfAborted(); };
       const conversationStore: NonNullable<LegacyToolContext['conversationStore']> = {
-        getHistory: async id => { requireConversation(id); return structuredClone(state.history.messages); },
-        getCustomMetadata: async (id, key) => { requireConversation(id); return structuredClone((state.metadata.custom as Record<string, unknown> | undefined)?.[key]); },
+        getHistory: async id => { requireConversation(id); return structuredClone((await readState()).history.messages); },
+        getCustomMetadata: async (id, key) => { requireConversation(id); return structuredClone(((await readState()).metadata.custom as Record<string, unknown> | undefined)?.[key]); },
         setCustomMetadata: async (id, key, value) => {
-          requireConversation(id); state.metadata.custom = { ...state.metadata.custom as Record<string, unknown>, [key]: structuredClone(value) }; metadataChanged = true;
+          requireConversation(id); const state = await readState();
+          state.metadata.custom = { ...state.metadata.custom as Record<string, unknown>, [key]: structuredClone(value) }; metadataChanged = true;
         },
       };
       const { multimodal, ...result } = await withArtifactHost(host, () => tool.handler(args, {
-        conversationId: context.conversationId, toolId: context.toolCallId, abortSignal: context.signal, conversationStore,
+        conversationId, toolId: context.toolCallId, abortSignal: context.signal, conversationStore,
       }));
       context.signal.throwIfAborted();
       if (!result.success) return { ...result, attachments: multimodal };
       const seed = classifyApprovalGateForToolResult({ id: context.toolCallId!, name: tool.declaration.name, args }, result);
       if (seed) {
+        const state = await readState();
         state.metadata.custom = { ...state.metadata.custom as Record<string, unknown>, pendingApprovalGate: { ...seed, id: randomUUID(), createdAt: Date.now() } };
         metadataChanged = true;
       }
-      if (staged.size) await this.app.changes.perform(transaction, workspace, state, [...staged.values()],
-        metadataChanged ? { metadata: state.metadata } : {}, { runId: context.runId, toolCallId: context.toolCallId });
-      else if (metadataChanged) await this.app.storage.commitConversation({ conversationId: state.metadata.id,
-        expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
+      if (staged.size || metadataChanged) {
+        const state = await readState();
+        if (staged.size) await this.app.changes.perform(transaction, workspace, state, [...staged.values()],
+          metadataChanged ? { metadata: state.metadata } : {}, { runId: context.runId, toolCallId: context.toolCallId });
+        else await this.app.storage.commitConversation({ conversationId: state.metadata.id,
+          expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
+      }
       if (metadataChanged) this.app.productUi.conversations.clearMetadataCache();
       return { ...result, attachments: multimodal };
     });
   }
   async beforeRun(run: import('@graycode/contracts').RunRecord) {
+    const conversation = await this.app.storage.getConversation(run.conversationId);
+    if (conversation && !normalizePendingApprovalGate((conversation.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) return;
     const state = await this.app.storage.readConversationState(run.conversationId);
     if (!normalizePendingApprovalGate((state.metadata.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) return;
     // 新的用户消息取代旧确认请求；隐藏确认通过准备事务明确消费对应请求。
