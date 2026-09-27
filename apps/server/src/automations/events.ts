@@ -13,7 +13,10 @@ interface FileListener { watcher: FSWatcher; signature: string; timer?: ReturnTy
 /** 原生通知只唤醒校验；内容指纹和事务中的来源状态决定是否产生新事件。 */
 export class AutomationEventSources {
   private readonly files = new Map<string, FileListener>();
+  private readonly lifetime = new AbortController();
+  private readonly reads = new Set<Promise<string>>();
   private queue: Promise<unknown> = Promise.resolve();
+  private reconciling?: Promise<void>;
   private poll?: ReturnType<typeof setInterval>;
   private closed = false;
   constructor(private readonly app: PlatformApplication, private readonly host: {
@@ -50,12 +53,23 @@ export class AutomationEventSources {
   async sourceState(actorId: string, event: AutomationEventConfiguration): Promise<string> {
     if (event.trigger.type === 'run_completed') return String(Date.now());
     if (event.trigger.type === 'node_online') return this.app.nodes.status(actorId).peers.find(peer => peer.id === (event.trigger as { peerId: string }).peerId)?.state ?? 'missing';
+    this.lifetime.signal.throwIfAborted();
+    // 配置校验也可能正在读文件；它不在监听队列中，但同样需要在关闭时结束。
+    const reading = this.fileState(actorId, event); this.reads.add(reading);
+    try { return await reading; } finally { this.reads.delete(reading); }
+  }
+  private async fileState(actorId: string, event: AutomationEventConfiguration): Promise<string> {
     const file = await this.file(actorId, event);
     try {
       if (!(await stat(file)).isFile()) throw new Error('请选择文件，文件夹不能作为单文件监控来源。');
-      const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk);
+      const hash = createHash('sha256'); for await (const chunk of createReadStream(file, { signal: this.lifetime.signal })) hash.update(chunk);
+      this.lifetime.signal.throwIfAborted();
       return hash.digest('hex');
-    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'; throw error; }
+    } catch (error) { this.lifetime.signal.throwIfAborted(); if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'; throw error; }
+  }
+  private async reportFailure(id: string, error: unknown) {
+    // 正常退出中止校验时保持任务状态，下一次启动仍按用户配置恢复监听。
+    if (!this.closed) await this.host.fail(id, error);
   }
   private enqueue(operation: () => Promise<void>) {
     const next = this.queue.then(() => this.closed ? undefined : operation()); this.queue = next.catch(() => {}); return next;
@@ -85,13 +99,13 @@ export class AutomationEventSources {
           if (name && path.basename(String(name)).toLocaleLowerCase() !== path.basename(file).toLocaleLowerCase()) return;
           for (const id of this.causes()) listener.causes.add(id);
           clearTimeout(listener.timer);
-          listener.timer = setTimeout(() => { listener.timer = undefined; void this.scan(record.id).catch(error => this.host.fail(record.id, error)); }, trigger.debounceMs);
+          listener.timer = setTimeout(() => { listener.timer = undefined; void this.scan(record.id).catch(error => this.reportFailure(record.id, error)); }, trigger.debounceMs);
           listener.timer.unref();
         });
-        listener.watcher.on('error', error => { if (!this.closed) void this.host.fail(record.id, error); });
+        listener.watcher.on('error', error => { void this.reportFailure(record.id, error); });
         this.files.set(record.id, listener);
         await this.scanNow(record.id);
-      } catch (error) { await this.host.fail(record.id, error); }
+      } catch (error) { await this.reportFailure(record.id, error); }
     }
     if (active.length && !this.poll) { this.poll = setInterval(() => { void this.reconcile().catch(error => this.app.publish({ type: 'notification', severity: 'error', message: `事件恢复失败：${String(error)}` })); }, 30_000); this.poll.unref(); }
     if (!active.length && this.poll) { clearInterval(this.poll); this.poll = undefined; }
@@ -106,19 +120,22 @@ export class AutomationEventSources {
       summary: `${record.event.trigger.path}：${next === 'missing' ? '文件已删除' : record.eventSourceState === 'missing' ? '文件已创建' : '内容已改变'}` }, { previous: record.eventSourceState, next });
   }
   scan(id: string) { return this.enqueue(() => this.scanNow(id)); }
-  async reconcile() {
-    for (const record of this.records()) {
-      if (record.event?.trigger.type === 'file_changed') await this.scan(record.id).catch(error => this.host.fail(record.id, error));
-    }
-    await this.nodesChanged();
-    await this.replayCompleted();
+  reconcile(): Promise<void> {
+    // 慢文件校验期间复用正在执行的定期检查，避免每次计时器唤醒再排一整轮读取。
+    return this.reconciling ??= (async () => {
+      for (const record of this.records()) {
+        if (record.event?.trigger.type === 'file_changed') await this.scan(record.id).catch(error => this.reportFailure(record.id, error));
+      }
+      await this.nodesChanged();
+      await this.replayCompleted();
+    })().finally(() => { this.reconciling = undefined; });
   }
   nodesChanged() { return this.enqueue(async () => {
     for (const record of this.records()) {
       if (record.event?.trigger.type !== 'node_online') continue;
       const next = await this.sourceState(record.actorId, record.event);
       if (next === record.eventSourceState) continue;
-      if (next === 'missing' || next === 'revoked') { await this.host.fail(record.id, new Error('来源设备已经移除或撤销，请重新选择事件来源。')); continue; }
+      if (next === 'missing' || next === 'revoked') { await this.reportFailure(record.id, new Error('来源设备已经移除或撤销，请重新选择事件来源。')); continue; }
       if (next !== 'online') { await this.host.baseline(record.id, next); continue; }
       const peer = this.app.nodes.status(record.actorId).peers.find(row => row.id === (record.event!.trigger as { peerId: string }).peerId);
       await this.host.receive(record.id, { key: `node:${randomUUID()}`, type: 'node_online', observedAt: Date.now(), status: 'pending', ancestry: [],
@@ -151,12 +168,13 @@ export class AutomationEventSources {
   async settleFiles(run: RunRecord) {
     if (!run.automationId) return;
     for (const record of this.records()) if (record.event?.trigger.type === 'file_changed')
-      await this.scan(record.id).catch(error => this.host.fail(record.id, error));
+      await this.scan(record.id).catch(error => this.reportFailure(record.id, error));
   }
   async close() {
     this.closed = true; clearInterval(this.poll);
+    this.lifetime.abort();
     // 关闭期间已开始的路径解析可能尚未返回，须等待它结束再释放全部监听。
-    await this.queue; clearInterval(this.poll);
+    await this.queue; await Promise.allSettled([...this.reads, ...(this.reconciling ? [this.reconciling] : [])]); clearInterval(this.poll);
     for (const item of this.files.values()) { clearTimeout(item.timer); item.watcher.close(); } this.files.clear();
   }
 }
