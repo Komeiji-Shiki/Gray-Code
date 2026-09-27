@@ -35,4 +35,10 @@ test('同文件的打开队列仍按客户端分别建立草稿', async () => {
   const [first, second] = await Promise.all(['first', 'second'].map(client => files.openDocument(workspace, 'fixture.txt', client)));
   await files.updateDocument(workspace, 'fixture.txt', 'first', '第一窗口草稿', first.version);
   expect(await files.openDocument(workspace, 'fixture.txt', 'second')).toEqual(second);
+  const draft = files.clientDocument('first', workspace.id, 'fixture.txt')!;
+  expect(draft.text).toBe('第一窗口草稿');
+  draft.text = '调用方修改副本';
+  expect(files.clientDocument('first', workspace.id, 'fixture.txt')!.text).toBe('第一窗口草稿');
+  expect(files.clientDocument('second', workspace.id, 'fixture.txt')).toEqual(second);
+  expect(files.clientDocument('first', 'other-project', 'fixture.txt')).toBeUndefined();
 });

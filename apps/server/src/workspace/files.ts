@@ -65,6 +65,13 @@ export class WorkspaceFiles {
     return [...this.documents.values()].filter(document => document.clientId === clientId && document.workspaceId === workspaceId).map(document => structuredClone(document));
   }
 
+  /** 批量操作逐个读取最新草稿，只复制目标正文，避免每个文件都复制全部打开文档。 */
+  clientDocument(clientId: string, workspaceId: string, file: string): DocumentState | undefined {
+    for (const document of this.documents.values()) {
+      if (document.clientId === clientId && document.workspaceId === workspaceId && document.path === file) return structuredClone(document);
+    }
+  }
+
   openPaths(workspaceId?: string): string[] {
     return [...new Set([...this.documents.values()].filter(document => document.workspaceId === workspaceId).map(document => document.path))];
   }

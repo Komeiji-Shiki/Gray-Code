@@ -43,15 +43,29 @@ test('真实搜索接口包含本窗口草稿，替换预览核对版本和工�
     const drafts = jest.spyOn(app.files, 'clientDocuments');
     const result = await rpc('files.search', { requestId: 'search', options });
     expect(drafts).toHaveBeenCalledTimes(1);
-    drafts.mockRestore();
     expect(result.files.map((file: any) => file.path).sort()).toEqual(['main.ts', 'other.ts']);
     expect(result.files.find((file: any) => file.path === 'main.ts')).toMatchObject({ draft: true, matches: [{ range: { start: { line: 0, character: 6 } } }] });
     expect(result.skipped.some((file: any) => file.path === 'image.bin')).toBe(true);
     const preview = await rpc('files.replacePreview', { options, replacement: 'nextValue', files: result.files });
+    // 替换逐个读取当前草稿，不应为每个目标复制全部打开文档。
+    expect(drafts).toHaveBeenCalledTimes(1);
+    drafts.mockRestore();
     expect(preview.find((file: any) => file.path === 'main.ts')).toEqual({ path: 'main.ts', before: 'const draftValue = 1;\r\n', after: 'const nextValue = 1;\r\n' });
     expect(await readFile(path.join(f.source, 'main.ts'), 'utf8')).toBe('\uFEFFconst original = 1;\r\n');
     const otherClient = await rpc('files.search', { requestId: 'search', options }, { ...session, clientId: 'phone' });
     expect(otherClient.files.map((file: any) => file.path)).toEqual(['other.ts']);
+    const other = await rpc('documents.open', { path: 'other.ts' });
+    const resolve = app.files.resolve.bind(app.files);
+    const resolving = jest.spyOn(app.files, 'resolve').mockImplementationOnce(async (...args) => {
+      const absolute = await resolve(...args);
+      await rpc('documents.update', { path: 'other.ts', version: other.version, text: '下一文件的新输入' });
+      return absolute;
+    });
+    try {
+      // 处理第一个文件期间下一文件仍可编辑，不能将整批草稿快照当作当前版本。
+      await expect(rpc('files.replacePreview', { options, replacement: '', files: ['main.ts', 'other.ts'].map(file => result.files.find((item: any) => item.path === file)) }))
+        .rejects.toThrow('other.ts 已变化');
+    } finally { resolving.mockRestore(); }
     await rpc('documents.update', { path: 'main.ts', version: document.version, text: 'const newerInput = 3;' });
     await expect(rpc('files.replacePreview', { options, replacement: '', files: result.files })).rejects.toThrow('已变化');
     await expect(rpc('files.replacePreview', { options, replacement: '', files: [{ path: '../outside.ts', hash: '' }] })).rejects.toThrow('outside the authorized workspace');

@@ -22,7 +22,7 @@ export class WorkspaceSearch {
   }
   private async content(session: ClientSession, workspace: WorkspaceDefinition, file: string, drafts?: Map<string, DocumentState>) {
     // 读取本客户端的草稿；其他设备的编辑不混入本次查询。
-    const draft = drafts ? drafts.get(file) : this.app.files.clientDocuments(session.clientId, workspace.id).find(item => item.path === file);
+    const draft = drafts ? drafts.get(file) : this.app.files.clientDocument(session.clientId, workspace.id, file);
     if (draft) await this.app.files.resolve(workspace, file);
     const text = (draft?.text ?? (await this.app.files.read(workspace, file)).text).replace(/^\uFEFF/, '');
     return { text, draft: draft?.dirty === true };
