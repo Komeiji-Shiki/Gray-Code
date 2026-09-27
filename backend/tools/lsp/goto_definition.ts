@@ -125,6 +125,9 @@ export function createGotoDefinitionTool(): Tool {
                     
                     // 读取完整定义代码（带超时/中止保护）
                     try {
+                        // 定义可能位于另一个根目录，必须按返回目标重新应用现有读取策略。
+                        const targetAccessError = ensureOutsideWorkspaceAccessApproved('goto_definition', { path: targetUri.fsPath }, context);
+                        if (targetAccessError) throw new Error(targetAccessError);
                         const doc = await withTimeoutAndAbort(
                             vscode.workspace.openTextDocument(targetUri),
                             LSP_TIMEOUT_MS,

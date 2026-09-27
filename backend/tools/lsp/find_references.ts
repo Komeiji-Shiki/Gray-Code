@@ -74,6 +74,9 @@ export function createFindReferencesTool(): Tool {
                 const docCache = new Map<string, vscode.TextDocument>();
                 const page = await createReferencePage(locations, options, async ref => {
                     try {
+                        // Provider 可返回工作区外的引用；源文件获准读取不代表这些目标也获准。
+                        const targetAccessError = ensureOutsideWorkspaceAccessApproved('find_references', { path: ref.uri.fsPath }, context);
+                        if (targetAccessError) return { content: `(Unable to read file content: ${targetAccessError})` };
                         // countOnly 不会调用本回调；分页仅打开当前页需要的引用文档。
                         let doc = docCache.get(ref.uri.toString());
                         if (!doc) {
