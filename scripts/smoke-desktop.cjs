@@ -1,5 +1,5 @@
 // Run with: electron scripts/smoke-desktop.cjs. All data and screenshots stay in .tmp.
-const { app, BrowserWindow, dialog, webContents } = require('electron');
+const { app, BrowserWindow, dialog, webContents, nativeImage } = require('electron');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
@@ -151,6 +151,24 @@ async function main() {
   assert.equal((await rpc('settings.get')).settings.appearance.uiFont, selectedFont);
   assert.equal((await ui('getSettings')).settings.ui.appearance.loadingText, '正在认真处理…');
   assert.equal((await ui('getMcpServers')).servers[0].config.name, '原生 MCP 验证');
+  // 导入图片在草稿中即可预览；撤销不留资源，保存后改用实际持久化的图片地址。
+  const backgroundId = randomUUID();
+  const backgroundUrl = `graycode://app/assets/background/${backgroundId}`;
+  const backgroundData = nativeImage.createFromBitmap(Buffer.from([40, 50, 60, 255]), { width: 1, height: 1 }).toDataURL();
+  const importBackground = async () => ui('settings.importData', { value: { format: 'graycode-platform', version: 1,
+    settings: { appearance: { ...(await rpc('settings.get')).settings.appearance, backgroundImage: backgroundUrl } },
+    backgrounds: [{ id: backgroundId, url: backgroundUrl, name: '导入背景验证', dataUrl: backgroundData, thumbnail: backgroundData, width: 1, height: 1 }] } });
+  const imageLoads = url => evaluate(`new Promise(resolve => { const picture = new Image(); picture.onload = () => resolve(picture.naturalWidth === 1); picture.onerror = () => resolve(false); picture.src = ${JSON.stringify(url)}; })`);
+  await importBackground();
+  const stagedBackground = (await ui('appearance.images.list')).find(image => image.name === '导入背景验证');
+  assert(stagedBackground.url.startsWith('data:image/'));
+  assert(await imageLoads(stagedBackground.url));
+  await ui('ui.settings.discard');
+  assert(!(await ui('appearance.images.list')).some(image => image.name === '导入背景验证'));
+  await importBackground(); await ui('ui.settings.save');
+  const savedBackground = (await rpc('settings.get')).settings.appearance.backgroundImage;
+  assert(savedBackground.startsWith('graycode://app/assets/background/'));
+  assert(await imageLoads(savedBackground));
   await sleep(150);
   await fs.writeFile(path.join(output, 'settings.png'), paintedFrames.get(window.webContents.id));
   await rpc('browser.openFile', { workspaceId: 'smoke', path: 'index.html' });
@@ -159,7 +177,7 @@ async function main() {
   await until(() => preview.getTitle() === 'Preview verified', 'local HTML preview');
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests,
-    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching'], fontCount: fonts.length, errors, output };
+    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save'], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
   server.closeAllConnections(); server.close();

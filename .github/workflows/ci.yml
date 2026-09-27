@@ -31,3 +31,48 @@ jobs:
 
       - name: Typecheck & test
         run: npm run ci
+
+  windows-desktop:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix frontend ci --no-audit --no-fund
+      - name: Build Windows desktop
+        run: npm run build:desktop
+      - name: Verify Windows process and language service lifecycle
+        run: >-
+          npx jest --config jest.platform.config.cjs --runInBand --runTestsByPath
+          packages/core/tests/workspaceProcesses.test.ts
+          packages/core/tests/workspaceProcessTools.test.ts
+          packages/core/tests/languageServices.test.ts
+          packages/core/tests/commonLanguageServices.test.ts
+      - name: Verify real MCP fixtures
+        run: npx jest --config jest.backend.config.js --runInBand --runTestsByPath backend/__tests__/mcp/McpClient.test.ts
+      - name: Verify isolated desktop workflows
+        run: npx electron scripts/smoke-desktop.cjs
+      - name: Preserve desktop verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-desktop-check-${{ github.sha }}
+          path: |
+            .tmp/desktop-smoke-*/report.json
+            .tmp/desktop-smoke-*/failure.json
+            .tmp/desktop-smoke-*/*.png
+          if-no-files-found: ignore
+          # 仅收集隔离夹具的报告和截图；.tmp 目录需要显式允许隐藏文件。
+          include-hidden-files: true
+          retention-days: 7
