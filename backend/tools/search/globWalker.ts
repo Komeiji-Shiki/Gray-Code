@@ -1,21 +1,8 @@
 /**
- * 工作区 glob 遍历器（Node 宿主专用，readdir 可注入以便测试）。
- *
- * 修改原因：find_files / search_in_files / 工作区搜索共用的 NodeFileHost 目录遍历
- * 原先对每个目录条目执行 1-2 次 minimatch、对每个子目录做一次 realpath，且单个
- * 目录读取失败会中断整个查找。大工作区实测（约 1.6 万目录 / 6 万条目）：全树遍历
- * 约 3s，其中大部分时间花在逐条目 glob 匹配上；临时目录消失（ENOENT）会让整个
- * 查找直接失败。
- * 修改方式：
- *   1. 默认排除模式（整组都是 `**\/name\/**` 形式）与常见包含模式（`**\/*`、
- *      `**\/*.ext`、`*.ext`）改走字面量快速路径，其余模式保持 minimatch 回退，
- *      语义与旧实现完全一致（含 nocase/dot 选项）；
- *   2. 相对路径沿父目录拼接，不再对每个条目做 path.relative + 分隔符归一化；
- *   3. 只要求调用方先解析（realpath）根目录；子目录沿已解析根的条目名拼接，且
- *      遍历跳过符号链接与目录联动点，因此不可能跨出根目录；
- *   4. 子目录读取失败时跳过（可选回调上报），根目录失败仍然抛出。
- * 修改目的：在结果与顺序完全不变的前提下把遍历成本降到接近纯 readdir；单个坏目录
- * 不再破坏整个查找。
+ * Node 文件宿主共用的 glob 遍历器；readdir 可注入以验证结果与顺序。
+ * 常见后缀及字面量目录规则直接匹配，其余规则交给 minimatch，保持 dot/nocase 语义。
+ * 宿主先解析根目录，遍历跳过符号链接；相对路径随目录栈传递，减少逐条目路径计算。
+ * 根目录读取失败会抛出，子目录失败可上报后跳过，避免临时目录消失中断整个查询。
  */
 import minimatch from 'minimatch';
 import * as path from 'node:path';
@@ -110,10 +97,12 @@ export function tryParseLiteralDirectoryExcludes(
   if (!exclude) {
     return null;
   }
-  const parts = exclude.startsWith('{') && exclude.endsWith('}')
+  const grouped = exclude.startsWith('{') && exclude.endsWith('}');
+  const parts = grouped
     ? exclude.slice(1, -1).split(',')
     : [exclude];
-  if (parts.length === 0) {
+  // 单项花括号不表示分组；复杂的范围或嵌套规则继续交给 minimatch。
+  if (grouped && parts.length < 2) {
     return null;
   }
 
@@ -149,13 +138,13 @@ export async function* walkGlobTree(options: GlobWalkerOptions): AsyncGenerator<
   }
 
   const includeFast = tryCreateIncludeFastPath(pattern, caseInsensitive);
-  const includeMatcher = new minimatch.Minimatch(pattern, { dot: true, nocase: caseInsensitive });
-  const matchInclude = includeFast ?? ((relative: string) => includeMatcher.match(relative));
+  const includeMatcher = includeFast ? undefined : new minimatch.Minimatch(pattern, { dot: true, nocase: caseInsensitive });
+  const matchInclude = includeFast ?? ((relative: string) => includeMatcher!.match(relative));
 
   const directoryExcludes = tryParseLiteralDirectoryExcludes(exclude, caseInsensitive);
-  const ignoredMatcher = directoryExcludes
-    ? null
-    : new minimatch.Minimatch(exclude || '__graycode_no_exclusions__', { dot: true, nocase: caseInsensitive });
+  const ignoredMatcher = exclude && !directoryExcludes
+    ? new minimatch.Minimatch(exclude, { dot: true, nocase: caseInsensitive })
+    : undefined;
 
   const stack: Array<{ absolute: string; relative: string }> = [{ absolute: root, relative: '' }];
   let found = 0;
@@ -191,14 +180,14 @@ export async function* walkGlobTree(options: GlobWalkerOptions): AsyncGenerator<
           if (directoryExcludes.has(normalizeName(entry.name, caseInsensitive))) {
             continue;
           }
-        } else if (ignoredMatcher!.match(relative) || ignoredMatcher!.match(`${relative}/`)) {
+        } else if (ignoredMatcher?.match(relative) || ignoredMatcher?.match(`${relative}/`)) {
           continue;
         }
         if (entry.name !== '.git') {
           stack.push({ absolute: joinPath(current.absolute, entry.name), relative });
         }
       } else if (entry.isFile()) {
-        if (!directoryExcludes && ignoredMatcher!.match(relative)) {
+        if (ignoredMatcher?.match(relative)) {
           continue;
         }
         if (matchInclude(relative)) {

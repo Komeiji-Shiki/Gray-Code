@@ -2,7 +2,7 @@
  * globWalker（Node 宿主目录遍历核心）测试
  *
  * 覆盖：
- * - 与重构前实现（逐条目 minimatch、path.relative 相对路径、目录栈 LIFO）逐结果、
+ * - 与逐条目 minimatch 的参考实现（目录栈 LIFO）逐结果、
  *   逐顺序一致，包括默认排除模式的字面量快速路径、自定义排除回退、包含模式快
  *   路径与回退、大小写不敏感选项；
  * - limit 截断、符号链接与 .git 目录跳过、单文件读取失败与根目录失败；
@@ -79,12 +79,12 @@ async function collect(options: WalkOptions): Promise<GlobWalkerMatch[]> {
     return out;
 }
 
-/** 重构前逐条目 minimatch 的参考实现（仅测试用，逻辑与旧 NodeFileHost.iterateFiles 对齐） */
+/** 逐条目使用正式 minimatch 的参考实现；无排除规则时不进行排除匹配。 */
 async function referenceWalk(options: WalkOptions & { root: string; readdir: (absolute: string) => Promise<GlobWalkerDirent[]> }): Promise<string[]> {
     const caseInsensitive = options.caseInsensitive ?? false;
     const limit = options.limit ?? 1000;
     const match = new minimatch.Minimatch(options.pattern, { dot: true, nocase: caseInsensitive });
-    const ignored = new minimatch.Minimatch(options.exclude || '__graycode_no_exclusions__', { dot: true, nocase: caseInsensitive });
+    const ignored = options.exclude ? new minimatch.Minimatch(options.exclude, { dot: true, nocase: caseInsensitive }) : undefined;
     const pending = [options.root];
     const out: string[] = [];
     let found = 0;
@@ -94,7 +94,7 @@ async function referenceWalk(options: WalkOptions & { root: string; readdir: (ab
             const absolute = `${current}/${entry.name}`;
             const relative = absolute.slice(options.root.length + 1);
             if (entry.isSymbolicLink()) continue;
-            if (ignored.match(relative) || (entry.isDirectory() && ignored.match(`${relative}/`))) continue;
+            if (ignored?.match(relative) || (entry.isDirectory() && ignored?.match(`${relative}/`))) continue;
             if (entry.isDirectory()) { if (entry.name !== '.git') pending.push(absolute); }
             else if (entry.isFile() && match.match(relative)) { found++; out.push(relative); }
             if (found >= limit) break;
@@ -107,10 +107,12 @@ async function collectRelatives(options: WalkOptions): Promise<string[]> {
     return (await collect(options)).map(item => item.relative);
 }
 
-describe('与重构前实现一致（结果与顺序）', () => {
+describe('与逐条目 glob 匹配一致（结果与顺序）', () => {
     const INCLUDE_PATTERNS = ['**/*', '**/*.ts', '*.ts', '**/*.md', '**/*.d.ts', '**/*.{ts,tsx}', 'src/**', '**/*.tsx'];
     const EXCLUDES: Array<string | undefined> = [
         undefined,
+        '',
+        '{**/node_modules/**}',
         '**/node_modules/**',
         '{**/node_modules/**,**/.git/**}',
         '{**/node_modules/**,**/*.bak}',
@@ -170,7 +172,8 @@ describe('快速路径匹配器与 minimatch 语义一致', () => {
     test('字面量目录排除解析', () => {
         expect(Array.from(tryParseLiteralDirectoryExcludes('**/node_modules/**', false) ?? []).sort()).toEqual(['node_modules']);
         expect(Array.from(tryParseLiteralDirectoryExcludes('{**/node_modules/**,**/.git/**}', false) ?? []).sort()).toEqual(['.git', 'node_modules']);
-        expect(Array.from(tryParseLiteralDirectoryExcludes('{**/Node_Modules/**}', true) ?? [])).toEqual(['node_modules']);
+        expect(Array.from(tryParseLiteralDirectoryExcludes('**/Node_Modules/**', true) ?? [])).toEqual(['node_modules']);
+        expect(tryParseLiteralDirectoryExcludes('{**/node_modules/**}', false)).toBeNull();
         expect(tryParseLiteralDirectoryExcludes('**/*.bak', false)).toBeNull();
         expect(tryParseLiteralDirectoryExcludes('{**/node_modules/**,**/*.bak}', false)).toBeNull();
         expect(tryParseLiteralDirectoryExcludes('{**/node_modules/**,**/src/**/*.ts}', false)).toBeNull();
@@ -180,6 +183,15 @@ describe('快速路径匹配器与 minimatch 语义一致', () => {
 });
 
 describe('健壮性与边界', () => {
+    test.each([undefined, ''])('无排除规则（%s）不将内部占位名称当作真实排除项', async exclude => {
+        const name = '__graycode_no_exclusions__';
+        expect(await collectRelatives({ pattern: '**/*', exclude, readdir: makeReaddir({ '/root': [f(name), f('normal.txt')] }) }))
+            .toEqual([name, 'normal.txt']);
+        expect(await collectRelatives({ pattern: '**/*', exclude,
+            readdir: makeReaddir({ '/root': [d(name)], ['/root/' + name]: [f('child.txt')] }) }))
+            .toEqual([name + '/child.txt']);
+    });
+
     test('子目录读取失败时跳过该子树并回调，不影响其他结果', async () => {
         const failing = new Set(['/root/docs']);
         const errors: string[] = [];
@@ -213,10 +225,10 @@ describe('健壮性与边界', () => {
     });
 
     test('大小写不敏感（nocase）排除语义', async () => {
-        const insensitive = await collectRelatives({ pattern: '**/*.ts', exclude: '{**/node_modules/**}', caseInsensitive: true });
+        const insensitive = await collectRelatives({ pattern: '**/*.ts', exclude: '**/node_modules/**', caseInsensitive: true });
         expect(insensitive).not.toContain('node_modules/dep/dep.ts');
         expect(insensitive).not.toContain('Node_Modules/dep.ts');
-        const sensitive = await collectRelatives({ pattern: '**/*.ts', exclude: '{**/node_modules/**}', caseInsensitive: false });
+        const sensitive = await collectRelatives({ pattern: '**/*.ts', exclude: '**/node_modules/**', caseInsensitive: false });
         expect(sensitive).not.toContain('node_modules/dep/dep.ts');
         expect(sensitive).toContain('Node_Modules/dep.ts');
     });
