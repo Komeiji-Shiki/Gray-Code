@@ -17,7 +17,7 @@ test('较旧的本频道对话不会被全局最新 200 项挤出，其他频道
   await conversation('old-visible', 1, context.channelId);
   await conversation('other-channel', 2, 'elsewhere');
   await Promise.all(Array.from({ length: 210 }, (_, index) => conversation('personal-' + index, index + 10)));
-  const access = jest.spyOn(app, 'conversation');
+  const access = jest.spyOn(app, 'findConversation');
   const values = await app.discord.sessions.conversations('owner', context);
   expect(values.map(value => value.id)).toEqual(['old-visible']);
   expect(access.mock.calls).toEqual([['owner', 'old-visible']]);
@@ -40,5 +40,13 @@ test('频道授权记录读取失败会报告异常，而不是显示没有可�
   const original = app.storage.getRecord.bind(app.storage);
   jest.spyOn(app.storage, 'getRecord').mockImplementation((namespace, id) => namespace === BOT_CHANNEL_ACCESS
     ? Promise.reject(failure) : original(namespace, id));
+  await expect(app.discord.sessions.conversations('owner', context)).rejects.toBe(failure);
+});
+
+test('元数据读取异常会向上传递，真正不可访问的对话仍被过滤', async () => {
+  await conversation('candidate', 1, context.channelId);
+  expect(await app.discord.sessions.conversations('missing-actor', context)).toEqual([]);
+  const failure = new Error('fixture conversation metadata unavailable');
+  jest.spyOn(app.storage, 'getConversation').mockRejectedValueOnce(failure);
   await expect(app.discord.sessions.conversations('owner', context)).rejects.toBe(failure);
 });

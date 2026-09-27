@@ -169,8 +169,7 @@ export class BotSessions {
         // 先筛频道，减少无关的权限元数据读取；频道记录读取失败应向上传递。
         const access = await this.app.storage.getRecord(BOT_CHANNEL_ACCESS, item.id) as BotChannelAccess | null;
         if (!access || !sameBotChannel(access.context, context)) return null;
-        try { await this.app.conversation(actorId, item.id); return item; }
-        catch { return null; }
+        return await this.app.findConversation(actorId, item.id) ? item : null;
       }));
       values.push(...visible.filter((value): value is ConversationSummary => value !== null).slice(0, 200 - values.length));
       cursor = page.nextCursor;

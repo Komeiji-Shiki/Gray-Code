@@ -552,6 +552,12 @@ export class PlatformApplication {
     actorId: string,
     id: string,
   ): Promise<PlatformConversation> {
+    const conversation = await this.findConversation(actorId, id);
+    if (!conversation) throw new Error("Conversation is not accessible.");
+    return conversation;
+  }
+  /** 列表筛选允许不可访问，但存储或权限数据读取异常仍应交给调用方处理。 */
+  async findConversation(actorId: string, id: string): Promise<PlatformConversation | null> {
     const actor = this.actor(actorId);
     const conversation = await this.storage.getConversation(id);
     if (
@@ -559,7 +565,7 @@ export class PlatformApplication {
       !conversation ||
       (actor.role !== "owner" && conversation.actorId !== actor.id && !await canReadBotConversation(this, actor, conversation.id))
     )
-      throw new Error("Conversation is not accessible.");
+      return null;
     return conversation;
   }
   async manageConversation(actorId: string, id: string): Promise<PlatformConversation> {
