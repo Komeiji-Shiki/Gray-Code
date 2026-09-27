@@ -49,7 +49,7 @@ export class BotSummaries {
     const settings = loaded.profile.autoSummary ?? DEFAULT_BOT_AUTO_SUMMARY;
     const legacyTime = !settings.method || settings.method === 'time';
     if (!settings.enabled || (!legacyTime && settings.timedEnabled !== true) || this.app.context.isSummarizing(id)) return;
-    const agent = this.app.settings.snapshot().settings.agents.find(item => item.id === loaded.profile.agentId);
+    const agent = this.app.settings.find('agents', loaded.profile.agentId);
     const providerId = loaded.profile.providerId ?? agent?.providerId;
     const model = loaded.profile.modelId ?? agent?.modelId;
     // MessagePack 读取后字段顺序可能变化，比较配置含义，不能把重启当作设置变更。

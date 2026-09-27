@@ -69,7 +69,7 @@ export class ProductConfiguration {
   async channel(id: string): Promise<ChannelConfig | null> {
     const config = this.saved.channels.find(channel => channel.id === id);
     if (!config) return null;
-    const profile = this.application.settings.snapshot().settings.providers.find(profile => profile.id === id);
+    const profile = this.application.settings.find('providers', id);
     return { ...structuredClone(config), apiKey: profile?.credentialRef ? await this.application.settings.credential(profile.credentialRef) ?? '' : '' } as ChannelConfig;
   }
   async draft(input?: ProductSettingsDraft): Promise<ProductSettingsDraft> {

@@ -31,7 +31,7 @@ export class DebugServices {
   }
   async adapters(client: ClientSession, refresh = false) {
     this.app.requireOwner(client.actorId);
-    return this.catalog.list(this.app.settings.snapshot().settings.development?.debugAdapters ?? [], refresh);
+    return this.catalog.list(this.app.settings.read('development').development?.debugAdapters ?? [], refresh);
   }
   async settings(client: ClientSession, workspaceId: string) {
     this.workspace(client, workspaceId);
@@ -97,7 +97,7 @@ export class DebugServices {
     if (!(await stat(cwd)).isDirectory()) throw new Error('调试工作目录不是文件夹。');
     const dirty = this.app.files.clientDocuments(client.clientId, workspaceId).filter(document => document.dirty);
     if (configuration.request === 'launch' && dirty.length) throw new Error('项目仍有未保存文件，请先保存，再运行调试。');
-    const definitions = this.app.settings.snapshot().settings.development?.debugAdapters ?? [];
+    const definitions = this.app.settings.read('development').development?.debugAdapters ?? [];
     const definition = this.catalog.definitions(definitions).find(item => item.id === configuration.adapterId);
     if (!definition) throw new Error('调试器不存在，请检查开发设置。');
     const args = { ...configuration.options, name: configuration.name, request: configuration.request, cwd,

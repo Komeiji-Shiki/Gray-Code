@@ -17,7 +17,7 @@ import { NodeFileHost } from './fileHost';
 function readMultimodalCapability(app: PlatformApplication, context: ToolContext): MultimodalCapability {
   const providerId = context.modelSelection?.providerId || context.agent?.providerId;
   const protocol = providerId
-    ? app.settings.snapshot().settings.providers.find(profile => profile.id === providerId)?.protocol
+    ? app.settings.find('providers', providerId)?.protocol
     : undefined;
   return protocol
     ? getMultimodalCapability(protocol, 'function_call', true)

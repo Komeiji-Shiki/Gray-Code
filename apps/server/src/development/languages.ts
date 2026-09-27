@@ -48,10 +48,10 @@ export class LanguageServices {
   private configurationSnapshot?: string;
   constructor(private readonly app: PlatformApplication) {}
   definitions(): RuntimeLanguageServer[] {
-    const custom = this.app.settings.snapshot().settings.development?.languageServers ?? [];
+    const custom = this.app.settings.read('development').development?.languageServers ?? [];
     return this.catalog.all(custom).filter(entry => entry.info.available).map(entry => entry.definition);
   }
-  services(client: ClientSession, custom = this.app.settings.snapshot().settings.development?.languageServers ?? [], refresh = false) {
+  services(client: ClientSession, custom = this.app.settings.read('development').development?.languageServers ?? [], refresh = false) {
     this.app.requireOwner(client.actorId);
     return this.catalog.all(custom, refresh).filter(entry => !entry.definition.internal).map(entry => entry.info);
   }
@@ -97,7 +97,7 @@ export class LanguageServices {
     const absolute = await this.app.files.resolve(workspace, file);
     const uri = documentUri(pathToFileURL(absolute).toString());
     const languageId = documentLanguage(file);
-    const disabled = this.app.settings.snapshot().settings.development?.disabledLanguageServers ?? [];
+    const disabled = this.app.settings.read('development').development?.disabledLanguageServers ?? [];
     const definition = this.definitions().find(item => item.languages.includes(languageId) && !disabled.includes(item.id));
     if (!definition) {
       const service = this.services(client).find(item => item.languages.includes(languageId));
@@ -311,7 +311,7 @@ export class LanguageServices {
     const workspace = this.app.workspace(context.actorId, context.workspace.id, ['workspace_read', 'process_execute']);
     const client = { actorId: context.actorId, clientId: `language-tool:${context.runId}` };
     const languageId = documentLanguage(absolute);
-    const disabled = this.app.settings.snapshot().settings.development?.disabledLanguageServers ?? [];
+    const disabled = this.app.settings.read('development').development?.disabledLanguageServers ?? [];
     const definition = this.definitions().find(item => item.languages.includes(languageId) && !disabled.includes(item.id));
     if (!definition) throw new Error(`没有为 ${languageId} 配置语言服务。`);
     const session = await this.sessionFor(client, workspace, definition);
@@ -393,7 +393,7 @@ export class LanguageServices {
     return session.stopping;
   }
   async configure(): Promise<void> {
-    const snapshot = this.app.settings.snapshot().settings;
+    const snapshot = this.app.settings.read('development', 'workspaces');
     const settings = snapshot.development;
     const key = JSON.stringify({ servers: settings?.languageServers, disabled: settings?.disabledLanguageServers, workspaces: snapshot.workspaces });
     if (key === this.configurationSnapshot) return;

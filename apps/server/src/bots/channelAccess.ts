@@ -20,7 +20,7 @@ export function sameBotChannel(left: BotChannelIdentity, right: BotChannelIdenti
 export async function canReadBotConversation(app: PlatformApplication, actor: ActorIdentity, conversationId: string): Promise<boolean> {
   const access = await app.storage.getRecord(BOT_CHANNEL_ACCESS, conversationId) as BotChannelAccess | null;
   if (!access || actor.revoked) return false;
-  const settings = app.settings.snapshot().settings;
+  const settings = app.settings.read('accounts', 'bindings', 'botGuestAccountId', 'discord', 'onebot');
   const context = access.context;
   const bound = access.participants.some(participant => participant.actorId === actor.id && resolveBotUser(settings, {
     platform: context.platform, platformUserId: participant.platformUserId, network: context.network,

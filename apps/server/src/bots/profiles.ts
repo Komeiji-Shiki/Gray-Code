@@ -7,7 +7,7 @@ interface CapturedBotAgent { actorId: string; conversationId: string; agent: Age
 const namespace = 'bot-agent-profiles';
 
 export async function captureBotAgent(app: PlatformApplication, actorId: string, conversationId: string, profile: DiscordReplyProfile): Promise<AgentDefinition> {
-  const base = app.settings.snapshot().settings.agents.find(agent => agent.id === profile.agentId);
+  const base = app.settings.find('agents', profile.agentId);
   if (!base) throw new Error('Bot 的智能体配置不存在，请在桌面管理页重新选择。');
   const agent = configuredAgent(app, base);
   if (profile.providerId && profile.providerId !== agent.providerId) { agent.providerId = profile.providerId; delete agent.modelId; }

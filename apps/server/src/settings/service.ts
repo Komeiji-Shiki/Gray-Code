@@ -33,6 +33,7 @@ export interface SettingsProjection<T> {
 const namespace = "platform-settings";
 const secretNamespace = "platform-secrets";
 const identifier = /^[a-zA-Z0-9_-]{1,100}$/;
+type SettingsCollection = 'accounts' | 'agents' | 'providers' | 'workspaces';
 
 export function initialSettings(toolNames: string[]): AppSettings {
   return {
@@ -103,9 +104,7 @@ export class SettingsService<T = never> {
           namespace,
           id: "main",
           expectedRevision: null,
-          value: initialSettings(
-            this.tools.declarations().map((tool) => tool.name),
-          ),
+          value: initialSettings(this.tools.names()),
         },
       ]);
       record = await this.storage.getVersionedRecord(namespace, "main");
@@ -119,6 +118,16 @@ export class SettingsService<T = never> {
   }
   snapshot(): SettingsSnapshot {
     return structuredClone(this.current);
+  }
+  /** 运行时只复制需要的字段，返回值仍可独立修改，不会写穿已保存配置。 */
+  read<K extends keyof AppSettings>(...keys: K[]): Pick<AppSettings, K> {
+    const selected = Object.fromEntries(keys.filter(key => Object.hasOwn(this.current.settings, key))
+      .map(key => [key, this.current.settings[key]])) as Pick<AppSettings, K>;
+    return structuredClone(selected);
+  }
+  find<K extends SettingsCollection>(collection: K, id: string | undefined): AppSettings[K][number] | undefined {
+    const entries: ReadonlyArray<AppSettings[K][number]> = this.current.settings[collection];
+    return structuredClone(entries.find(entry => entry.id === id));
   }
   setProjection(projection: SettingsProjection<T>): void {
     if (this.projection) throw new Error('The settings projection is already installed.');

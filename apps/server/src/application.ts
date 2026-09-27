@@ -216,7 +216,7 @@ export class PlatformApplication {
     this.images = new AppearanceImages(storage, () => this.persistConfiguration());
     this.migration = new MigrationService(this);
     this.files = new WorkspaceFiles((workspaceId, file, absolute) => {
-      const workspace = this.settings.snapshot().settings.workspaces.find(item => item.id === workspaceId);
+      const workspace = this.settings.find('workspaces', workspaceId);
       this.notify({ type: 'file.changed', workspaceId, path: absolute && workspace ? workspaceFilePath(workspace, absolute) : file, absolute });
     },
       value => {
@@ -289,10 +289,7 @@ export class PlatformApplication {
     this.mcp = new PlatformMcpService(this);
     this.externalAgents = new ExternalAgents(this);
     this.modelAdapter = new ProviderModelAdapter({
-        profile: async (id) =>
-          this.settings
-            .snapshot()
-            .settings.providers.find((profile) => profile.id === id) ?? null,
+        profile: async (id) => this.settings.find('providers', id) ?? null,
         credential: (reference) => this.settings.credential(reference),
         channel: id => this.product.channel(id),
         // 复用原图片/PDF 预处理；调用位于当前应用的可选依赖作用域内。
@@ -371,18 +368,15 @@ export class PlatformApplication {
         if (child) return child;
         const bot = await resolveBotAgent(this, id, actor?.id, conversationId);
         if (bot) return bot;
-        const agent = this.settings.snapshot().settings.agents.find(agent => agent.id === id);
+        const agent = this.settings.find('agents', id);
         if (!agent) return null;
         return configuredAgent(this, agent);
       },
-      workspace: async (id) =>
-        this.settings
-          .snapshot()
-          .settings.workspaces.find((workspace) => workspace.id === id) ?? null,
+      workspace: async (id) => this.settings.find('workspaces', id) ?? null,
       review: async (input) => {
         if (input.agent.reviewerApi === 'systemone') {
           try {
-            const profile = this.settings.snapshot().settings.providers.find(item => item.id === input.agent.reviewerProviderId);
+            const profile = this.settings.find('providers', input.agent.reviewerProviderId);
             if (!profile) throw new Error('决策模型渠道不存在。');
             const credential = profile.credentialRef ? await this.settings.credential(profile.credentialRef) : null;
             const proxy = this.product.runtimeSettings().getProxySettings();
@@ -521,12 +515,9 @@ export class PlatformApplication {
   }
   publish(event: Record<string, unknown>): void { this.notify(event); }
   actor(id: string): ActorIdentity | null {
-    return (
-      this.settings
-        .snapshot()
-        .settings.accounts.find((actor) => actor.id === id && !actor.revoked) ??
-      resolveBotGuestActor(this.settings.snapshot().settings, id)
-    );
+    const actor = this.settings.find('accounts', id);
+    return actor && !actor.revoked ? actor
+      : resolveBotGuestActor(this.settings.read('accounts', 'bindings', 'botGuestAccountId'), id);
   }
   requireOwner(actorId: string): ActorIdentity {
     const actor = this.actor(actorId);
@@ -538,9 +529,7 @@ export class PlatformApplication {
     id: string,
     effects: ToolEffect[],
   ): WorkspaceDefinition {
-    const workspace = this.settings
-      .snapshot()
-      .settings.workspaces.find((workspace) => workspace.id === id);
+    const workspace = this.settings.find('workspaces', id);
     const actor = this.actor(actorId);
     if (!workspace || !actor)
       throw new Error("Workspace or account is unavailable.");

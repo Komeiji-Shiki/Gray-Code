@@ -2,20 +2,21 @@ import type { ActorIdentity, AppSettings, RunRecord } from '@graycode/contracts'
 import type { PlatformApplication } from '../application';
 
 interface BotUserIdentity { platform: 'discord' | 'onebot'; platformUserId: string; network?: string }
+type BotPermissionSettings = Pick<AppSettings, 'accounts' | 'bindings' | 'botGuestAccountId'>;
 const botGuestActorPrefix = 'bot-guest:';
-const userBinding = (settings: AppSettings, source: BotUserIdentity) => settings.bindings.find(binding => binding.platform === source.platform
+const userBinding = (settings: BotPermissionSettings, source: BotUserIdentity) => settings.bindings.find(binding => binding.platform === source.platform
   && binding.platformUserId === source.platformUserId && (source.platform !== 'onebot' || (binding.network ?? 'qq') === (source.network ?? 'qq')));
 const guestActorId = (source: BotUserIdentity) => botGuestActorPrefix + Buffer.from(JSON.stringify([
   source.platform, source.platform === 'onebot' ? source.network ?? 'qq' : '', source.platformUserId,
 ])).toString('base64url');
 
-export function isBotUserBlocked(settings: AppSettings, source: BotUserIdentity): boolean {
+export function isBotUserBlocked(settings: BotPermissionSettings, source: BotUserIdentity): boolean {
   const binding = userBinding(settings, source);
   return binding?.blocked === true || !!binding?.accountId && !settings.accounts.some(account => account.id === binding.accountId && !account.revoked);
 }
 
 /** 身份来自真实平台事件；拉黑和失效绑定不回退到默认访客权限。 */
-export function resolveBotUser(settings: AppSettings, source: BotUserIdentity): ActorIdentity | null {
+export function resolveBotUser(settings: BotPermissionSettings, source: BotUserIdentity): ActorIdentity | null {
   if (isBotUserBlocked(settings, source)) return null;
   const binding = userBinding(settings, source);
   if (binding?.accountId) return structuredClone(settings.accounts.find(account => account.id === binding.accountId) ?? null);
@@ -25,7 +26,7 @@ export function resolveBotUser(settings: AppSettings, source: BotUserIdentity): 
 }
 
 /** 访客 ID 可以重建真实平台身份，重启后仍重新读取当前权限，不缓存授权副本。 */
-export function resolveBotGuestActor(settings: AppSettings, id: string): ActorIdentity | null {
+export function resolveBotGuestActor(settings: BotPermissionSettings, id: string): ActorIdentity | null {
   if (!id.startsWith(botGuestActorPrefix) || id.length > 512) return null;
   try {
     const value = JSON.parse(Buffer.from(id.slice(botGuestActorPrefix.length), 'base64url').toString());
@@ -64,7 +65,7 @@ export async function actorForBotRun(app: PlatformApplication, actorId: string, 
     const workspaceId = scope.workspaceId ?? conversation?.workspaceId;
     // 子代理沿可信父子关系继承根频道目录，仍只匹配这一个受控工作区。
     if (actor.botWorkspaceAccess !== false && actor.workspaceIds !== '*' && ['discord', 'onebot'].includes(platform ?? '') && workspaceId === `workspace-${conversationId}`
-      && app.settings.snapshot().settings.workspaces.some(workspace => workspace.id === workspaceId))
+      && app.settings.find('workspaces', workspaceId))
       return { ...actor, workspaceIds: [...new Set([...actor.workspaceIds, workspaceId])] };
   }
   return actor;
