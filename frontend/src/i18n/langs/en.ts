@@ -1029,6 +1029,7 @@ const en: LanguageMessages = {
         },
 
         settings: {
+            clawdSettings: sharedEn.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedEn.components.settings.backgroundGalleryPolicy,
             title: 'Settings',
             tabs: {

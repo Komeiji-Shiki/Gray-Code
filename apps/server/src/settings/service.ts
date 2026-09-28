@@ -1,6 +1,7 @@
 import { workspaceRoots } from '../workspace/paths';
 import { validateDevelopmentSettings } from '../development/settings';
 import { validateExternalAgentProfiles } from '../externalAgents/settings';
+import { validateClawdSettings } from '../clawd/transport';
 import { validateDiscordSettings } from '../bots/config';
 import { validateRemoteAccess } from '../transport/webOrigin';
 import { validateDecisionProvider } from '../model/decisionReviewer';
@@ -229,6 +230,7 @@ export class SettingsService<T = never> {
     validateRemoteAccess(settings.remoteAccess);
     validateDevelopmentSettings(settings.development);
     validateExternalAgentProfiles(settings.externalAgents);
+    validateClawdSettings(settings.clawd);
     if (settings.version !== 1)
       throw new Error("Unsupported settings version.");
     for (const entries of [

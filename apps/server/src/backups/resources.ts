@@ -44,6 +44,7 @@ export async function pauseRestoredActivities(storage: PlatformStorage) {
     ...(settings.discord ? { discord: { ...settings.discord, autoConnect: false } } : {}),
     ...(settings.onebot ? { onebot: { ...settings.onebot, autoConnect: false } } : {}),
     ...(settings.remoteAccess ? { remoteAccess: { ...settings.remoteAccess, enabled: false } } : {}),
+    ...(settings.clawd ? { clawd: { ...settings.clawd, enabled: false } } : {}),
   } });
   const node = await storage.getRecord('execution-node', 'local') as Record<string, any> | null;
   if (node) await storage.putRecord({ namespace: 'execution-node', id: 'local', value: { ...node, settings: { ...node.settings, enabled: false } } });

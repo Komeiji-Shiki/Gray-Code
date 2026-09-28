@@ -200,6 +200,24 @@ const sharedEn = {
                     },
                 },
             },
+            clawdSettings: {
+                agentId: backendEn.modules.settings.clawdSettings.agentId,
+                check: backendEn.modules.settings.clawdSettings.check,
+                checking: backendEn.modules.settings.clawdSettings.checking,
+                description: backendEn.modules.settings.clawdSettings.description,
+                enabled: backendEn.modules.settings.clawdSettings.enabled,
+                hint: backendEn.modules.settings.clawdSettings.hint,
+                invalidAgentId: backendEn.modules.settings.clawdSettings.invalidAgentId,
+                saveFirst: backendEn.modules.settings.clawdSettings.saveFirst,
+                setup: backendEn.modules.settings.clawdSettings.setup,
+                status_connected: backendEn.modules.settings.clawdSettings.status_connected,
+                status_disabled: backendEn.modules.settings.clawdSettings.status_disabled,
+                status_error: backendEn.modules.settings.clawdSettings.status_error,
+                status_offline: backendEn.modules.settings.clawdSettings.status_offline,
+                status_unregistered: backendEn.modules.settings.clawdSettings.status_unregistered,
+                status_waiting: backendEn.modules.settings.clawdSettings.status_waiting,
+                title: backendEn.modules.settings.clawdSettings.title,
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {

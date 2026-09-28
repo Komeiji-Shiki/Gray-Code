@@ -59,6 +59,10 @@ export class ProductUi {
   async call(client: ClientSession, type: string, data: Record<string, any> = {}): Promise<unknown> {
     // 全局统计不依赖当前工作区，也不能占住此客户端的设置与交互队列。
     if (type === 'usage.getStats') return this.app.usage.stats(client.actorId, { startTime: data.startTime, endTime: data.endTime });
+    if (type === 'platform.clawd.status' || type === 'platform.clawd.check') {
+      this.app.requireOwner(client.actorId);
+      return type === 'platform.clawd.check' ? this.app.clawd.check() : this.app.clawd.status();
+    }
     if (type.startsWith('platform.remote.')) {
       this.app.requireOwner(client.actorId);
       if (!this.app.remoteAccess) throw new Error('当前启动方式未提供远程连接管理。');

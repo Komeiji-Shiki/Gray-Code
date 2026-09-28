@@ -581,6 +581,10 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
       labelKey: 'components.settings.workspaceFeatureLinks.companionsTitle',
       keywords: ['Live2D', '桌宠', '动作', '表情', '缩放', '屏幕感知', '采集', 'pet', 'screen awareness', 'ペット', '画面認識'],
       anchor: '[data-search-anchor="companion-settings"]' },
+    { key: 'clawd-integration', tab: 'appearance' as const,
+      labelKey: 'components.settings.clawdSettings.title',
+      keywords: ['Clawd', 'clawd-on-desk', '桌宠', '任务状态', 'Agent ID', 'desktop pet', 'ペット'],
+      anchor: '[data-search-anchor="clawd-settings"]' },
   ] : []),
   {
     key: 'memory', tab: 'memory',

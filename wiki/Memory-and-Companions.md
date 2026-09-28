@@ -36,6 +36,18 @@ GrayCode 内置了双层记忆架构（长期事实记忆 + 工程日志记忆�
 
 ---
 
+### Clawd 独立桌宠联动
+
+GrayCode 可以向同一电脑上运行的 [Clawd-on-Desk](https://github.com/rullerzhou-afk/clawd-on-desk) 发送任务状态。使用支持 [Custom HTTP Agent](https://github.com/rullerzhou-afk/clawd-on-desk/blob/main/docs/guides/custom-agent-http.md) 的 Clawd 版本。
+
+1. 启动 Clawd，在 **Settings → Agents** 添加 GrayCode 的可执行文件或安装目录，扫描后注册应用，复制生成的 **Agent ID**。
+2. 打开 GrayCode 的 **设置 → 外观 → Clawd 独立桌宠联动**，填写 Agent ID、启用联动，再点击 **保存全部**。
+3. 点击 **检查连接**。收到确认后，在 GrayCode 开始任务，Clawd 就会显示思考、工具执行、等待确认、完成或失败状态。取消任务会结束相应状态，不显示完成庆祝。
+
+不同对话使用独立的会话标识，同一对话的连续任务更新同一个会话。仅发送状态、会话标识、工作区路径和工具名称等元数据，不发送消息正文、工具参数或凭据。工具审批和问题回答仍在 GrayCode 中处理。连接检查确认 Clawd 接收了状态；勿扰模式可能抑制可见动画。
+
+联动通过本机 `~/.clawd/runtime.json` 自动发现端口。Clawd 未运行时不阻塞 GrayCode；恢复连接后同步最新状态，运行中的任务定期报告状态。关闭联动或退出 GrayCode 时结束已报告的会话。Web 模式连接的是 **GrayCode 服务端所在电脑** 的 Clawd。旧设置保持未启用，备份恢复后需重新启用并确认本机注册信息。
+
 ## 3. 屏幕感知（Screen Perception）
 
 屏幕感知功能允许模型在后台按需或周期性观察你的屏幕变化：

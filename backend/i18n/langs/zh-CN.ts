@@ -104,6 +104,24 @@ const zhCN = {
         },
 
         settings: {
+            clawdSettings: {
+                title: 'Clawd 独立桌宠联动',
+                description: '让已启动的 Clawd 跟随 GrayCode 的任务显示思考、工具执行、等待确认、完成和失败状态。',
+                enabled: '启用任务状态联动',
+                agentId: 'Clawd Agent ID',
+                setup: '在 Clawd 的 Settings → Agents 中添加 GrayCode 的可执行文件或安装目录，扫描后注册，再把生成的 Agent ID 复制到这里。',
+                hint: '保存全部后生效。只连接 GrayCode 服务端所在电脑的 Clawd，端口自动发现；审批继续在 GrayCode 中完成。',
+                check: '检查连接',
+                checking: '正在检查…',
+                saveFirst: '请先点击“保存全部”，再检查连接。',
+                status_disabled: '尚未启用',
+                status_waiting: '已启用，等待任务事件',
+                status_connected: 'Clawd 已接收状态；勿扰模式可能隐藏动画',
+                status_offline: 'Clawd 未运行或暂时无法连接，任务继续正常执行',
+                status_unregistered: '请在 Clawd 中注册并启用此 Agent ID',
+                status_error: 'Clawd 未接受状态，请检查版本和注册设置',
+                invalidAgentId: '请填写 Clawd 设置中注册 GrayCode 后生成的完整 Agent ID。',
+            },
             backgroundGalleryPolicy: 'JPG、PNG、WebP，每张不超过 10 MB。导入的图片随设置一起保存或撤销；上传和管理已保存的图库图片会立即生效。',
             errors: {
                 loadFailed: '加载设置失败',

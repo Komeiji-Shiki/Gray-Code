@@ -1031,6 +1031,7 @@ const zhCN = {
         },
 
         settings: {
+            clawdSettings: sharedZhCN.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedZhCN.components.settings.backgroundGalleryPolicy,
             title: '设置',
             tabs: {

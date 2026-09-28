@@ -107,7 +107,18 @@ export interface OneBotSettings extends BotConnectionSettings {
   protocolVersion?: 11 | 12;
   self?: { platform: string; userId: string };
 }
+export interface ClawdSettings {
+  enabled: boolean;
+  /** Clawd 注册自定义应用后生成的身份，不与 GrayCode 智能体 ID 混用。 */
+  agentId: string;
+}
+export interface ClawdStatus {
+  state: 'disabled' | 'waiting' | 'connected' | 'offline' | 'unregistered' | 'error';
+  port?: number;
+  lastSentAt?: number;
+}
 export interface AppSettings {
+  clawd?: ClawdSettings;
   remoteAccess?: RemoteAccessSettings;
   externalAgents?: ExternalAgentProfile[];
   development?: DevelopmentSettings;

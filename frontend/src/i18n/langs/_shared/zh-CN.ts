@@ -200,6 +200,24 @@ const sharedZhCN = {
                     },
                 },
             },
+            clawdSettings: {
+                agentId: backendZhCN.modules.settings.clawdSettings.agentId,
+                check: backendZhCN.modules.settings.clawdSettings.check,
+                checking: backendZhCN.modules.settings.clawdSettings.checking,
+                description: backendZhCN.modules.settings.clawdSettings.description,
+                enabled: backendZhCN.modules.settings.clawdSettings.enabled,
+                hint: backendZhCN.modules.settings.clawdSettings.hint,
+                invalidAgentId: backendZhCN.modules.settings.clawdSettings.invalidAgentId,
+                saveFirst: backendZhCN.modules.settings.clawdSettings.saveFirst,
+                setup: backendZhCN.modules.settings.clawdSettings.setup,
+                status_connected: backendZhCN.modules.settings.clawdSettings.status_connected,
+                status_disabled: backendZhCN.modules.settings.clawdSettings.status_disabled,
+                status_error: backendZhCN.modules.settings.clawdSettings.status_error,
+                status_offline: backendZhCN.modules.settings.clawdSettings.status_offline,
+                status_unregistered: backendZhCN.modules.settings.clawdSettings.status_unregistered,
+                status_waiting: backendZhCN.modules.settings.clawdSettings.status_waiting,
+                title: backendZhCN.modules.settings.clawdSettings.title,
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {

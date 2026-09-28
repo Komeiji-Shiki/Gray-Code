@@ -21,6 +21,7 @@ import type { RemoteAccessHost } from './transport/remotePort';
 import { ExecutionNodes } from './nodes/service';
 import { PlatformNotifications } from './notifications';
 import { CompanionService } from './companions/service';
+import { ClawdService } from './clawd/service';
 import { PetService } from './pets/service';
 import { ScreenSenseService } from './pets/screenSense';
 import { PlatformArtifacts } from './artifacts/service';
@@ -144,6 +145,7 @@ export class PlatformApplication {
   }));
   readonly notifications = new PlatformNotifications();
   readonly companion = new CompanionService(this);
+  readonly clawd: ClawdService;
   readonly pets: PetService;
   readonly screenSense: ScreenSenseService;
   readonly artifacts: PlatformArtifacts;
@@ -441,6 +443,7 @@ export class PlatformApplication {
     this.conversations = new ConversationService(this);
     this.context = new PlatformContextService(this);
     this.automations = new ApplicationAutomations(this);
+    this.clawd = new ClawdService(this);
   }
   static async open(options: ApplicationOptions): Promise<PlatformApplication> {
     const storage = await PlatformStorage.open(options.dataDirectory);
@@ -476,6 +479,7 @@ export class PlatformApplication {
       await application.subagents.feedback.initialize();
       await application.automations.initialize();
       await application.longMemory.background.initialize();
+      await application.clawd.initialize();
       return application;
     } catch (error) {
       try {
@@ -611,6 +615,7 @@ export class PlatformApplication {
       // 构造失败时只会取得其中一部分资源；正常启动后的关闭顺序仍保持原有依赖关系。
       ['屏幕感知', () => this.screenSense?.close()],
       ['桌宠', () => this.pets?.close()],
+      ['Clawd 联动', () => this.clawd?.close()],
       ['执行节点', () => this.nodes?.close()],
       ['电脑操作', () => this.computer?.close()],
       ['工作区搜索', () => this.workspaceSearch?.close()],

@@ -1029,6 +1029,7 @@ const ja: LanguageMessages = {
         },
 
         settings: {
+            clawdSettings: sharedJa.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedJa.components.settings.backgroundGalleryPolicy,
             title: '設定',
             tabs: {

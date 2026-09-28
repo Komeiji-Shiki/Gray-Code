@@ -102,6 +102,24 @@ const en: BackendLanguageMessages = {
         },
 
         settings: {
+            clawdSettings: {
+                title: 'Clawd desktop pet integration',
+                description: 'Let a running Clawd show GrayCode thinking, using tools, waiting for input, completing tasks and encountering errors.',
+                enabled: 'Enable task status integration',
+                agentId: 'Clawd Agent ID',
+                setup: 'In Clawd Settings → Agents, add the GrayCode executable or installation folder, scan and register it, then paste the generated Agent ID here.',
+                hint: 'Takes effect after Save all. Connects to Clawd on the GrayCode server computer, with automatic port discovery. Approvals stay in GrayCode.',
+                check: 'Check connection',
+                checking: 'Checking…',
+                saveFirst: 'Save all settings before checking the connection.',
+                status_disabled: 'Not enabled',
+                status_waiting: 'Enabled, waiting for task activity',
+                status_connected: 'Clawd accepted the state; Do Not Disturb may hide animations',
+                status_offline: 'Clawd is offline or unreachable; tasks continue normally',
+                status_unregistered: 'Register and enable this Agent ID in Clawd',
+                status_error: 'Clawd did not accept the state; check its version and registration',
+                invalidAgentId: 'Enter the complete Agent ID generated when registering GrayCode in Clawd settings.',
+            },
             backgroundGalleryPolicy: 'JPG, PNG or WebP, up to 10 MB each. Imported images are saved or discarded with settings; uploads and changes to saved gallery images take effect immediately.',
             errors: {
                 loadFailed: 'Failed to load settings',

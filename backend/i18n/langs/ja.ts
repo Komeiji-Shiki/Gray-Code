@@ -102,6 +102,24 @@ const ja: BackendLanguageMessages = {
         },
 
         settings: {
+            clawdSettings: {
+                title: 'Clawd デスクトップペット連携',
+                description: '起動中の Clawd に GrayCode の思考、ツール実行、確認待ち、完了、エラーの状態を表示します。',
+                enabled: 'タスク状態の連携を有効にする',
+                agentId: 'Clawd Agent ID',
+                setup: 'Clawd の Settings → Agents で GrayCode の実行ファイルまたはインストール先を追加し、スキャンして登録した後、生成された Agent ID をここに貼り付けてください。',
+                hint: '「すべて保存」後に反映されます。GrayCode サーバーと同じコンピューターの Clawd に接続し、ポートを自動検出します。承認操作は GrayCode で行います。',
+                check: '接続を確認',
+                checking: '確認中…',
+                saveFirst: '接続を確認する前に、すべての設定を保存してください。',
+                status_disabled: '無効',
+                status_waiting: '有効、タスクの開始待ち',
+                status_connected: 'Clawd が状態を受信しました。おやすみモードではアニメーションが非表示になる場合があります',
+                status_offline: 'Clawd が未起動または接続できません。タスクは通常どおり続行します',
+                status_unregistered: 'Clawd でこの Agent ID を登録して有効にしてください',
+                status_error: 'Clawd が状態を受け付けませんでした。バージョンと登録設定を確認してください',
+                invalidAgentId: 'Clawd の設定で GrayCode を登録した際に生成された完全な Agent ID を入力してください。',
+            },
             backgroundGalleryPolicy: 'JPG・PNG・WebP、1 枚最大 10 MB。インポート画像は設定と一緒に保存・破棄されます。アップロードと保存済み画像の管理はすぐに反映されます。',
             errors: {
                 loadFailed: '設定の読み込みに失敗しました',

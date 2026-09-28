@@ -36,7 +36,12 @@ const fontValue = (family: string) => JSON.stringify(family);
 const isInstalledFont = (value: string) => fonts.value.some(font => fontValue(font) === value);
 async function save() {
   if (!settings.value) return;
-  try { await sendToExtension('platform.settings.update', { settings: settings.value }); }
+  try {
+    const appearance = { ...settings.value.appearance, colors: { ...settings.value.appearance.colors } };
+    // 同页其他表单也参与保存，旧快照只能更新自己负责的字段。
+    const current = await sendToExtension<AppSettings>('platform.settings.get', {});
+    await sendToExtension('platform.settings.update', { settings: { ...current, appearance } });
+  }
   catch (e) { error.value = (e as Error).message; throw e; }
 }
 async function loadFonts(refresh = false) {
