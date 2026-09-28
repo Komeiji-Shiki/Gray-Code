@@ -8,6 +8,7 @@
  * finishSmoothStreamForState 等）从 ./chunkText 导入，保持模块级单例。
  */
 
+import { isPartialToolData } from '@shared/toolResultStatus'
 import type { Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../../types'
 import type { ChatStoreState, CheckpointRecord } from '../types'
 import { generateId } from '../../../utils/format'
@@ -45,13 +46,7 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
     // 部分接受（用户拒绝了部分块或手动编辑内容）→ warning；与 apply_diff 返回的 partial 标记对齐。
     // 必须早于 error 判定：部分成功时响应里仍带着失败块的 error 文本，
     // 先判 error 会把「应用了一部分」显示成整体失败。
-    if ((data as any).partial === true || (data as any).status === 'partial') return 'warning'
-
-    const appliedCount = (data as any).appliedCount
-    const failedCount = (data as any).failedCount
-    if (typeof appliedCount === 'number' && typeof failedCount === 'number' && appliedCount > 0 && failedCount > 0) {
-      return 'warning'
-    }
+    if (isPartialToolData(data)) return 'warning'
   }
 
   if (r?.success === false) return 'error'

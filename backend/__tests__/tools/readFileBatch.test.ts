@@ -91,7 +91,7 @@ describe('read_file batch requests', () => {
 
         expect(result.success).toBe(false);
         expect(result.error).toBe('1 file failed to read');
-        expect(result.data).toMatchObject({ successCount: 1, failCount: 1, totalCount: 2 });
+        expect(result.data).toMatchObject({ successCount: 1, failCount: 1, totalCount: 2, partial: true });
         expect(result.data.results[0].success).toBe(true);
         expect(result.data.results[1]).toMatchObject({ path: 'missing.txt', success: false, error: 'ENOENT' });
     });

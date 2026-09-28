@@ -151,7 +151,11 @@ async function main() {
     if (!completed) tool = call('smoke-write', 'workspace_files', { action: 'write', path: 'generated.txt', content: 'Desktop model/tool integration verified.', expectedHash: null });
     else if (completed === 1) tool = call('smoke-question', 'ask_user', { questions: [{ title: '选择验证结果标签', options: ['已验证', '继续检查'] }] });
     else if (answerReceived && completed === 2) tool = call('smoke-command', 'run_command', { command: 'powershell.exe', args: ['-NoProfile', '-Command', 'Remove-Item -LiteralPath generated.txt'] });
-    const message = tool ? { role: 'assistant', content: null, tool_calls: [tool] } : { role: 'assistant', content: answerReceived ? '文件已生成，已收到回答，高危命令已按选择拒绝。' : '文件已经完成；可以补充验证标签。' };
+    else if (answerReceived && completed === 3) tool = [
+      call('smoke-read-batch', 'read_file', { files: [{ path: 'generated.txt' }, { path: 'missing-fixture.txt' }] }),
+      call('smoke-context-status', 'context_status', {}),
+    ];
+    const message = tool ? { role: 'assistant', content: null, tool_calls: Array.isArray(tool) ? tool : [tool] } : { role: 'assistant', content: answerReceived ? '文件已生成，已收到回答，高危命令已按选择拒绝。' : '文件已经完成；可以补充验证标签。' };
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message, finish_reason: tool ? 'tool_calls' : 'stop' }] }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -210,6 +214,8 @@ async function main() {
   await until(async () => (await rpc('runs.list'))[0]?.status === 'completed', 'task completed');
   await until(() => chat('document.body.innerText.includes("文件已生成，已收到回答，高危命令已按选择拒绝。")'), 'final reply rendered after external approval');
   assert.equal(await fs.readFile(path.join(output, 'project', 'generated.txt'), 'utf8'), 'Desktop model/tool integration verified.');
+  await until(() => chat('Array.from(document.querySelectorAll(".tool-item.status-warning")).some(node => node.innerText.includes("读取文件") && !!node.querySelector(".status-icon.codicon-warning"))'), 'partial read warning icon and border');
+  await until(() => chat('document.body.innerText.includes("上下文状态")'), 'on-demand context status tool card');
   const conversationId = (await rpc('runs.list'))[0].conversationId;
   const beforeReroll = await rpc('conversations.history', { id: conversationId });
   const oldReplyId = beforeReroll.messages.at(-1).id;
@@ -233,6 +239,15 @@ async function main() {
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".settings-panel")'), 'settings panel');
   assert((await chat('document.querySelectorAll(".settings-sidebar .settings-tab").length')) >= 20);
+  await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.includes("总结")).click()');
+  await until(() => chat('!!document.querySelector("[data-search-anchor=context-user-retention] .select-trigger")'), 'user retention setting');
+  assert(await chat('document.querySelector("[data-search-anchor=context-user-retention]").innerText.includes("首条用户消息＋最近一次输入")'));
+  const retentionRevision = (await rpc('settings.get')).revision;
+  await chat('document.querySelector("[data-search-anchor=context-user-retention] .select-trigger").click()');
+  await until(() => chat('Array.from(document.querySelectorAll("[role=option]")).some(node=>node.textContent.includes("全部用户消息"))'), 'retention option');
+  await chat('Array.from(document.querySelectorAll("[role=option]")).find(node=>node.textContent.includes("全部用户消息")).click(); document.querySelector(".platform-settings-footer button.primary").click()');
+  await until(async () => (await rpc('settings.get')).revision > retentionRevision, 'retention immediate save');
+  assert.equal((await ui('getSummarizeConfig')).userMessageRetention, 'all');
   await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.trim()==="外观").click()');
   const fonts = await rpc('desktop.fonts');
   assert(fonts.length > 0);
@@ -286,7 +301,7 @@ async function main() {
   await verifyRegexCancellation(rpc);
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
-    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
+    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
   server.closeAllConnections(); server.close();

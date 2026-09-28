@@ -1,3 +1,4 @@
+import { isPartialToolData } from '@shared/toolResultStatus'
 import { isSubagentInvocationContent } from '@shared/subagentInvocation'
 import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 import { contentToMessageEnhanced, isOnlyFunctionResponse } from '@/stores/chat/parsers'
@@ -57,13 +58,11 @@ export function appendMonitorFloorIndices(window: SubAgentRunContentWindowState,
 
 function deriveToolStatus(result: unknown): ToolUsage['status'] {
   const r = result as any
-  if (r?.success === false || r?.error || r?.cancelled || r?.rejected) return 'error'
+  if (r?.cancelled || r?.rejected) return 'error'
   const data = r?.data
-  if (data && typeof data === 'object') {
-    if (data.status === 'pending') return 'awaiting_apply'
-    if (data.partial === true || data.status === 'partial') return 'warning'
-    if (typeof data.appliedCount === 'number' && typeof data.failedCount === 'number' && data.appliedCount > 0 && data.failedCount > 0) return 'warning'
-  }
+  if (data?.status === 'pending') return 'awaiting_apply'
+  if (isPartialToolData(data)) return 'warning'
+  if (r?.success === false || r?.error) return 'error'
   return 'success'
 }
 

@@ -627,6 +627,7 @@ export function createReadFileTool(
                     results,
                     successCount,
                     failCount,
+                    partial: successCount > 0 && failCount > 0,
                     totalCount: fileRequests.length,
                     multiRoot: isMultiRoot,
                     // 发现 16：files 超条数上限或多模态附件超累计字节上限时置位

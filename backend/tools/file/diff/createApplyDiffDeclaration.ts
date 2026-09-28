@@ -1,4 +1,5 @@
 import type { ToolDeclaration } from '../../types';
+import { toolBatchingGuidance } from '../../shared/batchingGuidance';
 export interface ApplyDiffDeclarationOptions { language: 'zh-CN' | 'en'; workspaces?: readonly { name: string }[]; format: 'unified' | 'search_replace' }
 /** 两个宿主共用原始参数与描述。 */
 export function createApplyDiffDeclaration(options: ApplyDiffDeclarationOptions): ToolDeclaration {
@@ -25,6 +26,7 @@ export function createApplyDiffDeclaration(options: ApplyDiffDeclarationOptions)
             }
         }
 
+        descriptionSuffix += toolBatchingGuidance(options.language);
         const format = options.format;
 
         if (format === 'search_replace') {

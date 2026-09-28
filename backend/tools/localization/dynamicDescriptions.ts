@@ -16,6 +16,7 @@
  */
 
 import type { LocalizationLanguage } from './types';
+import { toolBatchingGuidance } from '../shared/batchingGuidance';
 
 /** 按语言选择文本 */
 function pick(lang: LocalizationLanguage, zhText: string, enText: string): string {
@@ -196,6 +197,7 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
             'File path for batch reads, relative to the current workspace root. E.g.: src/main.ts.'
         );
 
+    description += toolBatchingGuidance(lang);
     return {
         description,
         path,

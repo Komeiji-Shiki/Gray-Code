@@ -155,3 +155,19 @@ describe('tool approval through the real render projection', () => {
     } finally { log.mockRestore() }
   })
 })
+
+describe('批量文件读取的总体状态', () => {
+  test.each([
+    { data: { successCount: 2, failCount: 1 }, success: false, status: 'warning', icon: 'warning' },
+    { data: { results: [{ success: true }, { success: false }] }, success: false, status: 'warning', icon: 'warning' },
+    { data: { successCount: 0, failCount: 2 }, success: false, status: 'error', icon: 'error' },
+    { data: { successCount: 2, failCount: 0 }, success: true, status: 'success', icon: 'check' },
+  ])('混合/全败/全成得到 $status（$data）', ({ data, success, status, icon }) => {
+    createApproval();
+    wrapper = mount(ToolMessage, { props: { tools: [{ id: 'read-batch', name: 'read_file', args: { files: [{ path: 'a' }, { path: 'missing' }] },
+      status: success ? 'success' : 'error', result: { success, data, ...(!success ? { error: 'Some files failed' } : {}) } }] } });
+    expect(wrapper.find(`.tool-item.status-${status}`).exists()).toBe(true);
+    expect(wrapper.find(`.status-icon.codicon-${icon}`).exists()).toBe(true);
+    if (status === 'warning') expect(wrapper.find('.tool-item.status-error').exists()).toBe(false);
+  });
+});

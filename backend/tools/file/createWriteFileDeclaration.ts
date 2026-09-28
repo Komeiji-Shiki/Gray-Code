@@ -1,4 +1,5 @@
 import type { ToolDeclaration } from '../types';
+import { toolBatchingGuidance } from '../shared/batchingGuidance';
 export interface DeclarationOptions { language: 'zh-CN' | 'en'; workspaces?: readonly { name: string }[]; precreateEmptyFile?: boolean }
 /** 原工具声明共用同一工厂，宿主只提供语言与工作区信息。 */
 export function createWriteFileDeclaration(options: DeclarationOptions): ToolDeclaration {
@@ -46,6 +47,7 @@ Batch write rules:
 - Correct example: output write_file(A), write_file(B), write_file(C) in sequence in the same round.
 
 Note: path is relative to the workspace root; content must be the complete target content of the file. When modifying large files, prefer apply_diff to avoid the risk of accidental deletion from full-file rewrites.`;
+    description += toolBatchingGuidance(options.language);
     let pathDescription = isZh
         ? '文件路径，相对于当前工作区根目录。例如：docs/example.md。'
         : 'File path, relative to the current workspace root. For example: docs/example.md.';
