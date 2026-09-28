@@ -78,6 +78,22 @@ test('日志有明确类型、正文和续读游标，零游标与空日志不�
   expect(wrapper.text()).toContain('没有新日志'); expect(wrapper.text()).toContain('续读游标 0')
 })
 
+test('浏览器筛选展示匹配总数、续查位置、链接与等待的实际结果', async () => {
+  const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_read', args: { action: 'snapshot' }, result: { success: true, data: {
+    nodes: [{ ref: 'paper', role: 'link', name: 'Research paper', description: 'Full text', url: 'https://example.com/paper' }],
+    returned: 1, total: 31, nextOffset: 11, partial: true,
+  } } } }))
+  expect(wrapper.text()).toContain('本次返回 1 项，共匹配 31 项')
+  expect(wrapper.text()).toContain('续查位置：11'); expect(wrapper.text()).toContain('结果不完整')
+  expect(wrapper.find('.snapshot-node a').attributes('href')).toBe('https://example.com/paper')
+  expect(wrapper.find('.snapshot-node').text()).toContain('Full text')
+  await wrapper.setProps({ args: { action: 'wait' }, result: { success: false, data: { conditionMet: false, timedOut: true, nodes: [] } } })
+  expect(wrapper.text()).toContain('等待结束，页面尚未满足条件')
+  expect(wrapper.text()).not.toContain('页面已满足等待条件')
+  await wrapper.setProps({ result: { success: true, data: { conditionMet: true, timedOut: false, nodes: [] } } })
+  expect(wrapper.text()).toContain('页面已满足等待条件')
+})
+
 test('动作已完成与后续截图失败独立展示，原始详情也不泄漏图像编码', async () => {
   const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_action', args: { action: 'click', tabId: 'tab-1' }, result: { success: true, data: { status: 'completed', repeated: true, operationId: 'op-1', title: 'Done', url: 'https://example.com', observationError: { code: 'CAPTURE_FAILED', message: 'Capture not available' } }, attachments: [screenshot] } } }))
   expect(wrapper.find('.action-status').text()).toBe('已完成')

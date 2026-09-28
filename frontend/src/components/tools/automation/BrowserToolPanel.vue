@@ -38,6 +38,7 @@ function logTime(value: unknown) {
       <div class="automation-heading"><span class="codicon codicon-globe" aria-hidden="true" /><div><div class="automation-kicker">{{ getToolDisplayName(toolName || 'browser_read') }}</div><h3>{{ actionLabel(action) }}</h3></div></div>
       <template #result>
         <VisualActionReceipt v-if="toolName === 'browser_action'" :value="data" />
+        <p v-if="typeof data.conditionMet === 'boolean'" class="automation-notice" :class="{ 'automation-error': data.timedOut === true }">{{ t(`components.tools.automation.${data.conditionMet ? 'conditionMet' : 'conditionTimedOut'}`) }}</p>
         <div v-if="tabId && (toolName === 'browser_files' || !page.title && !page.url)" class="automation-meta">{{ toolFieldLabel('tabId') }} <code>{{ tabId }}</code></div>
 
         <template v-if="Array.isArray(data.tabs)">
@@ -66,6 +67,7 @@ function logTime(value: unknown) {
 
         <section v-if="Array.isArray(data.nodes)" class="automation-section page-snapshot">
           <div class="automation-section-title"><h4>{{ toolFieldLabel('nodes') }}</h4><span class="automation-count">{{ nodes.length }}</span></div>
+          <p v-if="numeric(data.total) !== undefined" class="automation-meta">{{ t('components.tools.automation.snapshotCount', { count: nodes.length, total: data.total }) }}</p>
           <p v-if="!nodes.length" class="automation-empty">{{ t('components.tools.structured.empty') }}</p>
           <div v-else class="automation-content">
             <template v-for="(node, index) in nodes.slice(0, visible)" :key="index">
@@ -73,11 +75,15 @@ function logTime(value: unknown) {
               <div v-else class="snapshot-node" :style="{ paddingLeft: `${Math.min(numeric(record(node).depth) || 0, 12) * 8}px` }">
                 <div class="automation-item-head"><code v-if="record(node).ref" class="automation-code">[{{ text(record(node).ref) }}]</code><span class="automation-badge">{{ text(record(node).role) }}</span><strong>{{ text(record(node).name) }}</strong></div>
                 <pre v-if="record(node).value !== undefined" class="automation-pre">{{ text(record(node).value) }}</pre>
+                <p v-if="record(node).description" class="automation-muted">{{ text(record(node).description) }}</p>
+                <a v-if="toolLink(record(node).url)" class="automation-link" :href="toolLink(record(node).url)" target="_blank" rel="noopener noreferrer">{{ text(record(node).url) }}</a>
                 <div v-if="fullNodeStates(node).length" class="automation-meta"><span v-for="[key, value] in fullNodeStates(node)" :key="key">{{ toolFieldLabel(key) }}: {{ typeof value === 'boolean' ? t(`components.tools.structured.${value ? 'yes' : 'no'}`) : text(value) }}</span></div>
               </div>
             </template>
           </div>
           <button v-if="nodes.length > visible" type="button" class="automation-more" @click="visible += 40">{{ t('components.tools.structured.showMore', { count: nodes.length - visible }) }}</button>
+          <p v-if="numeric(data.nextOffset) !== undefined" class="automation-meta">{{ t('components.tools.platform.nextOffset', { offset: data.nextOffset }) }}</p>
+          <p v-if="data.partial === true" class="automation-notice">{{ t('components.tools.platform.partial') }}</p>
           <details v-if="frames.length" class="automation-details"><summary>{{ toolFieldLabel('frames') }} · {{ frames.length }}</summary><ul class="automation-list"><li v-for="(frame, index) in frames" :key="index"><span class="automation-code">{{ text(frame.url) || text(frame.frameId) }}</span><p v-if="frame.unavailable" class="automation-notice automation-error">{{ text(frame.unavailable) }}</p></li></ul></details>
         </section>
 
