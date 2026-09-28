@@ -19,6 +19,13 @@ interface OwnedTab {
   lease?: { runId: string; conversationId?: string; controller: AbortController };
   userControlled: boolean; takeoverSource?: string; queue: Promise<unknown>; modelInput: boolean;
   blockedDownload?: { filename: string; url: string };
+  actionPopups?: ActionPopups;
+}
+interface PopupResult {
+  requestedUrl: string; status: 'opening' | 'opened' | 'failed'; tab?: OwnedTab; error?: string;
+}
+interface ActionPopups {
+  signal: AbortSignal; entries: PopupResult[]; pending: Promise<void>[];
 }
 interface BrowserOperation {
   id: string; fingerprint: string; tabId: string; runId: string; requestedAt: number; finishedAt?: number;
@@ -112,9 +119,11 @@ export class DesktopBrowser implements BrowserHost {
     })());
     return { session: await this.sessions.get(profile.id)!, profileId: profile.id };
   }
-  private async create(actorId: string, profileId?: string, foreground = false): Promise<OwnedTab> {
+  private async create(actorId: string, profileId?: string, foreground = false, signal?: AbortSignal): Promise<OwnedTab> {
+    signal?.throwIfAborted();
     if (this.closing) throw new Error('浏览器正在关闭。');
     this.actor(actorId); const selected = await this.browserSession(actorId, profileId); this.actor(actorId);
+    signal?.throwIfAborted();
     if (this.closing) throw new Error('浏览器正在关闭。');
     const parent = this.getWindow();
     const view = new WebContentsView({ webPreferences: { session: selected.session, nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false,
@@ -139,8 +148,18 @@ export class DesktopBrowser implements BrowserHost {
     });
     wc.on('will-redirect', (event, url) => { if (!this.allowed(url, tab.profileId)) event.preventDefault(); });
     wc.setWindowOpenHandler(({ url }) => {
-      if (tab.page.automated && !tab.lease) return { action: 'deny' };
-      if (this.allowed(url, tab.profileId)) void this.popup(tab, url).catch(error => tab.page.log('error', String(error)));
+      if (tab.page.automated && (!tab.lease || tab.actionPopups?.signal.aborted)) return { action: 'deny' };
+      if (this.allowed(url, tab.profileId)) {
+        // 按来源标签和正在执行的动作归属，不能用全局标签差集混入其他任务的新页。
+        const tracking = tab.actionPopups?.signal.aborted ? undefined : tab.actionPopups;
+        const result: PopupResult = { requestedUrl: url, status: 'opening' };
+        tracking?.entries.push(result);
+        const pending = this.popup(tab, result, tracking?.signal).catch(error => {
+          result.status = 'failed'; result.error = error instanceof Error ? error.message : String(error);
+          tab.page.log('error', result.error);
+        });
+        tracking?.pending.push(pending);
+      }
       return { action: 'deny' };
     });
     // before-input-event only emits keyboard input; showing/focusing a tab is not a takeover.
@@ -154,26 +173,59 @@ export class DesktopBrowser implements BrowserHost {
       if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
       return tab.page.connect();
     });
+    const abort = () => { if (this.tabs.has(id) && !tab.userControlled) this.closeTab(tab); };
+    signal?.addEventListener('abort', abort, { once: true });
     try {
-      await tab.queue;
+      signal?.throwIfAborted(); await tab.queue; signal?.throwIfAborted();
       if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
     } catch (error) {
-      // 初始化失败的标签没有交给调用方，也必须释放已经挂载的原生页面。
-      if (this.tabs.has(id)) this.closeTab(tab);
+      // 初始化失败的临时标签需要释放，但不能关闭已经被人工接管的页面。
+      if (this.tabs.has(id) && !tab.userControlled) this.closeTab(tab);
       throw error;
-    }
+    } finally { signal?.removeEventListener('abort', abort); }
     if (foreground || !this.active.has(actorId)) this.active.set(actorId, id);
     this.changed(actorId); if (foreground) this.show(tab);
     return tab;
   }
-  private async popup(source: OwnedTab, url: string): Promise<void> {
-    const lease = source.lease;
-    const tab = await this.create(source.actorId, source.profileId, !source.page.automated);
-    tab.page.automated = source.page.automated;
-    if (lease && !lease.controller.signal.aborted) {
-      tab.lease = { runId: lease.runId, conversationId: lease.conversationId, controller: new AbortController() }; tab.page.automated = true;
+  private async popup(source: OwnedTab, result: PopupResult, actionSignal?: AbortSignal): Promise<void> {
+    const lease = source.lease, automated = source.page.automated;
+    const signal = lease ? AbortSignal.any([lease.controller.signal, ...(actionSignal ? [actionSignal] : [])]) : actionSignal;
+    const tab = await this.create(source.actorId, source.profileId, !automated, signal);
+    result.tab = tab;
+    if (signal?.aborted || !this.tabs.has(source.id) || automated && source.lease !== lease) {
+      if (!tab.userControlled) this.closeTab(tab);
+      signal?.throwIfAborted(); throw new Error('来源标签已关闭或控制权已变化，新标签不再导航。');
     }
-    await this.navigate(tab, url);
+    if (tab.userControlled) throw new Error('新标签已被用户接管。');
+    tab.page.automated = automated;
+    if (lease) tab.lease = { runId: lease.runId, conversationId: lease.conversationId, controller: new AbortController() };
+    const navigationSignal = tab.lease ? AbortSignal.any([tab.lease.controller.signal, ...(signal ? [signal] : [])]) : signal;
+    // 子页尚在导航时，其后续工具调用必须排在导航之后；取消和接管同样能中止加载。
+    tab.queue = this.navigate(tab, result.requestedUrl, navigationSignal);
+    await tab.queue; result.status = 'opened';
+  }
+  private describePopups(tracking: ActionPopups): Record<string, unknown>[] {
+    return tracking.entries.map(result => {
+      const alive = result.tab && this.tabs.has(result.tab.id) && !result.tab.view.webContents.isDestroyed();
+      return { requestedUrl: result.requestedUrl, ...(alive ? this.describe(result.tab!) : result.tab ? { id: result.tab.id } : {}),
+        status: result.tab && !alive ? 'closed' : result.status, ...(result.error ? { error: result.error } : {}) };
+    });
+  }
+  private async settlePopups(tracking: ActionPopups): Promise<void> {
+    if (!tracking.pending.length || tracking.signal.aborted) return;
+    // 仅等已观察到的新页，慢站点不能无限拖住原动作；未完成项明确保留 opening 状态。
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort: (() => void) | undefined;
+    try {
+      await Promise.race([Promise.all(tracking.pending), new Promise<void>(resolve => {
+        abort = resolve; tracking.signal.addEventListener('abort', abort, { once: true });
+        timer = setTimeout(resolve, 1000);
+        if (tracking.signal.aborted) resolve();
+      })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (abort) tracking.signal.removeEventListener('abort', abort);
+    }
   }
   private async navigate(tab: OwnedTab, url: unknown, signal?: AbortSignal): Promise<void> {
     if (typeof url !== 'string' || !this.allowed(url, tab.profileId)) throw new Error('浏览器只接受 HTTP(S) 地址或当前登录配置的工作区预览。');
@@ -336,7 +388,7 @@ export class DesktopBrowser implements BrowserHost {
       catch (error) { data.observationError = failure(error, 'CAPTURE'); }
     }
     if (options.after === 'snapshot' || options.after === 'both') {
-      try { data.snapshot = await tab.page.snapshot(signal, options.snapshotOptions); }
+      try { data.snapshot = await tab.page.snapshotAfterAction(signal, options.snapshotOptions); }
       catch (error) { data.snapshotError = failure(error, 'SNAPSHOT'); }
     }
     // 回执保存的是派发时状态；补读结束后再描述当前页，不能返回旧 url/title。
@@ -360,7 +412,7 @@ export class DesktopBrowser implements BrowserHost {
       if (previous.fingerprint !== fingerprint) throw new Error('同一工具调用 ID 不能用于不同的浏览器动作。');
       if (previous.status !== 'completed' || !previous.outcome)
         return { success: false, code: 'BROWSER_ACTION_UNKNOWN', error: previous.error ?? '这次动作已经派发但结果未确认，请重新观察。',
-          data: { operationId: id, status: previous.status, repeated: true } };
+          data: { ...previous.outcome?.data as Record<string, unknown>, operationId: id, status: previous.status, repeated: true } };
       return this.actionResult(tab, { ...previous.outcome, data: { ...previous.outcome.data as Record<string, unknown>, repeated: true } }, signal, observationOptions);
     }
     if (args.action !== 'navigate' && args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化或未提供，请重新读取后确认操作目标。');
@@ -369,26 +421,44 @@ export class DesktopBrowser implements BrowserHost {
     const record = { namespace, id, ownerId: context.conversationId ?? context.actorId };
     await this.application.storage.commitRecords([{ ...record, value: operation, expectedRevision: null }]);
     tab.blockedDownload = undefined;
+    const tracking: ActionPopups = { signal, entries: [], pending: [] };
+    tab.actionPopups = tracking;
+    const addPopups = (outcome: ToolOutcome) => tracking.entries.length
+      ? { ...outcome, data: { ...outcome.data as Record<string, unknown>, openedTabs: this.describePopups(tracking) } } : outcome;
     try {
-      const wc = tab.view.webContents;
-      signal.throwIfAborted();
-      if (args.action === 'navigate') { tab.source = undefined; await this.navigate(tab, args.url, signal); }
-      else if (args.action === 'back') { if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); }
-      else if (args.action === 'forward') { if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); }
-      else if (args.action === 'reload') wc.reload();
-      else await tab.page.action(args, signal);
-      signal.throwIfAborted(); operation.status = 'completed';
-      const receipt: VisualActionResult = { operationId: id, status: 'completed' };
-      const download = tab.blockedDownload as OwnedTab['blockedDownload'];
-      operation.outcome = download ? { success: false, code: 'DOWNLOAD_DESTINATION_REQUIRED',
-        error: '该操作触发文件下载，请通过 browser_files 指定保存路径。', data: { filename: download.filename, downloadUrl: download.url, ...receipt } }
-        : { success: true, data: { ...this.describe(tab), ...receipt } };
-    } catch (error) {
-      operation.status = (error as { code?: string }).code === 'OBSERVATION_STALE' ? 'failed' : 'unknown'; operation.error = (error as Error).message;
-      operation.outcome = { success: false, code: (error as { code?: string }).code ?? 'BROWSER_ACTION_UNKNOWN', error: operation.error,
-        data: { operationId: id, status: operation.status } };
-    } finally { operation.finishedAt = Date.now(); await this.application.storage.putRecord({ ...record, value: operation }); }
-    return this.actionResult(tab, operation.outcome!, signal, observationOptions);
+      try {
+        const wc = tab.view.webContents;
+        signal.throwIfAborted();
+        if (args.action === 'navigate') { tab.source = undefined; await this.navigate(tab, args.url, signal); }
+        else if (args.action === 'back') { if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); }
+        else if (args.action === 'forward') { if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); }
+        else if (args.action === 'reload') wc.reload();
+        else {
+          tab.modelInput = true;
+          try { await tab.page.action(args, signal); } finally { tab.modelInput = false; }
+        }
+        signal.throwIfAborted(); operation.status = 'completed';
+        const receipt: VisualActionResult = { operationId: id, status: 'completed' };
+        const download = tab.blockedDownload as OwnedTab['blockedDownload'];
+        operation.outcome = download ? { success: false, code: 'DOWNLOAD_DESTINATION_REQUIRED',
+          error: '该操作触发文件下载，请通过 browser_files 指定保存路径。', data: { filename: download.filename, downloadUrl: download.url, ...receipt } }
+          : { success: true, data: { ...this.describe(tab), ...receipt } };
+      } catch (error) {
+        operation.status = (error as { code?: string }).code === 'OBSERVATION_STALE' ? 'failed' : 'unknown'; operation.error = (error as Error).message;
+        operation.outcome = { success: false, code: (error as { code?: string }).code ?? 'BROWSER_ACTION_UNKNOWN', error: operation.error,
+          data: { operationId: id, status: operation.status } };
+      }
+      // 先保存动作事实；后续观察失败或进程中断不能导致再次派发输入。
+      operation.finishedAt = Date.now(); operation.outcome = addPopups(operation.outcome!);
+      await this.application.storage.putRecord({ ...record, value: operation });
+      await this.settlePopups(tracking);
+      const observed = await this.actionResult(tab, operation.outcome, signal, observationOptions);
+      if (tracking.entries.length) {
+        operation.outcome = addPopups(operation.outcome);
+        await this.application.storage.putRecord({ ...record, value: operation });
+      }
+      return addPopups(observed);
+    } finally { tab.actionPopups = undefined; }
   }
   async tool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
     this.actor(context.actorId); context.signal.throwIfAborted();
@@ -423,10 +493,7 @@ export class DesktopBrowser implements BrowserHost {
           }
           if (args.action === 'logs') return { success: true, data: tab.page.logs(args) };
         }
-        if (name === 'browser_action') {
-          tab.modelInput = true;
-          return await this.performAction(tab, args, context, signal);
-        }
+        if (name === 'browser_action') return await this.performAction(tab, args, context, signal);
         if (name === 'browser_files') {
           tab.modelInput = true;
           if (args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化，请重新读取后确认文件传输目标。');

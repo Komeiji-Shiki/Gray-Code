@@ -42,6 +42,7 @@ function fixtureHtml(origin, crossOrigin) {
   <iframe title="Same origin" src="${origin}/frame"></iframe><iframe title="Cross origin" src="${crossOrigin}/frame"></iframe>
   ${'<section role="group">'.repeat(35)}<button aria-label="Deep component" onclick="this.textContent='Deep clicked'">Deep component</button>${'</section>'.repeat(35)}
   <a href="${origin}/paper">Read paper here</a><a target="_blank" href="${origin}/paper">Open paper tab</a>
+  <a href="${origin}/delayed-paper">Read delayed paper</a>
   <button id="large" onclick="this.textContent='Large clicked'">Large surface</button></main>
   <script>
   let changed=0;
@@ -103,6 +104,11 @@ async function run(output) {
           response.end('<title>Embedded research</title><label>Frame field<input aria-label="Frame field"></label><button onclick="this.textContent=\'Frame clicked\'">Frame action</button>'
             + '<div role="region" aria-label="Frame scroll" style="height:60px;overflow:auto" onscroll="document.getElementById(\'state\').textContent=\'Frame scrolled\'">'
             + '<p>Scrollable row</p>'.repeat(30) + '</div><p id="state">Not scrolled</p>'); return;
+        }
+        if (request.url === '/delayed-paper') {
+          response.write('<!doctype html><title>Delayed paper</title><nav>Article navigation</nav>');
+          await new Promise(resolve => setTimeout(resolve, 300));
+          response.end('<main><h1>Delayed article body</h1></main>'); return;
         }
         if (request.url === '/paper') { response.end('<title>Quantum paper</title><h1>Quantum methods paper</h1>'); return; }
         response.end(fixtureHtml(origin, crossOrigin));
@@ -199,6 +205,20 @@ async function run(output) {
     const screenshot = await tool('browser_read', { action: 'screenshot', tabId });
     const image = nativeImage.createFromBuffer(Buffer.from(screenshot.attachments[0].data, 'base64'));
     assert(!image.isEmpty()); await fs.writeFile(path.join(output, 'browser.png'), image.toPNG());
+    const popup = await action({ action: 'click', ref: await find('Open paper tab', 'link'), after: 'snapshot' });
+    assert.equal(popup.data.url, url); assert.equal(popup.data.snapshot.url, url);
+    assert.equal(popup.data.openedTabs.length, 1, JSON.stringify(popup));
+    const child = popup.data.openedTabs[0];
+    assert(child.id); assert.equal(child.requestedUrl, origin + '/paper'); assert.equal(child.status, 'opened');
+    assert.equal(child.url, origin + '/paper');
+    const childRead = await tool('browser_read', { action: 'snapshot', tabId: child.id, query: 'Quantum methods paper', role: 'heading' });
+    assert.equal(childRead.data.total, 1, JSON.stringify(childRead));
+    await tool('browser_tabs', { action: 'close', tabId: child.id });
+    checks.push('popup-receipt-to-child-read-without-listing-or-reclicking');
+    const delayed = await action({ action: 'click', ref: await find('Read delayed paper', 'link'), after: 'snapshot', snapshotOptions: { query: 'Delayed article body', role: 'heading' } });
+    assert.equal(delayed.data.url, origin + '/delayed-paper'); assert.equal(delayed.data.snapshot.total, 1, JSON.stringify(delayed));
+    await action({ action: 'back', url: delayed.data.url, after: 'snapshot' });
+    checks.push('snapshot-only-waits-for-main-document-body');
     const navigated = await action({ action: 'click', ref: await find('Read paper here', 'link') });
     assert.equal(navigated.data.url, origin + '/paper'); assert.equal(navigated.data.title, 'Quantum paper');
     const back = await action({ action: 'back', url: navigated.data.url, after: 'both', snapshotOptions: { query: 'Search papers', role: 'searchbox' } });

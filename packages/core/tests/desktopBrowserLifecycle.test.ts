@@ -10,7 +10,9 @@ jest.mock('@graycode/core', () => ({ authorizeEffects: () => undefined }));
 jest.mock('../../../apps/desktop/src/browser/page', () => ({ BrowserPage: class {
   automated = false; revision = 0; connect = mockConnect; invalidate = jest.fn(() => { this.revision++; });
   allowManualInput = jest.fn(() => { this.automated = false; });
-  action = jest.fn(async () => {}); snapshot = jest.fn(async () => ({ nodes: [] }));
+  action = jest.fn(async () => {}); snapshot = jest.fn(async (..._args: unknown[]) => ({ nodes: [] }));
+  snapshotAfterAction = jest.fn((...args: unknown[]) => this.snapshot(...args));
+  log = jest.fn();
   waitForSnapshot = jest.fn(async () => ({ conditionMet: false, timedOut: true, nodes: [] }));
   screenshot = jest.fn(async (signal: AbortSignal) => {
     signal.throwIfAborted();
@@ -28,7 +30,9 @@ jest.mock('electron', () => {
       destroyed = false; finish!: () => void; fail!: (error: Error) => void;
       loading = new Promise<void>((resolve, reject) => { this.finish = resolve; this.fail = reject; });
       webContents = Object.assign(new EventEmitter(), { isDestroyed: () => this.destroyed, close: jest.fn(() => { this.destroyed = true; }),
-        loadURL: () => this.loading, setWindowOpenHandler() {}, getURL: () => 'about:blank', getTitle: () => '',
+        loadURL: jest.fn(() => this.loading), stop: jest.fn(),
+        setWindowOpenHandler: (handler: unknown) => { this.webContents.openHandler = handler; }, openHandler: undefined as any,
+        getURL: () => 'about:blank', getTitle: () => '',
         navigationHistory: { canGoBack: () => false, canGoForward: () => false } });
       constructor() { mockViews.push(this); }
       getBounds() { return this.bounds; } setBounds(value: any) { this.bounds = value; } setVisible() {}
@@ -326,5 +330,121 @@ test.each([{ after: 'none' }, { after: 'snapshot', snapshotOptions: { ref: 'old'
   try {
     await expect(f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', ...options }, f.context)).rejects.toThrow();
     expect(f.page.action).not.toHaveBeenCalled(); expect(f.app.storage.commitRecords).not.toHaveBeenCalled();
+  } finally { f.browser.close(); }
+});
+
+function finishPopup(view: any) {
+  view.webContents.loadURL.mockImplementation(async (target: string) => {
+    view.webContents.getURL = () => target; view.webContents.getTitle = () => 'Library';
+  });
+  view.finish();
+}
+
+test.each([false, true])('新标签回执保留原页面，动作失败=%s 时同样保留打开事实及幂等回放', async fails => {
+  const f = await automatedTab();
+  try {
+    f.page.action.mockImplementationOnce(async () => {
+      f.contents.openHandler({ url: 'https://example.test/library' });
+      if (fails) throw new Error('input acknowledgement lost');
+    });
+    const args = { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link', after: 'both' };
+    const pending = f.browser.tool('browser_action', args, f.context);
+    await settle(); expect(mockViews).toHaveLength(2); finishPopup(mockViews[1]);
+    const result = await pending;
+    expect(result).toMatchObject({ success: !fails, data: {
+      status: fails ? 'unknown' : 'completed', openedTabs: [{ id: expect.any(String), status: 'opened', requestedUrl: 'https://example.test/library', url: 'https://example.test/library', controlledBy: { runId: f.context.runId } }],
+    } });
+    if (!fails) expect(result.data).toMatchObject({ id: f.tab.id, url: 'about:blank', observation: { url: 'about:blank' } });
+    const stored = structuredClone((f.app.storage.putRecord as jest.Mock).mock.calls.at(-1)[0].value);
+    (f.app.storage.getRecord as jest.Mock).mockResolvedValueOnce(stored);
+    expect(await f.browser.tool('browser_action', args, f.context)).toMatchObject({ data: { repeated: true, openedTabs: (result.data as any).openedTabs } });
+    expect(f.page.action).toHaveBeenCalledTimes(1); expect(mockViews).toHaveLength(2);
+  } finally { f.browser.close(); }
+});
+
+test('并行来源的新标签不会混入当前动作回执', async () => {
+  const f = await automatedTab();
+  try {
+    const other = f.browser.tool('browser_tabs', { action: 'create' }, { ...f.context, runId: 'other-run' });
+    await settle(); mockViews[1].finish(); await other;
+    f.page.action.mockImplementationOnce(async () => {
+      f.contents.openHandler({ url: 'https://example.test/own' });
+      mockViews[1].webContents.openHandler({ url: 'https://example.test/other' });
+    });
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    await settle(); finishPopup(mockViews[2]); finishPopup(mockViews[3]);
+    const result = await pending;
+    expect((result.data as any).openedTabs).toHaveLength(1);
+    expect((result.data as any).openedTabs[0].requestedUrl).toBe('https://example.test/own');
+  } finally { f.browser.close(); }
+});
+
+test('新标签初始化失败作为新页错误返回，原动作仍已完成', async () => {
+  const f = await automatedTab();
+  try {
+    f.page.action.mockImplementationOnce(async () => { f.contents.openHandler({ url: 'https://example.test/library' }); });
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    await settle(); mockViews[1].fail(new Error('popup failed'));
+    expect(await pending).toMatchObject({ success: true, data: { status: 'completed', openedTabs: [{ status: 'failed', error: 'popup failed' }] } });
+    expect(mockViews[1].destroyed).toBe(true);
+  } finally { f.browser.close(); }
+});
+
+test('慢新页有界返回 opening，后续工具排在新页导航之后', async () => {
+  const f = await automatedTab();
+  jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+  let finish!: () => void;
+  try {
+    f.page.action.mockImplementationOnce(async () => { f.contents.openHandler({ url: 'https://example.test/slow' }); });
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    await settle();
+    mockViews[1].webContents.loadURL.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    mockViews[1].finish(); await settle();
+    await jest.advanceTimersByTimeAsync(1000);
+    const result = await pending, opened = (result.data as any).openedTabs[0];
+    expect(opened).toMatchObject({ id: expect.any(String), status: 'opening', requestedUrl: 'https://example.test/slow' });
+    const reading = f.browser.tool('browser_read', { action: 'snapshot', tabId: opened.id }, f.context);
+    await settle(); expect(mockPages[1].snapshot).not.toHaveBeenCalled();
+    finish(); await reading; expect(mockPages[1].snapshot).toHaveBeenCalledTimes(1);
+  } finally { finish?.(); jest.useRealTimers(); f.browser.close(); }
+});
+
+test('接管发生在新页初始化期间时中止新页，不继续导航', async () => {
+  const f = await automatedTab();
+  try {
+    f.page.action.mockImplementationOnce(async () => { f.contents.openHandler({ url: 'https://example.test/library' }); });
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    await settle();
+    f.contents.emit('before-mouse-event', {}, activeMouseInputs[0]);
+    expect(f.signal.aborted).toBe(true); expect(mockViews[1].destroyed).toBe(true);
+    mockViews[1].finish(); await pending; await settle();
+    expect(mockViews[1].webContents.loadURL).toHaveBeenCalledTimes(1);
+  } finally { f.browser.close(); }
+});
+
+test('已取消动作的迟到自动弹窗不再创建标签', async () => {
+  const f = await automatedTab(), controller = new AbortController();
+  try {
+    f.page.action.mockImplementationOnce(async () => {
+      controller.abort(new Error('任务取消'));
+      expect(f.contents.openHandler({ url: 'https://example.test/late' })).toEqual({ action: 'deny' });
+    });
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, { ...f.context, signal: controller.signal });
+    expect(result).toMatchObject({ success: false, data: { status: 'unknown' } });
+    expect(mockViews).toHaveLength(1); expect(result.data).not.toHaveProperty('openedTabs');
+  } finally { f.browser.close(); }
+});
+
+test('动作后的观察期间真实键盘输入立即接管', async () => {
+  const f = await automatedTab();
+  try {
+    f.page.screenshot.mockImplementationOnce(async (signal: AbortSignal) => {
+      f.contents.emit('before-input-event', {}, keyboardInput('keyDown'));
+      signal.throwIfAborted();
+    });
+    expect(await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context)).toMatchObject({
+      success: true, data: { status: 'completed', observationError: { message: expect.stringContaining('用户已接管') } },
+    });
+    expect(f.signal.aborted).toBe(true); expect(f.page.action).toHaveBeenCalledTimes(1);
   } finally { f.browser.close(); }
 });

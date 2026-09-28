@@ -20,8 +20,14 @@ export class BrowserPage {
   private epoch = 0;
   private debuggerOwned = false;
   private observation?: Omit<BrowserObservation, 'tabId'>;
+  private mainDocumentPending = false;
   constructor(readonly contents: WebContents, private readonly changed: () => void) {
-    contents.on('did-start-navigation', () => this.invalidate());
+    contents.on('did-start-navigation', details => {
+      this.invalidate();
+      if (details?.isMainFrame && !details.isSameDocument) this.mainDocumentPending = true;
+    });
+    const ready = () => { this.mainDocumentPending = false; };
+    contents.on('dom-ready', ready); contents.on('did-stop-loading', ready);
     contents.debugger.on('detach', (_event, reason) => {
       this.ready = undefined; this.debuggerOwned = false; this.sessions.clear(); this.invalidate();
       this.log('error', `页面调试连接已断开：${reason}`); changed();
@@ -144,6 +150,53 @@ export class BrowserPage {
       format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows),
       offset, returned: rows.length, total, nextOffset, truncated: nextOffset !== undefined,
       partial: frames.some(frame => frame.unavailable), ...(scopeRef ? { scopeRef } : {}), ...(budgetReached ? { characterLimit: 60000 } : {}) };
+  }
+
+  private async documentReady(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (!this.mainDocumentPending) return;
+    let ready!: () => void;
+    const work = new Promise<void>(resolve => {
+      ready = resolve;
+      this.contents.on('dom-ready', ready); this.contents.on('did-stop-loading', ready);
+      if (!this.mainDocumentPending) resolve();
+    });
+    try { await this.pending(work, signal); }
+    finally { this.contents.off('dom-ready', ready); this.contents.off('did-stop-loading', ready); }
+  }
+  async snapshotAfterAction(signal: AbortSignal, options: SnapshotOptions = {}) {
+    signal.throwIfAborted();
+    const deadline = AbortSignal.timeout(5000), closed = new AbortController();
+    const waiting = AbortSignal.any([signal, deadline, closed.signal]);
+    const destroyed = () => closed.abort(new Error('网页标签已关闭。'));
+    this.contents.once('destroyed', destroyed);
+    try {
+      if (this.contents.isDestroyed()) destroyed();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await this.pending(this.connect(), waiting);
+          await this.documentReady(waiting);
+          const epoch = this.epoch;
+          // AX 快照也需要渲染检查点；只等文档解析和绘制，不等待图片、长连接等所有网络资源。
+          await this.command('Runtime.evaluate', {
+            expression: 'new Promise(resolve => { const paint = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))); if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", paint, { once: true }); else paint(); })',
+            awaitPromise: true, returnByValue: true,
+          }, waiting);
+          if (epoch !== this.epoch || this.mainDocumentPending) continue;
+          return await this.snapshot(waiting, options);
+        } catch (error) {
+          waiting.throwIfAborted();
+          const changed = (error as { code?: string }).code === 'BROWSER_PAGE_CHANGED'
+            || /Execution context was destroyed|Cannot find context with specified id|Cannot find default execution context|Inspected target navigated or closed/i.test(String(error));
+          if (!changed) throw error;
+        }
+      }
+      throw Object.assign(new Error('页面持续发生导航，请用 browser_read 重新观察。'), { code: 'BROWSER_PAGE_CHANGED' });
+    } catch (error) {
+      signal.throwIfAborted(); closed.signal.throwIfAborted();
+      if (deadline.aborted) throw Object.assign(new Error('动作后的页面观察等待超时，请用 browser_read 重新观察。'), { code: 'BROWSER_SNAPSHOT_TIMEOUT' });
+      throw error;
+    } finally { this.contents.off('destroyed', destroyed); }
   }
 
   async waitForSnapshot(signal: AbortSignal, options: SnapshotOptions & { timeoutMs?: number; state?: string }) {

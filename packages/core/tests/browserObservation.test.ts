@@ -218,3 +218,67 @@ test('原生绘制表面不可用时建议读快照，不要求可能重复提�
   });
   await expect(f.page.snapshot(signal())).resolves.toMatchObject({ format: 'compact' });
 });
+
+test('动作后快照等主文档解析与绘制，不等全部网络资源或非匹配查询', async () => {
+  const f = fixture([ax('1', '正文')]);
+  f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  const reading = f.page.snapshotAfterAction(signal(), { query: '不存在的内容' });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(f.sendCommand.mock.calls.some(([method]) => method === 'Accessibility.getFullAXTree')).toBe(false);
+  f.contents.emit('dom-ready');
+  expect(await reading).toMatchObject({ total: 0, partial: false });
+  expect(f.sendCommand).toHaveBeenCalledWith('Runtime.evaluate', expect.objectContaining({ expression: expect.stringContaining('requestAnimationFrame'), awaitPromise: true }), undefined);
+  expect(f.contents.listenerCount('dom-ready')).toBe(1); expect(f.contents.listenerCount('destroyed')).toBe(0);
+});
+
+test('动作后快照在导航与上下文销毁时只重读观察', async () => {
+  const f = fixture([ax('1', '新文档')]);
+  const command = f.sendCommand.getMockImplementation()!; let checkpoint = 0, reads = 0;
+  f.sendCommand.mockImplementation(async (method, ...args) => {
+    if (method === 'Runtime.evaluate' && checkpoint++ === 0) throw new Error('Execution context was destroyed.');
+    if (method === 'Accessibility.getFullAXTree' && reads++ === 0) f.page.invalidate();
+    return command(method, ...args);
+  });
+  expect(await f.page.snapshotAfterAction(signal(), { compact: false })).toMatchObject({ nodes: [{ name: '新文档' }] });
+  expect(checkpoint).toBe(3); expect(reads).toBe(2);
+  expect(f.sendCommand.mock.calls.some(([method]) => method.startsWith('Input.'))).toBe(false);
+});
+
+test.each(['取消', '关闭'])('动作后观察在%s时及时退出并清理等待监听', async kind => {
+  const f = fixture([]), controller = new AbortController();
+  f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  const reading = f.page.snapshotAfterAction(controller.signal);
+  const rejected = expect(reading).rejects.toThrow(kind === '取消' ? '用户取消' : '网页标签已关闭');
+  await new Promise<void>(resolve => setImmediate(resolve));
+  if (kind === '取消') controller.abort(new Error('用户取消')); else f.contents.emit('destroyed');
+  await rejected;
+  expect(f.contents.listenerCount('dom-ready')).toBe(1); expect(f.contents.listenerCount('did-stop-loading')).toBe(1);
+  expect(f.contents.listenerCount('destroyed')).toBe(0);
+});
+
+test('持续导航最多尝试三次，非导航故障立即返回', async () => {
+  const f = fixture([]), read = jest.spyOn(f.page, 'snapshot').mockRejectedValue(Object.assign(new Error('导航'), { code: 'BROWSER_PAGE_CHANGED' }));
+  await expect(f.page.snapshotAfterAction(signal())).rejects.toMatchObject({ code: 'BROWSER_PAGE_CHANGED' });
+  expect(read).toHaveBeenCalledTimes(3);
+  read.mockClear().mockRejectedValue(new Error('调试连接不可用'));
+  await expect(f.page.snapshotAfterAction(signal())).rejects.toThrow('调试连接不可用');
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+test('动作后观察共享五秒截止，停止加载也可释放文档等待', async () => {
+  jest.useFakeTimers();
+  const timeout = jest.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+    const controller = new AbortController(); setTimeout(() => controller.abort(new Error('deadline')), ms); return controller.signal;
+  });
+  const f = fixture([]);
+  try {
+    f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    const reading = f.page.snapshotAfterAction(signal());
+    const failed = expect(reading).rejects.toMatchObject({ code: 'BROWSER_SNAPSHOT_TIMEOUT' });
+    await jest.advanceTimersByTimeAsync(5000); await failed;
+    expect(timeout).toHaveBeenCalledWith(5000);
+    expect(f.contents.listenerCount('dom-ready')).toBe(1);
+    f.contents.emit('did-stop-loading');
+    await expect(f.page.snapshotAfterAction(signal())).resolves.toMatchObject({ total: 0 });
+  } finally { timeout.mockRestore(); jest.useRealTimers(); }
+});
