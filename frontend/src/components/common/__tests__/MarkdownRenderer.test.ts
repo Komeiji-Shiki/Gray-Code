@@ -25,6 +25,7 @@ import { mount } from '@vue/test-utils'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 import MarkdownRendererSource from '../MarkdownRenderer.vue?raw'
 import { renderDependencyRevision } from '../markdown/renderDependencies'
+import { sendToExtension, showNotification } from '@/utils/vscode'
 
 // 打桩 vscode 桥接：MarkdownRenderer 后处理会异步调用文件存在性校验/图片读取，
 // 测试环境没有 acquireVsCodeApi，统一返回空结果，避免警告与未捕获异常。
@@ -49,6 +50,47 @@ function mountRenderer(props: Record<string, unknown> = {}) {
     }
   })
 }
+
+describe('MarkdownRenderer 本地链接', () => {
+  test.each([
+    ['.tmp/tool-ui-desktop.png', '.tmp/tool-ui-desktop.png'],
+    ['<.tmp/新版 卡片.png>', '.tmp/新版 卡片.png'],
+    ['reports/output.pdf', 'reports/output.pdf'],
+    ['src/main.ts#L12-L18', 'src/main.ts'],
+  ])('点击 %s 通过宿主打开，立即阻止聊天页导航', async (href, path) => {
+    const wrapper = mountRenderer({ content: `[查看文件](${href})` })
+    await flushRender()
+    vi.mocked(sendToExtension).mockClear()
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    wrapper.get('a').element.dispatchEvent(click)
+    expect(click.defaultPrevented).toBe(true)
+    expect(sendToExtension).toHaveBeenCalledWith('openWorkspaceFileAt', expect.objectContaining({ path }))
+    wrapper.unmount()
+  })
+
+  test('文件打开失败时仍拦截导航并显示错误，外部网址和页内锚点保持原有处理', async () => {
+    const wrapper = mountRenderer({ content: '[缺失图片](.tmp/missing.png) [网站](https://example.com/) [锚点](#detail)' })
+    await flushRender()
+    vi.mocked(sendToExtension).mockClear()
+    vi.mocked(sendToExtension).mockRejectedValueOnce(new Error('文件不存在'))
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    wrapper.get('a').element.dispatchEvent(click)
+    expect(click.defaultPrevented).toBe(true)
+    await tick()
+    expect(showNotification).toHaveBeenCalledWith('文件不存在', 'error')
+    vi.mocked(sendToExtension).mockClear()
+    for (const link of wrapper.findAll('a').slice(1)) {
+      // 读取处理结果后阻止 jsdom 真正导航。
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      let prevented = false
+      wrapper.element.addEventListener('click', (event: Event) => { prevented = event.defaultPrevented; event.preventDefault() }, { once: true })
+      link.element.dispatchEvent(event)
+      expect(prevented).toBe(false)
+    }
+    expect(sendToExtension).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 

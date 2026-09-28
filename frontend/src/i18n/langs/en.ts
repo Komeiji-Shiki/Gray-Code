@@ -2231,6 +2231,7 @@ const en: LanguageMessages = {
                 requiresConfigLabel: 'Requires Config:'
             },
             summarizeSettings: {
+                methodControls: sharedEn.components.settings.summarizeSettings.methodControls,
                 retention: sharedEn.components.settings.summarizeSettings.retention,
                 description: 'Context summarization can compress conversation history to reduce Token usage. This page is for manual summary and summary model settings. Auto summarize is configured in "Channel Settings > Context Management".',
                 manualSection: {

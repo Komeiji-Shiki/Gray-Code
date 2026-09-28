@@ -483,8 +483,10 @@ describe('summarizeContext（L-2：实现已迁至 messageActions，checkpointAc
       state.currentConversationId.value = 'conv_2'
       return { success: true, summaryContent: 's', summarizedMessageCount: 1 }
     })
-    await summarizeContext(state, async () => {})
+    const loadHistoryFn = vi.fn()
+    await summarizeContext(state, loadHistoryFn)
 
+    expect(loadHistoryFn).not.toHaveBeenCalled()
     // 切换后 finally 清理写入原对话标签页快照（而非当前会话），实现跨对话隔离
     expect(state.sessionSnapshots.value.get('tab_1')!.autoSummaryStatus).toBeNull()
   })

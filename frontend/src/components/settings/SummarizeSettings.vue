@@ -346,16 +346,16 @@ onUnmounted(() => {
     <div class="feature-description">
       <i class="codicon codicon-info"></i>
       <p>
-        {{ standaloneContext ? '在这里选择手动总结方式。自动总结方式和触发阈值在各模型渠道的“上下文管理”中独立选择；原始消息和附件始终保留，可恢复、搜索和查看。' : t('components.settings.summarizeSettings.description') }}
+        {{ t(standaloneContext ? 'components.settings.summarizeSettings.methodControls.description' : 'components.settings.summarizeSettings.description') }}
       </p>
     </div>
     
     <div v-if="standaloneContext" class="section" data-search-anchor="context-method">
-      <h5 class="section-title">手动总结方式</h5>
+      <h5 class="section-title">{{ t('components.settings.summarizeSettings.methodControls.defaultTitle') }}</h5>
       <CustomSelect :model-value="summarizeConfig.method ?? 'summary'" :options="[{ value: 'summary', label: t('components.tools.contextStatus.summaryOption') }, { value: 'notes', label: t('components.tools.contextStatus.notesOption') }]" @update:model-value="value => updateConfigField('method', value as 'summary' | 'notes')" />
       <p v-if="summarizeConfig.method !== 'notes'" class="field-hint">{{ t('components.settings.summarizeSettings.retention.summaryHint') }}</p>
       <p v-else class="field-hint">{{ t('components.settings.summarizeSettings.retention.notesHint') }}</p>
-      <p class="field-hint">未单独设置自动方式的旧渠道仍沿用此选择；已单独设置的渠道不受影响。Bot 保留自己的方式选择，并可使用原有时间总结。</p>
+      <p class="field-hint">{{ t('components.settings.summarizeSettings.methodControls.defaultHint') }}</p>
     </div>
 
     <div v-if="standaloneContext" class="section" data-search-anchor="context-user-retention">

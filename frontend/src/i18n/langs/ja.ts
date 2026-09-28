@@ -2231,6 +2231,7 @@ const ja: LanguageMessages = {
                 requiresConfigLabel: '必要な設定：'
             },
             summarizeSettings: {
+                methodControls: sharedJa.components.settings.summarizeSettings.methodControls,
                 retention: sharedJa.components.settings.summarizeSettings.retention,
                 description: 'コンテキスト要約機能は会話履歴を圧縮してトークン使用量を削減できます。このページでは手動要約と要約モデルを設定します。自動要約は「チャネル設定 > コンテキスト管理」で設定してください。',
                 manualSection: {

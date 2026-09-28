@@ -281,6 +281,13 @@ const sharedEn = {
                 description: backendEn.tools.reviewDocument.finding.description,
             },
             summarizeSettings: {
+                methodControls: {
+                    channelHint: backendEn.modules.settings.contextMethod.channelHint,
+                    channelTitle: backendEn.modules.settings.contextMethod.channelTitle,
+                    defaultHint: backendEn.modules.settings.contextMethod.defaultHint,
+                    defaultTitle: backendEn.modules.settings.contextMethod.defaultTitle,
+                    description: backendEn.modules.settings.contextMethod.description,
+                },
                 retention: {
                     all: backendEn.modules.settings.contextRetention.all,
                     first: backendEn.modules.settings.contextRetention.first,

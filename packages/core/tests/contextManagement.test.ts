@@ -123,7 +123,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect((await app.storage.verify()).ok).toBe(true);
   });
 
-  test('渠道自动普通总结不受手动笔记方式影响，手动换窗后仍能恢复历史', async () => {
+  test('渠道总结方式同时用于自动和手动操作，未设置的渠道仍使用全局默认值', async () => {
     const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' });
     await draft.configs.updateConfig(providerId, { contextManagementEnabled: true, autoSummarizeMethod: 'summary' }); await app.product.save(draft);
     generate = async input => ({ role: 'model', parts: [{ text: input.purpose === 'summary' ? summaryText : '继续完成当前任务。' }] });
@@ -133,12 +133,27 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect((await app.storage.readFullHistory('compaction')).messages.find(message => message.isSummary)).toMatchObject({ contextMethod: 'summary', isAutoSummary: true });
     const calls = seen.length;
     expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
-    expect(seen).toHaveLength(calls);
+    expect(seen).toHaveLength(calls + 1);
+    expect(seen.at(-1)?.purpose).toBe('summary');
+    expect((await app.storage.readFullHistory('compaction')).messages.at(-1)).toMatchObject({ contextMethod: 'summary', isAutoSummary: false });
+    const inherited = await app.product.draft();
+    const inheritedProviderId = await inherited.configs.createConfig({ type: 'openai', name: '未设置方式的渠道', enabled: true, url: 'http://127.0.0.1:1/v1', model: 'fixture', apiKey: '', timeout: 1000 });
+    await app.product.save(inherited);
+    expect((await app.context.summarizeManually('owner', 'compaction', inheritedProviderId)).success).toBe(true);
+    expect(seen).toHaveLength(calls + 1);
     expect((await app.storage.readFullHistory('compaction')).messages.at(-1)).toMatchObject({ contextMethod: 'notes', isAutoSummary: false });
     const resumed = await start('after-manual-notes'); expect(await app.runtime.wait(resumed.id)).toMatchObject({ status: 'completed' });
     expect(seen.at(-1)?.turnContext?.contextManagementMethod).toBe('summary');
     expect(seen.at(-1)?.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['context_history', 'context_notes']));
     expect(app.product.runtimeSettings().getSummarizeConfig().method).toBe('notes');
+  });
+
+  test('手动笔记换窗遵循渠道选择，无需触发自动阈值或调用总结模型', async () => {
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'summary' });
+    await draft.configs.updateConfig(providerId, { contextManagementEnabled: false, autoSummarizeMethod: 'notes' }); await app.product.save(draft);
+    expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
+    expect(seen).toHaveLength(0);
+    expect((await app.storage.readFullHistory('compaction')).messages.at(-1)).toMatchObject({ contextMethod: 'notes', contextSwitchReason: 'manual', isAutoSummary: false });
   });
 
   test('渠道方式独立保存，导入导出、类型切换和重启保留，非法方式不能提交', async () => {

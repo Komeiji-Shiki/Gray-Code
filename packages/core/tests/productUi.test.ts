@@ -3,6 +3,50 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
 
+test('手动总结等待模型时仍能切换会话和读取设置，取消后原文保持不变', async () => {
+  const f = await fixture(); await f.store.close();
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async input => {
+    entered();
+    await new Promise<void>((_resolve, reject) => {
+      input.signal.throwIfAborted();
+      input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true });
+    });
+    throw new Error('取消后不应继续生成');
+  } } });
+  const router = new ApplicationRouter(app);
+  const call = (type: string, data = {}) => router.call({ actorId: 'owner', clientId: 'summary-ui' }, 'ui.request', { type, data }) as Promise<any>;
+  let pending: Promise<any> | undefined;
+  try {
+    const draft = await app.product.draft();
+    const providerId = await draft.configs.createConfig({ name: '总结夹具', type: 'openai', enabled: true, url: 'http://127.0.0.1:1/v1', model: 'fixture', apiKey: '', timeout: 1000 });
+    draft.app.workspaces.push({ id: 'summary-workspace', name: '总结工作区', directory: f.source, deviceId: 'local' });
+    await app.product.save(draft);
+    await call('ui.context.set', { mode: 'code', workspaceId: 'summary-workspace' });
+    await call('conversation.createConversation', { conversationId: 'summary-origin', title: '总结中' });
+    await app.storage.appendHistory('summary-origin', [{ id: 'user', role: 'user', parts: [{ text: '保留原文' }] }, { id: 'model', role: 'model', parts: [{ text: '已有回复' }] }]);
+    pending = call('summarizeContext', { conversationId: 'summary-origin', configId: providerId });
+    await started;
+    let responsive = false;
+    const interaction = call('conversation.createConversation', { conversationId: 'summary-other', title: '其他对话' })
+      .then(() => call('getSettings')).then(() => { responsive = true; });
+    try {
+      // 模型由取消信号结束；这个有界等待只用于证明界面请求不必等模型完成。
+      await Promise.race([interaction, new Promise(resolve => setTimeout(resolve, 1000))]);
+      expect(responsive).toBe(true);
+      expect(app.context.isSummarizing('summary-origin')).toBe(true);
+      await expect(call('summarizeContext', { conversationId: 'summary-origin', configId: providerId })).rejects.toThrow('已经在总结');
+    } finally { await call('cancelSummarizeRequest', { conversationId: 'summary-origin' }); }
+    expect(await pending).toMatchObject({ success: false, error: { code: 'ABORTED' } });
+    await interaction;
+    expect(app.context.isSummarizing('summary-origin')).toBe(false);
+    expect((await app.storage.readFullHistory('summary-origin')).messages.map(message => message.id)).toEqual(['user', 'model']);
+  } finally {
+    await app.close(); await pending; await f.cleanup();
+  }
+});
+
 test('Bot 待发送接口按平台隔离，并保留主人授权与不确定消息重试确认', async () => {
   const f = await fixture(); await f.store.close();
   const app = await PlatformApplication.open({ dataDirectory: f.data });

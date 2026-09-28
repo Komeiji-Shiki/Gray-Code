@@ -281,6 +281,13 @@ const sharedZhCN = {
                 description: backendZhCN.tools.reviewDocument.finding.description,
             },
             summarizeSettings: {
+                methodControls: {
+                    channelHint: backendZhCN.modules.settings.contextMethod.channelHint,
+                    channelTitle: backendZhCN.modules.settings.contextMethod.channelTitle,
+                    defaultHint: backendZhCN.modules.settings.contextMethod.defaultHint,
+                    defaultTitle: backendZhCN.modules.settings.contextMethod.defaultTitle,
+                    description: backendZhCN.modules.settings.contextMethod.description,
+                },
                 retention: {
                     all: backendZhCN.modules.settings.contextRetention.all,
                     first: backendZhCN.modules.settings.contextRetention.first,

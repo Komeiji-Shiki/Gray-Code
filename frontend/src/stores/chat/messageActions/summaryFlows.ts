@@ -92,8 +92,8 @@ export async function summarizeContext(
     })
 
     if (result.success && result.summaryContent) {
-      // 重新加载历史以获取更新后的消息列表
-      await loadHistory()
+      // 等待模型期间可切换对话，完成回执只刷新仍在查看的原对话。
+      if (state.currentConversationId.value === originConversationId) await loadHistory()
 
       return {
         success: true,

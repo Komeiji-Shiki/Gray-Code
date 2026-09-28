@@ -114,7 +114,10 @@ function trust(item: BrowserWindow): void {
     } catch { /* 无效地址不交给系统执行。 */ }
     return { action: 'deny' };
   });
-  item.webContents.on("will-navigate", (event) => event.preventDefault());
+  item.webContents.on('will-frame-navigate', event => {
+    // 聊天也在子框架中，漏接的链接不能导航走整个聊天界面；预览页仍可正常导航。
+    if (event.isMainFrame || event.frame?.url.startsWith('graycode://app/chat/')) event.preventDefault();
+  });
   item.on("closed", () => trustedWindows.delete(contentsId));
 }
 async function activeTasks(): Promise<boolean> {

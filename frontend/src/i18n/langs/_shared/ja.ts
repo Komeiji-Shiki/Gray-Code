@@ -281,6 +281,13 @@ const sharedJa = {
                 description: backendJa.tools.reviewDocument.finding.description,
             },
             summarizeSettings: {
+                methodControls: {
+                    channelHint: backendJa.modules.settings.contextMethod.channelHint,
+                    channelTitle: backendJa.modules.settings.contextMethod.channelTitle,
+                    defaultHint: backendJa.modules.settings.contextMethod.defaultHint,
+                    defaultTitle: backendJa.modules.settings.contextMethod.defaultTitle,
+                    description: backendJa.modules.settings.contextMethod.description,
+                },
                 retention: {
                     all: backendJa.modules.settings.contextRetention.all,
                     first: backendJa.modules.settings.contextRetention.first,

@@ -96,6 +96,15 @@ export function parseWorkspaceFileRefExact(input: string): WorkspaceFileRef | nu
   }
 }
 
+/** 显式 Markdown 文件链接不限代码扩展名，图片、文档及带空格的路径也交给宿主打开。 */
+export function parseWorkspaceFileLinkRef(input: string): WorkspaceFileRef | null {
+  let href = input.trim()
+  if (!href || href.startsWith('#') || href.startsWith('//')) return null
+  try { href = decodeURIComponent(href) } catch { /* 保留文件名中不完整的百分号。 */ }
+  if (/^[a-z][a-z\d+.-]*:/i.test(href) && !/^[a-z]:[\\/]/i.test(href)) return null
+  return parseWorkspaceFileRefExact(href) ?? { path: normalizeWorkspaceFilePath(href) }
+}
+
 export function guessHighlightLanguageFromPath(filePath: string): string {
   const p = filePath.toLowerCase()
   if (p.endsWith('.ts') || p.endsWith('.tsx')) return 'typescript'

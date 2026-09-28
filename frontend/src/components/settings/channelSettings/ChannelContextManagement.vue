@@ -151,7 +151,7 @@ const thresholdHelp = computed(() => {
         <!-- 模式选择 -->
         <div class="option-item option-with-toggle">
           <div class="option-header">
-            <label>{{ standaloneContext ? '自动总结方式' : t('components.settings.channelSettings.form.contextManagement.mode.label') }}</label>
+            <label>{{ t(standaloneContext ? 'components.settings.summarizeSettings.methodControls.channelTitle' : 'components.settings.channelSettings.form.contextManagement.mode.label') }}</label>
           </div>
           <CustomSelect
             :model-value="standaloneContext ? (autoSummarizeMethod ?? 'summary') : contextManagementMode"
@@ -161,7 +161,7 @@ const thresholdHelp = computed(() => {
             @update:model-value="updateMode"
           />
           <span class="option-hint">
-            {{ standaloneContext ? '仅决定该渠道达到阈值后的自动处理方式，手动总结在“总结设置”中单独选择。保存后对新回合生效。' : t('components.settings.channelSettings.form.contextManagement.mode.hint') }}
+            {{ t(standaloneContext ? 'components.settings.summarizeSettings.methodControls.channelHint' : 'components.settings.channelSettings.form.contextManagement.mode.hint') }}
           </span>
           <span v-if="standaloneContext && autoMethodInherited" class="option-hint">此旧渠道尚未单独设置，当前沿用全局方式；选择一次后按该渠道独立保存。</span>
         </div>

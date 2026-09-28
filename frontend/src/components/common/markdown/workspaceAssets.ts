@@ -19,7 +19,7 @@ import {
   decodeDataPath,
   normalizeWorkspaceFilePath,
   parsePositiveInt,
-  parseWorkspaceFileRefExact,
+  parseWorkspaceFileLinkRef,
   extractPotentialFilePaths,
   type WorkspaceFileRef
 } from './workspaceFileRefs'
@@ -146,6 +146,8 @@ export function createWorkspaceAssetController(
    * 处理图片点击
    */
   async function handleImageClick(event: Event) {
+    // 包在链接内的图片由链接处理器打开，避免一次点击重复派发文件请求。
+    if (event.defaultPrevented) return
     const target = event.target as HTMLElement
     
     if (target.tagName === 'IMG' && target.classList.contains('loaded-image')) {
@@ -184,15 +186,7 @@ export function createWorkspaceAssetController(
     }
 
     if (!ref) {
-      let href = (link.getAttribute('href') || '').trim()
-      if (!href || href === '#' || href.startsWith('#')) return
-      if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) return
-
-      // markdown-it 会对非 ASCII 字符做 percent-encode，先还原再解析
-      try { href = decodeURIComponent(href) } catch { /* ignore malformed */ }
-
-      // 先解析 href；不行再解析链接文本
-      ref = parseWorkspaceFileRefExact(href) || parseWorkspaceFileRefExact((link.textContent || '').trim())
+      ref = parseWorkspaceFileLinkRef(link.getAttribute('href') || '')
     }
 
     if (!ref) return

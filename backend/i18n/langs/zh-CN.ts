@@ -104,6 +104,13 @@ const zhCN = {
         },
 
         settings: {
+            contextMethod: {
+                defaultTitle: '默认上下文处理方式',
+                description: '自动和手动操作都优先使用当前渠道的上下文处理方式，渠道未单独设置时沿用这里的默认值。原始消息和附件始终保留，可恢复、搜索和查看。',
+                defaultHint: '渠道设置优先于此默认值。Bot 保留自己的方式选择，并可使用原有时间总结。',
+                channelTitle: '上下文处理方式',
+                channelHint: '用于该渠道的自动处理和手动总结。阈值只影响自动触发；保存后对新回合和下一次手动操作生效。',
+            },
             contextRetention: {
                 title: '普通会话的用户消息保留',
                 first: '首条用户消息＋最近一次输入',

@@ -33,7 +33,7 @@ export function conversationContextSettings(app: PlatformApplication, conversati
     channel.platform === 'discord' ? 'discord' : 'onebot', { channelId: channel.channelId, direct: channel.direct === true }).autoSummary : undefined;
   const automaticMethod = automaticChannel?.autoSummarizeMethod;
   if (automaticMethod !== undefined && automaticMethod !== 'summary' && automaticMethod !== 'notes') throw new Error('当前渠道的自动总结方式无效，请重新选择。');
-  // 未传渠道时读取手动方式；Bot 的显式选择仍优先于渠道自动设置。
+  // 自动和手动操作共用渠道方式，未单独设置的渠道沿用全局值；Bot 的显式选择仍优先。
   const settings = app.product.runtimeSettings().getSummarizeConfig();
   return { method: bot?.method && bot.method !== 'time' ? bot.method
     : automaticMethod ?? settings.method ?? DEFAULT_CONTEXT_MANAGEMENT_METHOD, bot,

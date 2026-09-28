@@ -102,6 +102,13 @@ const en: BackendLanguageMessages = {
         },
 
         settings: {
+            contextMethod: {
+                defaultTitle: 'Default context management method',
+                description: 'Automatic and manual actions use the current channel’s context method. Channels without an explicit method use this default. Original messages and attachments remain available for restoration, search and viewing.',
+                defaultHint: 'Channel settings take precedence over this default. Bots retain their own method and timed summaries.',
+                channelTitle: 'Context management method',
+                channelHint: 'Used for automatic processing and manual summaries on this channel. The threshold only controls automatic triggers. Saved changes apply to new turns and the next manual action.',
+            },
             contextRetention: {
                 title: 'User messages retained in ordinary conversations',
                 first: 'First user message + latest input',

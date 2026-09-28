@@ -102,6 +102,13 @@ const ja: BackendLanguageMessages = {
         },
 
         settings: {
+            contextMethod: {
+                defaultTitle: '既定のコンテキスト管理方式',
+                description: '自動・手動操作では現在のチャネルの方式を優先します。個別設定のないチャネルでは、この既定値を使用します。元のメッセージと添付ファイルは復元・検索・閲覧できます。',
+                defaultHint: 'チャネルの個別設定が優先されます。Bot は独自の方式と時間ベースの要約を引き続き使用します。',
+                channelTitle: 'コンテキスト管理方式',
+                channelHint: 'このチャネルの自動処理と手動要約に適用します。しきい値は自動処理の開始だけを制御します。保存後、新しいターンと次の手動操作から反映されます。',
+            },
             contextRetention: {
                 title: '通常の会話で保持するユーザーメッセージ',
                 first: '最初のメッセージ＋直近の入力',
