@@ -687,6 +687,7 @@ const zhCN = {
                     argument: '本次参数（替换设置）',
                     settings: '工具设置',
                     fallback: '默认回退',
+                    includeIgnored: '显式纳入忽略文件',
                     unknown: '来源未记录'
                 }
             }

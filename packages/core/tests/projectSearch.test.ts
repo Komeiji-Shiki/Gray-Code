@@ -27,6 +27,8 @@ test('真实搜索接口包含本窗口草稿，替换预览核对版本和工�
   await mkdir(path.join(f.source, 'node_modules'));
   await writeFile(path.join(f.source, 'main.ts'), '\uFEFFconst original = 1;\r\n');
   await writeFile(path.join(f.source, 'other.ts'), 'const draftValue = 2;\n');
+  // 模型工具的新忽略默认值不应悄悄缩小尚无对应开关的项目搜索界面。
+  await writeFile(path.join(f.source, '.gitignore'), 'other.ts\n');
   await writeFile(path.join(f.source, 'node_modules', 'hidden.ts'), 'draftValue');
   await writeFile(path.join(f.source, 'image.bin'), Buffer.from([0, 1, 2]));
   const app = await PlatformApplication.open({ dataDirectory: f.data });

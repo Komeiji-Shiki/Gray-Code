@@ -48,8 +48,9 @@ export class WorkspaceSearch {
       const drafts = new Map(this.app.files.clientDocuments(session.clientId, workspaceId).map(document => [document.path, document]));
       let scanned = 0;
       for (const root of host.getAllWorkspaces()) {
+        // 界面尚无 includeIgnored 开关，保留其原有配置/显式 glob 范围，不随模型工具的默认值改变。
         const files = host.iterateFiles(root.uri, options.include?.trim() || '**/*',
-          buildExcludePattern([...config.excludePatterns ?? [], ...(options.exclude?.trim() ? [options.exclude.trim()] : [])]), fileLimit + 1);
+          buildExcludePattern([...config.excludePatterns ?? [], ...(options.exclude?.trim() ? [options.exclude.trim()] : [])]), fileLimit + 1, { includeIgnored: true });
         for await (const file of files) {
           controller.signal.throwIfAborted();
           if (scanned++ >= fileLimit) { result.truncated = true; return result; }

@@ -1,74 +1,97 @@
-import type { ToolContext } from '@graycode/core';
 import { workspaceTools } from '../../../apps/server/src/workspace/tools';
+import { createLiteralSearchTool, literalMatchPreview } from '../../../apps/server/src/workspace/literalSearchTool';
+import type { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
+import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../backend/modules/settings/types';
 
-const context = { workspace: { id: 'project', directory: '/project' }, signal: new AbortController().signal } as ToolContext;
-function toolsFixture() {
-  const entries = [
-    { name: 'a.txt', path: 'a.txt', kind: 'file' },
-    { name: 'nested', path: 'nested', kind: 'directory' },
-    { name: 'node_modules', path: 'node_modules', kind: 'directory' },
-  ];
-  const files = {
-    list: jest.fn(async (_workspace, directory) => directory === '.' ? entries : [{ name: 'b.txt', path: 'nested/b.txt', kind: 'file' }]),
-    read: jest.fn(async (_workspace, file) => ({ text: file === 'a.txt' ? 'hit hit\r\nhit\r\n' : 'hit\nother', hash: 'hash' })),
+function toolsFixture(contents: Record<string, string> = { 'a.txt': 'hit hit\r\nhit\r\n', 'nested/b.txt': 'hit\nother' }) {
+  const host = {
+    getAllWorkspaces: () => [{ name: 'project', uri: { fsPath: '/project', scheme: 'file' } }],
+    searchConfig: () => DEFAULT_SEARCH_IN_FILES_CONFIG,
+    toRelativePath: (file: { fsPath: string }) => file.fsPath,
+    iterateFiles: async function* () { for (const file of Object.keys(contents)) yield { fsPath: file, scheme: 'file' }; },
+    stat: jest.fn(async (_file: { fsPath: string }) => ({ size: 20, type: 1 })),
+    readFile: jest.fn(async (file: { fsPath: string }) => Buffer.from(contents[file.fsPath])),
   };
-  const tools = workspaceTools(files as any, {} as any, {} as any);
-  return { files, tools, search: tools.find(tool => tool.declaration.name === 'search_files')! };
+  const search = createLiteralSearchTool(host as unknown as NodeFileHost);
+  return { host, search };
 }
 
 describe('独立平台轻量搜索与工具选择说明', () => {
   test('按匹配行分页，去掉CR，跨目录续查且恰好一页不误报', async () => {
-    const { search, files } = toolsFixture();
-    const first = (await search.execute({ query: 'hit', limit: 2 }, context)).data as any;
+    const { search } = toolsFixture();
+    const first = (await search.handler({ query: 'hit', limit: 2 })).data;
     expect(first).toMatchObject({ offset: 0, nextOffset: 2, truncated: true });
     expect(first.matches.map((item: any) => item.text)).toEqual(['hit hit', 'hit']);
-    const second = (await search.execute({ query: 'hit', limit: 1, offset: first.nextOffset }, context)).data as any;
+    const second = (await search.handler({ query: 'hit', limit: 1, offset: first.nextOffset })).data;
     expect(second).toMatchObject({ offset: 2, truncated: false, matches: [{ path: 'nested/b.txt', line: 1, text: 'hit' }] });
     expect(second.nextOffset).toBeUndefined();
-    const all = (await search.execute({ query: 'hit', limit: 100 }, context)).data as any;
+    const all = (await search.handler({ query: 'hit', limit: 100 })).data;
     expect([...first.matches, ...second.matches]).toEqual(all.matches);
-    expect(files.list.mock.calls.some(([, directory]) => directory === 'node_modules')).toBe(false);
   });
 
   test('严格字面量且没有关键词回退，超过末页为空', async () => {
     const { search } = toolsFixture();
-    expect(((await search.execute({ query: 'hit other' }, context)).data as any).matches).toEqual([]);
-    expect(((await search.execute({ query: 'hit|other' }, context)).data as any).matches).toEqual([]);
-    expect((await search.execute({ query: 'hit', offset: 20 }, context)).data).toMatchObject({ matches: [], truncated: false });
+    expect((await search.handler({ query: 'hit other' })).data.matches).toEqual([]);
+    expect((await search.handler({ query: 'hit|other' })).data.matches).toEqual([]);
+    expect((await search.handler({ query: 'hit', offset: 20 })).data).toMatchObject({ matches: [], truncated: false });
   });
 
   test.each([-1, 0.5, Infinity, '1'])('无效 offset %s 被拒绝', async offset => {
-    const { search } = toolsFixture();
-    await expect(search.execute({ query: 'hit', offset }, context)).rejects.toThrow('offset');
+    await expect(toolsFixture().search.handler({ query: 'hit', offset })).rejects.toThrow('offset');
   });
 
   test('扫描上限给出缩小目录建议，而不是无效续查位置', async () => {
-    const files = {
-      list: async () => Array.from({ length: 20_001 }, (_, index) => ({ name: `${index}.txt`, path: `${index}.txt`, kind: 'file' })),
-      read: jest.fn(async () => ({ text: '', hash: 'hash' })),
-    };
-    const search = workspaceTools(files as any, {} as any, {} as any).find(tool => tool.declaration.name === 'search_files')!;
-    const result = (await search.execute({ query: 'missing' }, context)).data as any;
+    const { host, search } = toolsFixture(Object.fromEntries(Array.from({ length: 20_001 }, (_, index) => [`${index}.txt`, ''])));
+    const result = (await search.handler({ query: 'missing' })).data;
     expect(result).toMatchObject({ scanned: 20_000, truncated: true, truncationReasons: ['scanLimit'] });
     expect(result.nextOffset).toBeUndefined();
     expect(result.continuationHint).toContain('narrow directory');
-    expect(files.read).toHaveBeenCalledTimes(20_000);
+    expect(host.readFile).toHaveBeenCalledTimes(20_000);
   });
 
   test('文件读取中的取消不会被当作跳过的文件', async () => {
-    const { files, search } = toolsFixture();
+    const { host, search } = toolsFixture();
     const abort = new AbortController();
-    files.read.mockImplementation(async () => { abort.abort(new Error('cancelled')); throw new Error('read cancelled'); });
-    await expect(search.execute({ query: 'hit' }, { ...context, signal: abort.signal })).rejects.toThrow('cancelled');
+    host.readFile.mockImplementation(async () => { abort.abort(new Error('cancelled')); throw new Error('read cancelled'); });
+    await expect(search.handler({ query: 'hit' }, { abortSignal: abort.signal })).rejects.toThrow('cancelled');
+  });
+
+  test('长行预览保留命中、原文列号和截断信息，大小写折叠不挪动列号', async () => {
+    const value = 'İ' + 'a'.repeat(7293) + 'browser_read' + 'z'.repeat(2000);
+    const result = (await toolsFixture({ 'long.js': value }).search.handler({ query: 'BROWSER_READ' })).data.matches[0];
+    expect(result).toMatchObject({ column: 7295, matchLength: 12, contentTruncated: true });
+    expect(result.text).toContain('browser_read');
+    expect(result.text).toBe(value.slice(result.previewStartColumn - 1, result.previewStartColumn - 1 + result.text.length));
+    expect(result.text.length).toBeLessThanOrEqual(1201);
+    expect(literalMatchPreview('hit', 0, 3)).toMatchObject({ text: 'hit', column: 1, previewStartColumn: 1, contentTruncated: false });
+  });
+
+  test('超长命中与代理对边界仍给出有效的预览坐标', () => {
+    const value = 'x'.repeat(601) + '😀' + 'a'.repeat(1300) + '😀';
+    for (const [index, length] of [[602, 1], [603, 1300], [1903, 2]]) {
+      const preview = literalMatchPreview(value, index, length);
+      expect(preview.text).toBe(value.slice(preview.previewStartColumn - 1, preview.previewStartColumn - 1 + preview.text.length));
+      expect(preview.text).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
+    }
+  });
+
+  test('失败、二进制和大文件可见但不伪造匹配，读取前后都检查大小', async () => {
+    const { host, search } = toolsFixture({ 'large.txt': '', 'bad.txt': '', 'binary.bin': '\0hit', 'grown.txt': 'x'.repeat(2 * 1024 * 1024 + 1) });
+    host.stat.mockImplementation(async file => ({ size: file.fsPath === 'large.txt' ? 3 * 1024 * 1024 : 1, type: 1 }));
+    host.readFile.mockImplementation(async file => { if (file.fsPath === 'bad.txt') throw new Error('EACCES'); return Buffer.from(file.fsPath === 'binary.bin' ? '\0hit' : 'x'.repeat(2 * 1024 * 1024 + 1)); });
+    const result = (await search.handler({ query: 'hit' })).data;
+    expect(result).toMatchObject({ matches: [], skippedCount: 4, skippedFilesTruncated: false });
+    expect(host.readFile).toHaveBeenCalledTimes(3);
+    expect(result.skippedFiles[1].reason).toContain('EACCES');
   });
 
   test('声明说明互补能力和正确的进程会话来源', () => {
-    const { tools } = toolsFixture();
+    const tools = workspaceTools({} as any, {} as any, {} as any);
     const description = (name: string) => tools.find(tool => tool.declaration.name === name)!.declaration.description;
     expect(description('workspace_files')).toContain('read_file');
     expect(description('workspace_files')).toContain('expectedHash');
     expect(description('workspace_files')).toContain('apply_diff');
-    expect(description('search_files')).toContain('search_in_files');
+    expect(toolsFixture().search.declaration.description).toContain('search_in_files');
     expect(description('run_command')).toContain('execute_command');
     expect(description('process_session')).toContain('taskId');
   });

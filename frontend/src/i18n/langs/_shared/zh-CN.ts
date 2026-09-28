@@ -621,6 +621,7 @@ const sharedZhCN = {
                     excludeSources: {
                         argument: backendZhCN.tools.presentation.findFiles.excludeSources.argument,
                         fallback: backendZhCN.tools.presentation.findFiles.excludeSources.fallback,
+                        includeIgnored: backendZhCN.tools.presentation.findFiles.excludeSources.includeIgnored,
                         settings: backendZhCN.tools.presentation.findFiles.excludeSources.settings,
                         unknown: backendZhCN.tools.presentation.findFiles.excludeSources.unknown,
                     },

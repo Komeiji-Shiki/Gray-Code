@@ -63,24 +63,27 @@ describe('search_in_files 续查', () => {
         expect(exhausted.data.count).toBe(0);
         expect(exhausted.data.queryFallback).toBeUndefined();
         const fallback = fixture({ '/one/a.ts': 'alpha\nbeta\nalpha' });
-        const result = await fallback.handler({ query: 'alpha beta', offset: 1, maxResults: 1 });
+        const result = await fallback.handler({ query: 'alpha beta', keywordFallback: true, offset: 1, maxResults: 1 });
         expect(result.data.queryFallback).toMatchObject({ applied: true, reason: 'whitespace_keyword_or' });
         expect(result.data.results[0].line).toBe(2);
         expect(result.data.nextOffset).toBe(2);
     });
 
-    test('显式禁止关键词回退后严格匹配完整短语，默认与显式 true 仍兼容旧行为', async () => {
+    test('默认及显式 false 都严格匹配，只有显式 true 才扩大搜索', async () => {
         const tool = fixture({ '/one/a.ts': 'get_symbols\nother' });
         const query = 'get_symbols __graycode_tool_ux_nonexistent__';
-        for (const args of [{}, { keywordFallback: true }]) {
+        for (const args of [{}, { keywordFallback: false }]) {
             const result = await tool.handler({ query, isRegex: false, ...args });
-            expect(result.data.count).toBe(1);
-            expect(result.data.queryFallback).toMatchObject({ applied: true, reason: 'whitespace_keyword_or' });
+            expect(result.data).toMatchObject({ count: 0, truncated: false });
+            expect(result.data.queryFallback).toBeUndefined();
+            expect(result.data.searchHint).toContain('keywordFallback=true');
+            expect(result.data.nextOffset).toBeUndefined();
         }
-        const strict = await tool.handler({ query, isRegex: false, keywordFallback: false });
-        expect(strict.data).toMatchObject({ count: 0, truncated: false });
-        expect(strict.data.queryFallback).toBeUndefined();
-        expect(strict.data.nextOffset).toBeUndefined();
+        const broad = await tool.handler({ query, keywordFallback: true });
+        expect(broad.data.count).toBe(1);
+        expect(broad.data.queryFallback).toMatchObject({ applied: true, reason: 'whitespace_keyword_or' });
+        expect(broad.data.searchHint).toBeUndefined();
+        expect(tool.declaration.parameters.properties?.keywordFallback.default).toBe(false);
     });
 
     test('严格字面量分页不放宽成 OR，保留大小写与正则独立语义', async () => {

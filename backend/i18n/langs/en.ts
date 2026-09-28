@@ -685,6 +685,7 @@ Output content directly without any prefix.`
                     argument: 'Call argument (replaces settings)',
                     settings: 'Tool settings',
                     fallback: 'Default fallback',
+                    includeIgnored: 'Explicitly include ignored files',
                     unknown: 'Source not recorded'
                 }
             }

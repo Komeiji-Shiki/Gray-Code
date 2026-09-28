@@ -173,3 +173,37 @@ test('真实子进程：cwd、无 Shell 参数、跨 run 输入与增量读取�
     expect(await session.execute({ action: 'input', id: result.id, text: 'late' }, continuation)).toMatchObject({ success: false, code: 'EXITED' });
   } finally { await processes.close(); }
 });
+
+test.each([{ running: false, exitCode: 7, success: false }, { running: false, exitCode: -1, success: false }, { running: false, exitCode: 0, success: true }, { running: true, exitCode: null, success: true }, { running: false, exitCode: null, success: true }])('进程终态 $exitCode running=$running 保留输出和游标，明确失败摘要', async ({ running, exitCode, success }) => {
+  const { run, session, processes } = fixture();
+  const data = { id: 'session', output: 'diagnostic', outputOffset: 20, nextCursor: 30, hasMore: true, outputLost: true, truncated: true, running, exitCode };
+  processes.start.mockResolvedValue(data); processes.read.mockResolvedValue(data);
+  for (const result of [await run.execute({ command: 'fixture', args: [] }, context), await session.execute({ action: 'read', id: data.id, cursor: 20, maxChars: 10 }, context)]) {
+    expect(result.success).toBe(success); expect(result.data).toBe(data);
+    if (!success) expect(result).toMatchObject({ code: 'COMMAND_EXIT_NONZERO', error: `Command exited with code ${exitCode}` });
+    else expect(result.error).toBeUndefined();
+  }
+  expect((await session.execute({ action: 'stop', id: data.id }, context)).success).toBe(true);
+});
+
+test.each([0, 600])('真实非零退出（延迟 %dms）在初次或续读结果标记失败且仍可跨 run 续读', async delay => {
+  const records = new Map<string, unknown>();
+  const processes = new WorkspaceProcesses({
+    putRecord: async (record: StoredRecord) => { records.set(record.id, structuredClone(record.value)); },
+    getRecord: async (_namespace: string, id: string) => records.get(id) ?? null, getRun: async () => null,
+  });
+  const tools = workspaceTools(files, processes, {} as any);
+  const run = tools.find(tool => tool.declaration.name === 'run_command')!, session = tools.find(tool => tool.declaration.name === 'process_session')!;
+  try {
+    let result = await run.execute({ command: process.execPath, args: ['-e', `setTimeout(() => { console.error('fixture failure'); process.exitCode = 7; }, ${delay})`] }, context);
+    const deadline = Date.now() + 5000;
+    while ((result.data as ProcessResult).running && Date.now() < deadline) {
+      expect(result.success).toBe(true);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      result = await session.execute({ action: 'read', id: (result.data as ProcessResult).id }, { ...context, runId: 'continued' });
+    }
+    expect(result).toMatchObject({ success: false, code: 'COMMAND_EXIT_NONZERO', error: 'Command exited with code 7', data: { running: false, exitCode: 7, output: expect.stringContaining('fixture failure') } });
+    const final = result.data as ProcessResult;
+    expect(await session.execute({ action: 'read', id: final.id, cursor: final.nextCursor }, context)).toMatchObject({ success: false, data: { output: '', nextCursor: final.nextCursor, exitCode: 7 } });
+  } finally { await processes.close(); }
+});

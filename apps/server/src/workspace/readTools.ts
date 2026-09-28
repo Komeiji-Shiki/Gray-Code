@@ -8,6 +8,7 @@ import { createSearchDeclaration } from '../../../../backend/tools/search/declar
 import { getMultimodalCapability, type MultimodalCapability } from '../../../../backend/tools/shared/multimodal';
 import { FileReadAccess } from './readAccess';
 import { NodeFileHost } from './fileHost';
+import { createLiteralSearchTool } from './literalSearchTool';
 
 /**
  * 桌面与 Web 版默认启用多模态工具：渠道设置不再提供该开关，
@@ -31,6 +32,7 @@ export function readTools(app: PlatformApplication): RuntimeTool[] {
   const factories: ((host: NodeFileHost) => Tool)[] = [
     host => createReadFileTool(host, true), host => createListFilesTool(host),
     host => createFindFilesRuntime(host).createFindFilesTool(), host => createSearchDeclaration(host).createSearchInFilesTool(),
+    host => createLiteralSearchTool(host),
   ];
   return factories.map(factory => {
     const declaration = factory(catalog).declaration;

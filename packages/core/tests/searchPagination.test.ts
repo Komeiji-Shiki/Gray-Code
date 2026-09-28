@@ -4,7 +4,7 @@ import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
 import { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
-import { workspaceTools } from '../../../apps/server/src/workspace/tools';
+import { createLiteralSearchTool } from '../../../apps/server/src/workspace/literalSearchTool';
 import { createSearchDeclaration } from '../../../backend/tools/search/declarationRuntime';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../backend/modules/settings/types';
 
@@ -30,10 +30,10 @@ test('真实 Node 文件宿主中，两种搜索分页无重复、无遗漏并�
     workspace: { id: 'project', name: 'Fixture', directory, deviceId: 'local' },
     progress: () => {}, askUser: async () => { throw new Error('unused'); } } satisfies ToolContext;
   const advanced = createSearchDeclaration(new NodeFileHost(app, context)).createSearchInFilesTool();
-  const basic = workspaceTools(files, {} as any, {} as any).find(tool => tool.declaration.name === 'search_files')!;
+  const basic = createLiteralSearchTool(new NodeFileHost(app, context));
   const variants = [
     { query: (offset: number, limit: number) => advanced.handler({ query: 'hit', offset, maxResults: limit }), key: 'results' },
-    { query: (offset: number, limit: number) => basic.execute({ query: 'hit', offset, limit }, context), key: 'matches' },
+    { query: (offset: number, limit: number) => basic.handler({ query: 'hit', offset, limit }), key: 'matches' },
   ];
   for (const variant of variants) {
     const complete = (await variant.query(0, 100)).data as any;

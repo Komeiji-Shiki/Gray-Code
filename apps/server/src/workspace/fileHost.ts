@@ -4,17 +4,19 @@ import path from 'node:path';
 import { lstat, open, readFile, readdir, stat } from 'node:fs/promises';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
-import type { SearchFileHost, FileLocation, FileWorkspace } from '../../../../backend/tools/search/fileHost';
+import type { SearchFileHost, FileLocation, FileWorkspace, FileDiscoveryOptions } from '../../../../backend/tools/search/fileHost';
 import type { ReadFileHost } from '../../../../backend/tools/file/readFileRuntime';
 import type { ListFilesHost } from '../../../../backend/tools/file/listFilesRuntime';
 import { isBinaryFile } from '../../../../backend/tools/shared/multimodal';
 import { MAX_LINE_COUNT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
 import { walkGlobTree } from '../../../../backend/tools/search/globWalker';
+import { createGitIgnoreFilter } from '../../../../backend/tools/search/gitIgnoreFilter';
 import { detectTextFromHeader, decodeTextBytes } from '../../../../backend/tools/search/textEncodingRuntime';
 import { TextLineCounter } from '../../../../shared/textLines';
 
 /** 每次调用独享的文件宿主，工作区与账号来自运行器而不是模型自报参数。 */
 export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost {
+  readonly gitIgnoreSupported = true;
   constructor(private readonly app: PlatformApplication, private readonly context: ToolContext, private readonly readAccess?: FileReadAccess) {}
   private location(absolute: string): FileLocation { return { fsPath: absolute, scheme: 'file' }; }
   private workspace() {
@@ -92,12 +94,12 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     return (await readdir(await this.safe(file), { withFileTypes: true })).map(entry => [entry.name,
       entry.isSymbolicLink() ? 64 : entry.isDirectory() ? 2 : entry.isFile() ? 1 : 0]);
   }
-  async findFiles(root: FileLocation, pattern: string, exclude: string, limit: number): Promise<FileLocation[]> {
+  async findFiles(root: FileLocation, pattern: string, exclude: string, limit: number, options?: FileDiscoveryOptions): Promise<FileLocation[]> {
     const result: FileLocation[] = [];
-    for await (const file of this.iterateFiles(root, pattern, exclude, limit)) result.push(file);
+    for await (const file of this.iterateFiles(root, pattern, exclude, limit, options)) result.push(file);
     return result;
   }
-  async *iterateFiles(root: FileLocation, pattern: string, exclude: string, limit: number): AsyncGenerator<FileLocation> {
+  async *iterateFiles(root: FileLocation, pattern: string, exclude: string, limit: number, options?: FileDiscoveryOptions): AsyncGenerator<FileLocation> {
     // 修改原因：旧实现对每个目录条目执行 1-2 次 minimatch、对每个子目录做一次
     //          realpath（约 66μs/目录），大工作区实测全树遍历约 3s；单个子目录
     //          消失（ENOENT）还会让整个查找失败。
@@ -106,6 +108,23 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     //          排除模式与常见包含模式走字面量快速路径，子目录读取失败时跳过。
     // 修改目的：结果与顺序完全不变的前提下，把遍历成本降到接近纯 readdir。
     const directory = await this.safe(root);
+    const workspaceRoot = workspaceRootFor(this.workspace(), root.fsPath);
+    const ignoreRoot = workspaceRoot ? await this.safe(this.location(workspaceRoot.directory)) : directory;
+    const rootSegments = path.relative(ignoreRoot, directory).split(path.sep);
+    if (rootSegments.some(segment => (process.platform === 'win32' ? segment.toLowerCase() : segment) === '.git')) return;
+    const directoryFilter = options?.includeIgnored ? undefined : createGitIgnoreFilter(ignoreRoot, async file => {
+      this.context.signal.throwIfAborted();
+      try {
+        const info = await lstat(file);
+        if (info.isSymbolicLink() || !info.isFile()) return undefined;
+        if (info.size > 1024 * 1024) throw new Error(`Ignore file exceeds 1 MiB: ${file}`);
+        return await readFile(await this.safe(this.location(file)), 'utf8');
+      } catch (error) {
+        this.context.signal.throwIfAborted();
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw error;
+      }
+    });
     for await (const match of walkGlobTree({
       root: directory,
       pattern,
@@ -113,6 +132,7 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
       limit,
       readdir: absolute => readdir(absolute, { withFileTypes: true }),
       joinPath: (parent, name) => path.join(parent, name),
+      directoryFilter,
       throwIfAborted: () => this.context.signal.throwIfAborted()
     })) {
       yield this.location(match.absolute);

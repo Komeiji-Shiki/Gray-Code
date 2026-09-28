@@ -180,6 +180,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     parameters: {
       "patterns": {"type":"array","items":{"type":"string"},"required":true},
       "exclude": {"type":"string"},
+      "includeIgnored": {"type":"boolean","default":false},
       "maxResults": {"type":"number","default":500},
       "offset": {"type":"integer","default":0},
     },
@@ -436,7 +437,8 @@ export const toolMeta: Record<string, ToolMeta> = {
       "path": {"type":"string","default":"."},
       "pattern": {"type":"string","default":"**/*"},
       "isRegex": {"type":"boolean","default":false},
-      "keywordFallback": {"type":"boolean","default":true},
+      "keywordFallback": {"type":"boolean","default":false},
+      "includeIgnored": {"type":"boolean","default":false},
       "caseSensitive": {"type":"boolean"},
       "maxResults": {"type":"number","default":100},
       "offset": {"type":"integer","default":0},

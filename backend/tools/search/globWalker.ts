@@ -6,6 +6,7 @@
  */
 import minimatch from 'minimatch';
 import * as path from 'node:path';
+import type { DirectoryEntryFilter } from './gitIgnoreFilter';
 
 export interface GlobWalkerDirent {
   name: string;
@@ -35,6 +36,8 @@ export interface GlobWalkerOptions {
   throwIfAborted?: () => void;
   /** 子目录读取失败时回调（默认静默跳过） */
   onDirectoryError?: (absolute: string, error: unknown) => void;
+  /** null 表示整个目录已被忽略；规则读取失败应抛错，不能悄悄扩大搜索范围。 */
+  directoryFilter?: (absolute: string) => Promise<DirectoryEntryFilter | null>;
 }
 
 function normalizeName(name: string, caseInsensitive: boolean): string {
@@ -154,6 +157,9 @@ export async function* walkGlobTree(options: GlobWalkerOptions): AsyncGenerator<
     const current = stack.pop()!;
     throwIfAborted();
 
+    const filter = await options.directoryFilter?.(current.absolute);
+    if (filter === null) continue;
+    throwIfAborted();
     const mustSucceed = isRootDirectory;
     isRootDirectory = false;
     let entries: GlobWalkerDirent[];
@@ -170,7 +176,7 @@ export async function* walkGlobTree(options: GlobWalkerOptions): AsyncGenerator<
 
     for (const entry of entries) {
       throwIfAborted();
-      if (entry.isSymbolicLink()) {
+      if (entry.isSymbolicLink() || normalizeName(entry.name, caseInsensitive) === '.git' || filter?.(entry.name, entry.isDirectory())) {
         continue;
       }
 

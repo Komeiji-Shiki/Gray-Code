@@ -16,6 +16,7 @@ interface SearchInFilesArgs {
     pattern?: string;
     isRegex?: boolean;
     keywordFallback?: boolean;
+    includeIgnored?: boolean;
     caseSensitive?: boolean;
     maxResults?: number;
     offset?: number;
@@ -111,8 +112,8 @@ function createSearchInFilesTool(): Tool {
                     query: {
                         type: 'string',
                         description: isZh
-                            ? '搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 isRegex=true。搜索模式先尝试完整字面短语；isRegex=false 时默认可能改用空格分隔的关键词重试，严格字面量搜索须传 keywordFallback=false。'
-                            : 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode first tries the full literal phrase and by default may retry space-separated keywords when isRegex=false; pass keywordFallback=false for strict literal matching.'
+                            ? '搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 isRegex=true。搜索模式先尝试完整字面短语；isRegex=false 时默认严格匹配完整短语；只有显式 keywordFallback=true 才会在零命中时拆词重试。'
+                            : 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode matches the complete literal phrase by default. Only explicit keywordFallback=true retries space-separated keywords after zero matches.'
                     },
                     path: {
                         type: 'string',
@@ -134,10 +135,16 @@ function createSearchInFilesTool(): Tool {
                         default: false
                     },
                     keywordFallback: {
-                        type: 'boolean', default: true,
+                        type: 'boolean', default: false,
                         description: isZh
-                            ? '[仅 search 且 isRegex=false] 完整短语零命中时，是否按空白拆成关键词并以 OR 重试。默认 true 保留原有行为；false 保证严格字面量查询，不拆词。isRegex=true 或 replace 模式忽略此项。'
-                            : '[Only search with isRegex=false] Retry whitespace-separated keywords with OR when the full phrase has no matches. Default true preserves existing behavior; false keeps strict literal matching without splitting. Ignored for isRegex=true or replace mode.'
+                            ? '[仅 search 且 isRegex=false] 显式设 true 才在完整短语零命中时按空白拆词并以 OR 重试。默认 false，不扩大查询含义。isRegex=true 或 replace 模式忽略此项。'
+                            : '[Only search with isRegex=false] Explicit true retries whitespace-separated keywords with OR after zero phrase matches. Default false preserves the exact query. Ignored for isRegex=true or replace mode.'
+                    },
+                    includeIgnored: {
+                        type: 'boolean', default: false,
+                        description: isZh
+                            ? `默认遵循搜索排除配置${host.gitIgnoreSupported ? '及项目 .gitignore' : ''}。true 显式搜索这些忽略文件；独立平台仍跳过 .git 元数据和符号链接。分页时保持不变。`
+                            : `By default, respect search exclusions${host.gitIgnoreSupported ? ' and project .gitignore files' : ''}. True explicitly includes ignored files; the standalone host still excludes .git metadata and symlinks. Keep unchanged while paging.`
                     },
                     caseSensitive: {
                         type: 'boolean',
@@ -177,11 +184,15 @@ function createSearchInFilesTool(): Tool {
             const searchPath = typed.path || '.';
             const filePattern = typed.pattern || '**/*';
             const isRegex = typed.isRegex || false;
-            // 新开关只控制搜索的空白 OR 回退；默认保留原语义，不影响正则和保守替换路径。
-            const keywordFallback = typed.keywordFallback !== false;
+            // 精确查询不应因零命中而自动改变含义；宽搜必须显式选择。
+            const keywordFallback = typed.keywordFallback === true;
             if (typed.keywordFallback !== undefined && typeof typed.keywordFallback !== 'boolean') {
                 return { success: false, error: 'keywordFallback must be a boolean' };
             }
+            if (typed.includeIgnored !== undefined && typeof typed.includeIgnored !== 'boolean') {
+                return { success: false, error: 'includeIgnored must be a boolean' };
+            }
+            const includeIgnored = typed.includeIgnored === true;
             
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
             const mode = typed.mode || 'search';
@@ -253,7 +264,7 @@ function createSearchInFilesTool(): Tool {
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();
-                const excludePattern = getExcludePattern(searchConfig);
+                const excludePattern = includeIgnored ? '**/.git/**' : getExcludePattern(searchConfig);
                 
                 // 解析路径，确定搜索范围
                 const parsedPath = host.parseWorkspacePath(searchPath);
@@ -300,7 +311,8 @@ function createSearchInFilesTool(): Tool {
                             context?.conversationId,
                             context?.checkpointReady as Promise<unknown> | undefined,
                             context?.lockHolder as LockHolder | undefined,
-                            computation
+                            computation,
+                            { includeIgnored }
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
@@ -328,7 +340,8 @@ function createSearchInFilesTool(): Tool {
                                 context?.conversationId,
                                 context?.checkpointReady as Promise<unknown> | undefined,
                                 context?.lockHolder as LockHolder | undefined,
-                                computation
+                                computation,
+                                { includeIgnored }
                             );
                             allMatches.push(...result.matches);
                             allReplacements.push(...result.replacements);
@@ -370,7 +383,8 @@ function createSearchInFilesTool(): Tool {
                             context?.conversationId,
                             context?.checkpointReady as Promise<unknown> | undefined,
                             context?.lockHolder as LockHolder | undefined,
-                            computation
+                            computation,
+                            { includeIgnored }
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
@@ -412,6 +426,9 @@ function createSearchInFilesTool(): Tool {
                             totalReplacements,
                             truncated: anyTruncated,
                             caseSensitive,
+                            effectiveExclude: excludePattern,
+                            respectsGitIgnore: !!host.gitIgnoreSupported && !includeIgnored,
+                            includeIgnored,
                             skippedFiles: allSkippedFiles.length > 0 ? allSkippedFiles : undefined,
                             zeroMatchHint,
                             multiRoot: workspaces.length > 1,
@@ -459,7 +476,7 @@ function createSearchInFilesTool(): Tool {
                                 searchConfig,
                                 budget,
                                 page,
-                                { computation, signal: context?.abortSignal }
+                                { computation, signal: context?.abortSignal, includeIgnored }
                             );
                             results.push(...pass.matches);
                             filesTruncated = pass.filesTruncated;
@@ -481,7 +498,7 @@ function createSearchInFilesTool(): Tool {
                                     searchConfig,
                                     budget,
                                     page,
-                                    { computation, signal: context?.abortSignal }
+                                    { computation, signal: context?.abortSignal, includeIgnored }
                                 );
                                 results.push(...wsPass.matches);
                                 filesTruncated = filesTruncated || wsPass.filesTruncated;
@@ -510,7 +527,7 @@ function createSearchInFilesTool(): Tool {
                                 searchConfig,
                                 budget,
                                 page,
-                                { computation, signal: context?.abortSignal }
+                                { computation, signal: context?.abortSignal, includeIgnored }
                             );
                             results.push(...pass.matches);
                             filesTruncated = filesTruncated || pass.filesTruncated;
@@ -593,6 +610,12 @@ function createSearchInFilesTool(): Tool {
                             truncated: searchPass.matchesTruncated || searchPass.budgetTruncated || searchPass.filesTruncated,
                             multiRoot: workspaces.length > 1,
                             queryFallback: fallbackInfo,
+                            searchHint: !isRegex && !keywordFallback && searchPass.matchesSeen === 0 && !searchPass.budgetTruncated
+                                && !searchPass.filesTruncated && splitWhitespaceFallbackKeywords(query).length > 0
+                                ? 'No exact phrase matches. To explicitly broaden this query, retry with keywordFallback=true.' : undefined,
+                            effectiveExclude: excludePattern,
+                            respectsGitIgnore: !!host.gitIgnoreSupported && !includeIgnored,
+                            includeIgnored,
                             // 处理失败/被护栏跳过的文件及原因：与 replace 模式的 skippedFiles 同构，
                             // 让模型能区分「真没有匹配」与「N 个文件因权限/IO/大小被跳过」
                             skippedFiles: searchPass.skippedFiles.length > 0 ? searchPass.skippedFiles : undefined,

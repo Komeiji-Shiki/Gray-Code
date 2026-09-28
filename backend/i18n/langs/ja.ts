@@ -685,6 +685,7 @@ const ja: BackendLanguageMessages = {
                     argument: '呼び出し引数（設定を置換）',
                     settings: 'ツール設定',
                     fallback: '既定のフォールバック',
+                    includeIgnored: '無視されたファイルを明示的に含める',
                     unknown: '適用元の記録なし'
                 }
             }

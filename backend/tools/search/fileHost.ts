@@ -4,7 +4,10 @@ import type { LockHolder } from '../../core/fileWriteLockManager';
 
 export interface FileLocation { fsPath: string; scheme: string }
 export interface FileWorkspace { name: string; uri: FileLocation }
+export interface FileDiscoveryOptions { includeIgnored?: boolean }
 export interface SearchFileHost {
+  /** 当前宿主是否在配置 glob 之外应用项目 .gitignore。 */
+  readonly gitIgnoreSupported?: boolean;
   getAllWorkspaces(): FileWorkspace[];
   getWorkspaceRoot(): FileLocation | undefined;
   parseWorkspacePath(file: string): { workspace?: FileWorkspace; relativePath: string; isExplicit: boolean; error?: string };
@@ -15,7 +18,7 @@ export interface SearchFileHost {
   stat(file: FileLocation): Promise<{ size: number; type: number }>;
   readFile(file: FileLocation): Promise<Uint8Array>;
   readHeader?(file: FileLocation, bytes: number): Promise<Uint8Array>;
-  findFiles(root: FileLocation, pattern: string, exclude: string, limit: number): Promise<FileLocation[]>;
+  findFiles(root: FileLocation, pattern: string, exclude: string, limit: number, options?: FileDiscoveryOptions): Promise<FileLocation[]>;
   countLines(file: FileLocation, relative: string): Promise<number | undefined>;
   findExcludePatterns(): string[] | undefined;
   searchConfig(): Readonly<SearchInFilesToolConfig>;

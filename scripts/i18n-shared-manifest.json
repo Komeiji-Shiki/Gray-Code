@@ -277,6 +277,7 @@
     { "frontend": "components.tools.presentation.findFiles.excludeSources.argument", "backend": "tools.presentation.findFiles.excludeSources.argument" },
     { "frontend": "components.tools.presentation.findFiles.excludeSources.settings", "backend": "tools.presentation.findFiles.excludeSources.settings" },
     { "frontend": "components.tools.presentation.findFiles.excludeSources.fallback", "backend": "tools.presentation.findFiles.excludeSources.fallback" },
+    { "frontend": "components.tools.presentation.findFiles.excludeSources.includeIgnored", "backend": "tools.presentation.findFiles.excludeSources.includeIgnored" },
     { "frontend": "components.tools.presentation.findFiles.excludeSources.unknown", "backend": "tools.presentation.findFiles.excludeSources.unknown" },
     { "frontend": "components.message.tool.reviewCard.categoryCss", "backend": "tools.reviewDocument.values.category.css" },
     { "frontend": "components.message.tool.reviewCard.categoryHtml", "backend": "tools.reviewDocument.values.category.html" },

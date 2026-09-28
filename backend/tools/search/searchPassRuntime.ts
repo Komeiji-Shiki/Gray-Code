@@ -131,7 +131,7 @@ async function searchInDirectory(
     config: Readonly<SearchInFilesToolConfig>,
     budget?: SearchBudget,
     page?: SearchPageState,
-    execution?: { computation?: TextSearchWorker; signal?: AbortSignal }
+    execution?: { computation?: TextSearchWorker; signal?: AbortSignal; includeIgnored?: boolean }
 ): Promise<{ matches: SearchMatch[]; filesTruncated: boolean; skippedFiles: SkippedFileInfo[] }> {
     // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
     // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
@@ -141,7 +141,7 @@ async function searchInDirectory(
     
     
     const findLimit = Math.max(1, Math.floor(clampNonNegativeNumber(config.maxFindFiles, 1000)));
-    const foundFiles = await host.findFiles(searchRoot, filePattern, excludePattern, findLimit + 1);
+    const foundFiles = await host.findFiles(searchRoot, filePattern, excludePattern, findLimit + 1, { includeIgnored: execution?.includeIgnored });
     const filesTruncated = foundFiles.length > findLimit;
     const files = filesTruncated ? foundFiles.slice(0, findLimit) : foundFiles;
 

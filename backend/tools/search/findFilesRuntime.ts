@@ -34,6 +34,7 @@ interface FindFilesArgs {
     patterns?: string[];
     pattern?: string;
     exclude?: string;
+    includeIgnored?: boolean;
     maxResults?: number;
     offset?: number;
 }
@@ -45,14 +46,15 @@ async function findInWorkspace(
     exclude: string,
     maxResults: number,
     includeWorkspacePrefix: boolean,
-    page: { remaining: number }
+    page: { remaining: number },
+    includeIgnored: boolean
 ): Promise<FindResult> {
     try {
         // offset 先按宿主发现顺序跳过，再保持旧的页内排序；不能先全局排序，
         // 否则会改变首批结果与已有遍历预算。只统计本页行数，不重读已跳过文件。
         // 多取 1 个仅用于精确判定截断，跨工作区共享剩余 offset。
         const skip = page.remaining;
-        const files = await host.findFiles(workspace.uri, pattern, exclude, skip + maxResults + 1);
+        const files = await host.findFiles(workspace.uri, pattern, exclude, skip + maxResults + 1, { includeIgnored });
         page.remaining = Math.max(0, skip - files.length);
         const truncated = files.length > skip + maxResults;
         const cappedFiles = files.slice(skip, skip + maxResults);
@@ -92,7 +94,8 @@ async function findWithPattern(
     pattern: string,
     exclude: string,
     maxResults: number,
-    offset: number
+    offset: number,
+    includeIgnored: boolean
 ): Promise<FindResult> {
     const page = { remaining: offset };
     const workspaces = host.getAllWorkspaces();
@@ -106,7 +109,7 @@ async function findWithPattern(
     
     // 单工作区模式
     if (workspaces.length === 1) {
-        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false, page);
+        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false, page, includeIgnored);
     }
     
     // 多工作区模式：在所有工作区中查找
@@ -121,7 +124,7 @@ async function findWithPattern(
         // 修改方式：删除前置判断，每个工作区都走 maxResults+1 探测精确判定截断；
         //           remaining<=0 时探测仍能区分「该工作区还有文件（真截断）」与「没有文件（未截断）」。
         const remaining = maxResults - allFiles.length;
-        const result = await findInWorkspace(ws, pattern, exclude, remaining, true, page);
+        const result = await findInWorkspace(ws, pattern, exclude, remaining, true, page, includeIgnored);
         if (!result.success) {
             // 某根失败不能伪装成「全库无匹配」；保留其他根的结果，但不给出可能漏项的续查游标。
             workspaceErrors.push({ workspace: ws.name, error: result.error || 'File discovery failed' });
@@ -174,8 +177,8 @@ function createFindFilesTool(): Tool {
         : '\n\nImportant: the patterns parameter must be an array, even for a single pattern, e.g., {"patterns": ["*.ts"]}, NOT {"pattern": "*.ts"}.';
 
     const paginationNote = isZh
-        ? '\n每个模式含 nextOffset 时可作为 offset 续查。offset 按宿主发现顺序跳过，结果仅页内排序；不同宿主顺序可能不同，每页重新遍历，文件或排除设置变化后从 0 重查。排除策略见 effectiveExclude/excludeSource；不保证遵循 .gitignore。'
-        : '\nContinue each pattern with its nextOffset as offset. Offset skips host discovery order; only each page is sorted. Host order may differ and each page rescans live files; restart at 0 after files or exclusion settings change. See effectiveExclude/excludeSource for exclusions; .gitignore filtering is not guaranteed.';
+        ? '\n每个模式含 nextOffset 时可作为 offset 续查。offset 按宿主发现顺序跳过，结果仅页内排序；不同宿主顺序可能不同，每页重新遍历，文件或排除设置变化后从 0 重查。排除策略见 effectiveExclude/excludeSource/respectsGitIgnore。'
+        : '\nContinue each pattern with its nextOffset as offset. Offset skips host discovery order; only each page is sorted. Host order may differ and each page rescans live files; restart at 0 after files or exclusion settings change. See effectiveExclude/excludeSource/respectsGitIgnore for the effective exclusions.';
 
     return {
         declaration: {
@@ -208,8 +211,14 @@ function createFindFilesTool(): Tool {
                         type: 'string',
                         // 非空 exclude 一直是覆盖而非追加；不能用 schema default 诱导模型覆盖用户配置。
                         description: isZh
-                            ? '非空 glob 整体替换设置中的排除列表（不是追加），例如："**/node_modules/**"。省略或传空字符串沿用设置；未配置/空列表时回退排除 node_modules。不会自动合并 .gitignore。'
-                            : 'A nonempty glob replaces the configured exclusions (not appended), e.g., "**/node_modules/**". Omitted or empty string uses settings; missing/empty settings fall back to excluding node_modules. Does not automatically merge .gitignore.'
+                            ? '非空 glob 整体替换设置中的排除列表（不是追加），例如："**/node_modules/**"。省略或传空字符串沿用设置；未配置/空列表时回退排除 node_modules。includeIgnored=true 时仍应用显式 exclude。'
+                            : 'A nonempty glob replaces the configured exclusions (not appended), e.g., "**/node_modules/**". Omitted or empty string uses settings; missing/empty settings fall back to excluding node_modules. Explicit exclude still applies when includeIgnored=true.'
+                    },
+                    includeIgnored: {
+                        type: 'boolean', default: false,
+                        description: isZh
+                            ? `默认遵循查找排除配置${host.gitIgnoreSupported ? '及项目 .gitignore' : ''}。true 跳过这些忽略规则，但仍应用显式 exclude；独立平台始终跳过 .git 元数据、符号链接。分页时保持不变。`
+                            : `By default, respect find exclusions${host.gitIgnoreSupported ? ' and project .gitignore files' : ''}. True skips these rules, but explicit exclude still applies; the standalone host always skips .git metadata and symlinks. Keep unchanged while paging.`
                     },
                     maxResults: {
                         type: 'number',
@@ -248,14 +257,18 @@ function createFindFilesTool(): Tool {
             if (typed.exclude !== undefined && typeof typed.exclude !== 'string') {
                 return { success: false, error: 'exclude must be a string' };
             }
+            if (typed.includeIgnored !== undefined && typeof typed.includeIgnored !== 'boolean') {
+                return { success: false, error: 'includeIgnored must be a boolean' };
+            }
+            const includeIgnored = typed.includeIgnored === true;
             const offset = typed.offset ?? 0;
             if (!Number.isSafeInteger(offset) || offset < 0) {
                 return { success: false, error: 'offset must be a non-negative safe integer' };
             }
             // 保留 exclude='' 回退配置、非空值整体覆盖的旧约定，只补实际策略供模型核对。
             const configuredExcludes = host.findExcludePatterns();
-            const exclude = typed.exclude || buildExcludePattern(configuredExcludes, DEFAULT_EXCLUDE_PATTERN);
-            const excludeSource = typed.exclude ? 'argument' : configuredExcludes?.length ? 'settings' : 'fallback';
+            const exclude = typed.exclude || (includeIgnored ? '**/.git/**' : buildExcludePattern(configuredExcludes, DEFAULT_EXCLUDE_PATTERN));
+            const excludeSource = typed.exclude ? 'argument' : includeIgnored ? 'includeIgnored' : configuredExcludes?.length ? 'settings' : 'fallback';
             // 小于 1 的正小数不能归零；Infinity/NaN 也不能传给宿主变成空结果或无界扫描。
             const maxResults = typeof typed.maxResults === 'number' && Number.isFinite(typed.maxResults) && typed.maxResults > 0
                 ? Math.max(1, Math.floor(typed.maxResults)) : 500;
@@ -269,7 +282,7 @@ function createFindFilesTool(): Tool {
             let totalFiles = 0;
 
             for (const pattern of patternList) {
-                const result = await findWithPattern(pattern, exclude, maxResults, offset);
+                const result = await findWithPattern(pattern, exclude, maxResults, offset, includeIgnored);
                 result.offset = offset;
                 if (result.success && result.truncated) {
                     result.nextOffset = offset + (result.count || 0);
@@ -298,7 +311,9 @@ function createFindFilesTool(): Tool {
                     totalCount: patternList.length,
                     totalFiles,
                     effectiveExclude: exclude,
-                    excludeSource
+                    excludeSource,
+                    includeIgnored,
+                    respectsGitIgnore: !!host.gitIgnoreSupported && !includeIgnored
                 },
                 error: allSuccess ? undefined : `${failCount} patterns failed to search`
             };

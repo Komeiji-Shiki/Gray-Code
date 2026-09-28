@@ -32,7 +32,7 @@ describe('find_files 续查和实际排除策略', () => {
         const { tool, host } = fixture({ one: ['z.ts', 'd.ts', 'c.ts', 'a.ts'] });
         const first = await tool.handler({ patterns: ['**/*.ts'], maxResults: 2 });
         expect(first.data.results[0]).toMatchObject({ files: ['d.ts', 'z.ts'], offset: 0, nextOffset: 2, truncated: true });
-        expect(host.findFiles).toHaveBeenLastCalledWith(expect.anything(), '**/*.ts', '**/node_modules/**', 3);
+        expect(host.findFiles).toHaveBeenLastCalledWith(expect.anything(), '**/*.ts', '**/node_modules/**', 3, { includeIgnored: false });
         expect(host.countLines).toHaveBeenCalledTimes(2);
         (host.countLines as jest.Mock).mockClear();
         const second = await tool.handler({ patterns: ['**/*.ts'], maxResults: 2, offset: 2 });
@@ -89,11 +89,11 @@ describe('find_files 续查和实际排除策略', () => {
         for (const args of [{}, { exclude: '' }]) {
             const result = await tool.handler({ patterns: ['**/*'], ...args });
             expect(result.data).toMatchObject({ effectiveExclude: '{**/node_modules/**,**/dist/**}', excludeSource: 'settings' });
-            expect(host.findFiles).toHaveBeenLastCalledWith(expect.anything(), '**/*', '{**/node_modules/**,**/dist/**}', 501);
+            expect(host.findFiles).toHaveBeenLastCalledWith(expect.anything(), '**/*', '{**/node_modules/**,**/dist/**}', 501, { includeIgnored: false });
         }
         const explicit = await tool.handler({ patterns: ['**/*'], exclude: '**/node_modules/**' });
         expect(explicit.data).toMatchObject({ effectiveExclude: '**/node_modules/**', excludeSource: 'argument' });
-        expect(host.findFiles).toHaveBeenLastCalledWith(expect.anything(), '**/*', '**/node_modules/**', 501);
+        expect(host.findFiles).toHaveBeenLastCalledWith(expect.anything(), '**/*', '**/node_modules/**', 501, { includeIgnored: false });
         expect(tool.declaration.parameters.properties?.exclude.default).toBeUndefined();
     });
 
@@ -122,13 +122,13 @@ describe('find_files 续查和实际排除策略', () => {
     test.each([Infinity, NaN, '3'])('无效 maxResults %s 不传入宿主', async maxResults => {
         const { tool, host } = fixture({ one: [] });
         expect((await tool.handler({ patterns: ['**/*'], maxResults })).success).toBe(true);
-        expect(host.findFiles).toHaveBeenCalledWith(expect.anything(), '**/*', expect.anything(), 501);
+        expect(host.findFiles).toHaveBeenCalledWith(expect.anything(), '**/*', expect.anything(), 501, { includeIgnored: false });
     });
 
     test('小数正上限最少一项，极大数加探测溢出则拒绝', async () => {
         const { tool, host } = fixture({ one: ['b.ts', 'a.ts'] });
         expect((await tool.handler({ patterns: ['**/*'], maxResults: 0.5 })).data.results[0].count).toBe(1);
-        expect(host.findFiles).toHaveBeenCalledWith(expect.anything(), '**/*', expect.anything(), 2);
+        expect(host.findFiles).toHaveBeenCalledWith(expect.anything(), '**/*', expect.anything(), 2, { includeIgnored: false });
         expect((await tool.handler({ patterns: ['**/*'], maxResults: Number.MAX_SAFE_INTEGER })).success).toBe(false);
     });
 

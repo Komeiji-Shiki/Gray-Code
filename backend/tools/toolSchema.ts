@@ -43,4 +43,5 @@ export type ToolParameterSchema = {
     type: 'object';
     properties: Record<string, PropertySchema>;
     required?: string[];
+    additionalProperties?: boolean | PropertySchema;
 };

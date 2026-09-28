@@ -67,7 +67,7 @@ const resultError = computed(() => props.error || (typeof props.result?.error ==
 const effectiveExclude = computed(() => resultData.value?.effectiveExclude)
 const excludeSource = computed(() => {
   const source = resultData.value?.excludeSource
-  return ['argument', 'settings', 'fallback'].includes(source || '') ? source : 'unknown'
+  return ['argument', 'settings', 'fallback', 'includeIgnored'].includes(source || '') ? source : 'unknown'
 })
 
 // 批量结果逐项保留状态；旧单项结果也必须带回行数和失败信息，不能仅因存在 files 就判为成功。

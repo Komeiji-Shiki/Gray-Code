@@ -91,6 +91,7 @@ test.each([
   ['argument', 'Call argument (replaces settings)'],
   ['settings', 'Tool settings'],
   ['fallback', 'Default fallback'],
+  ['includeIgnored', 'Explicitly include ignored files'],
   ['future-source', 'Source not recorded']
 ])('effective exclusions expose the actual %s source rather than the submitted argument', (excludeSource, label) => {
   const wrapper = open({ success: true, data: {

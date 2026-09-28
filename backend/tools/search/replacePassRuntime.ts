@@ -6,7 +6,7 @@ import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 import type { SearchMatch, SkippedFileInfo } from './searchPassRuntime';
 import { normalizeLineEndingsToLF, escapeRegExp } from '../shared/textUtils';
 import { createTextReader, detectTextFromHeader, decodeTextBytes, type TextDetectionResult } from './textEncodingRuntime';
-import type { SearchFileHost, FileLocation } from './fileHost';
+import type { SearchFileHost, FileLocation, FileDiscoveryOptions } from './fileHost';
 import { createSearchPass } from './searchPassRuntime';
 export type { SkippedFileInfo };
 export interface ReplaceResult {
@@ -39,7 +39,8 @@ async function searchAndReplaceInDirectory(
     conversationId?: string,
     checkpointReady?: Promise<unknown>,
     lockHolder?: LockHolder,
-    computation?: TextSearchWorker
+    computation?: TextSearchWorker,
+    discovery?: FileDiscoveryOptions
 ): Promise<{
     matches: SearchMatch[];
     replacements: ReplaceResult[];
@@ -62,7 +63,7 @@ async function searchAndReplaceInDirectory(
     
     
     const findLimit = Math.max(1, Math.floor(clampNonNegativeNumber(config.maxFindFiles, 1000)));
-    const foundFiles = await host.findFiles(searchRoot, filePattern, excludePattern, findLimit + 1);
+    const foundFiles = await host.findFiles(searchRoot, filePattern, excludePattern, findLimit + 1, discovery);
     const filesTruncated = foundFiles.length > findLimit;
     const files = filesTruncated ? foundFiles.slice(0, findLimit) : foundFiles;
 

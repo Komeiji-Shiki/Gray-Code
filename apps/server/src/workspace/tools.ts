@@ -3,7 +3,8 @@ import { stat } from 'node:fs/promises';
 import { WorkspaceFiles } from "./files";
 import { getActualLanguage } from '../../../../backend/i18n';
 import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
-import { WorkspaceProcesses, commandEffects, ProcessSessionError, type ProcessOwner } from "./processes";
+import { WorkspaceProcesses, commandEffects, ProcessSessionError, type ProcessOwner, type ProcessResult } from "./processes";
+import type { ToolOutcome } from '@graycode/contracts';
 import type { WorkspaceChanges } from './changes';
 import { splitTextLines } from '../../../../shared/textLines';
 
@@ -16,6 +17,12 @@ function workspace(context: ToolContext) {
 function processOwner(context: ToolContext): ProcessOwner {
   return { actorId: context.actorId, conversationId: context.conversationId,
     runId: context.runId, workspaceId: context.workspace?.id };
+}
+function processOutcome(data: ProcessResult, stopped = false): ToolOutcome {
+  // stop 的成功表示停止请求已完成；运行中或无退出码不推断成命令失败。
+  return !stopped && !data.running && typeof data.exitCode === 'number' && data.exitCode !== 0
+    ? { success: false, code: 'COMMAND_EXIT_NONZERO', error: `Command exited with code ${data.exitCode}`, data }
+    : { success: true, data };
 }
 const optionalText = { type: "string" };
 export function workspaceTools(
@@ -139,86 +146,6 @@ export function workspaceTools(
     },
     {
       declaration: {
-        name: "search_files",
-        description: isZh
-          ? '轻量、严格字面量搜索 UTF-8 文本，每个匹配行返回一次，不自动拆分关键词。跳过符号链接、.git、node_modules、二进制和大文件。需要正则、文件 glob、上下文或替换时使用 search_in_files。结果有 nextOffset 时保持查询参数不变并传入 offset 续查；文件变化后从 0 重查。'
-          : 'Lightweight strict literal search in UTF-8 files, returning each matching line once without keyword fallback. Skips symlinks, .git, node_modules and binary/large files. Use search_in_files for regex, file globs, context or replacement. Continue with nextOffset as offset and unchanged query parameters; restart at 0 after files change.',
-        parameters: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            query: { type: "string", minLength: 1 },
-            directory: optionalText,
-            caseSensitive: { type: "boolean" },
-            limit: { type: "integer", minimum: 1, maximum: 200 },
-            offset: { type: "integer", minimum: 0, default: 0,
-              description: isZh ? '跳过的匹配行数；续查时使用上次返回的 nextOffset。' : 'Matching lines to skip; use the previous nextOffset to continue.' },
-          },
-          required: ["query"],
-        },
-      },
-      parallelRead: true,
-      effects: () => ["workspace_read"],
-      execute: async (args, context) => {
-        const target = workspace(context);
-        const pending = [String(args.directory ?? ".")];
-        const matches: { path: string; line: number; text: string }[] = [];
-        const limit = Number(args.limit ?? 100);
-        const offset = args.offset ?? 0;
-        if (!Number.isSafeInteger(offset) || Number(offset) < 0) throw new Error('offset must be a non-negative safe integer');
-        if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('limit must be an integer between 1 and 200');
-        if (typeof args.query !== 'string' || !args.query.length) throw new Error('query must be nonempty text');
-        const query = args.caseSensitive ? args.query : args.query.toLowerCase();
-        const probeLimit = limit + 1;
-        let remaining = Number(offset);
-        let scanned = 0;
-        let filesTruncated = false;
-        search: while (pending.length && matches.length < probeLimit) {
-          context.signal.throwIfAborted();
-          for (const entry of await files.list(target, pending.pop()!)) {
-            if (entry.kind === "directory") {
-              if (![".git", "node_modules"].includes(entry.name)) pending.push(entry.path);
-              continue;
-            }
-            if (entry.kind !== "file") continue;
-            if (scanned >= 20_000) { filesTruncated = true; break search; }
-            scanned++;
-            let text: string;
-            try {
-              text = (await files.read(target, entry.path)).text;
-            } catch {
-              context.signal.throwIfAborted();
-              continue;
-            }
-            for (const [line, value] of splitTextLines(text).entries()) {
-              if (!(args.caseSensitive ? value : value.toLowerCase()).includes(query)) continue;
-              if (remaining > 0) { remaining--; continue; }
-              matches.push({ path: entry.path, line: line + 1, text: value.slice(0, 1200) });
-              if (matches.length >= probeLimit) break search;
-            }
-          }
-        }
-        const matchesTruncated = matches.length > limit;
-        if (matchesTruncated) matches.length = limit;
-        const nextOffset = matchesTruncated ? Number(offset) + matches.length : undefined;
-        return {
-          success: true,
-          data: {
-            matches,
-            scanned,
-            offset,
-            nextOffset,
-            truncated: matchesTruncated || filesTruncated,
-            truncationReasons: matchesTruncated ? ['limit'] : filesTruncated ? ['scanLimit'] : undefined,
-            continuationHint: nextOffset !== undefined
-              ? `Continue with offset=${nextOffset} and unchanged query/directory/caseSensitive; restart at 0 if files changed.`
-              : filesTruncated ? 'File scan limit reached; narrow directory. Offset cannot reach unscanned files.' : undefined,
-          },
-        };
-      },
-    },
-    {
-      declaration: {
         name: "run_command",
         description: isZh
           ? '直接启动可执行文件并传入 args 数组，不经过 Shell，也不展开管道、重定向和环境变量。已有独立参数时优先用它，避免命令字符串转义。cwd 可指定工作区内目录；需要 Shell 语法、选择 Shell 或后台完成通知时使用 execute_command。返回的会话 ID 由 process_session 读取、输入或停止，同一账号、对话和工作区继续运行后仍可使用。'
@@ -243,11 +170,8 @@ export function workspaceTools(
         const requestedCwd = String(args.cwd ?? '');
         const cwd = await files.resolve(target, requestedCwd === '' || requestedCwd === '.' ? target.directory : requestedCwd);
         if (!(await stat(cwd)).isDirectory()) throw new Error('cwd must be a directory within the workspace.');
-        return {
-          success: true,
-          data: await processes.start(target, processOwner(context), String(args.command), args.args as string[],
-            (text) => context.progress({ text }), { cwd }),
-        };
+        return processOutcome(await processes.start(target, processOwner(context), String(args.command), args.args as string[],
+          (text) => context.progress({ text }), { cwd }));
       },
     },
     {
@@ -284,11 +208,8 @@ export function workspaceTools(
             await processes.input(String(args.id), owner, args.text);
           }
           if (args.action === "stop") await processes.stop(String(args.id), owner);
-          return {
-            success: true,
-            data: await processes.read(String(args.id), owner, args.action === 'read'
-              ? { cursor: args.cursor as number | undefined, maxChars: args.maxChars as number | undefined } : undefined),
-          };
+          return processOutcome(await processes.read(String(args.id), owner, args.action === 'read'
+            ? { cursor: args.cursor as number | undefined, maxChars: args.maxChars as number | undefined } : undefined), args.action === 'stop');
         } catch (error) {
           // 运行器会把普通异常统一成 TOOL_FAILED；这些可恢复状态需要保留明确错误码供模型决策。
           if (error instanceof ProcessSessionError) return { success: false, code: error.code, error: error.message };

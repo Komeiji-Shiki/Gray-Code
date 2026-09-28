@@ -621,6 +621,7 @@ const sharedJa = {
                     excludeSources: {
                         argument: backendJa.tools.presentation.findFiles.excludeSources.argument,
                         fallback: backendJa.tools.presentation.findFiles.excludeSources.fallback,
+                        includeIgnored: backendJa.tools.presentation.findFiles.excludeSources.includeIgnored,
                         settings: backendJa.tools.presentation.findFiles.excludeSources.settings,
                         unknown: backendJa.tools.presentation.findFiles.excludeSources.unknown,
                     },
