@@ -51,6 +51,6 @@ export async function contextStatus(app: PlatformApplication, context: ToolConte
     pendingWindowSwitch: !!custom?.pendingContextWindow,
     lastSwitchReason: boundary?.contextSwitchReason,
     messageCount: history.length,
-    note: '本地估算，包含已保存的系统提示、工具目录和活跃历史；不含本次查询尚未产生的回执。供应商实际计数可能不同。',
+    note: '本地估算：系统提示、工具定义与当前历史消息的合计用量，供容量规划参考。',
   } };
 }

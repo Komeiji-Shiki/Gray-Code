@@ -5,7 +5,7 @@ import { recordValue, toolRawData } from '../../../utils/toolPresentation'
 import ToolResultValue from './ToolResultValue.vue'
 
 defineOptions({ inheritAttrs: false })
-const props = defineProps<{ args?: Record<string, unknown>; result?: unknown; error?: string; status?: string; toolName?: string }>()
+const props = defineProps<{ args?: Record<string, unknown>; result?: unknown; error?: string; status?: string; toolName?: string; hideHeading?: boolean }>()
 const { t } = useI18n()
 const rawOpen = ref(false)
 const hasResult = computed(() => props.result !== undefined && props.result !== null)
@@ -26,7 +26,7 @@ const waiting = computed(() => !hasResult.value && !failure.value && ['queued', 
     <div v-if="failure" class="result-error" role="alert"><span class="codicon codicon-error" aria-hidden="true" /><span>{{ failure }}</span></div>
     <slot />
     <section v-if="hasResult" class="result-section" :aria-label="t('components.tools.result')">
-      <div class="result-heading"><span class="codicon codicon-output" aria-hidden="true" /><span>{{ t('components.tools.result') }}</span><span v-if="envelope?.success !== undefined" class="result-outcome" :class="{ failed: envelope.success === false }">{{ t(`components.tools.${envelope.success === false ? 'failed' : 'executed'}`) }}</span></div>
+      <div v-if="!hideHeading" class="result-heading"><span class="codicon codicon-output" aria-hidden="true" /><span>{{ t('components.tools.result') }}</span><span v-if="envelope?.success !== undefined" class="result-outcome" :class="{ failed: envelope.success === false }">{{ t(`components.tools.${envelope.success === false ? 'failed' : 'executed'}`) }}</span></div>
       <slot name="result" :payload="payload" :metadata="metadata">
         <ToolResultValue v-if="!resultEmpty" :value="payload" />
         <p v-else-if="!failure && !media.length" class="result-empty">{{ t(envelope?.success === false ? 'components.tools.failed' : 'components.tools.structured.noOutput') }}</p>

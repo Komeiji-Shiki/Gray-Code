@@ -234,3 +234,24 @@ test('未知/损坏图片编码只保留大小说明，不经通用详情泄漏�
   expect(safeAutomationResult({ screenshot: { data: encoded } })).toEqual({ screenshot: { data: `[image: ${encoded.length} chars]` } })
   expect(fileSize(0)).toBe('0 B')
 })
+
+test('动作打开的新标签独立展示，原页面与加载中无编号项仍可辨认', async () => {
+  const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_action', args: { action: 'click' }, result: { success: true, data: {
+    id: 'original', title: 'Original page', url: 'https://example.com/', status: 'completed',
+    openedTabs: [
+      { id: 'library', title: 'Library', url: 'https://example.com/library', requestedUrl: 'https://example.com/redirect', status: 'opened' },
+      { requestedUrl: 'https://example.com/slow', status: 'opening' },
+      { requestedUrl: 'https://example.com/failed', status: 'failed', error: 'Initialization failed' },
+      { id: 'closed-tab', requestedUrl: 'https://example.com/closed', status: 'closed' },
+    ],
+  } } } }))
+  expect(wrapper.text()).toContain('本次打开的新标签')
+  expect(wrapper.find('.current-page').text()).toContain('Original page')
+  expect(wrapper.findAll('.browser-tabs>li')).toHaveLength(4)
+  expect(wrapper.findAll('.browser-tabs>li')[0].text()).toContain('library')
+  expect(wrapper.findAll('.browser-tabs>li')[1].text()).toContain('加载中')
+  expect(wrapper.findAll('.browser-tabs>li')[2].text()).toContain('Initialization failed')
+  expect(wrapper.findAll('.browser-tabs>li')[3].text()).toContain('已关闭')
+  setLanguage('en'); await wrapper.vm.$nextTick()
+  expect(wrapper.text()).toContain('Tabs opened by this action')
+})

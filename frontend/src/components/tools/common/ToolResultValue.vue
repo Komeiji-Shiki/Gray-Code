@@ -12,6 +12,8 @@ const image = computed(() => toolImage(value.value))
 const byteLength = computed(() => value.value instanceof Uint8Array ? value.value.byteLength : undefined)
 const link = computed(() => toolLink(value.value))
 const entries = computed(() => recordValue(value.value) ? Object.entries(value.value).filter(([key, item]) => item !== undefined && !props.omit.includes(key)) : [])
+const compactFields = computed(() => entries.value.length > 3 && entries.value.every(([, item]) =>
+  item === null || typeof item === 'number' || typeof item === 'boolean' || typeof item === 'string' && item.length <= 96 && !item.includes('\n')))
 const statusLabel = computed(() => props.field === 'status' ? toolStatusLabel(value.value) : undefined)
 const items = computed(() => Array.isArray(value.value) ? value.value : [])
 const collection = computed(() => Array.isArray(value.value) || recordValue(value.value))
@@ -44,7 +46,7 @@ function summary(item: unknown): { key: string; text: string } | undefined {
           <div class="result-list-body"><div v-if="summary(item)" class="result-item-title">{{ summary(item)?.text }}</div><ToolResultValue :value="item" :depth="recordValue(item) ? 0 : depth + 1" :omit="[summary(item)?.key ?? '']" /></div>
         </li>
       </ol>
-      <dl v-else class="result-fields">
+      <dl v-else class="result-fields" :class="{ 'result-fields-compact': compactFields }">
         <div v-for="[key, item] in entries.slice(0, visible)" :key="key" class="result-field">
           <dt :title="key">{{ toolFieldLabel(key) }}</dt>
           <dd><ToolResultValue :value="item" :depth="depth + 1" :field="key" /></dd>
@@ -63,6 +65,7 @@ function summary(item: unknown): { key: string; text: string } | undefined {
 <style scoped>
 .result-group,.result-list-body,.result-text-wrap{min-width:0}.result-group-summary{cursor:pointer;color:var(--vscode-descriptionForeground);padding:3px 0;font-size:12px}.result-group[open]>.result-group-summary{margin-bottom:7px}.result-fields{margin:0;display:grid;gap:0}.result-field{display:grid;grid-template-columns:minmax(90px,130px) minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--vscode-panel-border)}.result-field:last-child{border-bottom:0}dt{font-size:11px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere}dd{margin:0;min-width:0}.result-list{list-style:none;padding:0;margin:0}.result-list>li{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--vscode-panel-border)}.result-list>li:last-child{border-bottom:0}.result-index{flex:0 0 24px;text-align:right;color:var(--vscode-descriptionForeground);font:11px var(--vscode-editor-font-family,monospace);padding-top:2px}.result-list-body{flex:1}.result-item-title{font-size:12px;font-weight:600;overflow-wrap:anywhere;margin-bottom:5px}.result-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:12px/1.65 var(--vscode-editor-font-family,monospace);color:var(--vscode-foreground)}.result-link{display:inline-flex;gap:5px;max-width:100%;align-items:baseline;color:var(--vscode-textLink-foreground);font-size:12px;overflow-wrap:anywhere;word-break:break-word;text-decoration:none}.result-link:hover{text-decoration:underline}.result-number{font:12px var(--vscode-editor-font-family,monospace);color:var(--vscode-foreground)}.result-boolean{font-size:11px;border:1px solid var(--vscode-panel-border);padding:1px 6px;color:var(--vscode-descriptionForeground)}.result-boolean.is-true{color:var(--vscode-testing-iconPassed)}.result-muted{font-size:12px;color:var(--vscode-descriptionForeground)}.result-more{display:block;margin-top:8px;padding:5px 0;border:0;border-radius:0;background:transparent;color:var(--vscode-textLink-foreground);font:inherit;font-size:11px;cursor:pointer}.result-more:hover{text-decoration:underline}.result-image{margin:0;max-width:100%}.result-image img{display:block;max-width:100%;max-height:400px;object-fit:contain;border:1px solid var(--vscode-panel-border);background:var(--vscode-editor-background)}figcaption{font-size:11px;color:var(--vscode-descriptionForeground);padding-top:6px;overflow-wrap:anywhere}button:focus-visible,a:focus-visible,summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:3px}@media(max-width:480px){.result-field{grid-template-columns:minmax(65px,90px) minmax(0,1fr);gap:8px}}
 .result-fields{container-type:inline-size}
+.result-fields-compact{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));column-gap:20px}.result-fields-compact>.result-field{grid-template-columns:minmax(85px,1fr) minmax(0,1.4fr);gap:10px;padding:6px 0;align-items:baseline}.result-fields-compact>.result-field:last-child{border-bottom:1px solid var(--vscode-panel-border)}
 .result-status{display:inline-block;font-size:11px;padding:2px 6px;border:1px solid var(--vscode-panel-border);color:var(--vscode-textLink-foreground)}
 .result-status.is-complete{color:var(--vscode-testing-iconPassed)}
 .result-status.is-failed{color:var(--vscode-errorForeground)}

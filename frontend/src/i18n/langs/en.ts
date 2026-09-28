@@ -3408,6 +3408,7 @@ const en: LanguageMessages = {
 
         tools: {
             presentation: sharedEn.components.tools.presentation,
+            contextStatus: sharedEn.components.tools.contextStatus,
             automation: sharedEn.components.tools.automation,
             platform: sharedEn.components.tools.platform,
             executing: 'Executing...',

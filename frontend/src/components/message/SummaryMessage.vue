@@ -155,7 +155,7 @@ async function handleRestore() {
       >
         <i class="codicon" :class="isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'" aria-hidden="true"></i>
         <i class="codicon codicon-fold summary-icon" aria-hidden="true"></i>
-        <span class="summary-title">{{ message.contextMethod === 'notes' ? '上下文已换窗口' : t('components.message.summary.title') }}</span>
+        <span class="summary-title">{{ message.contextMethod === 'notes' ? t('components.tools.contextStatus.switched') : t('components.message.summary.title') }}</span>
         <span v-if="floor" class="message-floor">#{{ floor }}</span>
         <span v-if="message.summarizedMessageCount" class="summary-count">
           {{ t('components.message.summary.compressed', { count: message.summarizedMessageCount }) }}

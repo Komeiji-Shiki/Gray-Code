@@ -788,7 +788,7 @@ export class ConfigManager {
         const warnings: string[] = [];
 
         if (config.autoSummarizeMethod !== undefined && !['summary', 'notes'].includes(config.autoSummarizeMethod)) {
-            errors.push('自动总结方式必须是普通总结或笔记换窗口。');
+            errors.push('自动总结方式必须是普通总结或笔记管理。');
         }
         
         // 基础字段验证

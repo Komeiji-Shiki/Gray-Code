@@ -77,5 +77,5 @@ test('保留策略默认首条加最近一次，切换全部后随统一设置�
   select().vm.$emit('update:modelValue', 'first'); await flushPromises();
   await discardDesktopSettings(); await flushPromises();
   expect(select().props('modelValue')).toBe('all');
-  expect(view.text()).toContain('Bot 不受影响');
+  expect(view.text()).toContain('Bot 沿用独立配置');
 });

@@ -109,7 +109,7 @@ export class PlatformContextService {
     const threshold = calculateContextThreshold(config.contextThreshold ?? '80%', resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens);
     const shouldCompact = policy.enabled && policy.mode === 'summarize' && (info.needsAutoSummarize || activeTokens > threshold);
     if (management.method === 'notes' && shouldCompact && !switchRequested) {
-      if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name))) throw new Error('笔记换窗口需要启用上下文笔记、历史读取和换窗口工具，请在启用工具后重试。');
+      if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name))) throw new Error('笔记管理需要启用 context_notes、context_history 和 new_context 工具，请启用后重试。');
       if (overflow) {
         await event('context.summary.started', { method: 'notes' });
         const result = await notesWindowBoundary(this.app, frame, true, config.type, management.userMessageRetention, 'input_budget_exceeded');

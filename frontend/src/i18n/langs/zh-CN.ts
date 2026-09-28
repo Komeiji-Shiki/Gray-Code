@@ -2716,7 +2716,7 @@ const zhCN = {
                     context_notes: '任务笔记',
                     goal_update: '更新长期目标',
                     context_history: '对话历史',
-                    new_context: '新建上下文窗口',
+                    new_context: '切换上下文',
                     bot_read_attachment: '读取机器人附件',
                     team_tasks: '团队任务',
                     team_wait: '等待团队更新',
@@ -2785,7 +2785,7 @@ const zhCN = {
                     context_notes: '在当前对话中保存、读取和追加任务笔记，用于跨上下文窗口保留目标、进展与后续工作。',
                     goal_update: '保存当前长期目标的进度，报告目标完成或需要用户补充的信息。',
                     context_history: '列出、搜索和读取当前对话的原始消息及工具结果，支持按消息编号恢复先前上下文窗口中的记录。',
-                    new_context: '保存任务笔记后，为同一任务开启新的上下文窗口；历史记录仍可查询，任务继续进行。',
+                    new_context: '保存工作笔记后切换到新的上下文，读取所需历史继续当前任务。',
                     bot_read_attachment: '查看机器人对话中收到的 TXT、MD 文档信息，按偏移量分段读取正文。',
                     team_tasks: '管理主对话及子代理共享的任务、依赖关系、领取状态和完成状态。',
                     team_wait: '从上次事件位置等待并读取团队任务更新；等待时释放子代理并发名额。',
@@ -3410,6 +3410,7 @@ const zhCN = {
 
         tools: {
             presentation: sharedZhCN.components.tools.presentation,
+            contextStatus: sharedZhCN.components.tools.contextStatus,
             automation: sharedZhCN.components.tools.automation,
             platform: sharedZhCN.components.tools.platform,
             executing: '执行中...',

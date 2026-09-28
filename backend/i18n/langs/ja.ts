@@ -401,9 +401,21 @@ const ja: BackendLanguageMessages = {
     },
 
     tools: {
+        contextStatus: {
+            title: '入力トークン使用量', remaining: '残り', reservedOutput: '出力予約', capacity: 'コンテキスト容量',
+            threshold: '要約しきい値', method: '管理方式', retention: '保持するユーザーメッセージ',
+            summary: '通常の要約', notes: '作業ノート', retainFirst: '最初と最新', retainAll: 'すべて', retainBot: 'Bot の設定',
+            summaryOption: '通常の要約 · 履歴を圧縮', notesOption: '作業ノート · 必要な履歴を復元',
+            notesHint: 'しきい値に達したら作業ノートを保存してコンテキストを切り替え、ノートと必要な履歴を読み込んで作業を続けます。',
+            switched: 'コンテキストを切り替えました', disabled: '自動管理オフ', pending: 'コンテキストの切り替え待ち',
+            normal: '上限内', overThreshold: '要約しきい値に到達', overBudget: '入力上限を超過', unknown: '未提供',
+            localEstimate: 'ローカル推定', usageSource: '現在の使用量', details: '使用量の詳細', empty: '使用量データがありません',
+            fixedPrompt: '固定プロンプト', history: '履歴', messages: 'メッセージ数', measuredAt: '確認時刻',
+            thresholdTokens: 'しきい値トークン数', contextId: 'コンテキスト ID', initial: '初期コンテキスト',
+        },
         runtimeControl: {
             contextStatusName: 'コンテキスト状態',
-            contextStatusDescription: '入力予算、推定使用量、切り替え閾値と保持方針を必要時に確認します。要約や切り替えは行いません。',
+            contextStatusDescription: '現在のトークン使用量と要約方針を確認',
             terminalTaskName: 'バックグラウンド端末タスク',
             terminalTaskDescription: 'execute_command の状態確認、出力の差分読み取り、管理対象プロセスツリーの停止を行います。',
         },
@@ -454,6 +466,10 @@ const ja: BackendLanguageMessages = {
                 "read": "添付を読む"
             },
             "currentPage": "現在のページ",
+            "openedTabs": "この操作で開いたタブ",
+            "openedTabsHint": "以下のスクリーンショットとスナップショットは元のタブのものです。新しいページを読むには、そのタブ ID を使用してください。",
+            "closedTab": "閉じました",
+            "requestedUrl": "要求した URL",
             "profiles": "ログイン設定",
             "activeTab": "現在のタブ",
             "untitled": "無題",

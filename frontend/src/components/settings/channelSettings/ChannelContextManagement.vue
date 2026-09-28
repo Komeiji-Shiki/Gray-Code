@@ -41,10 +41,10 @@ const emit = defineEmits<{
 }>()
 
 const standaloneContext = !!window.__GRAYCODE_HOST
-const automaticMethodOptions: SelectOption[] = [
-  { value: 'summary', label: '普通总结 · 复用完整前缀' },
-  { value: 'notes', label: '笔记换窗口 · 按需恢复历史' }
-]
+const automaticMethodOptions = computed<SelectOption[]>(() => [
+  { value: 'summary', label: t('components.tools.contextStatus.summaryOption') },
+  { value: 'notes', label: t('components.tools.contextStatus.notesOption') }
+])
 function updateMode(value: string) {
   if (!standaloneContext) emit('update:mode', value)
   else if (value === 'summary' || value === 'notes') emit('update:auto-method', value)
@@ -98,7 +98,7 @@ const thresholdHelp = computed(() => {
 
   if (standaloneContext) {
     lines.push(props.autoSummarizeMethod === 'notes'
-      ? '达到阈值后提醒模型保存笔记并换窗口，通过笔记和历史工具继续任务，不请求整段摘要。'
+      ? t('components.tools.contextStatus.notesHint')
       : '达到阈值后使用当前模型和完整请求前缀生成摘要，活跃上下文仅保留首条用户消息和新摘要，原文仍可恢复。')
     return lines.join('\n')
   }

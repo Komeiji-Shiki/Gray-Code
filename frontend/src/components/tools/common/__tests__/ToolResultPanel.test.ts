@@ -96,3 +96,14 @@ test('等待状态保留参数，空的成功结果和直接返回的标量都�
     expect(scalar.find('.result-boolean').text()).toBe('否')
   } finally { waiting.unmount(); completed.unmount(); scalar.unmount() }
 })
+
+test('短标量字段采用紧凑布局，长正文和嵌套数据保持原布局', () => {
+  const compact = mount(ToolResultValue, { props: { value: { count: 0, title: 'Result', status: 'completed', truncated: false } } })
+  const document = mount(ToolResultValue, { props: { value: { count: 1, title: 'Result', status: 'completed', text: '正文\n'.repeat(40) } } })
+  try {
+    expect(compact.find('.result-fields-compact').exists()).toBe(true)
+    expect(compact.findAll('.result-fields-compact>.result-field')).toHaveLength(4)
+    expect(document.find('.result-fields-compact').exists()).toBe(false)
+    expect(document.text()).toContain('正文')
+  } finally { compact.unmount(); document.unmount() }
+})

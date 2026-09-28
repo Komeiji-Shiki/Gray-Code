@@ -509,7 +509,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .tool-description {
   margin-left: calc(var(--gc-font-size-body) + var(--gc-icon-size-sm) + var(--gc-space-1) + var(--gc-space-1));
   color: var(--gc-text-muted);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--vscode-font-family);
   font-size: var(--gc-font-size-caption);
   line-height: var(--gc-line-height-normal);
   white-space: pre-wrap;
@@ -567,9 +567,10 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .tool-content {
-  padding: var(--gc-space-2) var(--gc-space-3);
+  min-width: 0;
+  padding: var(--gc-space-3);
   border-top: 1px solid var(--gc-border-subtle);
-  background: var(--gc-surface-muted);
+  background: transparent;
 }
 
 /* 默认内容样式 */

@@ -401,9 +401,21 @@ Output content directly without any prefix.`
     },
 
     tools: {
+        contextStatus: {
+            title: 'Input token usage', remaining: 'Remaining', reservedOutput: 'Reserved output', capacity: 'Context capacity',
+            threshold: 'Summary threshold', method: 'Management', retention: 'User messages retained',
+            summary: 'Summary', notes: 'Working notes', retainFirst: 'First and latest', retainAll: 'All', retainBot: 'Bot settings',
+            summaryOption: 'Summary · Compress history', notesOption: 'Working notes · Restore history as needed',
+            notesHint: 'At the threshold, save working notes, switch context, then read the notes and relevant history to continue.',
+            switched: 'Context switched', disabled: 'Automatic management off', pending: 'Context switch pending',
+            normal: 'Within budget', overThreshold: 'Summary threshold reached', overBudget: 'Input limit exceeded', unknown: 'Not provided',
+            localEstimate: 'Local estimate', usageSource: 'Current usage', details: 'Usage details', empty: 'Usage data unavailable',
+            fixedPrompt: 'Fixed prompt', history: 'History', messages: 'Messages', measuredAt: 'Checked at',
+            thresholdTokens: 'Threshold tokens', contextId: 'Context ID', initial: 'Initial context',
+        },
         runtimeControl: {
             contextStatusName: 'Context Status',
-            contextStatusDescription: 'Inspect the current input budget, estimated usage, switching threshold and retention policy without compacting context.',
+            contextStatusDescription: 'Check current token usage and summary policy',
             terminalTaskName: 'Background Terminal Task',
             terminalTaskDescription: 'Inspect execute_command tasks, read incremental output or stop their managed process trees.',
         },
@@ -454,6 +466,10 @@ Output content directly without any prefix.`
                 "read": "Read attachment"
             },
             "currentPage": "Current page",
+            "openedTabs": "Tabs opened by this action",
+            "openedTabsHint": "The screenshot and snapshot below still belong to the original tab. Use the new tab ID to read its page.",
+            "closedTab": "Closed",
+            "requestedUrl": "Requested URL",
             "profiles": "Login profiles",
             "activeTab": "Active tab",
             "untitled": "Untitled",

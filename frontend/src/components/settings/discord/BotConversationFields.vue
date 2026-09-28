@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { t } from '../../../i18n';
 import type { BotAutoSummarySettings, BotEnvironmentEntry, DiscordReplyProfile } from '../../../../../packages/contracts/src/settings';
 import { DEFAULT_BOT_AUTO_SUMMARY, DEFAULT_BOT_ENVIRONMENT } from '../../../../../shared/botConversation';
 const props = defineProps<{ modelValue: DiscordReplyProfile; inherited?: DiscordReplyProfile }>();
@@ -35,9 +36,9 @@ function changeTiming(patch: Partial<BotAutoSummarySettings>) { set('autoSummary
     <label><span>自动总结配置</span><select :value="modelValue.autoSummary ? 'custom' : 'inherit'" @change="set('autoSummary', ($event.target as HTMLSelectElement).value === 'inherit' ? undefined : { ...summary })"><option value="inherit">继承默认配置（{{ inheritedSummary.enabled ? '已开启' : '已关闭' }}）</option><option value="custom">为这个入口单独配置</option></select></label>
     <template v-if="modelValue.autoSummary">
       <label><span>开启自动总结</span><input type="checkbox" :checked="summary.enabled" @change="changeTiming({ enabled: ($event.target as HTMLInputElement).checked })" /></label>
-      <label><span>总结方式</span><select :value="summaryMode" @change="changeSummary({ method: ($event.target as HTMLSelectElement).value as 'summary' | 'notes' })"><option value="summary">普通总结 · 复用完整前缀</option><option value="notes">笔记窗口 · 按需恢复历史</option></select></label>
+      <label><span>总结方式</span><select :value="summaryMode" @change="changeSummary({ method: ($event.target as HTMLSelectElement).value as 'summary' | 'notes' })"><option value="summary">{{ t('components.tools.contextStatus.summaryOption') }}</option><option value="notes">{{ t('components.tools.contextStatus.notesOption') }}</option></select></label>
       <p v-if="summaryMode === 'summary'">按上下文阈值触发时，保留完整请求前缀并生成摘要；原文与附件仍可查看和恢复。</p>
-      <p v-else>按上下文阈值提醒模型保存笔记并切换窗口，之后可通过笔记与历史工具恢复所需内容。</p>
+      <p v-else>{{ t('components.tools.contextStatus.notesHint') }}</p>
       <label><span>开启时间总结<small>任务完成后，满足时间规则时执行总结。</small></span><input type="checkbox" :checked="timeEnabled" @change="changeSummary({ timedEnabled: ($event.target as HTMLInputElement).checked })" /></label>
       <template v-if="timeEnabled">
         <label><span>时间规则</span><select :value="summary.trigger" @change="changeTiming({ trigger: ($event.target as HTMLSelectElement).value as 'idle' | 'interval' })"><option value="idle">频道连续没有新消息</option><option value="interval">距上一次总结尝试已过指定时间</option></select></label>

@@ -108,9 +108,9 @@ const zhCN = {
                 title: '普通会话的用户消息保留',
                 first: '首条用户消息＋最近一次输入',
                 all: '全部用户消息',
-                hint: '同时用于普通会话的自动和手动总结、笔记换窗。无论选择哪项，始终保留切换前最近一次真实用户输入；Bot 不受影响。修改在后续回合或手动操作时生效。',
+                hint: '用于普通会话的自动总结、手动总结和笔记管理，始终保留最近一次用户输入；Bot 沿用独立配置。修改从后续回合或手动操作开始生效。',
                 summaryHint: '沿用当前模型、系统提示词和工具定义，在完整上下文末尾追加总结指令。成功后保留所选用户原文与新摘要，后续消息继续追加。',
-                notesHint: '手动操作直接换窗口，不额外生成整段摘要。新窗口保留所选用户原文与恢复提示，由模型按需读取工作笔记和历史。',
+                notesHint: '手动操作切换到新的上下文，保留所选用户消息和恢复提示，随后按需读取工作笔记与历史。',
             },
             clawdSettings: {
                 title: 'Clawd 独立桌宠联动',
@@ -403,9 +403,21 @@ const zhCN = {
     },
 
     tools: {
+        contextStatus: {
+            title: '输入 token 用量', remaining: '剩余额度', reservedOutput: '预留输出', capacity: '上下文容量',
+            threshold: '总结阈值', method: '管理方式', retention: '保留用户消息',
+            summary: '普通总结', notes: '笔记管理', retainFirst: '首条与最近一次', retainAll: '全部', retainBot: '按 Bot 配置',
+            summaryOption: '普通总结 · 压缩历史内容', notesOption: '笔记管理 · 按需恢复历史',
+            notesHint: '达到阈值后保存工作笔记，切换到新的上下文，再读取笔记和所需历史继续任务。',
+            switched: '已切换上下文', disabled: '自动管理已关闭', pending: '等待切换上下文',
+            normal: '余量充足', overThreshold: '已达总结阈值', overBudget: '超出输入上限', unknown: '未提供',
+            localEstimate: '本地估算', usageSource: '当前用量', details: '用量明细', empty: '暂无用量数据',
+            fixedPrompt: '固定提示', history: '历史消息', messages: '消息数量', measuredAt: '查询时间',
+            thresholdTokens: '阈值 token 数', contextId: '上下文编号', initial: '初始上下文',
+        },
         runtimeControl: {
             contextStatusName: '上下文状态',
-            contextStatusDescription: '按需查询当前输入预算、估算用量、换窗阈值与保留策略；不触发总结或换窗。',
+            contextStatusDescription: '查询当前token用量与总结策略',
             terminalTaskName: '后台终端任务',
             terminalTaskDescription: '查询 execute_command 的任务状态、增量读取输出或停止对应受管进程树。',
         },
@@ -456,6 +468,10 @@ const zhCN = {
                 "read": "读取附件"
             },
             "currentPage": "当前页面",
+            "openedTabs": "本次打开的新标签",
+            "openedTabsHint": "下方截图与快照仍属于原标签。查看新页面时，请使用对应的新标签 ID。",
+            "closedTab": "已关闭",
+            "requestedUrl": "打开地址",
             "profiles": "登录配置",
             "activeTab": "当前标签",
             "untitled": "无标题",

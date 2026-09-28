@@ -16,7 +16,8 @@ const data = computed(() => payload(safeResult.value))
 const action = computed(() => text(props.args?.action))
 const observation = computed(() => Object.keys(record(data.value.observation)).length ? record(data.value.observation) : data.value.screenshot ? data.value : {})
 const page = computed(() => ({ ...observation.value, ...data.value }))
-const tabs = computed(() => records(data.value.tabs))
+const tabs = computed(() => records(data.value.tabs ?? data.value.openedTabs))
+const openedTabs = computed(() => Array.isArray(data.value.openedTabs) && !Array.isArray(data.value.tabs))
 const profiles = computed(() => records(data.value.profiles))
 const snapshot = computed(() => Object.keys(record(data.value.snapshot)).length ? record(data.value.snapshot) : data.value)
 const nodes = computed(() => Array.isArray(snapshot.value.nodes) ? snapshot.value.nodes : [])
@@ -42,14 +43,16 @@ function logTime(value: unknown) {
         <p v-if="typeof data.conditionMet === 'boolean'" class="automation-notice" :class="{ 'automation-error': data.timedOut === true }">{{ t(`components.tools.automation.${data.conditionMet ? 'conditionMet' : 'conditionTimedOut'}`) }}</p>
         <div v-if="tabId && (toolName === 'browser_files' || !page.title && !page.url)" class="automation-meta">{{ toolFieldLabel('tabId') }} <code>{{ tabId }}</code></div>
 
-        <template v-if="Array.isArray(data.tabs)">
-          <div class="automation-section-title"><h4>{{ toolFieldLabel('tabs') }}</h4><span class="automation-count">{{ tabs.length }}</span></div>
+        <template v-if="Array.isArray(data.tabs) || openedTabs">
+          <div class="automation-section-title"><h4>{{ openedTabs ? t('components.tools.automation.openedTabs') : toolFieldLabel('tabs') }}</h4><span class="automation-count">{{ tabs.length }}</span></div>
+          <p v-if="openedTabs" class="automation-meta">{{ t('components.tools.automation.openedTabsHint') }}</p>
           <p v-if="!tabs.length" class="automation-empty">{{ t('components.tools.automation.noTabs') }}</p>
           <ul v-else class="automation-list browser-tabs">
-            <li v-for="tab in tabs.slice(0, visible)" :key="text(tab.id)" :class="{ 'is-active': tab.id === data.activeTabId }">
-              <div class="automation-item-head"><strong>{{ text(tab.title) || t('components.tools.automation.untitled') }}</strong><span v-if="tab.id === data.activeTabId" class="automation-badge">{{ t('components.tools.automation.activeTab') }}</span><span v-if="tab.loading === true" class="automation-badge">{{ t('components.tools.automation.loading') }}</span><span v-if="tab.userControlled === true" class="automation-badge is-warning">{{ t('components.tools.automation.userControlled') }}</span></div>
-              <a v-if="toolLink(tab.url)" class="automation-link" :href="toolLink(tab.url)" target="_blank" rel="noopener noreferrer">{{ text(tab.url) }}</a><span v-else class="automation-muted">{{ text(tab.url) }}</span>
-              <div class="automation-meta"><span>{{ toolFieldLabel('tabId') }} <code>{{ text(tab.id) }}</code></span><span v-if="tab.profileId">{{ toolFieldLabel('profileId') }} · {{ profileName(tab.profileId) }}</span><span v-if="record(tab.controlledBy).runId">{{ t('components.tools.automation.controlledBy') }} <code>{{ text(record(tab.controlledBy).runId) }}</code></span></div>
+            <li v-for="(tab, index) in tabs.slice(0, visible)" :key="text(tab.id) || index" :class="{ 'is-active': tab.id === data.activeTabId }">
+              <div class="automation-item-head"><strong>{{ text(tab.title) || t('components.tools.automation.untitled') }}</strong><span v-if="tab.id === data.activeTabId && tab.id" class="automation-badge">{{ t('components.tools.automation.activeTab') }}</span><span v-if="tab.loading === true || tab.status === 'opening'" class="automation-badge">{{ t('components.tools.automation.loading') }}</span><span v-if="tab.status === 'closed'" class="automation-badge">{{ t('components.tools.automation.closedTab') }}</span><span v-if="tab.userControlled === true" class="automation-badge is-warning">{{ t('components.tools.automation.userControlled') }}</span></div>
+              <a v-if="toolLink(tab.url || tab.requestedUrl)" class="automation-link" :href="toolLink(tab.url || tab.requestedUrl)" target="_blank" rel="noopener noreferrer">{{ text(tab.url || tab.requestedUrl) }}</a><span v-else class="automation-muted">{{ text(tab.url || tab.requestedUrl) }}</span>
+              <div v-if="tab.requestedUrl && tab.requestedUrl !== tab.url && tab.url" class="automation-meta">{{ t('components.tools.automation.requestedUrl') }} · {{ text(tab.requestedUrl) }}</div>
+              <div class="automation-meta"><span v-if="tab.id">{{ toolFieldLabel('tabId') }} <code>{{ text(tab.id) }}</code></span><span v-if="tab.profileId">{{ toolFieldLabel('profileId') }} · {{ profileName(tab.profileId) }}</span><span v-if="record(tab.controlledBy).runId">{{ t('components.tools.automation.controlledBy') }} <code>{{ text(record(tab.controlledBy).runId) }}</code></span></div>
               <div v-if="tab.error" class="automation-notice automation-error">{{ text(tab.error) }}</div>
             </li>
           </ul>

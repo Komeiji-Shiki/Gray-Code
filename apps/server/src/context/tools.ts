@@ -35,12 +35,12 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
   const schema = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
   return [
     {
-      declaration: { name: 'context_status', description: '按需查询当前会话的上下文容量：本地估算用量、输入预算、输出预留、触发阈值、保留策略和上次切换原因。工作中需要判断是否换窗时调用；不调用就不额外发送这些数值。只读，不触发总结或换窗，也不发起供应商计数请求。', parameters: schema({}, []) },
+      declaration: { name: 'context_status', description: '查询当前token用量与总结策略', parameters: schema({}, []) },
       parallelRead: true, effects: () => [],
       execute: async (_args, context) => contextStatus(app, context, await authorizeContext(context)),
     },
     {
-      declaration: { name: 'context_notes', description: 'Maintain persistent working notes for the current task across context windows. List or read notes to resume; write or append a concise checkpoint with goals, constraints, progress, next steps and exact history message IDs before new_context. Notes remain local to this conversation.',
+      declaration: { name: 'context_notes', description: '在当前会话保存和读取工作笔记。切换上下文前，用 write 或 append 记录目标、约束、进展、后续步骤及相关历史消息 ID；继续任务时用 list 或 read 恢复。',
         parameters: schema({ action: { type: 'string', enum: ['list', 'read', 'write', 'append'] }, name: { type: 'string', minLength: 1, maxLength: 120 }, text: { type: 'string', maxLength: 100000 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20000 } }, ['action']) },
       parallelRead: args => args.action === 'list' || args.action === 'read',
       effects: () => [],
@@ -122,19 +122,19 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
       },
     },
     {
-      declaration: { name: 'new_context', description: 'Only available when the current turn uses the notes context-management method; do not call it in other modes. Save a working checkpoint with context_notes before switching; use context_status when you need the current budget to decide. Start a fresh context window for the same task; prior messages remain available through context_history. The runtime switches after this tool batch finishes, preserving paired tool calls and results. This does not complete the task.', parameters: schema({}, []) },
+      declaration: { name: 'new_context', description: '切换到新的上下文，继续当前任务。适用于笔记管理模式；先用 context_notes 保存工作进展，可用 context_status 查询用量。切换在本批工具完成后执行，保留工具调用与结果配对；随后读取笔记，并通过 context_history 恢复所需历史。', parameters: schema({}, []) },
       effects: () => [],
       execute: async (_args, context) => {
         const id = await authorizeContext(context);
         const state = await app.storage.getConversationInfo(id);
         if (!state) throw new Error('当前会话已不存在。');
         const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as { turnContext?: { contextManagementMethod?: string } } | undefined;
-        if ((prefix?.turnContext?.contextManagementMethod ?? app.context.configuration(state.metadata).method) !== 'notes') throw new Error('当前回合没有选择笔记换窗口方式。');
+        if ((prefix?.turnContext?.contextManagementMethod ?? app.context.configuration(state.metadata).method) !== 'notes') throw new Error('切换上下文需要选择笔记管理方式。');
         context.signal.throwIfAborted();
         await app.storage.commitConversation({ conversationId: id, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken,
           activeRunId: context.runId, metadata: { ...state.metadata, custom: { ...state.metadata.custom as Record<string, unknown>,
             pendingContextWindow: { runId: context.runId, toolCallId: context.toolCallId } } } });
-        return { success: true, message: '本批工具完成后开始新的上下文窗口，请读取笔记并继续原任务。' };
+        return { success: true, message: '本批工具完成后切换到新的上下文，请读取笔记并继续任务。' };
       },
     },
   ];

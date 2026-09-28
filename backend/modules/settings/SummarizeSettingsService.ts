@@ -33,7 +33,7 @@ export class SummarizeSettingsService {
      */
     async updateSummarizeConfig(config: Partial<SummarizeConfig>): Promise<void> {
         if (config.method !== undefined && config.method !== 'summary' && config.method !== 'notes') {
-            throw new Error('请选择普通总结或笔记换窗口。');
+            throw new Error('请选择普通总结或笔记管理。');
         }
         if (config.userMessageRetention !== undefined && config.userMessageRetention !== 'first' && config.userMessageRetention !== 'all') {
             throw new Error('请选择保留首条或全部用户消息。');

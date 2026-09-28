@@ -3408,6 +3408,7 @@ const ja: LanguageMessages = {
 
         tools: {
             presentation: sharedJa.components.tools.presentation,
+            contextStatus: sharedJa.components.tools.contextStatus,
             automation: sharedJa.components.tools.automation,
             platform: sharedJa.components.tools.platform,
             executing: '実行中...',

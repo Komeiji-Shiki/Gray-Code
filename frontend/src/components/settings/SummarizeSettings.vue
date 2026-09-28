@@ -352,7 +352,7 @@ onUnmounted(() => {
     
     <div v-if="standaloneContext" class="section" data-search-anchor="context-method">
       <h5 class="section-title">手动总结方式</h5>
-      <CustomSelect :model-value="summarizeConfig.method ?? 'summary'" :options="[{ value: 'summary', label: '普通总结 · 复用完整前缀' }, { value: 'notes', label: '笔记换窗口 · 按需恢复历史' }]" @update:model-value="value => updateConfigField('method', value as 'summary' | 'notes')" />
+      <CustomSelect :model-value="summarizeConfig.method ?? 'summary'" :options="[{ value: 'summary', label: t('components.tools.contextStatus.summaryOption') }, { value: 'notes', label: t('components.tools.contextStatus.notesOption') }]" @update:model-value="value => updateConfigField('method', value as 'summary' | 'notes')" />
       <p v-if="summarizeConfig.method !== 'notes'" class="field-hint">{{ t('components.settings.summarizeSettings.retention.summaryHint') }}</p>
       <p v-else class="field-hint">{{ t('components.settings.summarizeSettings.retention.notesHint') }}</p>
       <p class="field-hint">未单独设置自动方式的旧渠道仍沿用此选择；已单独设置的渠道不受影响。Bot 保留自己的方式选择，并可使用原有时间总结。</p>
