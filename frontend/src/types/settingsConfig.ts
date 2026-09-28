@@ -56,6 +56,7 @@ export type AgentConfig = SubAgentConfig
 /** 上下文总结配置（SummarizeSettings.vue） */
 export interface SummarizeConfig {
   method?: 'summary' | 'notes'
+  userMessageRetention?: import('../../../shared/contextManagement').ContextUserMessageRetention
   summarizePrompt: string
   autoSummarizePrompt: string
   keepRecentRounds: number

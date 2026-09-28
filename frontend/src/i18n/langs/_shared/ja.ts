@@ -280,6 +280,16 @@ const sharedJa = {
             subagents: {
                 description: backendJa.tools.reviewDocument.finding.description,
             },
+            summarizeSettings: {
+                retention: {
+                    all: backendJa.modules.settings.contextRetention.all,
+                    first: backendJa.modules.settings.contextRetention.first,
+                    hint: backendJa.modules.settings.contextRetention.hint,
+                    notesHint: backendJa.modules.settings.contextRetention.notesHint,
+                    summaryHint: backendJa.modules.settings.contextRetention.summaryHint,
+                    title: backendJa.modules.settings.contextRetention.title,
+                },
+            },
             toolSettings: {
                 common: {
                     error: backendJa.modules.mcp.status.error,
@@ -298,6 +308,14 @@ const sharedJa = {
             toolsSettings: {
                 categories: {
                     other: backendJa.tools.reviewDocument.values.category.other,
+                },
+                toolDescriptions: {
+                    context_status: backendJa.tools.runtimeControl.contextStatusDescription,
+                    terminal_task: backendJa.tools.runtimeControl.terminalTaskDescription,
+                },
+                toolDisplayNames: {
+                    context_status: backendJa.tools.runtimeControl.contextStatusName,
+                    terminal_task: backendJa.tools.runtimeControl.terminalTaskName,
                 },
             },
         },

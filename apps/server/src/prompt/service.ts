@@ -39,15 +39,17 @@ export class PlatformPromptService {
     const failureSnapshot = failure ? [{ role: 'user' as const, parts: [{ text: failure }] }] : [];
     const failureMessage: PlatformMessage[] = failureSnapshot.map(message => ({ ...message, contextControl: 'run_failure' }));
     const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
-    const contextManagementMethod = this.app.context.configuration(input.conversation, contextChannel ?? undefined).method;
+    const contextSettings = this.app.context.configuration(input.conversation, contextChannel ?? undefined);
+    const contextManagementMethod = contextSettings.method;
+    const contextUserMessageRetention = contextSettings.userMessageRetention;
     const useContextNotes = contextManagementMethod === 'notes';
     // 手动换到笔记窗口后仍提供恢复工具，自动方式继续服从当前渠道，不强迫两者相同。
     const contextRecovery = this.app.context.configuration(input.conversation).method === 'notes'
       || input.history.findLast(message => message.isSummary && !message.isSummarized)?.contextMethod === 'notes';
-    const contextToolNames = useContextNotes ? [...CONTEXT_TOOL_NAMES] : contextRecovery ? ['context_history', 'context_notes'] : [];
+    const contextToolNames = ['context_status', ...(useContextNotes ? [...CONTEXT_TOOL_NAMES] : contextRecovery ? ['context_history', 'context_notes'] : [])];
     if (typeof (input.conversation.custom as Record<string, unknown> | undefined)?.platformSubagentId === 'string') return {
       systemPrompt: input.agent.systemPrompt, toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
-      turnContext: { contextManagementMethod },
+      turnContext: { contextManagementMethod, contextUserMessageRetention },
       ...(useContextNotes || failure ? { promptContext: { historyPlacement: 'entry' as const,
         beforeHistoryMessages: (useContextNotes ? [{ role: 'user', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] }] : []) as PlatformMessage[],
         afterHistoryMessages: failureMessage } } : {}),
@@ -135,7 +137,7 @@ export class PlatformPromptService {
           || !message.parts.some(part => typeof part.text === 'string' && isLegacyBotIdentityText(part.text))), ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },
       messageParts: characterSource?.parts,
-      turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod },
+      turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod, contextUserMessageRetention },
       messageMetadata: { turnPlatformMode: input.previousTurn?.turnPlatformMode ?? conversationMode ?? 'chat', ...(companionTurn ? { companionTurn } : {}), ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterTurn, characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
         characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve',
         turnDynamicContext: serializePromptContextCache({ ...bundle,

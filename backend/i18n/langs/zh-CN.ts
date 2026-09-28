@@ -104,6 +104,14 @@ const zhCN = {
         },
 
         settings: {
+            contextRetention: {
+                title: '普通会话的用户消息保留',
+                first: '首条用户消息＋最近一次输入',
+                all: '全部用户消息',
+                hint: '同时用于普通会话的自动和手动总结、笔记换窗。无论选择哪项，始终保留切换前最近一次真实用户输入；Bot 不受影响。修改在后续回合或手动操作时生效。',
+                summaryHint: '沿用当前模型、系统提示词和工具定义，在完整上下文末尾追加总结指令。成功后保留所选用户原文与新摘要，后续消息继续追加。',
+                notesHint: '手动操作直接换窗口，不额外生成整段摘要。新窗口保留所选用户原文与恢复提示，由模型按需读取工作笔记和历史。',
+            },
             clawdSettings: {
                 title: 'Clawd 独立桌宠联动',
                 description: '让已启动的 Clawd 跟随 GrayCode 的任务显示思考、工具执行、等待确认、完成和失败状态。',
@@ -395,6 +403,12 @@ const zhCN = {
     },
 
     tools: {
+        runtimeControl: {
+            contextStatusName: '上下文状态',
+            contextStatusDescription: '按需查询当前输入预算、估算用量、换窗阈值与保留策略；不触发总结或换窗。',
+            terminalTaskName: '后台终端任务',
+            terminalTaskDescription: '查询 execute_command 的任务状态、增量读取输出或停止对应受管进程树。',
+        },
         automation: {
             "actions": {
                 "list": "列出",

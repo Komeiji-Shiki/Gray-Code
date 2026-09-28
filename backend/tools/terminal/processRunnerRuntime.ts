@@ -581,6 +581,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         const stdoutTail = flushDecodeState(stdoutDecodeModeRef, stdoutGbkDecoder);
 
                         if (stdoutTail) {
+                            emitTerminalOutput({ terminalId, type: 'output', data: stdoutTail });
                             const content = stdoutRemaining + stdoutTail;
                             const lines = content.split(/\r?\n/);
                             stdoutRemaining = lines.pop() || '';
@@ -592,6 +593,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         const stderrTail = flushDecodeState(stderrDecodeModeRef, stderrGbkDecoder);
 
                         if (stderrTail) {
+                            emitTerminalOutput({ terminalId, type: 'error', data: stderrTail });
                             const content = stderrRemaining + stderrTail;
                             const lines = content.split(/\r?\n/);
                             stderrRemaining = lines.pop() || '';

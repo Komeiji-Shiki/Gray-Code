@@ -10,17 +10,20 @@ import { createTerminalPrompts } from '../../../../backend/tools/terminal/prompt
 import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
+import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../workspace/processes';
+import { getActualLanguage } from '../../../../backend/i18n';
 
 interface TerminalRecord {
   id: string; actorId: string; conversationId: string; runId: string; workspaceId: string;
   status: 'queued' | 'running' | 'completed' | 'cancelled' | 'error' | 'interrupted';
   startTime: number; updatedAt: number; data: Record<string, unknown>;
+  outputBuffer?: ProcessOutputBuffer;
 }
 type Runner = ReturnType<typeof createTerminalRuntime>;
 
 /** 独立宿主保存任务归属和终态；Shell 与进程处理复用原运行器。 */
 export class PlatformTerminals {
-  private readonly active = new Map<string, { record: TerminalRecord; runner: Runner }>();
+  private readonly active = new Map<string, { record: TerminalRecord; runner: Runner; outputSave?: ReturnType<typeof setTimeout> }>();
   private events: Promise<void> = Promise.resolve();
   private closing = false;
   constructor(private readonly app: PlatformApplication) {}
@@ -45,6 +48,9 @@ export class PlatformTerminals {
 
   tool(config = getDefaultExecuteCommandConfig()): RuntimeTool {
     const declaration = this.runtime(config, new TerminalTaskPort(() => {})).createExecuteCommandTool().declaration;
+    declaration.description += getActualLanguage() === 'zh-CN'
+      ? '\n后台 taskId 可交给 terminal_task 查询状态、增量读取或停止。默认等待完成通知；需要诊断无进展的任务时按需查询，不循环轮询。'
+      : '\nUse terminal_task with the returned background taskId to inspect status, read incremental output or stop the managed task. Prefer automatic completion notices; inspect stalled tasks when needed without polling loops.';
     return { declaration: declaration as ToolDeclaration,
       effects: args => shellCommandEffects(String(args.command)),
       execute: (args, context) => this.execute(args, context, declaration, structuredClone(config)) };
@@ -61,11 +67,24 @@ export class PlatformTerminals {
     const id = `terminal-${randomUUID()}`;
     const record: TerminalRecord = { id, actorId: context.actorId, conversationId: context.conversationId,
       runId: context.runId, workspaceId: context.workspace.id, status: 'queued', startTime: Date.now(), updatedAt: Date.now(),
-      data: { command: args.command, cwd, shell: args.shell ?? 'default', background: args.background === true } };
+      data: { command: args.command, cwd, shell: args.shell ?? 'default', background: args.background === true },
+      outputBuffer: { output: '', outputOffset: 0, truncated: false } };
     const tasks = new TerminalTaskPort(event => this.queue(record, event));
     const runner = this.runtime(config, tasks, context.workspace.directory);
     const unsubscribe = runner.onTerminalOutput(event => {
       this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'terminalOutput', data: event } });
+      if (event.data && (event.type === 'output' || event.type === 'error')) {
+        appendProcessOutput(record.outputBuffer!, event.data);
+        record.updatedAt = Date.now();
+        const active = this.active.get(id);
+        if (active && !active.outputSave) {
+          active.outputSave = setTimeout(() => {
+            active.outputSave = undefined;
+            if (this.active.has(id)) this.queue(record, { taskId: id, taskType: 'terminal', type: 'progress', data: {} });
+          }, 1000);
+          active.outputSave.unref();
+        }
+      }
       if (event.data) context.progress({ terminalId: id, text: event.data });
     });
     this.active.set(id, { record, runner });
@@ -99,6 +118,7 @@ export class PlatformTerminals {
 
   private queue(record: TerminalRecord, event: TaskEvent) {
     this.events = this.events.catch(() => {}).then(async () => {
+      if ((event.type === 'start' || event.type === 'progress') && !this.active.has(record.id)) return;
       record.data = { ...record.data, ...event.data };
       record.updatedAt = Date.now();
       if (event.type === 'start' || event.type === 'progress') {
@@ -127,6 +147,7 @@ export class PlatformTerminals {
     ]);
   }
   private async finish(record: TerminalRecord) {
+    clearTimeout(this.active.get(record.id)?.outputSave);
     record.updatedAt = Date.now();
     // 先保存终态，重启时仍可补发尚未交付的后台结果。
     await this.save(record, true);
@@ -177,9 +198,55 @@ export class PlatformTerminals {
   async kill(actorId: string, id: string) {
     await this.accessible(actorId, id);
     const runner = this.active.get(id)?.runner;
-    if (runner) await runner.killTerminalProcess(id);
+    if (runner) {
+      const result = await runner.killTerminalProcess(id);
+      if (!result.success && this.active.has(id)) return result;
+    }
     await this.events;
     return this.output(actorId, id);
+  }
+  private taskSummary(record: TerminalRecord) {
+    return { taskId: record.id, status: record.status, running: this.active.has(record.id) && ['queued', 'running'].includes(record.status),
+      command: String(record.data.command ?? '').slice(0, 1000), background: record.data.background === true,
+      startTime: record.startTime, updatedAt: record.updatedAt, exitCode: record.data.exitCode ?? null, error: record.data.error };
+  }
+  async manageTask(args: Record<string, unknown>, context: ToolContext) {
+    if (!context.conversationId || !context.workspace) throw new Error('请先为当前会话选择工作区。');
+    await this.app.conversation(context.actorId, context.conversationId);
+    const run = await this.app.storage.getRun(context.runId);
+    if (!run || run.actorId !== context.actorId || run.conversationId !== context.conversationId) throw new ProcessSessionError('FORBIDDEN', '终端管理需要有效的当前运行身份。');
+    const owned = (record: TerminalRecord) => record.actorId === context.actorId && record.conversationId === context.conversationId && record.workspaceId === context.workspace!.id;
+    await this.events; context.signal.throwIfAborted();
+    if (args.action === 'list') {
+      const offset = args.offset ?? 0, limit = args.limit ?? 20;
+      if (!Number.isSafeInteger(offset) || Number(offset) < 0 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 100) throw new Error('offset/limit 无效。');
+      const records: TerminalRecord[] = [];
+      for (const id of await this.app.storage.listRecords('terminal-records', context.conversationId)) {
+        context.signal.throwIfAborted();
+        const record = this.active.get(id)?.record ?? await this.app.storage.getRecord('terminal-records', id) as TerminalRecord | null;
+        if (record && owned(record)) records.push(record);
+      }
+      records.sort((a, b) => b.startTime - a.startTime || a.id.localeCompare(b.id));
+      const tasks = records.slice(Number(offset), Number(offset) + Number(limit)).map(record => this.taskSummary(record));
+      const nextOffset = Number(offset) + tasks.length < records.length ? Number(offset) + tasks.length : undefined;
+      return { success: true, data: { tasks, total: records.length, offset, nextOffset } };
+    }
+    if (typeof args.taskId !== 'string' || !args.taskId) throw new Error('需要 execute_command 返回的 taskId。');
+    const record = this.active.get(args.taskId)?.record ?? await this.app.storage.getRecord('terminal-records', args.taskId) as TerminalRecord | null;
+    if (!record) throw new ProcessSessionError('NOT_FOUND', '终端任务不存在。');
+    if (!owned(record)) throw new ProcessSessionError('FORBIDDEN', '只能管理同一账号、会话和工作区的终端任务。');
+    if (!['status', 'read', 'stop'].includes(String(args.action))) throw new Error('不支持的终端管理动作。');
+    if (args.action === 'stop') {
+      context.signal.throwIfAborted();
+      const stopped = await this.kill(context.actorId, record.id);
+      if (!stopped.success) return { success: false, code: 'STOP_FAILED', error: String(stopped.error ?? '终端进程停止失败。'), data: this.taskSummary(record) };
+    }
+    const summary = this.taskSummary(record);
+    const data = args.action === 'read' ? { ...summary, ...readProcessOutput(record.outputBuffer ?? {
+      output: String(record.data.output ?? ''), outputOffset: 0, truncated: !!record.data.truncatedNote,
+    }, { cursor: args.cursor as number | undefined, maxChars: (args.maxChars ?? 12000) as number }),
+      cursorOriginKnown: !!record.outputBuffer } : summary;
+    return { success: true, data };
   }
   async detach(actorId: string, conversationId: string) {
     await this.app.conversation(actorId, conversationId);

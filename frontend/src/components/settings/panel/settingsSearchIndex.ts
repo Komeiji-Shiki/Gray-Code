@@ -321,6 +321,12 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="summarize-manual"]'
   },
   {
+    key: 'context-user-retention', tab: 'summarize',
+    labelKey: 'components.settings.summarizeSettings.retention.title',
+    keywords: ['用户消息', '保留全部', '首条', '最近输入', 'user retention', 'latest input', '用户原文'],
+    anchor: '[data-search-anchor="context-user-retention"]'
+  },
+  {
     key: 'summarize-options', tab: 'summarize',
     labelKey: 'components.settings.summarizeSettings.optionsSection.title',
     keywords: ['保留轮数', 'keep rounds', '保留', 'token', '提示词', 'prompt', '最大尝试', '输入占比', '预算'],

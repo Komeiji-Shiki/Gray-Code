@@ -41,6 +41,7 @@ import { prepareExternalWrite } from './workspace/writeAccess';
 import { PlatformMemory } from './memory/service';
 import { PlatformSkills } from './skills/service';
 import { PlatformTerminals } from './terminal/service';
+import { terminalTaskTool } from './terminal/tool';
 import { InteractiveTerminals } from './workspace/interactiveTerminals';
 import { randomUUID } from "node:crypto";
 import { conversationTools } from './conversations/tools';
@@ -280,6 +281,7 @@ export class PlatformApplication {
     this.remoteAccess = options.remoteAccess?.(this);
     this.nodes = new ExecutionNodes(this, options.secretCodec);
     this.tools.register(this.terminals.tool());
+    this.tools.register(terminalTaskTool(this.terminals));
     this.skills = new PlatformSkills(this);
     this.tools.register(this.skills.tool());
     this.memory = new PlatformMemory(this);

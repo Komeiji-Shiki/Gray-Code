@@ -251,6 +251,9 @@ export interface Content {
     contextControl?: 'reminder' | 'summary_request';
     /** 本边界实际覆盖的活跃消息，包含被替代的上一条摘要。 */
     summarizedMessageIds?: string[];
+    /** 此边界明确保留的历史用户原文；覆盖旧边界标记，随分支恢复重新计算。 */
+    retainedUserMessageIds?: string[];
+    contextSwitchReason?: 'model_requested' | 'threshold' | 'input_budget_exceeded' | 'manual';
     
     /**
      * 总结消息覆盖的消息数量

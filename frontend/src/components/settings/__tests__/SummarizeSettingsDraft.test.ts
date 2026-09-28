@@ -66,3 +66,16 @@ test('旧扩展离开总结设置时仍提交尚未触发的输入', async () =>
   view.unmount(); wrapper = undefined; await flushPromises();
   expect(staged.summarizePrompt).toBe('扩展最后一次输入');
 });
+
+test('保留策略默认首条加最近一次，切换全部后随统一设置保存并可撤销', async () => {
+  const view = await render();
+  const select = () => view.find('[data-search-anchor="context-user-retention"]').findComponent({ name: 'CustomSelect' });
+  expect(select().props('modelValue')).toBe('first');
+  select().vm.$emit('update:modelValue', 'all'); await flushPromises();
+  await saveDesktopSettings();
+  expect(saved.userMessageRetention).toBe('all');
+  select().vm.$emit('update:modelValue', 'first'); await flushPromises();
+  await discardDesktopSettings(); await flushPromises();
+  expect(select().props('modelValue')).toBe('all');
+  expect(view.text()).toContain('Bot 不受影响');
+});

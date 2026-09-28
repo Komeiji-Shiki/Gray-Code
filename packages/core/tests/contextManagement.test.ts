@@ -43,7 +43,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     const readState = jest.spyOn(app.storage, 'readConversationState');
     const prepareHistory = jest.spyOn(app.longMemoryPrompt.history, 'prepare');
     try {
-      expect(await catalog.entries.get('context_notes')!.tool.execute({ action: 'list' }, context)).toEqual({ success: true, notes: [{ name: 'checkpoint' }] });
+      expect(await catalog.entries.get('context_notes')!.tool.execute({ action: 'list' }, context)).toEqual({ success: true, notes: [{ name: 'checkpoint', updatedAt: now, characters: 4 }] });
       const before = (await app.storage.getConversationInfo('compaction'))!;
       expect(await catalog.entries.get('new_context')!.tool.execute({}, context)).toMatchObject({ success: true });
       expect(readState).not.toHaveBeenCalled(); expect(prepareHistory).not.toHaveBeenCalled();
@@ -67,7 +67,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect(summary.messages.slice(0, normal.messages.length)).toEqual(normal.messages);
     expect(summary.messages.at(-1)?.contextControl).toBe('summary_request');
     const firstBoundary = (await app.storage.readFullHistory('compaction')).messages.find(message => message.isSummary)!;
-    expect((await app.storage.readFullHistory('compaction')).messages.filter(message => !message.isSummarized).map(message => message.id)).toEqual(['first', firstBoundary.id]);
+    expect((await app.storage.readFullHistory('compaction')).messages.filter(message => !message.isSummarized).map(message => message.id)).toEqual(['first', 'latest', firstBoundary.id]);
     await app.storage.appendHistory('compaction', [{ id: 'later', role: 'user', isUserInput: true, parts: [{ text: '后续修改' }] },
       { id: 'later-answer', role: 'model', parts: [{ text: '后续执行结果' }] }]);
     expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
@@ -109,8 +109,8 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect(seen.every(input => input.turnContext?.contextManagementMethod === 'notes')).toBe(true);
     expect(app.product.runtimeSettings().getSummarizeConfig().method).toBe('summary');
     expect(seen[0].messages.at(-1)?.contextControl).toBe('reminder');
-    expect(seen[1].messages).toHaveLength(2);
-    expect(seen[1].messages[0].id).toBe('first'); expect(seen[1].messages[1].contextMethod).toBe('notes');
+    expect(seen[1].messages).toHaveLength(3);
+    expect(seen[1].messages[0].id).toBe('first'); expect(seen[1].messages[1].id).toBe('latest'); expect(seen[1].messages[2].contextMethod).toBe('notes');
     expect(JSON.stringify(seen[1].messages)).toContain('checkpoint'); expect(JSON.stringify(seen[1].messages)).toContain('latest');
     expect(JSON.stringify(seen[1].messages)).not.toContain('必须可恢复的原始证据');
     expect(JSON.stringify(seen[2].messages)).toContain('必须可恢复的原始证据');
@@ -161,6 +161,78 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect((await app.product.channel(providerId))?.autoSummarizeMethod).toBe('notes');
     expect((await app.product.channel(imported))?.autoSummarizeMethod).toBe('notes');
     expect((await app.product.channel(other))?.autoSummarizeMethod).toBe('summary');
+  });
+
+  test.each(['first', 'all'] as const)('保留策略 %s 跨多次换窗保留原文与最近要求，并能从全部改回首条', async userMessageRetention => {
+    const draft = await app.product.draft();
+    await draft.settings.updateSummarizeConfig({ method: 'notes', userMessageRetention }); await app.product.save(draft);
+    await app.storage.appendHistory('compaction', [
+      { id: 'middle', role: 'user', parts: [{ text: '中间原文要求' }] },
+      { id: 'reply', role: 'model', parts: [{ text: '中间回复' }] },
+    ]);
+    const run = await start('latest'); await app.runtime.wait(run.id);
+    for (let i = 0; i < 2; i++) {
+      expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
+      const history = (await app.storage.readFullHistory('compaction')).messages;
+      const users = history.filter(message => message.role === 'user' && !message.isSummary && !message.isSummarized);
+      expect(users.map(message => message.id)).toEqual(userMessageRetention === 'all' ? ['first', 'middle', 'latest'] : ['first', 'latest']);
+      expect(JSON.stringify(history.at(-1)?.parts)).toContain('latest real user message has ID latest');
+      expect(history.at(-1)?.retainedUserMessageIds).toEqual(users.map(message => message.id));
+    }
+    const updated = await app.product.draft(); await updated.settings.updateSummarizeConfig({ userMessageRetention: 'all' }); await app.product.save(updated);
+    await app.context.summarizeManually('owner', 'compaction', providerId);
+    expect((await app.storage.readFullHistory('compaction')).messages.find(message => message.id === 'middle')?.isSummarized).not.toBe(true);
+    const reset = await app.product.draft(); await reset.settings.updateSummarizeConfig({ userMessageRetention: 'first' }); await app.product.save(reset);
+    await app.context.summarizeManually('owner', 'compaction', providerId);
+    const history = (await app.storage.readFullHistory('compaction')).messages;
+    expect(history.find(message => message.id === 'middle')?.isSummarized).toBe(true);
+    await app.context.restoreSummary('owner', 'compaction', history.at(-1)!.id!);
+    expect((await app.storage.readFullHistory('compaction')).messages.find(message => message.id === 'middle')?.isSummarized).not.toBe(true);
+    expect(app.context.configuration({ ...(await app.storage.getConversation('compaction'))!, custom: { botEnvironment: { version: 1, channel: { platform: 'discord', channelId: 'fixture' } } } }).userMessageRetention).toBeUndefined();
+  });
+
+  test('手动普通总结采用当前保留设置，不沿用上一回合捕获的旧策略', async () => {
+    await app.storage.appendHistory('compaction', [{ id: 'middle-manual', role: 'user', parts: [{ text: '额外用户要求' }] }]);
+    const run = await start('latest-manual'); await app.runtime.wait(run.id);
+    expect(seen[0].turnContext?.contextUserMessageRetention).toBe('first');
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'summary', userMessageRetention: 'all' }); await app.product.save(draft);
+    expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
+    const history = (await app.storage.readFullHistory('compaction')).messages;
+    expect(history.at(-1)?.retainedUserMessageIds).toEqual(['first', 'middle-manual', 'latest-manual']);
+    expect(history.find(message => message.id === 'middle-manual')?.isSummarized).not.toBe(true);
+  });
+
+  test('上下文状态只在显式查询时返回，使用当前运行前缀估算且不修改会话', async () => {
+    generate = async () => seen.length === 1 ? { role: 'model', parts: [{ functionCall: { id: 'budget', name: 'context_status', args: {} } }] }
+      : { role: 'model', parts: [{ text: '继续执行。' }] };
+    const run = await start('status-input'); expect(await app.runtime.wait(run.id)).toMatchObject({ status: 'completed' });
+    expect(seen).toHaveLength(2);
+    expect(JSON.stringify(seen[0].messages)).not.toContain('estimatedInputTokens');
+    const response = seen[1].messages.flatMap(message => message.parts).find(part => part.functionResponse)?.functionResponse as any;
+    expect(response.response.data).toMatchObject({ source: 'local-estimate', prefixAvailable: true, maxInputTokens: 16000, thresholdTokens: 3200,
+      userMessageRetention: 'first', includesCurrentToolResult: false });
+    expect(response.response.data.estimatedInputTokens).toBe(response.response.data.fixedPromptTokens + response.response.data.historyTokens);
+    const before = await app.storage.getConversationInfo('compaction');
+    const context = { actorId: 'owner', runId: run.id, conversationId: 'compaction', signal: new AbortController().signal, progress: () => {}, askUser: jest.fn() };
+    await app.tools.catalog(['context_status']).entries.get('context_status')!.tool.execute({}, context);
+    expect(await app.storage.getConversationInfo('compaction')).toEqual(before);
+    expect(seen).toHaveLength(2);
+  });
+
+  test('历史搜索围绕命中预览并可直接按偏移读取，笔记读取提供续查游标', async () => {
+    await app.storage.appendHistory('compaction', [{ id: 'long-evidence', role: 'model', parts: [{ text: '前'.repeat(8000) + 'NEEDLE_TAG' + '后'.repeat(1000) }] }]);
+    const run = await start('history-test'); await app.runtime.wait(run.id);
+    const context = { actorId: 'owner', runId: run.id, conversationId: 'compaction', signal: new AbortController().signal, progress: () => {}, askUser: jest.fn() };
+    const tools = app.tools.catalog(['context_history', 'context_notes']).entries;
+    const history = tools.get('context_history')!.tool;
+    const found = await history.execute({ action: 'search', query: 'NEEDLE_TAG', limit: 1 }, context) as any;
+    const hit = found.items[0];
+    expect(hit).toMatchObject({ messageId: 'long-evidence', matchOffset: 8000, matchLength: 10, textTruncated: true });
+    expect(hit.text).toContain('NEEDLE_TAG');
+    expect(await history.execute({ action: 'read', messageId: hit.messageId, offset: hit.matchOffset, limit: 10 }, context)).toMatchObject({ text: 'NEEDLE_TAG', nextOffset: 8010 });
+    await tools.get('context_notes')!.tool.execute({ action: 'write', name: 'paged', text: '123456' }, context);
+    expect(await tools.get('context_notes')!.tool.execute({ action: 'read', name: 'paged', limit: 2 }, context)).toMatchObject({ text: '12', nextOffset: 2, truncated: true });
+    await expect(history.execute({ action: 'read', messageId: hit.messageId, offset: -1 }, context)).rejects.toThrow('offset');
   });
 
   test('手动笔记换窗口不调用模型；旧窗口和笔记在应用重新打开后仍然保留', async () => {

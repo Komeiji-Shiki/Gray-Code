@@ -2231,6 +2231,7 @@ const en: LanguageMessages = {
                 requiresConfigLabel: 'Requires Config:'
             },
             summarizeSettings: {
+                retention: sharedEn.components.settings.summarizeSettings.retention,
                 description: 'Context summarization can compress conversation history to reduce Token usage. This page is for manual summary and summary model settings. Auto summarize is configured in "Channel Settings > Context Management".',
                 manualSection: {
                     title: 'Manual Summarization',
@@ -2697,6 +2698,8 @@ const en: LanguageMessages = {
                     tooltip: 'Configure Tool'
                 },
                 toolDisplayNames: {
+                    context_status: sharedEn.components.settings.toolsSettings.toolDisplayNames.context_status,
+                    terminal_task: sharedEn.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: 'Application Windows', computer_observe: 'Observe Computer', computer_control: 'Desktop Control', computer_action: 'Computer Action',
                     memory_search: 'Search Long-term Memory', memory_read: 'Read Long-term Memory', memory_remember: 'Save Long-term Memory', memory_remove: 'Remove Long-term Memory',
                     memory_revise: 'Revise Long-term Memory', memory_summarize: 'Summarize Long-term Memory', memory_topics: 'Memory Topics', pet_control: 'Pet Control',
@@ -2767,6 +2770,8 @@ const en: LanguageMessages = {
                     get_activity_stats: 'Get Activity Stats',
                 },
                 toolDescriptions: {
+                    context_status: sharedEn.components.settings.toolsSettings.toolDescriptions.context_status,
+                    terminal_task: sharedEn.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: 'List, create and manage built-in browser tabs, and show a tab in the workspace.',
                     browser_read: 'Read page structure and element references, capture the current viewport, or inspect captured console and network records.',
                     browser_action: 'Click, fill text and press keys using page element references. Model actions pause when the user takes control.',

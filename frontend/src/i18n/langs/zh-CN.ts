@@ -2233,6 +2233,7 @@ const zhCN = {
                 requiresConfigLabel: '依赖配置：'
             },
             summarizeSettings: {
+                retention: sharedZhCN.components.settings.summarizeSettings.retention,
                 description: '上下文总结功能可以压缩对话历史，减少 Token 使用量。此页面用于配置手动总结与总结模型。自动总结请在「渠道设置 > 上下文管理」中配置。',
                 manualSection: {
                     title: '手动总结',
@@ -2699,6 +2700,8 @@ const zhCN = {
                     tooltip: '配置工具'
                 },
                 toolDisplayNames: {
+                    context_status: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.context_status,
+                    terminal_task: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: '应用窗口', computer_observe: '观察电脑', computer_control: '桌面控制权', computer_action: '操作电脑',
                     memory_search: '检索长期记忆', memory_read: '读取长期记忆', memory_remember: '保存长期记忆', memory_remove: '移除长期记忆',
                     memory_revise: '修订长期记忆', memory_summarize: '总结长期记忆', memory_topics: '记忆主题', pet_control: '桌宠控制',
@@ -2769,6 +2772,8 @@ const zhCN = {
                     get_activity_stats: '获取活动统计',
                 },
                 toolDescriptions: {
+                    context_status: sharedZhCN.components.settings.toolsSettings.toolDescriptions.context_status,
+                    terminal_task: sharedZhCN.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: '列出、创建和管理内置浏览器标签页，可在工作台中显示标签页。',
                     browser_read: '读取网页结构和元素引用、截取当前视口，或查看已捕获的控制台与网络记录。',
                     browser_action: '通过页面元素引用点击、填写文本和按键；用户接管后暂停模型操作。',

@@ -102,6 +102,14 @@ const ja: BackendLanguageMessages = {
         },
 
         settings: {
+            contextRetention: {
+                title: '通常の会話で保持するユーザーメッセージ',
+                first: '最初のメッセージ＋直近の入力',
+                all: 'すべてのユーザーメッセージ',
+                hint: '通常の会話の自動・手動要約とノートウィンドウに適用します。切り替え前の直近の実際のユーザー入力は必ず保持します。Bot には影響しません。次のターンまたは手動操作から反映されます。',
+                summaryHint: '現在のモデル、システムプロンプト、ツールを再利用して要約を依頼します。選択したユーザーの原文と新しい要約を保持して続行します。',
+                notesHint: '追加の要約生成なしでウィンドウを切り替えます。選択したユーザーの原文と復元案内を保持し、必要に応じてノートや履歴を参照します。',
+            },
             clawdSettings: {
                 title: 'Clawd デスクトップペット連携',
                 description: '起動中の Clawd に GrayCode の思考、ツール実行、確認待ち、完了、エラーの状態を表示します。',
@@ -393,6 +401,12 @@ const ja: BackendLanguageMessages = {
     },
 
     tools: {
+        runtimeControl: {
+            contextStatusName: 'コンテキスト状態',
+            contextStatusDescription: '入力予算、推定使用量、切り替え閾値と保持方針を必要時に確認します。要約や切り替えは行いません。',
+            terminalTaskName: 'バックグラウンド端末タスク',
+            terminalTaskDescription: 'execute_command の状態確認、出力の差分読み取り、管理対象プロセスツリーの停止を行います。',
+        },
         automation: {
             "actions": {
                 "list": "一覧",

@@ -280,6 +280,16 @@ const sharedZhCN = {
             subagents: {
                 description: backendZhCN.tools.reviewDocument.finding.description,
             },
+            summarizeSettings: {
+                retention: {
+                    all: backendZhCN.modules.settings.contextRetention.all,
+                    first: backendZhCN.modules.settings.contextRetention.first,
+                    hint: backendZhCN.modules.settings.contextRetention.hint,
+                    notesHint: backendZhCN.modules.settings.contextRetention.notesHint,
+                    summaryHint: backendZhCN.modules.settings.contextRetention.summaryHint,
+                    title: backendZhCN.modules.settings.contextRetention.title,
+                },
+            },
             toolSettings: {
                 common: {
                     error: backendZhCN.modules.mcp.status.error,
@@ -298,6 +308,14 @@ const sharedZhCN = {
             toolsSettings: {
                 categories: {
                     other: backendZhCN.tools.reviewDocument.values.category.other,
+                },
+                toolDescriptions: {
+                    context_status: backendZhCN.tools.runtimeControl.contextStatusDescription,
+                    terminal_task: backendZhCN.tools.runtimeControl.terminalTaskDescription,
+                },
+                toolDisplayNames: {
+                    context_status: backendZhCN.tools.runtimeControl.contextStatusName,
+                    terminal_task: backendZhCN.tools.runtimeControl.terminalTaskName,
                 },
             },
         },

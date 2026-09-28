@@ -85,6 +85,11 @@ export function materializeBranch(branch: BranchState): PlatformMessage[] {
     const ids = messages[index].summarizedMessageIds;
     const covered = Array.isArray(ids) ? ids.map(id => byId.get(id)) : messages.slice(Math.max(previousSummary + 1, firstUser + 1), index);
     for (const message of covered) if (message && (!message.isSummary || messages[index].contextMethod) && message !== messages[firstUser]) message.isSummarized = true;
+    const retained = messages[index].retainedUserMessageIds;
+    if (Array.isArray(retained)) for (const id of retained) {
+      const message = byId.get(String(id));
+      if (message && isRealUserMessage({ ...message, isSummarized: false } as Content)) delete message.isSummarized;
+    }
     previousSummary = index;
   }
   return messages;

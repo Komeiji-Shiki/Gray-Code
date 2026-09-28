@@ -2231,6 +2231,7 @@ const ja: LanguageMessages = {
                 requiresConfigLabel: '必要な設定：'
             },
             summarizeSettings: {
+                retention: sharedJa.components.settings.summarizeSettings.retention,
                 description: 'コンテキスト要約機能は会話履歴を圧縮してトークン使用量を削減できます。このページでは手動要約と要約モデルを設定します。自動要約は「チャネル設定 > コンテキスト管理」で設定してください。',
                 manualSection: {
                     title: '手動要約',
@@ -2697,6 +2698,8 @@ const ja: LanguageMessages = {
                     tooltip: 'ツールを設定'
                 },
                 toolDisplayNames: {
+                    context_status: sharedJa.components.settings.toolsSettings.toolDisplayNames.context_status,
+                    terminal_task: sharedJa.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: 'アプリのウィンドウ', computer_observe: '画面の確認', computer_control: 'デスクトップ制御', computer_action: 'コンピューター操作',
                     memory_search: '長期記憶の検索', memory_read: '長期記憶の読み取り', memory_remember: '長期記憶の保存', memory_remove: '長期記憶の削除',
                     memory_revise: '長期記憶の修正', memory_summarize: '長期記憶の要約', memory_topics: '記憶のトピック', pet_control: 'ペットの操作',
@@ -2767,6 +2770,8 @@ const ja: LanguageMessages = {
                     get_activity_stats: 'アクティビティ統計を取得',
                 },
                 toolDescriptions: {
+                    context_status: sharedJa.components.settings.toolsSettings.toolDescriptions.context_status,
+                    terminal_task: sharedJa.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: '内蔵ブラウザーのタブを一覧表示、作成、管理し、ワークスペースに表示します。',
                     browser_read: 'ページ構造と要素参照を取得し、表示範囲を撮影するか、記録済みのコンソールとネットワーク情報を確認します。',
                     browser_action: 'ページの要素参照を使ってクリック、テキスト入力、キー操作を行います。ユーザーが操作を引き継ぐとモデルの操作を一時停止します。',

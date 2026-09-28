@@ -102,6 +102,14 @@ const en: BackendLanguageMessages = {
         },
 
         settings: {
+            contextRetention: {
+                title: 'User messages retained in ordinary conversations',
+                first: 'First user message + latest input',
+                all: 'All user messages',
+                hint: 'Applies to automatic/manual summaries and notes windows in ordinary conversations. The latest real user input before switching is always retained. Bots are unaffected. Changes take effect in later turns or manual actions.',
+                summaryHint: 'Reuse the current model, system prompt and tools, then append a summary request. Keep the selected original user messages and the new summary before continuing.',
+                notesHint: 'Switch directly without an extra summary request. Keep the selected original user messages and recovery instructions; the model can retrieve notes and history as needed.',
+            },
             clawdSettings: {
                 title: 'Clawd desktop pet integration',
                 description: 'Let a running Clawd show GrayCode thinking, using tools, waiting for input, completing tasks and encountering errors.',
@@ -393,6 +401,12 @@ Output content directly without any prefix.`
     },
 
     tools: {
+        runtimeControl: {
+            contextStatusName: 'Context Status',
+            contextStatusDescription: 'Inspect the current input budget, estimated usage, switching threshold and retention policy without compacting context.',
+            terminalTaskName: 'Background Terminal Task',
+            terminalTaskDescription: 'Inspect execute_command tasks, read incremental output or stop their managed process trees.',
+        },
         automation: {
             "actions": {
                 "list": "List",

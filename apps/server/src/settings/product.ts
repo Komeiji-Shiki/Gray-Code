@@ -112,6 +112,8 @@ export class ProductConfiguration {
         draft.revision = current.revision;
       }
     }
+    const retention = draft.settings.getSummarizeConfig().userMessageRetention;
+    if (retention !== undefined && retention !== 'first' && retention !== 'all') throw new Error('用户消息保留策略必须是首条或全部。');
     const channels = structuredClone(draft.value.channels);
     const next = structuredClone(draft.app);
     // 草稿用 data URL 预览尚未保存的图片，提交时恢复原有资源引用格式。

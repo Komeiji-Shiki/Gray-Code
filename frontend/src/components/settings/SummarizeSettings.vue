@@ -5,7 +5,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
+import { useDesktopSettingsDraft, markDesktopSettingsDirty } from '@/platform/settingsDraft'
 import { reactive, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -34,6 +34,7 @@ const configLoaded = ref(false)
 // 总结配置
 const summarizeConfig = reactive<SummarizeConfig>({
   method: 'summary',
+  userMessageRetention: 'first',
   // 手动总结提示词
   summarizePrompt: '请将以上对话内容进行总结，保留关键信息和上下文要点，去除冗余内容。',
   // 自动总结提示词
@@ -246,6 +247,8 @@ let configSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
 async function updateConfigField<K extends keyof SummarizeConfig>(field: K, value: SummarizeConfig[K]) {
   // 先更新本地值（即时反馈）
   summarizeConfig[field] = value
+  // 自定义下拉框只发组件事件，不会冒泡原生 input/change；立即保存也必须提交新选择。
+  markDesktopSettingsDirty()
   scheduleConfigSave()
 }
 
@@ -350,9 +353,17 @@ onUnmounted(() => {
     <div v-if="standaloneContext" class="section" data-search-anchor="context-method">
       <h5 class="section-title">手动总结方式</h5>
       <CustomSelect :model-value="summarizeConfig.method ?? 'summary'" :options="[{ value: 'summary', label: '普通总结 · 复用完整前缀' }, { value: 'notes', label: '笔记换窗口 · 按需恢复历史' }]" @update:model-value="value => updateConfigField('method', value as 'summary' | 'notes')" />
-      <p v-if="summarizeConfig.method !== 'notes'" class="field-hint">沿用当前模型、系统提示词和工具定义，在完整上下文末尾追加总结指令。成功后仅保留首条用户消息与新摘要，后续消息继续追加。</p>
-      <p v-else class="field-hint">手动操作会直接换窗口，不额外生成整段摘要。新窗口保留首条用户消息与恢复提示，由模型按需读取工作笔记和原始历史。</p>
+      <p v-if="summarizeConfig.method !== 'notes'" class="field-hint">{{ t('components.settings.summarizeSettings.retention.summaryHint') }}</p>
+      <p v-else class="field-hint">{{ t('components.settings.summarizeSettings.retention.notesHint') }}</p>
       <p class="field-hint">未单独设置自动方式的旧渠道仍沿用此选择；已单独设置的渠道不受影响。Bot 保留自己的方式选择，并可使用原有时间总结。</p>
+    </div>
+
+    <div v-if="standaloneContext" class="section" data-search-anchor="context-user-retention">
+      <h5 class="section-title">{{ t('components.settings.summarizeSettings.retention.title') }}</h5>
+      <CustomSelect :model-value="summarizeConfig.userMessageRetention ?? 'first'"
+        :options="[{ value: 'first', label: t('components.settings.summarizeSettings.retention.first') }, { value: 'all', label: t('components.settings.summarizeSettings.retention.all') }]"
+        @update:model-value="value => updateConfigField('userMessageRetention', value as 'first' | 'all')" />
+      <p class="field-hint">{{ t('components.settings.summarizeSettings.retention.hint') }}</p>
     </div>
 
     <!-- 手动总结说明 -->

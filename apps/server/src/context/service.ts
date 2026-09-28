@@ -64,6 +64,8 @@ export class PlatformContextService {
     // 工具目录和总结方式在回合开始时一同捕获，设置变更不破坏正在运行的前缀。
     const capturedMethod = input.turnContext?.contextManagementMethod;
     if (capturedMethod === 'summary' || capturedMethod === 'notes') management.method = capturedMethod;
+    const capturedRetention = input.turnContext?.contextUserMessageRetention;
+    if (management.userMessageRetention !== undefined && (capturedRetention === 'first' || capturedRetention === 'all')) management.userMessageRetention = capturedRetention;
     if (management.bot?.method && management.bot.method !== 'time') config = { ...config,
       contextManagementEnabled: management.bot.enabled, contextManagementMode: 'summarize' };
     const settings = this.app.product.runtimeSettings();
@@ -79,7 +81,7 @@ export class PlatformContextService {
       part.functionResponse && (part.functionResponse as { id?: string }).id === pending.toolCallId));
     if (switchRequested && management.method === 'notes') {
       await event('context.summary.started', { method: 'notes' });
-      const result = await notesWindowBoundary(this.app, frame, true, config.type);
+      const result = await notesWindowBoundary(this.app, frame, true, config.type, management.userMessageRetention, 'model_requested');
       await commit(true);
       await event('context.summary.completed', { ...result });
     }
@@ -110,7 +112,7 @@ export class PlatformContextService {
       if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name))) throw new Error('笔记换窗口需要启用上下文笔记、历史读取和换窗口工具，请在启用工具后重试。');
       if (overflow) {
         await event('context.summary.started', { method: 'notes' });
-        const result = await notesWindowBoundary(this.app, frame, true, config.type);
+        const result = await notesWindowBoundary(this.app, frame, true, config.type, management.userMessageRetention, 'input_budget_exceeded');
         await commit(true);
         await event('context.summary.completed', { ...result });
         if (preview) notices.push('当前内容预计超过上下文容量，发送前将切换到笔记窗口；这里展示切换后的内容。');

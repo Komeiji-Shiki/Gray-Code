@@ -113,7 +113,8 @@ describe.each(['entries', 'legacy'] as const)('%s prompt capture through live fe
     }
     const boundary = full.find(message => message.contextMethod === 'notes')!;
     expect(boundary).toBeDefined();
-    expect(generated[3].messages.map(message => message.id)).toEqual(['original-task', boundary.id]);
+    expect(generated[3].messages.map(message => message.id)).toEqual(['original-task', feedback[1].id, boundary.id]);
+    expect(JSON.stringify(generated[3].messages)).toContain('green instead');
     // Restore the real notes boundary, then rebuild from the storage projection: no synthetic prompt anchor is persisted.
     await app.context.restoreSummary('owner', 'anchor-chat', boundary.id!);
     const config = (await app.product.channel(providerId))!;

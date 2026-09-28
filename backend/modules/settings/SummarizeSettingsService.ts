@@ -35,6 +35,9 @@ export class SummarizeSettingsService {
         if (config.method !== undefined && config.method !== 'summary' && config.method !== 'notes') {
             throw new Error('请选择普通总结或笔记换窗口。');
         }
+        if (config.userMessageRetention !== undefined && config.userMessageRetention !== 'first' && config.userMessageRetention !== 'all') {
+            throw new Error('请选择保留首条或全部用户消息。');
+        }
         // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
         // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
         await this.core.serializeMutation(async () => {

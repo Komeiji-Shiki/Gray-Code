@@ -38,7 +38,8 @@ describe('context evaluation and summaries share the original rules and one hist
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
 
-  test('automatic summaries protect original text, pair tool messages and supply reduced model history', async () => {
+  test.each(['first', 'all'] as const)('automatic summaries retain %s user originals, pair tool messages and supply reduced model history', async userMessageRetention => {
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ userMessageRetention }); await app.product.save(draft);
     const before = await app.storage.readFullHistory('context');
     const run = await app.runtime.start({ actorId: 'owner', agentId: 'default', conversationId: 'context', requestKey: 'managed',
       providerId, promptModeId: 'context-test', message: { id: 'latest-user', role: 'user', parts: [{ text: 'Continue the work.' }] } });
@@ -47,8 +48,9 @@ describe('context evaluation and summaries share the original rules and one hist
     const after = await app.storage.readFullHistory('context');
     for (const original of before.messages) expect(after.messages.find(message => message.id === original.id)?.parts).toEqual(original.parts);
     expect(after.messages.find(message => message.id === 'u0')?.isSummarized).not.toBe(true);
-    expect(after.messages.find(message => message.id === 'latest-user')?.isSummarized).toBe(true);
-    expect(primary[0].messages.filter(message => !message.contextControl).map(message => message.id)).toEqual(['u0', after.messages.find(message => message.isSummary)!.id]);
+    expect(after.messages.find(message => message.id === 'latest-user')?.isSummarized).not.toBe(true);
+    const retained = userMessageRetention === 'all' ? ['u0', 'u1', 'u2', 'u3', 'latest-user'] : ['u0', 'latest-user'];
+    expect(primary[0].messages.filter(message => !message.contextControl).map(message => message.id)).toEqual([...retained, after.messages.find(message => message.isSummary)!.id]);
     expect(summaries[0].systemPrompt).toBe(primary[0].systemPrompt);
     expect(summaries[0].tools).toEqual(primary[0].tools);
     expect(summaries[0].conversationId).toBe('context');

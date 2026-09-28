@@ -38,6 +38,27 @@ interface ManagedProcess extends ProcessOutput {
 type SavedProcess = Omit<ProcessOutput, 'outputOffset'> & { outputOffset?: number; ownerId: string; owner?: ProcessOwner };
 const spawn: typeof nativeSpawn = crossSpawn;
 const outputLimit = 256_000;
+export type ProcessOutputBuffer = Pick<ProcessResult, 'output' | 'outputOffset' | 'truncated'>;
+export function appendProcessOutput(entry: ProcessOutputBuffer, text: string): void {
+  entry.output += text;
+  if (entry.output.length > outputLimit) {
+    entry.outputOffset += entry.output.length - outputLimit;
+    entry.output = entry.output.slice(-outputLimit);
+    entry.truncated = true;
+  }
+}
+export function readProcessOutput(entry: ProcessOutputBuffer, options: ProcessReadOptions = {}) {
+  const end = entry.outputOffset + entry.output.length;
+  if (options.cursor !== undefined && (!Number.isSafeInteger(options.cursor) || options.cursor < 0 || options.cursor > end))
+    throw new ProcessSessionError('INVALID_CURSOR', 'cursor must be a non-negative UTF-16 integer no later than nextCursor.');
+  if (options.maxChars !== undefined && (!Number.isSafeInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > outputLimit))
+    throw new ProcessSessionError('INVALID_CURSOR', `maxChars must be an integer between 1 and ${outputLimit}.`);
+  const cursor = options.cursor ?? entry.outputOffset;
+  const offset = Math.max(cursor, entry.outputOffset);
+  const output = entry.output.slice(offset - entry.outputOffset, offset - entry.outputOffset + (options.maxChars ?? outputLimit));
+  const nextCursor = offset + output.length;
+  return { output, outputOffset: offset, nextCursor, hasMore: nextCursor < end, outputLost: cursor < entry.outputOffset, truncated: entry.truncated };
+}
 
 /** 按命令内容生成审批分类，不因使用 Shell 就统一判为高风险。 */
 export function commandEffects(args: Record<string, unknown>): ToolEffect[] {
@@ -94,13 +115,7 @@ export class WorkspaceProcesses {
     this.entries.set(entry.id, entry);
     const output = (text: string) => {
       if (!text) return;
-      entry.output += text;
-      if (entry.output.length > outputLimit) {
-        // 游标按 JS 字符串的 UTF-16 单元计数；环形保留区丢弃前缀时不能重置绝对位置。
-        entry.outputOffset += entry.output.length - outputLimit;
-        entry.output = entry.output.slice(-outputLimit);
-        entry.truncated = true;
-      }
+      appendProcessOutput(entry, text);
       onOutput?.(text);
     };
     // 两条管道可能交错且都拆开 UTF-8 多字节字符，必须独立解码，不能逐块 toString。
@@ -148,27 +163,7 @@ export class WorkspaceProcesses {
     this.entries.delete(entry.id);
   }
   private result(entry: ProcessOutput, options: ProcessReadOptions = {}): ProcessResult {
-    const end = entry.outputOffset + entry.output.length;
-    if (options.cursor !== undefined && (!Number.isSafeInteger(options.cursor) || options.cursor < 0 || options.cursor > end))
-      throw new ProcessSessionError('INVALID_CURSOR', 'cursor must be a non-negative UTF-16 integer no later than nextCursor.');
-    if (options.maxChars !== undefined && (!Number.isSafeInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > outputLimit))
-      throw new ProcessSessionError('INVALID_CURSOR', `maxChars must be an integer between 1 and ${outputLimit}.`);
-    // 省略游标保持旧的全量保留区读取；显式请求已淘汰位置才报告 outputLost。
-    const cursor = options.cursor ?? entry.outputOffset;
-    const offset = Math.max(cursor, entry.outputOffset);
-    const output = entry.output.slice(offset - entry.outputOffset, offset - entry.outputOffset + (options.maxChars ?? outputLimit));
-    const nextCursor = offset + output.length;
-    return {
-      id: entry.id,
-      output,
-      outputOffset: offset,
-      nextCursor,
-      hasMore: nextCursor < end,
-      outputLost: cursor < entry.outputOffset,
-      truncated: entry.truncated,
-      exitCode: entry.exitCode,
-      running: entry.running,
-    };
+    return { ...readProcessOutput(entry, options), id: entry.id, exitCode: entry.exitCode, running: entry.running };
   }
   private sameModelOwner(saved: Exclude<ProcessOwner, string>, owner: Exclude<ProcessOwner, string>): boolean {
     // 同一对话继续运行会换 runId；无对话上下文时收紧到原 run，不能退化成账号级共享。

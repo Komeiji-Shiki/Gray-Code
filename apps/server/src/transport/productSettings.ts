@@ -70,7 +70,7 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     'tools.setToolAutoExec': async data => { await settings.setToolAutoExec(data.toolName, data.autoExec); return { success: true }; },
     'tools.getTools': () => ({ tools: app.tools.declarations().map(tool => ({ ...tool, enabled: settings.isToolEnabled(tool.name),
       category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files|workspace_files|search_files)$/.test(tool.name) ? 'file'
-        : /^(run_command|process_session|execute_command)$/.test(tool.name) ? 'terminal'
+        : /^(run_command|process_session|execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
           : tool.name.startsWith('memory_') ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'
             : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) }),
     'tools.setToolEnabled': async data => { await settings.setToolEnabled(data.toolName, data.enabled); return { success: true }; },
