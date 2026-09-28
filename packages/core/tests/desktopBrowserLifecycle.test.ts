@@ -8,7 +8,7 @@ const mockViews: any[] = []; const mockHosts: any[] = []; const mockPages: any[]
 const mockConnect = jest.fn(async () => {});
 jest.mock('@graycode/core', () => ({ authorizeEffects: () => undefined }));
 jest.mock('../../../apps/desktop/src/browser/page', () => ({ BrowserPage: class {
-  automated = false; connect = mockConnect; invalidate = jest.fn();
+  automated = false; revision = 0; connect = mockConnect; invalidate = jest.fn(() => { this.revision++; });
   allowManualInput = jest.fn(() => { this.automated = false; });
   action = jest.fn(async () => {}); snapshot = jest.fn(async () => ({ nodes: [] }));
   waitForSnapshot = jest.fn(async () => ({ conditionMet: false, timedOut: true, nodes: [] }));
@@ -55,7 +55,7 @@ function fixture(listRecords = jest.fn(async () => [] as string[])) {
   const app = { actor: () => ({ id: 'owner' }), requireOwner() {}, subscribe: () => unsubscribe,
     storage: { listRecords, getRecord: jest.fn(), commitRecords: jest.fn(), putRecord: jest.fn() } } as unknown as PlatformApplication;
   const browser = new DesktopBrowser(app, () => undefined, jest.fn());
-  return { browser, unsubscribe };
+  return { browser, unsubscribe, app };
 }
 beforeEach(() => { mockViews.length = 0; mockHosts.length = 0; mockPages.length = 0; mockConnect.mockClear(); });
 
@@ -87,7 +87,7 @@ test('初始网页加载失败释放页面并从标签列表移除', async () =>
 });
 
 async function automatedTab(profileId?: string) {
-  const { browser } = fixture();
+  const { browser, app } = fixture();
   const context: ToolContext = { actorId: 'owner', runId: 'browser-run', toolCallId: 'browser-call',
     signal: new AbortController().signal, askUser: jest.fn(), progress: jest.fn() };
   try {
@@ -97,7 +97,7 @@ async function automatedTab(profileId?: string) {
     await browser.tool('browser_read', { action: 'screenshot', tabId: tab.id }, context);
     const page = mockPages[0], contents = mockViews[0].webContents;
     const signal: AbortSignal = page.screenshot.mock.calls[0][0];
-    return { browser, context, tab, page, contents, signal };
+    return { browser, context, tab, page, contents, signal, app };
   } catch (error) { browser.close(); throw error; }
 }
 
@@ -262,5 +262,69 @@ test.each(['hidden', 'minimized'] as const)('后台截图在主窗 %s 时挂到�
     expect(f.page.screenshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { x: 0, y: 0, width: 700, height: 500 }, 1280);
     parent.visible = true; parent.minimized = false; f.browser.layout(layout);
     expect(parent.contentView.children).toContain(mockViews[0]);
+  } finally { f.browser.close(); }
+});
+
+test.each(['click', 'back'])('%s 后导航发生在观察期间，外层 URL/title 与新观察一致，重放仅补读', async action => {
+  const f = await automatedTab();
+  try {
+    let url = 'about:blank', title = '';
+    f.contents.getURL = () => url; f.contents.getTitle = () => title;
+    f.contents.navigationHistory = { canGoBack: () => true, canGoForward: () => false, goBack: jest.fn() };
+    f.page.screenshot.mockImplementation(async () => {
+      url = 'https://example.test/next'; title = 'Next page';
+      return { observation: { id: 'new-shot', url }, attachment: { mimeType: 'image/png', data: 'fixture' } };
+    });
+    const args = { action, tabId: f.tab.id, url: 'about:blank', ref: 'before' };
+    const result = await f.browser.tool('browser_action', args, f.context);
+    expect(result).toMatchObject({ success: true, data: { status: 'completed', url, title, observation: { url } } });
+    const stored = (f.app.storage.putRecord as jest.Mock).mock.calls[0][0].value;
+    (f.app.storage.getRecord as jest.Mock).mockResolvedValueOnce(stored);
+    const replay = await f.browser.tool('browser_action', args, f.context);
+    expect(replay).toMatchObject({ success: true, data: { repeated: true, url, title } });
+    expect(action === 'click' ? f.page.action : f.contents.navigationHistory.goBack).toHaveBeenCalledTimes(1);
+  } finally { f.browser.close(); }
+});
+
+test.each(['snapshot', 'both'] as const)('after=%s 返回新 ref 和筛选结果，不沿用动作 ref', async after => {
+  const f = await automatedTab();
+  try {
+    f.page.screenshot.mockClear();
+    f.page.snapshot.mockResolvedValueOnce({ url: 'about:blank', nodes: [{ ref: 'after-ref', role: 'button' }], nextOffset: 1 });
+    const snapshotOptions = { compact: false, query: 'Next', role: 'button', maxNodes: 1, interactiveOnly: true };
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before-ref', after, snapshotOptions }, f.context);
+    expect(result).toMatchObject({ success: true, data: { status: 'completed', snapshot: { nodes: [{ ref: 'after-ref' }], nextOffset: 1 } } });
+    expect(f.page.snapshot).toHaveBeenCalledWith(expect.any(AbortSignal), snapshotOptions);
+    expect(f.page.screenshot).toHaveBeenCalledTimes(after === 'both' ? 1 : 0);
+    expect(result.attachments?.length ?? 0).toBe(after === 'both' ? 1 : 0);
+  } finally { f.browser.close(); }
+});
+
+test.each(['screenshot', 'snapshot'])('both 的 %s 失败保留另一种观察及动作回执', async failed => {
+  const f = await automatedTab();
+  try {
+    f.page[failed].mockRejectedValueOnce(new Error('fixture observation failure'));
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', after: 'both' }, f.context);
+    expect(result).toMatchObject({ success: true, data: { status: 'completed', [failed === 'screenshot' ? 'observationError' : 'snapshotError']: { message: expect.stringContaining('不要重复刚才的动作') } } });
+    expect(result.data).toHaveProperty(failed === 'screenshot' ? 'snapshot' : 'observation');
+    expect(result.retryable).toBeUndefined(); expect(f.page.action).toHaveBeenCalledTimes(1);
+  } finally { f.browser.close(); }
+});
+
+test('both 两次观察之间同址导航，丢弃过期图片但保留新快照', async () => {
+  const f = await automatedTab();
+  try {
+    f.page.snapshot.mockImplementationOnce(async () => { f.page.invalidate(); return { url: 'about:blank', nodes: ['new document'] }; });
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', after: 'both' }, f.context);
+    expect(result).toMatchObject({ success: true, data: { status: 'completed', snapshot: { nodes: ['new document'] }, observationError: { code: 'BROWSER_PAGE_CHANGED' } } });
+    expect(result.data).not.toHaveProperty('observation'); expect(result.attachments).toBeUndefined();
+  } finally { f.browser.close(); }
+});
+
+test.each([{ after: 'none' }, { after: 'snapshot', snapshotOptions: { ref: 'old' } }, { after: 'both', snapshotOptions: { maxNodes: 0 } }, { snapshotOptions: {} }, { maxImageDimension: -1 }])('无效观察参数 %j 在派发前拒绝', async options => {
+  const f = await automatedTab();
+  try {
+    await expect(f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', ...options }, f.context)).rejects.toThrow();
+    expect(f.page.action).not.toHaveBeenCalled(); expect(f.app.storage.commitRecords).not.toHaveBeenCalled();
   } finally { f.browser.close(); }
 });

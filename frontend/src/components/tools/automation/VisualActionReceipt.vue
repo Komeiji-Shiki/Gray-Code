@@ -8,7 +8,7 @@ const { t } = useI18n()
 const state = computed(() => text(props.value.status))
 const label = computed(() => state.value === 'unknown' || !state.value ? t('components.tools.automation.operationUnknown')
   : state.value === 'dispatching' ? t('components.tools.automation.dispatching') : toolStatusLabel(state.value) || state.value)
-const observationError = computed(() => record(props.value.observationError))
+const observationErrors = computed(() => [record(props.value.observationError), record(props.value.snapshotError)].filter(value => Object.keys(value).length))
 </script>
 
 <template>
@@ -18,7 +18,7 @@ const observationError = computed(() => record(props.value.observationError))
       <span class="automation-badge action-status" :class="{ 'is-good': state === 'completed', 'is-error': state === 'failed', 'is-warning': !state || ['unknown', 'dispatching'].includes(state) }" :title="state">{{ label }}</span>
     </div>
     <p v-if="value.repeated === true" class="automation-muted">{{ t('components.tools.automation.repeated') }}</p>
-    <div v-if="Object.keys(observationError).length" class="automation-notice observation-error" role="status">
+    <div v-for="(observationError, index) in observationErrors" :key="index" class="automation-notice observation-error" role="status">
       <strong>{{ t('components.tools.automation.observationUnavailable') }}</strong>
       <div>{{ text(observationError.message) }}</div><code v-if="observationError.code" class="automation-code">{{ text(observationError.code) }}</code>
     </div>

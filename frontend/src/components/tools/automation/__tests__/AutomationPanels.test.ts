@@ -105,6 +105,20 @@ test('动作已完成与后续截图失败独立展示，原始详情也不泄�
   expect(wrapper.find('.result-raw').text()).toContain('op-1')
 })
 
+test('动作后嵌套快照显示新引用与分页，快照失败不覆盖已完成状态', async () => {
+  const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_action', args: { action: 'click', after: 'both' }, result: { success: true, data: {
+    status: 'completed', title: 'Next page', url: 'https://example.com/next',
+    snapshot: { nodes: ['[fresh-ref] button Next'], total: 3, nextOffset: 1, partial: true, truncated: true, frames: [{ frameId: 'main', url: 'https://example.com/next' }] },
+    observationError: { message: 'Screenshot failed; read again' },
+  } } } }))
+  expect(wrapper.find('.page-snapshot').text()).toContain('[fresh-ref]')
+  expect(wrapper.text()).toContain('本次返回 1 项，共匹配 3 项'); expect(wrapper.text()).toContain('续查位置：1')
+  expect(wrapper.find('.current-page').text()).toContain('Next page')
+  await wrapper.setProps({ result: { success: true, data: { status: 'completed', observationError: { message: 'Screenshot failed' }, snapshotError: { message: 'Snapshot failed' } } } })
+  expect(wrapper.findAll('.observation-error')).toHaveLength(2)
+  expect(wrapper.find('.action-status').text()).toBe('已完成'); expect(wrapper.text()).toContain('Snapshot failed')
+})
+
 test('未知/失败动作不被展示为已完成', () => {
   const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_action', args: { action: 'click' }, result: { success: false, code: 'BROWSER_ACTION_UNKNOWN', error: 'Disconnected', data: { status: 'unknown', repeated: true } } } }))
   expect(wrapper.find('[role="alert"]').text()).toContain('Disconnected')

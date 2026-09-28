@@ -44,6 +44,7 @@ export class BrowserPage {
       }
     });
   }
+  get revision(): number { return this.epoch; }
   invalidate(): void { this.references.clear(); this.observation = undefined; this.epoch++; }
   log(kind: PageLog['kind'], value: unknown): void {
     this.records.push({ cursor: ++this.logCursor, time: Date.now(), kind, text: String(value).slice(0, 3000) });

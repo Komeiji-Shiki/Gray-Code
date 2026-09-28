@@ -34,8 +34,9 @@ GrayCode 内置了轻量独立的浏览器环境，可供模型进行网页检�
 - **按需读取**：默认每次最多 250 个节点，可用 `maxNodes` 调整至 1–1000；另有约 60,000 字符的节点正文预算。`total` 表示本次筛选的匹配数，`returned` 表示本次返回数，`nextOffset` 用于续查。保持筛选条件并把 `nextOffset` 传给 `offset`；限定 `ref` 的区域分页使用最新 `scopeRef`，即使区域根节点不在本页也能继续。页面内容变化后从头读取。个别超长字段返回片段并标记 `textTruncated`，可用更具体的 `query` 定位后面的文字；`partial` 表示有框架读取失败，不等于该框架没有内容。
 - **表单与菜单**：`hover` 支持坐标或引用，可展开悬停菜单；`fill` 替换字段内容，空字符串清空，数值和日期字段遵循页面的原生格式；`type` 在当前焦点或给定引用处输入。`select` 根据 `values` 或 `labels` 设置原生下拉框，可多选，多选框可用空数组清空。`check` 使用 `checked` 设置复选框、单选框或开关的目标状态，状态已满足时不重复点击；单选框的取消通过选择同组其他选项完成。自定义菜单继续使用点击和按键，图表、画布使用截图坐标。
 - **等待页面反馈**：`browser_read` 的 `wait` 必须提供 `query`，默认等待文字出现，`state: "absent"` 等待其消失。可叠加 `role`、`frameId` 等筛选，默认等待 10,000 毫秒，`timeoutMs` 范围为 100–30,000 毫秒；支持取消和人工接管。返回 `conditionMet`、`timedOut` 和最后观察结果。条件满足表示观察到了对应文字状态，并不自动代表整项业务成功。
+- **动作后的观察**：`browser_action` 默认 `after: "screenshot"` 保持截图行为；`after: "snapshot"` 只返回新快照和元素引用，`after: "both"` 同时返回两种观察。`snapshotOptions` 支持 `compact`、`query`、`role`、`interactiveOnly`、`frameId`、`maxNodes`，不沿用动作前的 `ref` 或分页偏移。快照在 `data.snapshot`，新 ref 可直接供下次动作使用；续查仍通过 `browser_read`，保持同样的筛选条件。外层 URL/标题在观察后更新；两次观察间发生导航时省略已过期截图，不把旧图和新页面混在一起。
 - **稳定渲染捕获**：页面执行滚动或点击后，系统会等待新的绘制帧完成后再捕获最新截图，确保模型看到的是最新的页面渲染结果。
-- **观察失败的恢复**：截图超时会说明停在哪个阶段（等待绘制帧、布局读取或图像采集）；纯观察超时可重试 `browser_read` 的 `screenshot`，也可先用 `snapshot` 检查页面状态。`browser_action` 的 `status` 表示动作结果，`observationError` 只表示后续观察失败：此时重新读取，不要重复刚才的点击或提交，也不要求重新加载页面。
+- **观察失败的恢复**：截图超时会说明停在哪个阶段（等待绘制帧、布局读取或图像采集）；纯观察超时可重试 `browser_read` 的 `screenshot`，也可先用 `snapshot` 检查页面状态。`browser_action` 的 `status` 表示动作结果，`observationError` / `snapshotError` 分别表示后续截图或快照失败，一项失败不丢掉另一项观察：此时重新读取，不要重复刚才的点击或提交，也不要求重新加载页面。
 
 一个搜索流程可以先截图了解网站，再用 `snapshot` 查找搜索框，以返回的 `ref` 填写查询，使用最新截图的 `observationId` 按 Enter，然后用 `wait` 等待结果标题或加载提示消失。读取论文、商品或数据表时再按 `role: "link"`、`role: "row"` 或具体文字筛选；结果链接返回浏览器实际识别的 URL。点击后原标签没有变化时，读取标签列表确认是否打开了新页面。
 

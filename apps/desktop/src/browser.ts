@@ -11,6 +11,7 @@ import { BrowserPage } from './browser/page';
 import { BrowserProfiles } from './browser/profiles';
 import { isActiveMouseInput } from './browser/input';
 import { BrowserTransfers } from './browser/transfers';
+import { actionObservationOptions, type ActionObservationOptions } from '../../server/src/browser/observationOptions';
 
 interface OwnedTab {
   id: string; actorId: string; profileId: string; view: WebContentsView; page: BrowserPage;
@@ -323,17 +324,33 @@ export class DesktopBrowser implements BrowserHost {
     const observation: BrowserObservation = { ...frame.observation, tabId: tab.id };
     return { success: true, data: observation, attachments: [frame.attachment] };
   }
-  private async actionResult(tab: OwnedTab, outcome: ToolOutcome, signal: AbortSignal, dimension: number | undefined): Promise<ToolOutcome> {
-    try {
-      const captured = await this.capture(tab, signal, dimension);
-      return { ...outcome, data: { ...outcome.data as Record<string, unknown>, observation: captured.data }, attachments: captured.attachments };
-    } catch (error) {
-      // 已派发动作的状态保持不变；明确只补读观察，避免模型因截图失败重复点击或提交。
-      return { ...outcome, data: { ...outcome.data as Record<string, unknown>, observationError: {
-        code: (error as { code?: string }).code ?? 'BROWSER_CAPTURE_FAILED', message: `${(error as Error).message} 截图失败不代表动作失败；请用 browser_read 重新观察，不要重复刚才的动作。` } } };
+  private async actionResult(tab: OwnedTab, outcome: ToolOutcome, signal: AbortSignal, options: ActionObservationOptions): Promise<ToolOutcome> {
+    const data: Record<string, unknown> = { ...outcome.data as Record<string, unknown> };
+    let captured: ToolOutcome | undefined, captureRevision: number | undefined;
+    const failure = (error: unknown, kind: 'CAPTURE' | 'SNAPSHOT') => ({
+      code: (error as { code?: string })?.code ?? `BROWSER_${kind}_FAILED`,
+      message: `${error instanceof Error ? error.message : String(error)} 观察失败不代表动作失败；请用 browser_read 重新观察，不要重复刚才的动作。`,
+    });
+    if (options.after !== 'snapshot') {
+      try { captured = await this.capture(tab, signal, options.maxImageDimension); captureRevision = tab.page.revision; }
+      catch (error) { data.observationError = failure(error, 'CAPTURE'); }
     }
+    if (options.after === 'snapshot' || options.after === 'both') {
+      try { data.snapshot = await tab.page.snapshot(signal, options.snapshotOptions); }
+      catch (error) { data.snapshotError = failure(error, 'SNAPSHOT'); }
+    }
+    // 回执保存的是派发时状态；补读结束后再描述当前页，不能返回旧 url/title。
+    if (!tab.view.webContents.isDestroyed()) Object.assign(data, this.describe(tab));
+    // 两次观察之间即使同址重载也可能使旧坐标失效，只保留仍属于当前文档的图像。
+    if (captured && (captureRevision !== tab.page.revision || (captured.data as BrowserObservation).url !== data.url)) {
+      captured = undefined;
+      data.observationError = failure(Object.assign(new Error('页面在后续观察期间发生变化，旧截图已省略。'), { code: 'BROWSER_PAGE_CHANGED' }), 'CAPTURE');
+    }
+    if (captured) data.observation = captured.data;
+    return { ...outcome, data, attachments: captured?.attachments };
   }
   private async performAction(tab: OwnedTab, args: Record<string, unknown>, context: ToolContext, signal: AbortSignal): Promise<ToolOutcome> {
+    const observationOptions = actionObservationOptions(args);
     if (!context.toolCallId) throw new Error('浏览器动作需要运行器提供唯一的工具调用 ID。');
     const id = createHash('sha256').update(JSON.stringify([context.actorId, context.runId, context.iteration, context.toolCallId])).digest('hex');
     const fingerprint = createHash('sha256').update(JSON.stringify(args)).digest('hex');
@@ -344,7 +361,7 @@ export class DesktopBrowser implements BrowserHost {
       if (previous.status !== 'completed' || !previous.outcome)
         return { success: false, code: 'BROWSER_ACTION_UNKNOWN', error: previous.error ?? '这次动作已经派发但结果未确认，请重新观察。',
           data: { operationId: id, status: previous.status, repeated: true } };
-      return this.actionResult(tab, { ...previous.outcome, data: { ...previous.outcome.data as Record<string, unknown>, repeated: true } }, signal, args.maxImageDimension as number | undefined);
+      return this.actionResult(tab, { ...previous.outcome, data: { ...previous.outcome.data as Record<string, unknown>, repeated: true } }, signal, observationOptions);
     }
     if (args.action !== 'navigate' && args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化或未提供，请重新读取后确认操作目标。');
     this.attach(tab);
@@ -364,14 +381,14 @@ export class DesktopBrowser implements BrowserHost {
       const receipt: VisualActionResult = { operationId: id, status: 'completed' };
       const download = tab.blockedDownload as OwnedTab['blockedDownload'];
       operation.outcome = download ? { success: false, code: 'DOWNLOAD_DESTINATION_REQUIRED',
-        error: '该操作触发文件下载，请通过 browser_files 指定保存路径。', data: { ...download, ...receipt } }
+        error: '该操作触发文件下载，请通过 browser_files 指定保存路径。', data: { filename: download.filename, downloadUrl: download.url, ...receipt } }
         : { success: true, data: { ...this.describe(tab), ...receipt } };
     } catch (error) {
       operation.status = (error as { code?: string }).code === 'OBSERVATION_STALE' ? 'failed' : 'unknown'; operation.error = (error as Error).message;
       operation.outcome = { success: false, code: (error as { code?: string }).code ?? 'BROWSER_ACTION_UNKNOWN', error: operation.error,
         data: { operationId: id, status: operation.status } };
     } finally { operation.finishedAt = Date.now(); await this.application.storage.putRecord({ ...record, value: operation }); }
-    return this.actionResult(tab, operation.outcome!, signal, args.maxImageDimension as number | undefined);
+    return this.actionResult(tab, operation.outcome!, signal, observationOptions);
   }
   async tool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
     this.actor(context.actorId); context.signal.throwIfAborted();

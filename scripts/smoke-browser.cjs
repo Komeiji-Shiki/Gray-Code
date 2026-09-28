@@ -41,7 +41,7 @@ function fixtureHtml(origin, crossOrigin) {
   <div id="shadow"></div><div id="covered"><button aria-label="Covered control">Covered control</button><div id="cover">Overlay</div></div>
   <iframe title="Same origin" src="${origin}/frame"></iframe><iframe title="Cross origin" src="${crossOrigin}/frame"></iframe>
   ${'<section role="group">'.repeat(35)}<button aria-label="Deep component" onclick="this.textContent='Deep clicked'">Deep component</button>${'</section>'.repeat(35)}
-  <a target="_blank" href="${origin}/paper">Open paper tab</a>
+  <a href="${origin}/paper">Read paper here</a><a target="_blank" href="${origin}/paper">Open paper tab</a>
   <button id="large" onclick="this.textContent='Large clicked'">Large surface</button></main>
   <script>
   let changed=0;
@@ -64,11 +64,14 @@ async function run(output) {
   app.commandLine.appendSwitch('site-per-process');
   app.on('window-all-closed', () => {});
   const checks = [];
-  let browser, platform, parent, server, origin, crossOrigin, step = 0, modelTab, modelRef, modelObservation;
+  let browser, platform, parent, server, origin, crossOrigin, step = 0, modelTab, modelRef;
   const report = { checks };
   try {
     await app.whenReady();
-    parent = new BrowserWindow({ show: false, opacity: 0, focusable: false, skipTaskbar: true });
+    // 合成夹具没有可见工作台；使用真实 Chromium 离屏合成，避免 Windows 遮挡优化挂起 rAF。
+    // 截图仍经正式 BrowserPage.capturePage 路径采集，不跳过像素和动作后的观察断言。
+    parent = new BrowserWindow({ show: false, opacity: 0, focusable: false, skipTaskbar: true,
+      webPreferences: { offscreen: true, backgroundThrottling: false } });
     server = createServer(async (request, response) => {
       try {
         if (request.url === '/model') {
@@ -81,12 +84,14 @@ async function run(output) {
           if (step === 1) { modelTab = last.data.id; call = { name: 'browser_read', args: { action: 'snapshot', tabId: modelTab, query: 'Search papers', role: 'searchbox', compact: false } }; }
           if (step === 2) {
             modelRef = last.data.nodes[0].ref;
-            call = { name: 'browser_action', args: { action: 'fill', tabId: modelTab, url: origin + '/', ref: modelRef, text: 'quantum methods' } };
+            call = { name: 'browser_action', args: { action: 'fill', tabId: modelTab, url: origin + '/', ref: modelRef, text: 'quantum methods', after: 'both', snapshotOptions: { compact: false, query: 'Search papers', role: 'searchbox' } } };
           }
           if (step === 3) {
-            modelObservation = last.data.observation.id;
+            assert.equal(last.data.url, last.data.observation.url); assert.equal(last.data.url, last.data.snapshot.url);
+            modelRef = last.data.snapshot.nodes[0].ref;
+            assert.notEqual(modelRef, undefined);
             assert(input.messages.some(message => message.parts.some(part => part.inlineData)));
-            call = { name: 'browser_action', args: { action: 'press', tabId: modelTab, url: origin + '/', observationId: modelObservation, key: 'Enter' } };
+            call = { name: 'browser_action', args: { action: 'press', tabId: modelTab, url: last.data.url, ref: modelRef, key: 'Enter' } };
           }
           if (step === 4) call = { name: 'browser_read', args: { action: 'wait', tabId: modelTab, query: 'Results ready', timeoutMs: 4000 } };
           if (step === 5) assert.equal(last.data.conditionMet, true);
@@ -99,7 +104,7 @@ async function run(output) {
             + '<div role="region" aria-label="Frame scroll" style="height:60px;overflow:auto" onscroll="document.getElementById(\'state\').textContent=\'Frame scrolled\'">'
             + '<p>Scrollable row</p>'.repeat(30) + '</div><p id="state">Not scrolled</p>'); return;
         }
-        if (request.url === '/paper') { response.end('<h1>Quantum methods paper</h1>'); return; }
+        if (request.url === '/paper') { response.end('<title>Quantum paper</title><h1>Quantum methods paper</h1>'); return; }
         response.end(fixtureHtml(origin, crossOrigin));
       } catch (error) { response.statusCode = 500; response.end(String(error.stack ?? error)); }
     });
@@ -131,7 +136,10 @@ async function run(output) {
     const action = async args => {
       const result = await tool('browser_action', { tabId, url, ...args });
       assert.equal(result.success, true, JSON.stringify(result));
-      assert.equal(result.data.status, 'completed'); assert(result.data.observation, JSON.stringify(result));
+      assert.equal(result.data.status, 'completed');
+      if (args.after === 'snapshot') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.attachments, undefined); }
+      else { assert(result.data.observation, JSON.stringify(result)); assert.equal(result.data.url, result.data.observation.url); }
+      if (args.after === 'both') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.data.url, result.data.snapshot.url); }
       return result;
     };
     const shot = await tool('browser_read', { action: 'screenshot', tabId });
@@ -144,8 +152,9 @@ async function run(output) {
     checks.push('pagination-and-screenshot-preservation');
     const deepRef = await find('Deep component', 'button'); assert(deepRef);
     const searchRef = await find('Search papers', 'searchbox');
-    await action({ action: 'fill', ref: searchRef, text: 'first query' });
-    await action({ action: 'fill', ref: await find('Search papers', 'searchbox'), text: '' });
+    const filled = await action({ action: 'fill', ref: searchRef, text: 'first query', after: 'snapshot', snapshotOptions: { query: 'Search papers', role: 'searchbox', compact: false } });
+    await action({ action: 'fill', ref: filled.data.snapshot.nodes[0].ref, text: '' });
+    checks.push('snapshot-only-ref-chaining-without-extra-read');
     assert.equal((await read({ query: 'Search papers', role: 'searchbox' })).data.nodes[0].value ?? '', '');
     const submitted = await action({ action: 'type', ref: await find('Search papers', 'searchbox'), text: 'quantum methods' });
     await action({ action: 'press', observationId: submitted.data.observation.id, key: 'Enter' });
@@ -190,6 +199,11 @@ async function run(output) {
     const screenshot = await tool('browser_read', { action: 'screenshot', tabId });
     const image = nativeImage.createFromBuffer(Buffer.from(screenshot.attachments[0].data, 'base64'));
     assert(!image.isEmpty()); await fs.writeFile(path.join(output, 'browser.png'), image.toPNG());
+    const navigated = await action({ action: 'click', ref: await find('Read paper here', 'link') });
+    assert.equal(navigated.data.url, origin + '/paper'); assert.equal(navigated.data.title, 'Quantum paper');
+    const back = await action({ action: 'back', url: navigated.data.url, after: 'both', snapshotOptions: { query: 'Search papers', role: 'searchbox' } });
+    assert.equal(back.data.url, url); assert.equal(back.data.title, 'Research browser fixture');
+    checks.push('click-and-back-refresh-url-title-and-observations');
     browser.finishRun(context.runId);
     const draft = await platform.product.draft();
     for (const name of ['browser_tabs', 'browser_read', 'browser_action']) await draft.settings.setToolAutoExec(name, true);

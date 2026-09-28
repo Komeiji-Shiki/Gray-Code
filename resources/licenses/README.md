@@ -4,6 +4,7 @@
 
 | 文件 | 组件与锁定版本 | 来源 |
 | --- | --- | --- |
+| `ajv.txt` | Ajv 8.20.0（沿用工作区已有版本，server 显式声明直接依赖） | 安装包原始 `LICENSE`，MIT；[官方源码](https://github.com/ajv-validator/ajv) |
 | `acp-sdk.txt` | `@agentclientprotocol/sdk` 1.5.0 | 安装包原始 `LICENSE`，Apache-2.0；[官方源码](https://github.com/agentclientprotocol/typescript-sdk) |
 | `mcp-client.txt` | `@modelcontextprotocol/client` 2.0.0 | 安装包原始 `LICENSE`；[官方源码](https://github.com/modelcontextprotocol/typescript-sdk) |
 | `mcp-core.txt` | `@modelcontextprotocol/core` 2.0.0 | 安装包原始 `LICENSE`；[官方源码](https://github.com/modelcontextprotocol/typescript-sdk) |

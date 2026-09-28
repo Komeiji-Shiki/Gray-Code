@@ -18,8 +18,9 @@ const observation = computed(() => Object.keys(record(data.value.observation)).l
 const page = computed(() => ({ ...observation.value, ...data.value }))
 const tabs = computed(() => records(data.value.tabs))
 const profiles = computed(() => records(data.value.profiles))
-const nodes = computed(() => Array.isArray(data.value.nodes) ? data.value.nodes : [])
-const frames = computed(() => records(data.value.frames))
+const snapshot = computed(() => Object.keys(record(data.value.snapshot)).length ? record(data.value.snapshot) : data.value)
+const nodes = computed(() => Array.isArray(snapshot.value.nodes) ? snapshot.value.nodes : [])
+const frames = computed(() => records(snapshot.value.frames))
 const logs = computed(() => records(data.value.entries))
 const visible = ref(40)
 watch(() => props.result, () => { visible.value = 40 })
@@ -65,9 +66,9 @@ function logTime(value: unknown) {
           <div v-if="page.error" class="automation-notice automation-error">{{ text(page.error) }}</div>
         </section>
 
-        <section v-if="Array.isArray(data.nodes)" class="automation-section page-snapshot">
+        <section v-if="Array.isArray(snapshot.nodes)" class="automation-section page-snapshot">
           <div class="automation-section-title"><h4>{{ toolFieldLabel('nodes') }}</h4><span class="automation-count">{{ nodes.length }}</span></div>
-          <p v-if="numeric(data.total) !== undefined" class="automation-meta">{{ t('components.tools.automation.snapshotCount', { count: nodes.length, total: data.total }) }}</p>
+          <p v-if="numeric(snapshot.total) !== undefined" class="automation-meta">{{ t('components.tools.automation.snapshotCount', { count: nodes.length, total: snapshot.total }) }}</p>
           <p v-if="!nodes.length" class="automation-empty">{{ t('components.tools.structured.empty') }}</p>
           <div v-else class="automation-content">
             <template v-for="(node, index) in nodes.slice(0, visible)" :key="index">
@@ -82,8 +83,8 @@ function logTime(value: unknown) {
             </template>
           </div>
           <button v-if="nodes.length > visible" type="button" class="automation-more" @click="visible += 40">{{ t('components.tools.structured.showMore', { count: nodes.length - visible }) }}</button>
-          <p v-if="numeric(data.nextOffset) !== undefined" class="automation-meta">{{ t('components.tools.platform.nextOffset', { offset: data.nextOffset }) }}</p>
-          <p v-if="data.partial === true" class="automation-notice">{{ t('components.tools.platform.partial') }}</p>
+          <p v-if="numeric(snapshot.nextOffset) !== undefined" class="automation-meta">{{ t('components.tools.platform.nextOffset', { offset: snapshot.nextOffset }) }}</p>
+          <p v-if="snapshot.partial === true" class="automation-notice">{{ t('components.tools.platform.partial') }}</p>
           <details v-if="frames.length" class="automation-details"><summary>{{ toolFieldLabel('frames') }} · {{ frames.length }}</summary><ul class="automation-list"><li v-for="(frame, index) in frames" :key="index"><span class="automation-code">{{ text(frame.url) || text(frame.frameId) }}</span><p v-if="frame.unavailable" class="automation-notice automation-error">{{ text(frame.unavailable) }}</p></li></ul></details>
         </section>
 
@@ -103,7 +104,7 @@ function logTime(value: unknown) {
           <div class="automation-meta"><span v-if="numeric(data.count) !== undefined">{{ toolFieldLabel('count') }} · {{ data.count }}</span><span v-if="fileSize(data.bytes)">{{ t('components.tools.automation.size') }} · {{ fileSize(data.bytes) }}</span></div>
         </section>
         <VisualObservation :value="observation" />
-        <p v-if="data.truncated === true" class="automation-notice">{{ t('components.tools.automation.truncated') }}</p>
+        <p v-if="data.truncated === true || snapshot.truncated === true" class="automation-notice">{{ t('components.tools.automation.truncated') }}</p>
         <p v-if="!Object.keys(data).filter(key => key !== 'success').length && !error && !record(result).error" class="automation-empty">{{ t(record(result).success === true ? 'components.tools.structured.noOutput' : 'components.tools.structured.empty') }}</p>
       </template>
     </ToolResultPanel>
