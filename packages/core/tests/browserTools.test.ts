@@ -6,6 +6,13 @@ import { browserTools } from '../../../apps/server/src/browser/tools';
 import { initialSettings } from '../../../apps/server/src/settings/service';
 import { fixture } from './fixtures';
 
+test('表单状态与悬停操作沿用外部发送权限，读取和条件等待保持只读权限', () => {
+  const tools = browserTools();
+  const action = tools.find(tool => tool.declaration.name === 'browser_action')!;
+  for (const name of ['select', 'check', 'hover', 'fill', 'type']) expect(action.effects({ action: name })).toEqual(['private_browser', 'external_send']);
+  expect(tools.find(tool => tool.declaration.name === 'browser_read')!.effects({ action: 'wait', query: 'result' })).toEqual(['private_browser']);
+});
+
 test('浏览器声明不随身份或宿主变化，拒绝与审批在访问私人页面之前执行', async () => {
   const f = await fixture();
   const previous = initialSettings(['ask_user']); previous.toolCatalogVersion = 10;

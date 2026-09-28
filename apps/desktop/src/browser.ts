@@ -387,7 +387,7 @@ export class DesktopBrowser implements BrowserHost {
     }
     const tab = this.tab(context.actorId, args.tabId);
     const operation = tab.queue.catch(() => {}).then(async (): Promise<ToolOutcome> => {
-      const signal = this.claim(tab, context); tab.modelInput = true;
+      const signal = this.claim(tab, context);
       try {
         if (name === 'browser_tabs' && args.action === 'close') { this.closeTab(tab); return { success: true }; }
         if (name === 'browser_tabs' && args.action === 'show') {
@@ -396,15 +396,22 @@ export class DesktopBrowser implements BrowserHost {
         }
         if (name === 'browser_read') {
           if (args.action === 'snapshot') return { success: true, data: await tab.page.snapshot(signal, args) };
+          if (args.action === 'wait') {
+            const data = await tab.page.waitForSnapshot(signal, args);
+            return data.conditionMet ? { success: true, data }
+              : { success: false, code: 'BROWSER_WAIT_TIMEOUT', error: '等待结束，页面尚未满足指定条件；请检查当前页面，不要重复提交之前的动作。', data };
+          }
           if (args.action === 'screenshot') {
             return await this.capture(tab, signal, args.maxImageDimension as number | undefined);
           }
           if (args.action === 'logs') return { success: true, data: tab.page.logs(args) };
         }
         if (name === 'browser_action') {
+          tab.modelInput = true;
           return await this.performAction(tab, args, context, signal);
         }
         if (name === 'browser_files') {
+          tab.modelInput = true;
           if (args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化，请重新读取后确认文件传输目标。');
           const currentContext = { ...context, signal };
           if (args.action === 'upload') return { success: true, data: await this.transfers.upload(tab.page, args, currentContext) };

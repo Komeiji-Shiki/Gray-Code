@@ -11,6 +11,7 @@ jest.mock('../../../apps/desktop/src/browser/page', () => ({ BrowserPage: class 
   automated = false; connect = mockConnect; invalidate = jest.fn();
   allowManualInput = jest.fn(() => { this.automated = false; });
   action = jest.fn(async () => {}); snapshot = jest.fn(async () => ({ nodes: [] }));
+  waitForSnapshot = jest.fn(async () => ({ conditionMet: false, timedOut: true, nodes: [] }));
   screenshot = jest.fn(async (signal: AbortSignal) => {
     signal.throwIfAborted();
     return { observation: { id: 'fixture-observation', url: 'about:blank' }, attachment: { mimeType: 'image/png', data: 'fixture' } };
@@ -192,6 +193,20 @@ test('明确接管在模型工具进行中立即中止，之后选择显示和�
     f.contents.emit('before-mouse-event', {}, { type: 'mouseMove', x: 20, y: 30 } satisfies MouseInputEvent);
     expect((await f.browser.state('owner')).tabs[0].userControlled).toBe(true);
     await expect(f.browser.tool('browser_tabs', { action: 'show', tabId: f.tab.id }, f.context)).rejects.toThrow('用户已接管');
+  } finally { f.browser.close(); }
+});
+
+test('读取及等待页面时实际键鼠输入立即接管，等待超时保留条件结果', async () => {
+  const f = await automatedTab();
+  try {
+    const timeout = await f.browser.tool('browser_read', { action: 'wait', tabId: f.tab.id, query: '结果' }, f.context);
+    expect(timeout).toMatchObject({ success: false, code: 'BROWSER_WAIT_TIMEOUT', data: { conditionMet: false, timedOut: true } });
+    f.page.waitForSnapshot.mockImplementationOnce((signal: AbortSignal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      f.contents.emit('before-input-event', {}, keyboardInput('keyDown'));
+    }));
+    await expect(f.browser.tool('browser_read', { action: 'wait', tabId: f.tab.id, query: '结果' }, f.context)).rejects.toThrow('用户已接管');
+    expect((await f.browser.state('owner')).tabs[0].userControlled).toBe(true);
   } finally { f.browser.close(); }
 });
 

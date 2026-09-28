@@ -1,12 +1,13 @@
 import type { WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { BrowserObservation } from '@graycode/contracts';
-import { compactSnapshot, type SnapshotNode } from './snapshot';
+import { compactSnapshot, snapshotRows, type AxNode, type SnapshotNode, type SnapshotOptions } from './snapshot';
 import { browserKey } from './keys';
+import { checkedState, pointInElement, prepareTextInput, selectElement } from './elements';
 
 interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string }
 interface PageLog { cursor: number; time: number; kind: 'console' | 'network' | 'error'; text: string }
-interface AxNode { nodeId: string; parentId?: string; ignored?: boolean; role?: { value?: string }; name?: { value?: string }; value?: { value?: unknown }; backendDOMNodeId?: number; properties?: Array<{ name: string; value: { value?: unknown } }> }
 
 /** 只提供固定的页面操作。模型参数不能成为脚本、CDP 方法名或宿主接口。 */
 export class BrowserPage {
@@ -89,49 +90,33 @@ export class BrowserPage {
       signal.throwIfAborted(); return result;
     } finally { if (timer) clearTimeout(timer); if (abort) signal.removeEventListener('abort', abort); }
   }
-  async snapshot(signal: AbortSignal, options: { compact?: boolean; maxNodes?: number; ref?: string } = {}) {
-    await this.connect(); signal.throwIfAborted();
+  async snapshot(signal: AbortSignal, options: SnapshotOptions = {}) {
+    signal.throwIfAborted(); await this.pending(this.connect(), signal);
     const scope = options.ref ? this.reference(options.ref) : undefined;
-    this.invalidate(); const epoch = this.epoch; const prefix = randomUUID().slice(0, 8);
+    // 读取文字不会改变截图坐标；只更新元素引用，截图仍按导航、滚动和缩放校验。
+    this.references.clear(); const epoch = this.epoch; const prefix = randomUUID().slice(0, 8);
     const references = new Map<string, ElementReference>();
+    const scopeRef = scope ? `${prefix}-scope` : undefined;
+    if (scopeRef) references.set(scopeRef, scope!);
     const rows: SnapshotNode[] = []; const frames: Array<Record<string, unknown>> = [];
-    const maximum = options.maxNodes ?? 250;
-    let truncated = false;
+    const maximum = options.maxNodes ?? 250, offset = options.offset ?? 0;
+    let total = 0, characters = 0, budgetReached = false;
     const read = async (frameId?: string, url?: string, sessionId?: string) => {
-      if (rows.length >= maximum) { truncated = true; return; }
-      const { nodes } = await this.command('Accessibility.getFullAXTree', { depth: 24, ...(frameId ? { frameId } : {}) }, signal, sessionId) as { nodes: AxNode[] };
-      frames.push({ frameId: frameId ?? this.sessions.get(sessionId!)?.targetId, url });
-      const root = scope && nodes.find(node => node.backendDOMNodeId === scope.backendNodeId);
-      if (scope && !root) throw new Error('所选页面区域已经变化，请重新读取整个页面。');
-      const selected = new Set<string>();
-      const byId = new Map(nodes.map(node => [node.nodeId, node]));
-      const children = new Map<string, string[]>();
-      for (const node of nodes) if (node.parentId) {
-        const siblings = children.get(node.parentId) ?? [];
-        siblings.push(node.nodeId); children.set(node.parentId, siblings);
-      }
-      // 根据父子关系选择区域，不依赖调试协议返回节点的排列顺序。
-      const pending = root ? [root.nodeId] : [];
-      while (pending.length) {
-        const id = pending.pop()!; selected.add(id);
-        pending.push(...children.get(id) ?? []);
-      }
-      const depths = new Map<string, number>();
-      const depthOf = (node: AxNode): number => {
-        if (depths.has(node.nodeId)) return depths.get(node.nodeId)!;
-        const parent = node.parentId ? byId.get(node.parentId) : undefined;
-        const depth = parent ? depthOf(parent) + 1 : 0; depths.set(node.nodeId, depth); return depth;
-      };
-      for (const node of nodes) {
-        if (scope && !selected.has(node.nodeId)) continue;
-        const depth = depthOf(node) - (root ? depthOf(root) : 0);
-        if (node.ignored || node.role?.value === 'InlineTextBox' || !node.name?.value && ['generic', 'none'].includes(node.role?.value ?? '')) continue;
-        if (rows.length >= maximum) { truncated = true; break; }
-        const id = node.backendDOMNodeId ? `${prefix}-${references.size + 1}` : undefined;
+      const identity = frameId ?? this.sessions.get(sessionId!)?.targetId;
+      if (options.frameId && options.frameId !== identity) return;
+      // 深层组件不截断树深度；输出预算在筛选之后应用，后面的正文和 iframe 仍可检索。
+      const { nodes } = await this.command('Accessibility.getFullAXTree', frameId ? { frameId } : {}, signal, sessionId) as { nodes: AxNode[] };
+      const failed = frames.findIndex(frame => frame.frameId === identity && frame.unavailable);
+      if (failed >= 0) frames.splice(failed, 1);
+      frames.push({ frameId: identity, url });
+      for (const { node, row } of snapshotRows(nodes, options, scope?.backendNodeId)) {
+        if (total++ < offset || rows.length >= maximum || budgetReached) continue;
+        const size = JSON.stringify(row).length;
+        if (characters + size > 60000 && rows.length) { budgetReached = true; continue; }
+        characters += size;
+        const id = node.backendDOMNodeId ? `${prefix}-${rows.length + 1}` : undefined;
         if (id) references.set(id, { backendNodeId: node.backendDOMNodeId!, sessionId, frameId });
-        const properties = Object.fromEntries((node.properties ?? []).filter(value => ['checked', 'selected', 'disabled', 'expanded', 'required', 'readonly', 'level', 'multiline'].includes(value.name)).map(value => [value.name, value.value.value]));
-        rows.push({ ...(id ? { ref: id } : {}), frameId: frameId ?? this.sessions.get(sessionId!)?.targetId, depth, role: node.role?.value, name: node.name?.value?.slice(0, 1200),
-          ...(node.value?.value !== undefined ? { value: String(node.value.value).slice(0, 1200) } : {}), ...properties });
+        rows.push({ ...(id ? { ref: id } : {}), frameId: identity, ...row });
       }
     };
     const visit = async (node: { frame: { id: string; url: string }; childFrames?: any[] }) => {
@@ -150,10 +135,40 @@ export class BrowserPage {
         catch (error) { signal.throwIfAborted(); frames.push({ frameId: target.targetId, url: target.url, unavailable: String(error) }); }
       }
     }
-    if (epoch !== this.epoch) throw new Error('页面在读取时发生导航，请重新读取。');
+    if (options.frameId && !frames.length) throw new Error('页面框架不存在或已经变化，请先读取整个页面确认 frameId。');
+    if (epoch !== this.epoch) throw Object.assign(new Error('页面在读取时发生导航，请重新读取。'), { code: 'BROWSER_PAGE_CHANGED' });
     for (const [id, reference] of references) this.references.set(id, reference);
+    const nextOffset = offset + rows.length < total ? offset + rows.length : undefined;
     return { url: this.contents.getURL(), title: this.contents.getTitle(), frames,
-      format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows), truncated };
+      format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows),
+      offset, returned: rows.length, total, nextOffset, truncated: nextOffset !== undefined,
+      partial: frames.some(frame => frame.unavailable), ...(scopeRef ? { scopeRef } : {}), ...(budgetReached ? { characterLimit: 60000 } : {}) };
+  }
+
+  async waitForSnapshot(signal: AbortSignal, options: SnapshotOptions & { timeoutMs?: number; state?: string }) {
+    if (!options.query?.trim()) throw new Error('wait 需要 query 指定等待出现或消失的页面文字。');
+    if (options.ref || options.offset) throw new Error('wait 请使用 query、role 或 frameId 指定条件，不使用会变化的 ref 或 offset。');
+    const timeoutMs = options.timeoutMs ?? 10000, started = Date.now();
+    const deadline = AbortSignal.timeout(timeoutMs), waiting = AbortSignal.any([signal, deadline]);
+    let snapshot: Awaited<ReturnType<BrowserPage['snapshot']>> | undefined;
+    try {
+      while (true) {
+        try {
+          snapshot = await this.snapshot(waiting, options);
+          const conditionMet = options.state === 'absent' ? snapshot.total === 0 && !snapshot.partial : snapshot.total > 0;
+          if (conditionMet) return { ...snapshot, conditionMet: true, timedOut: false, waitedMs: Date.now() - started };
+        } catch (error) {
+          waiting.throwIfAborted();
+          if ((error as { code?: string }).code !== 'BROWSER_PAGE_CHANGED') throw error;
+          snapshot = undefined;
+        }
+        await delay(200, undefined, { signal: waiting });
+      }
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!deadline.aborted) throw error;
+      return { ...snapshot, conditionMet: false, timedOut: true, waitedMs: Date.now() - started };
+    }
   }
   async screenshot(signal: AbortSignal, bounds: { width: number; height: number }, maxImageDimension = 1280) {
     await this.connect(); signal.throwIfAborted();
@@ -227,8 +242,8 @@ export class BrowserPage {
     await this.command('Page.setInterceptFileChooserDialog', { enabled: true }, signal);
     const action = String(args.action);
     const observation = args.observationId ? await this.observed(args.observationId, signal) : undefined;
-    const reference = args.ref || action === 'fill' || !observation && ['click', 'press'].includes(action) ? this.reference(args.ref) : undefined;
-    if (['type', 'drag'].includes(action) && !observation) throw new Error('请提供最近截图的 observationId。');
+    const reference = args.ref || ['fill', 'select', 'check'].includes(action) || !observation && ['click', 'hover', 'press'].includes(action) ? this.reference(args.ref) : undefined;
+    if (action === 'drag' && !observation || action === 'type' && !observation && !reference) throw new Error('请提供最近截图的 observationId 或可输入元素的 ref。');
     try {
       if (action === 'scroll') {
         if (!['up', 'down', 'left', 'right'].includes(String(args.direction))) throw new Error('请提供滚动方向。');
@@ -239,20 +254,30 @@ export class BrowserPage {
         else if (observation && (args.x !== undefined || args.y !== undefined)) {
           const point = this.imagePoint(observation, args.x, args.y); x = point.x; y = point.y;
         }
-        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' }, signal);
+        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' }, signal, reference?.sessionId);
         await this.command('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y,
           deltaX: ['left', 'right'].includes(String(args.direction)) ? (args.direction === 'left' ? -distance : distance) : 0,
-          deltaY: ['up', 'down'].includes(String(args.direction)) ? (args.direction === 'up' ? -distance : distance) : 0 }, signal);
-      } else if (action === 'click') {
-        const point = reference ? await this.point(reference, signal) : this.imagePoint(observation!, args.x, args.y);
+          deltaY: ['up', 'down'].includes(String(args.direction)) ? (args.direction === 'up' ? -distance : distance) : 0 }, signal, reference?.sessionId);
+      } else if (['click', 'hover', 'check'].includes(action)) {
+        if (action === 'check') {
+          if (typeof args.checked !== 'boolean') throw new Error('check 需要 checked 指定目标状态。');
+          const state = await this.checkState(reference!, signal);
+          if (state.checked === args.checked) return;
+          if (state.radio && !args.checked) throw new Error('单选框不能直接取消，请选择同组的其他选项。');
+        }
+        const point = reference ? await this.point(reference, signal, action === 'hover') : this.imagePoint(observation!, args.x, args.y);
         const button = args.button ?? 'left';
         if (!['left', 'middle', 'right'].includes(String(button))) throw new Error('不支持的鼠标按键。');
         const count = args.clickCount === 2 ? 2 : 1;
         await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' }, signal, reference?.sessionId);
+        if (action === 'hover') return;
+        if (action === 'check' && (button !== 'left' || count !== 1)) throw new Error('check 仅使用一次左键点击。');
         for (let clickCount = 1; clickCount <= count; clickCount++) {
           try { await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button, clickCount }, signal, reference?.sessionId); }
           finally { await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button, clickCount }, AbortSignal.timeout(1000), reference?.sessionId); }
         }
+        if (action === 'check' && (await this.checkState(reference!, signal)).checked !== args.checked)
+          throw new Error('已点击选项，但页面尚未确认目标状态，请重新观察，不要重复切换。');
       } else if (action === 'drag') {
         const from = this.imagePoint(observation!, args.x, args.y), to = this.imagePoint(observation!, args.toX, args.toY);
         const duration = Number(args.durationMs ?? 300), steps = Math.max(2, Math.ceil(duration / 16));
@@ -269,38 +294,65 @@ export class BrowserPage {
         } finally { await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 }, AbortSignal.timeout(1000)); }
       } else if (action === 'type') {
         if (typeof args.text !== 'string') throw new Error('请提供需要输入的文本。');
-        await this.command('Input.insertText', { text: args.text }, signal);
+        if (reference) await this.command('DOM.focus', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
+        await this.command('Input.insertText', { text: args.text }, signal, reference?.sessionId);
       } else if (action === 'fill') {
         if (typeof args.text !== 'string') throw new Error('请提供需要填入的文本。');
         const objectId = await this.element(reference!, signal);
         const prepared = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
-          functionDeclaration: `function() { if (!this.isConnected || this.disabled || this.readOnly) return false; if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) { if (this.type === 'file' || typeof this.select !== 'function') return false; this.focus(); this.select(); return true; } if (this.isContentEditable) { this.focus(); const range = document.createRange(); range.selectNodeContents(this); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); return true; } return false; }` }, signal, reference!.sessionId);
-        if (!prepared.result?.value) throw new Error('此元素不是可编辑文本框。');
-        await this.command('Input.insertText', { text: args.text }, signal, reference!.sessionId);
-      } else if (action === 'press') {
-        const key = browserKey(String(args.key));
-        if (reference) await this.command('DOM.focus', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
-        try { await this.command('Input.dispatchKeyEvent', { type: 'keyDown', ...key }, signal, reference?.sessionId); }
-        finally {
-          const { text: _text, ...released } = key;
-          await this.command('Input.dispatchKeyEvent', { type: 'keyUp', ...released }, AbortSignal.timeout(1000), reference?.sessionId);
+          functionDeclaration: prepareTextInput, arguments: [{ value: args.text }] }, signal, reference!.sessionId);
+        const status = prepared.result?.value;
+        if (status === 'invalid-value') throw new Error('文本不符合该输入框的原生格式，请按页面要求填写数值或日期。');
+        if (status !== 'filled' && status !== 'selected') throw new Error('此元素不是可编辑文本框。');
+        if (status === 'selected') {
+          // insertText('') 不会删除选择区，空值必须派发真正的删除键。
+          if (args.text) await this.command('Input.insertText', { text: args.text }, signal, reference!.sessionId);
+          else await this.press('Backspace', signal, reference!.sessionId);
         }
+      } else if (action === 'select') {
+        const choices = args.values ?? args.labels;
+        if (!!args.values === !!args.labels || !Array.isArray(choices) || choices.some(value => typeof value !== 'string'))
+          throw new Error('select 需要 values 或 labels 字符串数组，两者只能提供一个。');
+        const objectId = await this.element(reference!, signal);
+        const selected = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
+          functionDeclaration: selectElement, arguments: [{ value: args.values }, { value: args.labels }] }, signal, reference!.sessionId);
+        if (selected.exceptionDetails || selected.result?.value !== null) throw new Error(selected.result?.value ?? '下拉框操作失败，请重新观察页面。');
+      } else if (action === 'press') {
+        if (reference) await this.command('DOM.focus', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
+        await this.press(String(args.key), signal, reference?.sessionId);
       } else throw new Error('不支持的页面操作。');
     } finally {
       this.invalidate();
       if (this.contents.debugger.isAttached()) void this.contents.debugger.sendCommand('Runtime.releaseObjectGroup', { objectGroup: 'graycode-browser' }, reference?.sessionId).catch(() => {});
     }
   }
-  private async point(reference: ElementReference, signal: AbortSignal): Promise<{ x: number; y: number }> {
+  private async press(value: string, signal: AbortSignal, sessionId?: string): Promise<void> {
+    const key = browserKey(value);
+    try { await this.command('Input.dispatchKeyEvent', { type: 'keyDown', ...key }, signal, sessionId); }
+    finally {
+      const { text: _text, ...released } = key;
+      await this.command('Input.dispatchKeyEvent', { type: 'keyUp', ...released }, AbortSignal.timeout(1000), sessionId);
+    }
+  }
+  private async checkState(reference: ElementReference, signal: AbortSignal) {
+    const objectId = await this.element(reference, signal);
+    const result = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true, functionDeclaration: checkedState }, signal, reference.sessionId);
+    const state = result.result?.value;
+    if (!state || state.error) throw new Error(state?.error ?? '无法读取选项状态。');
+    return { checked: state.checked === true || state.checked === 'true' ? true : state.checked === false || state.checked === 'false' ? false : 'mixed', radio: state.radio };
+  }
+  private async point(reference: ElementReference, signal: AbortSignal, allowDisabled = false): Promise<{ x: number; y: number }> {
     await this.command('DOM.scrollIntoViewIfNeeded', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
     const objectId = await this.element(reference, signal);
     const result = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
-      functionDeclaration: `function() { const r = this.getBoundingClientRect(); const hit = document.elementFromPoint(Math.max(0, Math.min(innerWidth - 1, r.x + r.width / 2)), Math.max(0, Math.min(innerHeight - 1, r.y + r.height / 2))); return this.isConnected && !this.disabled && (hit === this || this.contains(hit)); }` }, signal, reference.sessionId);
-    if (!result.result?.value) throw new Error('此元素当前不可点击或被其他内容遮挡，请重新读取页面。');
+      functionDeclaration: pointInElement, arguments: [{ value: allowDisabled }] }, signal, reference.sessionId);
+    const location = result.result?.value;
+    if (!location) throw new Error('此元素当前不可点击或被其他内容遮挡，请重新读取页面。');
     const resultQuads = await this.command('DOM.getContentQuads', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
-    const quad = resultQuads.quads?.[0] as number[] | undefined;
+    const quad = resultQuads.quads?.[location.index] as number[] | undefined;
     if (!quad || quad.length !== 8) throw new Error('此元素当前不可见。');
-    return { x: (quad[0] + quad[2] + quad[4] + quad[6]) / 4, y: (quad[1] + quad[3] + quad[5] + quad[7]) / 4 };
+    return { x: quad[0] + (quad[2] - quad[0]) * location.u + (quad[6] - quad[0]) * location.v,
+      y: quad[1] + (quad[3] - quad[1]) * location.u + (quad[7] - quad[1]) * location.v };
   }
   detach(): void {
     this.invalidate();
