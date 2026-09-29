@@ -6,11 +6,9 @@ import type { EditorNode } from '../../types/editorNode'
 import type { PromptContextItem } from '../../types/promptContext'
 import { parseMessageToNodes } from '../../types/contextParser'
 import { getFileIcon } from '../../utils/fileIcons'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, showNotification } from '../../utils/vscode'
+import { t } from '../../i18n'
 import { languageFromPath } from '../../utils/languageFromPath'
-import { useOpenWorkspaceFile } from '../../composables/useOpenWorkspaceFile'
-
-const { openFile } = useOpenWorkspaceFile()
 
 const props = defineProps<{
   content: string
@@ -97,10 +95,14 @@ function truncatePreview(content: string, maxLines = 10, maxChars = 500): string
   return result
 }
 
-// 文本使用发送时的副本，文件引用按消息所属对话打开。
+// 用户文件徽章来自工作台选择器；文本预览使用发送时保存的副本。
 async function handleContextClick(ctx: PromptContextItem) {
   if (ctx.isTextContent === false && ctx.filePath) {
-    await openFile(ctx.filePath)
+    try {
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: ctx.filePath })
+    } catch (error) {
+      await showNotification(error instanceof Error ? error.message : t('components.common.markdown.openFileFailed'), 'error')
+    }
     return
   }
 

@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { defineComponent, h, provide, ref, type Ref } from 'vue'
 import MarkdownRenderer from '../../components/common/MarkdownRenderer.vue'
+import InlineContextMessage from '../../components/message/InlineContextMessage.vue'
 import { invalidateWorkspaceAssets } from '../../components/common/markdown/markdownItCore'
 import { messageConversationKey } from '../../composables/messageConversationContext'
 import { useOpenWorkspaceFile } from '../../composables/useOpenWorkspaceFile'
@@ -57,6 +58,15 @@ test('对话切换后相同正文重新读取图片，旧请求返回后仍显�
   expect(wrapper.get('img').attributes('src')).toBe('data:image/png;base64,BBBB')
   request.mockClear(); invalidateWorkspaceAssets(['same.png']); await settle()
   expect(request).toHaveBeenCalledWith('readWorkspaceImage', { path: 'same.png', conversationId: 'B' })
+})
+
+test('用户选择的文件徽章沿用工作台文件入口', async () => {
+  request.mockResolvedValue({})
+  const wrapper = mount(InlineContextMessage, { props: { content: '<lim-context type="file" path="picked.pdf" title="picked.pdf" binary="true"></lim-context>' },
+    global: { provide: { [messageConversationKey as symbol]: ref('conversation-A') } } })
+  wrappers.push(wrapper)
+  await wrapper.get('.context-chip').trigger('click')
+  expect(request).toHaveBeenCalledWith('openWorkspaceFile', { path: 'picked.pdf' })
 })
 
 test('工具文件入口传入消息对话，行号和范围仍准确', async () => {
