@@ -1,9 +1,11 @@
 import { workspaceFilePath } from './paths';
-import { uiWorkspace } from './uiFiles';
+import { inputFileHandlers, uiWorkspace } from './uiFiles';
+import path from 'node:path';
 import type { WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { fileHash } from './fileTransaction';
+import { inferMimeTypeByPath } from '../../../../backend/tools/shared/inputFileTypes';
 
 /** 用户主动打开或保存文件的界面入口，复用工作区路径和编辑草稿保护。 */
 export function workspaceUiHandlers(app: PlatformApplication, client: ClientSession, selected?: WorkspaceDefinition) {
@@ -13,6 +15,11 @@ export function workspaceUiHandlers(app: PlatformApplication, client: ClientSess
     if (typeof data.path !== 'string' || !data.path.trim()) throw new Error('缺少文件路径。');
     const absolute = await app.files.resolve(target, data.path);
     const relative = workspaceFilePath(target, absolute);
+    if (inferMimeTypeByPath(relative).startsWith('image/')) {
+      // 聊天中的图片链接与已发送附件共用查看器，文件读取沿用工作区权限和大小限制。
+      const image = await inputFileHandlers(app, client, target).readWorkspaceImage({ path: relative });
+      return app.previews.show(client, { name: path.basename(relative), data: image.data, mimeType: image.mimeType }, true);
+    }
     const positive = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 1;
     app.publish({ type: 'workspace.file.open', clientId: client.clientId, workspaceId: target.id, path: relative,
       selection: data.startLine ? { startLineNumber: positive(data.startLine), startColumn: positive(data.startCharacter),

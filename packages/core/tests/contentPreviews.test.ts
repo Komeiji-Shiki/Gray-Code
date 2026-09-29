@@ -1,6 +1,8 @@
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
+import path from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 
 function image(name: string, content: string) {
   return { name, mimeType: 'image/png', data: Buffer.from(content).toString('base64') };
@@ -15,11 +17,42 @@ async function open() {
   app.subscribe(event => { if (event.type === 'workspace.preview') published.push(event); });
   return {
     app,
+    source: f.source,
     published,
     call: (type: string, data = {}) => router.call(owner, 'ui.request', { type, data }) as Promise<any>,
     finish: async () => { await app.close(); await f.cleanup(); },
   };
 }
+
+test('本地图片链接和正文图片进入附件查看器，文字文件仍打开编辑器', async () => {
+  const f = await open();
+  try {
+    const draft = await f.app.product.draft();
+    draft.app.workspaces.push({ id: 'images', name: '图片工作区', directory: f.source, deviceId: 'local' });
+    await f.app.product.save(draft);
+    await f.call('ui.context.set', { workspaceId: 'images', mode: 'code' });
+    const imagePath = 'output/新版 卡片.png';
+    const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=';
+    await mkdir(path.join(f.source, 'output'));
+    await writeFile(path.join(f.source, imagePath), Buffer.from(imageData, 'base64'));
+    await writeFile(path.join(f.source, 'notes.md'), '文字文件');
+    const editorEvents: Record<string, any>[] = [];
+    f.app.subscribe(event => { if (event.type === 'workspace.file.open') editorEvents.push(event); });
+    for (const [method, file] of [['openWorkspaceFileAt', imagePath], ['openWorkspaceFile', path.join(f.source, imagePath)]]) {
+      expect(await f.call(method, { path: file })).toEqual({ success: true });
+      const preview = await f.call('preview.get', { id: f.published.at(-1)!.previewId });
+      expect(preview).toMatchObject({ title: '新版 卡片.png', mimeType: 'image/png', data: imageData });
+    }
+    expect(editorEvents).toHaveLength(0);
+    // 使用与用户附件相同的注册和读取路径，预览正文无需再经过文件编辑器或浏览器。
+    await f.call('previewAttachment', { name: '新版 卡片.png', mimeType: 'image/png', data: imageData });
+    expect(await f.call('preview.get', { id: f.published.at(-1)!.previewId })).toMatchObject({ title: '新版 卡片.png', mimeType: 'image/png', data: imageData });
+    await expect(f.call('openWorkspaceFileAt', { path: 'output/missing.png' })).rejects.toThrow();
+    expect(f.published).toHaveLength(3);
+    await f.call('openWorkspaceFileAt', { path: 'notes.md', startLine: 2 });
+    expect(editorEvents).toEqual([expect.objectContaining({ workspaceId: 'images', path: 'notes.md', selection: expect.objectContaining({ startLineNumber: 2 }) })]);
+  } finally { await f.finish(); }
+});
 
 test('图片组预览：批量注册、组信息读取与组内切换', async () => {
   const f = await open();
