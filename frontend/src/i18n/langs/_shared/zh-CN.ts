@@ -680,6 +680,7 @@ const sharedZhCN = {
                 appendedContent: backendZhCN.tools.presentation.appendedContent,
                 characters: backendZhCN.tools.presentation.characters,
                 contentUnavailable: backendZhCN.tools.presentation.contentUnavailable,
+                diffUnavailable: backendZhCN.tools.presentation.diffUnavailable,
                 findFiles: {
                     continuationDetails: backendZhCN.tools.presentation.findFiles.continuationDetails,
                     excludeSources: {
@@ -716,6 +717,15 @@ const sharedZhCN = {
                 partialRange: backendZhCN.tools.presentation.partialRange,
                 partialSuccess: backendZhCN.tools.presentation.partialSuccess,
                 recipient: backendZhCN.tools.presentation.recipient,
+                searchReplace: {
+                    accepted: backendZhCN.tools.presentation.searchReplace.accepted,
+                    filesRejected: backendZhCN.tools.presentation.searchReplace.filesRejected,
+                    keywordFallback: backendZhCN.tools.presentation.searchReplace.keywordFallback,
+                    pending: backendZhCN.tools.presentation.searchReplace.pending,
+                    proposed: backendZhCN.tools.presentation.searchReplace.proposed,
+                    rejected: backendZhCN.tools.presentation.searchReplace.rejected,
+                    skipped: backendZhCN.tools.presentation.searchReplace.skipped,
+                },
             },
             reject: backendZhCN.tools.file.diffCodeLens.reject,
             subagents: {

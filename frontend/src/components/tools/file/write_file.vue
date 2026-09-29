@@ -17,7 +17,8 @@ import { MarkdownRenderer } from '../../common'
 import ChannelSelector from '../../input/ChannelSelector.vue'
 import ModelSelector from '../../input/ModelSelector.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
-import { loadDiffContent as loadDiffContentFromBackend, showNotification } from '@/utils/vscode'
+import { showNotification } from '@/utils/vscode'
+import { useToolDiffPreviews, type ToolDiffContent as DiffContent } from '../common/useToolDiffPreviews'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
 import { copyToClipboard } from '@/utils/format'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
@@ -56,23 +57,6 @@ interface WriteResult {
   diffContentId?: string
 }
 
-// Diff 内容（从后端加载）
-interface DiffContent {
-  originalContent: string
-  newContent: string
-  filePath: string
-}
-
-// 加载状态
-const diffContents = ref<Map<string, DiffContent>>(new Map())
-const loadingDiffs = ref<Set<string>>(new Set())
-const diffLoadErrors = ref<Map<string, string>>(new Map())
-const diffContentIds = new Map<string, string>()
-let disposed = false
-
-// 显示模式：'content' | 'diff'
-const viewModes = ref<Map<string, 'content' | 'diff'>>(new Map())
-
 // 获取文件列表（从参数中）
 // 兼容批量格式 (files 数组) 和单文件格式 (path + content)
 const fileList = computed((): WriteFileEntry[] => {
@@ -94,17 +78,10 @@ const writeResults = computed((): WriteResult[] => {
   const result = props.result as Record<string, any> | undefined
 
   // 批量结果
-  if (result?.data?.results) {
+  if (Array.isArray(result?.data?.results)) {
     return result.data.results as WriteResult[]
   }
-
-  // 如果没有结果，为每个文件创建空结果
-  return fileList.value.map(f => ({
-    path: f.path,
-    success: !props.error,
-    lineCount: f.content?.split('\n').length,
-    error: props.error
-  }))
+  return []
 })
 
 // 合并文件列表和结果，方便显示
@@ -129,72 +106,15 @@ const mergedFiles = computed((): MergedFile[] => {
 const planFiles = computed((): MergedFile[] => mergedFiles.value.filter(f => isPlanDocPath(f.path)))
 
 function getPlanCardStatus(file: MergedFile): 'pending' | 'running' | 'success' | 'error' {
+  if (props.error) return 'error'
   // 还没收到 tool result：视为 running
   if (!props.result) return 'running'
   if (file.result && file.result.success === false) return 'error'
-  if (props.error) return 'error'
   return 'success'
 }
 
-// 监听结果变化，自动加载 diff 内容（并行加载：批量文件不再逐个串行等待）
-watch(writeResults, async (results) => {
-  for (const [path, id] of diffContentIds) {
-    if (results.some(result => result.path === path && result.diffContentId === id)) continue
-    diffContentIds.delete(path); diffContents.value.delete(path); loadingDiffs.value.delete(path)
-    diffLoadErrors.value.delete(path); viewModes.value.delete(path)
-  }
-  const pending = results.filter(
-    result => result.diffContentId
-      && diffContentIds.get(result.path) !== result.diffContentId
-  )
-  await Promise.all(pending.map(result => loadDiffContent(result.path, result.diffContentId!)))
-}, { immediate: true })
-
-// 加载 diff 内容
-async function loadDiffContent(filePath: string, diffContentId: string) {
-  if (disposed || loadingDiffs.value.has(filePath) && diffContentIds.get(filePath) === diffContentId) return
-  diffContentIds.set(filePath, diffContentId)
-  diffContents.value.delete(filePath)
-  const current = () => !disposed && diffContentIds.get(filePath) === diffContentId
-    && writeResults.value.some(result => result.path === filePath && result.diffContentId === diffContentId)
-
-  loadingDiffs.value.add(filePath)
-  diffLoadErrors.value.delete(filePath)
-
-  try {
-    const response = await loadDiffContentFromBackend(diffContentId)
-    if (!current()) return
-
-    if (response) {
-      diffContents.value.set(filePath, response)
-      // 自动切换到 diff 视图
-      viewModes.value.set(filePath, 'diff')
-    } else {
-      throw new Error('Failed to load diff content')
-    }
-  } catch (err) {
-    if (!current()) return
-    diffLoadErrors.value.set(filePath, err instanceof Error ? err.message : String(err))
-    console.error('Failed to load diff content:', err)
-  } finally {
-    if (current()) loadingDiffs.value.delete(filePath)
-  }
-}
-
-// 获取视图模式
-function getViewMode(path: string): 'content' | 'diff' {
-  return viewModes.value.get(path) || 'content'
-}
-
-// 是否有 diff 内容可显示
-function hasDiffContent(path: string): boolean {
-  return diffContents.value.has(path)
-}
-
-// 是否正在加载
-function isLoadingDiff(path: string): boolean {
-  return loadingDiffs.value.has(path)
-}
+const { diffContents, diffLoadErrors, viewModes, loadDiffContent, getViewMode, hasDiffContent, isLoadingDiff } = useToolDiffPreviews(
+  computed(() => writeResults.value.map(result => ({ key: result.path, diffContentId: result.diffContentId }))), 'content')
 
 // 总文件数统计
 const successCount = computed(() => {
@@ -354,7 +274,7 @@ interface RenderedFileDiff {
 // 已计算的文件保持原结果对象引用，避免单个文件加载完成触发全部文件重复计算。
 const renderedFileDiffs = ref<Map<string, RenderedFileDiff>>(new Map())
 
-watch(diffContents, (contents) => {
+watch(() => new Map(diffContents.value), (contents) => {
   const next = new Map(renderedFileDiffs.value)
   for (const [path, content] of contents) {
     const existing = next.get(path)
@@ -436,7 +356,6 @@ function isDiffExpanded(path: string): boolean {
 
 // 清理定时器
 onBeforeUnmount(() => {
-  disposed = true
   for (const timeout of copyTimeouts.values()) {
     clearTimeout(timeout)
   }
@@ -537,7 +456,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 全局错误 -->
-    <div v-if="error && mergedFiles.length === 0" class="panel-error">
+    <div v-if="error && writeResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
       <span class="error-text">{{ error }}</span>
     </div>
@@ -611,6 +530,11 @@ onBeforeUnmount(() => {
         <div v-if="isLoadingDiff(file.path)" class="loading-diff">
           <span class="codicon codicon-loading codicon-modifier-spin"></span>
           {{ t('components.tools.file.writeFilePanel.loadingDiff') }}
+        </div>
+
+        <div v-else-if="diffLoadErrors.has(file.path)" class="diff-load-error" role="alert">
+          <span>{{ diffLoadErrors.get(file.path) }}</span>
+          <button v-if="file.result?.diffContentId" type="button" class="gc-button gc-button--ghost" @click="loadDiffContent(file.path, file.result.diffContentId)">{{ t('common.retry') }}</button>
         </div>
 
         <!-- Diff 视图 -->

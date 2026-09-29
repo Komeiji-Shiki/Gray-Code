@@ -8,6 +8,7 @@ import { routeExtensionMessage, type PendingRequestHandler } from './extensionMe
 // B1：超时豁免名单迁入 shared/protocol.ts 单一来源（与 NON_BLOCKING_MESSAGE_TYPES 语义不同，勿合并）
 import { MESSAGE_NAMES, UNBOUNDED_REQUEST_TYPES } from '@shared/protocol'
 import { getHostTransport } from './hostTransport'
+import { t } from '../i18n'
 
 // 获取 VSCode API（全局类型由 vite-env.d.ts 声明：acquireVsCodeApi(): VsCodeApi）
 let vscodeApi: VsCodeApi | null = null
@@ -325,26 +326,17 @@ export async function loadDiffContent(diffContentId: string): Promise<{
   originalContent: string
   newContent: string
   filePath: string
-} | null> {
-  try {
-    const result = await sendToExtension<{
-      success: boolean
-      originalContent?: string
-      newContent?: string
-      filePath?: string
-      error?: string
-    }>(MESSAGE_NAMES['diff.loadContent'], { diffContentId })
-    
-    if (result.success && result.originalContent && result.newContent) {
-      return {
-        originalContent: result.originalContent,
-        newContent: result.newContent,
-        filePath: result.filePath || ''
-      }
-    }
-    return null
-  } catch (err) {
-    console.error('Failed to load diff content:', err)
-    return null
+}> {
+  const result = await sendToExtension<{
+    success: boolean
+    originalContent?: string
+    newContent?: string
+    filePath?: string
+    error?: string
+  }>(MESSAGE_NAMES['diff.loadContent'], { diffContentId })
+  // 新建与清空文件都包含合法空正文，按字段类型校验，保留宿主返回的错误原因。
+  if (result.success && typeof result.originalContent === 'string' && typeof result.newContent === 'string' && typeof result.filePath === 'string') {
+    return { originalContent: result.originalContent, newContent: result.newContent, filePath: result.filePath }
   }
+  throw new Error(result.error || t('components.tools.presentation.diffUnavailable'))
 }

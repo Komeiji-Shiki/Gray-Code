@@ -680,6 +680,7 @@ const sharedEn = {
                 appendedContent: backendEn.tools.presentation.appendedContent,
                 characters: backendEn.tools.presentation.characters,
                 contentUnavailable: backendEn.tools.presentation.contentUnavailable,
+                diffUnavailable: backendEn.tools.presentation.diffUnavailable,
                 findFiles: {
                     continuationDetails: backendEn.tools.presentation.findFiles.continuationDetails,
                     excludeSources: {
@@ -716,6 +717,15 @@ const sharedEn = {
                 partialRange: backendEn.tools.presentation.partialRange,
                 partialSuccess: backendEn.tools.presentation.partialSuccess,
                 recipient: backendEn.tools.presentation.recipient,
+                searchReplace: {
+                    accepted: backendEn.tools.presentation.searchReplace.accepted,
+                    filesRejected: backendEn.tools.presentation.searchReplace.filesRejected,
+                    keywordFallback: backendEn.tools.presentation.searchReplace.keywordFallback,
+                    pending: backendEn.tools.presentation.searchReplace.pending,
+                    proposed: backendEn.tools.presentation.searchReplace.proposed,
+                    rejected: backendEn.tools.presentation.searchReplace.rejected,
+                    skipped: backendEn.tools.presentation.searchReplace.skipped,
+                },
             },
             reject: backendEn.tools.file.diffCodeLens.reject,
             subagents: {

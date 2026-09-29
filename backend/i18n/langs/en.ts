@@ -797,7 +797,12 @@ Output content directly without any prefix.`
             historyMessages: 'History', characters: '{count} characters',
             invalidatedNote: 'This note is no longer valid. Rebuild it from valid sources.',
             partialContent: 'Only part of the content is shown. Continue reading using the returned range.',
-            partialSuccess: 'Partially completed', partialRange: 'Partial content',
+            partialSuccess: 'Partially completed', partialRange: 'Partial content', diffUnavailable: 'Unable to read diff content.',
+            searchReplace: {
+                accepted: 'Applied', rejected: 'Rejected', pending: 'Awaiting review',
+                filesRejected: 'Rejected {count} files', proposed: '{count} proposed replacements', skipped: 'Skipped {count} files',
+                keywordFallback: 'Search used the following keywords:',
+            },
             moreHistory: 'Earlier records are available using the returned history position.',
             // Pagination requires another tool call; exclusion sources describe this receipt, not current settings.
             findFiles: {

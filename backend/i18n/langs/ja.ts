@@ -797,7 +797,12 @@ const ja: BackendLanguageMessages = {
             historyMessages: '履歴', characters: '{count} 文字',
             invalidatedNote: 'このノートは無効です。有効な情報源から整理し直してください。',
             partialContent: '本文の一部を表示しています。返された範囲を使って続きを読むことができます。',
-            partialSuccess: '一部完了', partialRange: '一部の内容',
+            partialSuccess: '一部完了', partialRange: '一部の内容', diffUnavailable: '差分を読み込めませんでした。',
+            searchReplace: {
+                accepted: '適用済み', rejected: '拒否済み', pending: '確認待ち',
+                filesRejected: '{count} ファイルを拒否', proposed: '置換候補 {count} 件', skipped: '{count} ファイルをスキップ',
+                keywordFallback: '次のキーワードで検索しました：',
+            },
             moreHistory: '返された履歴位置を使って、さらに古い記録を読み込めます。',
             // ページの続行とローカル展開を区別し、除外元は今回の結果に記録された情報だけを表示する。
             findFiles: {

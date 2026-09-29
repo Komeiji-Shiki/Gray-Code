@@ -207,6 +207,38 @@ describe('单工作区基础搜索不受影响', () => {
 });
 
 describe('替换模式 matches 收集预算上限', () => {
+    test.each([
+        ['全部拒绝', ['rejected', 'rejected'], 0, 0],
+        ['接受与拒绝混合', ['accepted', 'rejected'], 1, 2]
+    ] as const)('%s时统计实际应用的替换，保留候选结果', async (_name, decisions, filesModified, totalReplacements) => {
+        setWorkspaces([{ name: 'ws1', fsPath: 'C:/gc-test-repo1' }]);
+        const files = ['first.txt', 'second.txt'].map(name => makeFileUri(`C:/gc-test-repo1/${name}`));
+        findFilesMock.mockResolvedValue(files);
+        readFileMock.mockResolvedValue(Buffer.from('xx'));
+        statMock.mockResolvedValue({ size: 2 });
+        const documents = files.map(file => makeFakeDocument(file.fsPath, 'xx'));
+        (vscode.workspace as any).textDocuments = documents;
+        (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(async uri =>
+            documents.find(doc => doc.uri.fsPath === uri.fsPath) ?? makeFakeDocument(uri.fsPath ?? uri.path ?? 'virtual-diff', 'xx'));
+        const pending = createSearchInFilesTool().handler({ query: 'x', mode: 'replace', replace: 'y' }, makeContext());
+        const dm = DiffManager.getInstance();
+        for (const decision of decisions) {
+            let diff: ReturnType<typeof dm.getPendingDiffs>[number] | undefined;
+            for (let attempt = 0; attempt < 100 && !diff; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 10));
+                diff = dm.getPendingDiffs()[0];
+            }
+            expect(diff).toBeDefined();
+            if (decision === 'accepted') await dm.acceptDiff(diff!.id, false);
+            else await dm.rejectDiff(diff!.id);
+        }
+        const result = await pending;
+        expect(result.success).toBe(true);
+        expect(result.data).toMatchObject({ filesModified, totalReplacements, proposedReplacements: 4,
+            filesRejected: decisions.filter(value => value === 'rejected').length });
+        expect(result.data.results.map(item => item.status)).toEqual(decisions);
+    });
+
     test('高频 query 超过 MAX_REPLACE_MATCHES 时截断收集并置 truncated，替换仍完整执行', async () => {
         setWorkspaces([{ name: 'ws1', fsPath: 'C:/gc-test-repo1' }]);
         const fileUri = makeFileUri('C:/gc-test-repo1/big.txt');

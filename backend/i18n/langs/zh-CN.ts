@@ -799,7 +799,12 @@ const zhCN = {
             historyMessages: '历史记录', characters: '{count} 字符',
             invalidatedNote: '这份笔记已失效，需要根据有效来源重新整理。',
             partialContent: '当前只显示部分正文，可按工具返回的范围继续读取。',
-            partialSuccess: '部分成功', partialRange: '部分内容',
+            partialSuccess: '部分成功', partialRange: '部分内容', diffUnavailable: '无法读取差异内容。',
+            searchReplace: {
+                accepted: '已应用', rejected: '已拒绝', pending: '待确认',
+                filesRejected: '已拒绝 {count} 个文件', proposed: '候选替换 {count} 处', skipped: '跳过 {count} 个文件',
+                keywordFallback: '已按以下关键词分别搜索：',
+            },
             moreHistory: '还有更早记录，可使用返回的历史位置继续读取。',
             // 分页属于工具续查，不是卡片的本地展开；排除来源只反映本次回执，不推测当前设置。
             findFiles: {

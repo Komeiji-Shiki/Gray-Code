@@ -680,6 +680,7 @@ const sharedJa = {
                 appendedContent: backendJa.tools.presentation.appendedContent,
                 characters: backendJa.tools.presentation.characters,
                 contentUnavailable: backendJa.tools.presentation.contentUnavailable,
+                diffUnavailable: backendJa.tools.presentation.diffUnavailable,
                 findFiles: {
                     continuationDetails: backendJa.tools.presentation.findFiles.continuationDetails,
                     excludeSources: {
@@ -716,6 +717,15 @@ const sharedJa = {
                 partialRange: backendJa.tools.presentation.partialRange,
                 partialSuccess: backendJa.tools.presentation.partialSuccess,
                 recipient: backendJa.tools.presentation.recipient,
+                searchReplace: {
+                    accepted: backendJa.tools.presentation.searchReplace.accepted,
+                    filesRejected: backendJa.tools.presentation.searchReplace.filesRejected,
+                    keywordFallback: backendJa.tools.presentation.searchReplace.keywordFallback,
+                    pending: backendJa.tools.presentation.searchReplace.pending,
+                    proposed: backendJa.tools.presentation.searchReplace.proposed,
+                    rejected: backendJa.tools.presentation.searchReplace.rejected,
+                    skipped: backendJa.tools.presentation.searchReplace.skipped,
+                },
             },
             reject: backendJa.tools.file.diffCodeLens.reject,
             subagents: {

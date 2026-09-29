@@ -14,10 +14,13 @@ import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
-import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
+import { useToolDiffPreviews, type ToolDiffContent as DiffContent } from '../common/useToolDiffPreviews'
 import { escapeHtml } from '../../common/markdownUtils'
+import { useOpenWorkspaceFile } from '../../../composables/useOpenWorkspaceFile'
+import ToolResultValue from '../common/ToolResultValue.vue'
 
 const { t } = useI18n()
+const { openFileAt } = useOpenWorkspaceFile()
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -27,6 +30,8 @@ const props = defineProps<{
 
 // 展开状态
 const expanded = ref(false)
+const skippedOpen = ref(false)
+const hasResult = computed(() => props.result !== undefined && props.result !== null)
 
 // 获取搜索参数
 const searchQuery = computed(() => props.args.query as string || '')
@@ -53,6 +58,8 @@ interface ReplaceResult {
   workspace?: string
   replacements: number
   diffContentId?: string
+  status?: 'accepted' | 'rejected' | 'pending'
+  autoSaveError?: string
 }
 
 interface QueryFallbackInfo {
@@ -97,10 +104,21 @@ const replaceResults = computed((): ReplaceResult[] => {
   return []
 })
 
+// 旧回执的总计可能包含已拒绝项；有逐文件审阅状态时以实际结果为准。
+const hasReviewStatuses = computed(() => replaceResults.value.length > 0
+  && replaceResults.value.every(result => ['accepted', 'rejected', 'pending'].includes(result.status ?? '')))
+const acceptedResults = computed(() => replaceResults.value.filter(result => result.status === 'accepted'))
+const filesRejected = computed(() => hasReviewStatuses.value
+  ? replaceResults.value.filter(result => result.status === 'rejected').length : Number(resultData.value?.filesRejected ?? 0))
+const proposedReplacements = computed(() => Number(resultData.value?.proposedReplacements
+  ?? replaceResults.value.reduce((total, result) => total + result.replacements, 0)))
+const skippedFiles = computed(() => Array.isArray(resultData.value?.skippedFiles) ? resultData.value.skippedFiles : [])
+
 // 统计信息
 const matchCount = computed(() => {
   const result = props.result as Record<string, any> | undefined
   if (isReplaceMode.value) {
+    if (hasReviewStatuses.value) return acceptedResults.value.reduce((total, item) => total + item.replacements, 0)
     return result?.data?.totalReplacements as number || 0
   }
   if (result?.data?.count !== undefined) {
@@ -110,6 +128,7 @@ const matchCount = computed(() => {
 })
 
 const filesModified = computed(() => {
+  if (hasReviewStatuses.value) return acceptedResults.value.length
   const result = props.result as Record<string, any> | undefined
   return result?.data?.filesModified as number || 0
 })
@@ -127,20 +146,8 @@ const pathWarning = computed(() => {
   return resultData.value?.pathWarning as PathWarningInfo | undefined
 })
 
-// 按文件分组
-const groupedResults = computed(() => {
-  const groups: Record<string, SearchMatch[]> = {}
-  for (const match of searchResults.value) {
-    if (!groups[match.file]) {
-      groups[match.file] = []
-    }
-    groups[match.file].push(match)
-  }
-  return groups
-})
-
 // 文件数量
-const fileCount = computed(() => Object.keys(groupedResults.value).length)
+const fileCount = computed(() => matchesByFile.value.size)
 
 // 按文件预分组的匹配列表：模板内不再每次渲染对全量结果做 filter
 const matchesByFile = computed(() => {
@@ -172,93 +179,20 @@ function toggleExpand() {
   expanded.value = !expanded.value
 }
 
-// 获取文件名
-function getFileName(filePath: string | undefined): string {
-  if (!filePath) return ''
-  const parts = filePath.split(/[/\\]/)
-  return parts[parts.length - 1] || filePath
-}
-
 // 高亮匹配文本
 function highlightMatch(context: string | undefined, match: string | undefined): string {
-  // 安全检查
   if (!context) return ''
   if (!match) return escapeHtml(context)
-  
-  // 先转义再高亮，防止文件原文注入 HTML（远程代码执行风险）
-  const escapedContext = escapeHtml(context)
-  const escapedMatch = escapeHtml(match)
-  const escaped = escapedMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  // 使用替换函数而非替换字符串，避免匹配串含 $' / $` / $$ 时触发 replace 的特殊替换语义（G1）
-  return escapedContext.replace(new RegExp(escaped, 'gi'), () => `<mark>${escapedMatch}</mark>`)
+  // 在原文中划分命中片段后分别转义，保留大小写和 HTML 字符的原貌。
+  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return context.split(new RegExp(`(${escaped})`, 'gi'))
+    .map((part, index) => index % 2 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)).join('')
 }
 
 // ============ Diff 相关 ============
 
-// Diff 内容（从后端加载）
-interface DiffContent {
-  originalContent: string
-  newContent: string
-  filePath: string
-}
-
-// 加载状态
-const diffContents = ref<Map<string, DiffContent>>(new Map())
-const loadingDiffs = ref<Set<string>>(new Set())
-const diffLoadErrors = ref<Map<string, string>>(new Map())
-
-// 显示模式：'matches' | 'diff'
-const viewModes = ref<Map<string, 'matches' | 'diff'>>(new Map())
-
-// 监听结果变化，自动加载 diff 内容（并行加载：批量文件不再逐个串行等待）
-watch(replaceResults, async (results) => {
-  const pending = results.filter(
-    result => result.diffContentId
-      && !diffContents.value.has(result.file)
-      && !loadingDiffs.value.has(result.file)
-  )
-  await Promise.all(pending.map(result => loadDiffContent(result.file, result.diffContentId!)))
-}, { immediate: true })
-
-// 加载 diff 内容
-async function loadDiffContent(filePath: string, diffContentId: string) {
-  if (loadingDiffs.value.has(filePath)) return
-  
-  loadingDiffs.value.add(filePath)
-  diffLoadErrors.value.delete(filePath)
-  
-  try {
-    const response = await loadDiffContentFromBackend(diffContentId)
-    
-    if (response) {
-      diffContents.value.set(filePath, response)
-      // 自动切换到 diff 视图
-      viewModes.value.set(filePath, 'diff')
-    } else {
-      throw new Error('Failed to load diff content')
-    }
-  } catch (err) {
-    diffLoadErrors.value.set(filePath, err instanceof Error ? err.message : String(err))
-    console.error('Failed to load diff content:', err)
-  } finally {
-    loadingDiffs.value.delete(filePath)
-  }
-}
-
-// 获取视图模式
-function getViewMode(path: string): 'matches' | 'diff' {
-  return viewModes.value.get(path) || 'matches'
-}
-
-// 是否有 diff 内容可显示
-function hasDiffContent(path: string): boolean {
-  return diffContents.value.has(path)
-}
-
-// 是否正在加载
-function isLoadingDiff(path: string): boolean {
-  return loadingDiffs.value.has(path)
-}
+const { diffContents, diffLoadErrors, viewModes, loadDiffContent, getViewMode, hasDiffContent, isLoadingDiff } = useToolDiffPreviews(
+  computed(() => replaceResults.value.map(result => ({ key: result.file, diffContentId: result.diffContentId }))), 'matches')
 
 type DisplayDiffLine = LineDiffEntry | {
   type: 'omitted'
@@ -319,7 +253,7 @@ function buildContextualDiffLines(diffLines: LineDiffEntry[]): DisplayDiffLine[]
 // 已计算的文件保持原结果对象引用，避免单个文件加载完成触发全部文件重复计算。
 const renderedSearchDiffs = ref<Map<string, RenderedSearchDiff>>(new Map())
 
-watch(diffContents, (contents) => {
+watch(() => new Map(diffContents.value), (contents) => {
   const next = new Map(renderedSearchDiffs.value)
   for (const [path, content] of contents) {
     const existing = next.get(path)
@@ -416,13 +350,15 @@ function isDiffExpanded(path: string): boolean {
         <span class="title">{{ isReplaceMode ? t('components.tools.search.searchInFilesPanel.replaceTitle') : t('components.tools.search.searchInFilesPanel.title') }}</span>
         <span v-if="isRegex" class="regex-badge">{{ t('components.tools.search.searchInFilesPanel.regex') }}</span>
       </div>
-      <div class="header-stats">
-        <span v-if="isReplaceMode" class="stat success">
-          <span class="codicon codicon-check"></span>
+      <div v-if="hasResult" class="header-stats">
+        <span v-if="isReplaceMode" class="stat" :class="{ success: matchCount > 0 }">
+          <span v-if="matchCount > 0" class="codicon codicon-check"></span>
           {{ t('components.tools.search.searchInFilesPanel.replacements', { count: matchCount }) }}
         </span>
         <span v-if="isReplaceMode" class="stat">{{ t('components.tools.search.searchInFilesPanel.filesModified', { count: filesModified }) }}</span>
         <span v-else class="stat">{{ t('components.tools.search.searchInFilesPanel.matchCount', { count: matchCount }) }}</span>
+        <span v-if="isReplaceMode && filesRejected" class="stat rejected-count">{{ t('components.tools.presentation.searchReplace.filesRejected', { count: filesRejected }) }}</span>
+        <span v-if="isReplaceMode && proposedReplacements > matchCount" class="stat">{{ t('components.tools.presentation.searchReplace.proposed', { count: proposedReplacements }) }}</span>
         <span v-if="!isReplaceMode" class="stat">{{ t('components.tools.search.searchInFilesPanel.fileCount', { count: fileCount }) }}</span>
         <span v-if="truncated" class="stat truncated">{{ t('components.tools.search.searchInFilesPanel.truncated') }}</span>
         <span v-if="!isReplaceMode && typeof resultData?.nextOffset === 'number'" class="stat search-next-offset">{{ t('components.tools.platform.nextOffset', { offset: resultData.nextOffset }) }}</span>
@@ -460,7 +396,7 @@ function isDiffExpanded(path: string): boolean {
       <div v-else-if="queryFallback?.reason === 'whitespace_keyword_or'" class="diagnostic-row info">
         <span class="codicon codicon-search"></span>
         <span>
-          No exact phrase match was found, so search retried space-separated keywords:
+          {{ t('components.tools.presentation.searchReplace.keywordFallback') }}
           <code>{{ queryFallback.keywords.join(', ') }}</code>
         </span>
       </div>
@@ -476,14 +412,15 @@ function isDiffExpanded(path: string): boolean {
       <span class="error-text">{{ error }}</span>
     </div>
     
-    <!-- 无结果 -->
-    <div v-else-if="searchResults.length === 0 && !error" class="no-results">
+    <p v-if="!hasResult && !error" class="search-waiting" role="status">{{ t('components.tools.structured.waiting') }}</p>
+    <!-- 完成回执中的空结果 -->
+    <div v-else-if="hasResult && (isReplaceMode ? replaceResults.length : searchResults.length) === 0 && !error" class="no-results">
       <span class="codicon codicon-info"></span>
       <span>{{ t('components.tools.search.searchInFilesPanel.noResults') }}</span>
     </div>
     
     <!-- 替换模式：按文件显示结果 -->
-    <div v-else-if="isReplaceMode" class="replace-results">
+    <div v-else-if="isReplaceMode && replaceResults.length" class="replace-results">
       <div
         v-for="replaceResult in replaceResults"
         :key="replaceResult.file"
@@ -493,12 +430,13 @@ function isDiffExpanded(path: string): boolean {
         <div class="file-header">
           <div class="file-info">
             <span class="codicon codicon-file file-icon"></span>
-            <span class="file-name">{{ getFileName(replaceResult.file) }}</span>
-            <span class="file-path">{{ replaceResult.file }}</span>
+            <button type="button" class="file-path file-link gc-link-button" :title="replaceResult.file" @click="openFileAt(replaceResult.file)">{{ replaceResult.file }}</button>
+            <span v-if="replaceResult.status" class="replace-status" :class="replaceResult.status">{{ t(`components.tools.presentation.searchReplace.${replaceResult.status}`) }}</span>
             <span class="replace-count">{{ t('components.tools.search.searchInFilesPanel.replacementsInFile', { count: replaceResult.replacements }) }}</span>
           </div>
         </div>
         
+        <p v-if="replaceResult.autoSaveError" class="replacement-save-error" role="alert">{{ replaceResult.autoSaveError }}</p>
         <!-- 视图切换按钮 -->
         <div v-if="hasDiffContent(replaceResult.file)" class="view-toggle">
           <button
@@ -521,6 +459,11 @@ function isDiffExpanded(path: string): boolean {
         <div v-if="isLoadingDiff(replaceResult.file)" class="loading-diff">
           <span class="codicon codicon-loading codicon-modifier-spin"></span>
           {{ t('components.tools.search.searchInFilesPanel.loadingDiff') }}
+        </div>
+
+        <div v-else-if="diffLoadErrors.has(replaceResult.file)" class="diff-load-error" role="alert">
+          <span>{{ diffLoadErrors.get(replaceResult.file) }}</span>
+          <button v-if="replaceResult.diffContentId" type="button" class="gc-button gc-button--ghost" @click="loadDiffContent(replaceResult.file, replaceResult.diffContentId)">{{ t('common.retry') }}</button>
         </div>
         
         <!-- Diff 视图 -->
@@ -569,7 +512,7 @@ function isDiffExpanded(path: string): boolean {
     </div>
     
     <!-- 仅搜索模式：结果列表 -->
-    <div v-else class="results-list">
+    <div v-else-if="!isReplaceMode && searchResults.length" class="results-list">
       <CustomScrollbar :max-height="300">
         <div class="match-items">
           <div
@@ -579,9 +522,8 @@ function isDiffExpanded(path: string): boolean {
           >
             <div class="match-header">
               <span class="codicon codicon-file file-icon"></span>
-              <span class="file-name">{{ getFileName(match?.file) }}</span>
-              <span class="file-path">{{ match?.file || '' }}</span>
-              <span class="line-info">:{{ match?.line || 0 }}:{{ match?.column || 0 }}</span>
+              <button type="button" class="file-path file-link gc-link-button" :title="match.file" @click="openFileAt(match.file, match.line)">{{ match.file }}</button>
+              <button type="button" class="line-info file-link gc-link-button" @click="openFileAt(match.file, match.line)">:{{ match.line }}:{{ match.column }}</button>
             </div>
             <div class="match-context">
               <pre><code v-html="highlightMatch(match?.context, match?.match)"></code></pre>
@@ -598,10 +540,17 @@ function isDiffExpanded(path: string): boolean {
         </button>
       </div>
     </div>
+    <details v-if="skippedFiles.length" class="skipped-files" @toggle="skippedOpen = ($event.target as HTMLDetailsElement).open">
+      <summary>{{ t('components.tools.presentation.searchReplace.skipped', { count: skippedFiles.length }) }}</summary>
+      <ToolResultValue v-if="skippedOpen" :value="skippedFiles" />
+    </details>
   </div>
 </template>
 
 <style scoped>
+.search-waiting{color:var(--vscode-descriptionForeground)}.file-link{cursor:pointer;text-align:left;color:var(--vscode-textLink-foreground)}.replace-status{font-size:11px;white-space:nowrap;color:var(--vscode-descriptionForeground)}.replace-status.accepted{color:var(--vscode-testing-iconPassed)}.replace-status.rejected,.rejected-count{color:var(--vscode-editorWarning-foreground)}.replacement-save-error{color:var(--vscode-errorForeground);white-space:pre-wrap;overflow-wrap:anywhere}.skipped-files{border-top:1px solid var(--vscode-panel-border);padding-top:8px}.skipped-files>summary{cursor:pointer;color:var(--vscode-descriptionForeground);font-size:12px;margin-bottom:8px}
+.diff-load-error { display: flex; align-items: center; gap: 8px; padding: 10px; color: var(--vscode-errorForeground); border-left: 2px solid currentColor; }
+.diff-load-error span { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .search-in-files-panel {
   display: flex;
   flex-direction: column;
@@ -611,6 +560,8 @@ function isDiffExpanded(path: string): boolean {
 /* 头部 */
 .panel-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) 0;
@@ -643,6 +594,8 @@ function isDiffExpanded(path: string): boolean {
 
 .header-stats {
   display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
   gap: var(--spacing-sm, 8px);
 }

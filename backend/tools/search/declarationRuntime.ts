@@ -408,6 +408,8 @@ function createSearchInFilesTool(): Tool {
                         anyTruncated = true;
                     }
 
+                    const acceptedReplacements = allReplacements.filter(item => item.status === 'accepted');
+                    const filesRejected = allReplacements.filter(item => item.status === 'rejected').length;
                     return {
                         success: !anyCancelled,
                         cancelled: anyCancelled,
@@ -422,8 +424,11 @@ function createSearchInFilesTool(): Tool {
                                 // 替换模式下不返回 context，减小体积，前端已有 diff 视图
                             })),
                             results: allReplacements,
-                            filesModified: allReplacements.length,
-                            totalReplacements,
+                            filesModified: acceptedReplacements.length,
+                            totalReplacements: acceptedReplacements.reduce((total, item) => total + item.replacements, 0),
+                            proposedReplacements: totalReplacements,
+                            filesRejected,
+                            partial: acceptedReplacements.length > 0 && filesRejected > 0,
                             truncated: anyTruncated,
                             caseSensitive,
                             effectiveExclude: excludePattern,
