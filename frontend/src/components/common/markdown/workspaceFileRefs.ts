@@ -101,8 +101,11 @@ export function parseWorkspaceFileLinkRef(input: string): WorkspaceFileRef | nul
   let href = input.trim()
   if (!href || href.startsWith('#') || href.startsWith('//')) return null
   try { href = decodeURIComponent(href) } catch { /* 保留文件名中不完整的百分号。 */ }
+  // 根目录文件的行号写法（main.ts:12）也包含冒号，先识别文件引用。
+  const fileRef = parseWorkspaceFileRefExact(href)
+  if (fileRef) return fileRef
   if (/^[a-z][a-z\d+.-]*:/i.test(href) && !/^[a-z]:[\\/]/i.test(href)) return null
-  return parseWorkspaceFileRefExact(href) ?? { path: normalizeWorkspaceFilePath(href) }
+  return { path: normalizeWorkspaceFilePath(href) }
 }
 
 export function guessHighlightLanguageFromPath(filePath: string): string {

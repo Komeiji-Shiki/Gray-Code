@@ -14,7 +14,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Ref } from 'vue'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { t } from '@/i18n'
-import { observeAssetPaths, assetRequestGeneration } from './assetChanges'
+import { observeAssetPaths, assetRequestGeneration, workspaceAssetCacheKey } from './assetChanges'
 import { ImageRequests } from './imageRequests'
 type WorkspaceImage = { success: boolean; data?: string; mimeType?: string; error?: string }
 const imageRequests = new ImageRequests<WorkspaceImage>()
@@ -45,8 +45,10 @@ export interface WorkspaceAssetController {
  * @param containerRef 渲染容器（v-html 挂载点）
  */
 export function createWorkspaceAssetController(
-  containerRef: Ref<HTMLElement | null>
+  containerRef: Ref<HTMLElement | null>,
+  getConversationId: () => string | null | undefined = () => undefined
 ): WorkspaceAssetController {
+  const context = (conversationId = getConversationId()) => conversationId ? { conversationId } : {}
   /**
    * 文件存在性缓存 & 预校验
    *
@@ -61,9 +63,10 @@ export function createWorkspaceAssetController(
    */
   async function prevalidateFilePaths(content: string, isCurrent: () => boolean = () => true) {
     const revision = workspaceAssetRevision.value
+    const conversationId = getConversationId()
     if (!isCurrent()) return
     const allPaths = extractPotentialFilePaths(content)
-    const unchecked = allPaths.filter(p => !fileExistenceCache.has(p))
+    const unchecked = allPaths.filter(p => !fileExistenceCache.has(workspaceAssetCacheKey(p, conversationId)))
     if (unchecked.length === 0) return
     let invalidated = false
     const stop = observeAssetPaths(() => unchecked, () => { invalidated = true })
@@ -71,12 +74,12 @@ export function createWorkspaceAssetController(
     try {
       const resp = await sendToExtension<{ results: Record<string, boolean> }>(
         MESSAGE_NAMES.checkWorkspaceFilesExist,
-        { paths: unchecked }
+        { paths: unchecked, ...context(conversationId) }
       )
-      if (invalidated || !isCurrent() || revision !== workspaceAssetRevision.value) return
+      if (invalidated || !isCurrent() || revision !== workspaceAssetRevision.value || getConversationId() !== conversationId) return
       if (resp?.results) {
         for (const [p, exists] of Object.entries(resp.results)) {
-          setCached(fileExistenceCache, p, exists)
+          setCached(fileExistenceCache, workspaceAssetCacheKey(p, conversationId), exists)
         }
       }
     } catch (err) {
@@ -89,10 +92,11 @@ export function createWorkspaceAssetController(
    */
   async function loadWorkspaceImages(isCurrent: () => boolean = () => true) {
     const requestGeneration = assetRequestGeneration()
+    const conversationId = getConversationId()
     const container = containerRef.value
     const revision = workspaceAssetRevision.value
     let invalidated = false
-    const current = () => !invalidated && isCurrent() && revision === workspaceAssetRevision.value && containerRef.value === container
+    const current = () => !invalidated && isCurrent() && revision === workspaceAssetRevision.value && containerRef.value === container && getConversationId() === conversationId
     if (!container || !current()) return
 
     const images = container.querySelectorAll('img.workspace-image[data-path], img.loaded-image[data-path]')
@@ -112,8 +116,9 @@ export function createWorkspaceAssetController(
         continue
       }
 
-      if (imageCache.has(imgPath)) {
-        img.setAttribute('src', imageCache.get(imgPath)!)
+      const cacheKey = workspaceAssetCacheKey(imgPath, conversationId)
+      if (imageCache.has(cacheKey)) {
+        img.setAttribute('src', imageCache.get(cacheKey)!)
         img.classList.remove('workspace-image')
         img.classList.add('loaded-image')
         img.setAttribute('data-image-path', imgPath)
@@ -127,14 +132,15 @@ export function createWorkspaceAssetController(
     try {
       await Promise.all(pending.map(async ({ img, imgPath }) => {
         try {
-          const response = await imageRequests.request(`${requestGeneration}:${imgPath}`, () => sendToExtension<WorkspaceImage>(MESSAGE_NAMES.readWorkspaceImage, { path: imgPath }),
+          const cacheKey = workspaceAssetCacheKey(imgPath, conversationId)
+          const response = await imageRequests.request(`${requestGeneration}:${cacheKey}`, () => sendToExtension<WorkspaceImage>(MESSAGE_NAMES.readWorkspaceImage, { path: imgPath, ...context(conversationId) }),
             current, () => { const rect = img.getBoundingClientRect(); return rect.bottom >= 0 && rect.top <= innerHeight ? 0 : Math.abs(rect.top) + 1 })
 
           if (!current() || !container.contains(img)) return
           if (response?.success && response.data) {
             const dataUrl = `data:${response.mimeType || 'image/png'};base64,${response.data}`
             // 带字节预算写入缓存；超大图片跳过缓存但下方仍直接设置 src 显示
-            setCachedImage(imgPath, dataUrl)
+            setCachedImage(cacheKey, dataUrl)
             img.setAttribute('src', dataUrl)
             img.classList.remove('workspace-image')
             img.classList.add('loaded-image')
@@ -163,7 +169,7 @@ export function createWorkspaceAssetController(
     if (target.tagName === 'IMG' && target.classList.contains('loaded-image')) {
       const imgPath = target.getAttribute('data-image-path')
       if (imgPath) {
-        await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: imgPath })
+        await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: imgPath, ...context() })
       }
     }
   }
@@ -207,6 +213,7 @@ export function createWorkspaceAssetController(
     try {
       await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
         path: ref.path,
+        ...context(),
         startLine: ref.startLine,
         endLine: ref.endLine,
         highlight: true

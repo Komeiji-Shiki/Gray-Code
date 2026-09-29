@@ -19,6 +19,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref } from 'vue'
 import { sendToExtension, showNotification } from '../../../utils/vscode'
 import { useChatStore } from '../../../stores/chatStore'
+import { useMessageFileConversation } from '../../../composables/messageFileContext'
 import { useDependency } from '../../../composables/useDependency'
 import { useI18n } from '../../../composables/useI18n'
 import { DependencyWarning } from '../../common'
@@ -108,6 +109,7 @@ const cancelling = ref(false)
 
 // Chat store（取消回退用）
 const chatStore = useChatStore()
+const fileConversation = useMessageFileConversation()
 
 // 依赖检查（无依赖的工具跳过自动检查）
 const depsEnabled = computed(() => (props.dependencies?.length ?? 0) > 0)
@@ -240,7 +242,7 @@ async function saveImage(imageData: MultimodalData, path: string) {
   saveError.value = ''
 
   try {
-    const payload: Record<string, unknown> = { path, conversationId: chatStore.currentConversationId }
+    const payload: Record<string, unknown> = { path, conversationId: fileConversation?.value }
     payload.data = imageData.data
     payload.mimeType = imageData.mimeType
     const result = await sendToExtension(MESSAGE_NAMES.saveImageToPath, payload) as { success: boolean; error?: string }
@@ -262,10 +264,10 @@ async function saveImage(imageData: MultimodalData, path: string) {
   }
 }
 
-// 在 VSCode 中打开图片
+// 图片使用消息所在对话的附件查看器。
 async function openImageInVSCode(path: string) {
   try {
-    await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path, conversationId: chatStore.currentConversationId })
+    await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path, conversationId: fileConversation?.value })
   } catch (err) {
     console.error('打开文件失败:', err)
     await showNotification(`${tk('openFileFailed')} ${path}`, 'error')

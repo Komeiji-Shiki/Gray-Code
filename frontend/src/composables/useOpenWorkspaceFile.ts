@@ -11,14 +11,17 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension, showNotification } from '../utils/vscode'
 import { t } from '../i18n'
+import { useMessageFileConversation } from './messageFileContext'
 
 export function useOpenWorkspaceFile() {
+  const conversation = useMessageFileConversation()
+  const context = () => conversation?.value ? { conversationId: conversation.value } : {}
   /** 打开文件（不定位行号） */
   async function openFile(path: string | undefined | null): Promise<void> {
     const target = (path || '').trim()
     if (!target) return
     try {
-      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: target })
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: target, ...context() })
     } catch (error) {
       console.error('[useOpenWorkspaceFile] Failed to open file:', error)
       await showNotification(`${t('components.common.markdown.openFileFailed')}: ${target}`, 'error')
@@ -50,6 +53,7 @@ export function useOpenWorkspaceFile() {
     try {
       await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
         path: target,
+        ...context(),
         startLine: start,
         ...(end !== undefined ? { endLine: end } : {})
       })

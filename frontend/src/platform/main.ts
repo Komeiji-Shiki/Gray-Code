@@ -79,7 +79,6 @@ window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.se
 applyDesktopAppearance(platformSettings.appearance);
 let assetTimer: ReturnType<typeof setTimeout> | undefined;
 const changedAssetPaths = new Set<string>();
-let assetWorkspaceId: string | undefined;
 function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; changedAssetPaths.clear(); invalidateWorkspaceAssets(); }
 window.addEventListener('pagehide', () => { if (assetTimer) clearTimeout(assetTimer); }, { once: true });
 desktop.subscribe(event => {
@@ -96,11 +95,11 @@ desktop.subscribe(event => {
       await desktop.call('desktop.saveResult', { requestId: event.requestId, participant: 'settings', error });
     })().catch(error => { desktopSettingsDraft.error = String(error); });
   }
-  if (event.type === 'workspace.selected' || event.type === 'ui.conversation.focused' && !event.resynchronized) assetWorkspaceId = event.workspaceId;
   if (event.type === 'workspace.selected' || event.type === 'ui.message' && event.message?.type === 'workspaceUri'
     || event.type === 'ui.conversation.focused' && !event.resynchronized
     || event.type === 'transport.resumed') resetWorkspaceAssets();
-  if (event.type === 'file.changed' && (!assetWorkspaceId || event.workspaceId === assetWorkspaceId)) {
+  // 消息所属项目可以与工作台选择不同；按变更路径刷新各对话的资源引用。
+  if (event.type === 'file.changed') {
     if (typeof event.path === 'string') changedAssetPaths.add(event.path);
     if (typeof event.absolute === 'string') changedAssetPaths.add(event.absolute);
     // 固定窗口合并，不因持续写文件无限推迟失效。

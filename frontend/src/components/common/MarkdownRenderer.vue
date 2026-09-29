@@ -29,7 +29,8 @@ import { renderContent, type RenderProfile } from './markdown/markdownItEngine'
 import { renderDependencyRevision } from './markdown/renderDependencies'
 import { createCodeBlockDomController } from './markdown/codeBlockDom'
 import { createWorkspaceAssetController } from './markdown/workspaceAssets'
-import { observeAssetPaths } from './markdown/assetChanges'
+import { observeAssetPaths, workspaceAssetCacheKey } from './markdown/assetChanges'
+import { useMessageFileConversation } from '../../composables/messageFileContext'
 import MermaidZoomModal from './markdown/MermaidZoomModal.vue'
 
 const props = withDefaults(defineProps<{
@@ -54,6 +55,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, actualLanguage } = useI18n()
+const conversation = useMessageFileConversation()
 
 // 容器引用
 const containerRef = ref<HTMLElement | null>(null)
@@ -78,6 +80,7 @@ let renderTimer: number | null = null
 let renderEpoch = 0
 let disposed = false
 let lastRenderedAssetRevision = workspaceAssetRevision.value
+let lastRenderedConversationId = conversation?.value
 /** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
 let lastRenderedSource = ''
 let lastRenderedProfile: RenderProfile = 'default'
@@ -93,7 +96,7 @@ let postProcessedSource = ''
 let postProcessedProfile: RenderProfile = 'default'
 
 function buildCompletedRenderCacheKey(content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
-  return `${workspaceAssetRevision.value}\u0000${renderDependencyRevision.value}\u0000${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
+  return `${conversation?.value ?? ''}\u0000${workspaceAssetRevision.value}\u0000${renderDependencyRevision.value}\u0000${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
 }
 
 function buildWorkspaceFileExistenceSignature(content: string): string {
@@ -104,8 +107,9 @@ function buildWorkspaceFileExistenceSignature(content: string): string {
     .slice()
     .sort()
     .map((path) => {
-      if (!fileExistenceCache.has(path)) return `${path}:?`
-      return `${path}:${fileExistenceCache.get(path) === true ? '1' : '0'}`
+      const key = workspaceAssetCacheKey(path, conversation?.value)
+      if (!fileExistenceCache.has(key)) return `${path}:?`
+      return `${path}:${fileExistenceCache.get(key) === true ? '1' : '0'}`
     })
     .join('|')
 }
@@ -113,7 +117,7 @@ function buildWorkspaceFileExistenceSignature(content: string): string {
 function getMemoizedCompletedRender(cacheKey: string, content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
   const cached = completedRenderCache.get(cacheKey)
   if (cached !== undefined) return cached
-  const html = renderContent(content, latexOnly, renderProfile)
+  const html = renderContent(content, latexOnly, renderProfile, conversation?.value)
   completedRenderCache.set(cacheKey, html)
   return html
 }
@@ -142,6 +146,7 @@ function renderCurrentContent(): boolean {
       actualLanguage.value === lastRenderedLanguage &&
       renderDependencyRevision.value === lastRenderedDependencyRevision &&
       workspaceAssetRevision.value === lastRenderedAssetRevision &&
+      conversation?.value === lastRenderedConversationId &&
       renderedContent.value !== ''
     )
 
@@ -155,7 +160,8 @@ function renderCurrentContent(): boolean {
     lastRenderedAssetRevision = workspaceAssetRevision.value
     lastRenderedMode = 'streaming'
     lastCompletedRenderCacheKey = ''
-    renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
+    lastRenderedConversationId = conversation?.value
+    renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile, conversation?.value)
     return true
   }
 
@@ -251,9 +257,10 @@ function scheduleRender() {
   const latexOnly = props.latexOnly
   const language = actualLanguage.value
   const revision = workspaceAssetRevision.value
+  const conversationId = conversation?.value
   const current = () => !disposed && epoch === renderEpoch && !props.isStreaming && props.content === source
     && props.renderProfile === profile && props.latexOnly === latexOnly && actualLanguage.value === language
-    && workspaceAssetRevision.value === revision
+    && workspaceAssetRevision.value === revision && conversation?.value === conversationId
   renderTimer = window.setTimeout(() => {
     renderTimer = null
     void (async () => {
@@ -277,7 +284,7 @@ function scheduleRender() {
 const codeBlockDom = createCodeBlockDomController(containerRef, isStreamingClassActive, () => props.isStreaming)
 
 // ===================== 工作区资源（文件预校验/图片加载/链接点击） =====================
-const workspaceAssets = createWorkspaceAssetController(containerRef)
+const workspaceAssets = createWorkspaceAssetController(containerRef, () => conversation?.value)
 
 /**
  * 处理 Mermaid 图表点击放大
@@ -314,7 +321,7 @@ watch(
   // 完成态缓存必须随语言切换失效，否则会把旧语言的工具栏文案错误复用到新语言界面。
   // 怎么改：将 actualLanguage 与原有 props 一起作为渲染触发源。
   // 目的：在不改 DOM/CSS 的前提下保持 memoized render 与现有国际化语义一致。
-  () => [props.content, props.latexOnly, props.renderProfile, props.isStreaming, actualLanguage.value] as const,
+  () => [props.content, props.latexOnly, props.renderProfile, props.isStreaming, actualLanguage.value, conversation?.value] as const,
   () => {
     scheduleRender()
   },

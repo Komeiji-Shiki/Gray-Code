@@ -3,11 +3,12 @@ import { createMonitorLiveReplay } from './monitorLiveReplay'
 import type { SubAgentRunEvent, SubAgentRunManifest, SubAgentRunContentWindow, SubAgentRunSnapshot } from './monitorTypes'
 import { useMonitorControls } from './useMonitorControls'
 import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
+import { messageFileConversationKey } from '../../composables/messageFileContext'
 import SubAgentContextCompactionNotice from './SubAgentContextCompactionNotice.vue'
 import SubAgentRequests from './SubAgentRequests.vue'
 import {
@@ -142,6 +143,8 @@ const focusedRun = computed<SubAgentRunSnapshot | undefined>(() => {
     eventSequence: contentWindow?.eventSequence ?? manifest.eventSequence
   }
 })
+
+provide(messageFileConversationKey, computed(() => focusedManifest.value?.conversationId))
 
 function upsertManifest(manifest: SubAgentRunManifest | undefined) {
   if (!manifest?.runId) return

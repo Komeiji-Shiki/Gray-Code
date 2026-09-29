@@ -15,6 +15,7 @@ import { t } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE, RENDER_LATEX_ONLY_PAREN_INLINE_RE, RENDER_LATEX_ONLY_BRACKET_BLOCK_RE } from '@/components/common/markdownUtils'
 import { markdownItMathBlock } from '@/utils/markdownMathBlock'
 import { fileExistenceCache, codeHighlightCache } from './markdownItCore'
+import { workspaceAssetCacheKey } from './assetChanges'
 import {
   WORKSPACE_FILE_REF_FIND_RE,
   parsePositiveInt,
@@ -31,7 +32,7 @@ import deflist from 'markdown-it-deflist'
 import taskLists from 'markdown-it-task-lists'
 
 export type RenderProfile = 'default' | 'artifactSafe'
-interface MathRenderEnvironment { trustedMath?: Map<string, string> }
+interface MathRenderEnvironment { trustedMath?: Map<string, string>; conversationId?: string | null }
 
 /**
  * 将 highlight.js 的 HTML 按“原始换行”安全拆成行，避免拆坏跨行的 <span>
@@ -128,7 +129,7 @@ function markdownItWorkspaceFileLinks(md: MarkdownIt) {
         // 行内 code：如果内容“完全等于”一个文件引用，则包一层 <a>
         if (child.type === 'code_inline') {
           const ref = parseWorkspaceFileRefExact(child.content || '')
-          if (!ref || fileExistenceCache.get(ref.path) !== true) {
+          if (!ref || fileExistenceCache.get(workspaceAssetCacheKey(ref.path, state.env?.conversationId)) !== true) {
             out.push(child)
             continue
           }
@@ -177,7 +178,7 @@ function markdownItWorkspaceFileLinks(md: MarkdownIt) {
           const matchEnd = matchStart + matchAll.length
 
           // 未确认存在 → 作为纯文本输出，不生成链接
-          if (fileExistenceCache.get(path) !== true) {
+          if (fileExistenceCache.get(workspaceAssetCacheKey(path, state.env?.conversationId)) !== true) {
             const plainText = text.slice(lastIndex, matchEnd)
             if (plainText) {
               const t = new TokenCtor('text', '', 0)
@@ -404,7 +405,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     const titleHtml = codeRef?.path
       ? (() => {
           // 未确认存在 → 不生成链接，仅显示普通标题
-          if (fileExistenceCache.get(codeRef.path) !== true) {
+          if (fileExistenceCache.get(workspaceAssetCacheKey(codeRef.path, env?.conversationId)) !== true) {
             return `<span class="code-block-title">${escapeHtml(`${codeRef.path}`)}</span>`
           }
           const encodedPath = encodeDataPath(codeRef.path)
@@ -707,7 +708,7 @@ function preserveSpacesInBlocks(html: string): string {
 /**
  * 渲染 Markdown 和 LaTeX
  */
-export function renderContent(content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
+export function renderContent(content: string, latexOnly: boolean, renderProfile: RenderProfile, conversationId?: string | null): string {
   if (!content) return ''
   
   // 仅 LaTeX 模式（用户消息）
@@ -719,7 +720,7 @@ export function renderContent(content: string, latexOnly: boolean, renderProfile
   
   // 完整 Markdown 模式：LaTeX 由 markdown-it 插件解析（$...$ / $$...$$）
   // 每次渲染传入独立 env，保证 code block 的序号从 1 开始
-  const environment: MathRenderEnvironment = { trustedMath: renderProfile !== 'artifactSafe' ? new Map() : undefined }
+  const environment: MathRenderEnvironment = { trustedMath: renderProfile !== 'artifactSafe' ? new Map() : undefined, conversationId }
   let html = markdownIt.render(content, environment)
 
   // #66：html:true 模式下净化产物，避免模型正文中的原始 HTML（script/on*）在 webview 执行

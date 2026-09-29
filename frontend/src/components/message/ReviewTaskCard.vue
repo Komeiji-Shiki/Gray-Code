@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { MESSAGE_NAMES } from '@shared/protocol'
+import { useMessageFileConversation } from '../../composables/messageFileContext'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from '../../i18n'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../common'
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const fileConversation = useMessageFileConversation()
 
 const copied = ref(false)
 let copyResetTimer: ReturnType<typeof setTimeout> | undefined
@@ -533,6 +535,7 @@ async function openReviewFile(): Promise<void> {
   try {
     await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
       path: props.card.path,
+      conversationId: fileConversation?.value,
       highlight: false,
       preview: false
     })

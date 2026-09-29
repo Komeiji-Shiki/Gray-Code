@@ -8,6 +8,9 @@ import { parseMessageToNodes } from '../../types/contextParser'
 import { getFileIcon } from '../../utils/fileIcons'
 import { sendToExtension } from '../../utils/vscode'
 import { languageFromPath } from '../../utils/languageFromPath'
+import { useOpenWorkspaceFile } from '../../composables/useOpenWorkspaceFile'
+
+const { openFile } = useOpenWorkspaceFile()
 
 const props = defineProps<{
   content: string
@@ -94,14 +97,10 @@ function truncatePreview(content: string, maxLines = 10, maxChars = 500): string
   return result
 }
 
-// Click chip: open in VSCode virtual doc
+// 文本使用发送时的副本，文件引用按消息所属对话打开。
 async function handleContextClick(ctx: PromptContextItem) {
   if (ctx.isTextContent === false && ctx.filePath) {
-    try {
-      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: ctx.filePath })
-    } catch (error) {
-      console.error('Failed to open workspace file:', error)
-    }
+    await openFile(ctx.filePath)
     return
   }
 

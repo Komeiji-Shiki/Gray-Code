@@ -8,6 +8,7 @@
  * 卡片展示判断与执行/生成动作。
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
+import { useMessageFileConversation } from '../../composables/messageFileContext'
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { sendToExtension, saveState, showNotification, onExtensionCommand } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
@@ -40,6 +41,7 @@ const chatStore = useChatStore()
 let unsubscribeConfigChanged: (() => void) | null = null
 
 const { t } = useI18n()
+const fileConversation = useMessageFileConversation()
 
 const {
   selectedChannelId,
@@ -123,6 +125,7 @@ async function openDocFile(card: TaskCardItem) {
   try {
     await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
       path: card.path,
+      conversationId: fileConversation?.value,
       highlight: false,
       preview: false
     })
@@ -470,6 +473,7 @@ function handleCardAction(card: TaskCardItem) {
 }
 
 async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
+  const conversationId = fileConversation?.value
   for (const card of cards) {
     if (!card?.path) continue
     if (card.kind === 'review' || card.kind === 'progress') continue
@@ -481,6 +485,7 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
     try {
       await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
         path: card.path,
+        conversationId,
         highlight: false
       })
     } catch (error) {
