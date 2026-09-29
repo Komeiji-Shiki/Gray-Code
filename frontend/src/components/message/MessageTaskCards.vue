@@ -8,7 +8,7 @@
  * 卡片展示判断与执行/生成动作。
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { useMessageFileConversation } from '../../composables/messageFileContext'
+import { useMessageConversation } from '../../composables/messageConversationContext'
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { sendToExtension, saveState, showNotification, onExtensionCommand } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
@@ -41,7 +41,7 @@ const chatStore = useChatStore()
 let unsubscribeConfigChanged: (() => void) | null = null
 
 const { t } = useI18n()
-const fileConversation = useMessageFileConversation()
+const fileConversation = useMessageConversation()
 
 const {
   selectedChannelId,

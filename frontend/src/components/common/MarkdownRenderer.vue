@@ -30,7 +30,7 @@ import { renderDependencyRevision } from './markdown/renderDependencies'
 import { createCodeBlockDomController } from './markdown/codeBlockDom'
 import { createWorkspaceAssetController } from './markdown/workspaceAssets'
 import { observeAssetPaths, workspaceAssetCacheKey } from './markdown/assetChanges'
-import { useMessageFileConversation } from '../../composables/messageFileContext'
+import { useMessageConversation } from '../../composables/messageConversationContext'
 import MermaidZoomModal from './markdown/MermaidZoomModal.vue'
 
 const props = withDefaults(defineProps<{
@@ -55,7 +55,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, actualLanguage } = useI18n()
-const conversation = useMessageFileConversation()
+const conversation = useMessageConversation()
 
 // 容器引用
 const containerRef = ref<HTMLElement | null>(null)

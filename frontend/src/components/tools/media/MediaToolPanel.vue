@@ -19,7 +19,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref } from 'vue'
 import { sendToExtension, showNotification } from '../../../utils/vscode'
 import { useChatStore } from '../../../stores/chatStore'
-import { useMessageFileConversation } from '../../../composables/messageFileContext'
+import { useMessageConversation } from '../../../composables/messageConversationContext'
 import { useDependency } from '../../../composables/useDependency'
 import { useI18n } from '../../../composables/useI18n'
 import { DependencyWarning } from '../../common'
@@ -109,7 +109,7 @@ const cancelling = ref(false)
 
 // Chat store（取消回退用）
 const chatStore = useChatStore()
-const fileConversation = useMessageFileConversation()
+const fileConversation = useMessageConversation()
 
 // 依赖检查（无依赖的工具跳过自动检查）
 const depsEnabled = computed(() => (props.dependencies?.length ?? 0) > 0)

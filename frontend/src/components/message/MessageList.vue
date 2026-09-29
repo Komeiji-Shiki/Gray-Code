@@ -35,7 +35,7 @@ import { useBuildPanel } from './useBuildPanel'
 import { useTodoPanel } from './useTodoPanel'
 import { useCheckpointRestoreFlow } from './useCheckpointRestoreFlow'
 import { useVirtualMessageWindow } from './useVirtualMessageWindow'
-import { messageFileConversationKey } from '../../composables/messageFileContext'
+import { messageConversationKey } from '../../composables/messageConversationContext'
 
 const { t } = useI18n()
 
@@ -47,7 +47,7 @@ const props = defineProps<{
 
 // 从 store 读取等待状态
 const chatStore = useChatStore()
-provide(messageFileConversationKey, computed(() => chatStore.currentConversationId))
+provide(messageConversationKey, computed(() => chatStore.currentConversationId))
 const continuingBackground = computed(() => chatStore.allMessages.at(-1)?.source === 'background_task')
 
 /** 共享辅助：todo/build 两侧共用的工具结果合并（以参数注入两个 composable，不搞全局） */

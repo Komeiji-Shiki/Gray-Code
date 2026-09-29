@@ -11,10 +11,10 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension, showNotification } from '../utils/vscode'
 import { t } from '../i18n'
-import { useMessageFileConversation } from './messageFileContext'
+import { useMessageConversation } from './messageConversationContext'
 
 export function useOpenWorkspaceFile() {
-  const conversation = useMessageFileConversation()
+  const conversation = useMessageConversation()
   const context = () => conversation?.value ? { conversationId: conversation.value } : {}
   /** 打开文件（不定位行号） */
   async function openFile(path: string | undefined | null): Promise<void> {

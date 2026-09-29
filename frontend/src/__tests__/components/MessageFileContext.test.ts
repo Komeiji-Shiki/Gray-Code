@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { defineComponent, h, provide, ref, type Ref } from 'vue'
 import MarkdownRenderer from '../../components/common/MarkdownRenderer.vue'
 import { invalidateWorkspaceAssets } from '../../components/common/markdown/markdownItCore'
-import { messageFileConversationKey } from '../../composables/messageFileContext'
+import { messageConversationKey } from '../../composables/messageConversationContext'
 import { useOpenWorkspaceFile } from '../../composables/useOpenWorkspaceFile'
 import { sendToExtension } from '../../utils/vscode'
 
@@ -15,7 +15,7 @@ afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.u
 
 function markdown(conversation: Ref<string | undefined>, content: string) {
   const wrapper = mount(defineComponent({ setup() {
-    provide(messageFileConversationKey, conversation)
+    provide(messageConversationKey, conversation)
     return () => h(MarkdownRenderer, { content })
   } }))
   wrappers.push(wrapper)
@@ -63,7 +63,7 @@ test('工具文件入口传入消息对话，行号和范围仍准确', async ()
   request.mockResolvedValue({})
   const conversation = ref('A')
   const Tool = defineComponent({ setup() { const { openFileAt } = useOpenWorkspaceFile(); return () => h('button', { onClick: () => openFileAt('source.ts', 17, 20) }, '打开') } })
-  const wrapper = mount(defineComponent({ setup() { provide(messageFileConversationKey, conversation); return () => h(Tool) } }))
+  const wrapper = mount(defineComponent({ setup() { provide(messageConversationKey, conversation); return () => h(Tool) } }))
   wrappers.push(wrapper)
   await wrapper.get('button').trigger('click')
   expect(request).toHaveBeenCalledWith('openWorkspaceFileAt', { path: 'source.ts', startLine: 17, endLine: 20, conversationId: 'A' })

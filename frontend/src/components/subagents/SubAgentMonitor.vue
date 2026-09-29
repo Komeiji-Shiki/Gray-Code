@@ -8,7 +8,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
-import { messageFileConversationKey } from '../../composables/messageFileContext'
+import { messageConversationKey } from '../../composables/messageConversationContext'
 import SubAgentContextCompactionNotice from './SubAgentContextCompactionNotice.vue'
 import SubAgentRequests from './SubAgentRequests.vue'
 import {
@@ -144,7 +144,7 @@ const focusedRun = computed<SubAgentRunSnapshot | undefined>(() => {
   }
 })
 
-provide(messageFileConversationKey, computed(() => focusedManifest.value?.conversationId))
+provide(messageConversationKey, computed(() => focusedManifest.value?.conversationId))
 
 function upsertManifest(manifest: SubAgentRunManifest | undefined) {
   if (!manifest?.runId) return

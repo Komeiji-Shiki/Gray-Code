@@ -16,7 +16,7 @@ import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { copyToClipboard } from '../../../utils/format'
 import { showNotification } from '../../../utils/vscode'
-import { useMessageFileConversation } from '../../../composables/messageFileContext'
+import { useMessageConversation } from '../../../composables/messageConversationContext'
 
 const { t } = useI18n()
 
@@ -34,7 +34,7 @@ const emit = defineEmits<{
 
 // 终端 store
 const terminalStore = useTerminalStore()
-const conversation = useMessageFileConversation()
+const conversation = useMessageConversation()
 const operationError = ref('')
 let disposed = false
 let copyTimer: ReturnType<typeof setTimeout> | undefined

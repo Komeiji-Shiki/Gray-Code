@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ExecuteCommand from '../../components/tools/terminal/execute_command.vue'
 import { useTerminalStore } from '../../stores/terminalStore'
-import { messageFileConversationKey } from '../../composables/messageFileContext'
+import { messageConversationKey } from '../../composables/messageConversationContext'
 import { setLanguage } from '../../i18n'
 import { sendToExtension } from '../../utils/vscode'
 
@@ -15,7 +15,7 @@ beforeEach(() => { setActivePinia(createPinia()); setLanguage('zh-CN'); request.
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); setLanguage('auto') })
 function render(props: Record<string, unknown>, conversationId = 'A') {
   const wrapper = mount(ExecuteCommand, { props: { args: { command: 'node worker.cjs' }, ...props }, global: {
-    provide: { [messageFileConversationKey as symbol]: ref(conversationId) }, stubs: { CustomScrollbar: { template: '<div><slot /></div>' } }
+    provide: { [messageConversationKey as symbol]: ref(conversationId) }, stubs: { CustomScrollbar: { template: '<div><slot /></div>' } }
   } })
   wrappers.push(wrapper); return wrapper
 }
