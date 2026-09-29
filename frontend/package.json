@@ -40,7 +40,7 @@
     "jsdom": "^29.1.1",
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "vue-tsc": "^2.0.0"
   },
   "license": "SEE LICENSE IN LICENSE"
