@@ -685,7 +685,12 @@ Output content directly without any prefix.`
                 "output": "Process output",
                 "noOutput": "No process output yet",
                 "truncated": "Only the output tail is retained; earlier output was truncated.",
-                "input": "Sent input"
+                "input": "Sent input",
+                "taskActions": { "list": "Background commands", "status": "Background command status", "read": "Read background output", "stop": "Stop background command" },
+                "taskCount": "{count} command tasks",
+                "noTasks": "This conversation has no background command tasks",
+                "interrupted": "Interrupted",
+                "moreOutput": "More output is available to read."
             },
             "team": {
                 "actions": {

@@ -685,7 +685,12 @@ const ja: BackendLanguageMessages = {
                 "output": "プロセス出力",
                 "noOutput": "プロセス出力はまだありません",
                 "truncated": "末尾の出力のみ保持されています。以前の出力は切り詰められました。",
-                "input": "送信した入力"
+                "input": "送信した入力",
+                "taskActions": { "list": "バックグラウンドコマンド一覧", "status": "バックグラウンドコマンドの状態", "read": "バックグラウンド出力を読む", "stop": "バックグラウンドコマンドを停止" },
+                "taskCount": "{count} 件のコマンドタスク",
+                "noTasks": "この会話にはバックグラウンドコマンドがありません",
+                "interrupted": "中断済み",
+                "moreOutput": "続けて読み取れる出力があります。"
             },
             "team": {
                 "actions": {

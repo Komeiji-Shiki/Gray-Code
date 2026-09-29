@@ -4,6 +4,7 @@ import { useI18n } from '../../../i18n'
 import ToolResultPanel from '../common/ToolResultPanel.vue'
 import ToolReceiptDetails from '../common/ToolReceiptDetails.vue'
 import PlatformText from './PlatformText.vue'
+import ProcessOutput from './ProcessOutput.vue'
 import { label, number, object, pick, resultBody, strings, successfulResult, text, type PlatformToolProps } from './platformResult'
 
 defineOptions({ inheritAttrs: false })
@@ -29,14 +30,11 @@ const state = computed(() => data.value.running === true ? 'running' : data.valu
         <span class="platform-status process-state" :class="failedExit ? 'failed' : state" role="status"><span v-if="state === 'running'" class="codicon codicon-loading" aria-hidden="true" />{{ t(`components.tools.platform.process.${state}`) }}</span>
         <span v-if="number(data.exitCode) !== undefined" class="process-exit-code">{{ t('components.tools.structured.fields.exitCode') }}: {{ data.exitCode }}</span>
       </div>
-      <p v-if="data.truncated === true" class="platform-notice warning">{{ t('components.tools.platform.process.truncated') }}</p>
-      <h4 class="platform-section-title">{{ t('components.tools.platform.process.output') }}</h4>
-      <PlatformText v-if="typeof data.output === 'string' && data.output.length" :text="data.output" code />
-      <p v-else class="platform-empty">{{ t(typeof data.output === 'string' ? 'components.tools.platform.process.noOutput' : 'components.tools.platform.noData') }}</p>
+      <ProcessOutput :data="data" />
       <template v-if="args.action === 'input' && typeof args.text === 'string' && successfulResult(props)">
         <h4 class="platform-section-title">{{ t('components.tools.platform.process.input') }}</h4><PlatformText :text="args.text" code />
       </template>
-      <ToolReceiptDetails :value="{ ...pick(data, ['id']), ...(!data.id && args.id ? { id: args.id } : {}) }" :metadata="metadata" />
+      <ToolReceiptDetails :value="{ ...pick(data, ['id', 'outputOffset', 'nextCursor', 'hasMore', 'outputLost']), ...(!data.id && args.id ? { id: args.id } : {}) }" :metadata="metadata" />
     </template>
   </ToolResultPanel></div>
 </template>

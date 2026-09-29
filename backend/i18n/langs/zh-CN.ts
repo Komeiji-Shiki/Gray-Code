@@ -687,7 +687,12 @@ const zhCN = {
                 "output": "进程输出",
                 "noOutput": "暂无进程输出",
                 "truncated": "仅保留末尾输出，更早内容已截断。",
-                "input": "发送的输入"
+                "input": "发送的输入",
+                "taskActions": { "list": "后台命令列表", "status": "后台命令状态", "read": "读取后台命令输出", "stop": "停止后台命令" },
+                "taskCount": "共 {count} 个命令任务",
+                "noTasks": "当前对话没有后台命令任务",
+                "interrupted": "已中断",
+                "moreOutput": "还有已生成的输出，可继续读取。"
             },
             "team": {
                 "actions": {
