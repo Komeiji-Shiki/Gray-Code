@@ -1,11 +1,14 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { setLanguage } from '../../../../i18n'
 import { DefaultToolResult, getToolConfig, registerTool, toolRegistry } from '../../../../utils/toolRegistry'
 import { toolImage, toolLink, toolRawData } from '../../../../utils/toolPresentation'
 import ToolResultPanel from '../ToolResultPanel.vue'
 import ToolResultValue from '../ToolResultValue.vue'
 import McpToolPanel from '../../mcp/mcp_tool.vue'
+import { sendToExtension, showNotification } from '../../../../utils/vscode'
+
+vi.mock('../../../../utils/vscode', () => ({ sendToExtension: vi.fn().mockResolvedValue({ success: true }), showNotification: vi.fn().mockResolvedValue(undefined) }))
 
 beforeEach(() => setLanguage('zh-CN'))
 afterEach(() => { setLanguage('auto'); toolRegistry.unregister('custom_display_fixture') })
@@ -95,6 +98,30 @@ test('等待状态保留参数，空的成功结果和直接返回的标量都�
     expect(completed.text()).toContain('操作已完成，没有额外输出')
     expect(scalar.find('.result-boolean').text()).toBe('否')
   } finally { waiting.unmount(); completed.unmount(); scalar.unmount() }
+})
+
+test('混合成功和失败的回执显示部分成功，保留失败原因与已完成结果', () => {
+  const wrapper = mount(ToolResultPanel, { props: { args: {}, result: { success: false, error: '有一个文件读取失败',
+    data: { successCount: 1, failCount: 1, results: [{ path: 'ok.txt', success: true }, { path: 'missing.txt', success: false }] } } } })
+  try {
+    expect(wrapper.get('.result-outcome').classes()).toContain('warning')
+    expect(wrapper.get('.result-outcome').classes()).not.toContain('failed')
+    expect(wrapper.get('.result-outcome').text()).toBe('部分成功')
+    expect(wrapper.get('.result-error').classes()).toContain('warning')
+    expect(wrapper.text()).toContain('有一个文件读取失败')
+  } finally { wrapper.unmount() }
+})
+
+test('工具图片可用鼠标或键盘打开附件查看器，预览失败会显示原因', async () => {
+  const wrapper = mount(ToolResultValue, { props: { value: { name: '工具截图.png', mimeType: 'image/png', data: 'aGVsbG8=' } } })
+  try {
+    vi.mocked(sendToExtension).mockClear()
+    await wrapper.get('button.result-image-preview').trigger('click')
+    expect(sendToExtension).toHaveBeenCalledWith('previewAttachment', { name: '工具截图.png', mimeType: 'image/png', data: 'aGVsbG8=' })
+    vi.mocked(sendToExtension).mockRejectedValueOnce(new Error('预览读取失败'))
+    await wrapper.get('button.result-image-preview').trigger('click')
+    expect(showNotification).toHaveBeenCalledWith('预览读取失败', 'error')
+  } finally { wrapper.unmount() }
 })
 
 test('短标量字段采用紧凑布局，长正文和嵌套数据保持原布局', () => {

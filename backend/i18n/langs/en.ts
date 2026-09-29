@@ -797,6 +797,7 @@ Output content directly without any prefix.`
             historyMessages: 'History', characters: '{count} characters',
             invalidatedNote: 'This note is no longer valid. Rebuild it from valid sources.',
             partialContent: 'Only part of the content is shown. Continue reading using the returned range.',
+            partialSuccess: 'Partially completed', partialRange: 'Partial content',
             moreHistory: 'Earlier records are available using the returned history position.',
             // Pagination requires another tool call; exclusion sources describe this receipt, not current settings.
             findFiles: {

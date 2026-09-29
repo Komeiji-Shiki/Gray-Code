@@ -713,6 +713,8 @@ const sharedJa = {
                 noteContent: backendJa.tools.presentation.noteContent,
                 noteDirectory: backendJa.tools.presentation.noteDirectory,
                 partialContent: backendJa.tools.presentation.partialContent,
+                partialRange: backendJa.tools.presentation.partialRange,
+                partialSuccess: backendJa.tools.presentation.partialSuccess,
                 recipient: backendJa.tools.presentation.recipient,
             },
             reject: backendJa.tools.file.diffCodeLens.reject,

@@ -12,7 +12,6 @@ assert(path.dirname(path.resolve(output)) === path.join(root, '.tmp') && path.ba
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const errors = [];
 const rendererBenchmark = process.env.GRAYCODE_RENDER_BENCHMARK === '1' ? require('./renderer-performance.cjs') : undefined;
-const paintedFrames = new Map();
 let requests = 0;
 let server;
 async function until(check, label, timeout = 20000) {
@@ -160,8 +159,6 @@ async function main() {
   process.argv.push('--data', path.join(output, 'data'));
   dialog.showErrorBox = (title, message) => { process.stderr.write(`${title}: ${message}\n`); app.exit(1); };
   app.on('browser-window-created', (_event, window) => {
-    const contentsId = window.webContents.id;
-    window.webContents.on('paint', (_event, _rect, image) => paintedFrames.set(contentsId, image.toPNG()));
     window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
     window.webContents.on('render-process-gone', (_event, details) => errors.push(`Renderer exited: ${details.reason}`));
   });
@@ -225,6 +222,7 @@ async function main() {
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
   await verifyLatestFileFocus(evaluate);
+  await require('./smoke-image-preview.cjs')({ window, evaluate, ui, until, root, output });
   const terminal = await rpc('terminal.create', { workspaceId: 'smoke' });
   await evaluate(`window.__smokeTerminalOutput = ''; window.graycode.subscribe(event => { if(event.type==='terminal.data' && event.id===${JSON.stringify(terminal.id)}) window.__smokeTerminalOutput += event.data; }); undefined`);
   await rpc('terminal.input', { id: terminal.id, data: "Write-Output ('native-' + 'terminal-ok')\r" });
@@ -265,7 +263,7 @@ async function main() {
   await until(async () => (await rpc('conversations.history', { id: conversationId })).messages.at(-1)?.id === oldReplyId, 'switch original candidate');
   await until(() => chat('Array.from(document.querySelectorAll(".branch-switcher-position-text")).some(node => node.textContent.replace(/\\s/g, "") === "1/2")'), 'original candidate rendered');
   await sleep(300);
-  await fs.writeFile(path.join(output, 'workbench.png'), await until(() => paintedFrames.get(window.webContents.id), 'workbench frame'));
+  await fs.writeFile(path.join(output, 'workbench.png'), (await window.webContents.capturePage()).toPNG());
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".settings-panel")'), 'settings panel');
   assert((await chat('document.querySelectorAll(".settings-sidebar .settings-tab").length')) >= 20);
@@ -321,7 +319,7 @@ async function main() {
   assert(savedBackground.startsWith('graycode://app/assets/background/'));
   assert(await imageLoads(savedBackground));
   await sleep(150);
-  await fs.writeFile(path.join(output, 'settings.png'), paintedFrames.get(window.webContents.id));
+  await fs.writeFile(path.join(output, 'settings.png'), (await window.webContents.capturePage()).toPNG());
   await rpc('browser.openFile', { workspaceId: 'smoke', path: 'index.html' });
   // 页面也可能挂在后台 BaseWindow 上，按真实 WebContents 查找，不依赖可见窗口层级。
   const preview = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().startsWith('graycode-preview://')), 'embedded browser');

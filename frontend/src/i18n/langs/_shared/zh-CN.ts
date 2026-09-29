@@ -713,6 +713,8 @@ const sharedZhCN = {
                 noteContent: backendZhCN.tools.presentation.noteContent,
                 noteDirectory: backendZhCN.tools.presentation.noteDirectory,
                 partialContent: backendZhCN.tools.presentation.partialContent,
+                partialRange: backendZhCN.tools.presentation.partialRange,
+                partialSuccess: backendZhCN.tools.presentation.partialSuccess,
                 recipient: backendZhCN.tools.presentation.recipient,
             },
             reject: backendZhCN.tools.file.diffCodeLens.reject,

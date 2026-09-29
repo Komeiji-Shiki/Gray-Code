@@ -403,6 +403,8 @@
     { "frontend": "components.tools.presentation.characters", "backend": "tools.presentation.characters" },
     { "frontend": "components.tools.presentation.invalidatedNote", "backend": "tools.presentation.invalidatedNote" },
     { "frontend": "components.tools.presentation.partialContent", "backend": "tools.presentation.partialContent" },
+    { "frontend": "components.tools.presentation.partialSuccess", "backend": "tools.presentation.partialSuccess" },
+    { "frontend": "components.tools.presentation.partialRange", "backend": "tools.presentation.partialRange" },
     { "frontend": "components.tools.presentation.moreHistory", "backend": "tools.presentation.moreHistory" },
     { "frontend": "components.tools.presentation.findFiles.returnedFiles", "backend": "tools.presentation.findFiles.returnedFiles" },
     { "frontend": "components.tools.presentation.findFiles.pageFiles", "backend": "tools.presentation.findFiles.pageFiles" },

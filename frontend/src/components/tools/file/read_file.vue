@@ -21,12 +21,12 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-const { openFile } = useOpenWorkspaceFile()
+const { openFileAt } = useOpenWorkspaceFile()
 
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
 
-// 复制状态（按文件路径）
+// 同一文件的不同读取范围分别保存展开与复制状态。
 const copiedFiles = ref<Set<string>>(new Set())
 const copyTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -63,11 +63,6 @@ const fileRequests = computed((): FileRequest[] => {
   }]
 })
 
-// 获取路径列表
-const pathList = computed(() => {
-  return fileRequests.value.map(f => f.path)
-})
-
 // 单个文件读取结果
 interface ReadResult {
   path: string
@@ -83,21 +78,23 @@ interface ReadResult {
   error?: string
 }
 
+interface ReadResultRow extends ReadResult {
+  key: string
+  preview: string
+  contentLineCount: number
+}
+
+const hasResult = computed(() => props.result !== undefined && props.result !== null)
+
 // 获取读取结果列表
 const readResults = computed((): ReadResult[] => {
   const result = props.result as Record<string, any> | undefined
 
   // 批量结果
-  if (result?.data?.results) {
+  if (Array.isArray(result?.data?.results)) {
     return result.data.results as ReadResult[]
   }
-
-  // 如果没有结果，为每个路径创建空结果
-  return pathList.value.map(p => ({
-    path: p,
-    success: !props.error,
-    error: props.error
-  }))
+  return []
 })
 
 // 总文件数统计
@@ -144,6 +141,13 @@ function isPartialRead(result: ReadResult): boolean {
 // 预览行数
 const previewLineCount = 15
 
+// 内容只在回执更新时拆行；展开、复制提示和其他工具更新复用预览结果。
+const resultRows = computed((): ReadResultRow[] => readResults.value.map((result, index) => {
+  const lines = getContentLines(result.content)
+  return { ...result, key: `${index}:${result.path}:${result.startLine ?? ''}:${result.endLine ?? ''}`,
+    preview: lines.slice(0, previewLineCount).join('\n'), contentLineCount: lines.length }
+}))
+
 // 获取文件名
 function getFileName(filePath: string): string {
   const parts = filePath.split(/[/\\]/)
@@ -163,19 +167,8 @@ function getContentLines(content: string | undefined): string[] {
 }
 
 // 获取显示的内容
-function getDisplayContent(result: ReadResult): string {
-  if (!result.content) return ''
-  const lines = getContentLines(result.content)
-  if (isFileExpanded(result.path) || lines.length <= previewLineCount) {
-    return result.content
-  }
-  return lines.slice(0, previewLineCount).join('\n')
-}
-
-// 检查是否需要展开按钮
-function needsExpand(result: ReadResult): boolean {
-  const lines = getContentLines(result.content)
-  return lines.length > previewLineCount
+function getDisplayContent(result: ReadResultRow): string {
+  return isFileExpanded(result.key) ? result.content ?? '' : result.preview
 }
 
 // 切换文件展开状态
@@ -198,7 +191,7 @@ function isCopied(path: string): boolean {
 }
 
 // 复制单个文件内容
-async function copyFileContent(result: ReadResult) {
+async function copyFileContent(result: ReadResultRow) {
   if (!result.content) return
 
   // 移除行号前缀（格式如 "   1 | "）
@@ -216,20 +209,20 @@ async function copyFileContent(result: ReadResult) {
   }
 
   // 显示对钩状态
-  copiedFiles.value.add(result.path)
+  copiedFiles.value.add(result.key)
 
   // 清除之前的定时器
-  const existingTimeout = copyTimeouts.get(result.path)
+  const existingTimeout = copyTimeouts.get(result.key)
   if (existingTimeout) {
     clearTimeout(existingTimeout)
   }
 
   // 1秒后恢复
   const timeout = setTimeout(() => {
-    copiedFiles.value.delete(result.path)
-    copyTimeouts.delete(result.path)
+    copiedFiles.value.delete(result.key)
+    copyTimeouts.delete(result.key)
   }, 1000)
-  copyTimeouts.set(result.path, timeout)
+  copyTimeouts.set(result.key, timeout)
 }
 
 // 清理定时器
@@ -258,7 +251,7 @@ onBeforeUnmount(() => {
           <span class="codicon codicon-error"></span>
           {{ failCount }}
         </span>
-        <span class="stat total">{{ t('components.tools.file.readFilePanel.total', { count: readResults.length }) }}</span>
+        <span class="stat total">{{ t('components.tools.file.readFilePanel.total', { count: hasResult ? readResults.length : fileRequests.length }) }}</span>
       </div>
     </div>
 
@@ -268,11 +261,16 @@ onBeforeUnmount(() => {
       <span class="error-text">{{ error }}</span>
     </div>
 
+    <p v-else-if="!hasResult" class="file-waiting" role="status">
+      <span class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></span>
+      {{ t('components.tools.structured.waiting') }}
+    </p>
+
     <!-- 文件列表 -->
     <div v-else class="file-list">
       <div
-        v-for="result in readResults"
-        :key="result.path"
+        v-for="result in resultRows"
+        :key="result.key"
         :class="['file-panel', { 'is-error': !result.success }]"
       >
         <!-- 文件头部 -->
@@ -283,8 +281,8 @@ onBeforeUnmount(() => {
               'codicon',
               result.success ? 'codicon-file-text' : 'codicon-error'
             ]"></span>
-            <button type="button" class="file-name clickable gc-link-button" :title="result.path" @click.stop="openFile(result.path)">{{ getFileName(result.path) }}</button>
-            <button v-if="getFileExtension(result.path)" type="button" class="file-ext clickable gc-link-button" :title="result.path" @click.stop="openFile(result.path)">.{{ getFileExtension(result.path) }}</button>
+            <button type="button" class="file-name clickable gc-link-button" :title="result.path" @click.stop="openFileAt(result.path, result.startLine, result.endLine)">{{ getFileName(result.path) }}</button>
+            <button v-if="getFileExtension(result.path)" type="button" class="file-ext clickable gc-link-button" :title="result.path" @click.stop="openFileAt(result.path, result.startLine, result.endLine)">.{{ getFileExtension(result.path) }}</button>
             <span v-if="result.lineCount" class="line-count">{{ t('components.tools.file.readFilePanel.lines', { count: result.lineCount }) }}</span>
           </div>
           <div class="file-actions">
@@ -292,24 +290,24 @@ onBeforeUnmount(() => {
               v-if="result.content"
               type="button"
               class="action-btn"
-              :class="{ 'copied': isCopied(result.path) }"
-              :title="isCopied(result.path) ? t('components.tools.file.readFilePanel.copied') : t('components.tools.file.readFilePanel.copyContent')"
-              :aria-label="isCopied(result.path) ? t('components.tools.file.readFilePanel.copied') : t('components.tools.file.readFilePanel.copyContent')"
+              :class="{ 'copied': isCopied(result.key) }"
+              :title="isCopied(result.key) ? t('components.tools.file.readFilePanel.copied') : t('components.tools.file.readFilePanel.copyContent')"
+              :aria-label="isCopied(result.key) ? t('components.tools.file.readFilePanel.copied') : t('components.tools.file.readFilePanel.copyContent')"
               @click.stop="copyFileContent(result)"
             >
-              <span :class="['codicon', isCopied(result.path) ? 'codicon-check' : 'codicon-copy']"></span>
+              <span :class="['codicon', isCopied(result.key) ? 'codicon-check' : 'codicon-copy']"></span>
             </button>
           </div>
         </div>
 
         <!-- 文件路径 -->
-        <button type="button" class="file-path clickable gc-link-button" :title="result.path" @click.stop="openFile(result.path)">{{ result.path }}</button>
+        <button type="button" class="file-path clickable gc-link-button" :title="result.path" @click.stop="openFileAt(result.path, result.startLine, result.endLine)">{{ result.path }}</button>
 
         <!-- 行范围信息（仅当使用行范围时显示） -->
         <div v-if="getLineRangeSummary(result)" class="line-range-info">
           <span class="codicon codicon-list-selection"></span>
           <span class="range-text">{{ getLineRangeSummary(result) }}</span>
-          <span v-if="isPartialRead(result)" class="partial-badge">partial</span>
+          <span v-if="isPartialRead(result)" class="partial-badge">{{ t('components.tools.presentation.partialRange') }}</span>
         </div>
 
         <!-- 错误信息 -->
@@ -330,7 +328,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 文本内容 -->
-        <div v-else-if="result.content" class="file-content" :class="{ 'expanded': isFileExpanded(result.path) }">
+        <div v-else-if="result.content" class="file-content" :class="{ 'expanded': isFileExpanded(result.key) }">
           <div class="content-wrapper">
             <CustomScrollbar :horizontal="true">
               <pre class="content-code"><code>{{ getDisplayContent(result) }}</code></pre>
@@ -338,10 +336,10 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- 展开/收起按钮 -->
-          <div v-if="needsExpand(result)" class="expand-section">
-            <button class="expand-btn" @click="toggleFile(result.path)">
-              <span :class="['codicon', isFileExpanded(result.path) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isFileExpanded(result.path) ? t('components.tools.file.readFilePanel.collapse') : t('components.tools.file.readFilePanel.expandRemaining', { count: getContentLines(result.content).length - previewLineCount }) }}
+          <div v-if="result.contentLineCount > previewLineCount" class="expand-section">
+            <button class="expand-btn" @click="toggleFile(result.key)">
+              <span :class="['codicon', isFileExpanded(result.key) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
+              {{ isFileExpanded(result.key) ? t('components.tools.file.readFilePanel.collapse') : t('components.tools.file.readFilePanel.expandRemaining', { count: result.contentLineCount - previewLineCount }) }}
             </button>
           </div>
         </div>
@@ -357,6 +355,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.file-waiting { display: flex; align-items: center; gap: 8px; color: var(--vscode-descriptionForeground); }
 .read-file-panel {
   display: flex;
   flex-direction: column;

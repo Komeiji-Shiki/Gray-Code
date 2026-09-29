@@ -799,6 +799,7 @@ const zhCN = {
             historyMessages: '历史记录', characters: '{count} 字符',
             invalidatedNote: '这份笔记已失效，需要根据有效来源重新整理。',
             partialContent: '当前只显示部分正文，可按工具返回的范围继续读取。',
+            partialSuccess: '部分成功', partialRange: '部分内容',
             moreHistory: '还有更早记录，可使用返回的历史位置继续读取。',
             // 分页属于工具续查，不是卡片的本地展开；排除来源只反映本次回执，不推测当前设置。
             findFiles: {

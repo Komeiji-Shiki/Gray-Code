@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from '../../../i18n'
 import { recordValue, toolFieldLabel, toolImage, toolLink, toolStatusLabel, toolTextValue } from '../../../utils/toolPresentation'
+import { MESSAGE_NAMES } from '@shared/protocol'
+import { sendToExtension, showNotification } from '../../../utils/vscode'
 
 const props = withDefaults(defineProps<{ value: unknown; depth?: number; field?: string; omit?: string[] }>(), { depth: 0, field: '', omit: () => [] })
 const { t } = useI18n()
@@ -9,6 +11,8 @@ const expanded = ref(props.depth === 1 && ['content', 'nodes', 'matches', 'tasks
 const visible = ref(20), textLimit = ref(3000)
 const value = computed(() => toolTextValue(props.value))
 const image = computed(() => toolImage(value.value))
+const imageName = computed(() => recordValue(value.value) && typeof value.value.name === 'string' && value.value.name
+  ? value.value.name : t('components.tools.structured.image'))
 const byteLength = computed(() => value.value instanceof Uint8Array ? value.value.byteLength : undefined)
 const link = computed(() => toolLink(value.value))
 const entries = computed(() => recordValue(value.value) ? Object.entries(value.value).filter(([key, item]) => item !== undefined && !props.omit.includes(key)) : [])
@@ -28,11 +32,25 @@ function summary(item: unknown): { key: string; text: string } | undefined {
   const key = ['title', 'name', 'path', 'role', 'id'].find(key => typeof item[key] === 'number' || typeof item[key] === 'string' && item[key] !== '')
   return key ? { key, text: String(item[key]) } : undefined
 }
+
+async function previewToolImage() {
+  const source = image.value
+  if (!source) return
+  const separator = source.indexOf(',')
+  try {
+    await sendToExtension(MESSAGE_NAMES.previewAttachment, { name: imageName.value,
+      mimeType: source.slice(5, source.indexOf(';')), data: source.slice(separator + 1).replace(/\s+/g, '') })
+  } catch (error) {
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+  }
+}
 </script>
 
 <template>
   <figure v-if="image" class="result-image">
-    <img :src="image" :alt="recordValue(value) ? String(value.name ?? t('components.tools.structured.image')) : t('components.tools.structured.image')" loading="lazy" />
+    <button type="button" class="result-image-preview" :aria-label="`${t('components.message.attachment.clickToPreview')}: ${imageName}`" @click="previewToolImage">
+      <img :src="image" :alt="imageName" loading="lazy" />
+    </button>
     <figcaption v-if="recordValue(value) && value.name">{{ value.name }}</figcaption>
   </figure>
   <span v-else-if="byteLength !== undefined" class="result-muted">{{ t('components.tools.structured.binary', { count: byteLength }) }}</span>
@@ -63,6 +81,7 @@ function summary(item: unknown): { key: string; text: string } | undefined {
 </template>
 
 <style scoped>
+.result-image-preview{display:block;max-width:100%;padding:0;border:0;border-radius:0;background:transparent;cursor:zoom-in}
 .result-group,.result-list-body,.result-text-wrap{min-width:0}.result-group-summary{cursor:pointer;color:var(--vscode-descriptionForeground);padding:3px 0;font-size:12px}.result-group[open]>.result-group-summary{margin-bottom:7px}.result-fields{margin:0;display:grid;gap:0}.result-field{display:grid;grid-template-columns:minmax(90px,130px) minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--vscode-panel-border)}.result-field:last-child{border-bottom:0}dt{font-size:11px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere}dd{margin:0;min-width:0}.result-list{list-style:none;padding:0;margin:0}.result-list>li{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--vscode-panel-border)}.result-list>li:last-child{border-bottom:0}.result-index{flex:0 0 24px;text-align:right;color:var(--vscode-descriptionForeground);font:11px var(--vscode-editor-font-family,monospace);padding-top:2px}.result-list-body{flex:1}.result-item-title{font-size:12px;font-weight:600;overflow-wrap:anywhere;margin-bottom:5px}.result-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:12px/1.65 var(--vscode-editor-font-family,monospace);color:var(--vscode-foreground)}.result-link{display:inline-flex;gap:5px;max-width:100%;align-items:baseline;color:var(--vscode-textLink-foreground);font-size:12px;overflow-wrap:anywhere;word-break:break-word;text-decoration:none}.result-link:hover{text-decoration:underline}.result-number{font:12px var(--vscode-editor-font-family,monospace);color:var(--vscode-foreground)}.result-boolean{font-size:11px;border:1px solid var(--vscode-panel-border);padding:1px 6px;color:var(--vscode-descriptionForeground)}.result-boolean.is-true{color:var(--vscode-testing-iconPassed)}.result-muted{font-size:12px;color:var(--vscode-descriptionForeground)}.result-more{display:block;margin-top:8px;padding:5px 0;border:0;border-radius:0;background:transparent;color:var(--vscode-textLink-foreground);font:inherit;font-size:11px;cursor:pointer}.result-more:hover{text-decoration:underline}.result-image{margin:0;max-width:100%}.result-image img{display:block;max-width:100%;max-height:400px;object-fit:contain;border:1px solid var(--vscode-panel-border);background:var(--vscode-editor-background)}figcaption{font-size:11px;color:var(--vscode-descriptionForeground);padding-top:6px;overflow-wrap:anywhere}button:focus-visible,a:focus-visible,summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:3px}@media(max-width:480px){.result-field{grid-template-columns:minmax(65px,90px) minmax(0,1fr);gap:8px}}
 .result-fields{container-type:inline-size}
 .result-fields-compact{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));column-gap:20px}.result-fields-compact>.result-field{grid-template-columns:minmax(85px,1fr) minmax(0,1.4fr);gap:10px;padding:6px 0;align-items:baseline}.result-fields-compact>.result-field:last-child{border-bottom:1px solid var(--vscode-panel-border)}
