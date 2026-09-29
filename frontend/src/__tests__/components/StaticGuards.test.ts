@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import { readFileSync, readdirSync } from 'fs'
-import { join, relative } from 'path'
+import { dirname, join, relative } from 'path'
+
+/** 样式独立后继续检查组件实际加载的 CSS，保持原有守卫覆盖。 */
+function readComponent(file: string): string {
+  return readFileSync(file, 'utf8').replace(/<style\b([^>]*?)\bsrc="([^"]+)"([^>]*)>\s*<\/style>/g,
+    (_match, before, source, after) => `<style${before}${after}>${readFileSync(join(dirname(file), source), 'utf8')}</style>`)
+}
 
 /**
  * 静态断言：防止前端样式/交互回归。
@@ -46,7 +52,7 @@ describe('frontend 静态守卫', () => {
   test('禁止 rgba(var(--vscode-*)) 这类失效的 CSS 写法', () => {
     const offenders: string[] = []
     for (const file of collectVueFiles()) {
-      const src = readFileSync(file, 'utf8')
+      const src = readComponent(file)
       const re = /rgba\(\s*var\(--vscode-/g
       let m: RegExpExecArray | null
       while ((m = re.exec(src)) !== null) {
@@ -59,7 +65,7 @@ describe('frontend 静态守卫', () => {
   test('禁止原生 alert()', () => {
     const offenders: string[] = []
     for (const file of collectScriptFiles()) {
-      const src = readFileSync(file, 'utf8')
+      const src = readComponent(file)
       // 排除注释行：仅匹配非注释上下文中的 alert( 调用
       let m: RegExpExecArray | null
       const re = /\balert\s*\(/g
@@ -79,7 +85,7 @@ describe('frontend 静态守卫', () => {
     const FORBIDDEN = ['dialog-overlay', 'config-dialog', 'manifest-overlay', 'dialog-backdrop']
     const offenders: string[] = []
     for (const file of collectVueFiles()) {
-      const src = readFileSync(file, 'utf8')
+      const src = readComponent(file)
       const styleRe = /<style[\s\S]*?<\/style>/g
       let m: RegExpExecArray | null
       while ((m = styleRe.exec(src)) !== null) {
@@ -97,7 +103,7 @@ describe('frontend 静态守卫', () => {
   test('纯图标按钮必须提供可访问名称（aria-label / title）', () => {
     const offenders: string[] = []
     for (const file of collectVueFiles()) {
-      const src = readFileSync(file, 'utf8')
+      const src = readComponent(file)
       const btnRe = /<button\b[\s\S]*?<\/button>/g
       let m: RegExpExecArray | null
       while ((m = btnRe.exec(src)) !== null) {
@@ -121,7 +127,7 @@ describe('frontend 静态守卫', () => {
     // 防止手滑引入无法编译的 CSS color-mix 占位
     const offenders: string[] = []
     for (const file of collectVueFiles()) {
-      const src = readFileSync(file, 'utf8')
+      const src = readComponent(file)
       const styleRe = /<style[\s\S]*?<\/style>/g
       let m: RegExpExecArray | null
       while ((m = styleRe.exec(src)) !== null) {

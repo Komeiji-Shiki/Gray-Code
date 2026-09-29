@@ -1,0 +1,703 @@
+.message-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+}
+
+.message-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ============ Build 顶部卡片（Cursor-like，保持 GrayCode 面板风格） ============ */
+.build-sticky-shell {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: 8px var(--spacing-md, 16px) 0;
+  background: var(--vscode-editor-background);
+}
+
+
+.todo-sticky-shell {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px var(--spacing-md, 16px) 0;
+  background: var(--vscode-editor-background);
+}
+
+.todo-snapshot-icon {
+  color: var(--vscode-charts-blue, #3794ff);
+}
+
+.build-bar {
+  margin: 0;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+  flex-shrink: 0;
+}
+
+.build-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm, 8px);
+  padding: 6px 10px;
+  background: var(--gc-surface-muted);
+  user-select: none;
+}
+
+.build-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.build-title-button {
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--gc-radius-sm);
+  cursor: pointer;
+}
+
+.build-icon {
+  font-size: 12px;
+  color: var(--vscode-charts-orange, #e69500);
+  flex-shrink: 0;
+}
+
+.build-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  flex-shrink: 0;
+}
+
+.build-sep {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.build-name {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.build-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.build-progress {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  min-width: 42px;
+  text-align: right;
+}
+
+.build-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--gc-radius-sm);
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    color var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+.build-btn:hover {
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
+}
+
+.build-current {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.build-body {
+  max-height: min(40vh, 320px);
+  padding: 8px 10px 10px;
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.build-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+  padding: 6px 2px;
+}
+
+.build-todos {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+
+.build-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.todo-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--vscode-panel-border);
+  flex-shrink: 0;
+}
+
+.todo-dot.pending {
+  background: color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+}
+
+.todo-dot.in_progress {
+  background: var(--vscode-charts-blue, #3794ff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent);
+}
+
+.todo-dot.completed {
+  background: var(--vscode-testing-iconPassed);
+}
+
+.todo-dot.cancelled {
+  background: var(--vscode-testing-iconFailed);
+}
+
+.build-todo.status-completed .todo-text {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+.build-todo.status-cancelled .todo-text {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.todo-text {
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.messages-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* 加载更多指示器（button 语义：可键盘聚焦触发加载） */
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  /* 点击可手动触发加载更多 */
+  cursor: pointer;
+  font: inherit;
+}
+
+.load-more-container:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.load-more-container:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+.load-more-container:disabled {
+  cursor: progress;
+}
+
+.load-more-container .codicon {
+  font-size: 16px;
+}
+
+.load-more-text {
+  font-size: 11px;
+  line-height: 1.3;
+  max-width: 90%;
+  text-align: center;
+  white-space: normal;
+}
+
+/* 恢复结果提示（H-3）：独立于错误条，按成功/部分成功/警告/失败分级着色 */
+.restore-notice {
+  display: flex;
+  flex-direction: column;
+  margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: var(--gc-radius-sm);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.restore-notice-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+
+.restore-notice-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.restore-notice-error .restore-notice-icon {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.restore-notice-partial .restore-notice-icon {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.restore-notice-warning .restore-notice-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+.restore-notice-success .restore-notice-icon {
+  color: var(--vscode-testing-iconPassed, #89d185);
+}
+
+.restore-notice-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.restore-notice-body {
+  padding: 12px;
+}
+
+.restore-notice-text {
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  border-radius: var(--gc-radius-sm);
+  margin: 0;
+}
+
+.restore-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.restore-notice-dismiss {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: var(--gc-radius-sm);
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.restore-notice-dismiss:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* U1 忙时投递（M3-1）轻量回显：细条提示，随消息区滚动，不占错误条 */
+.interrupt-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
+  flex-shrink: 0;
+}
+
+.interrupt-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: var(--gc-radius-sm);
+}
+
+.interrupt-notice .codicon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.interrupt-notice-delivered .codicon {
+  color: var(--vscode-testing-iconPassed, #89d185);
+}
+
+.interrupt-notice-error .codicon {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.interrupt-notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 继续对话提示 */
+.continue-message {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-md, 16px);
+  margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: var(--gc-radius-xs);
+  flex-shrink: 0;
+}
+
+.continue-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.continue-icon .codicon {
+  font-size: 16px;
+}
+
+.continue-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.continue-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.continue-text {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+}
+
+.continue-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.continue-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, 0.2));
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: var(--gc-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.continue-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.3));
+}
+
+.continue-btn .codicon {
+  font-size: 12px;
+}
+
+.btn-text {
+  font-weight: 500;
+}
+
+/* 检查点条 */
+.checkpoint-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  margin: 0;
+  background: var(--vscode-editor-background);
+  border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） */
+.summarize-divider {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+}
+
+.summarize-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--vscode-editor-lineHighlightBorder, rgba(128, 128, 128, 0.35));
+}
+
+.checkpoint-bar.checkpoint-before {
+  border-left-color: var(--vscode-charts-yellow, #ddb92f);
+}
+
+.checkpoint-bar.checkpoint-after {
+  border-left-color: var(--vscode-charts-green, #89d185);
+}
+
+.checkpoint-bar.checkpoint-merged {
+  border-left-color: var(--vscode-charts-blue, #75beff);
+}
+
+.checkpoint-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.checkpoint-before .checkpoint-icon {
+  color: var(--vscode-charts-yellow, #ddb92f);
+}
+
+.checkpoint-after .checkpoint-icon {
+  color: var(--vscode-charts-green, #89d185);
+}
+
+.checkpoint-merged .checkpoint-icon {
+  color: var(--vscode-charts-blue, #75beff);
+}
+
+.checkpoint-icon .codicon {
+  font-size: 14px;
+}
+
+.checkpoint-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.checkpoint-label {
+  font-weight: 500;
+}
+
+.checkpoint-before .checkpoint-label {
+  color: var(--vscode-charts-yellow, #ddb92f);
+}
+
+.checkpoint-after .checkpoint-label {
+  color: var(--vscode-charts-green, #89d185);
+}
+
+.checkpoint-merged .checkpoint-label {
+  color: var(--vscode-charts-blue, #75beff);
+}
+
+.checkpoint-meta {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+
+.checkpoint-floor {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.checkpoint-time {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.checkpoint-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  border-radius: var(--gc-radius-sm);
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.checkpoint-action:hover {
+  opacity: 1;
+  background: var(--vscode-list-hoverBackground);
+}
+
+.checkpoint-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.checkpoint-action .codicon {
+  font-size: 14px;
+}
+
+/* ============ 恢复确认：待删除文件清单（CP-09） ============ */
+.restore-delete-section {
+  margin-top: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border-radius: var(--gc-radius-sm);
+}
+
+.restore-delete-title {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-errorForeground);
+  background: var(--vscode-inputValidation-warningBackground, var(--vscode-editor-background));
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  position: sticky;
+  top: 0;
+}
+
+.restore-delete-untracked-note {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--vscode-editorWarning-foreground);
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+}
+
+.restore-delete-items {
+  padding: 4px 0;
+}
+
+.restore-delete-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.restore-delete-item .codicon {
+  font-size: 12px;
+  color: var(--vscode-errorForeground);
+  flex-shrink: 0;
+}
+
+.restore-delete-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.restore-delete-more {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.restore-delete-empty {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.restore-unbacked-tip {
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: var(--gc-radius-sm);
+}

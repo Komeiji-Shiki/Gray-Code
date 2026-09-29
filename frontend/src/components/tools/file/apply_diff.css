@@ -1,0 +1,660 @@
+.apply-diff-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+}
+
+/* 头部 */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-xs, 4px) 0;
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.diff-icon {
+  color: var(--vscode-charts-purple, #a855f7);
+  font-size: 14px;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.header-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-ext {
+  opacity: 0.7;
+}
+
+.stat.clickable,
+.file-path-bar.clickable {
+  cursor: pointer;
+}
+
+.stat.clickable:hover,
+.file-path-bar.clickable:hover .path {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+}
+
+/* 文件路径栏 */
+.file-path-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: var(--radius-sm, 2px);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+}
+
+.file-path-bar .codicon {
+  color: var(--vscode-charts-blue);
+}
+
+.file-path-bar .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 结果状态 */
+.result-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  background: var(--vscode-testing-iconPassed);
+  background: rgba(0, 200, 83, 0.1);
+  border: 1px solid var(--vscode-testing-iconPassed);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.result-status.is-error {
+  background: rgba(255, 82, 82, 0.1);
+  border-color: var(--vscode-testing-iconFailed);
+}
+
+.result-status.is-partial {
+  background: rgba(230, 149, 0, 0.1);
+  border-color: var(--vscode-charts-orange);
+}
+
+.status-icon {
+  font-size: 12px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-icon.success {
+  color: var(--vscode-testing-iconPassed);
+}
+
+.status-icon.error {
+  color: var(--vscode-testing-iconFailed);
+}
+
+.status-icon.partial {
+  color: var(--vscode-charts-yellow);
+}
+
+.status-icon.rejected {
+  color: var(--vscode-charts-yellow);
+}
+
+.status-text {
+  flex: 1;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+}
+
+.status-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: var(--gc-radius-xs);
+  font-weight: 500;
+}
+
+.status-badge.pending {
+  background: var(--vscode-charts-orange, #e69500);
+  color: var(--vscode-editor-background);
+}
+
+.status-badge.accepted {
+  background: var(--vscode-testing-iconPassed);
+  color: var(--vscode-editor-background);
+}
+
+.status-badge.rejected {
+  background: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+}
+
+.status-badge.partial {
+  background: var(--vscode-charts-yellow, #e69500);
+  color: var(--vscode-editor-background);
+}
+
+/* 用户编辑区块 */
+.user-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: rgba(0, 122, 204, 0.08);
+  border: 1px solid var(--vscode-charts-blue, #007acc);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.user-edit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.user-edit-icon {
+  color: var(--vscode-charts-blue, #007acc);
+  font-size: 12px;
+}
+
+.user-edit-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-content {
+  background: var(--vscode-editor-background);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-sm, 8px);
+}
+
+.user-edit-hunk {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-hunk-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  padding: 4px 8px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.user-edit-hunk-title .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: var(--gc-radius-md);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--vscode-editor-background);
+  background: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-hunk-title .range {
+  font-family: var(--vscode-editor-font-family);
+}
+
+.user-edit-code {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.user-edit-code.old {
+  background: rgba(255, 82, 82, 0.08);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.user-edit-code.new {
+  background: rgba(0, 200, 83, 0.08);
+}
+
+/* 操作页脚 */
+.action-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+  margin-top: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: var(--radius-sm, 2px);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.footer-top {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+}
+
+.timer-container {
+  flex: 1;
+  position: relative;
+  height: 4px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: var(--gc-radius-xs);
+  overflow: hidden;
+}
+
+.timer-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--vscode-charts-blue);
+  transition: width 0.05s linear;
+}
+
+.timer-text {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  min-width: 24px;
+  text-align: right;
+}
+
+.footer-buttons {
+  display: flex;
+  gap: var(--spacing-sm, 8px);
+  justify-content: flex-end;
+}
+
+.footer-buttons button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--gc-radius-xs);
+  border: none;
+  transition: opacity 0.12s ease;
+}
+
+.footer-buttons .confirm-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.footer-buttons .confirm-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.footer-buttons .reject-btn {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.footer-buttons .reject-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* 全局错误 */
+.panel-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.error-icon {
+  color: var(--vscode-inputValidation-errorForeground);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.error-text {
+  font-size: 12px;
+  color: var(--vscode-inputValidation-errorForeground);
+  line-height: 1.4;
+}
+
+/* Diff 列表 */
+.diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+}
+
+/* 单个 Diff 块 */
+.diff-block {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+  transition: border-color var(--transition-fast, 0.1s);
+}
+
+.diff-block.is-failed {
+  border-color: var(--vscode-errorForeground);
+  opacity: 0.8;
+}
+
+.diff-block.is-rejected {
+  border-color: var(--vscode-charts-yellow, #e69500);
+}
+
+/* Diff 头部 */
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.diff-header.is-rejected {
+  background: rgba(230, 149, 0, 0.08);
+}
+
+.diff-header.is-failed {
+  background: rgba(255, 82, 82, 0.05);
+}
+
+.diff-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+}
+
+.status-icon {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-icon.success {
+  color: var(--vscode-testing-iconPassed);
+}
+
+.status-icon.error {
+  color: var(--vscode-testing-iconFailed);
+}
+
+.error-msg {
+  font-size: 10px;
+  word-break: break-word;
+}
+
+.diff-number {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.start-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.diff-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+}
+
+.diff-stats .stat {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.diff-stats .stat.deleted {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.diff-stats .stat.added {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+.diff-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 2px);
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.1s);
+}
+
+.action-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.action-btn.copied {
+  color: var(--vscode-testing-iconPassed);
+}
+
+/* Diff 内容 */
+.diff-content {
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+}
+
+.diff-content-failed {
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-editor-background);
+  font-size: 11px;
+}
+
+.failed-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failed-label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.failed-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  border-radius: var(--radius-sm, 2px);
+  font-size: 11px;
+  color: var(--vscode-inputValidation-errorForeground);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.failed-error .codicon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.failed-code {
+  margin: 0;
+  padding: var(--spacing-xs, 4px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: var(--radius-sm, 2px);
+  font-family: var(--vscode-editor-font-family);
+  white-space: pre;
+}
+
+.failed-code.search {
+  border-left: 2px solid var(--vscode-testing-iconFailed);
+}
+
+.diff-lines {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Diff 行样式 */
+.diff-line {
+  display: flex;
+  white-space: pre;
+  min-height: 1.5em;
+}
+
+.diff-line.line-unchanged {
+  background: transparent;
+}
+
+.diff-line.line-deleted {
+  background: rgba(255, 82, 82, 0.15);
+}
+
+.diff-line.line-added {
+  background: rgba(0, 200, 83, 0.15);
+}
+
+/* 行号 */
+.line-nums {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0 var(--spacing-xs, 4px);
+  background: var(--vscode-editorLineNumber-foreground);
+  background: rgba(128, 128, 128, 0.1);
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+.old-num,
+.new-num {
+  min-width: 24px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground);
+  padding: 0 2px;
+}
+
+.line-deleted .old-num {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.line-added .new-num {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+/* 差异标记 */
+.line-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.marker {
+  font-weight: bold;
+}
+
+.marker.deleted {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.marker.added {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+.marker.unchanged {
+  color: transparent;
+}
+
+/* 行内容 */
+.line-content {
+  flex: 1;
+  padding: 0 var(--spacing-sm, 8px);
+}
+
+/* 展开区域 */
+.expand-section {
+  display: flex;
+  justify-content: center;
+  padding: 2px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.expand-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  padding: 2px var(--spacing-sm, 8px);
+  background: transparent;
+  border: none;
+  font-size: 10px;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  transition: opacity var(--transition-fast, 0.1s);
+}
+
+.expand-btn:hover {
+  opacity: 0.8;
+}

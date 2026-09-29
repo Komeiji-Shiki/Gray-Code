@@ -1,0 +1,286 @@
+.input-box {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-resize-handle {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  z-index: 12;
+  height: 10px;
+  cursor: ns-resize;
+  outline: none;
+}
+
+.input-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 38px;
+  height: 2px;
+  border-radius: var(--gc-radius-xs);
+  background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity var(--transition-fast, 0.1s), background var(--transition-fast, 0.1s);
+}
+
+.input-resize-handle:hover::after,
+.input-resize-handle:focus-visible::after {
+  opacity: 1;
+  background: var(--vscode-focusBorder);
+}
+
+/* contenteditable 编辑器 */
+.input-editor {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  max-height: 160px;
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: var(--radius-sm, 2px);
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  transition: border-color var(--transition-fast, 0.1s);
+  outline: none;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  cursor: text;
+
+  /* 隐藏原生滚动条 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.input-editor::-webkit-scrollbar {
+  display: none;
+}
+
+.input-editor:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.input-editor.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 占位符：绝对定位浮层，不占用内容布局空间。
+   ::before 若参与文档流会占据首行位置，清空输入后光标会被推到
+   灰色占位符文本之后；改为浮层后光标保持在内容起点（占位符之前）。 */
+.input-editor.is-empty::before {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: inherit;
+  content: attr(data-placeholder);
+  color: var(--vscode-input-placeholderForeground);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 拖拽悬停状态 */
+.input-box.drag-over .input-editor {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* 内联徽章样式：浅蓝色背景（使用 :deep 以应用到动态创建的元素） */
+.input-editor :deep(.context-chip) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  vertical-align: middle;
+
+  padding: 2px 8px;
+  margin: 0 2px;
+  border-radius: var(--gc-radius-sm);
+
+  background: rgba(0, 122, 204, 0.16);
+  border: 1px solid rgba(0, 122, 204, 0.28);
+  color: var(--vscode-foreground);
+
+  user-select: none;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.input-editor :deep(.context-chip:hover) {
+  background: rgba(0, 122, 204, 0.24);
+  border-color: rgba(0, 122, 204, 0.4);
+}
+
+.input-editor :deep(.context-chip .codicon),
+.input-editor :deep(.context-chip .icon) {
+  font-size: 12px;
+  color: var(--vscode-textLink-foreground);
+  flex-shrink: 0;
+}
+
+.input-editor :deep(.context-chip__text) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.input-editor :deep(.context-chip__remove) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
+
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.input-editor :deep(.context-chip:hover .context-chip__remove),
+.input-editor :deep(.context-chip.hovered .context-chip__remove) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.input-editor :deep(.context-chip__remove:hover) {
+  color: var(--vscode-errorForeground);
+}
+
+/* 自定义滚动条 - 悬浮设计，不占用布局 */
+.scroll-track {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  width: 6px;
+  height: calc(100% - 2px);
+  border-radius: 0;
+  cursor: pointer;
+  background: transparent;
+  z-index: 10;
+  opacity: 1;
+}
+
+.scroll-thumb {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  border-radius: 0;
+  cursor: grab;
+  transition: background 0.18s ease, top 0.06s linear;
+  will-change: top;
+  background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
+}
+
+.scroll-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.55));
+}
+
+.scroll-thumb:active {
+  cursor: grabbing;
+  background: var(--vscode-scrollbarSlider-activeBackground, rgba(100, 100, 100, 0.7));
+}
+
+.char-count {
+  position: absolute;
+  right: var(--spacing-sm, 8px);
+  bottom: var(--spacing-xs, 4px);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  pointer-events: none;
+}
+
+@media (max-width: 520px) {
+  .input-editor.is-empty::before { content: attr(data-compact-placeholder); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-track,
+  .scroll-thumb {
+    transition: none !important;
+  }
+}
+
+/* 悬浮预览弹窗 */
+.context-preview {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 8px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: var(--gc-radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  max-height: 240px;
+  overflow: hidden;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+}
+
+.preview-header .codicon {
+  font-size: 14px;
+  color: var(--vscode-textLink-foreground);
+}
+
+.preview-title {
+  flex: 1;
+  font-weight: 500;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-content {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family);
+  line-height: 1.5;
+  overflow-y: auto;
+  max-height: 180px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--vscode-foreground);
+  background: var(--vscode-textBlockQuote-background);
+}
+
+/* 淡入淡出动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}

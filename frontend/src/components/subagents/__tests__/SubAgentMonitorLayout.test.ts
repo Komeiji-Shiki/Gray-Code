@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
-const monitor = readFileSync(resolve(__dirname, '../SubAgentMonitor.vue'), 'utf8')
+const monitor = readFileSync(resolve(__dirname, '../SubAgentMonitor.css'), 'utf8')
 const theme = readFileSync(resolve(__dirname, '../../../platform/theme.css'), 'utf8')
 
 function rule(source: string, selector: string): string {

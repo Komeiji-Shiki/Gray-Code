@@ -1,0 +1,281 @@
+.monitor-root {
+  height: 100vh;
+  min-width: 0;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  display: flex;
+  flex-direction: column;
+}
+
+.monitor-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 14px 16px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.monitor-header > div {
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.monitor-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.monitor-header p {
+  margin: 4px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.run-count {
+  padding: 3px 8px;
+  border-radius: var(--gc-radius-pill);
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.run-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow-x: hidden;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  /* 列表独立滚动；短窗口限制占用比例，把剩余高度留给消息区。 */
+  max-height: min(172px, 30vh);
+  overflow-y: auto;
+}
+
+.run-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  /* 修改原因：多行换行后若保持定宽，最后一行会留出难看的缺口。
+     修改方式：允许 tab 在行内伸展铺满，但每行至少 170px，避免单个 tab 过窄。 */
+  flex: 1 1 170px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--gc-radius-md);
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.run-tab.active {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.run-name,
+.run-meta {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.run-meta,
+.run-subtitle {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.run-window-note {
+  /* 修改原因：Monitor 默认只拉尾部窗口时，用户需要知道当前不是完整 transcript。
+     修改方式：使用与 subtitle 一致的弱提示样式，避免抢占主状态信息。
+     修改目的：优化可理解性，同时保持按需加载性能边界。 */
+  margin-top: 3px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.run-retry-status {
+  /* 修改原因：Monitor 需要展示 SubAgent 内部自动重试状态，但不能像主窗口一样弹全局 retry 提示。
+     修改方式：在 run 标题区添加紧凑状态行，并按 retry 类型调整颜色。
+     修改目的：让内部 API 抖动和恢复过程在 Monitor 中可审计。 */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.run-retry-status.retry-retrySuccess {
+  color: var(--vscode-testing-iconPassed);
+}
+
+.run-retry-status.retry-retryFailed {
+  color: var(--vscode-testing-iconFailed);
+}
+
+.load-older-row {
+  /* 修改原因：历史分页入口属于消息列表的一部分，应该出现在当前窗口顶部而不是标题区。
+     修改方式：居中放置小按钮，并与消息楼层保持同样的横向留白。
+     修改目的：用户向上阅读时自然发现“加载更早”，同时不影响 run 控制按钮。 */
+  display: flex;
+  justify-content: center;
+  padding: 10px 16px 4px;
+}
+
+.load-older-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--gc-radius-pill);
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.load-older-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.load-older-btn:not(:disabled):hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.message-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.message-shell {
+  min-height: 100%;
+}
+
+.run-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background);
+}
+
+.run-title-info {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.run-subtitle {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.run-control-buttons {
+  /* 修改原因：Monitor 顶部控制按钮需要醒目但仍保持 VS Code 工具栏风格。
+     修改方式：使用紧凑 inline-flex 按钮组，并通过 primary/danger 变体区分继续和退出。
+     修改目的：避免误触“退出并让主工具失败”，同时不引入与主窗口不一致的视觉组件。 */
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.control-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--gc-radius-xs);
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.control-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.control-btn.primary {
+  border-color: var(--vscode-button-background);
+}
+
+.control-btn.danger {
+  border-color: var(--vscode-errorForeground);
+  color: var(--vscode-errorForeground);
+}
+
+.run-title-actions {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.control-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+}
+
+.run-readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--gc-radius-pill);
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.run-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 260px;
+  color: var(--vscode-descriptionForeground);
+}

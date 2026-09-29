@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { createMonitorLiveReplay } from './monitorLiveReplay'
+import type { SubAgentRunEvent, SubAgentRunManifest, SubAgentRunContentWindow, SubAgentRunSnapshot } from './monitorTypes'
+import { useMonitorControls } from './useMonitorControls'
 import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
@@ -13,7 +16,6 @@ import {
   latestContextCompaction,
   upsertContextCompactionRecord
 } from './monitorContextCompaction'
-import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
 import { copyToClipboard } from '@/utils/format'
 import { onMessageFromExtension, sendToExtension, showNotification } from '@/utils/vscode'
 import { setVscodeWindowFocused } from '@/services/soundEventController'
@@ -22,27 +24,19 @@ import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
 import {
   createPreviousRunWindowRequestOptions,
   isRunContentWindowStale,
-  isRunWindowTailAuthoritative,
   prependRunContentWindow,
   replaceRunContentWindow,
-  replaceRunContentWindowPreservingPrefix,
-  type SubAgentRunContentWindowState
+  replaceRunContentWindowPreservingPrefix
 } from './monitorWindowState'
 import {
   reduceMonitorToolStatusOverlay,
   type MonitorToolStatusOverlay
 } from './monitorToolStatusOverlay'
 import {
-  DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT,
-  enqueueMonitorLiveDelta,
-  getMonitorLiveDeltaRevision,
-  getMonitorLiveDeltaSequence,
-  hasRenderableMonitorLiveDelta,
-  selectReplayableMonitorLiveDeltas,
-  type MonitorLiveDeltaEvent
+  hasRenderableMonitorLiveDelta
 } from './monitorLiveDeltaBuffer'
-import type { Content, Message } from '@/types'
-import { appendMonitorFloorIndices, computeMonitorMessageFloorMap, renderMonitorMessages, type MonitorRenderCacheEntry } from './monitorMessages'
+import type { Message } from '@/types'
+import { computeMonitorMessageFloorMap, renderMonitorMessages, type MonitorRenderCacheEntry } from './monitorMessages'
 import {
   getRunRetryEventCue,
   getRunStatusTransitionCue,
@@ -54,53 +48,6 @@ import {
 // 修改方式：与后端 SubAgentRunStatus 保持同构的联合类型（定义见 monitorSoundCues.ts，供提示音迁移检测复用）。
 // 修改目的：后续顶部控制按钮可以根据状态判断是否允许继续、退出或仅查看历史。
 type RunStatus = MonitorRunStatus
-
-interface SubAgentRunEvent {
-  runId: string
-  agentName?: string
-  type: string
-  timestamp: number
-  toolId?: string
-  toolName?: string
-  eventSequence?: number
-  contentRevision?: number
-  payload?: any
-}
-
-interface SubAgentRunManifest {
-  runId: string
-  agentName?: string
-  status: RunStatus
-  createdAt: number
-  updatedAt: number
-  conversationId?: string
-  contentCount: number
-  eventCount: number
-  contentRevision?: number
-  eventSequence?: number
-  preview?: string
-  lastMessageRole?: Content['role']
-  canRetry?: boolean
-  legacy?: boolean
-  continuedFromRunId?: string
-  streamingContentIndex?: number | null
-}
-
-type SubAgentRunContentWindow = SubAgentRunContentWindowState
-
-interface SubAgentRunSnapshot {
-  runId: string
-  agentName?: string
-  status: RunStatus
-  createdAt: number
-  updatedAt: number
-  contents: Content[]
-  events: SubAgentRunEvent[]
-  streamingContentIndex?: number | null
-  conversationId?: string
-  contentRevision?: number
-  eventSequence?: number
-}
 
 const { t } = useI18n()
 
@@ -134,7 +81,7 @@ const pendingForcedRunWindowRefreshes = new Set<string>()
 // 修改原因：Monitor 在流式中途打开时，llm_delta 可能早于 getRunWindow 响应到达，旧逻辑会直接丢弃这些正文增量。
 // 修改方式：为每个 run 维护有界 live delta 缓冲；窗口可用且 revision 匹配后按 eventSequence 回放。
 // 修改目的：不恢复 full snapshot 传输，也能让实时打开 Monitor 的显示最终追上同一轮流式输出。
-const liveDeltaBuffersByRunId = new Map<string, MonitorLiveDeltaEvent[]>()
+const { bufferLiveDeltaEvent, clearSupersededLiveDeltaBuffer, applyLiveDeltaToWindow, replayBufferedLiveDeltas } = createMonitorLiveReplay(windowsByRunId)
 const latestRunWindowRequestSeq = new Map<string, number>()
 let runWindowRequestSeq = 0
 const focusedRunId = ref<string | undefined>((window as any).__GRAYCODE_INITIAL_RUN_ID || undefined)
@@ -504,103 +451,6 @@ async function loadOlderMessages() {
   }
 }
 
-function setLiveDeltaBuffer(runId: string, buffer: MonitorLiveDeltaEvent[]) {
-  // 修改原因：缓冲区是 Map，Vue 不需要追踪它；但必须集中删除空数组，避免长期打开 Monitor 后残留空 run key。
-  // 修改方式：空缓冲直接 delete，非空缓冲替换为新数组引用。
-  // 修改目的：让有界缓冲的生命周期清晰，避免后台 run 持续占用内存。
-  if (buffer.length === 0) {
-    liveDeltaBuffersByRunId.delete(runId)
-  } else {
-    liveDeltaBuffersByRunId.set(runId, buffer)
-  }
-}
-
-function bufferLiveDeltaEvent(event: SubAgentRunEvent) {
-  if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return
-  const current = liveDeltaBuffersByRunId.get(event.runId)
-  setLiveDeltaBuffer(
-    event.runId,
-    enqueueMonitorLiveDelta(current, event, DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT)
-  )
-}
-
-function clearSupersededLiveDeltaBuffer(runId: string, revision: number | undefined) {
-  const current = liveDeltaBuffersByRunId.get(runId)
-  if (!current || typeof revision !== 'number') return
-  // 修改原因：content_snapshot 表示后端 transcript 已进入更新 revision，旧 revision 的 live delta 已被权威窗口取代。
-  // 修改方式：低于新 revision 的缓冲 delta 提前淘汰，等于或高于 revision 的 delta 继续等待匹配窗口。
-  // 修改目的：流结束或工具结果写入后，不让旧实时片段重新追加到新窗口。
-  setLiveDeltaBuffer(runId, current.filter(event => getMonitorLiveDeltaRevision(event) >= revision))
-}
-
-type MonitorLiveDeltaFreshness = Pick<SubAgentRunManifest, 'contentCount' | 'eventSequence'>
-
-function applyLiveDeltaToWindow(
-  event: MonitorLiveDeltaEvent,
-  contentWindow: SubAgentRunContentWindow,
-  manifest?: MonitorLiveDeltaFreshness
-): SubAgentRunContentWindow | undefined {
-  if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return contentWindow
-  const eventRevision = getMonitorLiveDeltaRevision(event)
-  const windowRevision = typeof contentWindow.contentRevision === 'number' ? contentWindow.contentRevision : 0
-  if (eventRevision < windowRevision) return contentWindow
-
-  const freshness = {
-    contentCount: manifest?.contentCount ?? contentWindow.totalCount,
-    contentRevision: eventRevision,
-    eventSequence: getMonitorLiveDeltaSequence(event) ?? manifest?.eventSequence ?? contentWindow.eventSequence
-  }
-  if (!isRunWindowTailAuthoritative(contentWindow, freshness)) return undefined
-
-  // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
-  // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是同 revision 尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
-  // 修改目的：兼容旧协议实时输出，同时新瘦身协议不会把大正文塞进 event。
-  const timestamp = event.timestamp || Date.now()
-  const nextContents = applyStreamChunkToContents(contentWindow.contents || [], event.payload, timestamp, contentWindow.startIndex || 0)
-  const sequence = getMonitorLiveDeltaSequence(event)
-  return {
-    ...contentWindow,
-    contents: nextContents,
-    floorIndices: appendMonitorFloorIndices(contentWindow, nextContents),
-    endIndex: Math.max(contentWindow.endIndex, contentWindow.startIndex + nextContents.length),
-    totalCount: Math.max(contentWindow.totalCount, contentWindow.startIndex + nextContents.length),
-    contentRevision: eventRevision,
-    eventSequence: Math.max(contentWindow.eventSequence || 0, sequence ?? manifest?.eventSequence ?? 0)
-  }
-}
-
-function replayBufferedLiveDeltas(runId: string) {
-  const currentWindow = windowsByRunId.value[runId]
-  const currentBuffer = liveDeltaBuffersByRunId.get(runId)
-  if (!currentWindow || !currentBuffer?.length) return
-
-  const { replayable, remaining } = selectReplayableMonitorLiveDeltas(currentBuffer, currentWindow)
-  if (replayable.length === 0) {
-    setLiveDeltaBuffer(runId, remaining)
-    return
-  }
-
-  let workingWindow = currentWindow
-  const stillBlocked: MonitorLiveDeltaEvent[] = []
-  for (const event of replayable) {
-    const nextWindow = applyLiveDeltaToWindow(event, workingWindow, {
-      contentCount: workingWindow.totalCount,
-      eventSequence: getMonitorLiveDeltaSequence(event) ?? workingWindow.eventSequence
-    })
-    if (!nextWindow) {
-      stillBlocked.push(event)
-      continue
-    }
-    workingWindow = nextWindow
-  }
-
-  windowsByRunId.value = {
-    ...windowsByRunId.value,
-    [runId]: workingWindow
-  }
-  setLiveDeltaBuffer(runId, [...stillBlocked, ...remaining])
-}
-
 function enqueueLlmDelta(event: SubAgentRunEvent) {
   if (!event?.runId) return
   const list = pendingLlmDeltaEvents.get(event.runId)
@@ -901,36 +751,7 @@ const latestRetryEvent = computed(() => {
 
 // P5：运行时间显示改为相对耗时（如「42s / 2m30s」），绝对本地时间戳对用户没有意义。
 // 与 BackgroundTaskBar 的 formatDuration 语义一致：运行中显示已运行时长，结束后显示总耗时。
-const now = ref(Date.now())
-let elapsedTicker: ReturnType<typeof setInterval> | undefined
-
-function formatElapsed(startMs?: number, endMs?: number): string {
-  if (!startMs) return ''
-  const end = endMs ?? now.value
-  const seconds = Math.max(0, Math.floor((end - startMs) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m${seconds % 60}s`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h${minutes % 60}m`
-}
-
-// 有活跃 run 时每秒刷新一次耗时显示（空闲时不跑 ticker，避免周期性开销）
-watch(() => activeRunIds.value.size, (size) => {
-  if (size > 0 && !elapsedTicker) {
-    now.value = Date.now()
-    elapsedTicker = setInterval(() => { now.value = Date.now() }, 1000)
-  } else if (size === 0 && elapsedTicker) {
-    clearInterval(elapsedTicker)
-    elapsedTicker = undefined
-  }
-}, { immediate: true })
-
-function runElapsed(run: { createdAt: number; updatedAt: number; status: RunStatus }): string {
-  const isActive = run.status === 'queued' || run.status === 'running'
-    || run.status === 'paused' || run.status === 'awaiting_monitor_action'
-  return formatElapsed(run.createdAt, isActive ? undefined : run.updatedAt)
-}
+const { runElapsed, controlNotice, showControlNotice, pauseFocusedRun, resumeFocusedRun, exitFocusedRun } = useMonitorControls(focusedRun, focusedRunIsActive, activeRunIds)
 
 function selectRun(runId: string) {
   // 修改原因：用户在 Monitor 内点击 run tab 是显式选择，后续 run 事件不应再用旧 focusRunId 覆盖它。
@@ -942,66 +763,11 @@ function selectRun(runId: string) {
 }
 
 /** 控制操作未生效时的一次性提示（数秒后自动消失） */
-const controlNotice = ref('')
-let controlNoticeTimer: ReturnType<typeof setTimeout> | undefined
-
-function showControlNotice(message: string) {
-  controlNotice.value = message
-  if (controlNoticeTimer) clearTimeout(controlNoticeTimer)
-  controlNoticeTimer = setTimeout(() => {
-    controlNotice.value = ''
-    controlNoticeTimer = undefined
-  }, 4000)
-}
-
 function updateActiveRunIds(raw: unknown) {
   // 修改原因：activeRunIds 来自后端运行控制器，是判断顶部控制按钮是否可用的权威来源。
   // 修改方式：只接受字符串数组并转换为 Set，非法载荷回退为空集合。
   // 修改目的：避免前端根据历史状态猜测可控制性。
   activeRunIds.value = new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [])
-}
-
-async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
-  const run = focusedRun.value
-  if (!run || !focusedRunIsActive.value) return
-  const type = action === 'pause'
-    ? 'subagents.pauseRun'
-    : action === 'resume'
-      ? 'subagents.resumeRun'
-      : 'subagents.exitRun'
-
-  // 修改原因：Monitor 顶部按钮要控制当前活跃 run，而不是改前端本地状态。
-  // 修改方式：把 pause/resume/exit 意图发送给后端 runController handler，等待事件总线回推新状态。
-  // 修改目的：保持后端为控制语义的 source of truth，避免主工具 Promise 与 UI 状态不一致。
-  const response = await sendToExtension<{ success?: boolean; active?: boolean; status?: RunStatus; pending?: boolean }>(type, {
-    runId: run.runId,
-    reason: action === 'exit' ? '用户主动终止 SubAgent 执行' : undefined
-  })
-
-  // 修改原因：控制请求失败时前端过去完全无反馈——按钮还在，点了却什么都不发生（run 刚好结束时必然如此）。
-  // 修改方式：后端回传该 run 当前是否仍被运行控制器持有；不再活跃就本地摘掉控制按钮，并提示操作未生效。
-  // 修改目的：按钮的可见性与可用性始终反映后端真实控制权。
-  if (response?.active === false || (action === 'exit' && response?.success === true)) {
-    const next = new Set(activeRunIds.value)
-    next.delete(run.runId)
-    activeRunIds.value = next
-  }
-  if (response?.success === false) {
-    showControlNotice(t('components.subagents.monitor.controlUnavailable'))
-  }
-  if (response?.pending) showControlNotice('暂停请求已收到，将在当前模型请求或工具结束后暂停。')
-}
-
-function pauseFocusedRun() {
-  void controlFocusedRun('pause')
-}
-
-function resumeFocusedRun() {
-  void controlFocusedRun('resume')
-}
-
-function exitFocusedRun() {
-  void controlFocusedRun('exit')
 }
 
 function findContentIndexByMessageId(messageId: string): number | null {
@@ -1215,20 +981,12 @@ onBeforeUnmount(() => {
   disposeMessageListener?.()
   detachScrollListener?.()
   detachScrollListener = undefined
-  if (elapsedTicker) {
-    clearInterval(elapsedTicker)
-    elapsedTicker = undefined
-  }
   if (llmDeltaFlushFallbackTimer) {
     clearTimeout(llmDeltaFlushFallbackTimer)
     llmDeltaFlushFallbackTimer = undefined
   }
   pendingLlmDeltaEvents.clear()
   llmDeltaFlushScheduled = false
-  if (controlNoticeTimer) {
-    clearTimeout(controlNoticeTimer)
-    controlNoticeTimer = undefined
-  }
 })
 </script>
 
@@ -1385,286 +1143,4 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
-<style scoped>
-.monitor-root {
-  height: 100vh;
-  min-width: 0;
-  overflow-x: hidden;
-  box-sizing: border-box;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-foreground);
-  display: flex;
-  flex-direction: column;
-}
-
-.monitor-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 14px 16px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-}
-
-.monitor-header > div {
-  min-width: 0;
-  flex: 1 1 180px;
-}
-
-.monitor-header h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.monitor-header p {
-  margin: 4px 0 0;
-  color: var(--vscode-descriptionForeground);
-  font-size: 12px;
-}
-
-.run-count {
-  padding: 3px 8px;
-  border-radius: var(--gc-radius-pill);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.run-tabs {
-  display: flex;
-  flex: 0 0 auto;
-  min-width: 0;
-  overflow-x: hidden;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  /* 列表独立滚动；短窗口限制占用比例，把剩余高度留给消息区。 */
-  max-height: min(172px, 30vh);
-  overflow-y: auto;
-}
-
-.run-tab {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  /* 修改原因：多行换行后若保持定宽，最后一行会留出难看的缺口。
-     修改方式：允许 tab 在行内伸展铺满，但每行至少 170px，避免单个 tab 过窄。 */
-  flex: 1 1 170px;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  box-sizing: border-box;
-  padding: 6px 10px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
-  color: var(--vscode-foreground);
-  cursor: pointer;
-}
-
-.run-tab.active {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-activeSelectionBackground);
-}
-
-.run-name,
-.run-meta {
-  flex-shrink: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.run-name {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.run-meta,
-.run-subtitle {
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
-}
-
-.run-window-note {
-  /* 修改原因：Monitor 默认只拉尾部窗口时，用户需要知道当前不是完整 transcript。
-     修改方式：使用与 subtitle 一致的弱提示样式，避免抢占主状态信息。
-     修改目的：优化可理解性，同时保持按需加载性能边界。 */
-  margin-top: 3px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
-}
-
-.run-retry-status {
-  /* 修改原因：Monitor 需要展示 SubAgent 内部自动重试状态，但不能像主窗口一样弹全局 retry 提示。
-     修改方式：在 run 标题区添加紧凑状态行，并按 retry 类型调整颜色。
-     修改目的：让内部 API 抖动和恢复过程在 Monitor 中可审计。 */
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.run-retry-status.retry-retrySuccess {
-  color: var(--vscode-testing-iconPassed);
-}
-
-.run-retry-status.retry-retryFailed {
-  color: var(--vscode-testing-iconFailed);
-}
-
-.load-older-row {
-  /* 修改原因：历史分页入口属于消息列表的一部分，应该出现在当前窗口顶部而不是标题区。
-     修改方式：居中放置小按钮，并与消息楼层保持同样的横向留白。
-     修改目的：用户向上阅读时自然发现“加载更早”，同时不影响 run 控制按钮。 */
-  display: flex;
-  justify-content: center;
-  padding: 10px 16px 4px;
-}
-
-.load-older-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-pill);
-  background: var(--vscode-sideBar-background);
-  color: var(--vscode-foreground);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.load-older-btn:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.load-older-btn:not(:disabled):hover {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.message-scroll {
-  flex: 1;
-  min-height: 0;
-}
-
-.message-shell {
-  min-height: 100%;
-}
-
-.run-title-row {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBar-background);
-}
-
-.run-title-info {
-  flex: 1 1 220px;
-  min-width: 0;
-}
-
-.run-subtitle {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.run-control-buttons {
-  /* 修改原因：Monitor 顶部控制按钮需要醒目但仍保持 VS Code 工具栏风格。
-     修改方式：使用紧凑 inline-flex 按钮组，并通过 primary/danger 变体区分继续和退出。
-     修改目的：避免误触“退出并让主工具失败”，同时不引入与主窗口不一致的视觉组件。 */
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.control-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-xs);
-  background: transparent;
-  color: var(--vscode-foreground);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.control-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.control-btn.primary {
-  border-color: var(--vscode-button-background);
-}
-
-.control-btn.danger {
-  border-color: var(--vscode-errorForeground);
-  color: var(--vscode-errorForeground);
-}
-
-.run-title-actions {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.control-notice {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
-}
-
-.run-readonly-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: var(--gc-radius-pill);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.run-title {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 260px;
-  color: var(--vscode-descriptionForeground);
-}
-</style>
+<style scoped src="./SubAgentMonitor.css"></style>
