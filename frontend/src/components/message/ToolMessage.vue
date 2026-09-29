@@ -17,7 +17,8 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { isPartialToolData } from '@shared/toolResultStatus'
-import { ref, computed, watchEffect, watch, nextTick, defineComponent, type PropType, type ComponentPublicInstance } from 'vue'
+import { ref, computed, watchEffect, watch, nextTick, defineComponent, inject, type PropType, type ComponentPublicInstance } from 'vue'
+import { messageToolResultKey } from '../../composables/messageConversationContext'
 import type { ToolUsage } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
@@ -52,6 +53,7 @@ const props = defineProps<{
 }>()
 
 const chatStore = useChatStore()
+const resolveToolResult = inject(messageToolResultKey, (id, response) => response ?? (id ? chatStore.getToolResponseById(id) : undefined))
 const backgroundTaskStore = useBackgroundTaskStore()
 
 const DIFF_SUPPORTED_TOOLS = ['apply_diff', 'write_file', 'search_in_files', 'insert_code', 'delete_code']
@@ -132,10 +134,7 @@ const enhancedTools = computed<ToolUsage[]>(() => {
     const activePendingDiff = isDiffTool && isDiffApplicable && isDiffToolPending(tool)
 
     // 获取响应结果
-    let response: Record<string, unknown> | null | undefined = tool.result
-    if (!response && tool.id) {
-      response = chatStore.getToolResponseById(tool.id) as Record<string, unknown> | null
-    }
+    const response = resolveToolResult(tool.id, tool.result)
 
     // 如果工具已经有结果或响应
     if (response) {
@@ -287,7 +286,7 @@ function syncPendingDiffOrphanState(): void {
     }
 
     // 与 computed 一致：已有响应时孤儿分支不会执行，无需维护记录
-    const response = tool.result || (tool.id ? chatStore.getToolResponseById(tool.id) : undefined)
+    const response = resolveToolResult(tool.id, tool.result)
     if (response) continue
 
     const effectiveStatus = tool.status || 'queued'
@@ -352,7 +351,7 @@ watchEffect(() => {
   for (const [id, approvalId] of current) {
     // 这里读取“原始工具状态”（props.tools），避免被 enhancedTools 的乐观 executing 状态误清理
     const rawTool = props.tools.find(x => x.id === id)
-    const hasResponse = Boolean(rawTool?.result || rawTool?.error || chatStore.getToolResponseById(id))
+    const hasResponse = Boolean(rawTool?.error || resolveToolResult(id, rawTool?.result))
     const stillAwaitingApproval = rawTool?.status === 'awaiting_approval'
 
     if (!rawTool || !stillAwaitingApproval || hasResponse || rawTool.approvalId !== approvalId) {

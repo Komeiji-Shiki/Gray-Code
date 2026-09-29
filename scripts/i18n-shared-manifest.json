@@ -414,6 +414,7 @@
     { "frontend": "components.tools.presentation.partialSuccess", "backend": "tools.presentation.partialSuccess" },
     { "frontend": "components.tools.presentation.partialRange", "backend": "tools.presentation.partialRange" },
     { "frontend": "components.tools.presentation.diffUnavailable", "backend": "tools.presentation.diffUnavailable" },
+    { "frontend": "components.tools.presentation.cancelFailed", "backend": "tools.presentation.cancelFailed" },
     { "frontend": "components.tools.presentation.searchReplace.accepted", "backend": "tools.presentation.searchReplace.accepted" },
     { "frontend": "components.tools.presentation.searchReplace.rejected", "backend": "tools.presentation.searchReplace.rejected" },
     { "frontend": "components.tools.presentation.searchReplace.pending", "backend": "tools.presentation.searchReplace.pending" },

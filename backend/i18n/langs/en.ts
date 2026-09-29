@@ -803,6 +803,7 @@ Output content directly without any prefix.`
             invalidatedNote: 'This note is no longer valid. Rebuild it from valid sources.',
             partialContent: 'Only part of the content is shown. Continue reading using the returned range.',
             partialSuccess: 'Partially completed', partialRange: 'Partial content', diffUnavailable: 'Unable to read diff content.',
+            cancelFailed: 'Could not cancel the task. Please try again.',
             searchReplace: {
                 accepted: 'Applied', rejected: 'Rejected', pending: 'Awaiting review',
                 filesRejected: 'Rejected {count} files', proposed: '{count} proposed replacements', skipped: 'Skipped {count} files',

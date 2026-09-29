@@ -688,6 +688,7 @@ const sharedZhCN = {
             },
             presentation: {
                 appendedContent: backendZhCN.tools.presentation.appendedContent,
+                cancelFailed: backendZhCN.tools.presentation.cancelFailed,
                 characters: backendZhCN.tools.presentation.characters,
                 contentUnavailable: backendZhCN.tools.presentation.contentUnavailable,
                 diffUnavailable: backendZhCN.tools.presentation.diffUnavailable,

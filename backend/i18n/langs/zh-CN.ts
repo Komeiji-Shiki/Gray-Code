@@ -805,6 +805,7 @@ const zhCN = {
             invalidatedNote: '这份笔记已失效，需要根据有效来源重新整理。',
             partialContent: '当前只显示部分正文，可按工具返回的范围继续读取。',
             partialSuccess: '部分成功', partialRange: '部分内容', diffUnavailable: '无法读取差异内容。',
+            cancelFailed: '取消任务失败，请重试。',
             searchReplace: {
                 accepted: '已应用', rejected: '已拒绝', pending: '待确认',
                 filesRejected: '已拒绝 {count} 个文件', proposed: '候选替换 {count} 处', skipped: '跳过 {count} 个文件',

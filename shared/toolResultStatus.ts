@@ -5,7 +5,7 @@ export function isPartialToolData(value: unknown): boolean {
   if (data.partial === true || data.status === 'partial') return true;
   const positive = (count: unknown) => typeof count === 'number' && Number.isFinite(count) && count > 0;
   if (positive(data.appliedCount) && positive(data.failedCount)) return true;
-  if (positive(data.successCount) && positive(data.failCount)) return true;
+  if (positive(data.successCount) && (positive(data.failCount) || positive(data.failedCount) || positive(data.cancelledCount))) return true;
   if (!Array.isArray(data.results)) return false;
   return data.results.some(item => item?.success === true) && data.results.some(item => item?.success === false);
 }

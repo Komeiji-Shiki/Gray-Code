@@ -93,6 +93,7 @@ import {
   cancelSummarizeRequest as cancelSummarizeRequestFn
 } from './chat/checkpointActions'
 
+import { projectToolResultImages } from '../utils/toolResultImages'
 import {
   getToolResponseById as getToolResponseByIdFn,
   hasToolResponse as hasToolResponseFn,
@@ -306,6 +307,11 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   const getToolResponseById = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId)
+  const getToolDisplayResult = (toolCallId: string, response?: Record<string, unknown> | null) => {
+    const result = response ?? (toolCallId ? getToolResponseById(toolCallId) : undefined)
+    const index = state.toolResponseIndex.value.get(toolCallId)
+    return projectToolResultImages(result, index === undefined ? undefined : state.allMessages.value[index]?.parts, toolCallId)
+  }
   const hasToolResponse = (toolCallId: string) => hasToolResponseFn(state, toolCallId)
   const getActualIndex = (displayIndex: number) => getActualIndexFn(state, computed, displayIndex)
   
@@ -1006,6 +1012,7 @@ export const useChatStore = defineStore('chat', () => {
     // 工具
     formatTime,
     getToolResponseById,
+    getToolDisplayResult,
     hasToolResponse,
     getActualIndex,
     beginToolConfirmationRound,

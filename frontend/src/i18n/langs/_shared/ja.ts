@@ -688,6 +688,7 @@ const sharedJa = {
             },
             presentation: {
                 appendedContent: backendJa.tools.presentation.appendedContent,
+                cancelFailed: backendJa.tools.presentation.cancelFailed,
                 characters: backendJa.tools.presentation.characters,
                 contentUnavailable: backendJa.tools.presentation.contentUnavailable,
                 diffUnavailable: backendJa.tools.presentation.diffUnavailable,

@@ -8,7 +8,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
-import { messageConversationKey } from '../../composables/messageConversationContext'
+import { messageConversationKey, messageToolResultKey } from '../../composables/messageConversationContext'
 import SubAgentContextCompactionNotice from './SubAgentContextCompactionNotice.vue'
 import SubAgentRequests from './SubAgentRequests.vue'
 import {
@@ -145,6 +145,8 @@ const focusedRun = computed<SubAgentRunSnapshot | undefined>(() => {
 })
 
 provide(messageConversationKey, computed(() => focusedManifest.value?.conversationId))
+// 工具结果已经按本监视窗口投影，不能从主对话补入同名调用的回执。
+provide(messageToolResultKey, (_id, response) => response)
 
 function upsertManifest(manifest: SubAgentRunManifest | undefined) {
   if (!manifest?.runId) return

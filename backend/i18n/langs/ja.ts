@@ -803,6 +803,7 @@ const ja: BackendLanguageMessages = {
             invalidatedNote: 'このノートは無効です。有効な情報源から整理し直してください。',
             partialContent: '本文の一部を表示しています。返された範囲を使って続きを読むことができます。',
             partialSuccess: '一部完了', partialRange: '一部の内容', diffUnavailable: '差分を読み込めませんでした。',
+            cancelFailed: 'タスクをキャンセルできませんでした。もう一度お試しください。',
             searchReplace: {
                 accepted: '適用済み', rejected: '拒否済み', pending: '確認待ち',
                 filesRejected: '{count} ファイルを拒否', proposed: '置換候補 {count} 件', skipped: '{count} ファイルをスキップ',

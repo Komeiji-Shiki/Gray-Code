@@ -4,6 +4,7 @@ import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 import { contentToMessageEnhanced, isOnlyFunctionResponse } from '@/stores/chat/parsers'
 import { computePaginatedMessageFloorMap, isNumberedMessage } from '../message/messageListUtils'
 import { applyMonitorToolOverlay, type MonitorToolStatusOverlay } from './monitorToolStatusOverlay'
+import { projectToolResultImages } from '../../utils/toolResultImages'
 import type { MonitorRunStatus } from './monitorSoundCues'
 import type { SubAgentRunContentWindowState } from './monitorWindowState'
 
@@ -19,6 +20,7 @@ export interface MonitorRenderCacheEntry {
   contentRef: Content
   overlayRef: MonitorToolStatusOverlay | undefined
   responses: Array<ContentPart['functionResponse']>
+  responseParts: Array<ContentPart[] | undefined>
   message: Message
 }
 
@@ -75,9 +77,13 @@ export function renderMonitorMessages(
   cache: Map<number, MonitorRenderCacheEntry>
 ): Message[] {
   const responseMap = new Map<string, NonNullable<ContentPart['functionResponse']>>()
+  const responsePartsMap = new Map<string, ContentPart[]>()
   for (const content of run.contents) {
     for (const part of content.parts) {
-      if (part.functionResponse?.id) responseMap.set(part.functionResponse.id, part.functionResponse)
+      if (part.functionResponse?.id) {
+        responseMap.set(part.functionResponse.id, part.functionResponse)
+        responsePartsMap.set(part.functionResponse.id, content.parts)
+      }
     }
   }
   const streaming = active && run.status === 'running' && typeof run.streamingContentIndex === 'number' && window?.hasMoreAfter === false
@@ -89,9 +95,12 @@ export function renderMonitorMessages(
     const index = content.index ?? (window?.startIndex ?? 0) + offset
     const shouldStream = streaming && content.role === 'model' && index === tailIndex && index === run.streamingContentIndex
     const cached = cache.get(index)
-    const responses = content.parts.filter(part => part.functionCall).map(part => part.functionCall!.id ? responseMap.get(part.functionCall!.id) : undefined)
+    const calls = content.parts.filter(part => part.functionCall)
+    const responses = calls.map(part => part.functionCall!.id ? responseMap.get(part.functionCall!.id) : undefined)
+    const responseParts = calls.map(part => part.functionCall!.id ? responsePartsMap.get(part.functionCall!.id) : undefined)
     if (cached && cached.contentRef === content && cached.overlayRef === overlay
-      && responses.every((response, i) => response === cached.responses[i])) {
+      && responses.every((response, i) => response === cached.responses[i])
+      && responseParts.every((parts, i) => parts === cached.responseParts[i])) {
       const message = cached.message.streaming === shouldStream ? cached.message : { ...cached.message, streaming: shouldStream }
       if (message !== cached.message) cache.set(index, { ...cached, message })
       messages.push(message)
@@ -104,10 +113,10 @@ export function renderMonitorMessages(
       message.tools = message.tools.map(tool => {
         const projected = applyMonitorToolOverlay(tool, overlay)
         const response = responseMap.get(tool.id)
-        return response ? { ...projected, result: response.response as Record<string, unknown>, status: deriveToolStatus(response.response) } : projected
+        return response ? { ...projected, result: projectToolResultImages(response.response, responsePartsMap.get(tool.id), tool.id)!, status: deriveToolStatus(response.response) } : projected
       })
     }
-    cache.set(index, { contentRef: content, overlayRef: overlay, responses, message })
+    cache.set(index, { contentRef: content, overlayRef: overlay, responses, responseParts, message })
     messages.push(message)
   }
   if (streaming && run.streamingContentIndex === window?.totalCount && window.endIndex === window.totalCount) {

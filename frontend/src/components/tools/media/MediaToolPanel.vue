@@ -16,9 +16,9 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { isPartialToolData } from '@shared/toolResultStatus'
 import { sendToExtension, showNotification } from '../../../utils/vscode'
-import { useChatStore } from '../../../stores/chatStore'
 import { useMessageConversation } from '../../../composables/messageConversationContext'
 import { useDependency } from '../../../composables/useDependency'
 import { useI18n } from '../../../composables/useI18n'
@@ -106,9 +106,8 @@ const saveError = ref('')
 
 // 终止状态
 const cancelling = ref(false)
-
-// Chat store（取消回退用）
-const chatStore = useChatStore()
+const cancelError = ref('')
+let disposed = false
 const fileConversation = useMessageConversation()
 
 // 依赖检查（无依赖的工具跳过自动检查）
@@ -137,8 +136,8 @@ const resultData = computed<MediaToolResultData>(() => {
 
 // 获取多模态数据（处理/生成后的图片）
 const multimodalData = computed<MultimodalData[]>(() => {
-  const result = props.result as { multimodal?: MultimodalData[] } | undefined
-  return result?.multimodal || []
+  const result = props.result as { multimodal?: MultimodalData[]; attachments?: MultimodalData[] } | undefined
+  return result?.multimodal ?? result?.attachments ?? []
 })
 
 // 是否失败
@@ -148,6 +147,8 @@ const isFailed = computed(() => {
   }
   return false
 })
+const isSucceeded = computed(() => props.result?.success === true || resultData.value.success === true)
+const isPartial = computed(() => isPartialToolData(resultData.value))
 
 // 获取错误信息
 const errorMessage = computed(() => {
@@ -161,7 +162,7 @@ const errorMessage = computed(() => {
 
 // 是否被取消
 const isCancelled = computed(() => {
-  if (resultData.value.cancelled === true) return true
+  if (props.result?.cancelled === true || resultData.value.cancelled === true) return true
   const errorCode = typeof resultData.value.errorCode === 'string' ? resultData.value.errorCode.toUpperCase() : ''
   return errorCode === 'CANCELLED' || errorCode === 'ABORTED'
 })
@@ -171,13 +172,8 @@ const isRunning = computed(() => {
   if (props.error) return false
   if (isFailed.value) return false
   if (isCancelled.value) return false
-  if (
-    props.status === 'streaming' ||
-    props.status === 'queued' ||
-    props.status === 'awaiting_approval' ||
-    props.status === 'executing'
-  ) return true
-  return false
+  if (isSucceeded.value) return false
+  return props.status === 'executing'
 })
 
 // 工具是否可用（依赖已安装或无依赖要求）
@@ -186,10 +182,11 @@ const isToolAvailable = computed(() => !depsEnabled.value || allInstalled.value)
 // 状态标签
 const statusLabel = computed(() => {
   if (depsEnabled.value && !isToolAvailable.value && !checkingDependency.value) return tk('status.needDependency')
+  if (isPartial.value) return t('components.tools.presentation.partialSuccess')
   if (isCancelled.value) return tk('status.cancelled')
   if (props.statusOverride) return props.statusOverride.label
   if (isFailed.value || props.error) return tk('status.failed')
-  if (props.status === 'success') return tk('status.success')
+  if (isSucceeded.value || props.status === 'success') return tk('status.success')
   if (props.status === 'error') return tk('status.error')
   if (isRunning.value) return tk(props.processingStatusKey ?? 'status.processing')
   return tk('status.waiting')
@@ -198,10 +195,11 @@ const statusLabel = computed(() => {
 // 状态类名
 const statusClass = computed(() => {
   if (depsEnabled.value && !isToolAvailable.value && !checkingDependency.value) return 'disabled'
+  if (isPartial.value) return 'warning'
   if (isCancelled.value) return 'cancelled'
   if (props.statusOverride) return props.statusOverride.badgeClass
   if (isFailed.value || props.error || props.status === 'error') return 'error'
-  if (props.status === 'success') return 'success'
+  if (isSucceeded.value || props.status === 'success') return 'success'
   if (isRunning.value) return 'running'
   return 'pending'
 })
@@ -233,6 +231,14 @@ function resolvedImageLabel(img: MultimodalData, index: number): string {
 // 构造图片 data URI
 function imageSrc(img: MultimodalData): string {
   return 'data:' + img.mimeType + ';base64,' + img.data
+}
+
+async function previewImage(image: MultimodalData, index: number) {
+  try {
+    await sendToExtension(MESSAGE_NAMES.previewAttachment, { name: resolvedImageLabel(image, index), mimeType: image.mimeType, data: image.data })
+  } catch (error) {
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+  }
 }
 
 // 保存图片到指定路径
@@ -278,42 +284,28 @@ async function openImageInVSCode(path: string) {
 const effectiveToolId = computed(() => {
   return resultData.value.toolId || props.toolId
 })
+watch(() => [effectiveToolId.value, fileConversation?.value], () => { cancelling.value = false; cancelError.value = '' })
+onBeforeUnmount(() => { disposed = true })
 
 // 终止任务
 async function handleCancel() {
-  if (cancelling.value) return
+  if (cancelling.value || !effectiveToolId.value) return
 
   const toolId = effectiveToolId.value
+  const conversationId = fileConversation?.value
+  const current = () => !disposed && effectiveToolId.value === toolId && fileConversation?.value === conversationId
   cancelling.value = true
+  cancelError.value = ''
 
   try {
-    if (toolId) {
-      const channel = props.cancelChannel ?? 'task.cancel'
-      const idField = props.cancelIdField ?? 'taskId'
-      const result = await sendToExtension(channel, { [idField]: toolId, conversationId: chatStore.currentConversationId }) as {
-        success: boolean
-        error?: string
-      }
-
-      if (!result) {
-        console.warn('取消任务失败: empty response')
-        await chatStore.cancelStream()
-      } else if (!result.success) {
-        console.warn('取消任务失败:', result.error)
-        await chatStore.cancelStream()
-      }
-    } else {
-      await chatStore.cancelStream()
-    }
+    const channel = props.cancelChannel ?? 'task.cancel'
+    const idField = props.cancelIdField ?? 'taskId'
+    const result = await sendToExtension<{ success: boolean; error?: string }>(channel, { [idField]: toolId, conversationId })
+    if (current() && !result?.success) cancelError.value = result?.error || t('components.tools.presentation.cancelFailed')
   } catch (err) {
-    console.error('取消任务失败:', err)
-    try {
-      await chatStore.cancelStream()
-    } catch {
-      // 忽略
-    }
+    if (current()) cancelError.value = err instanceof Error ? err.message : String(err)
   } finally {
-    cancelling.value = false
+    if (current()) cancelling.value = false
   }
 }
 
@@ -338,7 +330,7 @@ function getImagePath(index: number): string | undefined {
       <div class="header-actions">
         <span v-if="headerExtraText" class="header-extra">{{ headerExtraText }}</span>
         <button
-          v-if="isRunning"
+          v-if="isRunning && effectiveToolId"
           class="action-btn cancel-btn"
           :disabled="cancelling"
           :title="tk(cancelTitleKey)"
@@ -349,6 +341,8 @@ function getImagePath(index: number): string | undefined {
         </button>
       </div>
     </div>
+
+    <div v-if="cancelError" class="panel-error cancel-error" role="alert">{{ cancelError }}</div>
 
     <!-- 依赖检查与缺失警告 -->
     <template v-if="depsEnabled">
@@ -440,13 +434,14 @@ function getImagePath(index: number): string | undefined {
           :key="index"
           class="image-card"
         >
-          <div class="image-wrapper" :class="imageWrapperClass?.(img)">
+          <button type="button" class="image-wrapper" :class="imageWrapperClass?.(img)"
+            :aria-label="`${t('components.message.attachment.clickToPreview')}: ${resolvedImageLabel(img, index)}`" @click="previewImage(img, index)">
             <img
               :src="imageSrc(img)"
               :alt="img.name || `image ${index + 1}`"
               class="result-image"
             />
-          </div>
+          </button>
           <div class="image-info">
             <span class="image-label">{{ resolvedImageLabel(img, index) }}</span>
             <div class="image-actions">
@@ -798,9 +793,14 @@ function getImagePath(index: number): string | undefined {
 .image-wrapper {
   position: relative;
   width: 100%;
-  padding-top: 100%;
+  display: block;
+  padding: 100% 0 0;
+  border: 0;
+  border-radius: 0;
+  cursor: zoom-in;
   background: var(--vscode-editor-inactiveSelectionBackground);
 }
+.image-wrapper:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
 /* 透明背景棋盘格图案（抠图结果用） */
 .image-wrapper.transparent-bg {
