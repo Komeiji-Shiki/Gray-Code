@@ -2,7 +2,7 @@
 export function projectVirtualScrollbarMarkers(markers: readonly { index: number; preview?: string }[], total: number, trackHeight: number) {
   if (total <= 0 || trackHeight <= 0) return []
   const stride = Math.max(1, Math.ceil(markers.length / 2000))
-  const positions = []
+  const positions: Array<{ top: number; targetIndex: number; index: number; contentPreview: string; color: string; tooltipPrefix: string }> = []
   for (let index = 0; index < markers.length; index += stride) {
     const marker = markers[index]
     const targetIndex = Math.max(0, Math.min(total - 1, Math.floor(marker.index)))
