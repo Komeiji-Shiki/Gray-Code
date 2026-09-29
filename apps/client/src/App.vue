@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { appearance, guard, initialize, loadSettings, report, state } from './state';
 import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
@@ -8,18 +8,18 @@ import Workbench from './components/Workbench.vue';
 import ErrorBanner from './components/ErrorBanner.vue';
 import ContentPreview from './components/ContentPreview.vue';
 import RunInspector from './components/RunInspector.vue';
-import ResourceLibrary from './components/ResourceLibrary.vue';
-import CharacterSetup from './components/CharacterSetup.vue';
+const ResourceLibrary = defineAsyncComponent(() => import('./components/ResourceLibrary.vue'));
+const CharacterSetup = defineAsyncComponent(() => import('./components/CharacterSetup.vue'));
 import AutomationsPanel from './components/AutomationsPanel.vue';
 import ConversationSidebar from './components/ConversationSidebar.vue';
 import WorkspaceSelector from './components/WorkspaceSelector.vue';
 import WebDialogs from './components/WebDialogs.vue';
 import NavigationIcon from './components/navigation/NavigationIcon.vue';
 import ComputerStatus from './components/ComputerStatus.vue';
-import CompanionSetup from './components/CompanionSetup.vue';
-import PetManager from './components/PetManager.vue';
+const CompanionSetup = defineAsyncComponent(() => import('./components/CompanionSetup.vue'));
+const PetManager = defineAsyncComponent(() => import('./components/PetManager.vue'));
 import PetSurface from './components/PetSurface.vue';
-import ScreenSenseSettings from './components/ScreenSenseSettings.vue';
+const ScreenSenseSettings = defineAsyncComponent(() => import('./components/ScreenSenseSettings.vue'));
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
 const productChatFrame = ref<HTMLIFrameElement>();
 function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
@@ -66,7 +66,8 @@ watch(() => state.settingsOpen, value => { if (value) mobileNavigationOpen.value
 // 初始化包含多次请求，卸载时解除监听并忽略迟到的结果。
 const lifetime = new AbortController();
 let unsubscribeHost: (() => void) | undefined;
-const split = ref(Number(localStorage.getItem('graycode.chatWidth')) || 48);
+const storedSplit = Number(localStorage.getItem('graycode.chatWidth'));
+const split = ref(Number.isFinite(storedSplit) && storedSplit > 0 ? Math.max(25, Math.min(75, storedSplit)) : 48);
 const resizing = ref(false);
 const container = ref<HTMLElement>();
 const choosingWorkspace = ref(false);
@@ -81,14 +82,20 @@ async function addWorkspace() {
   } finally { choosingWorkspace.value = false; }
 }
 const modeMenuOpen = ref(false);
+const choosingMode = ref(false);
 const modes = [{ id: 'chat', name: '对话', detail: '自由交流与日常任务' }, { id: 'code', name: '代码', detail: '编辑项目与执行开发任务' }, { id: 'character', name: '角色', detail: '角色资料与故事对话' }] as const;
 async function selectMode(mode: 'chat' | 'code' | 'character') {
-  const result = await call('ui.request', { type: 'ui.mode.select', data: { mode, conversationId: state.conversationId, workspaceId: mode === 'code' ? state.workspaceId : undefined } });
-  if (mode === 'code' && result.workspaceId) state.workspaceId = result.workspaceId;
-  state.mode = mode; modeMenuOpen.value = false;
+  if (choosingMode.value) return;
+  choosingMode.value = true;
+  try {
+    const result = await call('ui.request', { type: 'ui.mode.select', data: { mode, conversationId: state.conversationId, workspaceId: mode === 'code' ? state.workspaceId : undefined } });
+    if (mode === 'code' && result.workspaceId) state.workspaceId = result.workspaceId;
+    state.mode = mode; modeMenuOpen.value = false;
+  } finally { choosingMode.value = false; }
 }
 watch([libraryOpen, automationsOpen, characterSetup, companionOpen, petManagerOpen, screenSenseOpen, () => state.navigationDialogOpen, () => state.fileDialogOpen, () => state.panelMenuOpen], () => { state.panelObscured = libraryOpen.value || automationsOpen.value || !!characterSetup.value || companionOpen.value || petManagerOpen.value || screenSenseOpen.value || state.navigationDialogOpen || state.fileDialogOpen || state.panelMenuOpen; });
 function dragSplit(event: PointerEvent) {
+  if (event.button !== 0) return;
   const target = event.currentTarget as HTMLElement;
   target.setPointerCapture(event.pointerId); resizing.value = true; state.panelResizing = true;
 }
@@ -130,19 +137,20 @@ onMounted(() => { void (async () => {
   compactQuery.addEventListener('change', updateViewport);
   window.addEventListener('resize', updateViewport);
   window.visualViewport?.addEventListener('resize', updateViewport);
-  await initialize(lifetime.signal);
-  if (lifetime.signal.aborted) return;
-  await call('ui.context.set', { workspaceId: state.workspaceId, mode: state.mode });
-  if (lifetime.signal.aborted) return;
   unsubscribeHost = subscribe(event => {
     if (lifetime.signal.aborted) return;
     if (event.type === 'ui.ready') chatReady.value = true;
     if (event.type === 'pets.open') petManagerOpen.value = true;
     if (event.type === 'screenSense.open') screenSenseOpen.value = true;
     if (event.type === 'ui.view.changed') state.settingsOpen = event.view === 'settings';
-    if (event.type === 'settings.open') void call('ui.command', { command: 'showSettings' });
+    if (event.type === 'settings.open') void guard(() => call('ui.command', { command: 'showSettings' }));
     if (event.type === 'ui.message' && event.message?.command === 'channels.configChanged') void guard(() => loadSettings(lifetime.signal));
   });
+  await initialize(lifetime.signal);
+  if (lifetime.signal.aborted) return;
+  await call('ui.context.set', { workspaceId: state.workspaceId, mode: state.mode });
+  if (lifetime.signal.aborted) return;
+
   if (!isWeb) { await nextTick(); if (!lifetime.signal.aborted) await call('desktop.files.ready'); }
 })().catch(error => { if (!lifetime.signal.aborted) report(error); }); });
 onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', openWorkspacePanel); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
@@ -154,7 +162,7 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
       <div class="mode-switcher" @keydown.esc="modeMenuOpen = false" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) modeMenuOpen = false; }">
         <button class="mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" @click="modeMenuOpen = !modeMenuOpen"><strong>GrayCode</strong><span>{{ modes.find(mode => mode.id === state.mode)?.name }}</span><span>⌄</span></button>
         <div v-if="modeMenuOpen" class="mode-menu" role="menu">
-          <button v-for="mode in modes" :key="mode.id" role="menuitemradio" :aria-checked="state.mode === mode.id" @click="guard(() => selectMode(mode.id))"><span><strong>{{ mode.name }}</strong><small>{{ mode.detail }}</small></span><span v-if="state.mode === mode.id">✓</span></button>
+          <button v-for="mode in modes" :key="mode.id" role="menuitemradio" :disabled="choosingMode" :aria-checked="state.mode === mode.id" @click="guard(() => selectMode(mode.id))"><span><strong>{{ mode.name }}</strong><small>{{ mode.detail }}</small></span><span v-if="state.mode === mode.id">✓</span></button>
         </div>
       </div>
       <nav v-if="!isWeb && !compactViewport" class="app-menu" aria-label="应用菜单"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></nav>
@@ -184,13 +192,13 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
     <div v-if="!state.ready" class="loading-state">正在连接本地核心…</div>
     <div v-else class="application-body" :class="{ resizing: sidebarResizing }">
       <button v-if="compactViewport && mobileNavigationOpen && !state.settingsOpen" class="navigation-backdrop" aria-label="收起对话列表" @click="mobileNavigationOpen = false"></button>
-      <div ref="navigation" v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)" class="conversation-navigation" :style="{ '--sidebar-width': visibleSidebarWidth + 'px' }" :inert="!chatReady" :aria-busy="!chatReady">
+      <div ref="navigation" v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)" class="conversation-navigation" :style="{ '--sidebar-width': visibleSidebarWidth + 'px' }" :inert="!chatReady || undefined" :aria-busy="!chatReady">
         <ConversationSidebar v-model:collapsed="navigationCollapsed" @automations="finishNavigation(); automationsOpen = true" @navigate="finishNavigation" @jump-to-message="jumpToMessage" @add-workspace="guard(async () => { finishNavigation(); await addWorkspace(); })" />
         <div v-if="!compactViewport && !navigationCollapsed" class="navigation-resize" role="separator" aria-label="调整对话列表宽度" aria-orientation="vertical" :aria-valuemin="200" :aria-valuemax="sidebarMaximum" :aria-valuenow="Math.round(visibleSidebarWidth)" tabindex="0" @pointerdown.prevent="dragSidebar" @pointermove="moveSidebar" @pointerup="endSidebar" @pointercancel="endSidebar" @lostpointercapture="endSidebar" @keydown.left.prevent="resizeSidebarBy(-10)" @keydown.right.prevent="resizeSidebarBy(10)" @dblclick="sidebarWidth = 250; endSidebar()"></div>
       </div>
     <div ref="container" class="desktop-workspace" :class="{ 'chat-focused': state.chatFocused || state.settingsOpen, 'workbench-expanded': state.workbenchExpanded && !state.chatFocused && !state.settingsOpen, 'mobile-workbench': compactViewport && !state.chatFocused && !state.settingsOpen, resizing }" :style="{ '--chat-width': split + '%' }">
       <iframe ref="productChatFrame" class="product-chat" src="./chat/platform.html" title="GrayCode 对话和设置"></iframe>
-      <div v-if="!state.chatFocused && !state.settingsOpen" class="split-handle" role="separator" aria-label="调整对话与侧边面板宽度" aria-orientation="vertical" tabindex="0" @pointerdown="dragSplit" @pointermove="moveSplit" @pointerup="endSplit" @lostpointercapture="endSplit" @keydown.left.prevent="split = Math.max(25, split - 2); endSplit()" @keydown.right.prevent="split = Math.min(75, split + 2); endSplit()"></div>
+      <div v-if="!state.chatFocused && !state.settingsOpen" class="split-handle" role="separator" aria-label="调整对话与侧边面板宽度" aria-orientation="vertical" :aria-valuemin="25" :aria-valuemax="75" :aria-valuenow="Math.round(split)" tabindex="0" @pointerdown.prevent="dragSplit" @pointermove="moveSplit" @pointerup="endSplit" @pointercancel="endSplit" @lostpointercapture="endSplit" @keydown.left.prevent="split = Math.max(25, split - 2); endSplit()" @keydown.right.prevent="split = Math.min(75, split + 2); endSplit()"></div>
       <Workbench v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
     </div>
     </div>

@@ -7,6 +7,7 @@ import type { LanguageMessages } from '../types';
 import sharedEn from './_shared/en';
 
 const en: LanguageMessages = {
+    desktop: sharedEn.desktop,
     common: {
         save: 'Save',
         cancel: 'Cancel',

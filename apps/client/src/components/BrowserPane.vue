@@ -11,6 +11,7 @@ const activeTab = computed(() => browser.value.tabs.find(tab => tab.id === brows
 const isWeb = window.graycode?.kind === 'web';
 let observer: ResizeObserver | undefined; let frame = 0; let last = ''; let refreshPromise: Promise<void> | undefined; let refreshAgain = false;
 let disposed = false;
+let loadedTabId: string | undefined;
 function layout() {
   if (disposed) return;
   cancelAnimationFrame(frame); frame = requestAnimationFrame(() => {
@@ -19,7 +20,7 @@ function layout() {
     const input = { x: rect.x, y: rect.y, width: rect.width, height: rect.height,
       visible: props.active && !!activeTab.value && !state.chatFocused && !state.settingsOpen && !state.panelResizing && !state.panelObscured && !state.contentPreviewOpen && !state.inspectorOpen };
     const serialized = JSON.stringify(input); if (serialized === last) return; last = serialized;
-    void call('browser.layout', input).catch(() => {});
+    void call('browser.layout', input).catch(() => { if (last === serialized) last = ''; });
   });
 }
 async function refresh(): Promise<void> {
@@ -34,7 +35,7 @@ async function refresh(): Promise<void> {
       if (!selectedProfile.value || !result.profiles.some(profile => profile.id === selectedProfile.value)) selectedProfile.value = result.profiles[0]?.id ?? '';
       const current = result.tabs.find(tab => tab.id === result.activeTabId);
       const url = current?.url || 'about:blank';
-      if (loaded.value !== url) { address.value = url === 'about:blank' ? '' : url; loaded.value = url; }
+      if (loaded.value !== url || loadedTabId !== current?.id) { address.value = url === 'about:blank' ? '' : url; loaded.value = url; loadedTabId = current?.id; }
       await nextTick(layout);
     } while (refreshAgain && !disposed);
   })().finally(() => { refreshPromise = undefined; });
@@ -47,8 +48,8 @@ async function navigate() {
   if (isWeb) { loaded.value = url; layout(); } else await refresh();
 }
 async function control(action: BrowserControlAction) { await call('browser.control', { action, tabId: activeTab.value?.id }); await refresh(); }
-async function createTab() { await call('browser.newTab', { profileId: selectedProfile.value || undefined }); await refresh(); address.value = ''; }
-async function selectTab(tab: BrowserTab) { await call('browser.select', { tabId: tab.id }); await refresh(); address.value = tab.url === 'about:blank' ? '' : tab.url; }
+async function createTab() { await call('browser.newTab', { profileId: selectedProfile.value || undefined }); await refresh(); }
+async function selectTab(tab: BrowserTab) { await call('browser.select', { tabId: tab.id }); await refresh(); }
 async function closeTab(tab: BrowserTab) { await call('browser.closeTab', { tabId: tab.id }); await refresh(); }
 async function saveProfile() {
   if (editingProfile.value === 'rename') await call('browser.profile.rename', { id: selectedProfile.value, name: profileName.value });

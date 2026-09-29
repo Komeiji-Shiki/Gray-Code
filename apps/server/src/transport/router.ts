@@ -301,8 +301,9 @@ export class ApplicationRouter {
       case 'language.stop': return app.languages.stop(session, params.id);
       case 'documents.open': {
         app.requireOwner(session.actorId);
-        const doc = await app.files.openDocument(app.workspace(session.actorId, params.workspaceId, ['workspace_read']), params.path, session.clientId);
-        app.languages.documentChanged(doc); return doc;
+        const doc = await app.files.openDocument(app.workspace(session.actorId, params.workspaceId, ['workspace_read']), params.path, session.clientId, params.reload === true);
+        if (app.files.documentVersion(session.clientId, doc.workspaceId, doc.path) === doc.version) app.languages.documentChanged(doc);
+        return doc;
       }
       case 'documents.focus': {
         app.requireOwner(session.actorId);

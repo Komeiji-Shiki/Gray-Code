@@ -3,7 +3,7 @@
  * UpdateModal - 发现新版本弹窗。
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '@/i18n'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { escapeHtml } from './markdownUtils'
@@ -12,14 +12,17 @@ import Modal from './Modal.vue'
 const { t } = useI18n()
 
 const visible = ref(false)
-const phase = ref<'prompt' | 'downloading' | 'installed' | 'ready' | 'failed'>('prompt')
+const phase = ref<'prompt' | 'downloading' | 'applying' | 'installed' | 'ready' | 'failed'>('prompt')
 const update = ref<{ version: string; name: string; body: string; vsixAssetUrl?: string; channel?: string } | null>(null)
 const errorMsg = ref('')
 const manualInstall = ref(false)
+let disposed = false
+onBeforeUnmount(() => { disposed = true })
 
 onMounted(async () => {
   try {
     const res = await sendToExtension<{ status: { state: string; update?: typeof update.value } }>(MESSAGE_NAMES.getUpdateStatus, {})
+    if (disposed) return
     if (res?.status?.state === 'updateAvailable' && res.status.update) {
       manualInstall.value = !!(res as any).manualInstall
       update.value = res.status.update
@@ -32,24 +35,27 @@ onMounted(async () => {
 })
 
 async function install() {
-  if (!update.value) return
+  if (disposed || !update.value || phase.value === 'downloading' || phase.value === 'applying') return
   if (manualInstall.value) { await openReleasePage(); close(); return }
   phase.value = 'downloading'
   try {
     const result = await sendToExtension<any>(MESSAGE_NAMES.installUpdate, { update: update.value })
-    phase.value = result?.downloaded ? 'ready' : 'installed'
+    if (!disposed) phase.value = result?.downloaded ? 'ready' : 'installed'
   } catch (error: unknown) {
+    if (disposed) return
     phase.value = 'failed'
     errorMsg.value = error instanceof Error ? error.message : String(error)
   }
 }
 
 async function applyDesktopUpdate() {
-  phase.value = 'downloading'
+  if (disposed || phase.value === 'applying' || phase.value === 'downloading') return
+  phase.value = 'applying'
   try {
     const result = await sendToExtension<any>('desktop.updates.apply', {})
-    if (result?.cancelled) phase.value = 'ready'
+    if (!disposed && result?.cancelled) phase.value = 'ready'
   } catch (error) {
+    if (disposed) return
     phase.value = 'failed'
     errorMsg.value = error instanceof Error ? error.message : String(error)
   }
@@ -87,9 +93,9 @@ const formattedBody = computed(() => {
     v-model="visible"
     :aria-label="t('components.update.title')"
     width="540px"
-    :closable="phase !== 'downloading'"
-    :mask-closable="phase !== 'downloading'"
-    :close-on-escape="phase !== 'downloading'"
+    :closable="!['downloading', 'applying'].includes(phase)"
+    :mask-closable="!['downloading', 'applying'].includes(phase)"
+    :close-on-escape="!['downloading', 'applying'].includes(phase)"
     @close="close"
   >
     <template #header>
@@ -103,12 +109,12 @@ const formattedBody = computed(() => {
       </div>
     </template>
 
-    <div v-if="phase === 'downloading'" class="status-center" role="status" aria-live="polite">
+    <div v-if="phase === 'downloading' || phase === 'applying'" class="status-center" role="status" aria-live="polite">
       <i class="codicon codicon-loading gc-spin" aria-hidden="true"></i>
-      <span>{{ t('components.update.downloading') }}</span>
+      <span>{{ t(phase === 'applying' ? 'desktop.applying' : 'components.update.downloading') }}</span>
     </div>
 
-    <div v-else-if="phase === 'ready'" class="status-center" role="status">更新包已下载并校验。保存编辑后，可重启安装；安装前会备份当前数据。</div>
+    <div v-else-if="phase === 'ready'" class="status-center" role="status">{{ t('desktop.updateReadyDescription') }}</div>
 
     <div v-else-if="phase === 'installed'" class="status-center success" role="status">
       <i class="codicon codicon-check" aria-hidden="true"></i>
@@ -142,8 +148,8 @@ const formattedBody = computed(() => {
         </button>
       </template>
       <template v-else-if="phase === 'ready'">
-        <button type="button" class="gc-button" @click="close">稍后安装</button>
-        <button type="button" class="gc-button gc-button--primary" @click="applyDesktopUpdate">重启并安装</button>
+        <button type="button" class="gc-button" @click="close">{{ t('desktop.installLater') }}</button>
+        <button type="button" class="gc-button gc-button--primary" @click="applyDesktopUpdate">{{ t('desktop.restartInstall') }}</button>
       </template>
       <template v-else-if="phase === 'failed'">
         <button type="button" class="gc-button gc-button--primary" @click="openReleasePage">
@@ -151,7 +157,7 @@ const formattedBody = computed(() => {
         </button>
         <button type="button" class="gc-button" @click="close">{{ t('common.close') }}</button>
       </template>
-      <template v-else-if="phase !== 'downloading'">
+      <template v-else-if="!['downloading', 'applying'].includes(phase)">
         <button type="button" class="gc-button gc-button--primary" @click="close">
           {{ t('common.close') }}
         </button>

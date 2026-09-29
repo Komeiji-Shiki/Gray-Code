@@ -42,3 +42,27 @@ test('同文件的打开队列仍按客户端分别建立草稿', async () => {
   expect(files.clientDocument('second', workspace.id, 'fixture.txt')).toEqual(second);
   expect(files.clientDocument('first', 'other-project', 'fixture.txt')).toBeUndefined();
 });
+
+test('干净文档外部刷新保留身份并递增版本，旧版本写入不能覆盖刷新', async () => {
+  const files = new WorkspaceFiles();
+  const workspace = { id: 'project', name: 'fixture', deviceId: 'local', directory: path.resolve('.tmp') };
+  jest.spyOn(files, 'resolve').mockResolvedValue(path.join(workspace.directory, 'fixture.txt'));
+  const read = jest.spyOn(files as any, 'readAbsolute').mockResolvedValue({ text: 'before', hash: 'old-hash' });
+  const opened = await files.openDocument(workspace, 'fixture.txt', 'client');
+  read.mockResolvedValue({ text: 'after', hash: 'new-hash' });
+  const refreshed = await files.openDocument(workspace, 'fixture.txt', 'client', true);
+  expect(refreshed.text).toBe('after'); expect(refreshed.version).toBeGreaterThan(opened.version); expect(refreshed.dirty).toBe(false);
+  expect(files.clientDocument('client', workspace.id, 'fixture.txt')).toEqual(refreshed);
+  await expect(files.updateDocument(workspace, 'fixture.txt', 'client', 'stale', opened.version)).rejects.toThrow();
+});
+
+test('脏文档的刷新保留草稿，读盘时到达的输入在刷新后顺序应用', async () => {
+  const files = new WorkspaceFiles();
+  const workspace = { id: 'project', name: 'fixture', deviceId: 'local', directory: path.resolve('.tmp') };
+  jest.spyOn(files, 'resolve').mockResolvedValue(path.join(workspace.directory, 'fixture.txt'));
+  const read = jest.spyOn(files as any, 'readAbsolute').mockResolvedValue({ text: 'before', hash: 'old-hash' });
+  const opened = await files.openDocument(workspace, 'fixture.txt', 'client');
+  await files.updateDocument(workspace, 'fixture.txt', 'client', 'draft', opened.version);
+  const count = read.mock.calls.length;
+  expect((await files.openDocument(workspace, 'fixture.txt', 'client', true)).text).toBe('draft'); expect(read).toHaveBeenCalledTimes(count);
+});

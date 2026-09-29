@@ -196,3 +196,34 @@ describe('Modal 对话框行为', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 })
+
+
+test('焦点落到 body 时 Esc 只关闭最上层弹窗', async () => {
+  const outer = mountModal({ modelValue: true, title: 'outer' });
+  const inner = mountModal({ modelValue: true, title: 'inner' });
+  await nextTick(); (document.activeElement as HTMLElement).blur();
+  expect(document.activeElement).toBe(document.body);
+  triggerEsc(); await nextTick();
+  expect(inner.emitted('close')).toHaveLength(1); expect(outer.emitted('close')).toBeUndefined();
+});
+
+test('隐藏与禁用控件不进入 Tab 循环', async () => {
+  mountModal({ modelValue: true, closable: false }, { default: '<button id="first">first</button><div style="display:none"><button id="hidden">hidden</button></div><button tabindex="-1">skip</button><button id="last">last</button><fieldset disabled><button>disabled</button></fieldset>' });
+  await nextTick(); document.getElementById('last')!.focus(); triggerTab();
+  expect(document.activeElement?.id).toBe('first');
+  triggerTab(true); expect(document.activeElement?.id).toBe('last');
+});
+
+test('下层弹窗关闭时不抢走上层弹窗的焦点', async () => {
+  const outer = mountModal({ modelValue: true, title: 'outer' });
+  mountModal({ modelValue: true, title: 'inner' }); await nextTick();
+  const active = document.activeElement;
+  await outer.setProps({ modelValue: false }); expect(document.activeElement).toBe(active);
+});
+
+test('输入组件已处理的 Esc 不再关闭模态框', async () => {
+  const wrapper = mountModal({ modelValue: true, title: 'outer' }); await nextTick();
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  event.preventDefault(); document.dispatchEvent(event);
+  expect(wrapper.emitted('close')).toBeUndefined();
+});

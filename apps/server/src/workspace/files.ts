@@ -385,13 +385,26 @@ export class WorkspaceFiles {
     workspace: WorkspaceDefinition,
     file: string,
     clientId: string,
+    reloadClean = false,
   ): Promise<DocumentState> {
     const absolute = await this.resolve(workspace, file);
     // 后到的打开请求先读取已建立的草稿，不能用迟到的磁盘结果覆盖新输入。
     return this.locked(absolute, async () => {
       const key = this.documentKey(clientId, absolute);
       const existing = this.documents.get(key);
-      if (existing) return structuredClone(existing);
+      if (existing) {
+        if (reloadClean && !existing.dirty) {
+          const version = existing.version;
+          const value = await this.readAbsolute(absolute);
+          const current = this.documents.get(key);
+          // 刷新保持草稿身份、焦点和单调版本；读取期间的新输入优先。
+          if (current !== existing) return structuredClone(current ?? existing);
+          if (!existing.dirty && existing.version === version && value.hash !== existing.baseHash) {
+            existing.text = value.text; existing.baseHash = value.hash; existing.version++;
+          }
+        }
+        return structuredClone(existing);
+      }
       const value = await this.readAbsolute(absolute);
       const document: DocumentState = {
         workspaceId: workspace.id,

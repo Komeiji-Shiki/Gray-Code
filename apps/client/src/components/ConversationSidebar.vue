@@ -31,6 +31,7 @@ const deleteProjectConversations = ref(false);
 const title = ref('');
 const dialogBusy = ref(false);
 const dialogInput = ref<HTMLInputElement>();
+let disposed = false;
 let epoch = 0; let refreshTimer: ReturnType<typeof setTimeout> | undefined; let unsubscribe: (() => void) | undefined;
 const rpc = <T,>(type: string, data: Record<string, unknown> = {}) => call<T>('ui.request', { type, data });
 const ordering = computed<NavigationOrdering>(() => navigation.value.ordering ?? { revision: 0, groups: [], pinnedGroups: [], conversations: [], pinned: [], drafts: [] });
@@ -53,12 +54,17 @@ const groups = computed<NavigationGroup[]>(() => {
   const items = navigation.value.items;
   if (navigationScope.value === 'bots') return orderSidebarItems((['discord', 'onebot'] as const).map(platform => ({ key: platform, name: platform === 'discord' ? 'Discord' : 'QQ / OneBot', uri: '', workspace: undefined,
     items: items.filter(item => item.botPlatform === platform) })), ordering.value.groups, group => group.key);
-  const known = navigation.value.workspaces.map(workspace => ({ key: workspace.id, name: workspace.name, uri: workspace.uri, workspace, items: items.filter(item => item.workspaceId === workspace.id) }));
+  const workspaceIds = new Set(navigation.value.workspaces.map(workspace => workspace.id));
+  const byWorkspace = new Map<string, ConversationNavigationItem[]>();
   const unmapped = new Map<string, ConversationNavigationItem[]>();
-  for (const item of items.filter(item => !item.workspaceId || item.automaticWorkspace)) {
-    const key = item.automaticWorkspace ? '' : item.workspaceIdentity ?? item.workspaceUri ?? '';
-    const values = unmapped.get(key) ?? []; values.push(item); unmapped.set(key, values);
+  // 单遍分组；自动工作区仍属于普通对话，旧项目移除后也不能把历史藏起来。
+  for (const item of items) {
+    const mapped = !!item.workspaceId && workspaceIds.has(item.workspaceId) && !item.automaticWorkspace;
+    const target = mapped ? byWorkspace : unmapped;
+    const key = mapped ? item.workspaceId! : item.automaticWorkspace ? '' : item.workspaceIdentity ?? item.workspaceUri ?? '';
+    const values = target.get(key) ?? []; values.push(item); target.set(key, values);
   }
+  const known = navigation.value.workspaces.map(workspace => ({ key: workspace.id, name: workspace.name, uri: workspace.uri, workspace, items: byWorkspace.get(workspace.id) ?? [] }));
   const other = [...unmapped].map(([key, values]) => {
     const uri = values[0].automaticWorkspace ? '' : values[0].workspaceUri ?? '';
     let name = '普通对话';
@@ -71,6 +77,7 @@ const groups = computed<NavigationGroup[]>(() => {
   return [...ordered.filter(group => groupPinned(group.key)), ...ordered.filter(group => !groupPinned(group.key))];
 });
 async function refresh(reset = false, more = false) {
+  if (disposed) return;
   if (more && (loadingMore.value || !navigation.value.nextCursor)) return;
   const current = ++epoch; const searching = query.value;
   if (more) loadingMore.value = true;
@@ -166,13 +173,16 @@ async function showDialog(kind: NavigationDialogKind) {
   if (!menu.value) return;
   error.value = '';
   dialog.value = { ...menu.value, kind }; title.value = menu.value.project?.name ?? menu.value.item?.title ?? menu.value.view?.title ?? ''; menu.value = undefined;
-  deleteProjectConversations.value = false; projectRemoval.value = undefined;
+  deleteProjectConversations.value = false; projectRemoval.value = undefined; dialogBusy.value = false;
+  const selected = dialog.value;
   void nextTick(() => { dialogInput.value?.focus(); dialogInput.value?.select(); });
   if (kind === 'project-remove') {
     dialogBusy.value = true;
-    try { projectRemoval.value = await rpc('projects.previewRemoval', projectTarget(dialog.value.project!)); }
-    catch (cause) { error.value = (cause as Error).message; }
-    finally { dialogBusy.value = false; }
+    try {
+      const preview = await rpc<{ count: number; activeCount: number; token: string }>('projects.previewRemoval', projectTarget(selected.project!));
+      if (!disposed && dialog.value === selected) projectRemoval.value = preview;
+    } catch (cause) { if (!disposed && dialog.value === selected) error.value = (cause as Error).message; }
+    finally { if (!disposed && dialog.value === selected) dialogBusy.value = false; }
   }
 }
 async function changePin() {
@@ -207,9 +217,9 @@ async function confirmDialog() {
       navigation.value.pinned = navigation.value.pinned.filter(item => item.id !== selected.item!.id);
       if (selected.view) await command('platform.closeConversationView', { tabId: selected.view.id });
     }
-    dialog.value = undefined; await refresh(true);
-  } catch (cause) { error.value = (cause as Error).message; }
-  finally { dialogBusy.value = false; }
+    if (!disposed && dialog.value === selected) { dialogBusy.value = false; dialog.value = undefined; await refresh(true); }
+  } catch (cause) { if (!disposed && dialog.value === selected) error.value = (cause as Error).message; }
+  finally { if (!disposed && dialog.value === selected) dialogBusy.value = false; }
 }
 function toggleGroup(key: string) { const next = new Set(collapsedGroups.value); if (next.has(key)) next.delete(key); else next.add(key); collapsedGroups.value = next; }
 async function focusSearch() { emit('update:collapsed', false); await nextTick(); searchInput.value?.focus(); }
@@ -229,7 +239,7 @@ onMounted(() => {
     if (event.type === 'settings.changed' || event.type === 'event' && event.event?.type?.startsWith('run.')) scheduleRefresh();
   });
 });
-onUnmounted(() => { ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsubscribe?.(); window.removeEventListener('keydown', dismiss); state.navigationDialogOpen = false; });
+onUnmounted(() => { disposed = true; ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsubscribe?.(); window.removeEventListener('keydown', dismiss); state.navigationDialogOpen = false; });
 </script>
 <template>
   <aside class="conversation-sidebar" :class="{ collapsed }" aria-label="对话导航">

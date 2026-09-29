@@ -91,10 +91,10 @@ async function openWorktree(entry: GitWorktree, startTask = false) {
 function openFile(file: string) { emit('open', directory.value.replace(/[\\/]$/, '') + '/' + file, state.workspaceId); }
 function entryLabel(entry: GitEntry, staged: boolean) { return entry.conflict ? '冲突' : ({ M: '修改', A: '新增', D: '删除', R: '重命名', C: '复制', '?': '未跟踪' } as Record<string, string>)[staged ? entry.index : entry.index === '?' ? '?' : entry.worktree] || '修改'; }
 watch([() => state.workspaceId, directory], () => { refreshEpoch++; diffEpoch++; status.value = undefined; selection.value = undefined; diff.value = ''; error.value = ''; notice.value = ''; if (props.visible) void refresh(); }, { immediate: true });
-watch(() => props.visible, visible => { if (visible) void refresh(); });
+watch(() => props.visible, visible => { clearTimeout(refreshTimer); if (visible) void refresh(); });
 const unsubscribe = subscribe(event => {
   if (['file.changed', 'workspace.git.changed'].includes(event.type) && event.workspaceId === state.workspaceId && props.visible && !busy.value) {
-    clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void refresh(), 250);
+    clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (props.visible) void refresh(); }, 250);
   }
 });
 onUnmounted(() => { unsubscribe(); clearTimeout(refreshTimer); refreshEpoch++; diffEpoch++; });

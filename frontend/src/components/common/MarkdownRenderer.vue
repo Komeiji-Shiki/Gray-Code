@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { StringLruCache } from '../../utils/stringLruCache'
 /**
  * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
  *
@@ -24,7 +23,7 @@ import { StringLruCache } from '../../utils/stringLruCache'
 
 import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from '@/i18n'
-import { renderMermaid, fileExistenceCache } from './markdown/markdownItCore'
+import { renderMermaid, fileExistenceCache, completedRenderCache, workspaceAssetRevision } from './markdown/markdownItCore'
 import { extractPotentialFilePaths } from './markdown/workspaceFileRefs'
 import { renderContent, type RenderProfile } from './markdown/markdownItEngine'
 import { renderDependencyRevision } from './markdown/renderDependencies'
@@ -74,21 +73,10 @@ const isStreamingClassActive = ref(props.isStreaming)
 
 const STREAM_RENDER_DEBOUNCE_MS = 120
 const STREAM_RENDER_MAX_WAIT_MS = 180
-/**
- * 为什么要加完成态渲染缓存：消息列表在 store 变化时会重新走父级渲染流程，
- * 已完成消息即使内容不变，也可能再次进入 MarkdownRenderer。
- *
- * 怎么改：对“非 streaming”消息按内容/渲染配置/工作区文件存在性签名做 LRU memoization，
- * 命中时直接复用已生成的 HTML，避免重复 markdown-it.render。
- *
- * 目的：把重渲染成本收敛到“活跃流式消息”和“内容真正变化的已完成消息”。
- */
-const COMPLETED_RENDER_CACHE_LIMIT = 128
-/** 完成态渲染缓存字节预算：长消息 HTML 可达数百 KB，仅按条数限界会让缓存驻留内存膨胀到数十 MB */
-const COMPLETED_RENDER_CACHE_MAX_BYTES = 8 * 1024 * 1024
-const completedRenderCache = new StringLruCache(COMPLETED_RENDER_CACHE_LIMIT, COMPLETED_RENDER_CACHE_MAX_BYTES)
-
 let renderTimer: number | null = null
+let renderEpoch = 0
+let disposed = false
+let lastRenderedAssetRevision = workspaceAssetRevision.value
 /** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
 let lastRenderedSource = ''
 let lastRenderedProfile: RenderProfile = 'default'
@@ -104,7 +92,7 @@ let postProcessedSource = ''
 let postProcessedProfile: RenderProfile = 'default'
 
 function buildCompletedRenderCacheKey(content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
-  return `${renderDependencyRevision.value}\u0000${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
+  return `${workspaceAssetRevision.value}\u0000${renderDependencyRevision.value}\u0000${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
 }
 
 function buildWorkspaceFileExistenceSignature(content: string): string {
@@ -138,6 +126,7 @@ function renderCurrentContent(): boolean {
     lastRenderedLatexOnly = props.latexOnly
     lastRenderedLanguage = actualLanguage.value
     lastRenderedDependencyRevision = renderDependencyRevision.value
+    lastRenderedAssetRevision = workspaceAssetRevision.value
     lastRenderedMode = props.isStreaming ? 'streaming' : 'completed'
     lastCompletedRenderCacheKey = ''
     return changed
@@ -151,6 +140,7 @@ function renderCurrentContent(): boolean {
       props.renderProfile === lastRenderedProfile &&
       actualLanguage.value === lastRenderedLanguage &&
       renderDependencyRevision.value === lastRenderedDependencyRevision &&
+      workspaceAssetRevision.value === lastRenderedAssetRevision &&
       renderedContent.value !== ''
     )
 
@@ -161,6 +151,7 @@ function renderCurrentContent(): boolean {
     lastRenderedProfile = props.renderProfile
     lastRenderedLanguage = actualLanguage.value
     lastRenderedDependencyRevision = renderDependencyRevision.value
+    lastRenderedAssetRevision = workspaceAssetRevision.value
     lastRenderedMode = 'streaming'
     lastCompletedRenderCacheKey = ''
     renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
@@ -201,6 +192,7 @@ async function applyPostRenderDomState(rendered: boolean, needsPostProcess = fal
     const renderedSource = rendered ? lastRenderedSource : null
     // Mermaid / workspace images 需要基于最新 DOM 执行；流式阶段只回填轻量代码块状态。
     await nextTick()
+    if (disposed || renderedSource !== null && renderedSource !== props.content) return
     codeBlockDom.applyCodeBlockWrapStates()
 
     if (
@@ -213,6 +205,7 @@ async function applyPostRenderDomState(rendered: boolean, needsPostProcess = fal
 }
 
 async function renderStreamingNow(): Promise<void> {
+  if (disposed) return
   const rendered = renderCurrentContent()
   if (rendered) {
     lastStreamingRenderAt = Date.now()
@@ -222,6 +215,8 @@ async function renderStreamingNow(): Promise<void> {
 
 function scheduleRender() {
   clearRenderTimer()
+  const epoch = ++renderEpoch
+  if (disposed) return
 
   if (props.isStreaming) {
     // 新流开始：激活流式类并清空上一轮的展开态记录（超高块会在每次渲染后重新测量记录）
@@ -248,66 +243,32 @@ function scheduleRender() {
 
   lastStreamingRenderAt = 0
 
-  // 非流式 + 首次渲染：同步执行 render，让组件挂载瞬间就有内容（消除切换对话闪白）
-  if (renderedContent.value === '') {
-    renderCurrentContent()
-
-    // 后处理（图片/Mermaid/链接校验、代码块换行状态）仍异步执行
-    // #67：回调开头捕获 source/profile，await 后比对再写 postProcessed，防止并发更新时覆盖
-    renderTimer = window.setTimeout(async () => {
-      const source = props.content
-      const profile = props.renderProfile
-      await nextTick()
-      codeBlockDom.applyCodeBlockWrapStates()
-      if (
-        postProcessedSource !== source ||
-        postProcessedProfile !== profile
-      ) {
-        await workspaceAssets.prevalidateFilePaths(source)
-
-        // 为什么这里要在预校验后再尝试一次 render：
-        // 首次同步渲染时，工作区文件存在性缓存可能还是未知状态，
-        // 预校验完成后需要让”是否生成文件链接”这个边界重新收敛一次。
-        const rerenderedAfterPrevalidate = renderCurrentContent()
-        if (rerenderedAfterPrevalidate) {
-          await nextTick()
-          codeBlockDom.applyCodeBlockWrapStates()
-        }
-
-        await workspaceAssets.loadWorkspaceImages()
-        await renderMermaid(containerRef)
-        postProcessedSource = source
-        postProcessedProfile = profile
-      }
-    }, 0)
-    return
-  }
-
-  renderTimer = window.setTimeout(async () => {
-    // #67：回调开头捕获 source/profile，await 后比对再写 postProcessed，防止并发更新时覆盖
-    const source = props.content
-    const profile = props.renderProfile
-    // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询。
-    // 这样 memoized render 也能感知”文件是否存在”这个渲染边界，不会把未知状态缓存成最终结果。
-    await workspaceAssets.prevalidateFilePaths(source)
-
-    const rendered = renderCurrentContent()
-
-    // 需要后处理（图片/Mermaid）且尚未完成
-    const needsPostProcess = (
-      postProcessedSource !== source ||
-      postProcessedProfile !== profile
-    )
-
-    await applyPostRenderDomState(rendered, needsPostProcess)
-
-    if (!rendered && !needsPostProcess) return
-
-    await workspaceAssets.loadWorkspaceImages()
-    await renderMermaid(containerRef)
-
-    postProcessedSource = source
-    postProcessedProfile = profile
+  // 首次同步保留正文；预校验与后处理共用一条可失效的异步管线。
+  if (renderedContent.value === '') renderCurrentContent()
+  const source = props.content
+  const profile = props.renderProfile
+  const latexOnly = props.latexOnly
+  const language = actualLanguage.value
+  const revision = workspaceAssetRevision.value
+  const current = () => !disposed && epoch === renderEpoch && !props.isStreaming && props.content === source
+    && props.renderProfile === profile && props.latexOnly === latexOnly && actualLanguage.value === language
+    && workspaceAssetRevision.value === revision
+  renderTimer = window.setTimeout(() => {
+    renderTimer = null
+    void (async () => {
+      await workspaceAssets.prevalidateFilePaths(source, current)
+      if (!current()) return
+      const rendered = renderCurrentContent()
+      const needsPostProcess = postProcessedSource !== source || postProcessedProfile !== profile
+      await applyPostRenderDomState(rendered, needsPostProcess)
+      if (!current() || !rendered && !needsPostProcess) return
+      await workspaceAssets.loadWorkspaceImages(current)
+      if (!current()) return
+      await renderMermaid(containerRef, current)
+      if (!current()) return
+      postProcessedSource = source
+      postProcessedProfile = profile
+    })().catch(error => { if (current()) console.warn('Markdown 后处理失败:', error) })
   }, 0)
 }
 
@@ -366,7 +327,14 @@ watch(renderDependencyRevision, () => {
   scheduleRender()
 })
 
+watch(workspaceAssetRevision, () => {
+  postProcessedSource = ''
+  scheduleRender()
+})
+
 onUnmounted(()=> {
+  disposed = true
+  ++renderEpoch
   clearRenderTimer()
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', codeBlockDom.handleCodeToolbarClick)

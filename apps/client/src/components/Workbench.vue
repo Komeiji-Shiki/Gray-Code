@@ -16,7 +16,8 @@ import { guard, report, state } from "../state";
 import MarkdownIt from 'markdown-it';
 import BrowserPane from './BrowserPane.vue';
 import FileTree from "./FileTree.vue";
-import TerminalPanel from "./TerminalPanel.vue";
+import { PendingDocumentChanges } from '../pendingDocumentChanges';
+import { ModelReadyWaiters } from '../modelReadyWaiters';
 import GitPanel from "./GitPanel.vue";
 import ProblemsPanel from "./ProblemsPanel.vue";
 import SearchPanel from './SearchPanel.vue';
@@ -33,6 +34,8 @@ import NavigationIcon from './navigation/NavigationIcon.vue';
 import { workbenchPanels, type WorkbenchTab } from './workbenchPanels';
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
 connectDebugging();
+const TerminalPanel = defineAsyncComponent(() => import('./TerminalPanel.vue'));
+const terminalSession = ref('');
 const CodeEditor = defineAsyncComponent(() => import("./CodeEditor.vue"));
 const DiffPanel = defineAsyncComponent(() => import("./DiffPanel.vue"));
 const documents = reactive<DocumentState[]>([]);
@@ -46,14 +49,15 @@ const treeVisible = ref(localStorage.getItem('graycode.fileTreeVisible') !== 'fa
 const mobileTreeVisible = ref(true);
 const showingTree = computed({ get: () => props.compact ? mobileTreeVisible.value : treeVisible.value,
   set: value => { if (props.compact) mobileTreeVisible.value = value; else treeVisible.value = value; } });
-const treeWidth = ref(Number(localStorage.getItem('graycode.fileTreeWidth')) || 220);
+const savedTreeWidth = Number(localStorage.getItem('graycode.fileTreeWidth'));
+const treeWidth = ref(Number.isFinite(savedTreeWidth) && savedTreeWidth > 0 ? Math.max(140, Math.min(450, savedTreeWidth)) : 220);
 const treeResizing = ref(false);
 const panel = ref<HTMLElement>();
 const markdownPreview = ref(true);
 const markdown = new MarkdownIt({ html: false, linkify: true });
 const renderedMarkdown = computed(() => markdown.render(active.value?.text ?? ''));
-function startTreeResize(event: PointerEvent) { (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); treeResizing.value = true; state.panelResizing = true; }
-function moveTreeResize(event: PointerEvent) { if (!treeResizing.value || !panel.value) return; const rect = panel.value.getBoundingClientRect(); treeWidth.value = Math.max(140, Math.min(rect.width - 220, event.clientX - rect.left)); }
+function startTreeResize(event: PointerEvent) { if (event.button !== 0) return; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); treeResizing.value = true; state.panelResizing = true; }
+function moveTreeResize(event: PointerEvent) { if (!treeResizing.value || !panel.value) return; const rect = panel.value.getBoundingClientRect(); treeWidth.value = Math.max(140, Math.min(450, rect.width - 220, event.clientX - rect.left)); }
 function endTreeResize() { treeResizing.value = false; state.panelResizing = false; localStorage.setItem('graycode.fileTreeWidth', String(treeWidth.value)); }
 watch(treeVisible, value => localStorage.setItem('graycode.fileTreeVisible', String(value)));
 watch(pane, value => { if (!['editor', 'empty'].includes(value) && !openedPanels.value.includes(value)) openedPanels.value.push(value); });
@@ -65,12 +69,16 @@ function activatePanel(id: string) {
 }
 watch(() => computerState.openRequest, () => activatePanel('computer'));
 let browserCreated = false;
-watch(pane, value => { if (value === 'browser' && !browserCreated) {
-  browserCreated = true;
+let browserStarting = false;
+watch(pane, value => { if (value === 'browser' && !browserCreated && !browserStarting) {
+  browserStarting = true;
   void guard(async () => {
-    if (isWeb) { await call('browser.open', { url: 'about:blank' }); return; }
-    const current = await call<{ tabs: unknown[] }>('browser.state');
-    if (!current.tabs.length) await call('browser.newTab');
+    try {
+      if (isWeb) { await call('browser.open', { url: 'about:blank' }); browserCreated = true; return; }
+      const current = await call<{ tabs: unknown[] }>('browser.state');
+      if (!current.tabs.length) await call('browser.newTab');
+      browserCreated = true;
+    } finally { browserStarting = false; }
   });
 } });
 const isWeb = window.graycode?.kind === 'web';
@@ -90,18 +98,15 @@ const closingDocuments = new Set<DocumentState>();
 function flushDocument(doc: DocumentState) { return queues.get(key(doc)) ?? Promise.resolve(); }
 async function flushDocuments() { await Promise.all(documents.map(flushDocument)); }
 const editorModels = new Map<string, MonacoEditor.ITextModel>();
-const readyWaiters = new Map<string, (model: MonacoEditor.ITextModel) => void>();
+const readyWaiters = new ModelReadyWaiters<MonacoEditor.ITextModel>(() => new Error('编辑器尚未完成加载，请重试替换。'));
 const mobileBatchHistory = new EditorBatchHistory();
 function editorReady(doc: DocumentState, model: MonacoEditor.ITextModel) {
-  const id = key(doc); editorModels.set(id, model); readyWaiters.get(id)?.(model); readyWaiters.delete(id);
+  const id = key(doc); editorModels.set(id, model); readyWaiters.resolve(id, model);
 }
 async function readyModel(doc: DocumentState) {
   const id = key(doc), existing = editorModels.get(id);
   if (existing && !existing.isDisposed()) return existing;
-  return new Promise<MonacoEditor.ITextModel>((resolve, reject) => {
-    const timer = setTimeout(() => { readyWaiters.delete(id); reject(new Error('编辑器尚未完成加载，请重试替换。')); }, 10_000);
-    readyWaiters.set(id, model => { clearTimeout(timer); resolve(model); });
-  });
+  return readyWaiters.wait(id);
 }
 function openRange(path: string, range: SourceRange, workspaceId: string) {
   return open(path, workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1,
@@ -200,26 +205,26 @@ function markdownLink(event: MouseEvent) {
   const target = new URL(href, `https://workspace.invalid/${active.value.path.replaceAll('\\', '/')}`);
   void guard(() => open(decodeURIComponent(target.pathname).replace(/^\//, ''), active.value!.workspaceId));
 }
-function queue(doc: DocumentState, operation: () => Promise<unknown>) {
+function queue(doc: DocumentState, operation: () => Promise<unknown>, isChange = false) {
+  if (!isChange) pendingChanges.barrier(doc);
   const id = key(doc);
   const promise = (queues.get(id) ?? Promise.resolve()).catch(() => undefined).then(operation);
   queues.set(id, promise);
   void promise.catch(report);
   return promise;
 }
+const pendingChanges = new PendingDocumentChanges<DocumentState>(
+  (doc, operation) => { void queue(doc, operation, true); },
+  async (doc, text) => {
+    const result = await call<DocumentState>('documents.update', { workspaceId: doc.workspaceId, path: doc.path, text, version: doc.version });
+    doc.version = result.version;
+    if (doc.text === text) doc.dirty = result.dirty;
+  },
+);
 function change(doc: DocumentState, text: string) {
   doc.text = text;
   doc.dirty = true;
-  void queue(doc, async () => {
-    const result = await call<DocumentState>("documents.update", {
-      workspaceId: doc.workspaceId,
-      path: doc.path,
-      text,
-      version: doc.version,
-    });
-    doc.version = result.version;
-    if (doc.text === text) doc.dirty = result.dirty;
-  });
+  pendingChanges.push(doc, text);
 }
 async function save(doc: DocumentState) {
   await queue(doc, async () => {
@@ -288,7 +293,7 @@ const unsubscribe = subscribe((event) => {
     } else { doc.dirty = true; report(new Error(event.error ?? '文件已变化，新的输入仍保留，请另存或复制保存。')); }
     return;
   }
-  if (event.type === 'workspace.terminal.open') { activatePanel('terminal'); return; }
+  if (event.type === 'workspace.terminal.open') { terminalSession.value = event.id; activatePanel('terminal'); return; }
   if (event.type === 'browser.opened') { browserCreated = true; activatePanel('browser'); return; }
   if (event.type === 'workspace.file.open') { state.chatFocused = false; pane.value = 'editor'; void guard(() => open(event.path, event.workspaceId, event.selection)); return; }
   if (event.type === 'workspace.subagents.open') { openMonitor(event.runId, event.conversationId); return; }
@@ -298,16 +303,18 @@ const unsubscribe = subscribe((event) => {
     (doc) => doc.workspaceId === event.workspaceId && doc.path === event.path,
   );
   if (!doc || doc.dirty) return;
-  void guard(async () => {
-    await call("documents.close", {
-      workspaceId: doc.workspaceId,
-      path: doc.path,
+  void queue(doc, async () => {
+    if (!documents.includes(doc) || doc.dirty || closingDocuments.has(doc)) return;
+    const text = doc.text, version = doc.version;
+    const next = await call<DocumentState>('documents.open', {
+      workspaceId: doc.workspaceId, path: doc.path, reload: true,
     });
-    const next = await call<DocumentState>("documents.open", {
-      workspaceId: doc.workspaceId,
-      path: doc.path,
-    });
-    if (!doc.dirty) Object.assign(doc, next);
+    if (!documents.includes(doc) || doc.version !== version) return;
+    // 新输入已排在刷新后；先接续宿主版本，不能覆盖读盘期间的本地文本。
+    const changed = doc.dirty || doc.text !== text;
+    const latest = doc.text;
+    Object.assign(doc, next);
+    if (changed) { doc.text = latest; doc.dirty = true; }
   });
 });
 function projectSearchShortcut(event: KeyboardEvent) {
@@ -319,14 +326,14 @@ function projectSearchShortcut(event: KeyboardEvent) {
   }
 }
 window.addEventListener('keydown', projectSearchShortcut);
-onUnmounted(() => { openSequence++; unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
+onUnmounted(() => { readyWaiters.dispose(); openSequence++; unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
 </script>
 <template>
   <section ref="panel" class="workbench side-panel" :class="{ 'tree-hidden': !showingTree || pane !== 'editor', 'tree-resizing': treeResizing, 'compact-workbench': compact }" :style="{ '--tree-width': treeWidth + 'px' }">
     <WorkbenchTabs :tabs="tabs" :active="activeTab" :editor="pane === 'editor'" :tree-visible="showingTree" :expanded="state.workbenchExpanded" :compact="compact" @select="selectTab" @close="id => guard(() => closeTab(id))" @add="activatePanel" @menu="state.panelMenuOpen = $event" @tree="showingTree = !showingTree" @expand="state.workbenchExpanded = !state.workbenchExpanded" @hide="state.chatFocused = true" />
     <button v-if="compact && pane === 'editor' && showingTree" class="file-tree-backdrop" aria-label="收起文件列表" @click="showingTree = false"></button>
     <FileTree v-show="pane === 'editor' && showingTree" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" @hide="showingTree = false" />
-    <div v-if="!compact && pane === 'editor' && showingTree" class="tree-splitter" role="separator" aria-label="调整文件列表宽度" aria-orientation="vertical" tabindex="0" @pointerdown="startTreeResize" @pointermove="moveTreeResize" @pointerup="endTreeResize" @lostpointercapture="endTreeResize" @keydown.left.prevent="treeWidth = Math.max(140, treeWidth - 10); endTreeResize()" @keydown.right.prevent="treeWidth = Math.min(450, treeWidth + 10); endTreeResize()"></div>
+    <div v-if="!compact && pane === 'editor' && showingTree" class="tree-splitter" role="separator" aria-label="调整文件列表宽度" aria-orientation="vertical" :aria-valuemin="140" :aria-valuemax="450" :aria-valuenow="Math.round(treeWidth)" tabindex="0" @pointerdown.prevent="startTreeResize" @pointermove="moveTreeResize" @pointerup="endTreeResize" @pointercancel="endTreeResize" @lostpointercapture="endTreeResize" @keydown.left.prevent="treeWidth = Math.max(140, treeWidth - 10); endTreeResize()" @keydown.right.prevent="treeWidth = Math.min(450, treeWidth + 10); endTreeResize()"></div>
     <div class="side-surface">
       <DebugControls @details="activatePanel('debug')" />
       <div v-if="pane === 'empty'" class="workbench-launcher">
@@ -356,7 +363,7 @@ onUnmounted(() => { openSequence++; unsubscribe(); window.removeEventListener('k
       <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
       <ComputerPane v-if="openedPanels.includes('computer')" v-show="pane === 'computer'" :visible="pane === 'computer' && !state.chatFocused && !state.settingsOpen" />
       <NodePane v-if="openedPanels.includes('nodes')" v-show="pane === 'nodes'" :visible="pane === 'nodes' && !state.chatFocused && !state.settingsOpen" />
-      <TerminalPanel v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused" /><GitPanel v-if="openedPanels.includes('git')" v-show="pane === 'git'" :visible="pane === 'git'" :save-all="saveAll" :flush="flushDocuments" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
+      <TerminalPanel v-if="openedPanels.includes('terminal')" :session-id="terminalSession" v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused && !state.settingsOpen" /><GitPanel v-if="openedPanels.includes('git')" v-show="pane === 'git'" :visible="pane === 'git' && !state.chatFocused && !state.settingsOpen" :save-all="saveAll" :flush="flushDocuments" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
       <SearchPanel v-if="openedPanels.includes('search')" v-show="pane === 'search'" :workspace-id="state.workspaceId" :flush="flushDocuments" :apply="replaceFiles" :save-all="saveAll" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <OutlinePanel v-if="pane === 'outline'" :document="active" :flush="flushDocuments" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <DebugPanel v-if="openedPanels.includes('debug')" v-show="pane === 'debug'" :visible="pane === 'debug'" :save-all="saveAll" :active-file="active" @open="(path, line, column, workspaceId) => guard(() => open(path, workspaceId, { startLineNumber: line, endLineNumber: line, startColumn: column, endColumn: column }))" />
