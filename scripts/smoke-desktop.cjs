@@ -25,6 +25,19 @@ async function verifyShutdownRetry(rpc, window) {
   const systemRoot = process.env.SystemRoot;
   let quitRequested = false, prematureExit = false, failed = '', completed = false, questions = 0, exitDuringStop = false, probe;
   const holdExit = event => { event.preventDefault(); prematureExit = true; };
+  const answerConfirmation = (_event, dialogWindow) => {
+    dialogWindow.webContents.once('did-finish-load', () => {
+      void (async () => {
+        const content = dialogWindow.webContents;
+        if (!content.getURL().startsWith('data:text/html')) return;
+        if (!await content.executeJavaScript(`!!document.querySelector('[data-dialog-action="quit"]')`)) return;
+        questions++;
+        assert.equal(await content.executeJavaScript('document.activeElement?.getAttribute("data-dialog-action")'), 'cancel');
+        await fs.writeFile(path.join(output, 'quit-confirmation.png'), (await content.capturePage()).toPNG());
+        await content.executeJavaScript(`document.querySelector('[data-dialog-action="quit"]').click()`);
+      })().catch(error => { failed = String(error); });
+    });
+  };
   try {
     // 只创建本夹具的有界进程；异常中断夹具时它也会自行结束，不留下常驻后台程序。
     probe = await rpc('processes.start', { workspaceId: 'smoke', command: 'node.exe',
@@ -34,7 +47,8 @@ async function verifyShutdownRetry(rpc, window) {
     app.on('will-quit', holdExit);
     // 发起真实 before-quit；截住成功清理后的最终退出，先验证自己持有的进程已经消失。
     app.quit = () => { quitRequested = true; };
-    dialog.showMessageBox = async () => { questions++; return { response: 1, checkboxChecked: false }; };
+    app.on('browser-window-created', answerConfirmation);
+    dialog.showMessageBox = async () => { throw new Error('The branded exit dialog unexpectedly used its native fallback.'); };
     dialog.showErrorBox = (_title, message) => { failed = message; };
     childProcesses.execFile = (file, args, ...options) => {
       // 真实停止命令发出时再请求一次退出，验证清理期间也会拦截原生退出。
@@ -60,6 +74,7 @@ async function verifyShutdownRetry(rpc, window) {
     return true;
   } finally {
     if (systemRoot === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = systemRoot;
+    app.removeListener('browser-window-created', answerConfirmation);
     app.quit = originalQuit; dialog.showErrorBox = originalError; dialog.showMessageBox = originalQuestion;
     childProcesses.execFile = originalExecFile;
     app.removeListener('will-quit', holdExit);

@@ -1,4 +1,4 @@
-export function createDesktopInstallerArguments({ version, source, output, icon }) {
+export function createDesktopInstallerArguments({ version, source, output, icon, splashImage }) {
   return [
     'pack',
     '--packId=GrayCode',
@@ -11,6 +11,7 @@ export function createDesktopInstallerArguments({ version, source, output, icon 
     '--channel=win-x64',
     `--outputDir=${output}`,
     `--icon=${icon}`,
+    ...(splashImage ? [`--splashImage=${splashImage}`] : []),
     '--noPortable=true',
     '--shortcuts=StartMenuRoot',
   ];

@@ -14,7 +14,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Ref } from 'vue'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { t } from '@/i18n'
-import { fileExistenceCache, setCached, imageCache, setCachedImage } from './markdownItCore'
+import { fileExistenceCache, setCached, imageCache, setCachedImage, workspaceAssetRevision } from './markdownItCore'
 import {
   decodeDataPath,
   normalizeWorkspaceFilePath,
@@ -26,9 +26,9 @@ import {
 
 export interface WorkspaceAssetController {
   /** 渲染前预校验：批量检查未缓存的路径是否存在 */
-  prevalidateFilePaths(content: string): Promise<void>
+  prevalidateFilePaths(content: string, isCurrent?: () => boolean): Promise<void>
   /** 加载工作区图片（带模块级缓存与字节预算） */
-  loadWorkspaceImages(): Promise<void>
+  loadWorkspaceImages(isCurrent?: () => boolean): Promise<void>
   /** 处理图片点击（打开工作区文件） */
   handleImageClick(event: Event): Promise<void>
   /** 处理工作区文件链接点击（路径/行号 -> 打开文件并定位/高亮） */
@@ -55,7 +55,9 @@ export function createWorkspaceAssetController(
   /**
    * 渲染前预校验：批量检查未缓存的路径是否存在
    */
-  async function prevalidateFilePaths(content: string) {
+  async function prevalidateFilePaths(content: string, isCurrent: () => boolean = () => true) {
+    const revision = workspaceAssetRevision.value
+    if (!isCurrent()) return
     const allPaths = extractPotentialFilePaths(content)
     const unchecked = allPaths.filter(p => !fileExistenceCache.has(p))
     if (unchecked.length === 0) return
@@ -65,23 +67,27 @@ export function createWorkspaceAssetController(
         MESSAGE_NAMES.checkWorkspaceFilesExist,
         { paths: unchecked }
       )
+      if (!isCurrent() || revision !== workspaceAssetRevision.value) return
       if (resp?.results) {
         for (const [p, exists] of Object.entries(resp.results)) {
           setCached(fileExistenceCache, p, exists)
         }
       }
     } catch (err) {
-      console.warn('Failed to prevalidate workspace file paths:', err)
+      if (isCurrent() && revision === workspaceAssetRevision.value) console.warn('Failed to prevalidate workspace file paths:', err)
     }
   }
 
   /**
    * 加载工作区图片
    */
-  async function loadWorkspaceImages() {
-    if (!containerRef.value) return
+  async function loadWorkspaceImages(isCurrent: () => boolean = () => true) {
+    const container = containerRef.value
+    const revision = workspaceAssetRevision.value
+    const current = () => isCurrent() && revision === workspaceAssetRevision.value && containerRef.value === container
+    if (!container || !current()) return
 
-    const images = containerRef.value.querySelectorAll('img.workspace-image[data-path]')
+    const images = container.querySelectorAll('img.workspace-image[data-path]')
     // 缓存命中的图片同步设置 src；未命中的收集后按并发上限批量拉取
     const pending: Array<{ img: Element; imgPath: string }> = []
 
@@ -112,6 +118,7 @@ export function createWorkspaceAssetController(
     // 有界并行拉取：每批最多 4 个并发跨端请求，避免大量图片时一次性打爆扩展进程
     const CONCURRENCY = 4
     for (let i = 0; i < pending.length; i += CONCURRENCY) {
+      if (!current()) return
       const batch = pending.slice(i, i + CONCURRENCY)
       await Promise.all(batch.map(async ({ img, imgPath }) => {
         try {
@@ -122,6 +129,7 @@ export function createWorkspaceAssetController(
             error?: string;
           }>(MESSAGE_NAMES.readWorkspaceImage, { path: imgPath })
 
+          if (!current() || !container.contains(img)) return
           if (response?.success && response.data) {
             const dataUrl = `data:${response.mimeType || 'image/png'};base64,${response.data}`
             // 带字节预算写入缓存；超大图片跳过缓存但下方仍直接设置 src 显示
@@ -135,6 +143,7 @@ export function createWorkspaceAssetController(
             img.setAttribute('title', response?.error || t('components.common.markdown.imageLoadFailed'))
           }
         } catch (error) {
+          if (!current() || !container.contains(img)) return
           console.error('加载图片失败:', error)
           img.classList.add('image-error')
         }

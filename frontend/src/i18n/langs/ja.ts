@@ -7,6 +7,7 @@ import type { LanguageMessages } from '../types';
 import sharedJa from './_shared/ja';
 
 const ja: LanguageMessages = {
+    desktop: sharedJa.desktop,
     common: {
         save: '保存',
         cancel: 'キャンセル',

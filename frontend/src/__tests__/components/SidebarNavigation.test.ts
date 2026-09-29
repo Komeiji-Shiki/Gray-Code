@@ -160,3 +160,12 @@ test('目录移动使旧的展开请求失效，并沿新路径继续读取', as
   await tree.get('[title="刷新文件"]').trigger('click'); await flushPromises();
   expect(mocks.call.mock.calls.filter(([method, params]) => method === 'files.list' && params.path === 'folder')).toHaveLength(1);
 });
+
+test('自动工作区只归入普通对话一次，已移除项目的历史仍保持可见', async () => {
+  backend.items.push({ id: 'automatic-known', title: '自动工作区对话', workspaceId: 'project-a', automaticWorkspace: true, updatedAt: 2 });
+  backend.items.push({ id: 'removed-project', title: '旧项目历史', workspaceId: 'gone', workspaceUri: 'file:///C:/Gone', updatedAt: 1 });
+  const wrapper = await openSidebar();
+  expect(wrapper.findAll('[data-conversation-id="automatic-known"]')).toHaveLength(1);
+  expect(wrapper.get('[data-navigation-group="general"]').find('[data-conversation-id="automatic-known"]').exists()).toBe(true);
+  expect(wrapper.find('[data-conversation-id="removed-project"]').exists()).toBe(true);
+});

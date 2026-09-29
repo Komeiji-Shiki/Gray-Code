@@ -33,3 +33,38 @@ test('卸载后的状态和隐藏请求失败不再通知已关闭面板', async
   wrapper.unmount(); wrapper = undefined; fail(new Error('host closed')); await flushPromises();
   expect(mocks.errors).not.toHaveBeenCalled();
 });
+
+
+test('切换到相同网址的另一标签时丢弃地址草稿，迟到选择回执不改回旧网址', async () => {
+  const tabs = [{ id: 'a', title: 'A', url: 'https://same.example' }, { id: 'b', title: 'B', url: 'https://same.example' }];
+  let activeTabId = 'a'; let first!: () => void;
+  mocks.call.mockImplementation(async (method, params) => {
+    if (method === 'browser.state') return { tabs, profiles: [], activeTabId };
+    if (method === 'browser.select') { activeTabId = params.tabId; if (params.tabId === 'a') return new Promise<void>(resolve => { first = resolve; }); }
+    return {};
+  });
+  wrapper = mount(BrowserPane, { props: { active: true } }); await flushPromises();
+  await wrapper.get('input[aria-label="网页地址"]').setValue('unfinished address');
+  await wrapper.findAll('[role="tab"]')[1].trigger('click'); await flushPromises();
+  expect((wrapper.get('input[aria-label="网页地址"]').element as HTMLInputElement).value).toBe('https://same.example');
+  await wrapper.findAll('[role="tab"]')[0].trigger('click');
+  tabs[1].url = 'https://latest.example';
+  await wrapper.findAll('[role="tab"]')[1].trigger('click'); await flushPromises();
+  first(); await flushPromises();
+  expect((wrapper.get('input[aria-label="网页地址"]').element as HTMLInputElement).value).toBe('https://latest.example');
+});
+
+test('布局提交失败后，同样的布局仍能在下一次调整时重试', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+  let fail = true;
+  mocks.call.mockImplementation(async method => {
+    if (method === 'browser.state') return { tabs: [{ id: 'a', url: 'https://example.com' }], profiles: [], activeTabId: 'a' };
+    if (method === 'browser.layout' && fail) { fail = false; throw new Error('temporary disconnect'); }
+    return {};
+  });
+  wrapper = mount(BrowserPane, { props: { active: true } }); await flushPromises();
+  frames.splice(0).at(-1)?.(0); await flushPromises();
+  window.dispatchEvent(new Event('resize')); frames.splice(0).at(-1)?.(0); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'browser.layout')).toHaveLength(2);
+});

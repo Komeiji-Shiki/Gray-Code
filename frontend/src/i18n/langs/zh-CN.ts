@@ -9,6 +9,7 @@
 import sharedZhCN from './_shared/zh-CN';
 
 const zhCN = {
+    desktop: sharedZhCN.desktop,
     common: {
         save: '保存',
         cancel: '取消',

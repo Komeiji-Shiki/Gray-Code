@@ -9,19 +9,22 @@ import { appearance, guard, state } from '../state';
 import { appearancePalette } from '../appearance';
 import { useWorkspaceRoots } from '../workspaceRoots';
 const { roots, directory } = useWorkspaceRoots();
-const props = withDefaults(defineProps<{ compact?: boolean; visible?: boolean }>(), { compact: false, visible: true });
+const props = withDefaults(defineProps<{ compact?: boolean; visible?: boolean; sessionId?: string }>(), { compact: false, visible: true });
 const root = ref<HTMLElement>();
 const sessions = ref<InteractiveTerminalInfo[]>([]);
-const id = ref(sessionStorage.getItem('graycode.terminal') ?? '');
+const id = ref(props.sessionId || sessionStorage.getItem('graycode.terminal') || '');
 const selected = computed(() => sessions.value.find(session => session.id === id.value));
 const starting = ref(false);
 const attaching = ref(false);
+const attachedId = ref('');
+const canInput = computed(() => !!id.value && attachedId.value === id.value && !attaching.value && selected.value?.status === 'running');
 const commandLine = ref('');
 const sending = ref(false);
 let terminal: Terminal | undefined;
 let fit: FitAddon | undefined;
 let observer: ResizeObserver | undefined;
 let fitFrame: number | undefined;
+let disposed = false;
 let attachEpoch = 0;
 let listEpoch = 0;
 let offset = 0;
@@ -30,7 +33,7 @@ let pending: { data: string; offset: number }[] = [];
 function fitTerminal() {
   if (!props.visible || !root.value?.clientWidth || !root.value.clientHeight || !terminal) return;
   fit?.fit();
-  if (selected.value?.status === 'running') void guard(() => call('terminal.resize', { id: id.value, cols: terminal!.cols, rows: terminal!.rows }));
+  if (canInput.value) void guard(() => call('terminal.resize', { id: id.value, cols: terminal!.cols, rows: terminal!.rows }));
 }
 function renderData(event: { data: string; offset: number }) {
   if (event.offset <= offset) return;
@@ -39,26 +42,36 @@ function renderData(event: { data: string; offset: number }) {
   terminal?.write(event.data.slice(Math.max(0, offset - start))); offset = event.offset;
 }
 async function attach(target: string) {
-  if (!target || !terminal) return;
+  if (disposed || !target || !terminal) return;
   const epoch = ++attachEpoch;
-  id.value = target; sessionStorage.setItem('graycode.terminal', target); attaching.value = true; pending = [];
+  id.value = target; attachedId.value = ''; attaching.value = true; replaying = true; pending = [];
+  sessionStorage.setItem('graycode.terminal', target);
   try {
     const snapshot = await call<InteractiveTerminalSnapshot>('terminal.snapshot', { id: target });
     if (epoch !== attachEpoch) return;
-    replaying = true; terminal.reset(); offset = snapshot.offset;
+    // 先排空上一个会话的异步解析队列，避免旧输出在 reset 后混入新画面。
+    await new Promise<void>(resolve => terminal!.write('', resolve));
+    if (epoch !== attachEpoch) return;
+    terminal.reset(); offset = snapshot.offset;
     // 回放历史时禁止模拟终端把旧的设备查询再次应答到正在运行的 shell。
     await new Promise<void>(resolve => terminal!.write(snapshot.output, resolve));
     if (epoch !== attachEpoch) return;
-    replaying = false;
+    replaying = false; attachedId.value = target;
     sessions.value = sessions.value.map(session => session.id === target ? snapshot : session);
     attaching.value = false;
     // 快照请求期间的事件只追加尚未包含的部分。
     const buffered = pending; pending = [];
     for (const event of buffered) renderData(event);
     await nextTick(); fitTerminal();
-  } finally { if (epoch === attachEpoch) attaching.value = false; }
+  } catch (error) {
+    if (epoch !== attachEpoch) return;
+    // 快照失败后保持输入关闭；不能把旧画面上的操作发送到新会话。
+    pending = [];
+    throw error;
+  } finally { if (epoch === attachEpoch) { attaching.value = false; replaying = false; } }
 }
 async function refresh(restore = false) {
+  if (disposed) return;
   const epoch = ++listEpoch;
   const result = await call<InteractiveTerminalInfo[]>('terminal.list');
   if (epoch !== listEpoch) return;
@@ -67,33 +80,37 @@ async function refresh(restore = false) {
   if (!result.some(session => session.id === id.value)) {
     const target = result.find(session => session.workspaceId === state.workspaceId)?.id ?? result[0]?.id ?? '';
     if (target) await attach(target);
-    else { ++attachEpoch; id.value = ''; pending = []; attaching.value = false; terminal?.reset(); sessionStorage.removeItem('graycode.terminal'); }
+    else { ++attachEpoch; id.value = ''; attachedId.value = ''; replaying = false; pending = []; attaching.value = false; terminal?.reset(); sessionStorage.removeItem('graycode.terminal'); }
   } else if (restore) await attach(id.value);
 }
 async function start() {
-  if (!state.workspaceId || starting.value) return;
+  if (disposed || !state.workspaceId || starting.value) return;
   starting.value = true;
   try {
     const result = await call<InteractiveTerminalSnapshot>('terminal.create', { workspaceId: state.workspaceId, directory: directory.value, cols: terminal?.cols ?? 100, rows: terminal?.rows ?? 20 });
-    await refresh(); await attach(result.id);
+    if (disposed) return;
+    await refresh();
+    if (disposed) return;
+    await attach(result.id);
     if (!props.compact) terminal?.focus();
   } finally { starting.value = false; }
 }
 async function send(data: string) {
-  if (!id.value || attaching.value || selected.value?.status !== 'running') return;
+  if (disposed || !canInput.value || replaying) return false;
   await call('terminal.input', { id: id.value, data });
+  return true;
 }
 async function sendLine() {
   if (sending.value || !commandLine.value) return;
   sending.value = true; const text = commandLine.value;
-  try { await send(text + '\r'); if (commandLine.value === text) commandLine.value = ''; }
+  try { if (await send(text + '\r') && commandLine.value === text) commandLine.value = ''; }
   finally { sending.value = false; }
 }
 const unsubscribe = subscribe(event => {
   if (event.type === 'workspace.terminal.open') void guard(() => attach(event.id));
   if (event.type === 'terminal.data' && event.id === id.value) {
     const chunk = { data: event.data as string, offset: event.offset as number };
-    if (attaching.value) pending.push(chunk); else renderData(chunk);
+    if (attaching.value) pending.push(chunk); else if (attachedId.value === id.value) renderData(chunk);
   }
   if (event.type === 'terminal.changed') void guard(() => refresh());
   if (event.type === 'transport.connected') void guard(() => refresh(true));
@@ -110,10 +127,11 @@ onMounted(() => {
   });
   observer.observe(root.value!); void guard(() => refresh(true));
 });
+watch(() => props.sessionId, target => { if (target && terminal && target !== id.value) void guard(() => attach(target)); });
 watch(() => props.visible, async value => { if (value) { await nextTick(); fitTerminal(); } });
 watch(appearance, value => { if (terminal && value) { terminal.options.fontFamily = value.codeFont; terminal.options.fontSize = value.codeFontSize; fitTerminal(); } }, { deep: true });
 watch(appearancePalette, value => { if (terminal) terminal.options.theme = { background: value.background, foreground: value.text, cursor: value.accent, selectionBackground: value.selection }; });
-onUnmounted(() => { ++attachEpoch; ++listEpoch; unsubscribe(); observer?.disconnect(); if (fitFrame !== undefined) cancelAnimationFrame(fitFrame); terminal?.dispose(); });
+onUnmounted(() => { disposed = true; attachedId.value = ''; pending = []; ++attachEpoch; ++listEpoch; unsubscribe(); observer?.disconnect(); if (fitFrame !== undefined) cancelAnimationFrame(fitFrame); terminal?.dispose(); terminal = undefined; });
 </script>
 <template>
   <div class="terminal-panel" :class="{ 'compact-terminal': compact }">
@@ -130,10 +148,10 @@ onUnmounted(() => { ++attachEpoch; ++listEpoch; unsubscribe(); observer?.disconn
     <div v-if="!sessions.length" class="terminal-notice">选择工作区后打开终端。页面断开后，进程会继续在部署电脑运行。</div>
     <div v-else-if="selected?.status === 'exited'" class="terminal-notice">终端已退出，退出码 {{ selected.exitCode }}。输出保留到关闭终端或退出核心服务。</div>
     <div v-else-if="attaching" class="terminal-notice" role="status">正在接续终端输出…</div>
-    <div ref="root" class="terminal-root"></div>
+    <div ref="root" class="terminal-root" :aria-busy="attaching"></div>
     <div v-if="compact" class="terminal-mobile-input">
-      <div class="terminal-keys"><button v-for="key in [{label:'Ctrl+C',data:'\u0003'}, {label:'Tab',data:'\t'}, {label:'Esc',data:'\u001b'}, {label:'↑',data:'\u001b[A'}, {label:'↓',data:'\u001b[B'}]" :key="key.label" :disabled="selected?.status !== 'running' || attaching" @click="guard(() => send(key.data))">{{ key.label }}</button></div>
-      <form @submit.prevent="guard(sendLine)"><input v-model="commandLine" aria-label="终端命令" placeholder="输入命令" spellcheck="false" autocapitalize="off" autocorrect="off" :disabled="selected?.status !== 'running' || attaching" /><button :disabled="!commandLine || sending || selected?.status !== 'running' || attaching">发送 ↵</button></form>
+      <div class="terminal-keys"><button v-for="key in [{label:'Ctrl+C',data:'\u0003'}, {label:'Tab',data:'\t'}, {label:'Esc',data:'\u001b'}, {label:'↑',data:'\u001b[A'}, {label:'↓',data:'\u001b[B'}]" :key="key.label" :disabled="!canInput" @click="guard(() => send(key.data))">{{ key.label }}</button></div>
+      <form @submit.prevent="guard(sendLine)"><input v-model="commandLine" aria-label="终端命令" placeholder="输入命令" spellcheck="false" autocapitalize="off" autocorrect="off" :disabled="!canInput" /><button :disabled="!commandLine || sending || !canInput">发送 ↵</button></form>
     </div>
   </div>
 </template>

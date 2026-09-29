@@ -108,3 +108,21 @@ test('同一路径重新打开后，旧关闭回执不删除新标签或抑制�
   expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:same.ts', dirty: true })]));
   expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('重新打开后的新草稿');
 });
+
+test('外部文件刷新与后续输入共用文档队列，新文本使用刷新后的版本且不覆盖', async () => {
+  const view = workbench(true); view.open('refresh.ts'); await flushPromises();
+  const slow = deferred<ReturnType<typeof document>>();
+  mocks.call.mockImplementation(async (method, params) => {
+    if (method === 'documents.open' && params.reload) return slow.promise;
+    if (method === 'documents.update') return { ...document(params.path), text: params.text, version: params.version + 1, dirty: true };
+  });
+  for (const listener of mocks.listeners) listener({ type: 'file.changed', workspaceId: 'project', path: 'refresh.ts' });
+  await flushPromises();
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'new local draft'); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(0);
+  slow.resolve({ ...document('refresh.ts'), text: 'external text', version: 4, baseHash: 'external-hash' }); await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('documents.update', expect.objectContaining({ text: 'new local draft', version: 4 }));
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('new local draft');
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.close')).toHaveLength(0);
+  expect(mocks.report).not.toHaveBeenCalled();
+});

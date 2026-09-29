@@ -9,7 +9,7 @@ import { StringLruCache } from '../../../utils/stringLruCache'
  *
  * 从 MarkdownRenderer.vue 的普通 <script> 块抽取（每模块只执行一次），组件内仅引用。
  */
-import { nextTick } from 'vue'
+import { nextTick, readonly, ref } from 'vue'
 import type { Ref } from 'vue'
 
 /** 工作区文件存在性缓存：路径 → 是否存在 */
@@ -17,6 +17,20 @@ export const fileExistenceCache = new Map<string, boolean>()
 
 /** 工作区图片 data URL 缓存：路径 → data: URL */
 export const imageCache = new Map<string, string>()
+
+const assetRevision = ref(0)
+export const workspaceAssetRevision = readonly(assetRevision)
+/** 工作区上下文或文件内容变化后，旧请求也必须失去回填缓存的资格。 */
+export function invalidateWorkspaceAssets(): void {
+  fileExistenceCache.clear()
+  imageCache.clear()
+  imageCacheBytes = 0
+  completedRenderCache.clear()
+  assetRevision.value++
+}
+
+/** 全部消息共用一份预算；script setup 中的缓存会为每个组件重复创建。 */
+export const completedRenderCache = new StringLruCache(128, 8 * 1024 * 1024)
 
 /** highlightAuto 结果缓存：避免相同无标注代码块重复遍历 192 种语法 */
 export const codeHighlightCache = new StringLruCache(500, 4 * 1024 * 1024)
@@ -99,7 +113,7 @@ let mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null
 
 function loadMermaid() {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(m => m.default)
+    mermaidPromise = import('mermaid').then(m => m.default).catch(error => { mermaidPromise = null; throw error })
   }
   return mermaidPromise
 }
@@ -112,11 +126,12 @@ function loadMermaid() {
  * doRender 内部 await 后重新 querySelectorAll 并过滤 !node.isConnected，
  * 跳过已被 Vue 移除的 DOM 节点。
  */
-export async function renderMermaid(containerRef: Ref<HTMLElement | null>): Promise<void> {
+export async function renderMermaid(containerRef: Ref<HTMLElement | null>, isCurrent: () => boolean = () => true): Promise<void> {
   mermaidQueue = mermaidQueue.then(async () => {
-    if (!containerRef.value) return
+    if (!containerRef.value || !isCurrent()) return
 
     await nextTick()
+    if (!containerRef.value || !isCurrent()) return
 
     const mermaidElements = Array.from(
       containerRef.value.querySelectorAll('.mermaid')
@@ -130,6 +145,7 @@ export async function renderMermaid(containerRef: Ref<HTMLElement | null>): Prom
 
     try {
       const mermaid = await loadMermaid()
+      if (!isCurrent() || !containerRef.value) return
       // 重新初始化以应用可能的颜色变化
       mermaid.initialize({
         startOnLoad: false,
@@ -151,7 +167,7 @@ export async function renderMermaid(containerRef: Ref<HTMLElement | null>): Prom
       })
 
       await mermaid.run({
-        nodes: mermaidElements as HTMLElement[]
+        nodes: mermaidElements.filter(node => node.isConnected && containerRef.value?.contains(node)) as HTMLElement[]
       })
     } catch (error) {
       console.error('Mermaid 渲染失败:', error)

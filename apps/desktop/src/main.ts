@@ -1,3 +1,7 @@
+import { showDesktopConfirmation, showDesktopProgress, type DesktopProgress } from './desktopDialog';
+import { createIdleCloseCheck } from './idleClose';
+import { DesktopWindowState, restoreWindowBounds } from './windowState';
+import { t, getActualLanguage } from '../../../backend/i18n';
 import { DesktopUpdates } from './updates';
 import { DesktopInstaller, confirmInstalledRecovery } from './installer';
 import { DesktopStorageLocation } from './storageLocation';
@@ -14,11 +18,13 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   net,
   protocol,
   safeStorage,
   shell,
   session,
+  screen,
   Tray,
 } from "electron";
 import { randomUUID } from "node:crypto";
@@ -83,6 +89,7 @@ let browser: DesktopBrowser;
 let exitPhase: 'idle' | 'confirming' | 'closing' | 'ready' = 'idle';
 let exitOperation: Promise<void> | undefined;
 let closePending = false;
+let windowState: DesktopWindowState | undefined;
 let dirtyDocuments = 0;
 let dirtySettings = false;
 const trustedWindows = new Set<number>();
@@ -134,17 +141,30 @@ function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
   exitPhase = 'closing';
   closePending = false;
   exitOperation = Promise.resolve().then(async () => {
-    await backups?.close();
-    notifications?.dispose();
-    petWindowController?.dispose();
-    browser?.close();
-    await application?.close();
-    beforeExit?.();
-    // 保留托盘到清理成功，失败时仍可重试；只有此时才允许 Electron 真正关闭窗口。
-    tray?.destroy();
-    if (relaunch) app.relaunch();
-    exitPhase = 'ready';
-    app.quit();
+    let progress: DesktopProgress | undefined;
+    if (application && window && !window.isDestroyed() && window.isVisible()) {
+      progress = await showDesktopProgress({ language: getActualLanguage(), title: t('desktop.closingTitle'), message: t('desktop.closingMessage'),
+        detail: t('desktop.closingDetail'), progress: t('desktop.closingBackups'), colors: desktopColors() }, window)
+        .catch(error => { console.warn('退出进度界面不可用：', error); return undefined; });
+    }
+    try {
+      await windowState?.flush();
+      await backups?.close();
+      progress?.update(t('desktop.closingWindows'));
+      notifications?.dispose();
+      petWindowController?.dispose();
+      browser?.close();
+      progress?.update(t('desktop.closingCore'));
+      await application?.close();
+      if (beforeExit) progress?.update(t('desktop.closingUpdate'));
+      beforeExit?.();
+      // 保留托盘到清理成功，失败时仍可重试；只有此时才允许 Electron 真正关闭窗口。
+      tray?.destroy();
+      if (relaunch) app.relaunch();
+      exitPhase = 'ready';
+      progress?.close();
+      app.quit();
+    } finally { progress?.close(); }
   }).catch(error => {
     exitPhase = 'idle';
     exitOperation = undefined;
@@ -177,41 +197,61 @@ function minimizeToTray(): void {
   closePending = false;
   window.hide();
 }
-async function confirmQuit(): Promise<void> {
+function desktopColors(): Record<string, string> {
+  const appearance = application.settings.snapshot().settings.appearance;
+  return resolveAppearancePalette(appearance.theme, appearance.colors, !nativeTheme.shouldUseDarkColors);
+}
+async function confirmQuit(intent: 'quit' | 'window' = 'quit'): Promise<void> {
   if (exitPhase !== 'idle') return;
   exitPhase = 'confirming';
   try {
     const active = await activeTasks();
-    if (!application.isClosing && (dirtyDocuments || dirtySettings || active)) {
-      const result = await dialog.showMessageBox({
-        type: "question",
-        buttons: ["继续工作", "退出应用"],
-        defaultId: 0,
-        cancelId: 0,
-        title: "退出 GrayCode",
-        message: "退出应用会停止后台任务，并放弃尚未保存的编辑和设置。",
-      });
-      if (result.response !== 1) return;
+    const settingsDirty = !application.isClosing && (dirtySettings || await application.productUi.hasDirtyPreferences());
+    const dirty = dirtyDocuments > 0 || settingsDirty;
+    // 保留干净窗口关闭后等后台任务完成的既有策略。
+    if (intent === 'window' && !dirty && active) {
+      closePending = true; ensureTray(); window?.hide(); return;
+    }
+    if (!application.isClosing && (dirty || active)) {
+      const items = [
+        ...(dirtyDocuments ? [t('desktop.unsavedFiles', { count: dirtyDocuments })] : []),
+        ...(settingsDirty ? [t('desktop.unsavedSettings')] : []),
+        ...(active ? [t('desktop.activeTasks')] : []),
+      ];
+      const action = await showDesktopConfirmation({ language: getActualLanguage(), title: t('desktop.quitTitle'), message: t('desktop.quitMessage'),
+        detail: t('desktop.quitDetail') + (active ? '\n' + t('desktop.backgroundDetail') : ''), items, cancelId: 'cancel', colors: desktopColors(),
+        actions: [{ id: 'cancel', label: t('desktop.continueWorking'), kind: 'primary' },
+          ...(active ? [{ id: 'background', label: t('desktop.background') }] : []),
+          { id: 'quit', label: t('desktop.quit'), kind: 'danger' }] }, window);
+      if (action === 'background') { minimizeToTray(); return; }
+      if (action !== 'quit') return;
     }
     await quit();
   } catch (error) {
     dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error));
   } finally {
     if (exitPhase === 'confirming') exitPhase = 'idle';
+    // 确认期间结束的任务可能不再产生事件，进入托盘后立即补查一次。
+    if (closePending) checkIdleClose();
   }
 }
+const checkIdleClose = createIdleCloseCheck({
+  pending: () => closePending && exitPhase === 'idle', active: activeTasks, close: quit,
+  report: error => dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error)),
+});
 async function createWindow(): Promise<void> {
   closePending = false;
   if (window && !window.isDestroyed()) {
     activateDesktopWindow(window);
     return;
   }
-  const colors = resolveAppearancePalette(application.settings.snapshot().settings.appearance.theme);
+  const colors = desktopColors();
+  const primary = screen.getPrimaryDisplay();
+  const geometry = restoreWindowBounds(windowState?.value, [primary.workArea, ...screen.getAllDisplays().filter(display => display.id !== primary.id).map(display => display.workArea)]);
   window = new BrowserWindow({
-    width: 1560,
-    height: 980,
-    minWidth: 1080,
-    minHeight: 650,
+    ...geometry.bounds,
+    minWidth: geometry.minWidth,
+    minHeight: geometry.minHeight,
     title: "GrayCode",
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: colors.background, symbolColor: colors.text, height: 38 },
@@ -227,6 +267,8 @@ async function createWindow(): Promise<void> {
       backgroundThrottling: process.env.GRAYCODE_DESKTOP_SMOKE !== "1",
     },
   });
+  windowState?.bind(window);
+  if (geometry.maximized) window.maximize();
   bindDesktopAppearance(window, application);
   desktopFiles.suspend();
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) desktopFiles.suspend(); });
@@ -237,25 +279,7 @@ async function createWindow(): Promise<void> {
     if (exitPhase === 'ready') return;
     event.preventDefault();
     if (exitPhase !== 'idle') return;
-    exitPhase = 'confirming';
-    void (async () => {
-      if (!application.isClosing && (dirtyDocuments || dirtySettings)) {
-        const result = await dialog.showMessageBox(window!, {
-          type: "question",
-          buttons: ["继续编辑", "放弃修改并关闭"],
-          defaultId: 0,
-          cancelId: 0,
-          message: "还有未保存的文件或设置。",
-        });
-        if (result.response !== 1) return;
-      }
-      if (await activeTasks()) {
-        closePending = true;
-        ensureTray();
-        window!.hide();
-      } else await quit();
-    })().catch((error) => dialog.showErrorBox("GrayCode", error.message))
-      .finally(() => { if (exitPhase === 'confirming') exitPhase = 'idle'; });
+    void confirmQuit('window');
   });
   await window.loadURL("graycode://app/index.html");
 }
@@ -265,6 +289,8 @@ async function main(): Promise<void> {
   dataDirectory = await storageLocation.startup();
   await confirmInstalledRecovery(app.getPath('userData'), process.execPath, app.getVersion(), dataDirectory);
   await new BackupRestoreState(dataDirectory).apply();
+  windowState = new DesktopWindowState(path.join(dataDirectory, 'desktop-window.json'));
+  await windowState.load();
   session.defaultSession.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false),
   );
@@ -325,8 +351,9 @@ async function main(): Promise<void> {
     },
     restore: async archive => (await backups!.prepareRestore(archive)).pending.id,
     cancelRestore: () => backups!.cancelRestore(),
-    confirm: async (message, detail) => (await dialog.showMessageBox(window!, { type: 'question', title: 'GrayCode 安装与恢复', message, detail,
-      buttons: ['确认并重启', '继续工作'], defaultId: 1, cancelId: 1 })).response === 0,
+    confirm: async (message, detail) => (await showDesktopConfirmation({ language: getActualLanguage(), title: t('desktop.installerTitle'), message, detail,
+      colors: desktopColors(), cancelId: 'cancel', actions: [{ id: 'cancel', label: t('desktop.continueWorking'), kind: 'primary' },
+        { id: 'restart', label: t('desktop.restart') }] }, window)) === 'restart',
     restart: async apply => {
       setTimeout(() => { void quit(false, apply).catch(async error => {
         await backups!.cancelRestore().catch(() => {});
@@ -360,11 +387,7 @@ async function main(): Promise<void> {
   application.subscribe((event) => {
     notify(event);
     if (closePending && exitPhase === 'idle' && (event.type === "file.activity" || event.type === 'nodes.changed' || event.type === 'processes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
-      void activeTasks()
-        .then((active) => {
-          if (!active && closePending && exitPhase === 'idle') return quit();
-        })
-        .catch(error => dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error)));
+      checkIdleClose();
   });
   ipcMain.handle(
     "graycode:rpc",
@@ -571,6 +594,7 @@ async function main(): Promise<void> {
         label: "视图",
         submenu: [
           { label: "最小化到托盘", click: () => minimizeToTray() },
+          { label: t('desktop.quit'), accelerator: 'CmdOrCtrl+Q', click: () => void confirmQuit() },
           { type: "separator" },
           { role: "resetZoom", label: "恢复实际大小" },
           { role: "zoomIn", label: "放大" },

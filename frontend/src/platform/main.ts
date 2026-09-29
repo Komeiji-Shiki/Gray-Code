@@ -7,6 +7,7 @@ import { WORKSPACE_PANEL_MESSAGE } from '@shared/workspacePanelNavigation';
 import './theme.css';
 import '@vscode/codicons/dist/codicon.css';
 import { applyDesktopAppearance } from './appearance';
+import { invalidateWorkspaceAssets } from '../components/common/markdown/markdownItCore';
 import { trackPreferenceRequest, desktopSettingsDraft } from './settingsDraft';
 
 type DesktopBridge = { kind?: 'desktop' | 'web'; call(method: string, params?: Record<string, unknown>): Promise<any>; subscribe(listener: (event: Record<string, any>) => void): () => void };
@@ -73,7 +74,18 @@ defaultPromptModeId = startupPresets.currentModeId || 'code';
 // 主界面挂载前读取已保存偏好，查看子代理不重复播放启动动画。
 window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.settings?.ui?.appearance?.splashEnabled !== false;
 applyDesktopAppearance(platformSettings.appearance);
+let assetTimer: ReturnType<typeof setTimeout> | undefined;
+function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; invalidateWorkspaceAssets(); }
+window.addEventListener('pagehide', () => { if (assetTimer) clearTimeout(assetTimer); }, { once: true });
 desktop.subscribe(event => {
+  if (event.type === 'workspace.selected' || event.type === 'ui.message' && event.message?.type === 'workspaceUri'
+    || event.type === 'ui.conversation.focused' && !event.resynchronized
+    || event.type === 'transport.resumed') resetWorkspaceAssets();
+  if (event.type === 'file.changed') {
+    if (assetTimer) clearTimeout(assetTimer);
+    assetTimer = setTimeout(resetWorkspaceAssets, 150);
+  }
+  if (event.type === 'ui.message' && event.message?.command === 'platform.modeSelected') resetWorkspaceAssets();
   if (event.type === 'settings.changed') {
     dispatch({ type: 'settingsChanged' });
     void desktop.call('ui.request', { type: 'getPromptModes', data: {} })

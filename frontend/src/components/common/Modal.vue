@@ -5,6 +5,7 @@
 
 import { computed, ref, watch, onMounted, onUnmounted, nextTick, getCurrentInstance } from 'vue'
 import { t } from '@/i18n'
+import { pushModal, removeModal, isTopModal } from '../../utils/modalStack'
 import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
 
 const props = withDefaults(defineProps<{
@@ -36,6 +37,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const modalId = Symbol('modal')
 const instanceId = getCurrentInstance()?.uid ?? 0
 const titleId = `gc-modal-title-${instanceId}`
 const accessibleLabel = computed(() => props.ariaLabel || props.title || t('common.dialog'))
@@ -66,7 +68,15 @@ function getFocusableElements(root: HTMLElement): HTMLElement[] {
     root.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
     )
-  ).filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true')
+  ).filter((el) => {
+    if (el.tabIndex < 0 || el.matches(':disabled') || el.closest('[hidden], [inert], [aria-hidden="true"]')) return false
+    for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (style.display === 'none' || style.visibility === 'hidden') return false
+      if (node === root) break
+    }
+    return true
+  })
 }
 
 function restoreFocus() {
@@ -76,18 +86,11 @@ function restoreFocus() {
   previouslyFocused = null
 }
 
-// Esc 关闭 + Tab 焦点陷阱：焦点在对话框内循环；焦点逃逸到对话框外时拉回。
-// 嵌套 Modal（如 ResponseViewerDialog → JsonViewerDialog）场景：仅当焦点位于本 Modal、
-// 或不在任何其他 role="dialog" 内时才处理 Esc/Tab——焦点在更上层 Modal 中时本 Modal
-// 直接放行，避免焦点陷阱互相劫持、Esc 一次关闭所有层（最上层 Modal 独自处理）。
+// 由显式模态栈确定接收者，焦点被删除或暂时落到 body 时也不会一次关闭多层。
 function handleKeydown(e: KeyboardEvent) {
   const root = modalRoot.value
-  if (!root) return
+  if (!root || !visible.value || !isTopModal(modalId) || e.defaultPrevented) return
   const active = document.activeElement
-  // 焦点位于其他（更上层）对话框内：本 Modal 不参与 Esc 关闭与 Tab 陷阱
-  const inOtherDialog = !!active && !!active.closest?.('[role="dialog"]') && !root.contains(active)
-  if (inOtherDialog) return
-  if (!visible.value) return
 
   if (e.key === 'Escape' && props.closeOnEscape) {
     e.preventDefault()
@@ -117,6 +120,7 @@ function handleKeydown(e: KeyboardEvent) {
 let ownsScrollLock = false
 watch(visible, (val) => {
   if (val && !ownsScrollLock) {
+    pushModal(modalId)
     lockBodyScroll()
     ownsScrollLock = true
     // 打开时记录触发元素并把焦点移入对话框（渲染完成后执行）
@@ -137,9 +141,12 @@ watch(visible, (val) => {
       ;(focusTarget || root).focus()
     })
   } else if (!val && ownsScrollLock) {
+    const wasTop = isTopModal(modalId)
+    removeModal(modalId)
     unlockBodyScroll()
     ownsScrollLock = false
-    restoreFocus()
+    if (wasTop) restoreFocus()
+    else previouslyFocused = null
   }
 }, { immediate: true })
 
@@ -148,13 +155,16 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  const wasTop = isTopModal(modalId)
+  removeModal(modalId)
   document.removeEventListener('keydown', handleKeydown)
   if (ownsScrollLock) {
     unlockBodyScroll()
     ownsScrollLock = false
   }
-  // 对话框在打开状态下被销毁时也要归还焦点
-  restoreFocus()
+  // 下层弹窗被移除时不能把焦点从仍然打开的上层弹窗抢走。
+  if (wasTop) restoreFocus()
+  else previouslyFocused = null
 })
 </script>
 
