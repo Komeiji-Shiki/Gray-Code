@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import * as monaco from "monaco-editor";
+import * as monaco from '../monaco';
 import { call, subscribe } from "../api";
 import { appearance } from '../state';
 import { resolvedTheme } from '../appearance';
 import { installWorkbenchTheme, workbenchEditorTheme } from '../editorAppearance';
 import { workspaceEditorServices } from '../editorWorkspaceEdits';
 import NavigationIcon from './navigation/NavigationIcon.vue';
+import { ensureEditorLanguage } from '../editorLanguages';
+import { documentLanguageId, editorLanguageId } from '../../../../shared/documentLanguages';
 
 type DiffStatus = "pending" | "accepted" | "rejected" | "cancelled";
 interface WorkspaceDiff {
@@ -49,6 +51,7 @@ function showSelected() {
   const diff = selected();
   if (!diffEditor || !diff) { disposeModels(); diffEditor?.setModel(null); return; }
   disposeModels();
+  void ensureEditorLanguage(editorLanguageId(documentLanguageId(diff.path))).catch(cause => { if (selected() === diff) error.value = String(cause); });
   originalModel = monaco.editor.createModel(diff.originalText, undefined, monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/original/' + diff.path }));
   proposedModel = monaco.editor.createModel(diff.proposedText, undefined, monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/proposed/' + diff.path }));
   diffEditor.setModel({ original: originalModel, modified: proposedModel });

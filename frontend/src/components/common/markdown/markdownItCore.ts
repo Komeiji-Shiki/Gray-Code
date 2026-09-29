@@ -1,4 +1,5 @@
 import { StringLruCache } from '../../../utils/stringLruCache'
+import { assetPathMatches, notifyAssetChanges } from './assetChanges'
 /**
  * MarkdownRenderer 模块级单例（跨消息块共享）
  *
@@ -21,12 +22,19 @@ export const imageCache = new Map<string, string>()
 const assetRevision = ref(0)
 export const workspaceAssetRevision = readonly(assetRevision)
 /** 工作区上下文或文件内容变化后，旧请求也必须失去回填缓存的资格。 */
-export function invalidateWorkspaceAssets(): void {
+export function invalidateWorkspaceAssets(paths?: readonly string[]): void {
+  if (paths) {
+    for (const key of fileExistenceCache.keys()) if (paths.some(path => assetPathMatches(key, path))) fileExistenceCache.delete(key)
+    for (const [key, value] of imageCache) if (paths.some(path => assetPathMatches(key, path))) { imageCache.delete(key); imageCacheBytes -= estimateDataUrlBytes(value) }
+    notifyAssetChanges(paths)
+    return
+  }
   fileExistenceCache.clear()
   imageCache.clear()
   imageCacheBytes = 0
   completedRenderCache.clear()
   assetRevision.value++
+  notifyAssetChanges()
 }
 
 /** 全部消息共用一份预算；script setup 中的缓存会为每个组件重复创建。 */
@@ -170,6 +178,7 @@ export async function renderMermaid(containerRef: Ref<HTMLElement | null>, isCur
         nodes: mermaidElements.filter(node => node.isConnected && containerRef.value?.contains(node)) as HTMLElement[]
       })
     } catch (error) {
+      if (!isCurrent() || !containerRef.value || mermaidElements.every(node => !containerRef.value?.contains(node))) return
       console.error('Mermaid 渲染失败:', error)
     }
   }).catch(() => { /* 吞掉队列中的错误，避免阻塞后续调用 */ })

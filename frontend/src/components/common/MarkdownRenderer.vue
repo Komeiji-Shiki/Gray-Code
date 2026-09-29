@@ -29,6 +29,7 @@ import { renderContent, type RenderProfile } from './markdown/markdownItEngine'
 import { renderDependencyRevision } from './markdown/renderDependencies'
 import { createCodeBlockDomController } from './markdown/codeBlockDom'
 import { createWorkspaceAssetController } from './markdown/workspaceAssets'
+import { observeAssetPaths } from './markdown/assetChanges'
 import MermaidZoomModal from './markdown/MermaidZoomModal.vue'
 
 const props = withDefaults(defineProps<{
@@ -327,13 +328,17 @@ watch(renderDependencyRevision, () => {
   scheduleRender()
 })
 
-watch(workspaceAssetRevision, () => {
+const stopObservingAssets = observeAssetPaths(() => [...extractPotentialFilePaths(props.content),
+  ...Array.from(containerRef.value?.querySelectorAll('[data-path]') ?? []).map(node => {
+    try { return decodeURIComponent(atob(node.getAttribute('data-path')!)) } catch { return '' }
+  })], () => {
   postProcessedSource = ''
   scheduleRender()
 })
 
 onUnmounted(()=> {
   disposed = true
+  stopObservingAssets()
   ++renderEpoch
   clearRenderTimer()
   if (containerRef.value) {

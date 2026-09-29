@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
+import { documentTextPatch, applyDocumentTextPatch } from '../../../shared/documentPatch';
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -7,6 +8,24 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 afterEach(() => jest.restoreAllMocks());
+
+test('大文件增量往返保留中文、表情、BOM 和 CRLF，旧版本补丁拒绝覆盖', async () => {
+  const files = new WorkspaceFiles();
+  const workspace = { id: 'project', name: 'fixture', deviceId: 'local', directory: path.resolve('.tmp') };
+  const original = '\uFEFF' + '长文本🐱\r\n'.repeat(10_000);
+  const edited = original.slice(0, 50_000) + '输入法提交😺' + original.slice(50_000);
+  jest.spyOn(files, 'resolve').mockResolvedValue(path.join(workspace.directory, 'fixture.txt'));
+  jest.spyOn(files as any, 'readAbsolute').mockResolvedValue({ text: original, hash: 'original-hash' });
+  const opened = await files.openDocument(workspace, 'fixture.txt', 'client');
+  const patch = documentTextPatch(original, edited);
+  expect(JSON.stringify(patch).length).toBeLessThan(100);
+  expect(applyDocumentTextPatch(original, patch)).toBe(edited);
+  const next = await files.updateDocument(workspace, 'fixture.txt', 'client', patch, opened.version);
+  expect(next.text).toBe(edited);
+  await expect(files.updateDocument(workspace, 'fixture.txt', 'client', patch, opened.version)).rejects.toThrow('DOCUMENT_CONFLICT');
+  expect((await files.updateDocument(workspace, 'fixture.txt', 'client', documentTextPatch(edited, original), next.version)).text).toBe(original);
+  expect(() => applyDocumentTextPatch(original, { start: -1, deleteCount: 0, text: '' })).toThrow();
+});
 
 test('并发打开同一文档时，慢磁盘读取不能覆盖已经更新的草稿', async () => {
   const files = new WorkspaceFiles();

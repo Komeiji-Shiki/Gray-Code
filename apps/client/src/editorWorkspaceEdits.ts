@@ -1,4 +1,4 @@
-import * as monaco from 'monaco-editor';
+import * as monaco from './monaco';
 import { EditorBatchHistory, type BatchEditTarget, type EditBatchHandle } from '../../../shared/editorBatchHistory';
 import { report } from './state';
 

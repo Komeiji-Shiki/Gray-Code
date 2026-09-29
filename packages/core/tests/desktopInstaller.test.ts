@@ -132,4 +132,23 @@ describe('安装版更新与配套数据回退', () => {
     await expect(unsafe.apply()).rejects.toThrow('安装目录之外');
     expect(options.backup).not.toHaveBeenCalled();
   });
+
+  test('备份失败不重启，已校验更新和原程序仍可用于重试', async () => {
+    await installer.prepare(path.join(root, 'feed'));
+    (options.backup as jest.Mock).mockRejectedValueOnce(new Error('backup disk full'));
+    await expect(installer.apply()).rejects.toThrow('backup disk full');
+    expect(options.restart).not.toHaveBeenCalled();
+    expect(await fs.readFile(options.executable, 'utf8')).toBe('current executable');
+    expect(await installer.status()).toMatchObject({ busy: false, ready: { version: asset.Version } });
+    await expect(installer.apply()).resolves.toMatchObject({ restarting: true });
+  });
+
+  test('下载文件被占用后可恢复，重启读取不把未完成下载当作待安装包', async () => {
+    manager.downloadUpdateAsync.mockRejectedValueOnce(Object.assign(new Error('locked package'), { code: 'EBUSY' }));
+    await expect(installer.prepare(path.join(root, 'feed'))).rejects.toThrow('locked package');
+    const resumed = new DesktopInstaller(options);
+    expect((await resumed.status()).ready).toBeUndefined();
+    expect(options.restart).not.toHaveBeenCalled();
+    await expect(resumed.prepare(path.join(root, 'feed'))).resolves.toMatchObject({ downloaded: true });
+  });
 });

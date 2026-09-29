@@ -1,4 +1,4 @@
-import * as monaco from 'monaco-editor';
+import * as monaco from './monaco';
 import type { SourceRange, LanguageDiagnostic, LanguageSessionInfo, LanguageDocumentStatus } from '@graycode/contracts';
 import type { ServerCapabilities, CompletionItem as LspCompletion, CompletionList, SignatureHelp, CodeAction, Command, WorkspaceEdit } from 'vscode-languageserver-protocol';
 import { languageMethodSupported } from '../../../shared/languageSupport';
@@ -7,18 +7,6 @@ import { completionItems } from '../../../shared/completionItems';
 import { call, subscribe } from './api';
 import { report } from './state';
 import { applyWorkspaceTextEdits } from './editorWorkspaceEdits';
-
-// 在创建模型之前停用浏览器内的重复诊断，避免其异步结果覆盖真实工作区的语言服务。
-for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) {
-  defaults.setModeConfiguration({ ...defaults.modeConfiguration, completionItems: false, hovers: false, definitions: false,
-    references: false, documentSymbols: false, rename: false, documentRangeFormattingEdits: false, diagnostics: false, signatureHelp: false, codeActions: false });
-  defaults.setDiagnosticsOptions({ ...defaults.getDiagnosticsOptions(), noSyntaxValidation: true, noSemanticValidation: true, noSuggestionDiagnostics: true });
-}
-for (const defaults of [monaco.css.cssDefaults, monaco.css.scssDefaults, monaco.css.lessDefaults, monaco.html.htmlDefaults, monaco.json.jsonDefaults]) {
-  defaults.setModeConfiguration({ ...defaults.modeConfiguration, completionItems: false, hovers: false, documentSymbols: false,
-    documentFormattingEdits: false, documentRangeFormattingEdits: false, diagnostics: false,
-    ...('definitions' in defaults.modeConfiguration ? { definitions: false, references: false, rename: false } : {}) });
-}
 
 interface Binding {
   model: monaco.editor.ITextModel; workspaceId: string; path: string; uri?: string;

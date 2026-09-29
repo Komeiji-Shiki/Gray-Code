@@ -1,5 +1,8 @@
 import { showDesktopConfirmation, showDesktopProgress, type DesktopProgress } from './desktopDialog';
 import { createIdleCloseCheck } from './idleClose';
+import { DesktopSaveAll } from './saveAll';
+import { recoverStartup } from './startupRecovery';
+const desktopSaveAll = new DesktopSaveAll();
 import { DesktopWindowState, restoreWindowBounds } from './windowState';
 import { t, getActualLanguage } from '../../../backend/i18n';
 import { DesktopUpdates } from './updates';
@@ -219,11 +222,23 @@ async function confirmQuit(intent: 'quit' | 'window' = 'quit'): Promise<void> {
         ...(active ? [t('desktop.activeTasks')] : []),
       ];
       const action = await showDesktopConfirmation({ language: getActualLanguage(), title: t('desktop.quitTitle'), message: t('desktop.quitMessage'),
-        detail: t('desktop.quitDetail') + (active ? '\n' + t('desktop.backgroundDetail') : ''), items, cancelId: 'cancel', colors: desktopColors(),
+        detail: t(dirty ? 'desktop.saveAllDetail' : 'desktop.quitDetail') + (active ? '\n' + t('desktop.backgroundDetail') : ''), items, cancelId: 'cancel', colors: desktopColors(),
         actions: [{ id: 'cancel', label: t('desktop.continueWorking'), kind: 'primary' },
+          ...(dirty ? [{ id: 'save', label: t('desktop.saveAllQuit') }] : []),
           ...(active ? [{ id: 'background', label: t('desktop.background') }] : []),
-          { id: 'quit', label: t('desktop.quit'), kind: 'danger' }] }, window);
+          { id: 'quit', label: t(dirty ? 'desktop.discardQuit' : 'desktop.quit'), kind: 'danger' }] }, window);
       if (action === 'background') { minimizeToTray(); return; }
+      if (action === 'save') {
+        if (!window || window.isDestroyed()) throw new Error(t('desktop.saveAllUnavailable'));
+        // 保存期间用父窗口模态进度阻止新输入，避免回执确认后又产生未保存草稿。
+        const progress = await showDesktopProgress({ language: getActualLanguage(), title: t('desktop.saveAllQuit'), message: t('desktop.saveAllQuit'),
+          progress: t('desktop.saveAllProgress'), colors: desktopColors() }, window);
+        try {
+          await desktopSaveAll.request(window.webContents.id, requestId => window!.webContents.send('graycode:event', { type: 'desktop.saveAll', requestId }));
+          if (dirtyDocuments || dirtySettings || await application.productUi.hasDirtyPreferences()) throw new Error(t('desktop.saveAllIncomplete'));
+        } finally { progress.close(); }
+        await quit(); return;
+      }
       if (action !== 'quit') return;
     }
     await quit();
@@ -564,6 +579,7 @@ async function main(): Promise<void> {
         if (sameFile) throw new Error('请选择不同的保存位置。');
         await copyFile(file.absolute, selected.filePath); return { success: true, filePath: selected.filePath };
       }
+      if (method === 'desktop.saveResult') { desktopSaveAll.complete(event.sender.id, params); return { success: true }; }
       if (method === "desktop.dirtyDocuments") {
         dirtyDocuments = Math.max(0, Number(params.count) || 0);
         return;
@@ -638,8 +654,10 @@ else {
     /* Lifetime is controlled by the close policy and running tasks. */
   });
   void main().catch(async (error) => {
-    dialog.showErrorBox("GrayCode 启动失败", error.message);
-    try { await quit(); }
+    try {
+      await recoverStartup(error, args => quit(false, () => app.relaunch(args ? { args } : undefined)));
+      await quit();
+    }
     catch (cleanupError) { dialog.showErrorBox('GrayCode 关闭失败', String(cleanupError)); }
   });
 }

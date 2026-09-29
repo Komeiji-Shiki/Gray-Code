@@ -3,6 +3,10 @@ import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, 
 import { appearance, guard, initialize, loadSettings, report, state } from './state';
 import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
+import { useNavigationIntent } from './navigationIntent';
+import { shellText as t, setShellLanguage } from './i18n';
+import { appearanceCssVariables } from '../../../shared/appearanceTokens';
+const navigate = useNavigationIntent();
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import Workbench from './components/Workbench.vue';
 import ErrorBanner from './components/ErrorBanner.vue';
@@ -27,6 +31,8 @@ function jumpToMessage(target: { conversationId: string; messageIndex: number; m
     window.location.origin === 'null' ? '*' : window.location.origin);
 }
 function openWorkspacePanel(event: MessageEvent) {
+  if (event.source === productChatFrame.value?.contentWindow && event.origin === window.location.origin
+    && event.data?.type === 'graycode.language' && typeof event.data.language === 'string') setShellLanguage(event.data.language);
   const panel = readWorkspacePanelMessage(event, productChatFrame.value?.contentWindow, window.location.origin);
   if (panel === 'memory') openLibrary('memory');
   else if (panel === 'pets') petManagerOpen.value = true;
@@ -72,23 +78,26 @@ const resizing = ref(false);
 const container = ref<HTMLElement>();
 const choosingWorkspace = ref(false);
 async function addWorkspace() {
+  const intent = navigate();
   if (choosingWorkspace.value) return;
   choosingWorkspace.value = true;
   try {
     const selected = await call<{ directory: string; name: string } | null>('desktop.chooseWorkspace');
     if (!selected) return;
     const workspace = await call<{ id: string }>('workspaces.add', selected);
-    await loadSettings(); state.workspaceId = workspace.id;
+    await loadSettings(); if (intent.current()) state.workspaceId = workspace.id;
   } finally { choosingWorkspace.value = false; }
 }
 const modeMenuOpen = ref(false);
 const choosingMode = ref(false);
-const modes = [{ id: 'chat', name: '对话', detail: '自由交流与日常任务' }, { id: 'code', name: '代码', detail: '编辑项目与执行开发任务' }, { id: 'character', name: '角色', detail: '角色资料与故事对话' }] as const;
+const modes = computed(() => [{ id: 'chat', name: t('chat'), detail: t('chatDetail') }, { id: 'code', name: t('code'), detail: t('codeDetail') }, { id: 'character', name: t('character'), detail: t('characterDetail') }] as const);
 async function selectMode(mode: 'chat' | 'code' | 'character') {
   if (choosingMode.value) return;
   choosingMode.value = true;
+  const intent = navigate({ workspaceId: state.workspaceId, tabId: state.conversationId ?? undefined });
   try {
     const result = await call('ui.request', { type: 'ui.mode.select', data: { mode, conversationId: state.conversationId, workspaceId: mode === 'code' ? state.workspaceId : undefined } });
+    if (!intent.current()) return;
     if (mode === 'code' && result.workspaceId) state.workspaceId = result.workspaceId;
     state.mode = mode; modeMenuOpen.value = false;
   } finally { choosingMode.value = false; }
@@ -127,8 +136,7 @@ const variables = computed(() => {
   if (!config) return {};
   return { '--ui-font': config.uiFont, '--code-font': config.codeFont, '--text-font': config.textFont,
     '--font-size': config.fontSize + 'px', '--line-height': String(config.lineHeight),
-    ...Object.fromEntries(Object.entries(appearancePalette.value).filter(([name, value]) => /^[a-zA-Z-]+$/.test(name) && CSS.supports('color', value))
-      .map(([name, value]) => ['--' + name.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase()), value])) };
+    ...appearanceCssVariables(Object.fromEntries(Object.entries(appearancePalette.value).filter(([name, value]) => /^[a-zA-Z-]+$/.test(name) && CSS.supports('color', value)))) };
 });
 useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
@@ -166,18 +174,18 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
         </div>
       </div>
       <nav v-if="!isWeb && !compactViewport" class="app-menu" aria-label="应用菜单"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></nav>
-      <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center"><span class="subtle">工作区</span>
-        <WorkspaceSelector v-model="state.workspaceId" :workspaces="state.snapshot?.settings.workspaces ?? []" @browse="guard(addWorkspace)" />
-        <button class="quiet-button workspace-add" :disabled="choosingWorkspace" :title="isWeb ? '选择电脑文件夹' : '添加工作区'" :aria-label="isWeb ? '选择电脑文件夹' : '添加工作区'" @click="guard(addWorkspace)">＋</button>
+      <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center"><span class="subtle">{{ t('workspace') }}</span>
+        <WorkspaceSelector :model-value="state.workspaceId" @update:model-value="id => { navigate({ workspaceId: id }); state.workspaceId = id; }" :workspaces="state.snapshot?.settings.workspaces ?? []" @browse="guard(addWorkspace)" />
+        <button class="quiet-button workspace-add" :disabled="choosingWorkspace" :title="isWeb ? t('chooseFolder') : t('addWorkspace')" :aria-label="isWeb ? t('chooseFolder') : t('addWorkspace')" @click="guard(addWorkspace)">＋</button>
       </div>
-      <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? '工作台' : '返回对话') : (state.chatFocused ? '打开侧边面板' : '隐藏侧边面板') }}</button>
-      <button v-if="!compactViewport" class="quiet-button" @click="openLibrary()">资料库</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">角色配置</button>
+      <button v-if="!state.settingsOpen" class="quiet-button panel-toggle" :aria-pressed="!state.chatFocused" @click="state.chatFocused = !state.chatFocused; mobileNavigationOpen = false">{{ compactViewport ? (state.chatFocused ? t('workbench') : t('backToChat')) : (state.chatFocused ? t('openPanel') : t('closePanel')) }}</button>
+      <button v-if="!compactViewport" class="quiet-button" @click="openLibrary()">{{ t('library') }}</button><button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">{{ t('characterSetup') }}</button>
       <button v-if="!compactViewport && !state.settingsOpen && state.mode === 'chat'" class="quiet-button" @click="companionOpen = true">陪伴配置</button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">退出登录</button>
-      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? '选择电脑文件夹' : '添加工作区' }}</button><button @click="automationsOpen = true">自动任务</button><button @click="openLibrary()">资料库</button><button v-if="state.mode === 'chat'" @click="companionOpen = true">陪伴配置</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">角色配置</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
+      <details v-if="compactViewport" class="mobile-tools"><summary>更多</summary><div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')"><template v-if="!isWeb"><button v-for="menu in appMenus" :key="menu" @click="guard(() => call('desktop.menu', { label: menu }))">{{ menu }}</button></template><button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? t('chooseFolder') : t('addWorkspace') }}</button><button @click="automationsOpen = true">自动任务</button><button @click="openLibrary()">{{ t('library') }}</button><button v-if="state.mode === 'chat'" @click="companionOpen = true">陪伴配置</button><button v-if="state.mode === 'character'" @click="characterSetup = {}">{{ t('characterSetup') }}</button><button v-if="isWeb" @click="guard(() => call('web.logout'))">退出登录</button></div></details>
     </header>
     <ErrorBanner v-if="state.error" :message="state.error" @dismiss="state.error = ''" />
-    <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">关闭</button></div>
+    <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">{{ t('close') }}</button></div>
     <ComputerStatus v-if="state.ready" /><ScreenSenseStatus v-if="state.ready" @manage="screenSenseOpen = true" />
     <ScreenSenseSettings v-if="screenSenseOpen" @close="screenSenseOpen = false" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
@@ -189,7 +197,7 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
     <WebDialogs v-if="isWeb" />
     <AutomationsPanel :open="automationsOpen" @close="automationsOpen = false" />
     <RunInspector v-if="state.ready && !state.settingsOpen" />
-    <div v-if="!state.ready" class="loading-state">正在连接本地核心…</div>
+    <div v-if="!state.ready" class="loading-state">{{ t('connecting') }}</div>
     <div v-else class="application-body" :class="{ resizing: sidebarResizing }">
       <button v-if="compactViewport && mobileNavigationOpen && !state.settingsOpen" class="navigation-backdrop" aria-label="收起对话列表" @click="mobileNavigationOpen = false"></button>
       <div ref="navigation" v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)" class="conversation-navigation" :style="{ '--sidebar-width': visibleSidebarWidth + 'px' }" :inert="!chatReady || undefined" :aria-busy="!chatReady">

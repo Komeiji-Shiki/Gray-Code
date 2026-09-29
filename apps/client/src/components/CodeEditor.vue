@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { LanguageDocumentStatus } from '@graycode/contracts';
-import * as monaco from "monaco-editor";
-import { appearance } from "../state";
+import * as monaco from '../monaco';
+import { appearance, report } from "../state";
+import { ensureEditorLanguage } from '../editorLanguages';
 import { resolvedTheme } from '../appearance';
 import { installWorkbenchTheme, workbenchEditorTheme } from "../editorAppearance";
 import { bindLanguageDocument, editorUri } from "../languages";
@@ -47,6 +48,7 @@ function options() {
   };
 }
 onMounted(() => {
+  void ensureEditorLanguage(editorLanguageId(documentLanguageId(props.path))).catch(report);
   editor = monaco.editor.create(root.value!, {
     value: props.value,
     model: undefined,

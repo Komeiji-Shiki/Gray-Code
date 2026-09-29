@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [vue(), petRendererBuild()],
   base: "./",
   build: {
+    manifest: true,
     target: "es2022",
     sourcemap: true,
     rollupOptions: {

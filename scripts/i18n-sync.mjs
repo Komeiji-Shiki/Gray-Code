@@ -29,6 +29,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BACKEND_LANGS_DIR = path.join(ROOT, 'backend', 'i18n', 'langs');
 const FRONTEND_LANGS_DIR = path.join(ROOT, 'frontend', 'src', 'i18n', 'langs');
 const SHARED_DIR = path.join(FRONTEND_LANGS_DIR, '_shared');
+const SHELL_PATH = path.join(ROOT, 'apps/client/src/i18n.generated.ts');
+function shellTranslations(backend) {
+    return `${GENERATED_HEADER}\nexport default ${JSON.stringify(Object.fromEntries(LANGS.map(lang => [lang, backend[lang].desktop.shell])), null, 2)};\n`;
+}
 const MANIFEST_PATH = path.join(ROOT, 'scripts', 'i18n-shared-manifest.json');
 
 const LANGS = ['zh-CN', 'en', 'ja'];
@@ -204,6 +208,7 @@ function generate() {
     }
 
     fs.mkdirSync(SHARED_DIR, { recursive: true });
+    fs.writeFileSync(SHELL_PATH, shellTranslations(backend));
     for (const lang of LANGS) {
         const content = renderSharedTree(manifest.mappings, lang);
         fs.writeFileSync(path.join(SHARED_DIR, `${lang}.ts`), content);
@@ -232,6 +237,10 @@ function check() {
     }
 
     let failed = false;
+    if (!fs.existsSync(SHELL_PATH) || fs.readFileSync(SHELL_PATH, 'utf8').replace(/\r\n?/g, '\n') !== shellTranslations(backend)) {
+        console.error('[i18n-sync --check] 外壳词条与来源不一致，请运行 i18n-sync。');
+        failed = true;
+    }
 
     // 1) 生成物与重新生成结果逐字节一致（防手改 / 防漏跑脚本）
     for (const lang of LANGS) {

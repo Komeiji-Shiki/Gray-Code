@@ -303,7 +303,7 @@ export class ApplicationRouter {
         app.requireOwner(session.actorId);
         const doc = await app.files.openDocument(app.workspace(session.actorId, params.workspaceId, ['workspace_read']), params.path, session.clientId, params.reload === true);
         if (app.files.documentVersion(session.clientId, doc.workspaceId, doc.path) === doc.version) app.languages.documentChanged(doc);
-        return doc;
+        return { ...doc, supportsPatches: true };
       }
       case 'documents.focus': {
         app.requireOwner(session.actorId);
@@ -314,8 +314,9 @@ export class ApplicationRouter {
       }
       case 'documents.update': {
         app.requireOwner(session.actorId);
-        const doc = await app.files.updateDocument(app.workspace(session.actorId, params.workspaceId, ['workspace_write']), params.path, session.clientId, params.text, params.version);
-        app.languages.documentChanged(doc); return doc;
+        const doc = await app.files.updateDocument(app.workspace(session.actorId, params.workspaceId, ['workspace_write']), params.path, session.clientId, params.patch ?? params.text, params.version);
+        app.languages.documentChanged(doc);
+        return params.patch ? { version: doc.version, dirty: doc.dirty } : doc;
       }
       case 'documents.save': {
         app.requireOwner(session.actorId);

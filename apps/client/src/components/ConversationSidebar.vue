@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useNavigationIntent, type NavigationIntent } from '../navigationIntent';
+const navigate = useNavigationIntent();
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ConversationNavigationItem, ConversationNavigationResult, ConversationViewInfo, NavigationOrdering } from '@graycode/contracts';
 import { call, subscribe } from '../api';
@@ -101,34 +103,42 @@ function scheduleRefresh() {
   if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => { refreshTimer = undefined; void refresh(); }, 160);
 }
-async function command(command: string, data?: Record<string, unknown>) {
-  const result = await call('ui.command', { command, data });
-  if (['newChat', 'platform.openModeConversation', 'platform.switchConversationView', 'showHistory', 'showUsage', 'showSettings'].includes(command)) emit('navigate');
+async function command(command: string, data?: Record<string, unknown>, intent?: NavigationIntent) {
+  const navigationCommand = ['newChat', 'platform.openModeConversation', 'platform.switchConversationView', 'showHistory', 'showUsage', 'showSettings'].includes(command);
+  if (navigationCommand) intent ??= navigate({ tabId: String(data?.conversationId ?? data?.tabId ?? command) });
+  let result: unknown;
+  try { result = await call('ui.command', { command, data }); }
+  catch (error) { if (intent && !intent.current()) return; throw error; }
+  if (navigationCommand && intent?.current()) emit('navigate');
   return result;
 }
 function open(item: ConversationNavigationItem) {
+  const intent = navigate({ workspaceId: item.workspaceId, tabId: item.id });
   menu.value = undefined;
   void guard(async () => {
-    await command('platform.openModeConversation', { conversationId: item.id });
-    if (item.searchHit) emit('jumpToMessage', { conversationId: item.id,
+    await command('platform.openModeConversation', { conversationId: item.id }, intent);
+    if (intent.current() && item.searchHit) emit('jumpToMessage', { conversationId: item.id,
       messageIndex: item.searchHit.messageIndex, ...(item.searchHit.messageId ? { messageId: item.searchHit.messageId } : {}) });
   });
 }
 async function selectProject(group: (typeof groups.value)[number]) {
   if (!group.uri) { toggleGroup(group.key); return; }
+  const intent = navigate({ workspaceId: group.workspace?.id });
   const candidates = [...group.items, ...navigation.value.pinned.filter(item => group.workspace && item.workspaceId === group.workspace.id)]
     .sort((left, right) => right.updatedAt - left.updatedAt);
   const selected = candidates.find(item => item.id === state.conversationId) ?? candidates[0];
-  if (selected) await command('platform.openModeConversation', { conversationId: selected.id });
+  if (selected) await command('platform.openModeConversation', { conversationId: selected.id }, intent);
+  if (!intent.current()) return;
   if (group.workspace) state.workspaceId = group.workspace.id;
   const next = new Set(collapsedGroups.value); next.delete(group.key); collapsedGroups.value = next;
   state.chatFocused = false; emit('navigate', 'workbench');
 }
 async function newConversation(workspaceId?: string) {
+  const intent = navigate({ workspaceId });
   if (workspaceId) {
     const result = await rpc<{ conversationId: string }>('ui.mode.new', { mode: 'code', workspaceId });
-    await command('platform.openModeConversation', { conversationId: result.conversationId });
-  } else await command('newChat');
+    if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
+  } else await command('newChat', undefined, intent);
 }
 function showMenu(event: MouseEvent, item?: ConversationNavigationItem, view?: ConversationViewInfo) {
   createMenu.value = undefined;
@@ -140,9 +150,10 @@ function showCreateMenu(event: MouseEvent) {
   void nextTick(() => createMenuElement.value?.querySelector<HTMLButtonElement>('button')?.focus());
 }
 async function createGeneralConversation(automaticWorkspace: boolean) {
+  const intent = navigate();
   createMenu.value = undefined;
   const result = await rpc<{ conversationId: string }>('ui.mode.new', { mode: 'chat', automaticWorkspace });
-  await command('platform.openModeConversation', { conversationId: result.conversationId });
+  if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
 }
 async function openInExplorer() {
   const selected = menu.value; menu.value = undefined;

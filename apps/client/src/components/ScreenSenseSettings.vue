@@ -7,6 +7,7 @@ const dialog = ref<HTMLDialogElement>(), snapshot = ref<ScreenSenseSnapshot>(), 
 const options = ref<{ targets: ComputerWindows; conversations: { id: string; title: string }[]; providers: { id: string; name: string; model: string; models: { id: string; name?: string }[] }[] }>();
 const form = reactive({ target: '', trigger: '', interval: '', delivery: '', maximum: '', conversationId: '', providerId: '', modelId: '', prompt: '', currency: '', input: '', output: '', cacheRead: '', cacheWrite: '' });
 let saved = '', unsubscribe: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined, sequence = 0;
+let disposed = false;
 const dirty = computed(() => !!saved && JSON.stringify(form) !== saved);
 const provider = computed(() => options.value?.providers.find(item => item.id === form.providerId));
 const targets = computed(() => options.value ? [...options.value.targets.windows.map(window => ({ key: `window:${window.id}`, label: `${window.title} · PID ${window.processId}`, value: { kind: 'window', window } as ScreenSenseTarget })), ...options.value.targets.displays.map(display => ({ key: `display:${display.id}`, label: `显示器 ${display.id} · ${display.bounds.width} × ${display.bounds.height}`, value: { kind: 'display', display } as ScreenSenseTarget }))] : []);
@@ -17,8 +18,11 @@ function loadForm(configuration?: ScreenSenseConfiguration) {
     currency: configuration.prices?.currency ?? '', ...Object.fromEntries(['input','output','cacheRead','cacheWrite'].map(key => [key, String(configuration.prices?.[key as keyof ScreenSensePrices] ?? '')])) });
   saved = JSON.stringify(form);
 }
-async function refresh() { const request = ++sequence; const value = await call<ScreenSenseSnapshot>('screenSense.get'); if (request !== sequence) return; snapshot.value = value; if (!saved) loadForm(value.configuration); }
-async function perform(work: () => Promise<unknown>) { if (busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await work(); await refresh(); } catch (cause) { error.value = (cause as Error).message; } finally { busy.value = false; } }
+async function refresh() { if (disposed) return; const request = ++sequence; const value = await call<ScreenSenseSnapshot>('screenSense.get'); if (disposed || request !== sequence) return; snapshot.value = value; if (!saved) loadForm(value.configuration); }
+async function refreshOptions() { if (disposed) return; const value = await call<NonNullable<typeof options.value>>('screenSense.options'); if (!disposed) options.value = value; }
+async function perform(work: () => Promise<unknown>) { if (disposed || busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await work(); if (!disposed) await refresh(); } catch (cause) { if (!disposed) error.value = (cause as Error).message; } finally { if (!disposed) busy.value = false; } }
+// 停止采集独立于慢截图的互斥状态，关闭页面后也不再发起补读。
+async function stop() { try { await call('screenSense.stop'); if (!disposed) await refresh(); } catch (cause) { if (!disposed) error.value = (cause as Error).message; } }
 async function save() {
   const target = targets.value.find(item => item.key === form.target)?.value;
   if (!target) throw new Error('请刷新窗口列表并重新选择范围。');
@@ -27,21 +31,23 @@ async function save() {
   const configuration = { target, trigger: form.trigger, intervalSeconds: form.interval ? Number(form.interval) : undefined, delivery: form.delivery,
     maxCaptures: Number(form.maximum), conversationId: form.conversationId, providerId: form.providerId, modelId: form.modelId || undefined, prompt: form.prompt,
     ...(pricing.some(Boolean) ? { prices: { currency: form.currency, input: Number(form.input), output: Number(form.output), cacheRead: Number(form.cacheRead), cacheWrite: Number(form.cacheWrite) } } : {}) };
-  snapshot.value = await call('screenSense.configure', { configuration, revision: snapshot.value?.revision }); loadForm(snapshot.value?.configuration); notice.value = '已保存。点击开启后才会采集屏幕。';
+  const value = await call<ScreenSenseSnapshot>('screenSense.configure', { configuration, revision: snapshot.value?.revision });
+  if (disposed) return;
+  sequence++; snapshot.value = value; loadForm(value.configuration); notice.value = '已保存。点击开启后才会采集屏幕。';
 }
 function close() { if (busy.value) return; if (dirty.value) confirmClose.value = true; else emit('close'); }
-onMounted(() => { dialog.value?.showModal(); void perform(async () => { await refresh(); options.value = await call('screenSense.options'); }); unsubscribe = subscribe(event => {
+onMounted(() => { dialog.value?.showModal(); void perform(async () => { await refresh(); if (!disposed) await refreshOptions(); }); unsubscribe = subscribe(event => {
   if (event.type === 'screenSense.changed' || event.type === 'transport.resumed' || event.type === 'event' && /run\.(completed|failed|cancelled|interrupted)/.test(event.event?.type ?? '')) {
-    if (!timer) timer = setTimeout(() => { timer = undefined; void refresh().catch(cause => { error.value = cause.message; }); }, 160);
+    if (!disposed && !timer) timer = setTimeout(() => { timer = undefined; void refresh().catch(cause => { if (!disposed) error.value = cause.message; }); }, 160);
   }
 }); });
-onBeforeUnmount(() => { sequence++; unsubscribe?.(); clearTimeout(timer); });
+onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeout(timer); });
 </script>
 <template><dialog ref="dialog" class="screen-sense-settings" aria-labelledby="sense-title" @cancel.prevent="close">
   <header><div><h2 id="sense-title">屏幕感知</h2><p>独立选择采集范围和发送方式，重启后需要重新开启。</p></div><button :disabled="busy" @click="close">关闭</button></header>
   <div class="sense-content"><p v-if="error" role="alert" class="error">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
     <section class="sense-current"><strong>{{ snapshot?.status.active ? '本次屏幕感知已开启' : '屏幕感知未开启' }}</strong><p v-if="snapshot?.status.active">{{ snapshot.status.target }} · 已采集 {{ snapshot.status.captures }} / {{ snapshot.status.maxCaptures }} 次<span v-if="snapshot.status.nextCaptureAt"> · 下次 {{ new Date(snapshot.status.nextCaptureAt).toLocaleTimeString() }}</span></p><p v-if="snapshot?.status.error">{{ snapshot.status.error }}</p>
-      <button v-if="snapshot?.status.active" @click="call('screenSense.stop').then(refresh).catch(cause => { error = cause.message; })">立即停止采集</button>
+      <button v-if="snapshot?.status.active" @click="stop">立即停止采集</button>
       <button v-else :disabled="busy || !snapshot?.configuration || dirty" @click="perform(() => call('screenSense.start'))">开启本次屏幕感知</button>
       <button v-if="snapshot?.status.active" :disabled="busy || snapshot.status.capturing || snapshot.status.captures >= (snapshot.status.maxCaptures ?? 0)" @click="perform(() => call('screenSense.capture'))">立即采集一次</button>
       <button v-if="snapshot?.status.lastRunId" @click="perform(() => call('screenSense.cancelRun'))">停止当前屏幕任务</button>
@@ -50,7 +56,7 @@ onBeforeUnmount(() => { sequence++; unsubscribe?.(); clearTimeout(timer); });
     <section v-if="snapshot?.preview" class="sense-preview"><h3>待发送预览 · {{ snapshot.preview.target }}</h3><p>{{ new Date(snapshot.preview.capture.capturedAt).toLocaleString() }} · {{ snapshot.preview.capture.width }} × {{ snapshot.preview.capture.height }}</p><img :src="previewUrl" alt="当前选择范围的屏幕预览"><button :disabled="busy || snapshot.status.capturing" @click="perform(() => call('screenSense.send', { previewId: snapshot!.preview!.id }))">把这张图片发送到所选对话</button></section>
     <div class="settings-guide"><strong>按用途选择采集方式</strong><p>偶尔询问当前画面可用手动采集、先预览；持续关注进度可用间隔采集。自动发送会直接发起模型任务，较短间隔会增加截图、上下文和请求开销。</p></div>
     <form @submit.prevent="perform(save)"><fieldset :disabled="busy"><legend>采集与发送设置</legend>
-      <label>采集范围<select v-model="form.target"><option value="">请选择窗口或显示器</option><option v-for="target in targets" :key="target.key" :value="target.key">{{ target.label }}</option></select></label><button type="button" @click="perform(async () => { options = await call('screenSense.options'); })">刷新窗口列表</button><p>窗口模式仅采集该窗口；显示器模式包含整个所选屏幕。窗口关闭、进程更换或显示器坐标变化后会停止。</p>
+      <label>采集范围<select v-model="form.target"><option value="">请选择窗口或显示器</option><option v-for="target in targets" :key="target.key" :value="target.key">{{ target.label }}</option></select></label><button type="button" @click="perform(refreshOptions)">刷新窗口列表</button><p>窗口模式仅采集该窗口；显示器模式包含整个所选屏幕。窗口关闭、进程更换或显示器坐标变化后会停止。</p>
       <div class="sense-grid"><label>触发方式<select v-model="form.trigger"><option value="">请选择</option><option value="manual">手动采集</option><option value="interval">按间隔采集</option></select></label><label v-if="form.trigger === 'interval'">采集间隔（秒）<input v-model="form.interval" type="number" min="1" max="86400" required aria-label="采集间隔"><small class="settings-help">1～86400 秒。变化很快的操作可用较短间隔；关注下载或构建进度可用 30～60 秒，缓慢变化可用几分钟。实际还受上一轮采集及任务状态影响。</small></label><label>发送方式<select v-model="form.delivery"><option value="">请选择</option><option value="preview">先预览，再由我发送</option><option value="automatic">采集后自动发送</option></select></label><label>本次最多采集次数<input v-model="form.maximum" type="number" min="1" max="10000" required aria-label="本次最多采集次数"><small class="settings-help">达到上限后停止继续采集。次数包含预览采集；例如间隔 60 秒、上限 10 次可用于约十分钟的短时观察，实际时长取决于采集耗时。</small></label></div>
       <label>接收图片的普通对话<select v-model="form.conversationId" required><option value="">请选择</option><option v-for="conversation in options?.conversations" :key="conversation.id" :value="conversation.id">{{ conversation.title }}</option></select></label><div class="sense-grid"><label>渠道<select v-model="form.providerId" required @change="form.modelId = ''"><option value="">请选择</option><option v-for="channel in options?.providers" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select></label><label>模型<select v-model="form.modelId"><option value="">{{ provider?.model || '渠道默认模型' }}</option><option v-for="model in provider?.models" :key="model.id" :value="model.id">{{ model.name || model.id }}</option></select></label></div><label>发送图片时的交流内容<textarea v-model="form.prompt" rows="3" required maxlength="10000" placeholder="写下希望根据画面交流的内容" /></label>
       <details><summary>费用估算参考单价（可选）</summary><p>按每百万 Token 填写，来源为你填写的参考单价。估算覆盖这些屏幕交流任务的完整上下文与回复；实际费用以渠道账单为准。</p><label>币种<input v-model="form.currency" maxlength="20" placeholder="例如 USD"></label><div class="sense-grid"><label>普通输入<input v-model="form.input" type="number" min="0" step="any"></label><label>输出<input v-model="form.output" type="number" min="0" step="any"></label><label>缓存读取<input v-model="form.cacheRead" type="number" min="0" step="any"></label><label>缓存写入<input v-model="form.cacheWrite" type="number" min="0" step="any"></label></div></details>

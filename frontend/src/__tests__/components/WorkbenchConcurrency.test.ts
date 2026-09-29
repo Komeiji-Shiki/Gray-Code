@@ -5,6 +5,8 @@ import FileTree from '../../../../apps/client/src/components/FileTree.vue';
 import WorkbenchTabs from '../../../../apps/client/src/components/WorkbenchTabs.vue';
 import MobileCodeEditor from '../../../../apps/client/src/components/MobileCodeEditor.vue';
 import { state } from '../../../../apps/client/src/state';
+import { effectScope } from 'vue';
+import { useNavigationIntent } from '../../../../apps/client/src/navigationIntent';
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), report: vi.fn(), listeners: new Set<(event: any) => void>() }));
 vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
@@ -65,6 +67,33 @@ test('用户选择其他面板后，旧打开失败不覆盖当前界面错误',
   slow.reject(new Error('旧文件读取失败')); await flushPromises();
   expect(view.tabs().props('active')).toBe('panel:terminal');
   expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('侧栏产生新意图后，同工作区中迟到的文件打开也不能抢回焦点', async () => {
+  const slow = deferred<ReturnType<typeof document>>();
+  mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
+  const view = workbench(); view.open('slow.ts');
+  const scope = effectScope(); scope.run(() => useNavigationIntent()({ workspaceId: 'project', tabId: 'conversation' }));
+  slow.resolve(document('slow.ts')); await flushPromises();
+  expect(view.tabs().props('active')).not.toBe('file:project:slow.ts'); scope.stop();
+});
+
+test('退出保存收集文件失败并保留草稿，仍尝试保存其他文件并回报错误', async () => {
+  const view = workbench(true); view.open('conflict.ts'); view.open('other.ts'); await flushPromises();
+  for (const editor of view.wrapper.findAllComponents(MobileCodeEditor)) editor.vm.$emit('change', 'new draft');
+  await flushPromises();
+  mocks.call.mockImplementation(async (method, params) => {
+    if (method === 'documents.save') {
+      if (params.path === 'conflict.ts') throw new Error('DOCUMENT_CONFLICT');
+      return { ...document(params.path), text: 'new draft', dirty: false };
+    }
+  });
+  for (const listener of mocks.listeners) listener({ type: 'desktop.saveAll', requestId: 'quit-fixture' });
+  await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.save')).toHaveLength(2);
+  expect(mocks.call).toHaveBeenCalledWith('desktop.saveResult', expect.objectContaining({ requestId: 'quit-fixture', participant: 'documents', error: expect.stringContaining('conflict.ts') }));
+  expect(view.tabs().props('active')).toBe('file:project:conflict.ts');
+  expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:conflict.ts', dirty: true })]));
 });
 
 test('切换项目会使原项目的待打开请求失去焦点优先权', async () => {

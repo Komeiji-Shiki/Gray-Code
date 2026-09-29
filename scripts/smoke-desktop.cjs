@@ -7,9 +7,11 @@ const { createServer } = require('node:http');
 const { randomUUID } = require('node:crypto');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
-const output = path.join(root, '.tmp', `desktop-smoke-${randomUUID().slice(0, 8)}`);
+const output = process.env.GRAYCODE_SMOKE_OUTPUT || path.join(root, '.tmp', `desktop-smoke-${randomUUID().slice(0, 8)}`);
+assert(path.dirname(path.resolve(output)) === path.join(root, '.tmp') && path.basename(output).startsWith('desktop-smoke-'));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const errors = [];
+const rendererBenchmark = process.env.GRAYCODE_RENDER_BENCHMARK === '1' ? require('./renderer-performance.cjs') : undefined;
 const paintedFrames = new Map();
 let requests = 0;
 let server;
@@ -33,8 +35,15 @@ async function verifyShutdownRetry(rpc, window) {
         if (!await content.executeJavaScript(`!!document.querySelector('[data-dialog-action="quit"]')`)) return;
         questions++;
         assert.equal(await content.executeJavaScript('document.activeElement?.getAttribute("data-dialog-action")'), 'cancel');
+        assert(await content.executeJavaScript('!!document.querySelector("[data-dialog-action=save]")'));
+        content.setZoomFactor(2);
+        await content.debugger.attach('1.3');
+        await content.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+        assert(await content.executeJavaScript('Array.from(document.querySelectorAll("button")).every(button => {const box=button.getBoundingClientRect();return box.top>=0 && box.bottom<=innerHeight && box.left>=0 && box.right<=innerWidth;})'));
+        await fs.writeFile(path.join(output, 'quit-high-contrast-200.png'), (await content.capturePage()).toPNG());
+        content.debugger.detach(); content.setZoomFactor(1);
         await fs.writeFile(path.join(output, 'quit-confirmation.png'), (await content.capturePage()).toPNG());
-        await content.executeJavaScript(`document.querySelector('[data-dialog-action="quit"]').click()`);
+        await content.executeJavaScript(`document.querySelector('[data-dialog-action="save"]').click()`);
       })().catch(error => { failed = String(error); });
     });
   };
@@ -151,7 +160,8 @@ async function main() {
   process.argv.push('--data', path.join(output, 'data'));
   dialog.showErrorBox = (title, message) => { process.stderr.write(`${title}: ${message}\n`); app.exit(1); };
   app.on('browser-window-created', (_event, window) => {
-    window.webContents.on('paint', (_event, _rect, image) => paintedFrames.set(window.webContents.id, image.toPNG()));
+    const contentsId = window.webContents.id;
+    window.webContents.on('paint', (_event, _rect, image) => paintedFrames.set(contentsId, image.toPNG()));
     window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
     window.webContents.on('render-process-gone', (_event, details) => errors.push(`Renderer exited: ${details.reason}`));
   });
@@ -159,6 +169,7 @@ async function main() {
   server = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks)); requests++;
+    if (rendererBenchmark?.streamRendererWorkload(body, res)) return;
     const answerReceived = body.messages.some(message => typeof message.content === 'string' && message.content.includes('Answer to optional question'));
     const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
     const completed = body.messages.filter(message => message.role === 'tool').length;
@@ -200,6 +211,10 @@ async function main() {
   window.webContents.reload();
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
+  if (rendererBenchmark && process.env.GRAYCODE_BENCHMARK_ONLY === '1') {
+    const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId });
+    process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
+  }
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
   await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
   // 选择项目只切换工作台；通过项目新建按钮明确建立绑定该工作区的代码任务。
@@ -314,8 +329,14 @@ async function main() {
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
   await verifyProjectReplace(evaluate);
   await verifyRegexCancellation(rpc);
+  const rendererPerformance = rendererBenchmark ? await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId }) : undefined;
+  await rpc('ui.command', { command: 'showSettings' });
+  await until(() => chat('!!document.querySelector(".platform-settings-footer")'), 'settings draft for save and quit');
+  const closingSettings = await ui('platform.settings.get');
+  closingSettings.appearance.codeFontSize += 1;
+  await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
-  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
+  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true, rendererPerformance,
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);

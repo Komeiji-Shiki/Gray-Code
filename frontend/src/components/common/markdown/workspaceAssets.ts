@@ -14,6 +14,10 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Ref } from 'vue'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { t } from '@/i18n'
+import { observeAssetPaths, assetRequestGeneration } from './assetChanges'
+import { ImageRequests } from './imageRequests'
+type WorkspaceImage = { success: boolean; data?: string; mimeType?: string; error?: string }
+const imageRequests = new ImageRequests<WorkspaceImage>()
 import { fileExistenceCache, setCached, imageCache, setCachedImage, workspaceAssetRevision } from './markdownItCore'
 import {
   decodeDataPath,
@@ -61,13 +65,15 @@ export function createWorkspaceAssetController(
     const allPaths = extractPotentialFilePaths(content)
     const unchecked = allPaths.filter(p => !fileExistenceCache.has(p))
     if (unchecked.length === 0) return
+    let invalidated = false
+    const stop = observeAssetPaths(() => unchecked, () => { invalidated = true })
 
     try {
       const resp = await sendToExtension<{ results: Record<string, boolean> }>(
         MESSAGE_NAMES.checkWorkspaceFilesExist,
         { paths: unchecked }
       )
-      if (!isCurrent() || revision !== workspaceAssetRevision.value) return
+      if (invalidated || !isCurrent() || revision !== workspaceAssetRevision.value) return
       if (resp?.results) {
         for (const [p, exists] of Object.entries(resp.results)) {
           setCached(fileExistenceCache, p, exists)
@@ -75,19 +81,21 @@ export function createWorkspaceAssetController(
       }
     } catch (err) {
       if (isCurrent() && revision === workspaceAssetRevision.value) console.warn('Failed to prevalidate workspace file paths:', err)
-    }
+    } finally { stop() }
   }
 
   /**
    * 加载工作区图片
    */
   async function loadWorkspaceImages(isCurrent: () => boolean = () => true) {
+    const requestGeneration = assetRequestGeneration()
     const container = containerRef.value
     const revision = workspaceAssetRevision.value
-    const current = () => isCurrent() && revision === workspaceAssetRevision.value && containerRef.value === container
+    let invalidated = false
+    const current = () => !invalidated && isCurrent() && revision === workspaceAssetRevision.value && containerRef.value === container
     if (!container || !current()) return
 
-    const images = container.querySelectorAll('img.workspace-image[data-path]')
+    const images = container.querySelectorAll('img.workspace-image[data-path], img.loaded-image[data-path]')
     // 缓存命中的图片同步设置 src；未命中的收集后按并发上限批量拉取
     const pending: Array<{ img: Element; imgPath: string }> = []
 
@@ -115,19 +123,12 @@ export function createWorkspaceAssetController(
       pending.push({ img, imgPath })
     }
 
-    // 有界并行拉取：每批最多 4 个并发跨端请求，避免大量图片时一次性打爆扩展进程
-    const CONCURRENCY = 4
-    for (let i = 0; i < pending.length; i += CONCURRENCY) {
-      if (!current()) return
-      const batch = pending.slice(i, i + CONCURRENCY)
-      await Promise.all(batch.map(async ({ img, imgPath }) => {
+    const stop = observeAssetPaths(() => pending.map(item => item.imgPath), () => { invalidated = true })
+    try {
+      await Promise.all(pending.map(async ({ img, imgPath }) => {
         try {
-          const response = await sendToExtension<{
-            success: boolean;
-            data?: string;
-            mimeType?: string;
-            error?: string;
-          }>(MESSAGE_NAMES.readWorkspaceImage, { path: imgPath })
+          const response = await imageRequests.request(`${requestGeneration}:${imgPath}`, () => sendToExtension<WorkspaceImage>(MESSAGE_NAMES.readWorkspaceImage, { path: imgPath }),
+            current, () => { const rect = img.getBoundingClientRect(); return rect.bottom >= 0 && rect.top <= innerHeight ? 0 : Math.abs(rect.top) + 1 })
 
           if (!current() || !container.contains(img)) return
           if (response?.success && response.data) {
@@ -148,7 +149,7 @@ export function createWorkspaceAssetController(
           img.classList.add('image-error')
         }
       }))
-    }
+    } finally { stop() }
   }
 
   /**

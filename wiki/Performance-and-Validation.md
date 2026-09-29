@@ -82,7 +82,31 @@
 `editorPendingWork` 使用受控慢宿主验证待发送修改的合并：100 次连续输入在队列尚未执行时只发送一次最新全文。这个数字仅描述该夹具；实际输入间隔、宿主延迟和保存操作会改变请求数。待发送任务和保存/关闭屏障分开，保持版本与顺序语义。
 
 Markdown 完成态 HTML 使用跨消息共享的 128 条、8 MiB LRU；图片缓存和高亮缓存继续使用各自预算。切换工作区时同时失效图片、文件存在性与完成态 HTML，旧工作区尚在执行的异步任务不得回填缓存。文件变动通知合并 150 ms 后触发失效。
+文件变动现在按相对路径与绝对路径通知相关渲染器，无关消息保持原结果；重连和工作区切换仍整体失效。图片读取在所有消息间共享四路并发，同一世代的相同路径复用请求，过期排队项跳过，屏幕内图片优先。四路是同时进行的读取数，不限制图片总数或模型附件数。
 
 低频配置面板与首次打开前的终端按需加载；侧栏按一次分组生成工作区映射，并保留未识别工作区的历史对话入口。后台空闲检查与更新状态轮询均保持单飞请求，更新面板隐藏时暂停轮询。
 
 验证入口：`npm run typecheck:all`、`npm run test:frontend`、`npm run test:platform`、`npm run build:desktop`。Windows CI 的 `scripts/smoke-desktop.cjs` 会点击真实品牌退出对话框，检查默认取消焦点、重复退出互斥和清理失败重试，并保存退出确认截图。安装器原生部署、更新中断和回退仍需在隔离 Windows 环境验收。
+
+### 后续审计的依赖与行为预算
+
+编辑器维持全部编辑贡献和语法注册，TypeScript、CSS、HTML、JSON 的浏览器语言服务按当前语言加载，工作区 LSP 继续负责已有的诊断和补全。主线程的 Monaco 相关块由 PR #43 的 4,034,590 字节降到约 3,994,561 字节，变化约 1%；这不代表完整编辑器首次打开快了同样比例。
+
+`npm run build:desktop` 生成 Vite manifest，并运行 `scripts/renderer-budget.mjs`。报告保存在 `.tmp/renderer-budget.json`，分别列出入口静态依赖、动态面板的静态依赖、主线程大块与 worker。外壳主线程单块上限维持审计前的 4,034,590 字节，聊天为 1,400,000 字节；worker 独立使用 7,100,000 字节预算。Vite 原有的 500 kB 警告保留。入口引导块并不包含随后动态导入的 App，报告中的动态视图依赖必须一起查看。
+
+长对话测量用 `node scripts/renderer-performance.cjs`，只跑测量用 `node scripts/renderer-performance.cjs --only`。脚本先在独立数据目录准备 1,000 / 5,000 条合成历史，关闭准备数据的核心后启动 Electron，保留单实例锁。正文混合公式、Mermaid、长代码块和普通文字，并使用本机 SSE 端点边输出边滚动。结果记录首次打开时间、180 个帧间隔的 P50/P95/P99、长任务和峰值挂载消息数；输出位于 `.tmp/desktop-smoke-renderer-*/renderer-performance.json`。这是单机离屏 Chromium 基线，物理显示器刷新率、屏幕阅读器和真实远端磁盘仍需另外验收。
+
+2026-09-29 本机 Electron 44.2.0 的合成基线：1,000 条首次显示 415 ms，5,000 条 783 ms；两者帧间隔 P95 约 16.8 ms，峰值挂载消息均为 40，采样期间未记录到长任务。每种场景采样 180 帧，页面错误列表为空；这些结果不代表其他设备、远程宿主或无限历史规模的保证。
+
+| 组件 | 状态或计算的归属 | 清理与回归边界 |
+| --- | --- | --- |
+| SubAgentMonitor | `monitorLiveReplay` 持有每个任务的片段缓存，`useMonitorControls` 持有控制回执与计时器 | 版本匹配、迟到事件、同任务重连、停止和历史窗口 |
+| CustomScrollbar | `useScrollbarGeometry` 负责真实/虚拟坐标，`useScrollbarStyles` 只消费测量结果 | 观察器和指针监听仍由组件统一清理，保留历史锚点与嵌套滚动 |
+| write_file | `useWriteFilePlans` 负责计划执行的渠道与模型订阅 | 模型切换世代、卸载、按 diffContentId 区分预览 |
+| InputBox | `useEditorGeometry` 负责高度、光标可见性与拖动 | IME、撤销、键盘和提交仍由原组件及既有输入模块协调 |
+| MessageList | 保留既有虚拟窗口、任务面板和恢复流程 composable，样式独立 | 历史插入、定位引用、离底部输出和回到底部 |
+| apply_diff | `diffBlocks` 负责统一差异解析，展示继续使用 VirtualDiffLines | 部分失败、重复应用和长 diff |
+| PromptSettings | `promptEntries` 统一导入、预览、保存使用的条目规范化 | 取消不保存、聊天历史条目位置保持一致 |
+| ChannelSettings | `useChannelCredentials` 统一 URL/密钥延迟保存与明文请求身份 | 切换渠道、迟到回填、保存屏障和卸载 |
+
+各组件的 scoped CSS 位于同目录同名文件，组件仍以 `<style scoped src="...">` 加载；静态样式守卫继续读取这些实际样式文件。

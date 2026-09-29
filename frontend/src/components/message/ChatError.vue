@@ -4,6 +4,7 @@ import CopyButton from '../common/CopyButton.vue'
 import type { ErrorInfo } from '../../types'
 import { useI18n } from '../../i18n'
 import { isRetryableError } from '../../stores/chat/messageActions/retryFlows'
+import { redactDiagnostic } from '@shared/diagnosticText'
 
 defineProps<{ error: ErrorInfo }>()
 const emit = defineEmits<{ retry: []; dismiss: [] }>()
@@ -16,7 +17,7 @@ const { t } = useI18n()
       <div class="error-icon">⚠</div>
       <div class="error-title">{{ t('components.message.error.title') }}</div>
       <div class="error-actions">
-        <CopyButton :text="`${error.code}: ${error.message}`" />
+        <CopyButton :text="redactDiagnostic(`${error.code}: ${error.message}`)" />
         <button v-if="isRetryableError(error)" class="error-retry" type="button" @click="emit('retry')"
           :title="t('components.message.error.retry')" :aria-label="t('components.message.error.retry')">
           <span class="codicon codicon-refresh"></span>

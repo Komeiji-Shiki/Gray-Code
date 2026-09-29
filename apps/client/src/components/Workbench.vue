@@ -11,6 +11,7 @@ import {
 import type { IRange, editor as MonacoEditor } from "monaco-editor";
 import type { DocumentState, ProjectReplacement, SourceRange } from "@graycode/contracts";
 import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/editorBatchHistory';
+import { documentTextPatch } from '../../../../shared/documentPatch';
 import { call, subscribe } from "../api";
 import { guard, report, state } from "../state";
 import MarkdownIt from 'markdown-it';
@@ -18,6 +19,7 @@ import BrowserPane from './BrowserPane.vue';
 import FileTree from "./FileTree.vue";
 import { PendingDocumentChanges } from '../pendingDocumentChanges';
 import { ModelReadyWaiters } from '../modelReadyWaiters';
+import { useNavigationIntent } from '../navigationIntent';
 import GitPanel from "./GitPanel.vue";
 import ProblemsPanel from "./ProblemsPanel.vue";
 import SearchPanel from './SearchPanel.vue';
@@ -33,12 +35,14 @@ import WorkbenchTabs from './WorkbenchTabs.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import { workbenchPanels, type WorkbenchTab } from './workbenchPanels';
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
+const navigate = useNavigationIntent();
 connectDebugging();
 const TerminalPanel = defineAsyncComponent(() => import('./TerminalPanel.vue'));
 const terminalSession = ref('');
 const CodeEditor = defineAsyncComponent(() => import("./CodeEditor.vue"));
 const DiffPanel = defineAsyncComponent(() => import("./DiffPanel.vue"));
 const documents = reactive<DocumentState[]>([]);
+const synchronizedText = new WeakMap<DocumentState, { text: string; version: number }>();
 const current = ref("");
 const pane = ref('empty');
 let openSequence = 0;
@@ -62,6 +66,7 @@ function endTreeResize() { treeResizing.value = false; state.panelResizing = fal
 watch(treeVisible, value => localStorage.setItem('graycode.fileTreeVisible', String(value)));
 watch(pane, value => { if (!['editor', 'empty'].includes(value) && !openedPanels.value.includes(value)) openedPanels.value.push(value); });
 function activatePanel(id: string) {
+  navigate({ tabId: id });
   openSequence++;
   if (!openedPanels.value.includes(id) && (id !== 'editor' || !documents.length)) openedPanels.value.push(id);
   pane.value = id; state.chatFocused = false;
@@ -84,6 +89,7 @@ watch(pane, value => { if (value === 'browser' && !browserCreated && !browserSta
 const isWeb = window.graycode?.kind === 'web';
 const monitorQuery = ref('');
 function openMonitor(runId?: string, conversationId?: string) {
+  navigate({ tabId: 'monitor' });
   openSequence++;
   const query = new URLSearchParams({ view: 'subagents' });
   if (runId) query.set('runId', runId);
@@ -112,7 +118,17 @@ function openRange(path: string, range: SourceRange, workspaceId: string) {
   return open(path, workspaceId, { startLineNumber: range.start.line + 1, startColumn: range.start.character + 1,
     endLineNumber: range.end.line + 1, endColumn: range.end.character + 1 });
 }
-async function saveAll() { await flushDocuments(); for (const doc of documents.filter(doc => doc.dirty)) await save(doc); }
+async function saveAll() {
+  const failures: { doc: DocumentState; error: unknown }[] = [];
+  for (const doc of documents) {
+    try { await flushDocument(doc); if (doc.dirty) await save(doc); }
+    catch (error) { failures.push({ doc, error }); }
+  }
+  if (failures.length) {
+    current.value = key(failures[0].doc); pane.value = 'editor'; state.chatFocused = false; state.settingsOpen = false;
+    throw new Error(failures.map(item => `${item.doc.path}: ${item.error instanceof Error ? item.error.message : String(item.error)}`).join('\n'));
+  }
+}
 async function replaceFiles(workspaceId: string, edits: ProjectReplacement[]): Promise<EditBatchHandle> {
   await Promise.all(edits.map(edit => open(edit.path, workspaceId, undefined, false)));
   await flushDocuments();
@@ -154,6 +170,7 @@ const activeTab = computed(() => pane.value === 'empty' ? '' : pane.value === 'e
 const breadcrumb = computed(() => active.value?.path.split(/[\\/]/).filter(Boolean) ?? []);
 const documentWorkspace = computed(() => state.snapshot?.settings.workspaces.find(workspace => workspace.id === active.value?.workspaceId));
 function selectTab(id: string) {
+  navigate({ tabId: id });
   openSequence++;
   if (id.startsWith('file:')) { current.value = id.slice(5); pane.value = 'editor'; }
   else pane.value = id.slice(6);
@@ -170,21 +187,23 @@ async function copyPath() {
 }
 async function open(path: string, workspaceId = state.workspaceId, selection?: IRange, focus = true) {
   const sequence = focus ? ++openSequence : undefined;
+  const intent = focus ? navigate({ workspaceId, tabId: path }) : undefined;
+  const currentIntent = () => sequence === openSequence && intent?.current();
   try {
     if (/\.(png|jpe?g|gif|webp|bmp|svg|ico|pdf|mp3|wav|ogg|mp4|webm)$/i.test(path)) {
-      await call('browser.openFile', { workspaceId, path }); if (props.compact && focus && sequence === openSequence) mobileTreeVisible.value = false; return;
+      await call('browser.openFile', { workspaceId, path }); if (props.compact && focus && currentIntent()) mobileTreeVisible.value = false; return;
     }
     let doc = documents.find(item => item.workspaceId === workspaceId && item.path === path);
     if (!doc) {
       const opened = await call<DocumentState>('documents.open', { workspaceId, path });
       doc = documents.find(item => key(item) === key(opened));
-      if (!doc) { documents.push(opened); doc = opened; }
+      if (!doc) { documents.push(opened); doc = documents[documents.length - 1]; synchronizedText.set(doc, { text: doc.text, version: doc.version }); }
     }
     const id = key(doc);
-    if (focus && sequence === openSequence) { pane.value = 'editor'; openedPanels.value = openedPanels.value.filter(item => item !== 'editor'); if (props.compact) mobileTreeVisible.value = false; if (selection) markdownPreview.value = false; current.value = id; if (selection) selections[id] = { ...selection }; }
+    if (focus && currentIntent()) { pane.value = 'editor'; openedPanels.value = openedPanels.value.filter(item => item !== 'editor'); if (props.compact) mobileTreeVisible.value = false; if (selection) markdownPreview.value = false; current.value = id; if (selection) selections[id] = { ...selection }; }
     await nextTick();
   } catch (error) {
-    if (!focus || sequence === openSequence) throw error;
+    if (!focus || currentIntent()) throw error;
   }
 }
 // 聊天仍可保留当前代码标签，发起任务时由核心捕获此客户端的选择。
@@ -216,7 +235,12 @@ function queue(doc: DocumentState, operation: () => Promise<unknown>, isChange =
 const pendingChanges = new PendingDocumentChanges<DocumentState>(
   (doc, operation) => { void queue(doc, operation, true); },
   async (doc, text) => {
-    const result = await call<DocumentState>('documents.update', { workspaceId: doc.workspaceId, path: doc.path, text, version: doc.version });
+    const base = synchronizedText.get(doc);
+    const patch = doc.supportsPatches && base?.version === doc.version ? documentTextPatch(base.text, text) : undefined;
+    // 全文更短或基线未知时沿用旧协议；版本冲突必须保留草稿，不能用全文覆盖宿主。
+    const payload = patch && JSON.stringify(patch).length < text.length ? { patch } : { text };
+    const result = await call<Pick<DocumentState, 'version' | 'dirty'>>('documents.update', { workspaceId: doc.workspaceId, path: doc.path, ...payload, version: doc.version });
+    synchronizedText.set(doc, { text, version: result.version });
     doc.version = result.version;
     if (doc.text === text) doc.dirty = result.dirty;
   },
@@ -272,6 +296,15 @@ watch(
   (count) => void guard(() => call("desktop.dirtyDocuments", { count })),
 );
 const unsubscribe = subscribe((event) => {
+  if (event.type === 'desktop.saveAll') {
+    void (async () => {
+      let error: string | undefined;
+      try { await saveAll(); await call('desktop.dirtyDocuments', { count: documents.filter(doc => doc.dirty).length }); }
+      catch (cause) { error = cause instanceof Error ? cause.message : String(cause); report(cause); }
+      await call('desktop.saveResult', { requestId: event.requestId, participant: 'documents', error });
+    })().catch(report);
+    return;
+  }
   if (event.type === 'document.reset') {
     const doc = documents.find(item => item.workspaceId === event.workspaceId && item.path === event.path);
     if (!doc) return;
@@ -280,6 +313,7 @@ const unsubscribe = subscribe((event) => {
       const previousKey = key(doc); const wasCurrent = current.value === previousKey;
       const text = doc.text;
       Object.assign(doc, event.document);
+      synchronizedText.set(doc, { text: event.document.text, version: event.document.version });
       if (key(doc) !== previousKey) {
         if (wasCurrent) current.value = key(doc);
         const pending = queues.get(previousKey); queues.delete(previousKey); if (pending) queues.set(key(doc), pending);
@@ -314,6 +348,7 @@ const unsubscribe = subscribe((event) => {
     const changed = doc.dirty || doc.text !== text;
     const latest = doc.text;
     Object.assign(doc, next);
+    synchronizedText.set(doc, { text: next.text, version: next.version });
     if (changed) { doc.text = latest; doc.dirty = true; }
   });
 });

@@ -150,6 +150,8 @@ export interface SettingsDraft {
   credentials?: Record<string, string | null>;
 }
 export interface DocumentState {
+  /** 宿主支持基于 version 的增量更新；旧宿主省略时沿用全文同步。 */
+  supportsPatches?: boolean;
   workspaceId: string;
   path: string;
   text: string;

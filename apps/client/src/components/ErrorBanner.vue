@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { call } from '../api';
+import { shellText as t } from '../i18n';
+import { redactDiagnostic } from '../../../../shared/diagnosticText';
 
 const props = defineProps<{ message: string }>();
 const emit = defineEmits<{ dismiss: [] }>();
@@ -11,11 +13,12 @@ async function copy() {
   const message = props.message;
   copying.value = true;
   try {
-    if (window.graycode.kind === 'web') await navigator.clipboard.writeText(message);
-    else await call('desktop.clipboard.writeText', { text: message });
-    if (props.message === message) feedback.value = '已复制';
+    const diagnostic = redactDiagnostic(message);
+    if (window.graycode.kind === 'web') await navigator.clipboard.writeText(diagnostic);
+    else await call('desktop.clipboard.writeText', { text: diagnostic });
+    if (props.message === message) feedback.value = t('copied');
   } catch {
-    if (props.message === message) feedback.value = '复制失败';
+    if (props.message === message) feedback.value = t('copyFailed');
   } finally { copying.value = false; }
 }
 </script>
@@ -24,9 +27,9 @@ async function copy() {
   <div class="error-banner" role="alert">
     <span class="error-banner-message">{{ message }}</span>
     <div class="error-banner-actions">
-      <button type="button" :disabled="copying" @click="copy">复制错误</button>
+      <button type="button" :disabled="copying" @click="copy">{{ t('copyError') }}</button>
       <span role="status">{{ feedback }}</span>
-      <button type="button" @click="emit('dismiss')">关闭</button>
+      <button type="button" @click="emit('dismiss')">{{ t('close') }}</button>
     </div>
   </div>
 </template>

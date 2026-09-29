@@ -3,15 +3,18 @@ import errorSound from '../../../resources/sound/error.mp3?url';
 import completeSound from '../../../resources/sound/taskComplete.mp3?url';
 import taskErrorSound from '../../../resources/sound/taskError.mp3?url';
 import type { HostTransport } from '../utils/hostTransport';
+import { watch } from 'vue';
+import { actualLanguage } from '../i18n';
 import { WORKSPACE_PANEL_MESSAGE } from '@shared/workspacePanelNavigation';
 import './theme.css';
 import '@vscode/codicons/dist/codicon.css';
 import { applyDesktopAppearance } from './appearance';
 import { invalidateWorkspaceAssets } from '../components/common/markdown/markdownItCore';
-import { trackPreferenceRequest, desktopSettingsDraft } from './settingsDraft';
+import { trackPreferenceRequest, desktopSettingsDraft, saveDesktopSettings } from './settingsDraft';
 
 type DesktopBridge = { kind?: 'desktop' | 'web'; call(method: string, params?: Record<string, unknown>): Promise<any>; subscribe(listener: (event: Record<string, any>) => void): () => void };
 const desktop = (window.parent as unknown as { graycode: DesktopBridge }).graycode;
+watch(actualLanguage, language => window.parent.postMessage({ type: 'graycode.language', language }, window.location.origin === 'null' ? '*' : window.location.origin), { immediate: true });
 if (!desktop) throw new Error('The desktop host is unavailable.');
 const viewQuery = new URLSearchParams(window.location.search);
 const isMonitorView = viewQuery.get('view') === 'subagents';
@@ -75,15 +78,33 @@ defaultPromptModeId = startupPresets.currentModeId || 'code';
 window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.settings?.ui?.appearance?.splashEnabled !== false;
 applyDesktopAppearance(platformSettings.appearance);
 let assetTimer: ReturnType<typeof setTimeout> | undefined;
-function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; invalidateWorkspaceAssets(); }
+const changedAssetPaths = new Set<string>();
+let assetWorkspaceId: string | undefined;
+function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; changedAssetPaths.clear(); invalidateWorkspaceAssets(); }
 window.addEventListener('pagehide', () => { if (assetTimer) clearTimeout(assetTimer); }, { once: true });
 desktop.subscribe(event => {
+  if (event.type === 'desktop.saveAll' && !isMonitorView) {
+    void (async () => {
+      let error: string | undefined;
+      try {
+        if (desktopSettingsDraft.busy) throw new Error('设置正在保存，请稍后重试。');
+        if (desktopSettingsDraft.editing) await saveDesktopSettings();
+      } catch (cause) {
+        error = cause instanceof Error ? cause.message : String(cause);
+        await desktop.call('ui.command', { command: 'showSettings' }).catch(() => {});
+      }
+      await desktop.call('desktop.saveResult', { requestId: event.requestId, participant: 'settings', error });
+    })().catch(error => { desktopSettingsDraft.error = String(error); });
+  }
+  if (event.type === 'workspace.selected' || event.type === 'ui.conversation.focused' && !event.resynchronized) assetWorkspaceId = event.workspaceId;
   if (event.type === 'workspace.selected' || event.type === 'ui.message' && event.message?.type === 'workspaceUri'
     || event.type === 'ui.conversation.focused' && !event.resynchronized
     || event.type === 'transport.resumed') resetWorkspaceAssets();
-  if (event.type === 'file.changed') {
-    if (assetTimer) clearTimeout(assetTimer);
-    assetTimer = setTimeout(resetWorkspaceAssets, 150);
+  if (event.type === 'file.changed' && (!assetWorkspaceId || event.workspaceId === assetWorkspaceId)) {
+    if (typeof event.path === 'string') changedAssetPaths.add(event.path);
+    if (typeof event.absolute === 'string') changedAssetPaths.add(event.absolute);
+    // 固定窗口合并，不因持续写文件无限推迟失效。
+    if (!assetTimer) assetTimer = setTimeout(() => { assetTimer = undefined; const paths = [...changedAssetPaths]; changedAssetPaths.clear(); invalidateWorkspaceAssets(paths.length ? paths : undefined); }, 150);
   }
   if (event.type === 'ui.message' && event.message?.command === 'platform.modeSelected') resetWorkspaceAssets();
   if (event.type === 'settings.changed') {

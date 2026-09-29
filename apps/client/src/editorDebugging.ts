@@ -1,5 +1,5 @@
 import { watch } from 'vue';
-import * as monaco from 'monaco-editor';
+import * as monaco from './monaco';
 import { changeBreakpoints, connectDebugging, debugState, loadDebugSettings, toggleBreakpoint } from './debugging';
 import { report } from './state';
 

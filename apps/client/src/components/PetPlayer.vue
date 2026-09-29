@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { PetCommandInput, PetConfiguration, PetParameter, PetRenderState, PetResource } from '@graycode/contracts';
 import { call } from '../api';
 import type { PetRenderPayload } from '../pets/protocol';
+import { PetRequests } from '../pets/requests';
 const props = defineProps<{ resource: PetResource; configuration: PetConfiguration; state?: PetRenderState; controlled?: boolean }>();
 const emit = defineEmits<{ ready: [parameters: PetParameter[]]; failed: [message: string] }>();
 const frame = ref<HTMLIFrameElement>(), container = ref<HTMLDivElement>(), error = ref(''), ready = ref(false);
@@ -11,7 +12,7 @@ const generation = props.state?.generation;
 const source = new URL('pet-renderer.html', location.href).href;
 let heartbeat: ReturnType<typeof setInterval> | undefined, observer: ResizeObserver | undefined;
 let connected = false, started = false, closed = false, payload: PetRenderPayload | undefined, lastApply = '';
-const pending = new Map<string, { resolve(): void; reject(error: Error): void }>();
+const requests = new PetRequests();
 const identity = () => ({ rendererId, generation });
 function post(value: Record<string, unknown>) { frame.value?.contentWindow?.postMessage(JSON.parse(JSON.stringify({ type: 'graycode.pet.host', sessionId, ...value })), '*'); }
 function start() { if (!connected || !payload || started || closed) return; started = true; post({ action: 'load', payload }); }
@@ -21,7 +22,7 @@ function current(force = false) {
   if (!force && value === lastApply) return; lastApply = value;
   post({ action: 'apply', command: props.state?.current ?? null, configuration: props.configuration });
 }
-function failed(message: string) { error.value = message; emit('failed', message); }
+function failed(message: string) { if (closed) return; error.value = message; requests.rejectAll(new Error(message)); emit('failed', message); }
 async function message(event: MessageEvent) {
   if (closed || event.source !== frame.value?.contentWindow || event.data?.type !== 'graycode.pet.renderer') return;
   const value = event.data;
@@ -30,24 +31,30 @@ async function message(event: MessageEvent) {
   try {
     if (value.event === 'ready') {
       if (props.controlled) await call('pets.renderer.ready', { ...identity(), parameters: value.parameters });
+      if (closed) return;
       ready.value = true; const bounds = container.value?.getBoundingClientRect(); if (bounds) post({ action: 'resize', width: Math.round(bounds.width * devicePixelRatio), height: Math.round(bounds.height * devicePixelRatio) }); emit('ready', value.parameters); current(true);
+    } else if (value.event === 'closed') {
+      ready.value = false; failed('播放器已关闭，请重新打开预览。');
+      if (props.controlled) await call('pets.renderer.closed', identity());
     } else if (value.event === 'failed') {
+      ready.value = false;
       failed(String(value.error)); if (props.controlled) await call('pets.renderer.failed', { ...identity(), error: value.error });
     } else if (value.event === 'applied') {
+      requests.settle(value.requestId, value.success ? undefined : new Error(value.error));
       if (value.requestId && props.controlled) await call('pets.renderer.applied', { ...identity(), requestId: value.requestId, success: value.success === true, error: value.error });
-      const waiting = pending.get(value.requestId);
-      if (waiting) { pending.delete(value.requestId); if (value.success) waiting.resolve(); else waiting.reject(new Error(value.error)); }
-      if (!value.success) failed(String(value.error));
+      if (!closed && !value.success) error.value = String(value.error);
     }
   } catch (cause) { failed((cause as Error).message); }
 }
-function apply(command: PetCommandInput | null): Promise<void> {
-  if (!ready.value) return Promise.reject(new Error('桌宠预览尚未就绪。'));
+function apply(command: PetCommandInput | null, signal?: AbortSignal): Promise<void> {
+  if (closed || !ready.value) return Promise.reject(new Error('桌宠预览尚未就绪。'));
+  if (signal?.aborted) return Promise.reject(new Error('桌宠请求已取消。'));
   const requestId = crypto.randomUUID(); error.value = '';
-  return new Promise((resolve, reject) => {
-    pending.set(requestId, { resolve, reject });
+  const result = requests.wait(requestId, signal);
+  try {
     post({ action: 'apply', command: { ...(command ?? { action: 'cancel' }), requestId }, configuration: props.configuration });
-  });
+  } catch (cause) { requests.settle(requestId, cause instanceof Error ? cause : new Error(String(cause))); }
+  return result;
 }
 watch(() => [props.state?.current, props.configuration.stopped, props.configuration.reducedMotion], () => current(), { deep: true });
 onMounted(async () => {
@@ -68,7 +75,7 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   closed = true; observer?.disconnect(); clearInterval(heartbeat); window.removeEventListener('message', message);
-  for (const waiting of pending.values()) waiting.reject(new Error('预览已经关闭。')); pending.clear();
+  requests.rejectAll(new Error('预览已经关闭。'));
   if (props.controlled) void call('pets.renderer.closed', identity()).catch(() => {});
 });
 defineExpose({ apply, ready });

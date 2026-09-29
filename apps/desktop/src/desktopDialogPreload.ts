@@ -23,5 +23,5 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 ipcRenderer.on('graycode:dialog-progress', (_event, text: unknown) => {
   const label = document.getElementById('progress-label');
-  if (label && typeof text === 'string') label.textContent = text;
+  if (label && typeof text === 'string' && label.textContent !== text) label.textContent = text;
 });

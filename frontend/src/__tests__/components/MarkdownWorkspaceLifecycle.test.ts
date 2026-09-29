@@ -57,3 +57,15 @@ test('相同完成态消息在重新挂载时复用同一份有界缓存', async
   await vi.advanceTimersByTimeAsync(0);
   expect(second.get('h1').text()).toBe('Shared completed message'); expect(render).toHaveBeenCalledTimes(count);
 });
+
+test('只刷新引用了变更文件的消息，已显示图片也能重新读取', async () => {
+  request.mockImplementation(async method => method === 'readWorkspaceImage' ? { success: true, data: 'AAAA' } : { results: {} });
+  const first = mount(MarkdownRenderer, { props: { content: '![image](picture.png)' } });
+  const second = mount(MarkdownRenderer, { props: { content: 'unrelated text' } }); wrappers.push(first, second);
+  await vi.advanceTimersByTimeAsync(0); await flushPromises();
+  expect(first.find('img.loaded-image').exists()).toBe(true);
+  const render = vi.spyOn(engine, 'renderContent'); request.mockClear();
+  invalidateWorkspaceAssets(['picture.png']); await vi.advanceTimersByTimeAsync(0); await flushPromises();
+  expect(request.mock.calls.filter(([method]) => method === 'readWorkspaceImage')).toHaveLength(1);
+  expect(render.mock.calls.some(([content]) => content === 'unrelated text')).toBe(false);
+});

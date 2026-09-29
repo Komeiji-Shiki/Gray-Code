@@ -1,4 +1,5 @@
 import { inside, resolveWorkspacePath, workspaceFilePath, workspaceRootFor, workspaceRoots } from './paths';
+import { applyDocumentTextPatch, type DocumentTextPatch } from '../../../../shared/documentPatch';
 export { inside } from './paths';
 import type { ToolContext } from '@graycode/core';
 import path from "node:path";
@@ -423,7 +424,7 @@ export class WorkspaceFiles {
     workspace: WorkspaceDefinition,
     file: string,
     clientId: string,
-    text: string,
+    text: string | DocumentTextPatch,
     version: number,
   ): Promise<DocumentState> {
     return this.locked('workspace-mutations', async () => {
@@ -431,6 +432,7 @@ export class WorkspaceFiles {
     const document = this.documents.get(this.documentKey(clientId, absolute));
     if (!document || document.version !== version)
       throw new Error("DOCUMENT_CONFLICT: Editor draft is stale.");
+    if (typeof text !== 'string') text = applyDocumentTextPatch(document.text, text);
     if (typeof text !== "string" || Buffer.byteLength(text) > textLimit)
       throw new Error("Text exceeds the editing limit.");
     document.text = text;
