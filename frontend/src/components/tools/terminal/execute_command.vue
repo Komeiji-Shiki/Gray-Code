@@ -10,12 +10,13 @@
  * 使用 terminalStore 管理实时输出
  */
 
-import { computed, ref, watch, onMounted, nextTick } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useTerminalStore } from '../../../stores/terminalStore'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { copyToClipboard } from '../../../utils/format'
 import { showNotification } from '../../../utils/vscode'
+import { useMessageFileConversation } from '../../../composables/messageFileContext'
 
 const { t } = useI18n()
 
@@ -33,12 +34,16 @@ const emit = defineEmits<{
 
 // 终端 store
 const terminalStore = useTerminalStore()
+const conversation = useMessageFileConversation()
+const operationError = ref('')
+let disposed = false
+let copyTimer: ReturnType<typeof setTimeout> | undefined
 
 // 杀掉终端的加载状态
 const killing = ref(false)
 
 // 滚动容器引用
-const outputContainer = ref<HTMLElement | null>(null)
+const outputScrollbar = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 
 // 是否自动滚动到底部
 const autoScroll = ref(true)
@@ -57,22 +62,15 @@ const resultData = computed(() => {
 // 终端 ID（来自工具执行结果）
 const terminalId = computed(() => resultData.value.terminalId as string || '')
 
-// 从 store 获取终端状态
-// 优先通过 terminalId 获取，如果没有则尝试通过命令匹配
+// 回执 ID 或调用身份决定终端归属，相同命令可以在多个项目同时运行。
 const terminalState = computed(() => {
   if (terminalId.value) {
     return terminalStore.getTerminal(terminalId.value)
   }
   
-  if (command.value) {
-    const matchedId = terminalStore.findTerminalByCommand(command.value, cwd.value || undefined)
-    if (matchedId) {
-      return terminalStore.getTerminal(matchedId)
-    }
-  }
-  
-  return null
+  return props.toolId ? terminalStore.findTerminalByTool(props.toolId, conversation?.value) : undefined
 })
+const executionError = computed(() => props.error || props.result?.error as string || resultData.value.error || terminalState.value?.error)
 
 // 输出内容 - 优先使用 store 中的实时输出，否则使用结果中的静态输出
 const output = computed(() => {
@@ -115,61 +113,41 @@ const duration = computed(() => {
   return resultData.value.duration as number | undefined
 })
 
-const truncated = computed(() => resultData.value.truncated as boolean || false)
+const truncated = computed(() => terminalState.value?.truncated || resultData.value.truncated === true)
 const totalLines = computed(() => resultData.value.totalLines as number || 0)
 const outputLines = computed(() => resultData.value.outputLines as number || 0)
 
 // 是否正在运行
 const isRunning = computed(() => {
-  if (props.error) return false
-  
-  const result = props.result as Record<string, any> | undefined
-  if (result?.error) return false
-  
-  if (
-    props.status === 'streaming' ||
-    props.status === 'queued' ||
-    props.status === 'awaiting_approval' ||
-    props.status === 'executing'
-  ) {
-    return true
-  }
-  
+  if (executionError.value) return false
   if (terminalState.value) {
     return terminalState.value.running
   }
   
   if (killed.value) return false
   if (exitCode.value !== undefined) return false
-  return !!terminalId.value
+  return props.status === 'executing'
 })
 
 // 执行状态标签
 const statusLabel = computed(() => {
-  // 检查结果中的 error 字段
-  const result = props.result as Record<string, any> | undefined
-  const resultError = result?.error as string | undefined
-  
   // 优先检测取消状态（用户点击了取消按钮）
   if (cancelled.value || killed.value) {
     return t('components.tools.terminal.executeCommandPanel.status.terminated')
   }
-  if (props.error || resultError) return t('components.tools.terminal.executeCommandPanel.status.failed')
+  if (executionError.value) return t('components.tools.terminal.executeCommandPanel.status.failed')
   if (exitCode.value === 0) return t('components.tools.terminal.executeCommandPanel.status.success')
   if (exitCode.value !== undefined) return t('components.tools.terminal.executeCommandPanel.status.exitCode', { code: exitCode.value })
   if (isRunning.value) return t('components.tools.terminal.executeCommandPanel.status.running')
+  if (terminalState.value?.running === false) return t('components.tools.platform.process.exited')
   return t('components.tools.terminal.executeCommandPanel.status.pending')
 })
 
 // 状态颜色类
 const statusClass = computed(() => {
-  // 检查结果中的 error 字段
-  const result = props.result as Record<string, any> | undefined
-  const resultError = result?.error as string | undefined
-  
   // 优先检测取消状态（用户点击了取消按钮）
   if (cancelled.value || killed.value) return 'warning'
-  if (props.error || resultError) return 'error'
+  if (executionError.value) return 'error'
   if (exitCode.value !== undefined && exitCode.value !== 0) return 'error'
   if (exitCode.value === 0) return 'success'
   if (isRunning.value) return 'running'
@@ -184,26 +162,7 @@ function formatDuration(ms: number | undefined): string {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`
 }
 
-// 实际的终端标识（用于注册和杀死）
-// 优先使用 result 中的 terminalId，其次通过命令匹配
-const effectiveTerminalId = computed(() => {
-  if (terminalId.value) {
-    return terminalId.value
-  }
-  
-  if (command.value) {
-    const matchedId = terminalStore.findTerminalByCommand(command.value, cwd.value || undefined)
-    if (matchedId) {
-      return matchedId
-    }
-  }
-  
-  if (terminalState.value) {
-    return terminalState.value.id
-  }
-  
-  return props.toolId || ''
-})
+const effectiveTerminalId = computed(() => terminalId.value || terminalState.value?.id || '')
 
 // 杀掉终端
 async function handleKillTerminal() {
@@ -212,9 +171,12 @@ async function handleKillTerminal() {
   }
   
   killing.value = true
+  operationError.value = ''
+  const id = effectiveTerminalId.value
   
   try {
-    const result = await terminalStore.killTerminal(effectiveTerminalId.value)
+    const result = await terminalStore.killTerminal(id)
+    if (disposed || effectiveTerminalId.value !== id) return
     
     if (result.success) {
       // 更新结果显示被杀掉
@@ -223,15 +185,17 @@ async function handleKillTerminal() {
         data: {
           ...resultData.value,
           killed: true,
-          output: result.output || resultData.value.output,
+          output: result.output ?? resultData.value.output,
           endTime: Date.now()
         }
       })
+    } else {
+      operationError.value = result.error || t('stores.terminalStore.errors.killTerminalFailed')
     }
   } catch (err) {
-    console.error('杀掉终端失败:', err)
+    if (!disposed && effectiveTerminalId.value === id) operationError.value = err instanceof Error ? err.message : String(err)
   } finally {
-    killing.value = false
+    if (!disposed && effectiveTerminalId.value === id) killing.value = false
   }
 }
 
@@ -246,47 +210,26 @@ async function copyOutput() {
     return
   }
   copied.value = true
-  setTimeout(() => {
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
     copied.value = false
   }, 1000)
 }
 
-// 滚动到底部
-function scrollToBottom() {
-  if (outputContainer.value && autoScroll.value) {
-    nextTick(() => {
-      const container = outputContainer.value
-      if (container) {
-        container.scrollTop = container.scrollHeight
-      }
-    })
-  }
-}
+watch(autoScroll, enabled => { if (enabled) outputScrollbar.value?.scrollToBottom({ instant: true }) })
 
-// 监听输出变化，自动滚动
-watch(output, () => {
-  scrollToBottom()
-})
-
-// 组件挂载时，如果正在运行，注册到 store
-onMounted(() => {
-  if (isRunning.value && effectiveTerminalId.value) {
-    terminalStore.registerTerminal(effectiveTerminalId.value)
-  }
-})
-
-// 监听终端 ID 变化
-watch(effectiveTerminalId, (newId) => {
-  if (newId && isRunning.value) {
-    terminalStore.registerTerminal(newId)
-  }
-})
-
-// 监听运行状态变化
-watch(isRunning, (running) => {
-  if (running && effectiveTerminalId.value) {
-    terminalStore.registerTerminal(effectiveTerminalId.value)
-  }
+watch(effectiveTerminalId, () => { operationError.value = ''; killing.value = false })
+watch(effectiveTerminalId, (id, _old, onCleanup) => {
+  if (id) onCleanup(terminalStore.retainTerminal(id))
+}, { immediate: true })
+watch(() => [terminalId.value, resultData.value.background] as const, async ([id, background]) => {
+  if (!id || background !== true || terminalStore.getTerminal(id)) return
+  try { await terminalStore.restoreTerminal(id) }
+  catch (error) { if (!disposed && terminalId.value === id) operationError.value = error instanceof Error ? error.message : String(error) }
+}, { immediate: true })
+onBeforeUnmount(() => {
+  disposed = true
+  if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
 
@@ -304,7 +247,7 @@ watch(isRunning, (running) => {
           {{ formatDuration(duration) }}
         </span>
         <button
-          v-if="isRunning"
+          v-if="isRunning && effectiveTerminalId"
           class="action-btn kill-btn"
           :disabled="killing"
           :title="t('components.tools.terminal.executeCommandPanel.terminateTooltip')"
@@ -342,9 +285,9 @@ watch(isRunning, (running) => {
     </div>
     
     <!-- 错误信息 -->
-    <div v-if="error || resultData.error" class="panel-error">
+    <div v-if="executionError || operationError" class="panel-error" role="alert">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error || resultData.error }}</span>
+      <span class="error-text">{{ executionError || operationError }}</span>
     </div>
     
     <!-- 输出内容（即使有错误也显示，方便用户查看具体报错） -->
@@ -352,8 +295,8 @@ watch(isRunning, (running) => {
       <div class="output-header">
         <span class="output-title">{{ t('components.tools.terminal.executeCommandPanel.output') }}</span>
         <div class="output-header-right">
-          <span v-if="truncated && !isRunning" class="truncated-info">
-            {{ t('components.tools.terminal.executeCommandPanel.truncatedInfo', { outputLines, totalLines }) }}
+          <span v-if="truncated" class="truncated-info">
+            {{ totalLines ? t('components.tools.terminal.executeCommandPanel.truncatedInfo', { outputLines, totalLines }) : t('components.tools.platform.process.truncated') }}
           </span>
           <label v-if="isRunning" class="auto-scroll-toggle">
             <input
@@ -366,8 +309,8 @@ watch(isRunning, (running) => {
         </div>
       </div>
       <div class="output-content">
-        <div class="content-wrapper" ref="outputContainer">
-          <CustomScrollbar :horizontal="true">
+        <div class="content-wrapper">
+          <CustomScrollbar ref="outputScrollbar" :horizontal="true" :max-height="200" :sticky-bottom="autoScroll">
             <pre class="output-code"><code>{{ output || t('components.tools.terminal.executeCommandPanel.waitingOutput') }}</code></pre>
           </CustomScrollbar>
         </div>
@@ -375,7 +318,7 @@ watch(isRunning, (running) => {
     </div>
     
     <!-- 无输出 -->
-    <div v-else-if="!isRunning && !error" class="no-output">
+    <div v-else-if="!isRunning && !executionError && (result || terminalState)" class="no-output">
       <span class="codicon codicon-info"></span>
       <span>{{ t('components.tools.terminal.executeCommandPanel.noOutput') }}</span>
     </div>
@@ -630,7 +573,6 @@ watch(isRunning, (running) => {
 }
 
 .content-wrapper {
-  height: 200px;
   position: relative;
 }
 

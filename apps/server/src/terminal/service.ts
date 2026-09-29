@@ -72,7 +72,8 @@ export class PlatformTerminals {
     const tasks = new TerminalTaskPort(event => this.queue(record, event));
     const runner = this.runtime(config, tasks, context.workspace.directory);
     const unsubscribe = runner.onTerminalOutput(event => {
-      this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'terminalOutput', data: event } });
+      this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'terminalOutput',
+        data: { ...event, toolId: context.toolCallId, conversationId: context.conversationId } } });
       if (event.data && (event.type === 'output' || event.type === 'error')) {
         appendProcessOutput(record.outputBuffer!, event.data);
         record.updatedAt = Date.now();
@@ -193,7 +194,8 @@ export class PlatformTerminals {
     const record = await this.accessible(actorId, id);
     const live = this.active.get(id)?.runner.getTerminalOutput(id);
     return live?.success ? live : { success: true, output: String(record.data.output ?? ''), running: false,
-      exitCode: record.data.exitCode, error: record.data.error };
+      exitCode: record.data.exitCode, killed: record.data.killed === true || record.status === 'cancelled',
+      duration: record.data.duration, error: record.data.error };
   }
   async kill(actorId: string, id: string) {
     await this.accessible(actorId, id);

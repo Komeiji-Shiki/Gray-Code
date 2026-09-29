@@ -25,6 +25,8 @@ const MAX_TERMINAL_OUTPUT = 200 * 1024
  */
 export interface TerminalOutputEvent {
   terminalId: string
+  toolId?: string
+  conversationId?: string
   type: 'start' | 'output' | 'error' | 'exit'
   data?: string
   command?: string  // start 事件时包含命令
@@ -40,6 +42,10 @@ export interface TerminalOutputEvent {
  */
 export interface TerminalState {
   id: string
+  toolId?: string
+  conversationId?: string
+  error?: string
+  truncated?: boolean
   /** 累积的输出内容 */
   output: string
   /** 是否正在运行 */
@@ -54,7 +60,7 @@ export interface TerminalState {
   startTime: number
   /** 最后更新时间 */
   lastUpdate: number
-  /** 命令（用于匹配） */
+  /** 执行命令 */
   command?: string
   /** 工作目录 */
   cwd?: string
@@ -70,6 +76,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   
   /** 是否已初始化监听 */
   const initialized = ref(false)
+  const consumers = new Map<string, number>()
   
   // ============ 计算属性 ============
   
@@ -88,54 +95,31 @@ export const useTerminalStore = defineStore('terminal', () => {
   // ============ 方法 ============
   
   /**
-   * 注册终端（在工具调用开始时）
-   * 不覆盖已有的终端状态
-   */
-  function registerTerminal(terminalId: string): void {
-    // 如果终端已存在，不覆盖
-    if (terminals.value.has(terminalId)) {
-      return
-    }
-    
-    const now = Date.now()
-    terminals.value.set(terminalId, {
-      id: terminalId,
-      output: '',
-      running: true,
-      startTime: now,
-      lastUpdate: now
-    })
-  }
-  
-  /**
    * 获取终端状态
    */
   function getTerminal(terminalId: string): TerminalState | undefined {
     return terminals.value.get(terminalId)
   }
-  
-  /**
-   * 通过命令查找终端ID
-   * 用于在 result 还没有返回时，通过命令参数匹配终端
-   */
-  function findTerminalByCommand(command: string, cwd?: string): string | undefined {
-    // 精确匹配命令和工作目录
-    for (const [terminalId, terminal] of terminals.value) {
-      if (terminal.command === command && terminal.running) {
-        if (cwd === undefined || terminal.cwd === cwd) {
-          return terminalId
-        }
-      }
+
+  /** 正在展示的卡片保留状态；折叠或卸载后允许过期输出释放。 */
+  function retainTerminal(terminalId: string): () => void {
+    consumers.set(terminalId, (consumers.get(terminalId) ?? 0) + 1)
+    return () => {
+      const count = consumers.get(terminalId) ?? 0
+      if (count > 1) consumers.set(terminalId, count - 1)
+      else consumers.delete(terminalId)
     }
-    // 只匹配命令
-    for (const [terminalId, terminal] of terminals.value) {
-      if (terminal.command === command && terminal.running) {
-        return terminalId
-      }
-    }
-    return undefined
   }
   
+  /** 独立宿主提供调用归属；旧扩展宿主直接使用调用 ID 作为终端 ID。 */
+  function findTerminalByTool(toolId: string, conversationId?: string | null): TerminalState | undefined {
+    const direct = terminals.value.get(toolId)
+    if (direct && (!conversationId || !direct.conversationId || direct.conversationId === conversationId)) return direct
+    for (const terminal of terminals.value.values()) {
+      if (terminal.toolId === toolId && (!conversationId || terminal.conversationId === conversationId)) return terminal
+    }
+  }
+
   /**
    * 处理终端输出事件
    */
@@ -148,8 +132,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     
     switch (type) {
       case 'start':
-        // 终端启动事件：已存在（registerTerminal 已登记 / 重复 start 事件）时不整体覆盖，
-        // 只补齐命令 / 工作目录 / shell 元数据，保留已累积的输出与运行状态
+        // 重复启动事件只补齐元数据，保留已收到的输出和终态。
         if (terminal) {
           if (command !== undefined) terminal.command = command
           if (cwd !== undefined) terminal.cwd = cwd
@@ -188,7 +171,9 @@ export const useTerminalStore = defineStore('terminal', () => {
         terminal.lastUpdate = now
         // 追加输出（有界：超过 MAX_TERMINAL_OUTPUT 后截断仅保留尾部，避免 O(n²) 拼接与整段重渲染）
         if (data) {
-          terminal.output = (terminal.output + data).slice(-MAX_TERMINAL_OUTPUT)
+          const nextOutput = terminal.output + data
+          terminal.truncated ||= nextOutput.length > MAX_TERMINAL_OUTPUT
+          terminal.output = nextOutput.slice(-MAX_TERMINAL_OUTPUT)
         }
         break
         
@@ -214,6 +199,10 @@ export const useTerminalStore = defineStore('terminal', () => {
         
         break
     }
+    if (terminal) {
+      if (event.toolId !== undefined) terminal.toolId = event.toolId
+      if (event.conversationId !== undefined) terminal.conversationId = event.conversationId
+    }
   }
   
   /**
@@ -231,7 +220,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       if (terminal && result.success) {
         terminal.running = false
         terminal.killed = true
-        if (result.output) {
+        if (typeof result.output === 'string') {
           terminal.output = result.output.slice(-MAX_TERMINAL_OUTPUT)
         }
       }
@@ -245,26 +234,17 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
   }
   
-  /**
-   * 获取终端输出（用于手动刷新）
-   */
-  async function refreshOutput(terminalId: string): Promise<void> {
-    const { t } = useI18n()
-    try {
-      const result = await sendToExtension<{ success: boolean; output?: string; running?: boolean; error?: string }>(MESSAGE_NAMES['terminal.getOutput'], {
-        terminalId
-      })
-      
-      if (result.success) {
-        const terminal = terminals.value.get(terminalId)
-        if (terminal && result.output) {
-          terminal.output = result.output.slice(-MAX_TERMINAL_OUTPUT)
-          terminal.running = result.running ?? terminal.running
-        }
-      }
-    } catch (error) {
-      console.error(t('stores.terminalStore.errors.refreshOutputFailed'), error)
-    }
+  /** 历史后台任务按需恢复一次，等待期间收到的实时事件优先。 */
+  async function restoreTerminal(terminalId: string): Promise<void> {
+    if (terminals.value.has(terminalId)) return
+    const result = await sendToExtension<{ success: boolean; output?: string; running?: boolean; exitCode?: number; killed?: boolean; duration?: number; error?: string }>(
+      MESSAGE_NAMES['terminal.getOutput'], { terminalId })
+    if (!result.success) throw new Error(result.error || useI18n().t('stores.terminalStore.errors.refreshOutputFailed'))
+    if (terminals.value.has(terminalId)) return
+    const output = result.output ?? '', now = Date.now()
+    terminals.value.set(terminalId, { id: terminalId, output: output.slice(-MAX_TERMINAL_OUTPUT), running: result.running === true,
+      exitCode: result.exitCode, killed: result.killed, duration: result.duration, error: result.error,
+      truncated: output.length > MAX_TERMINAL_OUTPUT, startTime: now, lastUpdate: now })
   }
   
   /**
@@ -275,7 +255,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     const toDelete: string[] = []
     
     terminals.value.forEach((terminal, id) => {
-      if (!terminal.running && (now - terminal.lastUpdate) > maxAge) {
+      if (!terminal.running && !consumers.has(id) && (now - terminal.lastUpdate) > maxAge) {
         toDelete.push(id)
       }
     })
@@ -324,8 +304,10 @@ export const useTerminalStore = defineStore('terminal', () => {
       handleTerminalOutput(event)
     })
     
+    const cleanupTimer = setInterval(() => cleanup(), 60_000)
     initialized.value = true
     terminalCleanup = () => {
+      clearInterval(cleanupTimer)
       unsubscribe()
       initialized.value = false
       terminalCleanup = undefined
@@ -342,12 +324,12 @@ export const useTerminalStore = defineStore('terminal', () => {
     hasRunning,
     
     // 方法
-    registerTerminal,
     getTerminal,
-    findTerminalByCommand,
+    retainTerminal,
+    findTerminalByTool,
     handleTerminalOutput,
     killTerminal,
-    refreshOutput,
+    restoreTerminal,
     cleanup,
     removeTerminal,
     clearAll,
