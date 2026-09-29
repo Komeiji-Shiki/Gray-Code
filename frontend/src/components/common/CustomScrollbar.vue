@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useScrollbarStyles } from './useScrollbarStyles'
 import { useScrollbarGeometry } from './useScrollbarGeometry'
+import { projectVirtualScrollbarMarkers } from './virtualScrollbarMarkers'
 import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import { t } from '../../i18n'
 
@@ -185,8 +186,6 @@ const pendingLayoutUpdateOptions = {
 // 避免流式期间每帧对 '.user-message' 等元素逐个 getBoundingClientRect()
 // （强制同步布局）并重建 markerPositions 响应式数组。
 const MARKER_SCAN_THROTTLE_MS = 500
-/** 10k 条历史可能产生同量用户消息 marker，轨道只保留均匀采样节点，点击仍落到真实索引。 */
-const MAX_VIRTUAL_MARKER_NODES = 2000
 let lastMarkerScanAt = 0
 let pendingMarkerScanTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -215,6 +214,13 @@ let resizeObserver: ResizeObserver | null = null
 let mutationObserver: MutationObserver | null = null
 
 const isVirtualScroll = computed(() => props.virtualTotal > 0)
+const virtualMarkerTrackHeight = ref(0)
+const virtualMarkerPositions = computed(() => projectVirtualScrollbarMarkers(
+  props.virtualMarkers as Array<{ index: number; preview?: string }>, props.virtualTotal, virtualMarkerTrackHeight.value
+))
+watch(virtualMarkerPositions, positions => {
+  if (isVirtualScroll.value && props.markerSelector) markerPositions.value = positions
+})
 const virtualRowHeight = computed(() => Math.max(1, Number.isFinite(props.virtualEstimatedRowHeight) && props.virtualEstimatedRowHeight > 0
   ? props.virtualEstimatedRowHeight
   : 96))
@@ -391,27 +397,9 @@ function updateMarkers() {
   const trackHeight = scrollTrack.value.clientHeight
 
   if (isVirtualScroll.value) {
-    const total = Math.max(1, props.virtualTotal)
-    if (trackHeight <= 0 || props.virtualMarkers.length === 0) {
-      markerPositions.value = []
-      return
-    }
-
-    const rawMarkers = props.virtualMarkers as Array<{ index: number; preview?: string }>
-    const stride = Math.max(1, Math.ceil(rawMarkers.length / MAX_VIRTUAL_MARKER_NODES))
-    const sampledMarkers = stride === 1 ? rawMarkers : rawMarkers.filter((_marker, idx) => idx % stride === 0)
-    markerPositions.value = sampledMarkers.map((marker, idx) => {
-      const targetIndex = Math.max(0, Math.min(total - 1, Math.floor(marker.index)))
-      return {
-        top: ((targetIndex + 0.5) / total) * trackHeight,
-        element: undefined,
-        targetIndex,
-        index: idx + 1,
-        contentPreview: marker.preview || '',
-        color: '',
-        tooltipPrefix: ''
-      }
-    })
+    // 页码改变只影响滑块；全局标记位置取决于总量、标记内容与轨道高度。
+    virtualMarkerTrackHeight.value = trackHeight
+    markerPositions.value = virtualMarkerPositions.value
     return
   }
 
@@ -443,14 +431,13 @@ function updateMarkers() {
 // 虚拟窗口滚动到新页或 marker 索引刷新时，滚动条本身没有 childList 变更，
 // 因此需要直接按全局索引重算 thumb 与 marker。
 watch(
-  () => [props.virtualTotal, props.virtualStart, props.virtualEnd, props.virtualMarkers] as const,
+  () => [props.virtualTotal, props.virtualStart, props.virtualEnd, props.virtualMarkers, props.markerSelector] as const,
   () => {
     nextTick(() => {
       updateScrollbar()
       updateMarkers()
     })
-  },
-  { deep: true }
+  }
 )
 
 /**
@@ -1110,6 +1097,7 @@ defineExpose({
         <div
           v-for="marker in markerPositions"
           :key="`${marker.index}:${marker.contentPreview}`"
+          v-memo="[marker, markerHeight, markerBaseColor, markerOpacity]"
           class="scroll-marker"
           :style="{
             top: `${marker.top}px`,

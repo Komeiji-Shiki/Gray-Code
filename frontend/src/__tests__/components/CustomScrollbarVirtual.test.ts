@@ -1,11 +1,40 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick, reactive } from 'vue'
 import CustomScrollbar from '../../components/common/CustomScrollbar.vue'
 
 describe('CustomScrollbar virtual message track', () => {
   afterEach(() => {
     document.body.innerHTML = ''
+  })
+
+  test.each(['range', 'hover'])('虚拟标记在 %s 变化时复用坐标和样式，标记内容更新仍可准确定位', async mode => {
+    const readPreview = vi.fn(() => 'older')
+    const markers = reactive([{ index: 100, get preview() { return readPreview() } }])
+    const wrapper = mount(CustomScrollbar, { attachTo: document.body, props: {
+      markerSelector: '.user-message', virtualTotal: 1000, virtualStart: 800, virtualEnd: 1000, virtualMarkers: markers
+    } })
+    try {
+      await nextTick()
+      const container = wrapper.get('.scroll-container').element as HTMLElement
+      const track = wrapper.get('.scroll-track-v').element as HTMLElement
+      Object.defineProperty(container, 'clientHeight', { configurable: true, value: 100 })
+      Object.defineProperty(track, 'clientHeight', { configurable: true, value: 100 })
+      ;(wrapper.vm as any).update(); (wrapper.vm as any).updateMarkers(); await nextTick()
+      const styleWrite = vi.spyOn((wrapper.get('.scroll-marker').element as HTMLElement).style, 'top', 'set')
+      readPreview.mockClear()
+      if (mode === 'range') await wrapper.setProps({ virtualStart: 600, virtualEnd: 800 })
+      else await wrapper.get('.scroll-marker').trigger('mouseenter')
+      await nextTick(); await nextTick()
+      expect(readPreview).not.toHaveBeenCalled()
+      expect(styleWrite).not.toHaveBeenCalled()
+      await wrapper.setProps({ markerOpacity: 0.75 })
+      expect((wrapper.get('.scroll-marker').element as HTMLElement).style.opacity).toBe('0.75')
+      markers[0].index = 200
+      await flushPromises()
+      await wrapper.get('.scroll-marker').trigger('click')
+      expect(wrapper.emitted('seek')?.at(-1)).toEqual([200])
+    } finally { wrapper.unmount(); vi.restoreAllMocks() }
   })
 
   test('全局 marker 点击与拖动都发出绝对消息索引', async () => {
