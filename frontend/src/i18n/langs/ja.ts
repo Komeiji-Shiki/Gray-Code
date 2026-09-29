@@ -1636,7 +1636,7 @@ const ja: LanguageMessages = {
                 openScreenSense: "画面認識を設定",
             },
             contextSettings: {
-                invalidLimit: "-1 または 0 以上の整数を入力してください。無効な値は保存されません。",
+                invalidLimit: "-1 または 0 以上の整数を入力してください。",
                 loading: '読み込み中...',
                 workspaceFiles: {
                     title: 'ワークスペースファイルツリー',
@@ -1704,7 +1704,7 @@ const ja: LanguageMessages = {
             },
             dependencySettings: {
                 title: '拡張機能の依存関係管理',
-                description: 'オプションの拡張機能に必要な依存関係を管理します。これらの依存関係はローカルファイルシステムにインストールされ、プラグインにはパッケージ化されません。',
+                description: 'オプション機能に必要なローカル依存関係を、必要に応じてインストールまたは削除します。',
                 installPath: 'インストールパス：',
                 installed: 'インストール済み',
                 installing: 'インストール中...',
@@ -2087,7 +2087,7 @@ const ja: LanguageMessages = {
                     description: '各リクエスト時に動的に生成されメッセージ末尾に追加されます。リアルタイム情報（時刻、ファイルツリー、タブなど）を含み、履歴には保存されません。',
                     placeholder: '動的コンテキストテンプレートを入力、{{$WORKSPACE_FILES}}、{{$OPEN_TABS}} などの変数を使用できます...',
                     enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
-                    disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。',
+                    disabledNotice: '動的コンテキストテンプレートは無効です。有効にすると、各ターンの環境情報をテンプレートから生成します。',
                     strategyTitle: sharedJa.components.settings.promptSettings.dynamicSection.strategyTitle,
                     strategySingle: sharedJa.components.settings.promptSettings.dynamicSection.strategySingle,
                     strategyPreserve: sharedJa.components.settings.promptSettings.dynamicSection.strategyPreserve,
@@ -2215,7 +2215,7 @@ const ja: LanguageMessages = {
                     moveUp: '上へ移動',
                     moveDown: '下へ移動',
                     chatHistoryNoteTitle: '実際の会話履歴がここに挿入されます',
-                    chatHistoryNoteDescription: 'このエントリは通常のメッセージとして送信されません。削除・複製・無効化はできませんが、ドラッグまたは上下移動でプリセット骨格内の履歴の位置を調整できます。',
+                    chatHistoryNoteDescription: '会話履歴の挿入位置を示します。ドラッグまたは上下移動で、プリセット内の順序を調整できます。',
                     contentPlaceholder: 'プロンプト内容を入力。{{$ENVIRONMENT}}、{{$TODO_LIST}} などの変数を使用できます',
                     fakeThoughtLabel: '偽の思考プロセス',
                     fakeThoughtTitle: 'assistant（一時的なアシスタントメッセージ）のみ思考プロセスを偽装できます',
@@ -2263,7 +2263,7 @@ const ja: LanguageMessages = {
                 modelSection: {
                     title: '専用要約モデル',
                     useSeparate: '専用要約モデルを使用',
-                    useSeparateHint: '有効にすると、要約は会話で使用するモデルではなく、以下で指定したモデルを使用します。\nコストを節約するために、より安価なモデルを選択できます。',
+                    useSeparateHint: 'コンテキスト要約用のチャンネルとモデルを個別に選択します。低コストのモデルを選ぶと要約費用を抑えられます。',
                     currentModelHint: '現在、会話モデルを要約に使用しています',
                     selectChannel: 'チャンネルを選択',
                     selectChannelPlaceholder: '要約用のチャンネルを選択',
@@ -2423,7 +2423,7 @@ const ja: LanguageMessages = {
                     enabled: {
                         label: "ログ型メモリを有効化",
                         description: 'AI がセッションをまたいで長期情報を記憶・参照できるようにします。',
-                        disabledNotice: '無効にすると、記憶プロンプトは挿入されず、AI に記憶ツールも提供されません。既存の記憶と設定は保持され、下で引き続き表示・編集できます。'
+                        disabledNotice: '記憶プロンプトとツールは無効です。既存の記憶と設定は、下で引き続き表示・編集できます。'
                     },
                     saved: '保存しました',
                     saving: '保存中...',

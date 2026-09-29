@@ -1638,7 +1638,7 @@ const zhCN = {
                 openScreenSense: "配置屏幕感知",
             },
             contextSettings: {
-                invalidLimit: "请输入 -1 或非负整数；无效输入不会保存。",
+                invalidLimit: "请输入 -1 或非负整数。",
                 loading: '加载中...',
                 workspaceFiles: {
                     title: '工作区文件树',
@@ -1706,7 +1706,7 @@ const zhCN = {
             },
             dependencySettings: {
                 title: '扩展依赖管理',
-                description: '管理可选的扩展功能所需的依赖。这些依赖将安装到本地文件系统，不会打包进插件。',
+                description: '管理可选功能所需的本机依赖，按需安装或移除。',
                 installPath: '安装路径：',
                 installed: '已安装',
                 installing: '安装中...',
@@ -2089,7 +2089,7 @@ const zhCN = {
                     description: '每次请求时动态生成并追加到消息末尾，包含实时信息（时间、文件树、标签页等），不存储到历史记录中。',
                     placeholder: '输入动态上下文模板，可使用 {{$WORKSPACE_FILES}}、{{$OPEN_TABS}} 等变量...',
                     enableTooltip: '启用/禁用动态上下文模板',
-                    disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。',
+                    disabledNotice: '动态上下文模板已关闭。开启后，将按模板生成每轮对话的环境信息。',
                     strategyTitle: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyTitle,
                     strategySingle: sharedZhCN.components.settings.promptSettings.dynamicSection.strategySingle,
                     strategyPreserve: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyPreserve,
@@ -2217,7 +2217,7 @@ const zhCN = {
                     moveUp: '上移',
                     moveDown: '下移',
                     chatHistoryNoteTitle: '真实对话历史会插入在这里',
-                    chatHistoryNoteDescription: '该条目不会作为普通消息发送，不可删除、不可复制、不可禁用，但可以拖动或上下移动来控制历史在预设骨架中的位置。',
+                    chatHistoryNoteDescription: '聊天历史的插入位置标记。拖动或上下移动可调整历史在预设中的顺序。',
                     contentPlaceholder: '输入提示词内容，可使用 {{$ENVIRONMENT}}、{{$TODO_LIST}} 等变量',
                     fakeThoughtLabel: '伪造思考过程',
                     fakeThoughtTitle: '仅 assistant（临时助手消息）可伪造思考过程',
@@ -2265,7 +2265,7 @@ const zhCN = {
                 modelSection: {
                     title: '专用总结模型',
                     useSeparate: '使用专用总结模型',
-                    useSeparateHint: '启用后，总结时将使用下方指定的模型，而不是对话时使用的模型。\n可以选择更便宜的模型来节省成本。',
+                    useSeparateHint: '为上下文总结单独选择渠道和模型。可选择成本较低的模型。',
                     currentModelHint: '当前使用对话时的模型进行总结',
                     selectChannel: '选择渠道',
                     selectChannelPlaceholder: '选择用于总结的渠道',
@@ -2425,7 +2425,7 @@ const zhCN = {
                     enabled: {
                         label: "启用日志式记忆",
                         description: '允许 AI 跨会话回忆和记录长期信息。',
-                        disabledNotice: '关闭后不会注入记忆提示词，也不会向 AI 提供记忆工具。已有记忆和配置将保留，仍可在下方查看和编辑。'
+                        disabledNotice: '记忆提示词与工具已关闭。已有记忆和配置仍可在下方查看和编辑。'
                     },
                     saved: '保存成功',
                     saving: '正在保存...',

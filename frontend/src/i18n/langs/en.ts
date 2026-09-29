@@ -1636,7 +1636,7 @@ const en: LanguageMessages = {
                 openScreenSense: "Configure screen awareness",
             },
             contextSettings: {
-                invalidLimit: "Enter -1 or a nonnegative integer. Invalid input is not saved.",
+                invalidLimit: "Enter -1 or a nonnegative integer.",
                 loading: 'Loading...',
                 workspaceFiles: {
                     title: 'Workspace File Tree',
@@ -1704,7 +1704,7 @@ const en: LanguageMessages = {
             },
             dependencySettings: {
                 title: 'Extension Dependency Management',
-                description: 'Manage dependencies required for optional extension features. These dependencies will be installed to the local file system and not packaged into the plugin.',
+                description: 'Install or remove local dependencies for optional features as needed.',
                 installPath: 'Install Path:',
                 installed: 'Installed',
                 installing: 'Installing...',
@@ -2087,7 +2087,7 @@ const en: LanguageMessages = {
                     description: 'Generated dynamically and appended to the end of messages on each request, contains real-time info (time, file tree, tabs, etc.), not stored in history.',
                     placeholder: 'Enter dynamic context template, you can use {{$WORKSPACE_FILES}}, {{$OPEN_TABS}} and other variables...',
                     enableTooltip: 'Enable/disable dynamic context template',
-                    disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.',
+                    disabledNotice: 'Dynamic context templates are off. Enable them to generate environment information for each turn.',
                     strategyTitle: sharedEn.components.settings.promptSettings.dynamicSection.strategyTitle,
                     strategySingle: sharedEn.components.settings.promptSettings.dynamicSection.strategySingle,
                     strategyPreserve: sharedEn.components.settings.promptSettings.dynamicSection.strategyPreserve,
@@ -2215,7 +2215,7 @@ const en: LanguageMessages = {
                     moveUp: 'Move up',
                     moveDown: 'Move down',
                     chatHistoryNoteTitle: 'Real conversation history will be inserted here',
-                    chatHistoryNoteDescription: 'This entry is not sent as a normal message. It cannot be deleted, duplicated, or disabled, but can be dragged or moved up/down to control where history appears in the preset skeleton.',
+                    chatHistoryNoteDescription: 'Marks where chat history is inserted. Drag it or move it up or down to set its position in the preset.',
                     contentPlaceholder: 'Enter prompt content. Variables like {{$ENVIRONMENT}}, {{$TODO_LIST}} are available',
                     fakeThoughtLabel: 'Fake thought process',
                     fakeThoughtTitle: 'Only assistant (temporary assistant messages) can fake the thought process',
@@ -2263,7 +2263,7 @@ const en: LanguageMessages = {
                 modelSection: {
                     title: 'Dedicated Summarization Model',
                     useSeparate: 'Use Dedicated Summarization Model',
-                    useSeparateHint: 'When enabled, summarization will use the model specified below instead of the model used in the conversation.\nYou can choose a cheaper model to save costs.',
+                    useSeparateHint: 'Choose a separate channel and model for context summaries. A lower-cost model can reduce summarization costs.',
                     currentModelHint: 'Currently using the conversation model for summarization',
                     selectChannel: 'Select Channel',
                     selectChannelPlaceholder: 'Select channel for summarization',
@@ -2423,7 +2423,7 @@ const en: LanguageMessages = {
                     enabled: {
                         label: "Enable journal memory",
                         description: 'Allow the AI to recall and record long-term information across sessions.',
-                        disabledNotice: 'When disabled, the memory prompt is not injected and memory tools are not provided to the AI. Existing memories and settings are preserved and can still be viewed or edited below.'
+                        disabledNotice: 'Memory prompts and tools are off. Existing memories and settings remain available to view and edit below.'
                     },
                     saved: 'Saved',
                     saving: 'Saving...',
