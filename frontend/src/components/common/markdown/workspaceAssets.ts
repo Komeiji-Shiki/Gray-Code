@@ -166,10 +166,14 @@ export function createWorkspaceAssetController(
     if (event.defaultPrevented) return
     const target = event.target as HTMLElement
     
-    if (target.tagName === 'IMG' && target.classList.contains('loaded-image')) {
+    if (target.tagName === 'IMG' && target.classList.contains('loaded-image') && !target.closest('a')) {
       const imgPath = target.getAttribute('data-image-path')
       if (imgPath) {
-        await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: imgPath, ...context() })
+        try {
+          await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: imgPath, ...context() })
+        } catch (error) {
+          await showNotification(error instanceof Error ? error.message : t('components.common.markdown.openFileFailed'), 'error')
+        }
       }
     }
   }
