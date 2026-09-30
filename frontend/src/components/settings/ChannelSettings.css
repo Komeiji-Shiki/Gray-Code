@@ -15,7 +15,7 @@
   padding: 48px 24px;
   text-align: center;
   border: 1px dashed var(--gc-border-subtle);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
 }
 
 .channel-empty-icon {

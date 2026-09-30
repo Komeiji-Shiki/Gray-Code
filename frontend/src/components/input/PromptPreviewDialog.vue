@@ -87,7 +87,7 @@ onBeforeUnmount(() => { requestEpoch++ })
 .prompt-preview { display: flex; flex-direction: column; gap: 10px; min-width: 0; height: min(76vh, 900px); }
 .preview-toolbar, .preview-views { display: flex; flex-wrap: wrap; gap: 6px; }
 .preview-views { margin-right: auto; }
-button, input { font: inherit; font-size: 12px; color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-input); padding: 7px 10px; }
+button, input { font: inherit; font-size: 12px; color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); background: var(--gc-surface-input); padding: 7px 10px; }
 button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; } button[aria-pressed=true] { color: var(--gc-text-on-primary); background: var(--gc-button-primary); border-color: var(--gc-button-primary); }
 input { width: 100%; min-width: 0; box-sizing: border-box; }
 .preview-meta, .preview-notice, .preview-error, .preview-caption { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

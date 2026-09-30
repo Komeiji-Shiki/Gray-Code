@@ -239,7 +239,7 @@
   width: 100%;
   border: 0;
   border-bottom: 1px solid var(--gc-border-subtle);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--gc-text-muted);
   /* 点击可手动触发加载更多 */

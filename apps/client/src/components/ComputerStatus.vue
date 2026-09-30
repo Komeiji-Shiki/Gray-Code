@@ -16,5 +16,5 @@ onUnmounted(() => unsubscribe?.());
   </div>
 </template>
 <style scoped>
-.computer-status-strip{display:flex;gap:12px;align-items:center;padding:7px 12px;background:var(--gc-surface-sunken);border-bottom:1px solid var(--gc-accent);flex-wrap:wrap;font-size:12px}.computer-status-strip>span:first-child{color:var(--gc-accent)}.computer-stop-hint{color:var(--gc-text-muted);flex:1}.computer-status-strip button{border-radius:0;padding:5px 10px}.computer-emergency{color:#ffc8c8;border-color:#a54949}
+.computer-status-strip{display:flex;gap:12px;align-items:center;padding:7px 12px;background:var(--gc-surface-sunken);border-bottom:1px solid var(--gc-accent);flex-wrap:wrap;font-size:12px}.computer-status-strip>span:first-child{color:var(--gc-accent)}.computer-stop-hint{color:var(--gc-text-muted);flex:1}.computer-status-strip button{border-radius:var(--gc-radius-sm);padding:5px 10px}.computer-emergency{color:var(--gc-danger);border-color:var(--gc-danger-border)}
 </style>

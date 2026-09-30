@@ -39,5 +39,5 @@ onMounted(() => { if (desktop) void action(async () => { registration.value = aw
   </section>
 </template>
 <style scoped>
-.editor-registration{display:grid;gap:12px;margin-top:20px;padding-top:20px;border-top:1px solid var(--gc-border-subtle)}h4,p{margin:0}p{color:var(--gc-text-muted);font-size:12px;line-height:1.7}.executable,.extensions{overflow-wrap:anywhere}.executable{font-size:12px}.actions{display:flex;gap:10px;flex-wrap:wrap}button{font:inherit;border:1px solid var(--gc-border-subtle);border-radius:0;padding:8px 12px;background:var(--gc-surface-input);color:var(--gc-text-primary);cursor:pointer}button:disabled{opacity:.45;cursor:default}summary{cursor:pointer}.error{color:var(--gc-danger)}
+.editor-registration{display:grid;gap:12px;margin-top:20px;padding-top:20px;border-top:1px solid var(--gc-border-subtle)}h4,p{margin:0}p{color:var(--gc-text-muted);font-size:12px;line-height:1.7}.executable,.extensions{overflow-wrap:anywhere}.executable{font-size:12px}.actions{display:flex;gap:10px;flex-wrap:wrap}button{font:inherit;border:1px solid var(--gc-border-subtle);border-radius:var(--gc-radius-sm);padding:8px 12px;background:var(--gc-surface-input);color:var(--gc-text-primary);cursor:pointer}button:disabled{opacity:.45;cursor:default}summary{cursor:pointer}.error{color:var(--gc-danger)}
 </style>

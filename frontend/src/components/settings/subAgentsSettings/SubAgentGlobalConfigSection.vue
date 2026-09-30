@@ -123,7 +123,7 @@ const { t } = useI18n()
   padding: 6px 10px;
   background: var(--gc-surface-input);
   border: 1px solid var(--gc-border-control);
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
   color: var(--gc-text-primary);
   font-size: 13px;
   font-family: inherit;

@@ -75,8 +75,8 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.chatgpt-plan-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--text-secondary); }
-.chatgpt-plan-status a { color: var(--accent-color, #95b6ff); }
+.chatgpt-plan-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--gc-text-muted); }
+.chatgpt-plan-status a { color: var(--gc-link); }
 .selector-bar {
   display: grid;
   grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1fr) minmax(0, 2.2fr);

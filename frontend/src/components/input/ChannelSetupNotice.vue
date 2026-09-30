@@ -21,7 +21,7 @@ defineEmits<{ configure: []; retry: [] }>()
 .channel-setup-notice { display: flex; align-items: center; gap: 16px; padding: 10px 12px; margin: 0 0 8px; border-left: 2px solid var(--gc-focus-border); background: var(--gc-surface-base); color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; }
 p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .setup-error { display: block; color: var(--gc-danger); }
-button { flex-shrink: 0; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--gc-text-on-primary); background: var(--gc-button-primary); border: 1px solid transparent; border-radius: 0; }
+button { flex-shrink: 0; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--gc-text-on-primary); background: var(--gc-button-primary); border: 1px solid transparent; border-radius: var(--gc-radius-sm); }
 button:hover { background: var(--gc-button-primary-hover); }
 button:focus-visible { outline: 1px solid var(--gc-focus-border); outline-offset: 2px; }
 @media (max-width: 540px) { .channel-setup-notice { align-items: flex-start; flex-direction: column; gap: 8px; } }

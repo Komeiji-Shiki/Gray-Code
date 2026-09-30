@@ -23,6 +23,6 @@ const options = computed(() => [
 
 <style scoped>
 .reasoning-selector{display:flex;align-items:center;gap:5px;min-width:0;flex:0 0 auto}.reasoning-caption{color:var(--gc-text-muted);font-size:11px;white-space:nowrap}
-.reasoning-selector :deep(.select-trigger){height:var(--gc-control-height-md);padding:0 var(--gc-space-2);background:var(--gc-surface-base);border:1px solid var(--gc-border-subtle);border-radius:0}
+.reasoning-selector :deep(.select-trigger){height:var(--gc-control-height-md);padding:0 var(--gc-space-2);background:var(--gc-surface-base);border:1px solid var(--gc-border-subtle);border-radius:var(--gc-radius-sm)}
 .reasoning-selector :deep(.custom-select){width:auto;min-width:105px;max-width:155px}.reasoning-selector :deep(.selected-label){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>

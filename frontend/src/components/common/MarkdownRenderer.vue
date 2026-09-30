@@ -934,14 +934,14 @@ onUnmounted(()=> {
  * （.zoomed-mermaid-content 部分随 MermaidZoomModal 组件迁移） */
 .markdown-content :deep(.mermaid text),
 .markdown-content :deep(.mermaid span) {
-  fill: #ffffff !important;
-  color: #ffffff !important;
+  fill: rgb(255 255 255) !important;
+  color: rgb(255 255 255) !important;
   font-weight: 600 !important;
   text-shadow: 
-    -1px -1px 0 #000,  
-     1px -1px 0 #000,
-    -1px  1px 0 #000,
-     1px  1px 0 #000,
+    -1px -1px 0 rgb(0 0 0),  
+     1px -1px 0 rgb(0 0 0),
+    -1px  1px 0 rgb(0 0 0),
+     1px  1px 0 rgb(0 0 0),
      0px  0px 4px rgba(0,0,0,0.8) !important;
 }
 

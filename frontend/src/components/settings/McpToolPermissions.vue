@@ -24,5 +24,5 @@ const choices = computed(() => {
   </details>
 </template>
 <style scoped>
-.mcp-permissions{margin-top:16px;padding:15px;border:1px solid var(--gc-border-control);background:var(--gc-surface-raised)}summary{cursor:pointer;font-size:14px;font-weight:500}summary small{font-size:12px;font-weight:400;color:var(--gc-text-muted);margin-left:10px}p{font-size:13px;line-height:1.7;color:var(--gc-text-muted);margin:12px 0}button{margin-top:8px;padding:8px 12px;background:var(--gc-surface-input);border:1px solid var(--gc-border-control);color:var(--gc-text-primary);border-radius:0;cursor:pointer}
+.mcp-permissions{margin-top:16px;padding:15px;border:1px solid var(--gc-border-control);background:var(--gc-surface-raised)}summary{cursor:pointer;font-size:14px;font-weight:500}summary small{font-size:12px;font-weight:400;color:var(--gc-text-muted);margin-left:10px}p{font-size:13px;line-height:1.7;color:var(--gc-text-muted);margin:12px 0}button{margin-top:8px;padding:8px 12px;background:var(--gc-surface-input);border:1px solid var(--gc-border-control);color:var(--gc-text-primary);border-radius:var(--gc-radius-sm);cursor:pointer}
 </style>

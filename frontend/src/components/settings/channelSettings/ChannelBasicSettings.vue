@@ -582,7 +582,7 @@ const emit = defineEmits<{
 }
 
 .channel-support-table.detailed .channel-row {
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
 }
 
 .channel-row.header-row {

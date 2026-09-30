@@ -225,14 +225,14 @@ async function handleRestore() {
 
 <style scoped>
 .summary-editor { padding: 12px 16px; border-top: 1px solid var(--gc-border-control); }
-.summary-editor textarea { box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-input); color: var(--gc-text-primary); padding: 10px 12px; font: inherit; line-height: 1.6; }
+.summary-editor textarea { box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); background: var(--gc-surface-input); color: var(--gc-text-primary); padding: 10px 12px; font: inherit; line-height: 1.6; }
 .summary-editor p { color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; margin: 8px 0; }
 .summary-editor .summary-edit-error { color: var(--gc-danger); }
 .summary-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.summary-edit-actions button { border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-raised); color: var(--gc-text-primary); padding: 6px 14px; cursor: pointer; }
+.summary-edit-actions button { border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); background: var(--gc-surface-raised); color: var(--gc-text-primary); padding: 6px 14px; cursor: pointer; }
 .summary-edit-actions .summary-save { background: var(--gc-button-primary); color: var(--gc-text-on-primary); }
 .summary-edit-actions button:disabled { opacity: .5; cursor: default; }
-.summary-right .summary-edit-button { opacity: .8; border-radius: 0; }
+.summary-right .summary-edit-button { opacity: .8; border-radius: var(--gc-radius-sm); }
 .summary-edited-badge { font-size: 11px; color: var(--gc-text-muted); border: 1px solid var(--gc-border-control); padding: 1px 5px; }
 .summary-message {
   margin: 2px 0;

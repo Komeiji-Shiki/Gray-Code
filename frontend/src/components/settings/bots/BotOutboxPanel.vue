@@ -66,7 +66,7 @@ header { display: flex; flex-wrap: wrap; justify-content: space-between; align-i
 h5 { margin: 0; font-size: 17px; }
 p { margin: 12px 0 20px; color: var(--gc-text-muted); line-height: 1.7; overflow-wrap: anywhere; }
 small { color: var(--gc-text-muted); font-size: 12px; }
-button { background: var(--gc-surface-raised); color: var(--gc-text-primary); font: inherit; padding: 8px 14px; border: 1px solid var(--gc-border-control); border-radius: 0; cursor: pointer; }
+button { background: var(--gc-surface-raised); color: var(--gc-text-primary); font: inherit; padding: 8px 14px; border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
 button:focus-visible, input:focus-visible { outline: 1px solid var(--gc-focus-border); outline-offset: 2px; }
 .outbox-notice { padding: 12px; border-left: 2px solid var(--gc-border-control); background: var(--gc-surface-raised); }

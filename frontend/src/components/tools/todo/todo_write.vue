@@ -525,17 +525,17 @@ onBeforeUnmount(() => {
 
 .status-badge.in_progress {
   background: var(--gc-chart-blue);
-  color: #fff;
+  color: var(--gc-surface-base);
 }
 
 .status-badge.completed {
   background: var(--gc-success);
-  color: #fff;
+  color: var(--gc-surface-base);
 }
 
 .status-badge.cancelled {
   background: var(--gc-danger);
-  color: #fff;
+  color: var(--gc-surface-base);
 }
 
 /* TODO ID - 继承 file-path 风格 */

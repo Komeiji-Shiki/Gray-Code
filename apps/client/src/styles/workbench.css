@@ -112,7 +112,7 @@
   font-weight: 800;
   font-size: 70px;
   letter-spacing: -15px;
-  color: #383b42;
+  color: var(--gc-text-disabled);
   margin: 0 10px 28px 0;
 }
 .brand-mark span {

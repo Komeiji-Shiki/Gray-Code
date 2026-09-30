@@ -2,7 +2,7 @@
 .discord-header,.discord-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}
 h4{font-size:24px;margin:0 0 10px}h5{font-size:17px;margin:24px 0 14px}p{color:var(--gc-text-muted);line-height:1.75;margin:10px 0 20px}
 small{display:block;color:var(--gc-text-muted);line-height:1.6;font-size:12px;font-weight:400}
-button,input,select,textarea{font:inherit;color:var(--gc-text-primary);border:1px solid var(--gc-border-control);border-radius:0}
+button,input,select,textarea{font:inherit;color:var(--gc-text-primary);border:1px solid var(--gc-border-control);border-radius:var(--gc-radius-sm)}
 button{background:var(--gc-surface-raised);padding:8px 14px;cursor:pointer}button:hover{border-color:var(--gc-focus-border)}button:disabled{cursor:default;opacity:.5}
 input,select,textarea{background:var(--gc-surface-input);padding:9px 10px;min-width:0}input[type=checkbox]{accent-color:var(--gc-focus-border);width:17px;height:17px;flex-shrink:0}
 input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:1px solid var(--gc-focus-border);outline-offset:2px}
@@ -10,7 +10,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .discord-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--gc-border-control);margin:8px 0 26px}.discord-tabs button{border:0;background:none;white-space:nowrap;border-bottom:2px solid transparent;padding:12px 16px}.discord-tabs button.active{border-bottom-color:var(--gc-focus-border);color:var(--gc-focus-border)}
 .discord-settings :deep(.discord-fields>label){display:flex;align-items:center;justify-content:space-between;gap:24px;padding:15px 0;border-bottom:1px solid var(--gc-border-subtle)}
 .discord-settings :deep(.discord-fields>label>span){width:42%}.discord-settings :deep(.discord-fields>label>input:not([type=checkbox])),.discord-settings :deep(.discord-fields>label>select),.discord-settings :deep(.discord-fields>label>textarea){width:54%}
-.discord-settings :deep(.discord-fields input),.discord-settings :deep(.discord-fields select),.discord-settings :deep(.discord-fields textarea){font:inherit;color:var(--gc-text-primary);background:var(--gc-surface-input);border:1px solid var(--gc-border-control);border-radius:0;padding:9px 10px;min-width:0}
+.discord-settings :deep(.discord-fields input),.discord-settings :deep(.discord-fields select),.discord-settings :deep(.discord-fields textarea){font:inherit;color:var(--gc-text-primary);background:var(--gc-surface-input);border:1px solid var(--gc-border-control);border-radius:var(--gc-radius-sm);padding:9px 10px;min-width:0}
 .discord-settings :deep(.discord-fields small){display:block;font-size:12px;font-weight:400;color:var(--gc-text-muted);line-height:1.65;margin-top:5px}
 .discord-settings :deep(.discord-fields input[type=checkbox]){width:17px;height:17px;accent-color:var(--gc-focus-border)}
 .discord-settings :deep(.discord-inset){border-left:2px solid var(--gc-border-control);padding:0 0 8px 18px;margin:12px 0}

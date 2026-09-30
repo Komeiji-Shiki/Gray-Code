@@ -7,6 +7,7 @@ import ToolItemSource from '../../components/message/toolMessage/ToolItem.vue?ra
 import ViteConfigSource from '../../../vite.config.ts?raw'
 import { resolveWebviewAssetFileName } from '../../build/webviewAssetNaming'
 import { resolveAppearancePalette } from '../../../../shared/appearance'
+import { semanticTokens } from '../../../../shared/appearanceTokens'
 
 function collectTypeScriptFiles(directory: string): string[] {
   const files: string[] = []
@@ -90,11 +91,26 @@ describe('frontend visual and async architecture contracts', () => {
     const palette = resolveAppearancePalette('dark')
     const chat = readFileSync(path.resolve(process.cwd(), 'src/platform/theme.css'), 'utf8')
     const shell = readFileSync(path.resolve(process.cwd(), '../apps/client/src/styles/base.css'), 'utf8')
-    for (const [token, key] of [['--gc-surface-base', 'background'], ['--gc-surface-chrome', 'chrome'], ['--gc-text-primary', 'text'],
-      ['--gc-surface-raised', 'panel'], ['--gc-button-primary', 'button'], ['--gc-accent', 'accent']] as const) {
+    // Web 登录与工作区加载页在读取设置前显示，启动默认值必须覆盖全部语义 token。
+    for (const [key, tokens] of Object.entries(semanticTokens)) for (const token of tokens) {
       expect(chat).toContain(`${token}: ${palette[key]};`)
       expect(shell).toContain(`${token}: ${palette[key]};`)
     }
+  })
+
+  test('组件样式不写死色值，部件圆角不写死为 0', () => {
+    // 色值只允许出现在 token 定义、两处启动默认值、第三方主题适配与独立的桌宠窗口中。
+    const allowed = new Set([
+      'frontend/src/styles/tokens.css', 'frontend/src/platform/theme.css', 'apps/client/src/styles/base.css',
+      'apps/client/src/components/CodeEditor.vue', 'apps/client/src/pets/floating.css', 'apps/client/src/components/PetSurface.vue',
+      'frontend/src/components/common/markdown/MermaidZoomModal.vue', 'frontend/src/components/settings/BackgroundGallery.vue',
+    ].map(file => path.join(repoRoot, file)))
+    const roots = [path.resolve(process.cwd(), 'src'), path.join(repoRoot, 'apps/client/src')]
+    const hex = /(?<![\w&-])#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3}(?:[0-9a-fA-F]{2})?)?\b(?=[\s;,)!}'"])/g
+    // .ts 中的十六进制多为画布绘制或第三方主题参数，只检查样式文件。
+    expect(offenders(roots, hex, allowed).filter(line => !/\.ts: /.test(line))).toEqual([])
+    const zeroRadius = /\.(gc-button|gc-field|gc-badge|tool-item|permission-options button|approval-buttons button)[^{]*\{[^}]*border-radius:\s*0[;}]/g
+    expect(offenders(roots, zeroRadius, new Set())).toEqual([])
   })
 
   test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {

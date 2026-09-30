@@ -275,7 +275,7 @@ onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?
 .application > .titlebar { -webkit-app-region: drag; justify-content: flex-start; padding-right: 148px; height: 40px; min-height: 40px; padding-block: 0; box-sizing: border-box; }
 .titlebar button,.titlebar select { -webkit-app-region: no-drag; }
 .app-menu { display: flex; gap: 1px; }.app-menu button { background: transparent; border: 0; color: var(--gc-text-primary); padding: 7px 8px; font: inherit; cursor: pointer; }
-.app-menu button:hover { background: var(--surface-hover, #ffffff10); }
+.app-menu button:hover { background: var(--gc-surface-hover); }
 .workspace-add { font-size: 21px; padding: 2px 8px; }
 .application.web-host > .titlebar { padding-right: 14px; -webkit-app-region: no-drag; }
 .application.web-host{height:100dvh}.application.compact-host{height:var(--viewport-height,100dvh)}

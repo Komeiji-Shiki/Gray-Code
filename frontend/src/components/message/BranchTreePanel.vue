@@ -623,7 +623,7 @@ function cancelRename(): void {
   border-top: 1px solid var(--gc-border-subtle);
 }
 .branch-tree-row.branchPoint .branch-tree-node-marker { border-radius: var(--gc-radius-sm); color: var(--gc-chart-orange); }
-.branch-tree-row.current .branch-tree-node-marker { color: #fff; border-color: var(--gc-chart-blue); background: var(--gc-chart-blue); }
+.branch-tree-row.current .branch-tree-node-marker { color: var(--gc-surface-base); border-color: var(--gc-chart-blue); background: var(--gc-chart-blue); }
 .branch-tree-row-content { min-width: 0; flex: 1; display: flex; align-items: center; border-bottom: 1px solid color-mix(in srgb, var(--gc-border-subtle) 62%, transparent); }
 .branch-tree-row-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 7px; padding: 7px 6px; border-radius: var(--gc-radius-sm); }
 .branch-tree-row:not(.active):not(.deleted) .branch-tree-row-main { cursor: pointer; }

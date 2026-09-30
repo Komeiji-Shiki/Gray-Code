@@ -125,7 +125,7 @@ function isMediaTile(attachment: Attachment): boolean {
   height: 100%;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
   background: var(--gc-surface-base);
 }
@@ -146,7 +146,7 @@ function isMediaTile(attachment: Attachment): boolean {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #3a3d41, #2d2d30);
+  background: linear-gradient(135deg, var(--gc-surface-hover), var(--gc-surface-raised));
 }
 
 .tile-icon {

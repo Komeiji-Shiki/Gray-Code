@@ -192,9 +192,9 @@ useDesktopSettingsDraft(save, () => !!settings.value);
 <style scoped>
 h4 { font-size: 24px; margin: 0 0 12px; } p { color: var(--gc-text-muted); line-height: 1.7; margin: 12px 0 20px; }
 label { display: flex; justify-content: space-between; align-items: center; gap: 30px; padding: 16px 0; border-bottom: 1px solid var(--gc-border-subtle); }
-input,select,textarea { width: 58%; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); padding: 8px 10px; font: inherit; border-radius: 0; }
+input,select,textarea { width: 58%; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); padding: 8px 10px; font: inherit; border-radius: var(--gc-radius-sm); }
 input[type=checkbox] { width: auto; } select[multiple] { height: 120px; }
-button { padding: 8px 14px; color: var(--gc-text-primary); background: var(--gc-surface-raised); border: 1px solid var(--gc-border-control); cursor: pointer; border-radius: 0; }
+button { padding: 8px 14px; color: var(--gc-text-primary); background: var(--gc-surface-raised); border: 1px solid var(--gc-border-control); cursor: pointer; border-radius: var(--gc-radius-sm); }
 .integration-entry { padding: 12px 0 24px; margin-bottom: 20px; border-bottom: 1px solid var(--gc-border-control); }
 .integration-header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
 .integration-header h4 { margin-bottom: 0; }

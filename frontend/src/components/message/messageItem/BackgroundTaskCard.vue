@@ -115,7 +115,7 @@ async function openAgent() {
 .background-task-card {
   border: 1px solid var(--gc-border-subtle);
   border-left: 3px solid var(--gc-focus-border);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   padding: 8px 12px;
   margin: 4px 0;
   background: color-mix(in srgb, var(--gc-surface-base) 95%, var(--gc-focus-border) 5%);
@@ -174,7 +174,7 @@ async function openAgent() {
   background: transparent;
   color: var(--gc-text-muted);
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
 }
 
 .bg-task-view-btn:hover {

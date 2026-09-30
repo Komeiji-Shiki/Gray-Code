@@ -490,7 +490,7 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
   padding: var(--gc-space-4);
   background: var(--gc-surface-base);
   border: 1px solid var(--gc-border-subtle);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
 }
 
 .browse-header {

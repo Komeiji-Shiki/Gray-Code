@@ -361,7 +361,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 </template>
 
 <style scoped>
-.permission-request{padding:0 12px 10px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.permission-options{display:flex;gap:8px;flex-wrap:wrap}.permission-options button{white-space:normal;border-radius:0;text-align:left}
+.permission-request{padding:0 12px 10px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.permission-options{display:flex;gap:8px;flex-wrap:wrap}.permission-options button{white-space:normal;border-radius:var(--gc-radius-sm);text-align:left}
 .tool-item {
   display: flex;
   flex-direction: column;

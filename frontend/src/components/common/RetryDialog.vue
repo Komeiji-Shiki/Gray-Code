@@ -190,7 +190,7 @@ function handleRestoreAndRetry() {
 
 .dialog-btn.restore {
   background: var(--gc-info);
-  color: #fff;
+  color: var(--gc-surface-base);
 }
 
 .dialog-btn.restore:hover {

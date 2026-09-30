@@ -412,11 +412,11 @@ function onCustomPathInput(event: Event) {
 }
 
 .platform-general :is(input, button, .info-text, .proxy-settings, .storage-settings) {
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
 }
 .platform-general a.update-now-btn {
   text-decoration: none;
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
 }
 .platform-general .action-btn:not(.primary) {
   border: 1px solid var(--gc-border-subtle);

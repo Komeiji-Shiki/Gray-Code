@@ -344,7 +344,7 @@ function formatLineCount(file: FoundFileDetail): string {
   padding: var(--spacing-sm, 8px);
   background: var(--gc-danger-bg);
   border: 1px solid var(--gc-danger-border);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
 }
 
 .error-icon {
@@ -369,7 +369,7 @@ function formatLineCount(file: FoundFileDetail): string {
 /* 单个模式面板 */
 .pattern-panel {
   border: 1px solid var(--gc-border-subtle);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
@@ -424,7 +424,7 @@ function formatLineCount(file: FoundFileDetail): string {
   padding: 1px 4px;
   background: var(--gc-badge-bg);
   color: var(--gc-badge-fg);
-  border-radius: 0;
+  border-radius: var(--gc-radius-xs);
   margin-left: var(--spacing-xs, 4px);
 }
 
@@ -543,7 +543,7 @@ function formatLineCount(file: FoundFileDetail): string {
   font-size: 9px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 0;
+  border-radius: var(--gc-radius-xs);
   background: var(--gc-badge-bg);
   color: var(--gc-badge-fg);
 }

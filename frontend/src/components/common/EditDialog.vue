@@ -714,7 +714,7 @@ function handleRemoveAttachment(id: string) {
 .dialog-btn.restore {
   max-width: 220px;
   background: var(--gc-info);
-  color: #fff;
+  color: var(--gc-surface-base);
 }
 
 .dialog-btn.restore:hover:not(:disabled) {

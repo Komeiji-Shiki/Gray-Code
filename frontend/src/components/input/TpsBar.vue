@@ -50,7 +50,7 @@ function resolveChartColor(): string {
   } catch {
     // 解析失败走默认色
   }
-  return '#0050b3'
+  return getComputedStyle(document.documentElement).color
 }
 
 function drawChart(bars: number[]): void {

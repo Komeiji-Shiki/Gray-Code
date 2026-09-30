@@ -145,7 +145,7 @@ function handleRemove(attachmentId: string) {
   padding: var(--spacing-sm, 8px);
   background: var(--gc-surface-base);
   border: 1px solid var(--gc-border-subtle);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   margin-bottom: var(--spacing-sm, 8px);
 }
 
@@ -156,7 +156,7 @@ function handleRemove(attachmentId: string) {
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   background: var(--gc-surface-base);
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   transition: background-color var(--transition-fast, 0.1s);
 }
 
@@ -175,7 +175,7 @@ function handleRemove(attachmentId: string) {
   width: 32px;
   height: 32px;
   object-fit: cover;
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   flex-shrink: 0;
 }
 
@@ -207,7 +207,7 @@ function handleRemove(attachmentId: string) {
   padding: 0;
   flex-shrink: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
   background: transparent;
 }

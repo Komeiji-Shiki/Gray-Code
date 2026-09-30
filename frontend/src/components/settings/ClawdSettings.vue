@@ -64,7 +64,7 @@ useDesktopSettingsDraft(save, () => ready.value);
 h4 { margin: 0; font-size: var(--gc-font-size-title); } p { margin: 0; color: var(--gc-text-muted); line-height: 1.7; font-size: 12px; }
 .clawd-toggle, .clawd-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .clawd-toggle input { accent-color: var(--gc-focus-border); } .clawd-field { display: grid; gap: 8px; }
-.clawd-field input, button { font: inherit; color: var(--gc-text-primary); background: var(--gc-surface-raised); border: 1px solid var(--gc-border-control); border-radius: 0; padding: 8px 10px; min-width: 0; }
+.clawd-field input, button { font: inherit; color: var(--gc-text-primary); background: var(--gc-surface-raised); border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); padding: 8px 10px; min-width: 0; }
 button { cursor: pointer; } button:hover { background: var(--gc-surface-hover); } button:disabled { cursor: default; opacity: .5; }
 .clawd-status span { color: var(--gc-text-muted); font-size: 12px; } .clawd-error { color: var(--gc-danger); }
 </style>

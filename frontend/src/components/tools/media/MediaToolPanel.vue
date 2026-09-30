@@ -796,7 +796,7 @@ function getImagePath(index: number): string | undefined {
   display: block;
   padding: 100% 0 0;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
   cursor: zoom-in;
   background: var(--gc-surface-muted);
 }
@@ -805,13 +805,13 @@ function getImagePath(index: number): string | undefined {
 /* 透明背景棋盘格图案（抠图结果用） */
 .image-wrapper.transparent-bg {
   background-image:
-    linear-gradient(45deg, #808080 25%, transparent 25%),
-    linear-gradient(-45deg, #808080 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #808080 75%),
-    linear-gradient(-45deg, transparent 75%, #808080 75%);
+    linear-gradient(45deg, rgb(128 128 128) 25%, transparent 25%),
+    linear-gradient(-45deg, rgb(128 128 128) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgb(128 128 128) 75%),
+    linear-gradient(-45deg, transparent 75%, rgb(128 128 128) 75%);
   background-size: 10px 10px;
   background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
-  background-color: #a0a0a0;
+  background-color: rgb(160 160 160);
 }
 
 .result-image {

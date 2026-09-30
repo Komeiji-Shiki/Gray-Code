@@ -79,7 +79,7 @@ svg { display: block; margin: auto; }
 marker path { fill: var(--gc-text-muted); }
 .memory-graph-edge { stroke: var(--gc-text-muted); stroke-width: 1; fill: none; opacity: .65; }
 .memory-graph-edge.association { stroke: var(--gc-accent); stroke-dasharray: 5 4; }
-.memory-graph-node { box-sizing: border-box; display: flex; flex-direction: column; gap: 7px; width: 100%; height: 100%; margin: 0; padding: 11px 13px; text-align: left; background: var(--gc-surface-raised); border: 1px solid var(--gc-border-subtle); border-radius: 0; color: var(--gc-text-primary); cursor: pointer; font: inherit; }
+.memory-graph-node { box-sizing: border-box; display: flex; flex-direction: column; gap: 7px; width: 100%; height: 100%; margin: 0; padding: 11px 13px; text-align: left; background: var(--gc-surface-raised); border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-md); color: var(--gc-text-primary); cursor: pointer; font: inherit; }
 .memory-graph-node.selected { border: 2px solid var(--gc-accent); }
 .memory-graph-node.inactive { border-style: dashed; }
 .memory-graph-node:hover:not(:disabled) { background: var(--gc-surface-hover); }
