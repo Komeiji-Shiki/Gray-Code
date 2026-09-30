@@ -2275,6 +2275,7 @@ const en: LanguageMessages = {
                 }
             },
             settingsPanel: {
+                groups: sharedEn.components.settings.settingsPanel.groups,
                 title: 'Settings',
                 backToChat: 'Back to Chat',
                 sidebarCollapse: 'Collapse sidebar',
@@ -2375,6 +2376,7 @@ const en: LanguageMessages = {
                     followSystem: 'Follow system'
                 },
                 appInfo: {
+                    diagnostics: sharedEn.components.settings.settingsPanel.appInfo.diagnostics,
                     title: 'Application Info',
                     name: '{appName} - Vibe Coding Assistant',
                     version: 'Version: {version}',
@@ -3955,6 +3957,7 @@ const en: LanguageMessages = {
                 editRetryFailed: 'Edit retry failed',
                 deleteFailed: 'Delete failed',
                 noConversationSelected: 'No conversation selected',
+                cancelFailed: sharedEn.stores.chatStore.errors.cancelFailed,
                 unknownError: sharedEn.stores.chatStore.errors.unknownError,
                 restoreFailed: 'Restore failed',
                 restoreCheckpointFailed: sharedEn.stores.chatStore.errors.restoreCheckpointFailed,

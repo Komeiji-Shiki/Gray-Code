@@ -45,6 +45,9 @@ const { t } = useI18n()
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
 const isSubAgentMonitor = window.__GRAYCODE_VIEW_MODE === 'subagentMonitor'
 const isDesktopHost = Boolean(window.__GRAYCODE_HOST)
+const desktopState = window.__GRAYCODE_HOST?.getState?.() as Record<string, unknown> | undefined
+const savedDesktopConversationId = typeof desktopState?.desktopConversationId === 'string'
+  ? desktopState.desktopConversationId : null
 
 // 扩展在生成 Webview HTML 时同步注入本次启动偏好；模块执行与 Vue 挂载无需等待 IPC。
 // 浏览器预览等非扩展环境没有注入值时，沿用后端默认的“开启”。
@@ -58,6 +61,52 @@ const splashDone = ref(false)
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
+let disposed = false
+let desktopNavigationRevision = 0
+let rememberDesktopConversation = false
+let stopDesktopNavigationWatcher: (() => void) | undefined
+
+function saveDesktopConversation(conversationId: string | null) {
+  const host = window.__GRAYCODE_HOST
+  if (!host?.setState) return
+  const saved = host.getState?.()
+  host.setState({ ...(saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}), desktopConversationId: conversationId })
+}
+
+if (isDesktopHost && !isSubAgentMonitor) {
+  watch(() => [chatStore.currentConversationId, chatStore.activeTabId], () => {
+    if (rememberDesktopConversation) saveDesktopConversation(chatStore.currentConversationId)
+  }, { flush: 'sync' })
+  // 恢复历史前的宿主请求可能很慢；期间的新导航或输入使启动位置失效。
+  stopDesktopNavigationWatcher = watch(() => [chatStore.currentConversationId, chatStore.activeTabId, settingsStore.currentView,
+    chatStore.inputValue, JSON.stringify(chatStore.editorNodes ?? []), chatStore.storeAttachments?.length], () => {
+    desktopNavigationRevision++
+  }, { flush: 'sync' })
+}
+
+async function restoreDesktopConversation(tabId: string | null, revision: number): Promise<void> {
+  if (!savedDesktopConversationId) return
+  const canRestore = () => !disposed && desktopNavigationRevision === revision && chatStore.activeTabId === tabId
+    && !chatStore.currentConversationId && !chatStore.allMessages.length && !chatStore.inputValue?.trim()
+    && !(chatStore.storeAttachments?.length) && settingsStore.currentView === 'chat'
+  if (!canRestore()) {
+    if (!disposed) saveDesktopConversation(chatStore.currentConversationId)
+    return
+  }
+  try {
+    // 摘要不在首屏列表时先只读取它，随后再次核对用户是否已开始新的工作。
+    if (!chatStore.conversations.some(conversation => conversation.id === savedDesktopConversationId))
+      await chatStore.refreshConversationSummary(savedDesktopConversationId)
+    if (!canRestore()) {
+      if (!disposed) saveDesktopConversation(chatStore.currentConversationId)
+      return
+    }
+    await chatStore.openConversationInTab(savedDesktopConversationId)
+  } catch (error) {
+    console.warn('[App] Failed to restore desktop conversation:', error)
+    if (canRestore()) saveDesktopConversation(null)
+  }
+}
 
 if (window.__GRAYCODE_HOST) {
   if (!isSubAgentMonitor) watch(() => chatStore.currentConversationId, conversationId => {
@@ -330,12 +379,16 @@ onMounted(async () => {
       return;
     }
     if (message.type === 'command') {
+      if (['platform.modeSelected', 'platform.openModeConversation', 'platform.switchConversationView',
+        'platform.closeConversationView', 'newChat', 'showHistory', 'showUsage', 'showSettings'].includes(message.command ?? ''))
+        desktopNavigationRevision++
       switch (message.command) {
         case 'platform.modeSelected':
           if (message.data.promptModeId) void chatStore.setCurrentPromptModeId(message.data.promptModeId)
           break
         case 'platform.openModeConversation':
-          void chatStore.openConversationInTab(message.data.conversationId).then(() => settingsStore.showChat())
+          settingsStore.showChat()
+          void chatStore.openConversationInTab(message.data.conversationId)
             .catch(error => { chatStore.error = { code: 'OPEN_CONVERSATION_ERROR', message: (error as Error).message }; })
           break
         case 'platform.switchConversationView':
@@ -420,6 +473,9 @@ onMounted(async () => {
     () => ({ ok: true as const }),
     error => ({ ok: false as const, error })
   )
+  const startupTabId = chatStore.activeTabId
+  const startupNavigationRevision = desktopNavigationRevision
+  rememberDesktopConversation = true
 
   // command 订阅与 initialize 同步准备都已完成后再发送 ready 握手。扩展端会在握手中
   // 立即 flush pendingCommands；此顺序保证积压的 newChat 既不会丢，也不会命中未准备的 store。
@@ -440,10 +496,16 @@ onMounted(async () => {
     console.error('[App] chatStore.initialize failed', chatInitialization.error)
   }
 
+  if (isDesktopHost && chatInitialization.ok)
+    await restoreDesktopConversation(startupTabId, startupNavigationRevision)
+  stopDesktopNavigationWatcher?.()
+
   mainViewInitialized.value = true
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  stopDesktopNavigationWatcher?.()
   disposeMessageListener?.()
   disposeMessageListener = null
 

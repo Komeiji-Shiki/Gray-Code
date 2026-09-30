@@ -2,7 +2,7 @@ import { computed, reactive } from 'vue';
 import type { ConversationViewInfo, SettingsSnapshot } from '@graycode/contracts';
 import { rpc as call, subscribe } from './api';
 
-export const state = reactive({ panelResizing: false, panelObscured: false, panelMenuOpen: false, contentPreviewOpen: false, inspectorOpen: false, ready: false, error: '', settingsOpen: false, chatFocused: true, workbenchExpanded: false,
+export const state = reactive({ panelResizing: false, panelObscured: false, panelMenuOpen: false, contentPreviewOpen: false, inspectorOpen: false, ready: false, initializing: false, initializationError: '', error: '', settingsOpen: false, chatFocused: true, workbenchExpanded: false,
   notice: null as { message: string; severity: 'info' | 'warning' } | null,
   conversationId: null as string | null, mode: 'chat' as 'chat' | 'code' | 'character',
   conversationViews: [] as ConversationViewInfo[],
@@ -32,10 +32,11 @@ export function loadSettings(signal?: AbortSignal): Promise<void> {
 export async function initialize(signal?: AbortSignal) {
   if (signal?.aborted) return () => {};
   state.ready = false;
+  state.initializing = true; state.initializationError = '';
   let initializing = true;
   const unsubscribe = subscribe(event => {
     if (signal?.aborted) return;
-    if (event.type === 'settings.changed') {
+    if (event.type === 'settings.changed' || event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) {
       // 启动读取期间合并变更，并立即作废旧快照，避免清空刚选中的新工作区。
       if (initializing) settingsRequestSequence++;
       else void guard(() => loadSettings(signal));
@@ -70,6 +71,10 @@ export async function initialize(signal?: AbortSignal) {
     }
     state.ready = true;
     return dispose;
-  } catch (error) { dispose(); throw error; }
-  finally { initializing = false; }
+  } catch (error) {
+    dispose();
+    if (!signal?.aborted) state.initializationError = error instanceof Error ? error.message : String(error);
+    throw error;
+  }
+  finally { initializing = false; if (!signal?.aborted) state.initializing = false; }
 }

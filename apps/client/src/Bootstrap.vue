@@ -3,7 +3,7 @@ import { defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue';
 import { closeWebBridge, installWebBridge, webRequest } from './webBridge';
 import projectLogo from '../../../resources/icon.png';
 import WorkspaceLoading from './components/WorkspaceLoading.vue';
-const App = defineAsyncComponent({ loader: () => import('./App.vue'), loadingComponent: WorkspaceLoading, errorComponent: WorkspaceLoading, delay: 150 });
+const App = defineAsyncComponent({ loader: () => import('./App.vue'), loadingComponent: WorkspaceLoading, errorComponent: WorkspaceLoading, delay: 150, timeout: 20_000 });
 const native = Boolean(window.graycode);
 const authenticated = ref(native); const loading = ref(!native); const busy = ref(false); const token = ref(''); const error = ref('');
 const deviceName = ref(localStorage.getItem('graycode.webDeviceName') ?? '');

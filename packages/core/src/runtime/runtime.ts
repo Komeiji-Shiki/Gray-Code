@@ -25,7 +25,7 @@ export interface RuntimeServices {
   canAccessConversation?: (actor: ActorIdentity, conversation: PlatformConversation) => Promise<boolean>;
   questionTimeoutMs?: number;
   preparePrompt?: (input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
-    history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; automationId?: string }) => Promise<{
+    history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; automationId?: string; signal?: AbortSignal }) => Promise<{
     systemPrompt: string; toolNames: string[]; messageMetadata?: Record<string, unknown>; messageParts?: PlatformMessage['parts']; turnContext?: Record<string, unknown>; promptContext?: ModelInput['promptContext'];
   }>;
   transformOutput?: (input: { run: RunRecord; message: PlatformMessage; request: ModelInput }) => Promise<PlatformMessage>;
@@ -54,12 +54,13 @@ export interface ModelRequestContext {
   history: ConversationState;
 }
 export type RuntimeNotification = { type: 'event'; event: RunEvent }
+  | { type: 'runtime.preparation.changed' }
   | { type: 'run.created'; runId: string; run: RunRecord; message?: PlatformMessage }
   | { type: 'message.persisted'; runId: string; content: PlatformMessage }
   | { type: 'model.continued'; runId: string }
   | { type: 'model.delta'; runId: string; parts: Record<string, unknown>[] }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
-interface ActiveRun { controller: AbortController; done: Promise<void> }
+interface ActiveRun { conversationId: string; controller: AbortController; done: Promise<void> }
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
 interface FunctionCall { id: string; name: string; args: Record<string, unknown>; async?: boolean }
 export interface PreparedConversationChange {
@@ -75,7 +76,16 @@ export interface RuntimeRunScope {
   automationId?: string;
   workspace?: WorkspaceDefinition;
   clientId?: string;
+  /** 可信调用方取消已受理的启动请求；连接断开不触发此信号。 */
+  signal?: AbortSignal;
   modelSelection?: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>;
+}
+
+function captureRunScope(scope?: RuntimeRunScope): RuntimeRunScope | undefined {
+  if (!scope) return undefined;
+  // AbortSignal 不能结构化克隆；其他上下文仍在受理时捕获独立快照。
+  const { signal, ...snapshot } = scope;
+  return { ...structuredClone(snapshot), ...(signal ? { signal } : {}) };
 }
 
 /** The task owns generation and tool execution; client disconnects never own its lifetime. */
@@ -83,6 +93,10 @@ export class PlatformRuntime {
   private readonly active = new Map<string, ActiveRun>();
   private readonly starting = new Set<Promise<RunRecord>>();
   get activeCount(): number { return this.active.size; }
+  get preparingCount(): number { return this.starting.size; }
+  activeRunIds(conversationId: string): string[] {
+    return [...this.active].filter(([, value]) => value.conversationId === conversationId).map(([id]) => id);
+  }
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly listeners = new Set<(event: RuntimeNotification) => void>();
   private closing = false;
@@ -120,13 +134,14 @@ export class PlatformRuntime {
 
   /** 第三个参数仅由可信宿主传入，不从公共任务请求或模型参数读取。 */
   start(input: StartRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
-    return this.begin(structuredClone(input), change, scope ? structuredClone(scope) : undefined);
+    return this.begin(structuredClone(input), change, captureRunScope(scope));
   }
   continue(input: ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
-    return this.begin(structuredClone(input), change, scope ? structuredClone(scope) : undefined);
+    return this.begin(structuredClone(input), change, captureRunScope(scope));
   }
   private async prepareRun(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope) {
     if (this.closing) throw new Error('Runtime is closing.');
+    scope?.signal?.throwIfAborted();
     const actor = await this.services.actor(input.actorId, { conversationId: input.conversationId, workspaceId: input.workspaceId });
     const agent = await this.services.agent(input.agentId, actor ?? undefined, input.conversationId);
     if (!actor || actor.revoked || !agent) throw new Error('Actor or agent is unavailable.');
@@ -156,10 +171,13 @@ export class PlatformRuntime {
     const modelSelection = scope?.modelSelection ?? { providerId: input.providerId ?? agent.providerId, modelOverride: input.modelOverride ?? agent.modelId, reasoningEffort: input.reasoningEffort };
     const configuredRequest = { ...input, ...modelSelection };
     const automationId = scope?.automationId ?? this.services.currentAutomationId?.();
+    scope?.signal?.throwIfAborted();
     const prepared = await this.services.preparePrompt?.({ request: configuredRequest, agent: structuredClone(agent), actor, workspace: workspace ?? undefined,
-      history, conversation: change?.commit.metadata ?? conversation, previousTurn, clientId: scope?.clientId, automationId });
+      history, conversation: change?.commit.metadata ?? conversation, previousTurn, clientId: scope?.clientId, automationId, signal: scope?.signal });
+    scope?.signal?.throwIfAborted();
     const names = prepared?.toolNames ?? agent.toolNames;
     const catalog = this.services.prepareTools ? await this.services.prepareTools(names, configuredRequest, agent) : this.services.tools.catalog(names);
+    scope?.signal?.throwIfAborted();
     const now = Date.now();
     const run: RunRecord = { id: randomUUID(), requestKey: input.requestKey, conversationId: input.conversationId,
       executionNodeId: this.services.executionNodeId?.(), nodeOrigin: scope?.nodeOrigin ?? this.services.currentNodeOrigin?.(),
@@ -176,7 +194,7 @@ export class PlatformRuntime {
   }
   /** 预览与发送共用回合捕获和权限检查，但不创建任务与历史记录。 */
   async preview(input: StartRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope) {
-    const turn = await this.prepareRun(structuredClone(input), change, scope ? structuredClone(scope) : undefined);
+    const turn = await this.prepareRun(structuredClone(input), change, captureRunScope(scope));
     const { actor, workspace, catalog, run, message, selection, configuredAgent } = turn;
     const state = structuredClone(turn.state);
     state.metadata = structuredClone(change?.commit.metadata ?? state.metadata);
@@ -192,12 +210,17 @@ export class PlatformRuntime {
   private begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
     const pending = this.beginRun(input, change, scope);
     this.starting.add(pending);
-    void pending.finally(() => this.starting.delete(pending)).catch(() => undefined);
+    void pending.finally(() => {
+      this.starting.delete(pending);
+      // 正式运行 RPC 的准备失败也没有持久化事件，宿主仍需重新检查退出条件。
+      this.notify({ type: 'runtime.preparation.changed' });
+    }).catch(() => undefined);
     return pending;
   }
   private async beginRun(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
     const { workspace, state, catalog, modelSelection, prepared, run, message, selection, configuredAgent } = await this.prepareRun(input, change, scope);
     if (this.closing) throw new Error('Runtime is closing.');
+    scope?.signal?.throwIfAborted();
     const committed = await this.services.storage.commitConversation({ conversationId: input.conversationId,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, ...change?.commit,
       records: [...(change?.commit.records ?? []), { namespace: 'run-configurations', id: run.id, ownerId: run.conversationId,
@@ -209,11 +232,14 @@ export class PlatformRuntime {
     const controller = new AbortController();
     // 提交已经开始时仍需结算任务，但关闭后不能启动模型或工具。
     if (this.closing) controller.abort(new Error('Runtime is shutting down.'));
+    const abort = () => controller.abort(scope?.signal?.reason);
+    if (scope?.signal?.aborted) abort();
+    else scope?.signal?.addEventListener('abort', abort, { once: true });
     // Defer work one microtask so cancellation sees the run even when it arrives immediately.
     const execute = () => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection);
     const done = Promise.resolve().then(() => this.services.runInScope ? this.services.runInScope(run, execute) : execute())
-      .finally(() => { this.active.delete(run.id); this.questions.clear(run.id); });
-    this.active.set(run.id, { controller, done });
+      .finally(() => { scope?.signal?.removeEventListener('abort', abort); this.active.delete(run.id); this.questions.clear(run.id); });
+    this.active.set(run.id, { conversationId: run.conversationId, controller, done });
     // 对话事务和取消句柄都已建立，界面才开始订阅这一轮任务。
     this.notify({ type: 'run.created', runId: run.id, run: structuredClone(run), ...(message ? { message: structuredClone(message) } : {}) });
     void done.catch(() => undefined);

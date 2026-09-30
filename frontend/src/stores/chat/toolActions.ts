@@ -13,6 +13,7 @@ import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { insertMessageAt, removeMessageAt, rebuildMessageIndexById, setToolResponseCacheEntry, setToolResponseCacheEntries } from './state'
 import { finishSmoothStreamForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
+import { t } from '../../composables/useI18n'
 
 /**
  * 根据工具调用 ID 获取工具响应。
@@ -381,6 +382,10 @@ export async function cancelStreamAndRejectTools(
   state: ChatStoreState,
   _computed: ChatStoreComputed
 ): Promise<void> {
+  if (window.__GRAYCODE_HOST) {
+    await cancelDesktopStream(state, {}, true)
+    return
+  }
   if (!state.currentConversationId.value) return
 
   const currentStreamingId = state.streamingMessageId.value
@@ -467,6 +472,59 @@ export interface CancelStreamOptions {
   preserveSubAgents?: boolean
 }
 
+async function cancelDesktopStream(
+  state: ChatStoreState,
+  options: CancelStreamOptions,
+  rejectTools = false
+): Promise<CancelStreamResponse> {
+  const conversationId = state.currentConversationId.value
+  const streamId = state.activeStreamId.value
+  const messageId = state.streamingMessageId.value
+  const hadActiveRequest = state.isStreaming.value || state.isWaitingForResponse.value || !!streamId
+  if (!conversationId || (!hadActiveRequest && !rejectTools)) return { cancelled: false }
+  const ownsCurrentRequest = () => state.currentConversationId.value === conversationId && state.activeStreamId.value === streamId
+    && (streamId !== null || state.streamingMessageId.value === messageId)
+  try {
+    const response = await sendToExtension<{ success?: boolean; code?: string; error?: string } & Partial<CancelStreamResponse>>(
+      MESSAGE_NAMES.cancelStream,
+      { conversationId, ...(options.preserveSubAgents === true ? { preserveSubAgents: true } : {}) }
+    )
+    if (response?.success !== true) {
+      const error = new Error(response?.error || t('stores.chatStore.errors.cancelFailed'))
+      Object.assign(error, { code: response?.code || 'CANCEL_ERROR' })
+      throw error
+    }
+    if (state.currentConversationId.value === conversationId && (!state.activeStreamId.value || state.activeStreamId.value === streamId)
+      && state.error.value?.message === t('stores.chatStore.errors.cancelFailed')) state.error.value = null
+    // 取消回执前继续接收原运行的真实结果；迟到的回执不能清掉新会话或新运行。
+    if (ownsCurrentRequest()) {
+      const currentMessageId = state.streamingMessageId.value
+      state._lastCancelledStreamId.value = state.isStreaming.value && currentMessageId
+        ? { conversationId, messageId: currentMessageId, streamId: streamId ?? undefined } : null
+      stopStreamingMessage(state, currentMessageId)
+      removeEmptyAssistantPlaceholder(state, currentMessageId)
+      finishSmoothStreamForState(state, currentMessageId)
+      const info = markIncompleteToolsAsError(state, currentMessageId, options.preserveSubAgents === true)
+      ensureFunctionResponseMessageForRejectedTools(state, info, options.preserveSubAgents === true)
+      state.streamingMessageId.value = null
+      state.activeStreamId.value = null
+      state.isLoading.value = false
+      state.isStreaming.value = false
+      state.isWaitingForResponse.value = false
+      state.retryStatus.value = null
+      resetTurnBaseTokenEstimate()
+    }
+    return { cancelled: true, ...(response.foregroundWorkTransition ? { foregroundWorkTransition: response.foregroundWorkTransition } : {}) }
+  } catch (error) {
+    if (ownsCurrentRequest()) state.error.value = {
+      code: (error as { code?: string }).code || 'CANCEL_ERROR',
+      message: t('stores.chatStore.errors.cancelFailed'),
+      details: error instanceof Error ? error.message : String(error)
+    }
+    throw error
+  }
+}
+
 /**
  * 取消当前流式请求
  */
@@ -475,6 +533,7 @@ export async function cancelStream(
   _computed: ChatStoreComputed,
   options: CancelStreamOptions = {}
 ): Promise<CancelStreamResponse> {
+  if (window.__GRAYCODE_HOST) return cancelDesktopStream(state, options)
   const currentStreamingId = state.streamingMessageId.value
 
   // 仅在“真实流式生成中”才记录取消标记，避免非流式等待阶段残留旧标记。

@@ -31,6 +31,7 @@ export class WorkspaceFiles {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly documents = new Map<string, DocumentState>();
   private readonly activeEditors = new Map<string, string>();
+  private readonly detachedClients = new Set<string>();
   private recoveryError?: string;
   constructor(
     private readonly changed: (
@@ -40,6 +41,16 @@ export class WorkspaceFiles {
     ) => void = () => {},
     private readonly documentReset: (value: DocumentReset) => void = () => {},
   ) {}
+
+  clientConnected(clientId: string): void { this.detachedClients.delete(clientId); }
+  async clientClosed(clientId: string): Promise<void> {
+    // 保留正文和原磁盘哈希供原标签页恢复，离线草稿不再长期阻塞其它写入。
+    await this.locked('workspace-mutations', async () => {
+      this.detachedClients.add(clientId); this.activeEditors.delete(clientId);
+      for (const [key, document] of this.documents) if (document.clientId === clientId && !document.dirty) this.documents.delete(key);
+    });
+  }
+  private activeDraft(document: DocumentState): boolean { return document.dirty && !this.detachedClients.has(document.clientId); }
 
   /** 设置发布时保留文档所指向的文件，只更新其显示路径；移出的目录仍保留草稿供复制。 */
   rebindWorkspaces(previous: readonly WorkspaceDefinition[], next: readonly WorkspaceDefinition[]): void {
@@ -94,14 +105,20 @@ export class WorkspaceFiles {
   }
 
   blockWrites(reason?: string): void { this.recoveryError = reason; }
+  dirtyDocumentCount(includeDetached = true, excludeClientId?: string): number {
+    return [...this.documents.values()].filter(document => document.clientId !== excludeClientId && document.dirty && (includeDetached || !this.detachedClients.has(document.clientId))).length;
+  }
+  detachedDirtyDocumentCount(): number {
+    return [...this.documents.values()].filter(document => document.dirty && this.detachedClients.has(document.clientId)).length;
+  }
   dirtyPaths(workspaceId: string): string[] {
-    return [...new Set([...this.documents.values()].filter(document => document.workspaceId === workspaceId && document.dirty).map(document => document.path))];
+    return [...new Set([...this.documents.values()].filter(document => document.workspaceId === workspaceId && this.activeDraft(document)).map(document => document.path))];
   }
   private documentInside(key: string, document: DocumentState, directory: string): boolean {
     return inside(this.key(path.resolve(directory)), key.slice(document.clientId.length + 1));
   }
   dirtyPathsInDirectory(directory: string): string[] {
-    return [...new Set([...this.documents].filter(([key, document]) => document.dirty && this.documentInside(key, document, directory)).map(([, document]) => document.path))];
+    return [...new Set([...this.documents].filter(([key, document]) => this.activeDraft(document) && this.documentInside(key, document, directory)).map(([, document]) => document.path))];
   }
   /** 同步 Git 或外部操作改动的干净文件，保持原有草稿版本协议。 */
   async reloadCleanDocuments(directory: string): Promise<void> {
@@ -153,7 +170,7 @@ export class WorkspaceFiles {
     return this.locked('workspace-mutations', async () => {
       if (this.recoveryError && !options.recovery) throw new Error(`WORKSPACE_RECOVERY_REQUIRED: ${this.recoveryError}`);
       const dirty = options.rejectDirty || options.discardDirtyFiles !== undefined
-        ? [...this.documents.entries()].filter(([key, document]) => document.dirty &&
+        ? [...this.documents.entries()].filter(([key, document]) => this.activeDraft(document) &&
           (options.dirtyDirectory ? this.documentInside(key, document, options.dirtyDirectory) : document.workspaceId === workspace.id)) : [];
       const dirtyFiles = [...new Set(dirty.map(([, document]) => document.path))].sort();
       const confirmed = options.discardDirtyFiles !== undefined;
@@ -310,7 +327,7 @@ export class WorkspaceFiles {
   private checkDrafts(absolute: string, exceptClient?: string, ignored = new Set<string>()): void {
     for (const [key, document] of this.documents) {
       if (
-        document.dirty &&
+        this.activeDraft(document) &&
         !ignored.has(key) &&
         document.clientId !== exceptClient &&
         key.endsWith(`:${this.key(absolute)}`)
@@ -326,11 +343,13 @@ export class WorkspaceFiles {
       const file = key.slice(document.clientId.length + 1);
       const workspace = workspaces.find(item => item.id === document.workspaceId);
       const declared = workspace && resolveWorkspacePath(workspace, document.path);
-      if (document.dirty && (inside(this.key(absolute), file) || declared && inside(absolute, declared))) throw new Error(`DOCUMENT_DIRTY: ${document.path} 有未保存内容，请先保存或关闭该编辑草稿。`);
+      if (this.activeDraft(document) && (inside(this.key(absolute), file) || declared && inside(absolute, declared))) throw new Error(`DOCUMENT_DIRTY: ${document.path} 有未保存内容，请先保存或关闭该编辑草稿。`);
     }
   }
   async relocateDocuments(from: string, to: string | undefined, workspaces: readonly WorkspaceDefinition[]): Promise<void> {
     for (const [key, previous] of [...this.documents]) {
+      // 离线草稿没有参与移动/删除确认，恢复时用原基线报冲突，不能换成磁盘正文。
+      if (this.detachedClients.has(previous.clientId) && previous.dirty) continue;
       const absolute = key.slice(previous.clientId.length + 1);
       const workspace = workspaces.find(item => item.id === previous.workspaceId);
       const declared = workspace && resolveWorkspacePath(workspace, previous.path);

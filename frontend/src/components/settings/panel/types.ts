@@ -12,6 +12,12 @@ export interface TabItem {
   icon: string
 }
 
+export interface TabGroup {
+  id: string
+  label: string
+  tabs: TabItem[]
+}
+
 export interface SearchIndexEntry {
   /** 稳定唯一键（结果列表 key） */
   key: string

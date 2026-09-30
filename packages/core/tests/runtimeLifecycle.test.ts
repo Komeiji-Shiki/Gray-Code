@@ -26,13 +26,16 @@ describe('运行器启动、关闭和工具准备的取消边界', () => {
 
   test('关闭等待已受理的启动准备结束，并拒绝将其写成新任务', async () => {
     const entered = deferred(), release = deferred();
+    const preparations: string[] = []; runtime.subscribe(event => { if (event.type === 'runtime.preparation.changed') preparations.push(event.type); });
     services.preparePrompt = async () => { entered.resolve(); await release.promise; return { systemPrompt: '', toolNames: ['read'] }; };
     const started = runtime.start(input); const rejected = expect(started).rejects.toThrow('Runtime is closing');
     await entered.promise;
+    expect(runtime.preparingCount).toBe(1); expect(runtime.activeCount).toBe(0);
     let closed = false; const closing = runtime.close().then(() => { closed = true; });
     await new Promise(resolve => setImmediate(resolve));
     try { expect(closed).toBe(false); } finally { release.resolve(); }
     await rejected; await closing;
+    expect(runtime.preparingCount).toBe(0); expect(preparations).toEqual(['runtime.preparation.changed']);
     expect(await f.store.listRuns()).toEqual([]);
     expect(services.models.generate).not.toHaveBeenCalled();
   });
@@ -51,6 +54,49 @@ describe('运行器启动、关闭和工具准备的取消边界', () => {
     expect((await f.store.getRun(run.id))?.status).toBe('cancelled');
     expect(runtime.activeCount).toBe(0);
     expect(services.models.generate).not.toHaveBeenCalled();
+  });
+
+  test('启动准备期间的可信取消信号保持原身份，准备退出后不提交任务或历史', async () => {
+    const entered = deferred(), release = deferred(); const controller = new AbortController();
+    services.preparePrompt = async input => {
+      expect(input.signal).toBe(controller.signal); entered.resolve(); await release.promise;
+      return { systemPrompt: '', toolNames: ['read'] };
+    };
+    const started = runtime.start(input, undefined, { clientId: 'window', signal: controller.signal });
+    const rejected = expect(started).rejects.toThrow('Cancelled by user');
+    await entered.promise;
+    controller.abort(new Error('Cancelled by user.')); release.resolve(); await rejected;
+    expect(await f.store.listRuns()).toEqual([]);
+    expect((await f.store.readFullHistory(input.conversationId)).messages).toEqual([]);
+    expect(services.models.generate).not.toHaveBeenCalled();
+  });
+
+  test('取消发生在任务提交期间时，持久化输入保留且任务结算取消，不再调用模型', async () => {
+    const committed = deferred(), release = deferred(); const controller = new AbortController();
+    const original = f.store.commitConversation.bind(f.store);
+    jest.spyOn(f.store, 'commitConversation').mockImplementationOnce(async value => {
+      const result = await original(value); committed.resolve(); await release.promise; return result;
+    });
+    const started = runtime.start(input, undefined, { signal: controller.signal }); await committed.promise;
+    controller.abort(new Error('Cancelled by user.')); release.resolve();
+    const run = await started;
+    expect((await runtime.wait(run.id))?.status).toBe('cancelled');
+    expect(runtime.activeRunIds(input.conversationId)).toEqual([]);
+    expect((await f.store.readFullHistory(input.conversationId)).messages).toEqual([
+      expect.objectContaining({ role: 'user', runId: run.id, parts: input.message.parts }),
+    ]);
+    expect(services.models.generate).not.toHaveBeenCalled();
+  });
+
+  test('正式运行准备成功结束时清理准备计数，并发出不落库的生命周期通知', async () => {
+    const entered = deferred(), release = deferred(); const preparations: string[] = [];
+    services.preparePrompt = async () => { entered.resolve(); await release.promise; return { systemPrompt: '', toolNames: ['read'] }; };
+    runtime.subscribe(event => { if (event.type === 'runtime.preparation.changed') preparations.push(event.type); });
+    const started = runtime.start(input); await entered.promise;
+    expect(runtime.preparingCount).toBe(1); expect(runtime.activeCount).toBe(0); expect(preparations).toEqual([]);
+    release.resolve(); const run = await started; await runtime.wait(run.id);
+    expect(runtime.preparingCount).toBe(0); expect(preparations).toEqual(['runtime.preparation.changed']);
+    expect((await f.store.readRunEvents(run.id)).map(event => event.type)).not.toContain('runtime.preparation.changed');
   });
 
   test('工具准备期间取消只结算该调用，不执行尚未开始的工具', async () => {

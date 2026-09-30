@@ -280,6 +280,33 @@ describe('updateConversationAfterMessage（HIS-09）', () => {
     expect(conv.preview).toBeUndefined()
     expect(state.totalMessages.value).toBe(10)
   })
+
+  test('切到另一会话后，旧摘要回执只更新原摘要，不能覆盖当前窗口总数', async () => {
+    let finish!: (value: unknown) => void
+    mockSend.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const state = createState({
+      currentConversationId: ref('conv-a'),
+      conversations: ref([
+        { id: 'conv-a', title: 'A', isPersisted: true, createdAt: 1, updatedAt: 1, messageCount: 0 },
+        { id: 'conv-b', title: 'B', isPersisted: true, createdAt: 1, updatedAt: 1, messageCount: 9 }
+      ] as any),
+      allMessages: ref([{ id: 'a', role: 'user', content: 'A 的新输入', timestamp: 1 }]),
+      totalMessages: ref(1)
+    })
+    const summary = updateConversationAfterMessage(state)
+    state.currentConversationId.value = 'conv-b'
+    state.allMessages.value = [{ id: 'b', role: 'user', content: 'B 的输入', timestamp: 2 }]
+    state.totalMessages.value = 9
+    finish({ success: true })
+    await summary
+    expect(state.totalMessages.value).toBe(9)
+    expect(state.conversations.value[0].messageCount).toBe(1)
+    expect(state.conversations.value[0].preview).toBe('A 的新输入')
+    expect(state.conversations.value[1].messageCount).toBe(9)
+    expect(mockSend).toHaveBeenCalledWith('conversation.updateSummary', {
+      conversationId: 'conv-a', messageCount: 1, preview: 'A 的新输入'
+    })
+  })
 })
 
 describe('loadHistory 首屏先渲染再异步补拉（HIS-13）', () => {

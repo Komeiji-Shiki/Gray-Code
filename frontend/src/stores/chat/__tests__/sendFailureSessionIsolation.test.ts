@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import type { ChatStoreComputed, ConversationSessionSnapshot } from '../types'
 import { createChatState } from '../state'
 import { sendMessage } from '../messageActions/sendMessageFlow'
+import { cancelStream } from '../toolActions'
 import { sendToExtension } from '../../../utils/vscode'
 import { createAndPersistConversation, syncConversationWorkspaceUri } from '../conversationActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
@@ -132,6 +133,57 @@ describe('sendMessage request settlement stays in its origin session', () => {
     expect(send.state.isStreaming.value).toBe(false)
     expect(send.state.isLoading.value).toBe(false)
     expect(send.state.error.value?.message).toBe('send failed')
+  })
+
+  test.each(['before', 'after'])('独立端准备中止在取消回执 %s 到达，不显示发送失败或保留未落库消息', async order => {
+    const previousHost = window.__GRAYCODE_HOST
+    window.__GRAYCODE_HOST = { kind: 'desktop' } as NonNullable<typeof previousHost>
+    try {
+      const send = beginSend()
+      await send.ready
+      let finishCancel!: (value: unknown) => void
+      vi.mocked(sendToExtension).mockImplementation(() => new Promise(resolve => { finishCancel = resolve }))
+      const cancellation = cancelStream(send.state, {} as ChatStoreComputed)
+      send.state.inputValue.value = '停止后正在写的新输入'
+      send.state.editorNodes.value = [{ type: 'text', text: '停止后正在写的新输入' }]
+      if (order === 'after') { finishCancel({ success: true }); await cancellation }
+      send.reject(Object.assign(new Error('Cancelled by user.'), { code: 'CANCELLED_ERROR' }))
+      expect(await send.request).toBe(false)
+      if (order === 'before') { finishCancel({ success: true }); await cancellation }
+      expect(send.state.allMessages.value).toEqual([])
+      expect(send.state.isStreaming.value).toBe(false)
+      expect(send.state.isWaitingForResponse.value).toBe(false)
+      expect(send.state.error.value).toBeNull()
+      expect(send.state.inputValue.value).toBe('停止后正在写的新输入')
+    } finally { window.__GRAYCODE_HOST = previousHost }
+  })
+
+  test('准备中止的迟到拒绝只移除未提交消息，保持同会话后续运行和已输入草稿', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    window.__GRAYCODE_HOST = { kind: 'desktop' } as NonNullable<typeof previousHost>
+    try {
+      const send = beginSend()
+      await send.ready
+      vi.mocked(sendToExtension).mockResolvedValue({ success: true })
+      await cancelStream(send.state, {} as ChatStoreComputed)
+      send.state.allMessages.value.push(
+        { id: 'new-user', role: 'user', content: '新的已提交输入', timestamp: 3, backendIndex: 1 },
+        { id: 'new-assistant', role: 'assistant', content: '新回复', timestamp: 4, backendIndex: 2, streaming: true, localOnly: true }
+      )
+      send.state.activeStreamId.value = 'new-stream'
+      send.state.streamingMessageId.value = 'new-assistant'
+      send.state.isStreaming.value = true
+      send.state.isWaitingForResponse.value = true
+      send.state.inputValue.value = '第三条草稿'
+      send.reject(Object.assign(new Error('Cancelled by user.'), { code: 'CANCELLED_ERROR' }))
+      await send.request
+      expect(send.state.allMessages.value.map(message => message.id)).toEqual(['new-user', 'new-assistant'])
+      expect(send.state.allMessages.value.map(message => message.backendIndex)).toEqual([0, 1])
+      expect(send.state.activeStreamId.value).toBe('new-stream')
+      expect(send.state.isStreaming.value).toBe(true)
+      expect(send.state.error.value).toBeNull()
+      expect(send.state.inputValue.value).toBe('第三条草稿')
+    } finally { window.__GRAYCODE_HOST = previousHost }
   })
 
   test('创建期间切换会话时不写新会话的配置，原草稿退出等待状态', async () => {

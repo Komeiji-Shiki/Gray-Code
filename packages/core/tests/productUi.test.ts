@@ -2,6 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
+import { pathToFileURL } from 'node:url';
+import type { WorkspaceDiff } from '../../../apps/server/src/workspace/diffs';
 
 test('手动总结等待模型时仍能切换会话和读取设置，取消后原文保持不变', async () => {
   const f = await fixture(); await f.store.close();
@@ -143,5 +145,162 @@ test('设置页仅在显式显示时按需读取已保存的渠道 API Key', asy
     await call('config.updateConfig', { configId: id, updates: { apiKey: 'unsaved-test-key' } });
     expect(await call('config.revealApiKey', { configId: id })).toEqual({ apiKey: 'unsaved-test-key' });
     await expect(call('config.revealApiKey', { configId: 'missing' })).rejects.toThrow('渠道不存在');
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('删除当前工作区后仍可退出设置、停止对话和切换工作区，并同步清空旧 URI', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const clients = ['settings-end', 'cancel-stale', 'switch-stale'].map(clientId => ({ actorId: 'owner', clientId }));
+  const events: Record<string, any>[] = []; app.subscribe(event => { if (event.type === 'ui.message') events.push(event); });
+  try {
+    const draft = await app.product.draft();
+    draft.app.workspaces.push({ id: 'removed', name: '待删除', directory: f.source, deviceId: 'local' },
+      { id: 'remaining', name: '保留', directory: f.root, deviceId: 'local' }); await app.product.save(draft);
+    const conversation = await app.createConversation('owner', '失效工作区中的对话', 'removed');
+    for (const client of clients) await app.productUi.call(client, 'ui.context.set', { workspaceId: 'removed' });
+    await app.productUi.call(clients[0], 'ui.settings.begin');
+    const before = app.settings.snapshot(); before.settings.workspaces = before.settings.workspaces.filter(workspace => workspace.id !== 'removed');
+    await app.settings.save({ settings: before.settings, expectedRevision: before.revision });
+    await expect(app.productUi.call(clients[0], 'ui.settings.end')).resolves.toBeUndefined();
+    expect(await app.productUi.call(clients[1], 'cancelStream', { conversationId: conversation.id })).toEqual({ success: true });
+    expect(await app.productUi.call(clients[1], 'getWorkspaceUri')).toBeNull();
+    await app.productUi.call(clients[2], 'ui.context.set', { workspaceId: 'remaining' });
+    expect(await app.productUi.call(clients[2], 'getWorkspaceUri')).toBe(pathToFileURL(f.root).toString());
+    for (const client of clients) expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ clientId: client.clientId, message: { type: 'workspaceUri', data: null } }),
+    ]));
+    expect((await app.storage.getConversation(conversation.id))?.workspaceId).toBe('removed');
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('断开立即解除退出阻塞，排队写入和设置草稿仍可重连恢复', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'detached-draft' };
+  let enter!: () => void, release!: () => void; const entered = new Promise<void>(resolve => { enter = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; }); let pending: Promise<unknown> | undefined;
+  try {
+    await app.productUi.call(client, 'ui.settings.begin');
+    const draft = app.product.draft.bind(app.product);
+    const held = jest.spyOn(app.product, 'draft').mockImplementationOnce(async () => { enter(); await gate; return draft(); });
+    pending = app.productUi.call(client, 'ui.settings.discard'); await entered;
+    await app.productUi.clientClosed(client.clientId);
+    expect(await app.productUi.hasDirtyPreferences()).toBe(false);
+    app.productUi.clientConnected(client.clientId); release(); await pending; held.mockRestore();
+    const id = await app.productUi.call(client, 'config.createConfig', { name: '离线草稿', type: 'openai' });
+    expect(await app.productUi.hasDirtyPreferences()).toBe(true);
+    expect(await app.productUi.hasClientDirtyPreferences(client.clientId)).toBe(true);
+    expect(await app.productUi.hasClientDirtyPreferences('unopened-client')).toBe(false);
+    await app.productUi.clientClosed(client.clientId);
+    expect(await app.productUi.hasDirtyPreferences()).toBe(false);
+    expect(await app.productUi.hasDirtyPreferences(true)).toBe(true);
+    expect(await app.productUi.hasClientDirtyPreferences(client.clientId)).toBe(true);
+    expect(await app.productUi.hasDirtyPreferences(true, client.clientId)).toBe(false);
+    app.productUi.clientConnected(client.clientId);
+    expect(await app.productUi.hasDirtyPreferences()).toBe(true);
+    expect(await app.productUi.call(client, 'config.getConfig', { configId: id })).toMatchObject({ id, name: '离线草稿' });
+  } finally { release(); await pending; jest.restoreAllMocks(); await app.close(); await f.cleanup(); }
+});
+
+test('未打开设置页的有效远端更新仍被计为脏草稿，离线退出统计和随后打开设置都保留它', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'implicit-remote-draft' };
+  const profiles = [{ id: 'unsaved-profile', name: '未打开设置的草稿', command: 'node', args: ['--version'], enabled: false }];
+  try {
+    expect(await app.productUi.call(client, 'platform.externalAgents.update', { profiles })).toEqual({ success: true });
+    expect(await app.productUi.call(client, 'ui.settings.status')).toMatchObject({ dirty: true });
+    expect(await app.productUi.hasDirtyPreferences()).toBe(true);
+    expect(await app.productUi.hasClientDirtyPreferences(client.clientId)).toBe(true);
+    expect(app.settings.snapshot().settings.externalAgents).not.toEqual(profiles);
+    await app.productUi.clientClosed(client.clientId);
+    expect(await app.productUi.hasDirtyPreferences()).toBe(false);
+    expect(await app.productUi.hasDirtyPreferences(true)).toBe(true);
+    expect(await app.productUi.hasDirtyPreferences(true, client.clientId)).toBe(false);
+    expect(await app.productUi.hasClientDirtyPreferences(client.clientId)).toBe(true);
+    expect(await app.productUi.call(client, 'ui.settings.begin')).toMatchObject({ dirty: true });
+    expect(await app.productUi.call(client, 'platform.externalAgents.get')).toEqual(profiles);
+    await app.productUi.call(client, 'ui.settings.save');
+    expect(app.settings.snapshot().settings.externalAgents).toEqual(profiles);
+    expect(await app.productUi.hasClientDirtyPreferences(client.clientId)).toBe(false);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('Diff 预览使用提案所属工作区和精确记录，保留多文件入口及超过百条的历史目标', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'diff-identity' }; const events: Record<string, any>[] = [];
+  app.subscribe(event => { if (event.type === 'workspace.diff.open') events.push(event); });
+  try {
+    const draft = await app.product.draft();
+    draft.app.workspaces.push({ id: 'proposal-workspace', name: '提案', directory: f.source, deviceId: 'local' },
+      { id: 'selected-workspace', name: '当前界面', directory: f.root, deviceId: 'local' }); await app.product.save(draft);
+    const conversation = await app.createConversation('owner', 'Diff 归属', 'proposal-workspace');
+    await app.productUi.call(client, 'ui.context.set', { workspaceId: 'selected-workspace' });
+    const target: WorkspaceDiff = { id: 'older-target', conversationId: conversation.id, workspaceId: 'proposal-workspace',
+      path: 'real/target.txt', originalText: '旧', proposedText: '新', baseHash: null, status: 'accepted', toolCallId: 'multiple-files', createdAt: 1 };
+    await app.storage.putRecord({ namespace: 'workspace-diffs', id: target.id, ownerId: conversation.id, value: target });
+    const pending = { ...target, id: 'pending-target', path: 'real/pending.txt', status: 'pending' as const, createdAt: 2 };
+    await app.storage.putRecord({ namespace: 'workspace-diffs', id: pending.id, ownerId: conversation.id, value: pending });
+    for (let i = 0; i < 100; i++) {
+      const value = { ...target, id: `newer-${i}`, toolCallId: `other-${i}`, createdAt: i + 3 };
+      await app.storage.putRecord({ namespace: 'workspace-diffs', id: value.id, ownerId: conversation.id, value });
+    }
+    const newest = await app.diffs.list('owner', 'proposal-workspace');
+    expect(newest).toHaveLength(100); expect(newest.some(value => value.id === target.id)).toBe(false);
+    const included = await app.diffs.list('owner', 'proposal-workspace', target.id);
+    expect(included).toHaveLength(100); expect(included.at(-1)?.id).toBe(target.id);
+    await expect(app.diffs.list('owner', 'selected-workspace', target.id)).rejects.toThrow();
+    await expect(app.diffs.list('owner', 'proposal-workspace', 123 as unknown as string)).rejects.toThrow();
+    await app.productUi.call(client, 'diff.openPreview', { toolId: target.toolCallId, filePaths: [target.path, pending.path] });
+    expect(events.at(-1)).toMatchObject({ clientId: client.clientId, workspaceId: pending.workspaceId, conversationId: conversation.id,
+      path: pending.path, id: pending.id, toolCallId: pending.toolCallId });
+    await app.productUi.call(client, 'diff.openPreview', { toolId: target.toolCallId, result: { diffContentId: target.id } });
+    expect(events.at(-1)).toMatchObject({ workspaceId: target.workspaceId, path: target.path, id: target.id });
+    const other = await app.createConversation('owner', '复用模型工具标识', 'selected-workspace');
+    await app.storage.putRecord({ namespace: 'workspace-diffs', id: 'ambiguous-target', ownerId: other.id,
+      value: { ...target, id: 'ambiguous-target', conversationId: other.id, workspaceId: 'selected-workspace' } });
+    const count = events.length;
+    await expect(app.productUi.call(client, 'diff.openPreview', { toolId: target.toolCallId })).rejects.toThrow();
+    await expect(app.productUi.call(client, 'diff.openPreview', { toolId: 'missing-tool' })).rejects.toThrow();
+    expect(events).toHaveLength(count);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('真实嵌套工具结果中的提案身份限定卡片范围，复用工具标识和文件路径仍精确预览', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'nested-diff-result' }; const events: Record<string, any>[] = [];
+  app.subscribe(event => { if (event.type === 'workspace.diff.open') events.push(event); });
+  try {
+    const draft = await app.product.draft();
+    draft.app.workspaces.push({ id: 'nested-workspace', name: '嵌套结果', directory: f.source, deviceId: 'local' }); await app.product.save(draft);
+    const conversation = await app.createConversation('owner', '复用调用标识', 'nested-workspace');
+    const first: WorkspaceDiff = { id: 'older-card', conversationId: conversation.id, workspaceId: 'nested-workspace', path: 'same-file.txt',
+      originalText: '初始', proposedText: '旧卡片结果', baseHash: null, status: 'accepted', toolCallId: 'reused-tool', createdAt: 1 };
+    const second: WorkspaceDiff = { ...first, id: 'newer-card', proposedText: '新卡片结果', status: 'pending', createdAt: 2 };
+    const save = (value: WorkspaceDiff) => app.storage.putRecord({ namespace: 'workspace-diffs', id: value.id, ownerId: value.conversationId, value });
+    await save(first); await save(second);
+    const openSingle = (value: WorkspaceDiff) => app.productUi.call(client, 'diff.openPreview', {
+      toolId: value.toolCallId, toolName: 'apply_diff', filePaths: [value.path],
+      result: { success: value.status === 'accepted', data: { path: value.path, diffContentId: value.id, pendingDiffId: value.id } },
+    });
+    await openSingle(first); expect(events.at(-1)?.id).toBe(first.id);
+    await openSingle(second); expect(events.at(-1)?.id).toBe(second.id);
+    second.status = 'accepted'; await save(second);
+    await openSingle(first); expect(events.at(-1)?.id).toBe(first.id);
+    await openSingle(second); expect(events.at(-1)?.id).toBe(second.id);
+    const member: WorkspaceDiff = { ...first, id: 'batch-member', path: 'second-file.txt', status: 'pending', createdAt: 3 };
+    const unrelated: WorkspaceDiff = { ...first, id: 'other-card-pending', path: 'outside-card.txt', status: 'pending', createdAt: 0 };
+    await save(member); await save(unrelated);
+    const openBatch = (values: WorkspaceDiff[]) => app.productUi.call(client, 'diff.openPreview', {
+      toolId: first.toolCallId, toolName: 'write_file', filePaths: values.map(value => value.path),
+      result: { success: true, data: { results: values.map(value => ({ path: value.path, success: true, diffContentId: value.id, pendingDiffId: value.id })) } },
+    });
+    await openBatch([first, member]); expect(events.at(-1)?.id).toBe(member.id);
+    member.status = 'accepted'; await save(member);
+    await openBatch([second, member]); expect(events.at(-1)?.id).toBe(second.id);
+    const count = events.length;
+    await expect(app.productUi.call(client, 'diff.openPreview', { toolId: first.toolCallId, filePaths: [first.path],
+      result: { success: true, data: { results: [{ path: first.path, action: 'unchanged' }] } } })).rejects.toThrow();
+    await expect(app.productUi.call(client, 'diff.openPreview', { toolId: first.toolCallId, id: unrelated.id,
+      result: { success: true, data: { diffContentId: first.id, pendingDiffId: first.id } } })).rejects.toThrow();
+    expect(events).toHaveLength(count);
   } finally { await app.close(); await f.cleanup(); }
 });

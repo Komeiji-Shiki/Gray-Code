@@ -55,9 +55,12 @@ function closeDropdown() {
   emit('update:focused', false)
 }
 
-// Esc：关闭下拉并清空查询
-function handleEsc() {
+// 有查询时先清空搜索；空查询不能截断设置页的返回快捷键。
+function handleEsc(event: KeyboardEvent) {
   closeDropdown()
+  if (!props.query) return
+  event.stopPropagation()
+  event.preventDefault()
   emit('update:query', '')
   emit('update:activeIndex', 0)
 }

@@ -302,7 +302,7 @@ function check() {
 /* --report：盘点两端语言包                                              */
 /* ------------------------------------------------------------------ */
 
-function loadBackendPacks() {
+export function loadBackendPacks() {
     const backend = {};
     for (const lang of LANGS) backend[lang] = loadPack(path.join(BACKEND_LANGS_DIR, `${lang}.ts`));
     return backend;
@@ -469,22 +469,23 @@ function buildTripleMap(leaves) {
 /* CLI                                                                  */
 /* ------------------------------------------------------------------ */
 
-const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-    console.log(
-        '用法：\n' +
-        '  node scripts/i18n-sync.mjs            生成 _shared 语言包（幂等）\n' +
-        '  node scripts/i18n-sync.mjs --check    校验生成物与源一致（防漂移）\n' +
-        '  node scripts/i18n-sync.mjs --report   输出两端语言包盘点报告\n'
-    );
-    process.exit(0);
-}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    const args = process.argv.slice(2);
+    if (args.includes('--help') || args.includes('-h')) {
+        console.log(
+            '用法：\n' +
+            '  node scripts/i18n-sync.mjs            生成 _shared 语言包（幂等）\n' +
+            '  node scripts/i18n-sync.mjs --check    校验生成物与源一致（防漂移）\n' +
+            '  node scripts/i18n-sync.mjs --report   输出两端语言包盘点报告\n'
+        );
+        process.exit(0);
+    }
 
-if (args.includes('--check')) {
-    check();
-} else if (args.includes('--report')) {
-    report();
-} else {
-    generate();
+    if (args.includes('--check')) {
+        check();
+    } else if (args.includes('--report')) {
+        report();
+    } else {
+        generate();
+    }
 }
-

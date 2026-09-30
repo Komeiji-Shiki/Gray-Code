@@ -33,13 +33,21 @@ test.each([
 
 test('服务端入口在执行之前检查契约，合法上传字节保持原样', async () => {
   const upload = jest.fn().mockResolvedValue({ path: 'a.txt' });
-  const app = { actor: () => ({ id: 'owner' }), fileActions: { upload } } as unknown as PlatformApplication;
+  const filesConnected = jest.fn(), languagesConnected = jest.fn(), uiConnected = jest.fn();
+  const app = { actor: () => ({ id: 'owner' }), fileActions: { upload }, files: { clientConnected: filesConnected },
+    languages: { clientConnected: languagesConnected }, productUi: { clientConnected: uiConnected } } as unknown as PlatformApplication;
   const router = new ApplicationRouter(app), session = { actorId: 'owner', clientId: 'fixture' };
   await expect(router.call(session, 'files.upload', { workspaceId: 'w', path: 'a.txt', expectedVersion: 'v', bytes: [1] })).rejects.toThrow('bytes');
   expect(upload).not.toHaveBeenCalled();
+  expect(filesConnected).not.toHaveBeenCalled();
+  expect(languagesConnected).not.toHaveBeenCalled();
+  expect(uiConnected).not.toHaveBeenCalled();
   const bytes = new Uint8Array([0, 127, 255]);
   await router.call(session, 'files.upload', { workspaceId: 'w', path: 'a.txt', expectedVersion: 'v', bytes });
   expect(upload).toHaveBeenCalledWith('owner', 'w', 'a.txt', 'v', bytes);
+  expect(filesConnected).toHaveBeenCalledWith('fixture');
+  expect(languagesConnected).toHaveBeenCalledWith('fixture');
+  expect(uiConnected).toHaveBeenCalledWith('fixture');
   expect(() => validateRpcParams('runs.list', {})).not.toThrow();
   expect(() => validateRpcParams('computer.observe', { windowId: '123', screenshot: false, width: undefined })).not.toThrow();
 });

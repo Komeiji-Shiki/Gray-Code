@@ -23,20 +23,56 @@ interface ChatStream {
   results: { id: string; name: string; result: unknown }[];
   resultContents: PlatformMessage[];
 }
+interface PendingChatStart { actorId: string; controller: AbortController; done: Promise<void>; runId?: string }
 /** Map core run events to the existing chat UI stream contract without owning execution. */
 export class ProductChat {
   private readonly streams = new Map<string, ChatStream>();
+  private readonly starts = new Map<string, Set<PendingChatStart>>();
+  private readonly disconnectedClients = new Set<string>();
   constructor(private readonly app: PlatformApplication) {
     app.subscribe(notification => this.notification(notification as Record<string, any>));
   }
   private createStream(conversationId: string, runId?: string): ChatStream {
     return { conversationId, runId, clients: new Map(), remaining: new Set(), results: [], resultContents: [], accumulator: new StreamAccumulator(), phase: 'model' };
   }
-  async start(client: ClientSession, data: Record<string, any>, preferences: ProductSettingsDraft, mode: 'send' | 'continue' | 'reroll' | 'edit' = 'send'): Promise<unknown> {
+  hasPendingStarts(conversationId?: string): boolean {
+    return conversationId === undefined ? this.starts.size > 0 : !!this.starts.get(conversationId)?.size;
+  }
+  clientConnected(clientId: string): void { this.disconnectedClients.delete(clientId); }
+  clientClosed(clientId: string): void {
+    this.disconnectedClients.add(clientId);
+    for (const stream of this.streams.values()) stream.clients.delete(clientId);
+  }
+  /** 在客户端交互队列之前登记，停止也能覆盖尚未开始准备的输入。 */
+  queueStart(client: ClientSession, conversationId: string, operation: (signal: AbortSignal) => Promise<unknown>): Promise<unknown> {
+    const pending: PendingChatStart = { actorId: client.actorId, controller: new AbortController(), done: Promise.resolve() };
+    const entries = this.starts.get(conversationId) ?? new Set<PendingChatStart>();
+    entries.add(pending); this.starts.set(conversationId, entries);
+    const result = Promise.resolve().then(() => { pending.controller.signal.throwIfAborted(); return operation(pending.controller.signal); })
+      .then(value => {
+        const runId = (value as { runId?: unknown } | null)?.runId;
+        if (typeof runId === 'string') pending.runId = runId;
+        return value;
+      })
+      .finally(() => {
+        entries.delete(pending); if (!entries.size) this.starts.delete(conversationId);
+        // 准备失败或提交前取消没有 run 事件，桌面仍需重新检查已请求的退出。
+        this.app.publish({ type: 'chat.preparation.changed', conversationId });
+      });
+    pending.done = result.then(() => {}, () => {});
+    return result;
+  }
+  async start(client: ClientSession, data: Record<string, any>, preferences: ProductSettingsDraft, mode: 'send' | 'continue' | 'reroll' | 'edit' = 'send', signal?: AbortSignal): Promise<unknown> {
+    if (!signal) return this.queueStart(client, data.conversationId, signal => this.startRun(client, data, preferences, mode, signal));
+    return this.startRun(client, data, preferences, mode, signal);
+  }
+  private async startRun(client: ClientSession, data: Record<string, any>, preferences: ProductSettingsDraft, mode: 'send' | 'continue' | 'reroll' | 'edit', signal: AbortSignal): Promise<unknown> {
+    signal.throwIfAborted();
     if (!data.streamId || (!data.configId && !(mode === 'edit' && data.mode === 'keep'))) throw new Error('请选择渠道和模型。');
     const conversation = await this.app.conversation(client.actorId, data.conversationId);
     const requestKey = `desktop:${data.streamId}`;
     const existing = await this.app.storage.getRunByRequestKey(requestKey);
+    signal.throwIfAborted();
     if (existing) {
       if (existing.actorId !== client.actorId || existing.conversationId !== conversation.id) throw new Error('请求标识已被其他任务使用。');
       return { success: true, runId: existing.id };
@@ -47,24 +83,29 @@ export class ProductChat {
     const vision = typeof data.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: data.deepSeekVisionTileSplit } : {};
     if (mode === 'send' && !parts.length && !data.hiddenFunctionResponse) throw new Error('请输入消息或添加附件。');
     if (mode === 'send' && !data.hiddenFunctionResponse) await this.applyAutoTitle(conversation, text);
+    signal.throwIfAborted();
     const stream = this.createStream(conversation.id);
-    stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
+    if (!this.disconnectedClients.has(client.clientId)) stream.clients.set(client.clientId, { streamId: data.streamId, background: false });
     const input = chatRunInput(client, data, preferences, conversation, requestKey);
     let run: RunRecord;
-    const scope = { clientId: client.clientId };
+    const scope = { clientId: client.clientId, signal };
     if (mode === 'send' && data.hiddenFunctionResponse) {
       const change = await new ArtifactApproval(this.app).prepare(client.actorId, conversation.id, data.hiddenFunctionResponse);
+      signal.throwIfAborted();
       run = await this.app.runtime.continue({ ...input, expectedRevision: change.state.history.revision }, change, scope);
     } else if (mode === 'send') run = await this.app.runtime.start({ ...input, message: userMessage }, undefined, scope);
     else if (mode === 'continue') {
       const state = await this.app.conversations.read(client.actorId, conversation.id);
+      signal.throwIfAborted();
       run = await this.app.runtime.continue({ ...input, expectedRevision: state.history.revision }, undefined, scope);
     } else if (mode === 'reroll') {
       const change = await this.app.conversations.reroll(client.actorId, conversation.id, data.assistantNodeId, input.requestKey);
+      signal.throwIfAborted();
       run = await this.app.runtime.continue({ ...input, expectedRevision: change.state.history.revision }, change, scope);
     } else {
       const edit = await this.app.conversations.edit(client.actorId, conversation.id, data.userNodeId ?? data.messageId, parts, input.requestKey,
         data.mode === 'keep' ? 'keep' : 'branch', { ...vision, preserveAttachments: data.attachments === undefined });
+      signal.throwIfAborted();
       if (!edit.message) {
         const result = await this.app.conversations.commit(edit.change);
         const userContent = edit.change.commit.messages?.find(message => message.id === (data.userNodeId ?? data.messageId));
@@ -74,7 +115,7 @@ export class ProductChat {
     }
     stream.runId = run.id;
     const current = this.streams.get(run.id) ?? stream;
-    current.clients.set(client.clientId, { streamId: data.streamId, background: false });
+    if (!this.disconnectedClients.has(client.clientId)) current.clients.set(client.clientId, { streamId: data.streamId, background: false });
     this.streams.set(run.id, current);
     const page = mode === 'edit' || (conversation.custom as Record<string, unknown> | undefined)?.platformMode === 'character' && mode === 'send'
       ? await this.app.storage.readHistory(conversation.id, { limit: 20 }) : undefined;
@@ -124,7 +165,7 @@ export class ProductChat {
     const stream = this.streams.get(run.id);
     if (!stream) return { active: false };
     const streamId = `background:${run.id}`;
-    stream.clients.set(client.clientId, { streamId, background: true });
+    if (!this.disconnectedClients.has(client.clientId)) stream.clients.set(client.clientId, { streamId, background: true });
     const content = stream.phase === 'tools' && stream.content ? stream.content : {
       ...stream.accumulator.getStreamingContent(), id: `live:${run.id}:${run.iteration}`, role: 'model', runId: run.id,
     };
@@ -147,14 +188,25 @@ export class ProductChat {
    * 同时只允许一个活跃任务（RunRepository.create 在对话仍有活跃任务时抛 STORAGE_BUSY）。
    * 共享前端「替换当前回合」的流程——停止后立即发新消息、排队消息在动作边界提前投递、
    * 后台回执回流——都直接依赖「cancelStream 返回即旧回合已退出」，因此这里等任务退出
-   * 后再返回。等待带超时兜底：任务异常挂死时按既有语义继续，不让停止操作本身卡住。
+   * 后再返回。准备和排队中的输入也属于此生命周期；超时必须报告未释放。
    */
-  async cancel(client: ClientSession, conversationId: string): Promise<unknown> {
+  async cancel(client: ClientSession, conversationId: string, timeoutMs = OLD_STREAM_EXIT_WAIT_TIMEOUT_MS): Promise<unknown> {
+    const deadline = Date.now() + timeoutMs;
+    // 先捕获受理时的对象和存储读请求；异步授权、结算期间进入的新回合不属于这次停止。
+    const acceptedStarts = [...(this.starts.get(conversationId) ?? [])];
+    const acceptedRunIds = this.app.runtime.activeRunIds(conversationId);
+    const snapshot = this.app.storage.listRuns({ conversationId, activeOnly: true });
+    void snapshot.catch(() => {}); // 授权拒绝时不会再等待这个只读请求，仍需处理它的失败。
     await this.app.conversation(client.actorId, conversationId);
-    const runs = await this.app.storage.listRuns({ conversationId, activeOnly: true });
-    for (const run of runs) await this.app.runtime.cancel(run.id, client.actorId);
-    await this.waitForRelease(runs.map(run => run.id));
-    return { success: true };
+    const actor = this.app.actor(client.actorId);
+    if (!actor || actor.revoked) throw new Error('This account cannot cancel the run.');
+    const starts = acceptedStarts.filter(pending => actor.role === 'owner' || pending.actorId === actor.id);
+    for (const pending of starts) pending.controller.abort(Object.assign(new Error('Cancelled by user.'), { code: 'CANCELLED_ERROR' }));
+    const runs = await snapshot;
+    const runIds = [...new Set([...runs.map(run => run.id), ...acceptedRunIds])];
+    for (const runId of runIds) await this.app.runtime.cancel(runId, client.actorId);
+    const released = await this.waitForRelease(runIds, starts, client.actorId, Math.max(0, deadline - Date.now()));
+    return released ? { success: true } : { success: false, code: 'RUN_CANCEL_TIMEOUT' };
   }
   /**
    * 等待对话空闲。
@@ -167,27 +219,45 @@ export class ProductChat {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const active = await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 });
-      if (!active.length) return { idle: true };
+      const starts = [...(this.starts.get(conversationId) ?? [])];
+      const runIds = [...new Set([...this.app.runtime.activeRunIds(conversationId), ...active.map(run => run.id)])];
+      if (!active.length && !runIds.length && !starts.length) return { idle: true };
       if (Date.now() >= deadline) return { idle: false };
       // 本进程的运行控制器退出时会立即唤醒；不属于本进程的遗留活跃记录由固定间隔退避兜底。
       let timer: ReturnType<typeof setTimeout> | undefined;
       const pause = new Promise<void>(resolve => { timer = setTimeout(resolve, Math.min(100, deadline - Date.now())); });
       try {
         await Promise.race([
-          this.app.runtime.wait(active[0].id).then(run => run && ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(run.status) ? pause : undefined),
+          Promise.all([...starts.map(pending => pending.done), ...runIds.map(runId => this.app.runtime.wait(runId))])
+            .then(runs => active.length && !starts.length && runs.some(run => run && ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(run.status)) ? pause : undefined),
           pause,
         ]);
       } finally { if (timer !== undefined) clearTimeout(timer); }
     }
   }
-  /** 等待给定任务退出（超时视同已退出，按调用方既有语义继续）。 */
-  private async waitForRelease(runIds: string[]): Promise<void> {
-    if (!runIds.length) return;
+  /** 终态事件与 finally 清理都完成后才释放；存储失败继续交给调用方。 */
+  private async waitForRelease(runIds: string[], starts: PendingChatStart[], actorId: string, timeoutMs: number): Promise<boolean> {
+    if (!runIds.length && !starts.length) return true;
+    const deadline = Date.now() + timeoutMs; const targets = new Set(runIds);
+    const release = async () => {
+      await Promise.all(starts.map(async pending => {
+        await pending.done;
+        // 旧请求可能在快照后才提交；只接续该请求返回的任务身份，不再枚举整个会话。
+        if (pending.runId) { targets.add(pending.runId); await this.app.runtime.cancel(pending.runId, actorId); }
+      }));
+      for (;;) {
+        // 提交前 wait(runId) 可能只读到 queued，须在旧请求返回后等待其实际控制器退出。
+        const runs = await Promise.all([...targets].map(runId => this.app.runtime.wait(runId)));
+        if (runs.every(run => !run || !['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(run.status))) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+      }
+    };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
-        Promise.allSettled(runIds.map(runId => this.app.runtime.wait(runId))),
-        new Promise<void>(resolve => { timer = setTimeout(resolve, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS); }),
+      return await Promise.race([
+        release(),
+        new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
       ]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
@@ -229,7 +299,7 @@ export class ProductChat {
     return { success: true };
   }
   private emitClient(stream: ChatStream, clientId: string, chunk: Record<string, unknown>): void {
-    const client = stream.clients.get(clientId); if (!client) return;
+    const client = stream.clients.get(clientId); if (!client || this.disconnectedClients.has(clientId)) return;
     this.app.publish({ type: 'ui.message', runId: stream.runId, clientId,
       message: { type: 'streamChunk', data: { ...chunk, backgroundRun: client.background, conversationId: stream.conversationId, streamId: client.streamId, createdAt: Date.now() } } });
   }

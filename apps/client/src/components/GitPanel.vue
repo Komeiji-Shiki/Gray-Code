@@ -93,6 +93,14 @@ function entryLabel(entry: GitEntry, staged: boolean) { return entry.conflict ? 
 watch([() => state.workspaceId, directory], () => { refreshEpoch++; diffEpoch++; status.value = undefined; selection.value = undefined; diff.value = ''; error.value = ''; notice.value = ''; if (props.visible) void refresh(); }, { immediate: true });
 watch(() => props.visible, visible => { clearTimeout(refreshTimer); if (visible) void refresh(); });
 const unsubscribe = subscribe(event => {
+  if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) {
+    clearTimeout(refreshTimer);
+    const selected = selection.value, key = contextKey();
+    if (props.visible) void refresh().then(() => {
+      if (props.visible && key === contextKey() && selected && selection.value === selected) return showDiff(selected.path, selected.staged);
+    });
+    return;
+  }
   if (['file.changed', 'workspace.git.changed'].includes(event.type) && event.workspaceId === state.workspaceId && props.visible && !busy.value) {
     clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (props.visible) void refresh(); }, 250);
   }

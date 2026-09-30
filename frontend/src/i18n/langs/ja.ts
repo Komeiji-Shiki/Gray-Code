@@ -2275,6 +2275,7 @@ const ja: LanguageMessages = {
                 }
             },
             settingsPanel: {
+                groups: sharedJa.components.settings.settingsPanel.groups,
                 title: '設定',
                 backToChat: '会話に戻る',
                 sidebarCollapse: 'サイドバーを折りたたむ',
@@ -2375,6 +2376,7 @@ const ja: LanguageMessages = {
                     followSystem: 'システム設定に従う'
                 },
                 appInfo: {
+                    diagnostics: sharedJa.components.settings.settingsPanel.appInfo.diagnostics,
                     title: 'アプリケーション情報',
                     name: '{appName} - Vibe Coding アシスタント',
                     version: 'バージョン：{version}',
@@ -3955,6 +3957,7 @@ const ja: LanguageMessages = {
                 editRetryFailed: '編集再試行に失敗しました',
                 deleteFailed: '削除に失敗しました',
                 noConversationSelected: '会話が選択されていません',
+                cancelFailed: sharedJa.stores.chatStore.errors.cancelFailed,
                 unknownError: sharedJa.stores.chatStore.errors.unknownError,
                 restoreFailed: '復元に失敗しました',
                 restoreCheckpointFailed: sharedJa.stores.chatStore.errors.restoreCheckpointFailed,

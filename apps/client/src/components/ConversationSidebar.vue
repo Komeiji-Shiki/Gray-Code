@@ -8,6 +8,7 @@ import { guard, state } from '../state';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import ConversationNavigationRow from './navigation/ConversationNavigationRow.vue';
 import { useNavigationDrag } from './navigation/useNavigationDrag';
+import { useNavigationFocus } from './navigation/useNavigationFocus';
 import { orderSidebarItems } from '../../../../shared/sidebarOrder';
 defineProps<{ collapsed: boolean }>();
 const emit = defineEmits<{ 'update:collapsed': [value: boolean]; addWorkspace: []; automations: []; navigate: [panel?: 'workbench'];
@@ -17,6 +18,8 @@ const navigation = ref<ConversationNavigationResult>({ items: [], pinned: [], wo
 const query = ref('');
 const navigationScope = ref<'personal' | 'bots'>('personal');
 const searchInput = ref<HTMLInputElement>();
+const sidebarElement = ref<HTMLElement>();
+let settingsTrigger: HTMLButtonElement | undefined;
 const initialLoading = ref(true);
 const loadingMore = ref(false);
 const error = ref('');
@@ -27,12 +30,15 @@ type NavigationDialogKind = 'rename' | 'delete' | 'close' | 'project-rename' | '
 const menu = ref<{ item?: ConversationNavigationItem; view?: ConversationViewInfo; project?: NavigationProject; x: number; y: number }>();
 const createMenu = ref<{ x: number; y: number }>();
 const createMenuElement = ref<HTMLDivElement>();
+const menuElement = ref<HTMLDivElement>();
+const dialogElement = ref<HTMLFormElement>();
 const dialog = ref<{ kind: NavigationDialogKind; item?: ConversationNavigationItem; view?: ConversationViewInfo; project?: NavigationProject }>();
 const projectRemoval = ref<{ count: number; activeCount: number; token: string }>();
 const deleteProjectConversations = ref(false);
 const title = ref('');
 const dialogBusy = ref(false);
-const dialogInput = ref<HTMLInputElement>();
+const overlayRoot = computed(() => dialogElement.value ?? menuElement.value ?? createMenuElement.value);
+const { rememberTrigger } = useNavigationFocus(overlayRoot, dismissOverlay, () => searchInput.value ?? sidebarElement.value?.querySelector<HTMLButtonElement>('button') ?? undefined);
 let disposed = false;
 let epoch = 0; let refreshTimer: ReturnType<typeof setTimeout> | undefined; let unsubscribe: (() => void) | undefined;
 const rpc = <T,>(type: string, data: Record<string, unknown> = {}) => call<T>('ui.request', { type, data });
@@ -140,14 +146,19 @@ async function newConversation(workspaceId?: string) {
     if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
   } else await command('newChat', undefined, intent);
 }
+function openSettings(event: MouseEvent) {
+  settingsTrigger = event.currentTarget as HTMLButtonElement;
+  void guard(() => command('showSettings'));
+}
 function showMenu(event: MouseEvent, item?: ConversationNavigationItem, view?: ConversationViewInfo) {
+  rememberTrigger(event);
   createMenu.value = undefined;
   menu.value = { item, view: view ?? (item && views.value.get(item.id)), ...menuPosition(event) };
 }
 function showCreateMenu(event: MouseEvent) {
+  rememberTrigger(event);
   event.stopPropagation(); menu.value = undefined;
   createMenu.value = { ...menuPosition(event) };
-  void nextTick(() => createMenuElement.value?.querySelector<HTMLButtonElement>('button')?.focus());
 }
 async function createGeneralConversation(automaticWorkspace: boolean) {
   const intent = navigate();
@@ -169,6 +180,7 @@ function menuPosition(event: MouseEvent) {
 function showProjectMenu(event: MouseEvent, project: NavigationProject) {
   if (!project.uri && project.key !== 'general') return;
   event.preventDefault(); event.stopPropagation();
+  rememberTrigger(event);
   createMenu.value = undefined;
   menu.value = { project, ...menuPosition(event) };
 }
@@ -186,7 +198,6 @@ async function showDialog(kind: NavigationDialogKind) {
   dialog.value = { ...menu.value, kind }; title.value = menu.value.project?.name ?? menu.value.item?.title ?? menu.value.view?.title ?? ''; menu.value = undefined;
   deleteProjectConversations.value = false; projectRemoval.value = undefined; dialogBusy.value = false;
   const selected = dialog.value;
-  void nextTick(() => { dialogInput.value?.focus(); dialogInput.value?.select(); });
   if (kind === 'project-remove') {
     dialogBusy.value = true;
     try {
@@ -234,9 +245,14 @@ async function confirmDialog() {
 }
 function toggleGroup(key: string) { const next = new Set(collapsedGroups.value); if (next.has(key)) next.delete(key); else next.add(key); collapsedGroups.value = next; }
 async function focusSearch() { emit('update:collapsed', false); await nextTick(); searchInput.value?.focus(); }
-function dismiss(event: KeyboardEvent) { if (event.key === 'Escape') { drag.clear(); menu.value = undefined; createMenu.value = undefined; if (!dialogBusy.value) dialog.value = undefined; } }
+function dismissOverlay() { menu.value = undefined; createMenu.value = undefined; if (!dialogBusy.value) dialog.value = undefined; }
+function dismiss(event: KeyboardEvent) { if (event.key === 'Escape' && !event.defaultPrevented) drag.clear(); }
 watch([query, navigationScope], () => { ++epoch; drag.clear(); menu.value = undefined; createMenu.value = undefined; initialLoading.value = true; navigation.value = { items: [], pinned: [], workspaces: [], runs: [] }; if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { refreshTimer = undefined; void refresh(true); }, 180); });
 watch([dialog, menu, createMenu], ([currentDialog, currentMenu, currentCreateMenu]) => { state.navigationDialogOpen = !!(currentDialog || currentMenu || currentCreateMenu); });
+// 设置页位于聊天 iframe，外层负责把返回焦点交还给唯一的设置入口。
+watch(() => state.settingsOpen, (open, previous) => {
+  if (!open && previous) void nextTick(() => { if (!disposed && settingsTrigger?.isConnected) settingsTrigger.focus(); });
+});
 onMounted(() => {
   void refresh(true); window.addEventListener('keydown', dismiss);
   unsubscribe = subscribe(event => {
@@ -253,7 +269,7 @@ onMounted(() => {
 onUnmounted(() => { disposed = true; ++epoch; if (refreshTimer) clearTimeout(refreshTimer); unsubscribe?.(); window.removeEventListener('keydown', dismiss); state.navigationDialogOpen = false; });
 </script>
 <template>
-  <aside class="conversation-sidebar" :class="{ collapsed }" aria-label="对话导航">
+  <aside ref="sidebarElement" class="conversation-sidebar" :class="{ collapsed }" aria-label="对话导航">
     <div class="navigation-top"><button v-if="navigationScope === 'bots'" title="返回项目与对话" @click="navigationScope = 'personal'"><NavigationIcon name="chevron" class="navigation-back" /><span v-if="!collapsed">返回项目与对话</span></button><button v-else class="new-conversation" title="新建对话" @click="guard(() => newConversation())"><NavigationIcon name="plus" /><span v-if="!collapsed">新对话</span></button><button v-if="collapsed" title="搜索对话" aria-label="搜索对话" @click="focusSearch"><NavigationIcon name="search" /></button></div>
     <div v-if="navigationScope === 'bots' && !collapsed" class="navigation-scope-title"><NavigationIcon name="bot" />机器人会话</div>
     <div v-if="!collapsed" class="navigation-search"><NavigationIcon name="search" /><input ref="searchInput" v-model="query" type="search" aria-label="搜索对话标题和内容" placeholder="搜索对话标题和内容" /></div>
@@ -299,26 +315,26 @@ onUnmounted(() => { disposed = true; ++epoch; if (refreshTimer) clearTimeout(ref
       <button v-if="navigation.nextCursor && !navigation.searchIndexing" class="navigation-load-more" :disabled="loadingMore" @click="refresh(false, true)">{{ loadingMore ? '正在读取…' : '显示更多对话' }}</button>
       <button v-if="navigationScope === 'personal'" class="navigation-add-project" @click="emit('addWorkspace')"><NavigationIcon name="folder" />添加项目</button>
     </div>
-    <div class="navigation-bottom"><button title="自动任务" @click="emit('automations')"><NavigationIcon name="calendar" /><span v-if="!collapsed">自动任务</span></button><button title="机器人会话" :aria-pressed="navigationScope === 'bots'" @click="navigationScope = navigationScope === 'bots' ? 'personal' : 'bots'"><NavigationIcon name="bot" /><span v-if="!collapsed">机器人会话</span></button><button title="全部对话历史" @click="guard(() => command('showHistory'))"><NavigationIcon name="history" /><span v-if="!collapsed">全部历史</span></button><button title="用量统计" @click="guard(() => command('showUsage'))"><NavigationIcon name="chart" /><span v-if="!collapsed">用量统计</span></button><button title="设置" @click="guard(() => command('showSettings'))"><NavigationIcon name="settings" /><span v-if="!collapsed">设置</span></button></div>
+    <div class="navigation-bottom"><button title="自动任务" @click="emit('automations')"><NavigationIcon name="calendar" /><span v-if="!collapsed">自动任务</span></button><button title="机器人会话" :aria-pressed="navigationScope === 'bots'" @click="navigationScope = navigationScope === 'bots' ? 'personal' : 'bots'"><NavigationIcon name="bot" /><span v-if="!collapsed">机器人会话</span></button><button title="全部对话历史" @click="guard(() => command('showHistory'))"><NavigationIcon name="history" /><span v-if="!collapsed">全部历史</span></button><button title="用量统计" @click="guard(() => command('showUsage'))"><NavigationIcon name="chart" /><span v-if="!collapsed">用量统计</span></button><button title="设置" @click="openSettings"><NavigationIcon name="settings" /><span v-if="!collapsed">设置</span></button></div>
   </aside>
   <Teleport v-if="menu || dialog || createMenu" to=".application">
     <template v-if="menu || createMenu">
       <div class="navigation-menu-dismiss" @pointerdown="menu = undefined; createMenu = undefined" @contextmenu.prevent="menu = undefined; createMenu = undefined"></div>
-      <div v-if="menu" class="navigation-menu" role="menu" :aria-label="menu.project?.key === 'general' ? '普通对话操作' : menu.project ? '项目操作' : '对话操作'" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
+      <div v-if="menu" ref="menuElement" class="navigation-menu" role="menu" tabindex="-1" :aria-label="menu.project?.key === 'general' ? '普通对话操作' : menu.project ? '项目操作' : '对话操作'" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
         <button v-if="isDesktop && (menu.project?.uri || menu.item?.workspaceId || menu.item?.workspaceUri)" role="menuitem" @click="guard(openInExplorer)">在资源管理器中打开工作区</button>
         <button v-if="menu.project && (menu.project.key === 'general' || menu.project.workspace)" role="menuitem" @click="guard(changeGroupPin)">{{ groupPinned(menu.project.key) ? '取消置顶分组' : '置顶分组' }}</button>
         <template v-if="menu.project?.uri"><button role="menuitem" @click="showDialog('project-rename')">重命名项目</button><button role="menuitem" class="danger" @click="showDialog('project-remove')">移除项目</button></template>
         <button v-if="menu.item" role="menuitem" @click="showDialog('rename')">重命名</button><button v-if="menu.item" role="menuitem" @click="guard(changePin)">{{ menu.item.pinnedAt ? '取消置顶' : '置顶对话' }}</button><button v-if="menu.view" role="menuitem" @click="guard(closeView)">关闭视图，保留任务</button><button v-if="menu.item" role="menuitem" class="danger" @click="showDialog('delete')">删除对话</button>
       </div>
-      <div v-else-if="createMenu" ref="createMenuElement" class="navigation-menu navigation-creation-menu" role="menu" aria-label="新建普通对话" :style="{ left: createMenu.x + 'px', top: createMenu.y + 'px' }">
+      <div v-else-if="createMenu" ref="createMenuElement" class="navigation-menu navigation-creation-menu" role="menu" tabindex="-1" aria-label="新建普通对话" :style="{ left: createMenu.x + 'px', top: createMenu.y + 'px' }">
         <button role="menuitem" @click="guard(() => createGeneralConversation(true))"><strong>聊天，自动创建工作区</strong><small>在 Documents/graycode 中使用独立目录</small></button>
         <button role="menuitem" @click="guard(() => createGeneralConversation(false))"><strong>聊天，不绑定工作区</strong><small>直接打开对话，不创建文件目录</small></button>
       </div>
     </template>
     <div v-if="dialog" class="navigation-dialog-backdrop">
-      <form class="navigation-dialog" role="dialog" aria-modal="true" aria-labelledby="navigation-dialog-title" @submit.prevent="confirmDialog">
+      <form ref="dialogElement" class="navigation-dialog" role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="navigation-dialog-title" @submit.prevent="confirmDialog">
         <h2 id="navigation-dialog-title">{{ dialog.kind === 'project-rename' ? '重命名项目' : dialog.kind === 'project-remove' ? '移除项目' : dialog.kind === 'rename' ? '重命名对话' : dialog.kind === 'close' ? '关闭输入草稿' : '删除对话' }}</h2>
-        <template v-if="dialog.kind === 'rename' || dialog.kind === 'project-rename'"><input ref="dialogInput" v-model="title" maxlength="300" required :aria-label="dialog.kind === 'project-rename' ? '项目名称' : '对话标题'" /><p v-if="dialog.kind === 'project-rename'" class="navigation-hint">修改项目列表中的显示名称，磁盘文件夹名称保持原样。</p></template>
+        <template v-if="dialog.kind === 'rename' || dialog.kind === 'project-rename'"><input v-model="title" maxlength="300" required :disabled="dialogBusy" :aria-label="dialog.kind === 'project-rename' ? '项目名称' : '对话标题'" /><p v-if="dialog.kind === 'project-rename'" class="navigation-hint">修改项目列表中的显示名称，磁盘文件夹名称保持原样。</p></template>
         <template v-else-if="dialog.kind === 'project-remove'">
           <p>将「{{ dialog.project?.name }}」从左侧项目列表移除，磁盘上的文件会保留。重新添加同一目录可以恢复项目显示。</p>
           <label class="navigation-delete-history"><input v-model="deleteProjectConversations" type="checkbox" :disabled="!projectRemoval?.count || dialogBusy" /><span>同时删除关联的 {{ projectRemoval?.count ?? '…' }} 个对话</span></label>
@@ -327,7 +343,7 @@ onUnmounted(() => { disposed = true; ++epoch; if (refreshTimer) clearTimeout(ref
         </template>
         <p v-else>{{ dialog.kind === 'close' ? '关闭后会丢弃这个视图中尚未发送的文字和附件，已有历史与后台任务会保留。' : `将删除「${dialog.item?.title || '未命名对话'}」及其分支记录，正在执行的任务也会停止。此操作无法撤销。` }}</p>
         <p v-if="error" role="alert" class="navigation-error">{{ error }}</p>
-        <div class="navigation-dialog-actions"><button type="button" :disabled="dialogBusy" @click="dialog = undefined">取消</button><button :class="dialog.kind === 'rename' || dialog.kind === 'project-rename' ? 'primary' : 'danger'" :disabled="dialogBusy || dialog.kind === 'project-remove' && !projectRemoval">{{ dialogBusy ? '正在处理…' : dialog.kind === 'rename' || dialog.kind === 'project-rename' ? '保存名称' : dialog.kind === 'project-remove' ? '移除项目' : '确认' }}</button></div>
+        <div class="navigation-dialog-actions"><button type="button" data-navigation-cancel :disabled="dialogBusy" @click="dialog = undefined">取消</button><button :class="dialog.kind === 'rename' || dialog.kind === 'project-rename' ? 'primary' : 'danger'" :disabled="dialogBusy || dialog.kind === 'project-remove' && !projectRemoval">{{ dialogBusy ? '正在处理…' : dialog.kind === 'rename' || dialog.kind === 'project-rename' ? '保存名称' : dialog.kind === 'project-remove' ? '移除项目' : '确认' }}</button></div>
       </form>
     </div>
   </Teleport>

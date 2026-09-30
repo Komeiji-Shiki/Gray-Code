@@ -372,9 +372,12 @@ function onCustomPathInput(event: Event) {
         <p>{{ t('components.settings.settingsPanel.appInfo.name', { appName: appInfo.displayName || appInfo.name }) }}</p>
         <p class="version">{{ t('components.settings.settingsPanel.appInfo.version', { version: appInfo.version }) }}</p>
         <p v-if="appInfo.license" class="version">{{ appInfo.license }}</p>
-        <p v-if="appInfo.buildCommit" class="version">构建：{{ appInfo.buildCommit.slice(0, 12) }}{{ appInfo.buildDirty ? '（包含未提交修改）' : '' }}</p>
-        <p v-if="appInfo.buildTime" class="version">构建时间：{{ new Date(appInfo.buildTime).toLocaleString() }}</p>
-        <p v-if="appInfo.executablePath" class="version executable-path">程序位置：<code>{{ appInfo.executablePath }}</code></p>
+        <details v-if="appInfo.buildCommit || appInfo.buildTime || appInfo.executablePath" class="build-details">
+          <summary>{{ t('components.settings.settingsPanel.appInfo.diagnostics') }}</summary>
+          <p v-if="appInfo.buildCommit" class="version">构建：{{ appInfo.buildCommit.slice(0, 12) }}{{ appInfo.buildDirty ? '（包含未提交修改）' : '' }}</p>
+          <p v-if="appInfo.buildTime" class="version">构建时间：{{ new Date(appInfo.buildTime).toLocaleString() }}</p>
+          <p v-if="appInfo.executablePath" class="version executable-path">程序位置：<code>{{ appInfo.executablePath }}</code></p>
+        </details>
         <div class="github-links">
           <a v-if="appInfo.sourceUrl" :href="appInfo.sourceUrl" target="_blank" rel="noopener noreferrer" class="github-link">
             <i class="codicon codicon-code"></i>{{ t('components.settings.settingsPanel.appInfo.source') }}
@@ -450,6 +453,8 @@ function onCustomPathInput(event: Event) {
 }
 
 .executable-path code { overflow-wrap: anywhere; user-select: text; font-size: inherit; }
+.build-details { margin-top: 10px; }
+.build-details summary { color: var(--gc-text-muted); font-size: var(--gc-font-size-body); cursor: pointer; }
 
 .github-links {
   display: flex;

@@ -135,7 +135,7 @@ async function activeTasks(): Promise<boolean> {
   if (application.isClosing) return false;
   const hasRuns = (await application.storage.listRuns({ activeOnly: true, limit: 1 })).length > 0;
   // 在异步查询后读取连接状态，避免连接中的 Bot 被当作空闲程序退出。
-  return hasRuns || application.pets.keepsAlive || application.screenSense.keepsAlive || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
+  return hasRuns || application.runtime.preparingCount > 0 || application.productUi.chat.hasPendingStarts() || application.pets.keepsAlive || application.screenSense.keepsAlive || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
     || application.nodes.keepsAlive || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
     || application.interactiveTerminals.hasRunning || application.processes.activeCount > 0 || !!application.subagents.backgroundTasks().length;
 }
@@ -175,29 +175,32 @@ function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
   });
   return exitOperation;
 }
+function updateTrayStatus(): void {
+  tray?.setToolTip(t(closePending ? 'desktop.trayWaiting' : 'desktop.trayResident'));
+}
 function ensureTray(): void {
-  if (tray) return;
+  if (tray) { updateTrayStatus(); return; }
   const icon = nativeImage
     .createFromPath(path.resolve(__dirname, "../../../resources/icon.png"))
     .resize({ width: 24, height: 24 });
   tray = new Tray(icon);
-  tray.setToolTip("GrayCode · 正在后台运行");
+  updateTrayStatus();
   tray.on("double-click", () => { void createWindow(); });
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: "打开 GrayCode",
+        label: t('desktop.trayOpen'),
         click: () => { void createWindow(); },
       },
-      { label: "退出 GrayCode", click: () => void confirmQuit() },
+      { label: t('desktop.quit'), click: () => void confirmQuit() },
     ]),
   );
 }
 function minimizeToTray(): void {
   if (!window || window.isDestroyed()) return;
   // 用户主动选择托盘常驻，与关闭窗口后等待任务完成再退出的行为分开。
-  ensureTray();
   closePending = false;
+  ensureTray();
   window.hide();
 }
 function desktopColors(): Record<string, string> {
@@ -209,22 +212,33 @@ async function confirmQuit(intent: 'quit' | 'window' = 'quit'): Promise<void> {
   exitPhase = 'confirming';
   try {
     const active = await activeTasks();
-    const settingsDirty = !application.isClosing && (dirtySettings || await application.productUi.hasDirtyPreferences());
-    const dirty = dirtyDocuments > 0 || settingsDirty;
+    const readDrafts = async () => {
+      const settingsDirty = !application.isClosing && (dirtySettings || await application.productUi.hasClientDirtyPreferences(client.clientId));
+      const remoteSettings = !application.isClosing && await application.productUi.hasDirtyPreferences(true, client.clientId);
+      const remoteDocuments = application.isClosing ? 0 : application.files.dirtyDocumentCount(true, client.clientId);
+      const localDocuments = Math.max(dirtyDocuments, application.isClosing ? 0 : application.files.dirtyDocumentCount(true) - remoteDocuments);
+      return { settingsDirty, remoteSettings, remoteDocuments, localDocuments };
+    };
+    const shownDrafts = await readDrafts();
+    const { settingsDirty, remoteSettings, remoteDocuments, localDocuments } = shownDrafts;
+    const remoteDrafts = remoteDocuments > 0 || remoteSettings;
+    const dirty = localDocuments > 0 || settingsDirty || remoteDrafts;
     // 保留干净窗口关闭后等后台任务完成的既有策略。
     if (intent === 'window' && !dirty && active) {
       closePending = true; ensureTray(); window?.hide(); return;
     }
     if (!application.isClosing && (dirty || active)) {
       const items = [
-        ...(dirtyDocuments ? [t('desktop.unsavedFiles', { count: dirtyDocuments })] : []),
+        ...(localDocuments ? [t('desktop.unsavedFiles', { count: localDocuments })] : []),
         ...(settingsDirty ? [t('desktop.unsavedSettings')] : []),
+        ...(remoteDocuments ? [t('desktop.unsavedRemoteFiles', { count: remoteDocuments })] : []),
+        ...(remoteSettings ? [t('desktop.unsavedRemoteSettings')] : []),
         ...(active ? [t('desktop.activeTasks')] : []),
       ];
       const action = await showDesktopConfirmation({ language: getActualLanguage(), title: t('desktop.quitTitle'), message: t('desktop.quitMessage'),
-        detail: t(dirty ? 'desktop.saveAllDetail' : 'desktop.quitDetail') + (active ? '\n' + t('desktop.backgroundDetail') : ''), items, cancelId: 'cancel', colors: desktopColors(),
+        detail: t(remoteDrafts ? 'desktop.remoteDraftQuitDetail' : dirty ? 'desktop.saveAllDetail' : 'desktop.quitDetail') + (active ? '\n' + t('desktop.backgroundDetail') : ''), items, cancelId: 'cancel', colors: desktopColors(),
         actions: [{ id: 'cancel', label: t('desktop.continueWorking'), kind: 'primary' },
-          ...(dirty ? [{ id: 'save', label: t('desktop.saveAllQuit') }] : []),
+          ...(dirty && !remoteDrafts ? [{ id: 'save', label: t('desktop.saveAllQuit') }] : []),
           ...(active ? [{ id: 'background', label: t('desktop.background') }] : []),
           { id: 'quit', label: t(dirty ? 'desktop.discardQuit' : 'desktop.quit'), kind: 'danger' }] }, window);
       if (action === 'background') { minimizeToTray(); return; }
@@ -235,11 +249,17 @@ async function confirmQuit(intent: 'quit' | 'window' = 'quit'): Promise<void> {
           progress: t('desktop.saveAllProgress'), colors: desktopColors() }, window);
         try {
           await desktopSaveAll.request(window.webContents.id, requestId => window!.webContents.send('graycode:event', { type: 'desktop.saveAll', requestId }));
-          if (dirtyDocuments || dirtySettings || await application.productUi.hasDirtyPreferences()) throw new Error(t('desktop.saveAllIncomplete'));
+          if (dirtyDocuments || dirtySettings || application.files.dirtyDocumentCount(true) || await application.productUi.hasDirtyPreferences(true)) throw new Error(t('desktop.saveAllIncomplete'));
         } finally { progress.close(); }
         await quit(); return;
       }
       if (action !== 'quit') return;
+    }
+    // 模态对话框只阻止本地输入，远端可能在确认期间新增草稿，必须先展示新的放弃范围。
+    const latestDrafts = await readDrafts();
+    if (latestDrafts.localDocuments !== shownDrafts.localDocuments || latestDrafts.remoteDocuments !== shownDrafts.remoteDocuments
+      || latestDrafts.settingsDirty !== shownDrafts.settingsDirty || latestDrafts.remoteSettings !== shownDrafts.remoteSettings) {
+      exitPhase = 'idle'; return confirmQuit(intent);
     }
     await quit();
   } catch (error) {
@@ -251,11 +271,14 @@ async function confirmQuit(intent: 'quit' | 'window' = 'quit'): Promise<void> {
   }
 }
 const checkIdleClose = createIdleCloseCheck({
-  pending: () => closePending && exitPhase === 'idle', active: activeTasks, close: quit,
+  pending: () => closePending && exitPhase === 'idle', active: activeTasks,
+  // 等待任务结束期间，远端仍可能产生草稿；实际退出前重新核对并保留确认入口。
+  close: async () => { closePending = false; updateTrayStatus(); await confirmQuit('window'); },
   report: error => dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error)),
 });
 async function createWindow(): Promise<void> {
   closePending = false;
+  updateTrayStatus();
   if (window && !window.isDestroyed()) {
     activateDesktopWindow(window);
     return;
@@ -357,7 +380,7 @@ async function main(): Promise<void> {
     currentVersion: app.getVersion(), restartArgs: process.argv.slice(app.isPackaged ? 1 : 2).filter(value => !value.startsWith('--veloapp-')),
     backup: destination => backups!.export(destination),
     assertCanRestart: async restoreId => {
-      if (exitPhase !== 'idle' || application.isClosing || dirtySettings || dirtyDocuments || await application.productUi.hasDirtyPreferences())
+      if (exitPhase !== 'idle' || application.isClosing || dirtySettings || dirtyDocuments || application.files.dirtyDocumentCount(true) || await application.productUi.hasDirtyPreferences(true))
         throw new Error('请先保存或放弃编辑器与设置中的修改，再安装或回退。');
       const pendingRestore = (await backups!.status()).pending;
       if (restoreId && pendingRestore?.id !== restoreId) throw new Error('本次回退的恢复准备已经改变，请重新操作。');
@@ -401,7 +424,8 @@ async function main(): Promise<void> {
   await application.nodes.activate();
   application.subscribe((event) => {
     notify(event);
-    if (closePending && exitPhase === 'idle' && (event.type === "file.activity" || event.type === 'nodes.changed' || event.type === 'processes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
+    if (event.type === 'settings.changed') updateTrayStatus();
+    if (closePending && exitPhase === 'idle' && (event.type === 'runtime.preparation.changed' || event.type === 'chat.preparation.changed' || event.type === "file.activity" || event.type === 'nodes.changed' || event.type === 'processes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
       checkIdleClose();
   });
   ipcMain.handle(
@@ -465,7 +489,7 @@ async function main(): Promise<void> {
         const pending = (await backups!.status()).pending;
         if (!pending) throw new Error('没有等待应用的备份。');
         if (pending.requiresSelection && !pending.selection) throw new Error('请先选择恢复范围并查看最终预览。');
-        if (dirtySettings || dirtyDocuments || await application.productUi.hasDirtyPreferences()) throw new Error('请先保存或放弃编辑器与设置中的修改，再应用备份。');
+        if (dirtySettings || dirtyDocuments || application.files.dirtyDocumentCount(true) || await application.productUi.hasDirtyPreferences(true)) throw new Error('请先保存或放弃编辑器与设置中的修改，再应用备份。');
         const selected = await dialog.showMessageBox(window!, { type: 'question', title: '恢复程序数据',
           message: pending.selection?.mode === 'selective' ? '重启并恢复最终预览中的所选数据？' : '重启并应用完整备份？', detail: '当前任务和连接将停止，恢复前的数据目录会完整保留。项目源码不会被替换。',
           buttons: ['重启并恢复', '继续工作'], defaultId: 1, cancelId: 1 });
@@ -526,7 +550,7 @@ async function main(): Promise<void> {
         const error = await shell.openPath(target); if (error) throw new Error(error); return { success: true };
       }
       if (method === 'reloadWindow') {
-        if (await activeTasks() || dirtySettings || dirtyDocuments) throw new Error('请先结束任务、保存或放弃编辑器与设置中的修改，再重启应用。');
+        if (await activeTasks() || dirtySettings || dirtyDocuments || application.files.dirtyDocumentCount(true) || await application.productUi.hasDirtyPreferences(true)) throw new Error('请先结束任务、保存或放弃编辑器与设置中的修改，再重启应用。');
         setTimeout(() => { void quit(true).catch(error => dialog.showErrorBox('GrayCode 重启失败', String(error))); }, 100);
         return { success: true };
       }

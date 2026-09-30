@@ -2277,6 +2277,7 @@ const zhCN = {
                 }
             },
             settingsPanel: {
+                groups: sharedZhCN.components.settings.settingsPanel.groups,
                 title: '设置',
                 backToChat: '返回对话',
                 sidebarCollapse: '收起边栏',
@@ -2377,6 +2378,7 @@ const zhCN = {
                     followSystem: '跟随系统'
                 },
                 appInfo: {
+                    diagnostics: sharedZhCN.components.settings.settingsPanel.appInfo.diagnostics,
                     title: '应用信息',
                     name: '{appName} - Vibe Coding 助手',
                     version: '版本：{version}',
@@ -3957,6 +3959,7 @@ const zhCN = {
                 editRetryFailed: '编辑重试失败',
                 deleteFailed: '删除失败',
                 noConversationSelected: '未选择对话',
+                cancelFailed: sharedZhCN.stores.chatStore.errors.cancelFailed,
                 unknownError: sharedZhCN.stores.chatStore.errors.unknownError,
                 restoreFailed: '恢复失败',
                 restoreCheckpointFailed: sharedZhCN.stores.chatStore.errors.restoreCheckpointFailed,

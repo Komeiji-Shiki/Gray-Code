@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { normalizeWebOrigin } from './webOrigin';
 import { serveWorkspaceFile } from './fileTransfers';
 
-export interface HttpServerOptions { port?: number; token: string; actorId?: string; clientDirectory?: string; publicOrigin?: string; onConnectionsChanged?: () => void }
+export interface HttpServerOptions { port?: number; token: string; actorId?: string; clientDirectory?: string; publicOrigin?: string; onConnectionsChanged?: () => void; clientRecoveryGraceMs?: number }
 async function readBody(request: IncomingMessage, limit = 16 * 1024 * 1024): Promise<Record<string, any>> {
   const chunks: Buffer[] = []; let size = 0;
   for await (const chunk of request) { size += chunk.length; if (size > limit) throw new Error('请求内容超过大小限制。'); chunks.push(chunk); }
@@ -30,6 +30,43 @@ export async function startHttpServer(application: PlatformApplication, options:
   await sessions.restore();
   const router = new ApplicationRouter(application);
   const streams = new Map<ServerResponse, { client: ClientSession; connectionId: string; valid(): boolean; queue: Promise<void>; queuedBytes: number; accepting: boolean }>();
+  const recoveryGrace = options.clientRecoveryGraceMs ?? 30_000;
+  if (!Number.isFinite(recoveryGrace) || recoveryGrace < 0) throw new Error('客户端恢复宽限必须是非负毫秒数。');
+  const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const clientReleases = new Map<string, Promise<void>>();
+  const failedClientReleases = new Map<string, unknown>();
+  const releasedClients = new Set<string>();
+  const webClients = new Set<string>();
+  let serverClosing = false;
+  const connected = (clientId: string) => [...streams.values()].some(value => value.client.clientId === clientId && value.valid());
+  const releaseClient = (clientId: string): Promise<void> => {
+    const pending = clientReleases.get(clientId); if (pending) return pending;
+    releasedClients.add(clientId);
+    const completion = router.clientClosed(clientId).then(() => { failedClientReleases.delete(clientId); }).catch(error => {
+      failedClientReleases.set(clientId, error); console.warn('[Web] 客户端资源释放失败，将在离线宽限后重试：', error);
+    });
+    clientReleases.set(clientId, completion);
+    void completion.finally(() => {
+      if (clientReleases.get(clientId) === completion) clientReleases.delete(clientId);
+      if (failedClientReleases.has(clientId)) scheduleRelease(clientId);
+    });
+    return completion;
+  };
+  const activateClient = async (clientId: string, acknowledgeRelease = false): Promise<boolean> => {
+    clearTimeout(recoveryTimers.get(clientId)); recoveryTimers.delete(clientId);
+    // 清理已经开始时先等它结束，避免重连刚恢复的文档或进程被旧清理回调再次释放。
+    await clientReleases.get(clientId);
+    const released = acknowledgeRelease ? releasedClients.delete(clientId) : releasedClients.has(clientId);
+    webClients.add(clientId); router.clientConnected(clientId); scheduleRelease(clientId); return released;
+  };
+  const scheduleRelease = (clientId: string) => {
+    if (serverClosing || connected(clientId) || recoveryTimers.has(clientId)) return;
+    const timer = setTimeout(() => {
+      recoveryTimers.delete(clientId);
+      if (!connected(clientId)) void releaseClient(clientId);
+    }, recoveryGrace);
+    timer.unref(); recoveryTimers.set(clientId, timer);
+  };
   const writable = (response: ServerResponse, identity: { valid(): boolean }) => !response.destroyed && !response.writableEnded && identity.valid();
   const closeInvalidStreams = () => { for (const [stream, identity] of streams) if (!identity.valid()) { stream.end(); streams.delete(stream); } };
   const epoch = randomUUID(); let sequence = 0; let bufferedBytes = 0; let backlogResets = 0;
@@ -103,12 +140,14 @@ export async function startHttpServer(application: PlatformApplication, options:
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 70 * 1024 * 1024);
         if (!['previewAttachment', 'showContextContent', 'saveImageToPath'].includes(input.type)) throw new Error('不是媒体传输请求。');
+        await activateClient(auth.client.clientId);
         const result = await host.call(auth.client, 'ui.request', { type: input.type, data: input.data });
         response.end(JSON.stringify({ result })); return;
       }
       if (url.pathname === '/settings/import' && request.method === 'POST') {
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 128 * 1024 * 1024);
+        await activateClient(auth.client.clientId);
         const result = await host.call(auth.client, 'ui.request', { type: 'settings.importData', data: { value: input } });
         response.end(JSON.stringify({ result })); return;
       }
@@ -121,18 +160,22 @@ export async function startHttpServer(application: PlatformApplication, options:
       if (url.pathname === '/pet-resources/import' && request.method === 'POST') {
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 180 * 1024 * 1024);
+        await activateClient(auth.client.clientId);
         const result = await router.call(auth.client, 'pets.import', input);
         response.end(JSON.stringify({ result })); return;
       }
       if (url.pathname === '/events' && request.method === 'GET') {
+        const released = await activateClient(auth.client.clientId, true);
+        if (response.destroyed || response.writableEnded) { scheduleRelease(auth.client.clientId); return; }
         response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
         response.write(': connected\n\n');
         const identity = { ...auth, queue: Promise.resolve(), queuedBytes: 0, accepting: true };
         const cursor = String(request.headers['last-event-id'] ?? url.searchParams.get('after') ?? '');
-        let reset = false;
+        let reset = released;
+        if (released) response.write('event: reset\ndata: {}\n\n');
         if (cursor) {
           const index = recent.findIndex(event => event.id === cursor);
-          if (index < 0) { reset = true; response.write('event: reset\ndata: {}\n\n'); }
+          if (index < 0) { if (!reset) response.write('event: reset\ndata: {}\n\n'); reset = true; }
           else {
             const replay = recent.slice(index + 1);
             identity.queue = (async () => {
@@ -150,12 +193,14 @@ export async function startHttpServer(application: PlatformApplication, options:
           if (![...streams.values()].some(value => value.client.clientId === auth.client.clientId && value.valid())) {
             void application.computer.clientClosed(auth.client.clientId).catch(() => {});
             void application.nodes.clientClosed(auth.client.clientId).catch(() => {});
+            scheduleRelease(auth.client.clientId);
           }
         }); return;
       }
       if (url.pathname !== '/rpc' || request.method !== 'POST') { response.writeHead(404); response.end('{"error":"Not found."}'); return; }
       const body = await readBody(request);
       if (typeof body.method !== 'string' || (body.params && (typeof body.params !== 'object' || Array.isArray(body.params)))) throw new Error('Invalid RPC request.');
+      await activateClient(auth.client.clientId);
       const result = await host.call(auth.client, body.method, body.params ?? {});
       response.end(JSON.stringify({ result: result ?? null }));
     } catch (error) {
@@ -199,16 +244,22 @@ export async function startHttpServer(application: PlatformApplication, options:
   catch (error) { unsubscribe(); server.close(); throw error; }
   let closing: Promise<void> | undefined;
   return { port: (server.address() as AddressInfo).port, router,
-    diagnostics: () => ({ connections: streams.size, replayEvents: recent.length, replayBytes: bufferedBytes, backlogResets,
+    diagnostics: () => ({ connections: streams.size, replayEvents: recent.length, replayBytes: bufferedBytes, backlogResets, failedClientReleases: failedClientReleases.size,
       queuedBytes: [...streams.values()].reduce((total, stream) => total + stream.queuedBytes, 0) }),
     connections: () => { const connected = new Set([...streams.values()].filter(value => value.valid()).map(value => value.connectionId));
       return sessions.connections().map(connection => ({ ...connection, connected: connected.has(connection.id) })); },
     revoke: async (id: string) => { sessions.revoke(id); closeInvalidStreams(); await sessions.flush(); },
     rotateToken: async (token: string) => { sessions.rotate(token); closeInvalidStreams(); await sessions.flush(); },
     close: () => closing ??= (async () => {
+      serverClosing = true;
+      for (const timer of recoveryTimers.values()) clearTimeout(timer); recoveryTimers.clear();
       unsubscribe(); for (const stream of streams.keys()) stream.end();
       // 让已经接受的保存请求先返回，避免更改连接设置后误报保存失败。
       const deadline = setTimeout(() => server.closeAllConnections(), 5000); deadline.unref();
-      try { await new Promise<void>(resolve => server.close(() => resolve())); await sessions.flush(); } finally { clearTimeout(deadline); }
+      try {
+        await new Promise<void>(resolve => server.close(() => resolve())); await sessions.flush();
+        await Promise.all([...webClients].map(releaseClient));
+        if (failedClientReleases.size) throw new AggregateError([...failedClientReleases.values()], 'Web 客户端资源未能全部释放。');
+      } finally { clearTimeout(deadline); }
     })() };
 }

@@ -19,6 +19,7 @@ import ConversationSidebar from './components/ConversationSidebar.vue';
 import WorkspaceSelector from './components/WorkspaceSelector.vue';
 import WebDialogs from './components/WebDialogs.vue';
 import NavigationIcon from './components/navigation/NavigationIcon.vue';
+import { useNavigationFocus } from './components/navigation/useNavigationFocus';
 import ComputerStatus from './components/ComputerStatus.vue';
 const CompanionSetup = defineAsyncComponent(() => import('./components/CompanionSetup.vue'));
 const PetManager = defineAsyncComponent(() => import('./components/PetManager.vue'));
@@ -47,6 +48,19 @@ const libraryInitialTab = ref<'resources' | 'memory'>('resources');
 function openLibrary(tab: 'resources' | 'memory' = 'resources') { libraryInitialTab.value = tab; libraryOpen.value = true; }
 const automationsOpen = ref(false);
 const chatReady = ref(false);
+const chatLoadFailed = ref(false);
+const chatFrameVersion = ref(0);
+let chatReadyTimer: ReturnType<typeof setTimeout> | undefined;
+function watchChatReady() {
+  clearTimeout(chatReadyTimer);
+  if (chatReady.value || !state.ready || lifetime.signal.aborted) return;
+  chatReadyTimer = setTimeout(() => { if (!chatReady.value) chatLoadFailed.value = true; }, 20_000);
+}
+function reloadChat() {
+  chatReady.value = false; chatLoadFailed.value = false; chatFrameVersion.value++;
+  void nextTick().then(watchChatReady);
+}
+watch(() => state.ready, ready => { if (ready) void nextTick().then(watchChatReady); else clearTimeout(chatReadyTimer); });
 import { webUi } from './webBridge';
 const isWeb = window.graycode?.kind === 'web';
 const appMenus = ['编辑', '视图'];
@@ -72,6 +86,28 @@ watch(() => state.settingsOpen, value => { if (value) mobileNavigationOpen.value
 // 初始化包含多次请求，卸载时解除监听并忽略迟到的结果。
 const lifetime = new AbortController();
 let unsubscribeHost: (() => void) | undefined;
+let unsubscribeState: (() => void) | undefined;
+let initialization: AbortController | undefined;
+const booting = ref(false);
+async function bootstrap() {
+  if (booting.value || lifetime.signal.aborted) return;
+  booting.value = true;
+  if (state.initializationError && state.error === state.initializationError) state.error = '';
+  unsubscribeState?.(); initialization?.abort(); initialization = new AbortController();
+  const signal = initialization.signal;
+  try {
+    unsubscribeState = await initialize(signal);
+    if (signal.aborted) return;
+    await call('ui.context.set', { workspaceId: state.workspaceId, mode: state.mode });
+    if (signal.aborted) return;
+    if (!isWeb) { await nextTick(); if (!signal.aborted) await call('desktop.files.ready'); }
+  } catch (error) {
+    if (!signal.aborted) {
+      state.ready = false; state.initializationError = error instanceof Error ? error.message : String(error);
+      report(error);
+    }
+  } finally { if (!signal.aborted) booting.value = false; }
+}
 const storedSplit = Number(localStorage.getItem('graycode.chatWidth'));
 const split = ref(Number.isFinite(storedSplit) && storedSplit > 0 ? Math.max(25, Math.min(75, storedSplit)) : 48);
 const resizing = ref(false);
@@ -89,6 +125,9 @@ async function addWorkspace() {
   } finally { choosingWorkspace.value = false; }
 }
 const modeMenuOpen = ref(false);
+const modeMenu = ref<HTMLElement>();
+const modeTrigger = ref<HTMLElement>();
+const modeFocus = useNavigationFocus(modeMenu, () => { modeMenuOpen.value = false; }, () => modeTrigger.value);
 const choosingMode = ref(false);
 const modes = computed(() => [{ id: 'chat', name: t('chat'), detail: t('chatDetail') }, { id: 'code', name: t('code'), detail: t('codeDetail') }, { id: 'character', name: t('character'), detail: t('characterDetail') }] as const);
 async function selectMode(mode: 'chat' | 'code' | 'character') {
@@ -140,36 +179,32 @@ const variables = computed(() => {
 });
 useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
-onMounted(() => { void (async () => {
+onMounted(() => {
   window.addEventListener('message', openWorkspacePanel);
   compactQuery.addEventListener('change', updateViewport);
   window.addEventListener('resize', updateViewport);
   window.visualViewport?.addEventListener('resize', updateViewport);
   unsubscribeHost = subscribe(event => {
     if (lifetime.signal.aborted) return;
-    if (event.type === 'ui.ready') chatReady.value = true;
+    if (event.type === 'ui.ready') { chatReady.value = true; chatLoadFailed.value = false; clearTimeout(chatReadyTimer); }
+    if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
     if (event.type === 'pets.open') petManagerOpen.value = true;
     if (event.type === 'screenSense.open') screenSenseOpen.value = true;
     if (event.type === 'ui.view.changed') state.settingsOpen = event.view === 'settings';
     if (event.type === 'settings.open') void guard(() => call('ui.command', { command: 'showSettings' }));
     if (event.type === 'ui.message' && event.message?.command === 'channels.configChanged') void guard(() => loadSettings(lifetime.signal));
   });
-  await initialize(lifetime.signal);
-  if (lifetime.signal.aborted) return;
-  await call('ui.context.set', { workspaceId: state.workspaceId, mode: state.mode });
-  if (lifetime.signal.aborted) return;
-
-  if (!isWeb) { await nextTick(); if (!lifetime.signal.aborted) await call('desktop.files.ready'); }
-})().catch(error => { if (!lifetime.signal.aborted) report(error); }); });
-onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', openWorkspacePanel); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
+  void bootstrap();
+});
+onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?.(); clearTimeout(chatReadyTimer); window.removeEventListener('message', openWorkspacePanel); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
 </script>
 <template>
   <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="resolvedTheme" :data-density="appearance?.density">
     <header class="titlebar">
       <button v-if="!state.settingsOpen" class="sidebar-toggle" :title="navigationCollapsed ? '展开对话列表' : '收起对话列表'" :aria-expanded="!navigationCollapsed" aria-label="切换对话列表" @click="navigationCollapsed = !navigationCollapsed"><NavigationIcon name="panel" /></button>
-      <div class="mode-switcher" @keydown.esc="modeMenuOpen = false" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) modeMenuOpen = false; }">
-        <button class="mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" @click="modeMenuOpen = !modeMenuOpen"><strong>GrayCode</strong><span>{{ modes.find(mode => mode.id === state.mode)?.name }}</span><span>⌄</span></button>
-        <div v-if="modeMenuOpen" class="mode-menu" role="menu">
+      <div class="mode-switcher" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) modeMenuOpen = false; }">
+        <button ref="modeTrigger" class="mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" @click="modeFocus.rememberTrigger($event); modeMenuOpen = !modeMenuOpen"><strong>GrayCode</strong><span>{{ modes.find(mode => mode.id === state.mode)?.name }}</span><span>⌄</span></button>
+        <div v-if="modeMenuOpen" ref="modeMenu" class="mode-menu" role="menu" tabindex="-1">
           <button v-for="mode in modes" :key="mode.id" role="menuitemradio" :disabled="choosingMode" :aria-checked="state.mode === mode.id" @click="guard(() => selectMode(mode.id))"><span><strong>{{ mode.name }}</strong><small>{{ mode.detail }}</small></span><span v-if="state.mode === mode.id">✓</span></button>
         </div>
       </div>
@@ -186,6 +221,7 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
     </header>
     <ErrorBanner v-if="state.error" :message="state.error" @dismiss="state.error = ''" />
     <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">{{ t('close') }}</button></div>
+    <div v-if="state.ready && chatLoadFailed" class="notice-banner" data-severity="warning" role="alert"><span>{{ t('chatInitializationFailed') }}</span><button @click="reloadChat">{{ t('retryChat') }}</button></div>
     <ComputerStatus v-if="state.ready" /><ScreenSenseStatus v-if="state.ready" @manage="screenSenseOpen = true" />
     <ScreenSenseSettings v-if="screenSenseOpen" @close="screenSenseOpen = false" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
@@ -197,7 +233,10 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
     <WebDialogs v-if="isWeb" />
     <AutomationsPanel :open="automationsOpen" @close="automationsOpen = false" />
     <RunInspector v-if="state.ready && !state.settingsOpen" />
-    <div v-if="!state.ready" class="loading-state">{{ t('connecting') }}</div>
+    <div v-if="!state.ready" class="loading-state" :class="{ 'startup-error': state.initializationError }" :role="state.initializationError ? 'alert' : 'status'">
+      <template v-if="state.initializationError"><strong>{{ t('initializationFailed') }}</strong><p>{{ state.initializationError }}</p><button :disabled="booting" @click="bootstrap">{{ t('retryInitialization') }}</button></template>
+      <template v-else>{{ t('connecting') }}</template>
+    </div>
     <div v-else class="application-body" :class="{ resizing: sidebarResizing }">
       <button v-if="compactViewport && mobileNavigationOpen && !state.settingsOpen" class="navigation-backdrop" aria-label="收起对话列表" @click="mobileNavigationOpen = false"></button>
       <div ref="navigation" v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)" class="conversation-navigation" :style="{ '--sidebar-width': visibleSidebarWidth + 'px' }" :inert="!chatReady || undefined" :aria-busy="!chatReady">
@@ -205,7 +244,7 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
         <div v-if="!compactViewport && !navigationCollapsed" class="navigation-resize" role="separator" aria-label="调整对话列表宽度" aria-orientation="vertical" :aria-valuemin="200" :aria-valuemax="sidebarMaximum" :aria-valuenow="Math.round(visibleSidebarWidth)" tabindex="0" @pointerdown.prevent="dragSidebar" @pointermove="moveSidebar" @pointerup="endSidebar" @pointercancel="endSidebar" @lostpointercapture="endSidebar" @keydown.left.prevent="resizeSidebarBy(-10)" @keydown.right.prevent="resizeSidebarBy(10)" @dblclick="sidebarWidth = 250; endSidebar()"></div>
       </div>
     <div ref="container" class="desktop-workspace" :class="{ 'chat-focused': state.chatFocused || state.settingsOpen, 'workbench-expanded': state.workbenchExpanded && !state.chatFocused && !state.settingsOpen, 'mobile-workbench': compactViewport && !state.chatFocused && !state.settingsOpen, resizing }" :style="{ '--chat-width': split + '%' }">
-      <iframe ref="productChatFrame" class="product-chat" src="./chat/platform.html" title="GrayCode 对话和设置"></iframe>
+      <iframe :key="chatFrameVersion" ref="productChatFrame" class="product-chat" src="./chat/platform.html" title="GrayCode 对话和设置" @load="watchChatReady" @error="chatLoadFailed = true"></iframe>
       <div v-if="!state.chatFocused && !state.settingsOpen" class="split-handle" role="separator" aria-label="调整对话与侧边面板宽度" aria-orientation="vertical" :aria-valuemin="25" :aria-valuemax="75" :aria-valuenow="Math.round(split)" tabindex="0" @pointerdown.prevent="dragSplit" @pointermove="moveSplit" @pointerup="endSplit" @pointercancel="endSplit" @lostpointercapture="endSplit" @keydown.left.prevent="split = Math.max(25, split - 2); endSplit()" @keydown.right.prevent="split = Math.min(75, split + 2); endSplit()"></div>
       <Workbench v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
     </div>
@@ -214,6 +253,7 @@ onUnmounted(() => { lifetime.abort(); window.removeEventListener('message', open
   </div>
 </template>
 <style>
+.loading-state.startup-error{flex-direction:column;gap:12px;padding:24px;text-align:center}.startup-error p{max-width:640px;overflow-wrap:anywhere;color:var(--muted);margin:0}
 .mode-navigation{display:flex;gap:2px;-webkit-app-region:no-drag}.mode-navigation button{border:0;border-radius:0;background:transparent;color:var(--muted);padding:7px 12px;cursor:pointer}.mode-navigation button[aria-pressed="true"]{color:var(--text);box-shadow:inset 0 -2px var(--accent);background:var(--surface)}.desktop-workspace.chat-focused .product-chat{border-right:0}
 .desktop-workspace { display: grid; grid-template-columns: minmax(300px, var(--chat-width, 48%)) 5px minmax(0, 1fr); flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .application-body { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; position: relative; }

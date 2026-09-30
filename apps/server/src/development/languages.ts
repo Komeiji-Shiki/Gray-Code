@@ -44,6 +44,9 @@ export class LanguageServices {
   private readonly editorEdits = new Map<string, { clientId: string; requestId: string; resolve(value: ApplyWorkspaceEditResult): void }>();
   private readonly catalog = new LanguageServerCatalog();
   private readonly sessionStarts = new Map<string, Promise<Session>>();
+  private readonly clientClosings = new Map<string, Promise<void>>();
+  private readonly clientEpochs = new Map<string, number>();
+  private readonly detachedClients = new Set<string>();
   private closing = false;
   private configurationSnapshot?: string;
   constructor(private readonly app: PlatformApplication) {}
@@ -65,7 +68,11 @@ export class LanguageServices {
   }
   /** 同一客户端的并发首次请求共用启动过程；Vue 的辅助服务也遵守同一工作区边界。 */
   private sessionFor(client: ClientSession, workspace: WorkspaceDefinition, definition: RuntimeLanguageServer): Promise<Session> {
-    if (this.closing) return Promise.reject(new Error('语言服务正在退出。'));
+    if (this.closing || this.detachedClients.has(client.clientId)) return Promise.reject(new Error('语言服务客户端已断开或正在退出。'));
+    const releasing = this.clientClosings.get(client.clientId);
+    if (releasing) return releasing.then(() => this.sessionFor(client, workspace, definition));
+    const epoch = this.clientEpochs.get(client.clientId) ?? 0;
+    const current = () => !this.closing && !this.detachedClients.has(client.clientId) && epoch === (this.clientEpochs.get(client.clientId) ?? 0);
     const key = this.key(client, workspace.id, definition.id);
     const pending = this.sessionStarts.get(key);
     if (pending) return pending;
@@ -82,19 +89,23 @@ export class LanguageServices {
         companion = await this.sessionFor(client, workspace, paired);
       }
       if (session && session.companion !== companion) await this.stopSession(session);
+      if (!current()) throw new Error('语言服务客户端已断开。');
       if (!session || ['stopped', 'failed'].includes(session.info.status)) {
         session = this.create(client, workspace, definition, companion); this.sessions.set(key, session);
       }
       await session.ready;
+      if (!current()) throw new Error('语言服务客户端已断开。');
       return session;
     })();
     this.sessionStarts.set(key, starting);
-    return starting.finally(() => { this.sessionStarts.delete(key); });
+    return starting.finally(() => { if (this.sessionStarts.get(key) === starting) this.sessionStarts.delete(key); });
   }
   async ensure(client: ClientSession, workspaceId: string, file: string) {
+    const epoch = this.clientEpochs.get(client.clientId) ?? 0;
     this.app.requireOwner(client.actorId);
     const workspace = this.app.workspace(client.actorId, workspaceId, ['workspace_read']);
     const absolute = await this.app.files.resolve(workspace, file);
+    if (epoch !== (this.clientEpochs.get(client.clientId) ?? 0) || this.detachedClients.has(client.clientId)) throw new Error('语言服务客户端已断开。');
     const uri = documentUri(pathToFileURL(absolute).toString());
     const languageId = documentLanguage(file);
     const disabled = this.app.settings.read('development').development?.disabledLanguageServers ?? [];
@@ -365,6 +376,30 @@ export class LanguageServices {
   private clearDiagnostics(session: Session, uri: string, version?: number) {
     session.diagnostics.delete(uri);
     this.publishDiagnostics(session, uri, version);
+  }
+  clientConnected(clientId: string): void { this.detachedClients.delete(clientId); }
+  clientClosed(clientId: string): Promise<void> {
+    const pending = this.clientClosings.get(clientId);
+    if (pending) return pending;
+    this.detachedClients.add(clientId); this.clientEpochs.set(clientId, (this.clientEpochs.get(clientId) ?? 0) + 1);
+    for (const [key, cancellation] of this.requests) if (JSON.parse(key)[0] === clientId) cancellation.cancel();
+    for (const [id, edit] of this.editorEdits) if (edit.clientId === clientId) {
+      this.editorEdits.delete(id); edit.resolve({ applied: false, failureReason: '编辑客户端已断开。' });
+    }
+    const sessions = [...this.sessions.entries()].filter(([, session]) => session.client.clientId === clientId);
+    for (const [, session] of sessions) session.commandRequestId = undefined;
+    const starting = [...this.sessionStarts.entries()].filter(([key]) => JSON.parse(key)[0] === clientId).map(([, promise]) => promise);
+    const closing = (async () => {
+      // 先关闭持有的连接，使初始化中的请求也能结束，不能先等一个已离线的编辑器响应。
+      const results = await Promise.allSettled(sessions.map(([, session]) => this.stopSession(session)));
+      await Promise.allSettled(starting);
+      for (const [key, session] of sessions) if (this.sessions.get(key) === session && session.info.status === 'stopped') this.sessions.delete(key);
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failures.length) throw new AggregateError(failures.map(result => result.reason), '客户端语言服务关闭失败。');
+    })();
+    this.clientClosings.set(clientId, closing);
+    void closing.finally(() => { if (this.clientClosings.get(clientId) === closing) this.clientClosings.delete(clientId); }).catch(() => {});
+    return closing;
   }
   async stop(client: ClientSession, id: string) {
     this.app.requireOwner(client.actorId);

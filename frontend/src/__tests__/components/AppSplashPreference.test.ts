@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { nextTick, reactive, ref } from 'vue'
+import { nextTick, reactive, ref, shallowReactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 
 interface Deferred<T> {
@@ -63,6 +63,9 @@ vi.mock('../../components/usage', () => ({
 }))
 vi.mock('../../components/settings', () => ({
   SettingsPanel: { name: 'SettingsPanel', template: '<div />' }
+}))
+vi.mock('../../components/settings/SettingsPanel.vue', () => ({
+  default: { name: 'SettingsPanel', template: '<div />' }
 }))
 vi.mock('../../components/tabs', () => ({
   ConversationTabs: { name: 'ConversationTabs', template: '<div />' }
@@ -187,9 +190,10 @@ describe('App 开屏动画启动偏好', () => {
     })
 
     runtime.settingsStore = settingsStore
-    runtime.chatStore = {
+    runtime.chatStore = shallowReactive({
       __storeAttachments: ref([]),
       __error: ref(null),
+      conversations: [],
       currentConversationId: null,
       activeStreamId: null,
       openTabs: [],
@@ -198,6 +202,9 @@ describe('App 开屏动画启动偏好', () => {
       showEmptyState: true,
       messages: [],
       allMessages: [],
+      inputValue: '',
+      editorNodes: [],
+      storeAttachments: [],
       autoSummaryStatus: null,
       retryStatus: null,
       hasPendingToolConfirmation: false,
@@ -213,8 +220,11 @@ describe('App 开屏动画启动偏好', () => {
       editAndRetry: vi.fn(),
       cancelSummarizeRequest: vi.fn(),
       deleteMessage: vi.fn(),
-      retryFromMessage: vi.fn()
-    }
+      retryFromMessage: vi.fn(),
+      getConversationViews: vi.fn().mockReturnValue([]),
+      refreshConversationSummary: vi.fn(),
+      openConversationInTab: vi.fn()
+    })
     runtime.terminalStore = { initialize: vi.fn() }
 
     runtime.preloadChannelConfigs.mockClear()
@@ -238,6 +248,104 @@ describe('App 开屏动画启动偏好', () => {
     wrapper?.unmount()
     wrapper = undefined
     delete window.__GRAYCODE_STARTUP_SPLASH_ENABLED
+  })
+
+  test('打开会话期间进入设置，迟到的打开完成不能把视图拉回聊天', async () => {
+    const opened = deferred<void>()
+    runtime.chatStore.openConversationInTab.mockReturnValue(opened.promise)
+    runtime.settingsStore.showChat.mockImplementation(() => { runtime.settingsStore.currentView = 'chat' })
+    runtime.settingsStore.showSettings.mockImplementation(() => { runtime.settingsStore.currentView = 'settings' })
+    wrapper = mount(App, { global: { stubs: { SettingsPanel: true } } })
+    settingsRequest.resolve(makeSettingsResponse(true))
+    await flushPromises()
+    runtime.messageHandler?.({ type: 'command', command: 'platform.openModeConversation', data: { conversationId: 'slow-conversation' } })
+    expect(runtime.settingsStore.showChat).toHaveBeenCalledTimes(1)
+    runtime.messageHandler?.({ type: 'command', command: 'showSettings' })
+    opened.resolve()
+    await flushPromises()
+    expect(runtime.settingsStore.currentView).toBe('settings')
+    expect(runtime.settingsStore.showChat).toHaveBeenCalledTimes(1)
+  })
+
+  test('独立端刷新初始化后恢复已有会话，沿用宿主状态并保留其他字段', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    const initialization = deferred<void>()
+    const save = vi.fn()
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({ desktopConversationId: 'saved-conversation', otherSetting: 7 }), setState: save }
+    runtime.chatStore.conversations = [{ id: 'saved-conversation' }]
+    runtime.chatStore.initialize.mockImplementation(() => { runtime.chatStore.activeTabId = 'initial-tab'; return initialization.promise })
+    runtime.chatStore.openConversationInTab.mockImplementation(async () => {
+      runtime.chatStore.currentConversationId = 'saved-conversation'
+      runtime.chatStore.allMessages = [{ id: 'saved-reply', content: '已完成回复' }]
+    })
+    try {
+      wrapper = mount(App)
+      expect(save).not.toHaveBeenCalled()
+      settingsRequest.resolve(makeSettingsResponse(true))
+      initialization.resolve()
+      await flushPromises()
+      expect(runtime.chatStore.openConversationInTab).toHaveBeenCalledWith('saved-conversation')
+      expect(runtime.chatStore.currentConversationId).toBe('saved-conversation')
+      expect(save).toHaveBeenLastCalledWith({ desktopConversationId: 'saved-conversation', otherSetting: 7 })
+    } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
+  })
+
+  test('恢复摘要在途时的新输入会放弃旧会话焦点，草稿保持原样', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    const metadata = deferred<void>()
+    const save = vi.fn()
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({ desktopConversationId: 'saved-conversation' }), setState: save }
+    runtime.chatStore.initialize.mockImplementation(async () => { runtime.chatStore.activeTabId = 'initial-tab' })
+    runtime.chatStore.refreshConversationSummary.mockReturnValue(metadata.promise)
+    try {
+      wrapper = mount(App)
+      settingsRequest.resolve(makeSettingsResponse(true))
+      await flushPromises()
+      expect(runtime.chatStore.refreshConversationSummary).toHaveBeenCalledWith('saved-conversation')
+      runtime.chatStore.inputValue = '正在写的新输入'
+      metadata.resolve()
+      await flushPromises()
+      expect(runtime.chatStore.openConversationInTab).not.toHaveBeenCalled()
+      expect(runtime.chatStore.inputValue).toBe('正在写的新输入')
+      expect(save).toHaveBeenLastCalledWith({ desktopConversationId: null })
+    } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
+  })
+
+  test('保存的会话已删除时留在正常空白会话，并清除失效位置', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    const save = vi.fn()
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({ desktopConversationId: 'deleted-conversation' }), setState: save }
+    runtime.chatStore.initialize.mockImplementation(async () => { runtime.chatStore.activeTabId = 'initial-tab' })
+    runtime.chatStore.refreshConversationSummary.mockRejectedValue(new Error('CONVERSATION_NOT_FOUND'))
+    try {
+      wrapper = mount(App)
+      settingsRequest.resolve(makeSettingsResponse(true))
+      await flushPromises()
+      expect(runtime.chatStore.openConversationInTab).not.toHaveBeenCalled()
+      expect(runtime.chatStore.currentConversationId).toBeNull()
+      expect(save).toHaveBeenLastCalledWith({ desktopConversationId: null })
+    } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
+  })
+
+  test('初始化期间的新打开命令即使仍在等摘要，也会放弃启动会话恢复', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    const initialization = deferred<void>()
+    const opened = deferred<void>()
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({ desktopConversationId: 'saved-conversation' }), setState: vi.fn() }
+    runtime.chatStore.initialize.mockImplementation(() => { runtime.chatStore.activeTabId = 'initial-tab'; return initialization.promise })
+    runtime.chatStore.openConversationInTab.mockReturnValue(opened.promise)
+    try {
+      wrapper = mount(App)
+      runtime.messageHandler?.({ type: 'command', command: 'platform.openModeConversation', data: { conversationId: 'requested-conversation' } })
+      settingsRequest.resolve(makeSettingsResponse(true))
+      initialization.resolve()
+      await flushPromises()
+      expect(runtime.chatStore.openConversationInTab).toHaveBeenCalledTimes(1)
+      expect(runtime.chatStore.openConversationInTab).toHaveBeenCalledWith('requested-conversation')
+      expect(runtime.chatStore.refreshConversationSummary).not.toHaveBeenCalled()
+      opened.resolve()
+      await flushPromises()
+    } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
   })
 
   test('发送失败的附件只恢复到原标签快照', async () => {

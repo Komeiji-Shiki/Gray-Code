@@ -5,6 +5,7 @@ import { DiffReviewSession } from '../../../../backend/tools/file/DiffReviewSess
 import { encodeTextBytes, type TextDetectionResult } from '../../../../backend/tools/search/textEncodingRuntime';
 import { countDeletedLines } from '../../../../backend/core/services/diff/diffAlgorithm';
 import { splitLines } from '../../../../backend/core/services/diff/lineId';
+import { t } from '../../../../backend/i18n';
 
 export interface WorkspaceDiff {
   runId?: string;
@@ -44,14 +45,20 @@ export class WorkspaceDiffs {
   private save(value: WorkspaceDiff) {
     return this.app.storage.putRecord({ namespace, id: value.id, ownerId: value.conversationId, value });
   }
-  async list(actorId: string, workspaceId: string): Promise<WorkspaceDiff[]> {
+  async list(actorId: string, workspaceId: string, includeId?: string): Promise<WorkspaceDiff[]> {
+    if (includeId !== undefined && (typeof includeId !== 'string' || !includeId)) throw new Error(t('modules.diff.previewNotFound'));
     this.app.workspace(actorId, workspaceId, ['workspace_read']);
     const values: WorkspaceDiff[] = [];
     for (const id of await this.app.storage.listRecords(namespace)) {
       const value = await this.app.storage.getRecord(namespace, id) as WorkspaceDiff;
       if (value.workspaceId === workspaceId) { await this.app.conversation(actorId, value.conversationId); values.push(value); }
     }
-    return values.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    const recent = values.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    if (includeId === undefined || recent.some(value => value.id === includeId)) return recent;
+    const included = values.find(value => value.id === includeId);
+    if (!included) throw new Error(t('modules.diff.previewNotFound'));
+    // 精确预览历史目标时仍保持列表上限，只替换最旧的一项，不改默认最新列表。
+    return [...recent.slice(0, 99), included];
   }
   async content(actorId: string, id: string) {
     const value = await this.app.storage.getRecord(namespace, id) as WorkspaceDiff | null;

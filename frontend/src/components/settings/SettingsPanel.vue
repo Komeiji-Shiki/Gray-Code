@@ -21,9 +21,10 @@ import type { SupportedLanguage } from '@/i18n/types'
 import SettingsSidebar from './panel/SettingsSidebar.vue'
 import SettingsSearchBox from './panel/SettingsSearchBox.vue'
 import StorageMigrateDialog from './panel/StorageMigrateDialog.vue'
-import type { TabItem } from './panel/types'
+import type { TabGroup } from './panel/types'
 import { settingsSearchIndex } from './panel/settingsSearchIndex'
 import { useSettingsSearch } from './panel/useSettingsSearch'
+import { useSettingsFocus } from './panel/useSettingsFocus'
 import { useStoragePathSettings } from '@/composables/useStoragePathSettings'
 import { useUpdateSettings } from '@/composables/useUpdateSettings'
 import { useSettingsImportExport } from '@/composables/useSettingsImportExport'
@@ -67,6 +68,8 @@ const UsageSummaryCard = defineAsyncComponent(() => import('./panel/UsageSummary
 
 const settingsStore = useSettingsStore()
 const { t, setLanguage } = useI18n()
+const panelElement = ref<HTMLElement>()
+useSettingsFocus(panelElement, () => settingsStore.currentView === 'settings', closeSettings)
 
 async function selectSettingsTab(tab: SettingsTab): Promise<boolean> {
   if (tab === settingsStore.activeTab) return true
@@ -85,33 +88,42 @@ async function changeSettingsCategory(event: Event) {
 const sidebarCollapsed = ref(false)
 
 // 页签列表（使用 computed 以便语言切换时自动更新）
-const tabs = computed<TabItem[]>(() => [
-  { id: 'channel', label: t('components.settings.tabs.channel'), icon: 'codicon-plug' },
-  ...(isDesktopHost ? [{ id: 'development' as const, label: t('components.settings.tabs.development'), icon: 'codicon-code' }] : []),
-  { id: 'tools', label: t('components.settings.tabs.tools'), icon: 'codicon-tools' },
-  { id: 'autoExec', label: t('components.settings.tabs.autoExec'), icon: 'codicon-shield' },
-  { id: 'mcp', label: t('components.settings.tabs.mcp'), icon: 'codicon-server' },
-  { id: 'subagents', label: t('components.settings.tabs.subagents'), icon: 'codicon-hubot' },
-  { id: 'checkpoint', label: t('components.settings.tabs.checkpoint'), icon: 'codicon-history' },
-  { id: 'summarize', label: t('components.settings.tabs.summarize'), icon: 'codicon-fold' },
-  { id: 'imageGen', label: t('components.settings.tabs.imageGen'), icon: 'codicon-symbol-color' },
-  { id: 'dependencies', label: t('components.settings.tabs.dependencies'), icon: 'codicon-package' },
-  { id: 'context', label: t('components.settings.tabs.context'), icon: 'codicon-symbol-namespace' },
-  { id: 'prompt', label: t('components.settings.tabs.prompt'), icon: 'codicon-note' },
-  { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
-  { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
-  { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
-  { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
-  { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
-  { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
-  ...(isDesktopHost ? [
+const tabGroups = computed<TabGroup[]>(() => [
+  { id: 'models', label: t('components.settings.settingsPanel.groups.models'), tabs: [
+    { id: 'channel', label: t('components.settings.tabs.channel'), icon: 'codicon-plug' },
+    { id: 'prompt', label: t('components.settings.tabs.prompt'), icon: 'codicon-note' },
+    { id: 'imageGen', label: t('components.settings.tabs.imageGen'), icon: 'codicon-symbol-color' },
+  ] },
+  { id: 'execution', label: t('components.settings.settingsPanel.groups.execution'), tabs: [
+    { id: 'tools', label: t('components.settings.tabs.tools'), icon: 'codicon-tools' },
+    { id: 'autoExec', label: t('components.settings.tabs.autoExec'), icon: 'codicon-shield' },
+    { id: 'mcp', label: t('components.settings.tabs.mcp'), icon: 'codicon-server' },
+    { id: 'subagents', label: t('components.settings.tabs.subagents'), icon: 'codicon-hubot' },
+    ...(isDesktopHost ? [{ id: 'development' as const, label: t('components.settings.tabs.development'), icon: 'codicon-code' }] : []),
+    { id: 'dependencies', label: t('components.settings.tabs.dependencies'), icon: 'codicon-package' },
+  ] },
+  { id: 'context', label: t('components.settings.settingsPanel.groups.context'), tabs: [
+    { id: 'context', label: t('components.settings.tabs.context'), icon: 'codicon-symbol-namespace' },
+    { id: 'summarize', label: t('components.settings.tabs.summarize'), icon: 'codicon-fold' },
+    { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
+    { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
+    { id: 'checkpoint', label: t('components.settings.tabs.checkpoint'), icon: 'codicon-history' },
+  ] },
+  ...(isDesktopHost ? [{ id: 'connections', label: t('components.settings.settingsPanel.groups.connections'), tabs: [
+    { id: 'workspaces' as const, label: '工作区', icon: 'codicon-folder' },
+    { id: 'remote' as const, label: '远程连接', icon: 'codicon-remote' },
     { id: 'discord' as const, label: 'Discord Bot', icon: 'codicon-comment-discussion' },
     { id: 'onebot' as const, label: 'NapCat / OneBot', icon: 'codicon-radio-tower' },
     { id: 'accounts' as const, label: '账号与授权', icon: 'codicon-account' },
-    { id: 'workspaces' as const, label: '工作区', icon: 'codicon-folder' },
-    { id: 'remote' as const, label: '远程连接', icon: 'codicon-remote' },
-  ] : []),
+  ] }] : []),
+  { id: 'application', label: t('components.settings.settingsPanel.groups.application'), tabs: [
+    { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
+    { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
+    { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
+    { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
+  ] },
 ])
+const tabs = computed(() => tabGroups.value.flatMap(group => group.tabs))
 
 // ========== 设置项搜索 ==========
 
@@ -334,7 +346,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
 </script>
 
 <template>
-  <section class="settings-panel" aria-labelledby="settings-panel-title">
+  <section ref="panelElement" class="settings-panel" role="dialog" :aria-modal="settingsStore.currentView === 'settings' ? true : undefined" tabindex="-1" aria-labelledby="settings-panel-title">
     <div class="settings-header" :inert="isDesktopHost && desktopSettingsDraft.busy">
       <h3 id="settings-panel-title">{{ t('components.settings.settingsPanel.title') }}</h3>
       <!-- T12：拆至 SettingsSearchBox（搜索框 + 结果下拉） -->
@@ -360,10 +372,10 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
     </div>
     
     <div class="settings-content" :inert="isDesktopHost && desktopSettingsDraft.busy" :aria-busy="isDesktopHost && desktopSettingsDraft.busy">
-      <label v-if="isDesktopHost" class="mobile-settings-category">设置分类<select :value="settingsStore.activeTab" aria-label="设置分类" @change="changeSettingsCategory"><option v-for="tab in tabs" :key="tab.id" :value="tab.id">{{ tab.label }}</option></select></label>
+      <label v-if="isDesktopHost" class="mobile-settings-category">设置分类<select :value="settingsStore.activeTab" aria-label="设置分类" @change="changeSettingsCategory"><optgroup v-for="group in tabGroups" :key="group.id" :label="group.label"><option v-for="tab in group.tabs" :key="tab.id" :value="tab.id">{{ tab.label }}</option></optgroup></select></label>
       <!-- 左侧页签（T12：拆至 SettingsSidebar；可折叠：展开显示图标+文字，折叠仅图标+tooltip） -->
       <SettingsSidebar
-        :tabs="tabs"
+        :groups="tabGroups"
         :active-tab="settingsStore.activeTab"
         v-model:collapsed="sidebarCollapsed"
         :search-active="searchActive"

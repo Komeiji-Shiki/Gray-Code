@@ -310,7 +310,7 @@ export function bindLanguageDocument(input: Binding) {
   };
   void refresh();
   const unsubscribe = subscribe(event => {
-    if (event.type === 'language.configuration') { void refresh(); }
+    if (event.type === 'language.configuration' || event.type === 'transport.resumed') { void refresh(); }
     else if (event.type === 'language.diagnostics' && event.workspaceId === input.workspaceId && event.uri === input.uri &&
       (!event.sessionId || event.sessionId === session?.id) && Array.isArray(event.diagnostics)) {
       diagnosticsRevision++;

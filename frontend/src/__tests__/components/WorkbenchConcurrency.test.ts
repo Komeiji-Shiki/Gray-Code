@@ -13,7 +13,7 @@ vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks
   subscribe: (listener: (event: any) => void) => { mocks.listeners.add(listener); return () => mocks.listeners.delete(listener); } }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive } = await import('vue');
-  return { state: reactive({ workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false }),
+  return { state: reactive({ workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, sideExpanded: true }),
     report: mocks.report, guard: async (operation: () => Promise<unknown>) => { try { return await operation(); } catch (error) { mocks.report(error); } } };
 });
 vi.mock('../../../../apps/client/src/computer', () => ({ computerState: { openRequest: 0 } }));
@@ -154,4 +154,123 @@ test('外部文件刷新与后续输入共用文档队列，新文本使用刷�
   expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('new local draft');
   expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.close')).toHaveLength(0);
   expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('重建快照刷新打开的干净文档并恢复焦点，完整补发的重连不额外读取', async () => {
+  const view = workbench(true); view.open('resumed.ts'); await flushPromises();
+  mocks.call.mockClear();
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: false });
+  await flushPromises(); expect(mocks.call).not.toHaveBeenCalled();
+  mocks.call.mockImplementation(async (method, params) => method === 'documents.open' ? { ...document(params.path), text: 'latest disk text', version: 4, baseHash: 'latest-hash' } : undefined);
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('latest disk text');
+  expect(mocks.call).toHaveBeenCalledWith('documents.focus', { workspaceId: 'project', path: 'resumed.ts' });
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('离线输入等核对原基线后再同步，重连不会丢文本或重复更新', async () => {
+  const view = workbench(true); view.open('offline.ts'); await flushPromises(); mocks.call.mockClear();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'offline input'); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(0);
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: false });
+  await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('documents.open', { workspaceId: 'project', path: 'offline.ts', reload: true });
+  expect(mocks.call).toHaveBeenCalledWith('documents.update', expect.objectContaining({ text: 'offline input', version: 1 }));
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(1);
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('offline input');
+});
+
+test.each([1, 4])('重连时服务器版本为 %s 但磁盘基线已变化，保留离线正文且阻止自动覆盖与保存', async version => {
+  const view = workbench(true); view.open('conflict.ts'); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'retained local text'); await flushPromises();
+  mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open' ? { ...document(params.path), version, text: 'new server text', baseHash: 'new-hash' } : undefined);
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('retained local text');
+  expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ dirty: true })]));
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('save'); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update' || method === 'documents.save')).toHaveLength(0);
+  expect(mocks.report).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('conflict.ts') }));
+});
+
+test('更新回执丢失后服务器正文已等于离线输入，恢复版本而不重复发送', async () => {
+  const view = workbench(true); view.open('ack.ts'); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'already accepted'); await flushPromises();
+  mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open' ? { ...document(params.path), version: 2, text: 'already accepted', dirty: true } : undefined);
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('already accepted');
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(0);
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test.each([1, 2])('已同步但未保存的草稿遇到重启版本 %s，磁盘未变时恢复正文并使用新版本保存', async version => {
+  const view = workbench(true); view.open('accepted.ts'); await flushPromises();
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'accepted unsaved text'); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  mocks.call.mockClear().mockImplementation(async (method, params) => {
+    if (method === 'documents.open') return { ...document(params.path), version };
+    if (method === 'documents.update') return { ...document(params.path), text: params.text, version: params.version + 1, dirty: true };
+    if (method === 'documents.save') return { ...document(params.path), text: 'accepted unsaved text', version: params.version, dirty: false };
+  });
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('accepted unsaved text');
+  expect(mocks.call).toHaveBeenCalledWith('documents.update', expect.objectContaining({ text: 'accepted unsaved text', version }));
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('save'); await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('documents.save', expect.objectContaining({ version: version + 1 }));
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test.each([1, 2])('已同步但未保存的草稿遇到重启版本 %s，磁盘变化时保留正文并阻止覆盖', async version => {
+  const view = workbench(true); view.open('accepted.ts'); await flushPromises();
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'accepted unsaved text'); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open'
+    ? { ...document(params.path), text: 'changed disk text', baseHash: 'changed-disk-hash', version } : undefined);
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('accepted unsaved text');
+  expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ dirty: true })]));
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('save'); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update' || method === 'documents.save')).toHaveLength(0);
+  expect(mocks.report).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('accepted.ts') }));
+});
+
+test('已同步草稿遇到同磁盘基线的较新远端脏版本，保留本地正文并要求处理冲突', async () => {
+  const view = workbench(true); view.open('accepted.ts'); await flushPromises();
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'accepted unsaved text'); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open'
+    ? { ...document(params.path), text: 'newer remote draft', version: 3, dirty: true } : undefined);
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('accepted unsaved text');
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(0);
+  expect(mocks.report).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('accepted.ts') }));
+});
+
+test('重连读取失败保持输入暂停，用户重试保存先恢复版本后才写入', async () => {
+  const view = workbench(true); view.open('retry.ts'); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'retry input'); await flushPromises();
+  let reads = 0;
+  mocks.call.mockClear().mockImplementation(async (method, params) => {
+    if (method === 'documents.open') { if (!reads++) throw new Error('network unavailable'); return document(params.path); }
+    if (method === 'documents.update') return { ...document(params.path), text: params.text, version: params.version + 1, dirty: true };
+    if (method === 'documents.save') return { ...document(params.path), text: 'retry input', dirty: false };
+  });
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  await flushPromises();
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'retry input'); await flushPromises();
+  expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(0);
+  view.wrapper.findComponent(MobileCodeEditor).vm.$emit('save'); await flushPromises();
+  expect(reads).toBe(2);
+  expect(mocks.call).toHaveBeenCalledWith('documents.update', expect.objectContaining({ text: 'retry input', version: 1 }));
+  expect(mocks.call).toHaveBeenCalledWith('documents.save', expect.objectContaining({ version: 2 }));
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('retry input');
 });

@@ -60,7 +60,39 @@ test('启动失败时移除提前登记的监听，避免重试留下重复订�
   const rejected = expect(initializing).rejects.toThrow('startup failed');
   f.requests[0].reject(new Error('startup failed')); await rejected;
   expect(f.state.ready).toBe(false);
+  expect(f.state.initializationError).toContain('startup failed');
   expect(f.listeners.size).toBe(0);
+  const retry = f.initialize();
+  expect(f.state.initializationError).toBe('');
+  f.requests[1].resolve(snapshot(2, []));
+  const dispose = await retry;
+  expect(f.state.ready).toBe(true); expect(f.listeners.size).toBe(1); dispose();
+});
+
+test('丢失补发游标或重新登录会刷新外壳设置，普通重连不重复读取', async () => {
+  const f = client(), initial = f.initialize();
+  f.state.workspaceId = 'removed';
+  f.requests[0].resolve(snapshot(1, ['removed']));
+  const dispose = await initial;
+  f.emit({ type: 'transport.resumed', snapshotRequired: false });
+  expect(f.requests).toHaveLength(1);
+  f.emit({ type: 'transport.resumed', snapshotRequired: true });
+  expect(f.requests).toHaveLength(2);
+  f.requests[1].resolve(snapshot(2, [])); await new Promise(resolve => setImmediate(resolve));
+  expect(f.state.snapshot.revision).toBe(2); expect(f.state.workspaceId).toBe('');
+  f.emit({ type: 'transport.resumed', snapshotRequired: false, authenticatedAgain: true });
+  expect(f.requests).toHaveLength(3);
+  f.requests[2].resolve(snapshot(3, [])); await new Promise(resolve => setImmediate(resolve));
+  expect(f.state.snapshot.revision).toBe(3); dispose();
+});
+
+test('启动读取期间收到快照重建通知时合并刷新并等待最新快照', async () => {
+  const f = client(), initial = f.initialize();
+  f.emit({ type: 'transport.resumed', snapshotRequired: true });
+  f.requests[0].resolve(snapshot(1, [])); await new Promise(resolve => setImmediate(resolve));
+  expect(f.state.ready).toBe(false); expect(f.requests).toHaveLength(2);
+  f.requests[1].resolve(snapshot(2, [])); const dispose = await initial;
+  expect(f.state.snapshot.revision).toBe(2); dispose();
 });
 
 test('启动等待外部已发起的较新刷新，不提前就绪或重复发起读取', async () => {

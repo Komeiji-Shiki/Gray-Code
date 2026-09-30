@@ -1042,9 +1042,10 @@ export async function deleteConversation(
  * 流式完成后更新对话元数据
  */
 export async function updateConversationAfterMessage(state: ChatStoreState): Promise<void> {
-  if (!state.currentConversationId.value) return
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) return
   
-  const conv = state.conversations.value.find(c => c.id === state.currentConversationId.value)
+  const conv = state.conversations.value.find(c => c.id === conversationId)
   if (!conv) return
   
   const now = Date.now()
@@ -1067,14 +1068,14 @@ export async function updateConversationAfterMessage(state: ChatStoreState): Pro
     // HIS-09：updatedAt / messageCount / preview 合并为一次 IPC 写入
     // （updatedAt 由后端历史提交统一维护，不再前端分别 setCustomMetadata 三次）
     await sendToExtension(MESSAGE_NAMES['conversation.updateSummary'], {
-      conversationId: state.currentConversationId.value,
+      conversationId,
       messageCount,
       preview
     })
 
     // M3：IPC 成功后才更新本地计数（totalMessages/messageCount/updatedAt/preview）——
     // appendHistory 失败时后端会钳制 messageCount，前端保持与后端一致，避免永久超前。
-    state.totalMessages.value = messageCount
+    if (validateSessionIdentity(state, conversationId)) state.totalMessages.value = messageCount
     if (preview !== undefined) {
       conv.preview = preview
     }

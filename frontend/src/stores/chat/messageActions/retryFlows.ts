@@ -14,6 +14,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
+import { watch } from 'vue'
 import type { Message, Content, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, ErrorInfo, BranchStreamReplayContext } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
@@ -87,40 +88,91 @@ export async function retryLastMessage(
  */
 async function recoverAfterStreamStartFailure(
   state: ChatStoreState,
-  originConvId: string
+  originConvId: string,
+  streamId?: string
 ): Promise<void> {
+  const desktop = Boolean(window.__GRAYCODE_HOST)
+  if (desktop && !isDesktopStartCurrent(state, originConvId, streamId)) return
   state._pendingBranchRefreshAfterStream.value = null
   state._pendingBranchReplayContext.value = null
-  // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
+  let invalidated = false
+  let stopWatching: (() => void) | undefined
+  if (desktop) {
+    // 请求已明确退出；切走时保存空闲快照，切回会按既有路径重载权威历史。
+    state.streamingMessageId.value = null
+    state.activeStreamId.value = null
+    state.isStreaming.value = false
+    state.isWaitingForResponse.value = false
+    stopWatching = watch([state.currentConversationId, state.activeStreamId], () => { invalidated = true }, { flush: 'sync' })
+  }
   try {
-    const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
-      conversationId: originConvId,
-      limit: MESSAGES_PAGE_SIZE
-    })
-    const page = result?.messages || []
-    state.totalMessages.value = result?.total ?? page.length
-    state.windowStartIndex.value = page[0]?.index ?? 0
-    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
-    rebuildMessageIndexById(state)
-  } catch (reloadErr) {
-    console.error('[messageActions] retryFromMessage: failed to reload history after reroll start failure:', reloadErr)
-  }
-
-  // 失败重载历史后同步重载检查点——getMessagesPaged 只拉消息页，不重载 checkpoints，
-  // 否则后端历史未删、检查点仍存在，而前端窗口只有消息没有存档条（前后端不一致）。
-  if (state.currentConversationId.value === originConvId) {
+    // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
     try {
-      await loadCheckpoints(state)
+      const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
+        conversationId: originConvId,
+        limit: MESSAGES_PAGE_SIZE
+      })
+      if (invalidated) return
+      const page = result?.messages || []
+      state.totalMessages.value = result?.total ?? page.length
+      state.windowStartIndex.value = page[0]?.index ?? 0
+      state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+      rebuildMessageIndexById(state)
     } catch (reloadErr) {
-      console.error('[messageActions] retryFromMessage: failed to reload checkpoints after reroll start failure:', reloadErr)
+      console.error('[messageActions] retryFromMessage: failed to reload history after reroll start failure:', reloadErr)
     }
-  }
+    if (invalidated) return
 
-  state.streamingMessageId.value = null
-  state.isStreaming.value = false
-  state.activeStreamId.value = null
-  state.isWaitingForResponse.value = false
-  state.isLoading.value = false
+    // 失败重载历史后同步重载检查点——getMessagesPaged 只拉消息页，不重载 checkpoints，
+    // 否则后端历史未删、检查点仍存在，而前端窗口只有消息没有存档条（前后端不一致）。
+    if (state.currentConversationId.value === originConvId) {
+      try {
+        await loadCheckpoints(state)
+      } catch (reloadErr) {
+        console.error('[messageActions] retryFromMessage: failed to reload checkpoints after reroll start failure:', reloadErr)
+      }
+    }
+    if (invalidated) return
+
+    state.streamingMessageId.value = null
+    state.isStreaming.value = false
+    state.activeStreamId.value = null
+    state.isWaitingForResponse.value = false
+    state.isLoading.value = false
+  } finally { stopWatching?.() }
+}
+
+function isDesktopStartCurrent(state: ChatStoreState, conversationId: string, streamId?: string): boolean {
+  if (!window.__GRAYCODE_HOST) return true
+  return validateSessionIdentity(state, conversationId) && (state.activeStreamId.value === streamId
+    || !state.activeStreamId.value && !state.isStreaming.value && !state.isWaitingForResponse.value
+      && state._lastCancelledStreamId.value?.streamId === streamId)
+}
+
+function settleBackgroundCancelledStart(state: ChatStoreState, conversationId: string, streamId: string, error: unknown): void {
+  if (!window.__GRAYCODE_HOST || (error as { code?: string })?.code !== 'CANCELLED_ERROR') return
+  const tab = state.openTabs.value.find(tab => tab.conversationId === conversationId)
+  if (!tab) return
+  const snapshot = state.sessionSnapshots.value.get(tab.id)
+  if (!snapshot || snapshot.activeStreamId !== streamId) return
+  // 准备阶段没有终结 chunk；后台快照必须解除等待，切回才会走已有的权威历史恢复。
+  snapshot.allMessages = snapshot.allMessages.filter(message => message.id !== snapshot.streamingMessageId
+    || !isLocalOnlyAssistant(message) || !isEmptyAssistantPlaceholder(message))
+  snapshot.totalMessages = snapshot.windowStartIndex + snapshot.allMessages.length
+  snapshot.streamingMessageId = null
+  snapshot.activeStreamId = null
+  snapshot.isStreaming = false
+  snapshot.isWaitingForResponse = false
+  snapshot.isLoading = false
+  snapshot.pendingBranchRefreshAfterStream = null
+  snapshot.pendingBranchReplayContext = null
+  tab.isStreaming = false
+}
+
+function finishStartLoading(state: ChatStoreState, conversationId: string, streamId: string): void {
+  if (!window.__GRAYCODE_HOST || validateSessionIdentity(state, conversationId)
+    && (state.activeStreamId.value === streamId || !state.activeStreamId.value && !state.isStreaming.value && !state.isWaitingForResponse.value))
+    state.isLoading.value = false
 }
 
 /**
@@ -188,9 +240,9 @@ export async function retryFromMessage(
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
 
+    const streamId = generateId()
     try {
       const modelOverride = resolveConversationModelOverride(state)
-      const streamId = generateId()
       state.activeStreamId.value = streamId
       state._lastCancelledStreamId.value = null
       await sendToExtension(MESSAGE_NAMES.retryStream, {
@@ -201,18 +253,29 @@ export async function retryFromMessage(
         promptModeId: state.currentPromptModeId.value
       })
     } catch (err: any) {
+      if (!isDesktopStartCurrent(state, originConvId, streamId)) {
+        settleBackgroundCancelledStart(state, originConvId, streamId, err)
+        return
+      }
       if (state.isStreaming.value) {
-        safeSetError(state, originConvId, {
+        if (!(window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR')) safeSetError(state, originConvId, {
           code: err.code || 'RETRY_ERROR',
           message: err.message || 'Retry failed'
         })
+        if (window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR') {
+          const index = state.allMessages.value.findIndex(message => message.id === assistantMessageId)
+          if (index >= 0 && isLocalOnlyAssistant(state.allMessages.value[index]) && isEmptyAssistantPlaceholder(state.allMessages.value[index])) {
+            removeMessageAt(state, index)
+            setTotalMessagesFromWindow(state)
+          }
+        }
         state.streamingMessageId.value = null
         state.isStreaming.value = false
         state.activeStreamId.value = null
         state.isWaitingForResponse.value = false
       }
     } finally {
-      state.isLoading.value = false
+      finishStartLoading(state, originConvId, streamId)
     }
     return
   }
@@ -255,6 +318,7 @@ export async function retryFromMessage(
   state._pendingBranchRefreshAfterStream.value = originConvId
 
   let replayContext: BranchStreamReplayContext | null = null
+  const streamId = generateId()
   try {
     const modelOverride = resolveConversationModelOverride(state)
     replayContext = {
@@ -268,7 +332,6 @@ export async function retryFromMessage(
       deepSeekVisionTileSplit: state.visionSplitChecked?.value
     }
     state._pendingBranchReplayContext.value = replayContext
-    const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
     await sendToExtension(MESSAGE_NAMES['chat.rerollStream'], {
@@ -282,13 +345,17 @@ export async function retryFromMessage(
       deepSeekVisionTileSplit: state.visionSplitChecked?.value
     })
   } catch (err: any) {
+    if (!isDesktopStartCurrent(state, originConvId, streamId)) {
+      settleBackgroundCancelledStart(state, originConvId, streamId, err)
+      return
+    }
     const branchReplayContext = replayContext
     if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
       state._pendingBranchReplayContext.value = null
     }
     // 本次 reroll 已中止：无论会话是否切换，先复位分支图刷新标记，避免后续终结事件误消费
     state._pendingBranchRefreshAfterStream.value = null
-    if (state.isStreaming.value) {
+    if (state.isStreaming.value && !(window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR')) {
       safeSetError(state, originConvId, {
         code: err.code || 'RETRY_ERROR',
         message: err.message || 'Retry failed',
@@ -297,10 +364,10 @@ export async function retryFromMessage(
     }
     // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，重载原会话历史会污染当前窗口（与 editAndRetry 同款）
     if (validateSessionIdentity(state, originConvId)) {
-      await recoverAfterStreamStartFailure(state, originConvId)
+      await recoverAfterStreamStartFailure(state, originConvId, streamId)
     }
   } finally {
-    state.isLoading.value = false
+    finishStartLoading(state, originConvId, streamId)
   }
 }
 
@@ -449,8 +516,8 @@ async function replayBranchStreamAfterError(
   state._pendingBranchRefreshAfterStream.value = isKeepReplay ? null : originConvId
   state._pendingBranchReplayContext.value = context
 
+  const streamId = generateId()
   try {
-    const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
 
@@ -485,13 +552,17 @@ async function replayBranchStreamAfterError(
       applyEditedUserContent(state, originConvId, context.userNodeId, context.newText, result?.userContent)
     }
   } catch (err: any) {
+    if (!isDesktopStartCurrent(state, originConvId, streamId)) {
+      settleBackgroundCancelledStart(state, originConvId, streamId, err)
+      return
+    }
     const branchReplayContext = context
     if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
       state._pendingBranchReplayContext.value = null
     }
     state._pendingBranchRefreshAfterStream.value = null
     // keep 重放不设置 isStreaming：错误显示不能依赖该标志
-    if (state.isStreaming.value || isKeepReplay) {
+    if ((state.isStreaming.value || isKeepReplay) && !(window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR')) {
       safeSetError(state, originConvId, {
         code: err.code || (context.kind === 'reroll' ? 'RETRY_ERROR' : 'EDIT_RETRY_ERROR'),
         message: err.message || (context.kind === 'reroll' ? 'Retry failed' : 'Edit and retry failed'),
@@ -499,10 +570,10 @@ async function replayBranchStreamAfterError(
       })
     }
     if (validateSessionIdentity(state, originConvId)) {
-      await recoverAfterStreamStartFailure(state, originConvId)
+      await recoverAfterStreamStartFailure(state, originConvId, streamId)
     }
   } finally {
-    state.isLoading.value = false
+    finishStartLoading(state, originConvId, streamId)
   }
 }
 
@@ -581,7 +652,7 @@ export async function retryAfterError(
     })
   } catch (err: any) {
     if (validateSessionIdentity(state, originConvId) && state.streamingMessageId.value === assistantMessageId) {
-      safeSetError(state, originConvId, {
+      if (!(window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR')) safeSetError(state, originConvId, {
         code: err.code || 'RETRY_ERROR',
         message: err.message || 'Retry failed'
       })
@@ -699,6 +770,7 @@ export async function editAndRetry(
   }
 
   let replayContext: BranchStreamReplayContext | null = null
+  const streamId = generateId()
   try {
     const modelOverride = resolveConversationModelOverride(state)
     replayContext = {
@@ -716,7 +788,6 @@ export async function editAndRetry(
       deepSeekVisionTileSplit
     }
     state._pendingBranchReplayContext.value = replayContext
-    const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
     // TREE-03：主流程走 chat.editBranchStream——后端创建编辑候选（新 user 节点），
@@ -743,6 +814,10 @@ export async function editAndRetry(
     })
     applyEditedUserContent(state, originConvId, targetMessageId, newMessage, result?.userContent)
   } catch (err: any) {
+    if (!isDesktopStartCurrent(state, originConvId, streamId)) {
+      settleBackgroundCancelledStart(state, originConvId, streamId, err)
+      return
+    }
     const branchReplayContext = replayContext
     if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
       state._pendingBranchReplayContext.value = null
@@ -754,7 +829,7 @@ export async function editAndRetry(
     // 注意：无论会话是否切换，本次编辑分支流都已中止，分支图刷新标记必须复位，避免残留误消费。
     state._pendingBranchRefreshAfterStream.value = null
     // keep 模式不设置 isStreaming：错误显示不能依赖该标志，否则 IPC 层失败时错误静默丢失
-    if (state.isStreaming.value || effectiveMode === 'keep') {
+    if ((state.isStreaming.value || effectiveMode === 'keep') && !(window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR')) {
       // MESSAGE_CHANGED：目标消息已被其他操作改动（索引漂移校验失败），提示用户刷新历史，
       // 不附带 branchReplayContext（重放已无意义）
       const isMessageChanged = err?.code === 'MESSAGE_CHANGED'
@@ -768,9 +843,9 @@ export async function editAndRetry(
     }
     // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，避免跨会话污染
     if (validateSessionIdentity(state, originConvId)) {
-      await recoverAfterStreamStartFailure(state, originConvId)
+      await recoverAfterStreamStartFailure(state, originConvId, streamId)
     }
   } finally {
-    state.isLoading.value = false
+    finishStartLoading(state, originConvId, streamId)
   }
 }

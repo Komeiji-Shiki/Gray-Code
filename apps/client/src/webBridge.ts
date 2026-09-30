@@ -1,6 +1,7 @@
 import { reactive } from 'vue';
 import { validateRpcParams } from '@graycode/contracts';
 import type { DesktopBridge } from './api';
+import { shellText } from './i18n';
 
 interface Directory { name: string; path: string }
 export const webUi = reactive({ chooserOpen: false, directory: '', parent: '', directories: [] as Directory[],
@@ -18,18 +19,26 @@ const listeners = new Set<(event: Record<string, any>) => void>();
 const tabId = sessionStorage.getItem('graycode.webClient') ?? crypto.randomUUID();
 sessionStorage.setItem('graycode.webClient', tabId);
 
-export async function webRequest(url: string, body?: unknown) {
-  const response = await fetch(url, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
-    headers: { 'X-Graycode-Client': tabId, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  const value = await response.json();
-  if (!response.ok) {
-    if (response.status === 401 && url !== '/auth/login') window.dispatchEvent(new Event('graycode:session-expired'));
-    throw Object.assign(new Error(value.error ?? '请求失败。'), { code: value.code, status: response.status });
-  }
-  return value;
+export async function webRequest(url: string, body?: unknown, timeoutMs = ['/auth/session', '/auth/login'].includes(url) ? 15_000 : 0) {
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  try {
+    const response = await fetch(url, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', signal: controller?.signal,
+      headers: { 'X-Graycode-Client': tabId, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const value = await response.json();
+    if (!response.ok) {
+      if (response.status === 401 && url !== '/auth/login') window.dispatchEvent(new Event('graycode:session-expired'));
+      throw Object.assign(new Error(value.error ?? '请求失败。'), { code: value.code, status: response.status });
+    }
+    return value;
+  } catch (error) { if (controller?.signal.aborted) throw new Error(shellText('connectionTimeout')); throw error; }
+  finally { clearTimeout(timer); }
 }
-async function rpc(method: string, params: Record<string, unknown> = {}) { return (await webRequest('/rpc', { method, params })).result; }
+async function rpc(method: string, params: Record<string, unknown> = {}) {
+  const timeout = method === 'settings.get' || method === 'ui.context.set' || method === 'ui.request' && params.type === 'webviewReady' ? 20_000 : 0;
+  return (await webRequest('/rpc', { method, params }, timeout)).result;
+}
 export async function browseDirectory(directory = '') {
   const requestId = ++directoryRequestId;
   webUi.directoryBusy = true; webUi.directoryError = '';
@@ -69,14 +78,16 @@ function emit(event: Record<string, any>) {
     catch (error) { console.error('Web 事件订阅者处理失败：', event.type, error); }
   }
 }
-export function closeWebBridge() { eventSource?.close(); eventSource = undefined; finishDirectory(false); }
+export function closeWebBridge() { eventSource?.close(); eventSource = undefined; webUi.connection = 'disconnected'; emit({ type: 'transport.disconnected' }); finishDirectory(false); }
 export function installWebBridge(): DesktopBridge {
   eventSource?.close();
   const authenticatedAgain = bridgeInstalled; bridgeInstalled = true;
   let firstSynchronization = true;
+  webUi.connection = 'connecting';
   eventSource = new EventSource(`/events?client=${encodeURIComponent(tabId)}${lastEventId ? `&after=${encodeURIComponent(lastEventId)}` : ''}`);
   eventSource.onopen = () => { webUi.connection = 'connected'; emit({ type: 'transport.connected' }); };
   eventSource.onerror = () => {
+    if (webUi.connection !== 'disconnected') emit({ type: 'transport.disconnected' });
     webUi.connection = 'disconnected';
     void webRequest('/auth/session').catch(() => {});
   };

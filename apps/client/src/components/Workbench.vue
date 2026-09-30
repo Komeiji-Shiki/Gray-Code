@@ -14,6 +14,7 @@ import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/edi
 import { documentTextPatch } from '../../../../shared/documentPatch';
 import { call, subscribe } from "../api";
 import { guard, report, state } from "../state";
+import { shellText as t } from '../i18n';
 import MarkdownIt from 'markdown-it';
 import BrowserPane from './BrowserPane.vue';
 import FileTree from "./FileTree.vue";
@@ -45,9 +46,10 @@ const documents = reactive<DocumentState[]>([]);
 const synchronizedText = new WeakMap<DocumentState, { text: string; version: number }>();
 const current = ref("");
 const pane = ref('empty');
+const diffTarget = ref<{ workspaceId: string; id?: string; path?: string; toolCallId?: string }>();
 let openSequence = 0;
 // 项目切换先使旧打开请求失效，同一事件随后发起的新打开仍能取得焦点。
-watch(() => state.workspaceId, () => { openSequence++; }, { flush: 'sync' });
+watch(() => state.workspaceId, () => { openSequence++; diffTarget.value = undefined; }, { flush: 'sync' });
 const openedPanels = ref<string[]>([]);
 const treeVisible = ref(localStorage.getItem('graycode.fileTreeVisible') !== 'false');
 const mobileTreeVisible = ref(true);
@@ -100,6 +102,10 @@ function openMonitor(runId?: string, conversationId?: string) {
 const selections = reactive<Record<string, IRange>>({});
 const closing = ref<DocumentState | null>(null);
 const queues = new Map<string, Promise<unknown>>();
+const recoveringDocuments = new Set<DocumentState>();
+const documentConflicts = new WeakSet<DocumentState>();
+let transportConnected = true;
+const recoveryConflict = (doc: DocumentState) => new Error(`${doc.path}: ${t('documentRecoveryConflict')}`);
 const closingDocuments = new Set<DocumentState>();
 function flushDocument(doc: DocumentState) { return queues.get(key(doc)) ?? Promise.resolve(); }
 async function flushDocuments() { await Promise.all(documents.map(flushDocument)); }
@@ -235,6 +241,9 @@ function queue(doc: DocumentState, operation: () => Promise<unknown>, isChange =
 const pendingChanges = new PendingDocumentChanges<DocumentState>(
   (doc, operation) => { void queue(doc, operation, true); },
   async (doc, text) => {
+    // 重连先核对原文和版本，再发送离线输入；否则服务器重启后的版本号可能恰好相同。
+    if (!transportConnected || recoveringDocuments.has(doc)) return;
+    if (documentConflicts.has(doc)) throw recoveryConflict(doc);
     const base = synchronizedText.get(doc);
     const patch = doc.supportsPatches && base?.version === doc.version ? documentTextPatch(base.text, text) : undefined;
     // 全文更短或基线未知时沿用旧协议；版本冲突必须保留草稿，不能用全文覆盖宿主。
@@ -250,8 +259,34 @@ function change(doc: DocumentState, text: string) {
   doc.dirty = true;
   pendingChanges.push(doc, text);
 }
+function recoverDocument(doc: DocumentState) {
+  recoveringDocuments.add(doc);
+  return queue(doc, async () => {
+    let synchronized = false;
+    try {
+      if (!documents.includes(doc) || closingDocuments.has(doc)) return;
+      const version = doc.version, base = synchronizedText.get(doc);
+      const next = await call<DocumentState>('documents.open', { workspaceId: doc.workspaceId, path: doc.path, reload: true });
+      if (!documents.includes(doc) || doc.version !== version) return;
+      synchronized = true;
+      // 已收到更新回执的脏正文也只在内存中；服务重启后不能把它当作干净缓存丢掉。
+      const latest = doc.text, preserveDraft = doc.dirty || latest !== base?.text;
+      const sameBaseline = next.baseHash === doc.baseHash;
+      const sameDraft = next.version === version && next.text === base?.text;
+      if (documentConflicts.has(doc) || preserveDraft && next.text !== latest &&
+        (!sameBaseline || next.dirty && !sameDraft)) {
+        documentConflicts.add(doc); doc.dirty = true; throw recoveryConflict(doc);
+      }
+      Object.assign(doc, next); synchronizedText.set(doc, { text: next.text, version: next.version });
+      if (preserveDraft && latest !== next.text) { doc.text = latest; doc.dirty = true; change(doc, latest); }
+    } finally { if (synchronized || !documents.includes(doc)) recoveringDocuments.delete(doc); }
+  });
+}
 async function save(doc: DocumentState) {
+  if (!transportConnected) throw new Error(t('connectionTimeout'));
+  if (recoveringDocuments.has(doc)) await recoverDocument(doc);
   await queue(doc, async () => {
+    if (documentConflicts.has(doc)) throw recoveryConflict(doc);
     const result = await call<DocumentState>("documents.save", {
       workspaceId: doc.workspaceId,
       path: doc.path,
@@ -296,6 +331,17 @@ watch(
   (count) => void guard(() => call("desktop.dirtyDocuments", { count })),
 );
 const unsubscribe = subscribe((event) => {
+  if (event.type === 'transport.disconnected') { transportConnected = false; return; }
+  if (event.type === 'transport.resumed') {
+    const disconnected = !transportConnected; transportConnected = true;
+    if (!disconnected && !event.snapshotRequired && !event.authenticatedAgain) return;
+    for (const doc of documents) recoveringDocuments.add(doc);
+    void Promise.allSettled(documents.map(recoverDocument)).then(() => {
+      const doc = active.value;
+      if (doc && documents.includes(doc) && !closingDocuments.has(doc)) return call('documents.focus', { workspaceId: doc.workspaceId, path: doc.path });
+    }).catch(report);
+    return;
+  }
   if (event.type === 'desktop.saveAll') {
     void (async () => {
       let error: string | undefined;
@@ -331,7 +377,13 @@ const unsubscribe = subscribe((event) => {
   if (event.type === 'browser.opened') { browserCreated = true; activatePanel('browser'); return; }
   if (event.type === 'workspace.file.open') { state.chatFocused = false; pane.value = 'editor'; void guard(() => open(event.path, event.workspaceId, event.selection)); return; }
   if (event.type === 'workspace.subagents.open') { openMonitor(event.runId, event.conversationId); return; }
-  if (event.type === 'workspace.diff.open') { activatePanel('diff'); return; }
+  if (event.type === 'workspace.diff.open') {
+    const workspaceId = typeof event.workspaceId === 'string' ? event.workspaceId : state.workspaceId;
+    if (workspaceId !== state.workspaceId) state.workspaceId = workspaceId;
+    diffTarget.value = event.id || event.path || event.toolCallId ? { workspaceId,
+      id: event.id, path: event.path, toolCallId: event.toolCallId } : undefined;
+    activatePanel('diff'); return;
+  }
   if (event.type !== "file.changed") return;
   const doc = documents.find(
     (doc) => doc.workspaceId === event.workspaceId && doc.path === event.path,
@@ -398,7 +450,7 @@ onUnmounted(() => { readyWaiters.dispose(); openSequence++; unsubscribe(); windo
       <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
       <ComputerPane v-if="openedPanels.includes('computer')" v-show="pane === 'computer'" :visible="pane === 'computer' && !state.chatFocused && !state.settingsOpen" />
       <NodePane v-if="openedPanels.includes('nodes')" v-show="pane === 'nodes'" :visible="pane === 'nodes' && !state.chatFocused && !state.settingsOpen" />
-      <TerminalPanel v-if="openedPanels.includes('terminal')" :session-id="terminalSession" v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused && !state.settingsOpen" /><GitPanel v-if="openedPanels.includes('git')" v-show="pane === 'git'" :visible="pane === 'git' && !state.chatFocused && !state.settingsOpen" :save-all="saveAll" :flush="flushDocuments" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" />
+      <TerminalPanel v-if="openedPanels.includes('terminal')" :session-id="terminalSession" v-show="pane === 'terminal'" :compact="compact" :visible="pane === 'terminal' && !state.chatFocused && !state.settingsOpen" /><GitPanel v-if="openedPanels.includes('git')" v-show="pane === 'git'" :visible="pane === 'git' && !state.chatFocused && !state.settingsOpen" :save-all="saveAll" :flush="flushDocuments" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" /><DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" :target="diffTarget" />
       <SearchPanel v-if="openedPanels.includes('search')" v-show="pane === 'search'" :workspace-id="state.workspaceId" :flush="flushDocuments" :apply="replaceFiles" :save-all="saveAll" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <OutlinePanel v-if="pane === 'outline'" :document="active" :flush="flushDocuments" @open="(path, range, workspaceId) => guard(() => openRange(path, range, workspaceId))" />
       <DebugPanel v-if="openedPanels.includes('debug')" v-show="pane === 'debug'" :visible="pane === 'debug'" :save-all="saveAll" :active-file="active" @open="(path, line, column, workspaceId) => guard(() => open(path, workspaceId, { startLineNumber: line, endLineNumber: line, startColumn: column, endColumn: column }))" />

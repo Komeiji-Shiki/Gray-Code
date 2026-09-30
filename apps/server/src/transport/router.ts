@@ -15,6 +15,19 @@ export interface ClientSession {
 }
 export class ApplicationRouter {
   constructor(private readonly application: PlatformApplication) {}
+  clientConnected(clientId: string): void {
+    this.application.files.clientConnected(clientId);
+    this.application.languages.clientConnected(clientId);
+    this.application.productUi.clientConnected(clientId);
+  }
+  async clientClosed(clientId: string): Promise<void> {
+    const results = await Promise.allSettled([
+      this.application.files.clientClosed(clientId), this.application.languages.clientClosed(clientId),
+      this.application.productUi.clientClosed(clientId),
+    ]);
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason), '远程客户端资源释放失败。');
+  }
   async call(
     session: ClientSession,
     method: string,
@@ -23,6 +36,7 @@ export class ApplicationRouter {
     const app = this.application;
     if (!app.actor(session.actorId)) throw new Error("Account is unavailable.");
     validateRpcParams(method, params);
+    this.clientConnected(session.clientId);
     if (hasRpcHandler(method)) return rpcRequest(app, session, method, params);
     if (method.startsWith('git.')) return gitRequest(app, session, method, params);
     if (method.startsWith('debug.')) return debugRequest(app, session, method, params);
@@ -127,7 +141,8 @@ export class ApplicationRouter {
         return app.checkpoints.prune(session.actorId, params.conversationId);
       case 'workspace.diffs.list':
         app.requireOwner(session.actorId);
-        return app.diffs.list(session.actorId, params.workspaceId);
+        if (params.includeId !== undefined && (typeof params.includeId !== 'string' || !params.includeId)) throw new Error('差异记录标识不能为空。');
+        return app.diffs.list(session.actorId, params.workspaceId, params.includeId);
       case 'workspace.diffs.resolve':
         app.requireOwner(session.actorId);
         if (typeof params.accepted !== 'boolean') throw new Error('需要明确接受或拒绝修改。');

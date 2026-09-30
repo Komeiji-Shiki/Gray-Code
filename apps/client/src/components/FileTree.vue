@@ -172,6 +172,7 @@ const unsubscribe = subscribe(event => {
     scheduleRefresh(affected);
   } else if (event.type === 'file.changed' && event.workspaceId === state.workspaceId) scheduleRefresh([parentDirectory(event.path)]);
   else if (event.type === 'workspace.git.changed' && event.workspaceId === state.workspaceId) scheduleRefresh(expanded.value);
+  else if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) scheduleRefresh(expanded.value);
 });
 onUnmounted(() => {
   ++treeEpoch; unsubscribe(); state.fileDialogOpen = false; resizeObserver?.disconnect();

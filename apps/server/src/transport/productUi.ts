@@ -33,6 +33,7 @@ import { deleteConversation } from '../conversations/delete';
 import { removePermissionAccount, resolveBotGuestActor } from '../bots/permissions';
 import { activateConversationWorkspace } from '../conversations/workspace';
 import { validateDecisionProvider } from '../model/decisionReviewer';
+import type { WorkspaceDiff } from '../workspace/diffs';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -40,6 +41,7 @@ export class ProductUi {
   readonly chat: ProductChat;
   private readonly checkpointUi: CheckpointUi;
   private readonly clients = new Map<string, Promise<UiSession>>();
+  private readonly disconnectedClients = new Set<string>();
   private readonly accountActions = new Map<string, 'revoke' | 'delete'>();
   private readonly queues = new Map<string, Promise<unknown>>();
   constructor(private readonly app: PlatformApplication) {
@@ -53,11 +55,34 @@ export class ProductUi {
     if (!result) { result = this.app.product.draft().then(preferences => ({ preferences, editing: false })); this.clients.set(id, result); }
     return result;
   }
-  async hasDirtyPreferences(): Promise<boolean> {
-    const sessions = await Promise.allSettled(this.clients.values());
-    return sessions.some(session => session.status === 'fulfilled' && session.value.editing && session.value.preferences.dirty);
+  async hasDirtyPreferences(includeDisconnected = false, excludeClientId?: string): Promise<boolean> {
+    const entries = [...this.clients];
+    const sessions = await Promise.allSettled(entries.map(([, session]) => session));
+    return sessions.some((session, index) => entries[index][0] !== excludeClientId && (includeDisconnected || !this.disconnectedClients.has(entries[index][0]))
+      && session.status === 'fulfilled' && session.value.preferences.dirty);
+  }
+  async hasClientDirtyPreferences(clientId: string): Promise<boolean> {
+    const ui = await this.clients.get(clientId)?.catch(() => undefined);
+    return ui?.preferences.dirty ?? false;
+  }
+  clientConnected(clientId: string): void {
+    this.disconnectedClients.delete(clientId); this.chat.clientConnected(clientId);
+  }
+  async clientClosed(clientId: string): Promise<void> {
+    this.disconnectedClients.add(clientId); this.chat.clientClosed(clientId);
+    const queued = this.queues.get(clientId); const session = this.clients.get(clientId);
+    // 已受理的输入和设置写入继续完成；离线草稿可重连恢复，不能阻塞其他客户端交互。
+    // 清理等待留在后台，不能让旧的准备请求挡住重连后的取消入口。
+    void (async () => {
+      await queued?.catch(() => {});
+      const ui = await session?.catch(() => undefined);
+      if (!this.disconnectedClients.has(clientId)) return;
+      if (session && this.clients.get(clientId) === session && ui && !ui.preferences.dirty) this.clients.delete(clientId);
+      if (this.queues.get(clientId) === queued) this.queues.delete(clientId);
+    })().catch(() => {});
   }
   async call(client: ClientSession, type: string, data: Record<string, any> = {}): Promise<unknown> {
+    this.clientConnected(client.clientId);
     // 回调交换不能挡住状态查询和取消；开始登录仍串行，避免同客户端遗留多个监听器。
     if (['chatgpt.status', 'chatgpt.complete', 'chatgpt.cancel', 'chatgpt.disconnect'].includes(type)) return this.invoke(client, type, data);
     // 总结由会话级控制器和提交版本约束，模型等待期间不能占住整个界面的交互队列。
@@ -93,7 +118,11 @@ export class ProductUi {
     if (['platform.accounts.revoke', 'platform.accounts.delete', 'checkpoint.cancelOperation', 'checkpoint.getOperationProgress', 'dependencies.list', 'dependencies.getInstallPath', 'dependencies.install', 'dependencies.uninstall', 'tokenizer.getResource', 'chat.awaitConversationIdle', 'chat.sendInterruptMessage', 'imageGeneration.cancel', 'terminal.kill', 'terminal.getOutput', 'terminal.detachToBackground', 'task.cancel', 'task.getAll', 'cancelStream', 'cancelSummarizeRequest', 'toolConfirmation', 'models.getModels', 'migration.cancel', 'migration.status', 'diff.accept', 'diff.reject', 'platform.questions.answer', 'platform.discord.start', 'platform.discord.stop', 'platform.discord.status', 'platform.onebot.start', 'platform.onebot.stop', 'platform.onebot.status', 'disconnectMcpServer'].includes(type))
       return this.invoke(client, type, data);
     const previous = this.queues.get(client.clientId) ?? Promise.resolve();
-    const operation = previous.catch(() => {}).then(() => this.invoke(client, type, data));
+    const queued = (signal?: AbortSignal) => previous.catch(() => {}).then(() => {
+      signal?.throwIfAborted(); return this.invoke(client, type, data, signal);
+    });
+    const operation = ['chatStream', 'retryStream', 'chat.rerollStream', 'chat.editBranchStream'].includes(type)
+      ? this.chat.queueStart(client, data.conversationId, queued) : queued();
     this.queues.set(client.clientId, operation);
     try { return await operation; } finally { if (this.queues.get(client.clientId) === operation) this.queues.delete(client.clientId); }
   }
@@ -125,10 +154,11 @@ export class ProductUi {
     }
     return { success: true };
   }
-  private invoke(client: ClientSession, type: string, data: Record<string, any>): Promise<unknown> {
-    return withDependencyRuntime(this.app.dependencies, () => this.invokeScoped(client, type, data));
+  private invoke(client: ClientSession, type: string, data: Record<string, any>, signal?: AbortSignal): Promise<unknown> {
+    return withDependencyRuntime(this.app.dependencies, () => this.invokeScoped(client, type, data, signal));
   }
-  private async invokeScoped(client: ClientSession, type: string, data: Record<string, any>): Promise<unknown> {
+  private async invokeScoped(client: ClientSession, type: string, data: Record<string, any>, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
     this.app.requireOwner(client.actorId);
     if (['plan.getSourceStatus', 'plan.confirmExecution', 'design.confirmPlanGeneration', 'review.confirmPlanGeneration'].includes(type)) return new ArtifactApproval(this.app).confirm(client.actorId, type, data);
     if (type.startsWith('characters.conversation.')) return characterConversation(this.app, client, type, data);
@@ -150,10 +180,15 @@ export class ProductUi {
     // Only refresh idle clients. An open or dirty draft retains its original CAS revision.
     if (!ui.editing && !ui.preferences.dirty && ui.preferences.revision !== this.app.settings.snapshot().revision)
       ui.preferences = await this.app.product.draft();
+    signal?.throwIfAborted();
+    const notify = (message: unknown) => this.app.publish({ type: 'ui.message', clientId: client.clientId, message });
+    // 工作区删除后清掉会话中的旧选择，控制请求和下一次切换不能依赖已不存在的对象。
+    if (ui.workspaceId && !this.app.settings.find('workspaces', ui.workspaceId)) {
+      ui.workspaceId = undefined; notify({ type: 'workspaceUri', data: null });
+    }
     // 新建对话由请求中的工作区选项决定，不能让上一个会话残留的选择阻止创建。
     const workspace = ui.workspaceId && type !== 'ui.mode.new' ? this.app.workspace(client.actorId, ui.workspaceId, ['workspace_read']) : undefined;
     const uri = workspace ? pathToFileURL(workspace.directory).toString() : null;
-    const notify = (message: unknown) => this.app.publish({ type: 'ui.message', clientId: client.clientId, message });
     const refreshPreferences = () => {
       // 原页面分别订阅渠道、MCP 和通用设置；导入和撤销都要刷新对应的快照与缓存。
       for (const command of ['channels.configChanged', 'mcp.configChanged', 'settings.imported']) notify({ type: 'command', command, data: {} });
@@ -281,7 +316,44 @@ export class ProductUi {
       case 'diff.accept': return this.app.diffs.resolve(client.actorId, data.sessionId, true);
       case 'diff.reject': return this.app.diffs.resolve(client.actorId, data.sessionId, false);
       case 'diff.loadContent': return this.app.diffs.content(client.actorId, data.diffContentId);
-      case 'diff.openPreview': this.app.publish({ type: 'workspace.diff.open', toolCallId: data.toolId }); return { success: true };
+      case 'diff.openPreview': {
+        const explicitId = data.id ?? data.sessionId;
+        const result = data.result;
+        const singularIds = [result?.sessionId, result?.diffContentId, result?.pendingDiffId,
+          result?.data?.sessionId, result?.data?.diffContentId, result?.data?.pendingDiffId].filter(value => value !== undefined);
+        const memberIds = Array.isArray(result?.data?.results) ? result.data.results.flatMap((value: Record<string, unknown> | null) => {
+          const ids = [value?.diffContentId, value?.pendingDiffId].filter(id => id !== undefined);
+          if (new Set(ids).size > 1) throw new Error(t('modules.diff.previewAmbiguous'));
+          return ids;
+        }) : [];
+        const references = [...singularIds, ...memberIds];
+        if (references.some(id => typeof id !== 'string' || !id) || explicitId !== undefined && (typeof explicitId !== 'string' || !explicitId))
+          throw new Error(t('modules.diff.previewNotFound'));
+        if (new Set(singularIds).size > 1) throw new Error(t('modules.diff.previewAmbiguous'));
+        const resultIds = new Set<string>(references);
+        if (explicitId !== undefined && resultIds.size && !resultIds.has(explicitId)) throw new Error(t('modules.diff.previewNotFound'));
+        // 已有结果只引用本张卡片返回的提案；缺少记录身份时不能退回复用的模型调用标识。
+        if (result !== undefined && result !== null && !resultIds.size && explicitId === undefined) throw new Error(t('modules.diff.previewNotFound'));
+        const previewIds = explicitId !== undefined ? [explicitId] : resultIds.size ? [...resultIds] : undefined;
+        const previewPath = data.path ?? (Array.isArray(data.filePaths) && data.filePaths.length === 1 ? data.filePaths[0] : undefined);
+        const matches: WorkspaceDiff[] = [];
+        const ids = previewIds ?? await this.app.storage.listRecords('workspace-diffs', typeof data.conversationId === 'string' ? data.conversationId : undefined);
+        for (const id of ids) {
+          const value = await this.app.storage.getRecord('workspace-diffs', id) as WorkspaceDiff | null;
+          if (!value || value.toolCallId !== data.toolId
+            || data.conversationId !== undefined && value.conversationId !== data.conversationId
+            || previewPath !== undefined && value.path !== previewPath) continue;
+          await this.app.conversation(client.actorId, value.conversationId);
+          this.app.workspace(client.actorId, value.workspaceId, ['workspace_read']); matches.push(value);
+        }
+        if (!matches.length) throw new Error(t('modules.diff.previewNotFound'));
+        if (matches.some(value => value.conversationId !== matches[0].conversationId || value.workspaceId !== matches[0].workspaceId))
+          throw new Error(t('modules.diff.previewAmbiguous'));
+        // 同一调用的多文件提案共享归属，打开仍待处理的真实文件；跨会话标识复用不能猜目标。
+        const value = matches.sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending') || a.createdAt - b.createdAt || a.id.localeCompare(b.id))[0];
+        this.app.publish({ type: 'workspace.diff.open', clientId: client.clientId, conversationId: value.conversationId,
+          workspaceId: value.workspaceId, path: value.path, toolCallId: value.toolCallId, id: value.id }); return { success: true };
+      }
       case 'ui.state.get': return await this.app.storage.getRecord('ui-state', client.actorId) ?? {};
       case 'ui.state.set': await this.app.storage.putRecord({ namespace: 'ui-state', id: client.actorId, value: data.value }); return;
       case 'ui.command': notify({ type: 'command', command: data.command, data: data.data }); return;
@@ -385,13 +457,18 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: ui.preferences.dirty } });
         return { success: true };
       }
-      case 'ui.context.set':
-        if (data.workspaceId) this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']);
-        ui.workspaceId = data.workspaceId || undefined;
+      case 'ui.context.set': {
+        const nextWorkspace = data.workspaceId ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
+        ui.workspaceId = nextWorkspace?.id;
         if (['chat', 'code', 'character'].includes(data.mode)) ui.mode = data.mode;
-        notify({ type: 'workspaceUri', data: ui.workspaceId ? pathToFileURL(this.app.workspace(client.actorId, ui.workspaceId, []).directory).toString() : null }); return;
+        notify({ type: 'workspaceUri', data: nextWorkspace ? pathToFileURL(nextWorkspace.directory).toString() : null }); return;
+      }
       case 'ui.settings.begin':
-        if (!ui.editing) { ui.preferences = await this.app.product.draft(); ui.editing = true; }
+        if (!ui.editing) {
+          // 部分设置 RPC 可先暂存草稿；打开设置不能覆盖尚未保存的有效输入和 CAS 版本。
+          if (!ui.preferences.dirty) ui.preferences = await this.app.product.draft();
+          ui.editing = true;
+        }
         return { revision: ui.preferences.revision, dirty: ui.preferences.dirty };
       case 'ui.settings.status': return { revision: ui.preferences.revision, dirty: ui.preferences.dirty };
       case 'ui.settings.save': {
@@ -469,10 +546,10 @@ export class ProductUi {
         defaultPath: this.app.storage.directory, effectivePath: this.app.storage.directory };
       case 'getWorkspaceUri': return uri;
       case 'chatInput.focusState': return { success: true };
-      case 'chatStream': return this.chat.start(client, data, ui.preferences);
-      case 'retryStream': return this.chat.start(client, data, ui.preferences, 'continue');
-      case 'chat.rerollStream': return this.chat.start(client, data, ui.preferences, 'reroll');
-      case 'chat.editBranchStream': return this.chat.start(client, data, ui.preferences, 'edit');
+      case 'chatStream': return this.chat.start(client, data, ui.preferences, 'send', signal);
+      case 'retryStream': return this.chat.start(client, data, ui.preferences, 'continue', signal);
+      case 'chat.rerollStream': return this.chat.start(client, data, ui.preferences, 'reroll', signal);
+      case 'chat.editBranchStream': return this.chat.start(client, data, ui.preferences, 'edit', signal);
       case 'summarizeContext': return this.app.context.summarizeManually(client.actorId, data.conversationId, data.configId, data.modelOverride);
       case 'cancelSummarizeRequest': return this.app.context.cancelSummary(client.actorId, data.conversationId);
       case 'restoreSummarizedMessages': return this.app.context.restoreSummary(client.actorId, data.conversationId, data.summaryMessageId);

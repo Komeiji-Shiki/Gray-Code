@@ -35,9 +35,11 @@ import { isAgentMessageRoundPending } from '../agentMessageClaimGate'
 function cleanupFailedSendPlaceholders(
   state: ChatStoreState,
   pendingUserMessageId: string | undefined,
-  assistantMessageId: string | null
+  assistantMessageId: string | null,
+  discardUnsubmittedUser = false
 ): void {
-  const remaining = removeFailedSendPlaceholders(state.allMessages.value, pendingUserMessageId, assistantMessageId)
+  const remaining = removeFailedSendPlaceholders(state.allMessages.value, pendingUserMessageId, assistantMessageId,
+    discardUnsubmittedUser, state.windowStartIndex.value)
   if (remaining === state.allMessages.value) return
   state.allMessages.value = remaining
   rebuildMessageIndexById(state)
@@ -48,7 +50,9 @@ function cleanupFailedSendPlaceholders(
 function removeFailedSendPlaceholders(
   all: Message[],
   pendingUserMessageId: string | undefined,
-  assistantMessageId: string | null
+  assistantMessageId: string | null,
+  discardUnsubmittedUser = false,
+  windowStartIndex = 0
 ): Message[] {
   if (!pendingUserMessageId && !assistantMessageId) return all
   const removeIds = new Set<string>()
@@ -69,11 +73,18 @@ function removeFailedSendPlaceholders(
 
   // user 消息仅在空气泡仍为空（或本次未创建空气泡）时一并移除，
   // 避免误删用户已发送且已收到部分回答的消息
-  if (pendingUserMessageId && (removeIds.has(assistantMessageId ?? '') || !assistantMessageId)) {
+  if (pendingUserMessageId && (discardUnsubmittedUser || removeIds.has(assistantMessageId ?? '') || !assistantMessageId)) {
     removeIds.add(pendingUserMessageId)
   }
 
-  return removeIds.size === 0 ? all : all.filter(m => !removeIds.has(m.id))
+  if (removeIds.size === 0) return all
+  let removed = 0
+  return all.flatMap((message, index) => {
+    if (removeIds.has(message.id)) { removed++; return [] }
+    // 准备阶段确认未落库后，后续乐观消息仍按旧窗口计算索引；权威历史索引不随它重排。
+    return [discardUnsubmittedUser && removed && message.backendIndex === windowStartIndex + index
+      ? { ...message, backendIndex: message.backendIndex - removed } : message]
+  })
 }
 
 /**
@@ -440,19 +451,29 @@ export async function sendMessage(
     return tab ? state.sessionSnapshots.value.get(tab.id) : undefined
   }
   // 发送失败或提交前切走时统一清理原会话；快照和活跃窗口共用归属判断。
-  const cleanupUnsentMessage = (error?: { code: string; message: string }) => {
+  const cleanupUnsentMessage = (error?: { code: string; message: string }, discardUnsubmittedUser = false) => {
     if (isOriginCurrent()) {
-      if (!ownsSend(state.streamingMessageId.value, state.activeStreamId.value)) return
+      const ownsCurrent = ownsSend(state.streamingMessageId.value, state.activeStreamId.value)
+      if (!ownsCurrent) {
+        if (discardUnsubmittedUser) cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId, true)
+        return
+      }
       if (error && state._lastCancelledStreamId.value?.messageId !== assistantMessageId) state.error.value = error
-      cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
+      cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId, discardUnsubmittedUser)
+      const cancelled = state._lastCancelledStreamId.value
       resetPendingSendState(state)
+      if (discardUnsubmittedUser) state._lastCancelledStreamId.value = cancelled
       return
     }
     const snapshot = originSnapshot()
-    if (!snapshot || !ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)) return
+    if (!snapshot) return
+    const ownsSnapshot = ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)
+    if (!ownsSnapshot && !discardUnsubmittedUser) return
     if (error) snapshot.error = error
-    snapshot.allMessages = removeFailedSendPlaceholders(snapshot.allMessages, pendingUserMessageId, assistantMessageId)
+    snapshot.allMessages = removeFailedSendPlaceholders(snapshot.allMessages, pendingUserMessageId, assistantMessageId,
+      discardUnsubmittedUser, snapshot.windowStartIndex)
     snapshot.totalMessages = snapshot.windowStartIndex + snapshot.allMessages.length
+    if (!ownsSnapshot) return
     snapshot.streamingMessageId = null
     snapshot.activeStreamId = null
     snapshot.isStreaming = false
@@ -635,6 +656,11 @@ export async function sendMessage(
       if (index >= 0) replaceMessageAt(state, index, { ...state.allMessages.value[index], ...contentToMessageEnhanced(streamResult.userContent) })
     }
   } catch (err: any) {
+    if (window.__GRAYCODE_HOST && err.code === 'CANCELLED_ERROR') {
+      // 独立宿主的准备中止尚未提交用户输入；与真正发送失败区分，并保留后续输入/运行。
+      cleanupUnsentMessage(undefined, true)
+      return false
+    }
     cleanupUnsentMessage({ code: err.code || 'SEND_ERROR', message: err.message || 'Failed to send message' })
     return false
   } finally {

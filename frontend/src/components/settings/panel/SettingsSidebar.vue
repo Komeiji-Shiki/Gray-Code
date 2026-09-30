@@ -8,10 +8,10 @@
  */
 import { t } from '@/i18n'
 import type { SettingsTab } from '@/stores/settingsStore'
-import type { TabItem } from './types'
+import type { TabGroup } from './types'
 
 defineProps<{
-  tabs: TabItem[]
+  groups: TabGroup[]
   activeTab: SettingsTab
   collapsed: boolean
   searchActive: boolean
@@ -42,24 +42,27 @@ defineEmits<{
     >
       <i class="codicon codicon-menu" aria-hidden="true"></i>
     </button>
-    <button
-      type="button"
-      v-for="tab in tabs"
-      :key="tab.id"
-      :class="['settings-tab', {
-        active: activeTab === tab.id,
-        'has-match': searchActive && tabsWithMatches.has(tab.id),
-        dimmed: searchActive && !tabsWithMatches.has(tab.id)
-      }]"
-      :data-tooltip="tab.label"
-      :title="tab.label"
-      :aria-label="tab.label"
-      :aria-current="activeTab === tab.id ? 'page' : undefined"
-      @click="$emit('select', tab.id)"
-    >
-      <i :class="['codicon', tab.icon]" aria-hidden="true"></i>
-      <span v-if="!collapsed" class="settings-tab-label">{{ tab.label }}</span>
-    </button>
+    <section v-for="group in groups" :key="group.id" class="settings-tab-group" :aria-label="group.label">
+      <h4 v-if="!collapsed" class="settings-group-label">{{ group.label }}</h4>
+      <button
+        type="button"
+        v-for="tab in group.tabs"
+        :key="tab.id"
+        :class="['settings-tab', {
+          active: activeTab === tab.id,
+          'has-match': searchActive && tabsWithMatches.has(tab.id),
+          dimmed: searchActive && !tabsWithMatches.has(tab.id)
+        }]"
+        :data-tooltip="tab.label"
+        :title="tab.label"
+        :aria-label="tab.label"
+        :aria-current="activeTab === tab.id ? 'page' : undefined"
+        @click="$emit('select', tab.id)"
+      >
+        <i :class="['codicon', tab.icon]" aria-hidden="true"></i>
+        <span v-if="!collapsed" class="settings-tab-label">{{ tab.label }}</span>
+      </button>
+    </section>
   </nav>
 </template>
 
@@ -67,6 +70,10 @@ defineEmits<{
 /* 左侧页签（可折叠：默认展开显示图标+文字，折叠仅图标） */
 .settings-sidebar {
   width: 132px;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
   border-right: 1px solid var(--gc-border-subtle);
   padding: var(--gc-space-2) var(--gc-space-1);
   display: flex;
@@ -78,6 +85,18 @@ defineEmits<{
 
 .settings-sidebar.collapsed {
   width: 48px;
+}
+
+.settings-tab-group + .settings-tab-group {
+  margin-top: var(--gc-space-3);
+}
+
+.settings-group-label {
+  margin: 0;
+  padding: var(--gc-space-2) var(--gc-space-3) var(--gc-space-1);
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-caption);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 /* 顶部汉堡按钮：与页签同款；margin 在展开/收起时保持一致，避免切换时列表整体跳动 */
@@ -96,7 +115,7 @@ defineEmits<{
   padding: 0 var(--gc-space-3);
   background: transparent;
   border: none;
-  border-radius: var(--gc-radius-md);
+  border-radius: 0;
   color: var(--gc-text-primary);
   cursor: pointer;
   transition:
@@ -106,6 +125,11 @@ defineEmits<{
 
 .settings-tab:hover {
   background: var(--gc-surface-hover);
+}
+
+.settings-tab:focus-visible {
+  outline: 1px solid var(--gc-focus-border);
+  outline-offset: -1px;
 }
 
 .settings-tab-label {
@@ -142,13 +166,15 @@ defineEmits<{
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-.settings-sidebar.collapsed .settings-tab:hover::after {
+.settings-sidebar.collapsed .settings-tab:hover::after,
+.settings-sidebar.collapsed .settings-tab:focus-visible::after {
   opacity: 1;
   visibility: visible;
 }
 
 /* 汉堡按钮在展开/收起状态下都显示 tooltip */
-.settings-sidebar-toggle:hover::after {
+.settings-sidebar-toggle:hover::after,
+.settings-sidebar-toggle:focus-visible::after {
   opacity: 1;
   visibility: visible;
 }
@@ -172,7 +198,7 @@ defineEmits<{
 }
 
 .settings-tab.dimmed {
-  opacity: 0.35;
+  opacity: 0.55;
 }
 
 @media (max-width: 520px) {
@@ -181,6 +207,10 @@ defineEmits<{
   }
 
   .settings-tab-label {
+    display: none;
+  }
+
+  .settings-group-label {
     display: none;
   }
 
