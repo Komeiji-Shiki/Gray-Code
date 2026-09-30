@@ -13,6 +13,12 @@ const contrast = (a: string, b: string) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
   return (hi + 0.05) / (lo + 0.05)
 }
+const hsl = (hex: string) => {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2
+  const h = d === 0 ? 0 : max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4)
+  return { h: (h + 360) % 360, s: d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1)) }
+}
 const palettes = [
   ...DARK_PALETTES.map(id => [id, resolveAppearancePalette('dark', {}, false, id)] as const),
   ['ivory', resolveAppearancePalette('light')] as const
@@ -41,8 +47,8 @@ describe('品牌色板', () => {
   test('深色按所选配色解析，未知或缺省配色回落藏青外壳', () => {
     expect(resolveAppearancePalette('dark', {}, false, 'graphite').background).toBe('#181817')
     expect(resolveAppearancePalette('dark', {}, false, 'indigo').background).toBe('#161a26')
-    expect(resolveAppearancePalette('dark').background).toBe('#17181b')
-    expect(resolveAppearancePalette('dark', {}, false, 'unknown').background).toBe('#17181b')
+    expect(resolveAppearancePalette('dark').background).toBe('#17191f')
+    expect(resolveAppearancePalette('dark', {}, false, 'unknown').background).toBe('#17191f')
     expect(resolveDarkPalette(undefined)).toBe('shell')
     expect(resolveDarkPalette('indigo')).toBe('indigo')
   })
@@ -53,6 +59,18 @@ describe('品牌色板', () => {
     expect(resolveAppearancePalette('system', {}, false, 'indigo').background).toBe('#161a26')
     expect(resolvePaletteName('light', false, 'indigo')).toBe('ivory')
     expect(resolvePaletteName('dark', false, 'graphite')).toBe('graphite')
+  })
+
+  test('藏青外壳的内容区与外壳同一藏青色相、低饱和，不混入暖灰', () => {
+    const p = resolveAppearancePalette('dark', {}, false, 'shell')
+    const chromeHue = hsl(p.chrome).h
+    for (const key of ['background', 'panel', 'surface', 'input', 'border', 'hover', 'buttonSecondary', 'buttonSecondaryHover', 'muted', 'disabled']) {
+      const { h, s } = hsl(p[key])
+      expect.soft(Math.abs(h - chromeHue), `${key} 色相`).toBeLessThanOrEqual(10)
+      expect.soft(s, `${key} 饱和度`).toBeGreaterThanOrEqual(0.07)
+    }
+    // 与全藏青的「藏青」配色拉开：内容区饱和度明显更低。
+    expect(hsl(p.background).s).toBeLessThan(hsl(resolveAppearancePalette('dark', {}, false, 'indigo').background).s - 0.08)
   })
 
   test('自定义颜色覆盖所选配色', () => {
@@ -68,7 +86,7 @@ describe('品牌色板', () => {
 
 describe('代码与终端配色', () => {
   test.each([
-    ['dark', ['#17181b', '#181817', '#161a26', '#121315', '#121211', '#10131c', '#1f2023', '#1e2333']],
+    ['dark', ['#17191f', '#181817', '#161a26', '#121419', '#121211', '#10131c', '#1f222a', '#1e2333']],
     ['light', ['#f7f5ee', '#efece4', '#fdfcf8']]
   ] as const)('%s 语法色在所有代码底色上可读', (theme, backgrounds) => {
     const { syntax, ansi } = resolveCodePalette(theme)

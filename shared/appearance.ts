@@ -21,14 +21,15 @@ export function resolveUiFont(uiFont?: string): string {
 
 // 品牌色：藏青 #232A42、象牙白 #F7F5EE、石板灰 #727682。工作台、聊天、原生标题栏与对话框共用。
 // chrome 系用于标题栏、导航侧栏与标签栏；surface 为凹陷底（代码与命令块）。
+// 藏青外壳：外壳用饱和藏青，内容区取同一色相的低饱和石板色，避免冷外壳配暖灰内容。
 const darkPalettes: Record<DarkPaletteId, Record<string, string>> = {
   shell: {
     chrome: '#1a2033', chromeHover: '#232a42', chromeBorder: '#262d45', chromeText: '#e9e6de', chromeMuted: '#9aa0b5',
-    background: '#17181b', panel: '#1f2023', surface: '#121315', input: '#1f2023', text: '#ece9e1', muted: '#9c9a94', disabled: '#6e6c67',
-    border: '#2c2d31', hover: '#26272b', selection: '#2a3350', selectionText: '#f7f5ee', accent: '#9fb0e8', linkActive: '#c3cdf2',
+    background: '#17191f', panel: '#1f222a', surface: '#121419', input: '#1f222a', text: '#ece9e1', muted: '#9da2b0', disabled: '#6d7280',
+    border: '#2b2f39', hover: '#252933', selection: '#2a3350', selectionText: '#f7f5ee', accent: '#9fb0e8', linkActive: '#c3cdf2',
     button: '#f2eee5', buttonHover: '#faf8f2', buttonText: '#232a42',
-    buttonSecondary: '#2a2b2f', buttonSecondaryHover: '#323338', buttonSecondaryText: '#e3e0d8',
-    danger: '#e8877f', success: '#8dc4a0', warning: '#e3b566', scrollbar: '#6b6d7340', scrollbarHover: '#8a8c9270',
+    buttonSecondary: '#282c37', buttonSecondaryHover: '#30343f', buttonSecondaryText: '#e3e0d8',
+    danger: '#e8877f', success: '#8dc4a0', warning: '#e3b566', scrollbar: '#6d728040', scrollbarHover: '#8b90a070',
   },
   graphite: {
     chrome: '#121211', chromeHover: '#1c1c1a', chromeBorder: '#242422', chromeText: '#ece9e1', chromeMuted: '#9a978e',
