@@ -7,7 +7,8 @@ const { ClipboardItem, clipboard, nativeImage } = require('electron');
 module.exports = async function verifyImagePreview({ window, evaluate, ui, until, root, output }) {
   const previousSize = window.getSize(), previousMinimum = window.getMinimumSize();
   // 剪贴板可能包含多种原生格式，先读取实际内容；验证结束后恢复，不能只保留纯文本。
-  const previousClipboard = await Promise.all((await clipboard.read()).map(async item => new ClipboardItem(
+  // Windows 空剪贴板可能返回无类型的占位项，它不包含可保存的格式。
+  const previousClipboard = await Promise.all((await clipboard.read()).filter(item => item.types.length).map(async item => new ClipboardItem(
     Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)])))
   )));
   const image = nativeImage.createFromPath(path.join(root, 'resources/icon.png')).resize({ width: 1600, height: 1200 });
