@@ -308,7 +308,7 @@ onUnmounted(() => {
         <span class="selected-label">{{ selectedOption.label }}</span>
       </span>
       <span v-else class="placeholder">{{ resolvedPlaceholder }}</span>
-      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
+      <i :class="['codicon codicon-chevron-down select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true"></i>
     </button>
 
     <!--
@@ -435,7 +435,7 @@ onUnmounted(() => {
 
 .select-arrow {
   flex-shrink: 0;
-  font-size: var(--gc-font-size-micro);
+  font-size: var(--gc-font-size-control);
   margin-left: var(--gc-space-2);
   transition: transform var(--gc-duration-fast) var(--gc-ease-standard);
 }
@@ -473,7 +473,7 @@ onUnmounted(() => {
 }
 
 .custom-select.compact .select-arrow {
-  font-size: 8px;
+  font-size: var(--gc-font-size-body);
   margin-left: 6px;
 }
 

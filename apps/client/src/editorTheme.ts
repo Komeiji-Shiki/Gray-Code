@@ -3,7 +3,7 @@ import { resolveAppearancePalette, resolveCodePalette } from '../../../shared/ap
 export interface WorkbenchThemeData {
   base: 'vs' | 'vs-dark';
   inherit: true;
-  rules: Array<{ token: string; foreground: string; fontStyle?: string }>;
+  rules: Array<{ token: string; foreground: string }>;
   colors: Record<string, string>;
 }
 
@@ -15,11 +15,11 @@ export function workbenchThemeData(palette: Record<string, string>, light: boole
   const defaults = resolveAppearancePalette(light ? 'light' : 'dark');
   const color = (key: string) => /^#[0-9a-f]{6}$/i.test(palette[key] ?? '') ? palette[key] : defaults[key];
   const { syntax } = resolveCodePalette(light ? 'light' : 'dark');
-  const token = (name: string, value: string, fontStyle?: string) => ({ token: name, foreground: value.slice(1), ...(fontStyle ? { fontStyle } : {}) });
+  const token = (name: string, value: string) => ({ token: name, foreground: value.slice(1) });
   return {
     base: light ? 'vs' : 'vs-dark', inherit: true,
     rules: [
-      token('comment', syntax.comment, 'italic'),
+      token('comment', syntax.comment),
       token('keyword', syntax.keyword), token('storage', syntax.keyword),
       token('string', syntax.string), token('regexp', syntax.regexp),
       token('number', syntax.number), token('constant', syntax.constant),
@@ -39,6 +39,8 @@ export function workbenchThemeData(palette: Record<string, string>, light: boole
       'diffEditor.removedTextBackground': color('danger') + '2d', 'diffEditor.removedLineBackground': color('danger') + '1b',
       'diffEditorGutter.insertedLineBackground': color('success') + '48', 'diffEditorGutter.removedLineBackground': color('danger') + '48',
       'diffEditor.diagonalFill': color('border'),
+      'editorBracketHighlight.foreground1': syntax.type, 'editorBracketHighlight.foreground2': syntax.keyword,
+      'editorBracketHighlight.foreground3': syntax.function, 'editorBracketHighlight.unexpectedBracket.foreground': color('danger'),
     },
   };
 }

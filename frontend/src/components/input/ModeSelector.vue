@@ -225,7 +225,7 @@ function handleKeydown(event: KeyboardEvent) {
 
 .arrow-icon {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--gc-font-size-body);
   transition: transform 0.15s ease;
 }
 

@@ -10,13 +10,20 @@ describe('编辑器主题', () => {
     expect(theme.colors['editor.background']).toBe('#181817')
     expect(theme.colors['editor.selectionBackground']).toBe(palette.selection)
     expect(theme.rules).toContainEqual({ token: 'keyword', foreground: 'b3a8ec' })
-    expect(theme.rules).toContainEqual({ token: 'comment', foreground: '7f8391', fontStyle: 'italic' })
+    // 注释不用斜体：中文没有真斜体，合成倾斜难以阅读；与聊天代码块一致。
+    expect(theme.rules).toContainEqual({ token: 'comment', foreground: '7f8391' })
   })
 
   test('浅色使用纸上墨语法色', () => {
     const theme = workbenchThemeData(resolveAppearancePalette('light'), true)
     expect(theme.base).toBe('vs')
     expect(theme.rules).toContainEqual({ token: 'keyword', foreground: '5b4bb3' })
+  })
+
+  test('括号配对颜色取品牌代码配色，而不是 Monaco 默认的金、紫、蓝', () => {
+    const dark = workbenchThemeData(resolveAppearancePalette('dark'), false).colors
+    expect([dark['editorBracketHighlight.foreground1'], dark['editorBracketHighlight.foreground2'], dark['editorBracketHighlight.foreground3']]).toEqual(['#e2c88c', '#b3a8ec', '#8fc8d8'])
+    expect(workbenchThemeData(resolveAppearancePalette('light'), true).colors['editorBracketHighlight.foreground2']).toBe('#5b4bb3')
   })
 
   test('终端使用当前色板底色与品牌 ANSI 颜色', () => {

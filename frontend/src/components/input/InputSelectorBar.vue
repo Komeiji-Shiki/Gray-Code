@@ -96,11 +96,13 @@ const emit = defineEmits<{
 /* 胶囊：宽度随内容，过长时截断；下拉面板位置沿用组件自身逻辑。 */
 .selector-bar :deep(.mode-trigger),
 .selector-bar :deep(.selector-trigger),
-.selector-bar :deep(.model-trigger) {
+.selector-bar :deep(.model-trigger),
+.selector-bar :deep(.select-trigger) {
   width: auto;
   min-width: 0;
   max-width: 220px;
   height: 24px;
+  min-height: 0;
   padding: 0 var(--gc-space-2);
   border: 0;
   border-radius: var(--gc-radius-sm);
@@ -111,17 +113,25 @@ const emit = defineEmits<{
 
 .selector-bar :deep(.mode-trigger:hover),
 .selector-bar :deep(.selector-trigger:hover),
-.selector-bar :deep(.model-trigger:hover) {
+.selector-bar :deep(.model-trigger:hover),
+.selector-bar :deep(.select-trigger:hover) {
   color: var(--gc-text-primary);
   background: var(--gc-surface-active);
 }
 
 .selector-bar :deep(.mode-name),
-.selector-bar :deep(.placeholder) {
+.selector-bar :deep(.placeholder),
+.selector-bar :deep(.selected-label) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.selector-bar :deep(.select-arrow),
+.selector-bar :deep(.arrow-icon) {
+  font-size: 12px;
+  margin-left: var(--gc-space-1);
 }
 
 .channel-selector-wrapper :deep(.selector-dropdown) { min-width: 180px; max-width: calc(100vw - var(--gc-space-8)); }

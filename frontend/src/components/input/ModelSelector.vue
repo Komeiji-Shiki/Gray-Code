@@ -102,7 +102,7 @@ function handleKeydown(event: KeyboardEvent) {
       :title="getModelDisplayTitle(selectedModel)"
     >
       <span class="model-id" :title="getModelDisplayTitle(selectedModel)">{{ modelValue || t('components.input.modelSelector.placeholder') }}</span>
-            <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
+            <i :class="['codicon codicon-chevron-down select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true"></i>
     </button>
 
     <Transition name="dropdown">
@@ -200,7 +200,7 @@ function handleKeydown(event: KeyboardEvent) {
 
 .select-arrow {
   flex-shrink: 0;
-  font-size: 8px;
+  font-size: var(--gc-font-size-body);
   margin-left: 6px;
   transition: transform 0.15s;
 }
