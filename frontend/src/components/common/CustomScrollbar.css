@@ -115,7 +115,7 @@
   position: absolute;
   left: 0;
   width: 100%;
-  border-radius: 0;
+  border-radius: var(--gc-radius-pill);
   cursor: grab;
   transition: background 0.18s ease, transform 0.06s linear;
   /* will-change 不再常驻：仅在拖动期间通过 .dragging 类启用（见下方），
@@ -137,7 +137,7 @@
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 0;
+  border-radius: var(--gc-radius-pill);
   cursor: grab;
   transition: background 0.18s ease, transform 0.06s linear;
   /* will-change 同垂直滑块：仅在拖动期间通过 .dragging 类启用（见上方） */

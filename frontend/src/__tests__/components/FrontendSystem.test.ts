@@ -113,6 +113,17 @@ describe('frontend visual and async architecture contracts', () => {
     expect(offenders(roots, zeroRadius, new Set())).toEqual([])
   })
 
+  test('通用控件：主按钮用主按钮配色、次要按钮用次要底、滑块圆角', () => {
+    const primitives = readFileSync(path.resolve(process.cwd(), 'src/styles/primitives.css'), 'utf8')
+    expect(primitives).toMatch(/\.gc-button--primary\)\s*\{[^}]*var\(--gc-button-primary\)/)
+    expect(primitives).toMatch(/\.gc-button\)\s*\{[^}]*var\(--gc-button-secondary\)/)
+    expect(primitives).toContain('.gc-menu-item')
+    const scrollbar = readFileSync(path.resolve(process.cwd(), 'src/components/common/CustomScrollbar.css'), 'utf8')
+    expect(scrollbar).toMatch(/\.scroll-thumb-v\s*\{[^}]*border-radius:\s*var\(--gc-radius-pill\)/)
+    const shell = readFileSync(path.join(repoRoot, 'apps/client/src/styles/base.css'), 'utf8')
+    expect(shell).toMatch(/\nbutton\s*\{[^}]*border:\s*1px solid transparent/)
+  })
+
   test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {
     expect(ViteConfigSource).toContain('assetFileNames: resolveWebviewAssetFileName')
     expect(resolveWebviewAssetFileName({ name: 'index.css' })).toBe('index.css')

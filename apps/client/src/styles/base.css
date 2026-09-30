@@ -59,7 +59,8 @@ textarea {
 }
 button {
   cursor: pointer;
-  border: 1px solid var(--gc-border-subtle);
+  /* 次要按钮靠底色区分；透明边框占位，避免与描边按钮混排时尺寸不一。 */
+  border: 1px solid transparent;
   background: var(--gc-button-secondary);
   color: var(--gc-text-on-secondary);
   padding: 7px 12px;
@@ -70,7 +71,6 @@ button {
 }
 button:hover {
   background: var(--gc-button-secondary-hover);
-  border-color: var(--gc-text-muted);
 }
 button:disabled {
   opacity: 0.4;
@@ -80,14 +80,21 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 1px solid var(--gc-accent);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: 1px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 0;
+  border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 1px var(--gc-focus-border);
 }
 input,
 textarea,
 select {
   background: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   padding: 8px 10px;
   min-width: 0;

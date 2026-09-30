@@ -10,7 +10,6 @@
   background: var(--gc-surface-raised);
   border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  box-shadow: var(--gc-shadow-sm);
 }
 
 :where(.gc-button) {
@@ -20,9 +19,8 @@
   justify-content: center;
   gap: var(--gc-space-1);
   padding: 0 var(--gc-space-3);
-  /* 可见边框：无底色按钮（ghost）与灰底按钮在深色主题下才有明确的按钮感；
-     主色按钮（--primary）下方覆盖为 transparent 保持纯净视觉 */
-  border: 1px solid var(--gc-border-subtle);
+  /* 次要按钮靠底色区分，不再描边；保留透明边框占位，切换变体时尺寸不跳动。 */
+  border: 1px solid transparent;
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
   font-weight: var(--gc-font-weight-medium);
@@ -62,8 +60,14 @@
 
 :where(.gc-button--ghost) {
   padding-inline: var(--gc-space-2);
+  color: var(--gc-text-muted);
   background: transparent;
-  border: 1px solid var(--gc-border-subtle);
+  border-color: transparent;
+}
+
+:where(.gc-button--ghost:hover:not(:disabled)) {
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-hover);
 }
 
 :where(.gc-icon-button) {
@@ -183,7 +187,34 @@
 }
 
 :where(.gc-field:focus-visible) {
+  outline: 0;
   border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 1px var(--gc-focus-border);
+}
+
+:where(.gc-menu) {
+  padding: var(--gc-space-1);
+  background: var(--gc-surface-overlay);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+:where(.gc-menu-item) {
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-2);
+  width: 100%;
+  padding: 6px var(--gc-space-2);
+  border: 0;
+  border-radius: var(--gc-radius-sm);
+  background: transparent;
+  color: var(--gc-text-primary);
+  text-align: left;
+}
+
+:where(.gc-menu-item:hover, .gc-menu-item[aria-selected="true"]) {
+  background: var(--gc-surface-hover);
 }
 
 :where(.gc-badge) {
