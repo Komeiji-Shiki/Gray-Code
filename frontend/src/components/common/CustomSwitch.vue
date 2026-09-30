@@ -60,6 +60,8 @@ function handleChange(event: Event) {
 }
 
 .custom-switch {
+  /* 隐藏输入必须随开关定位，避免标签点击聚焦时把设置内容滚出视野。 */
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--gc-space-2);
@@ -75,19 +77,22 @@ function handleChange(event: Event) {
 
 .custom-switch input {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }
 
 .custom-switch-track {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 32px;
+  height: 16px;
   flex-shrink: 0;
   border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-pill);
+  border-radius: var(--gc-radius-md);
   background: var(--vscode-input-background, var(--gc-surface-muted));
   transition:
     background-color var(--gc-duration-normal) var(--gc-ease-standard),
@@ -98,21 +103,23 @@ function handleChange(event: Event) {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: var(--gc-radius-xs);
   background: var(--gc-text-primary);
+  opacity: 0.6;
   transition: transform var(--gc-duration-normal) var(--gc-ease-emphasized);
 }
 
 .custom-switch input:checked + .custom-switch-track {
-  border-color: var(--gc-accent);
-  background: var(--gc-accent);
+  border-color: var(--vscode-button-background, var(--gc-accent));
+  background: var(--vscode-button-background, var(--gc-accent));
 }
 
 .custom-switch input:checked + .custom-switch-track .custom-switch-thumb {
   transform: translateX(16px);
-  background: var(--gc-text-on-accent);
+  background: var(--vscode-button-foreground, var(--gc-text-on-accent));
+  opacity: 1;
 }
 
 /* 悬停边框覆盖开启状态的边框色，保证四周高亮可见。 */
@@ -141,17 +148,17 @@ function handleChange(event: Event) {
 }
 
 .custom-switch-field.compact .custom-switch-track {
-  width: 30px;
-  height: 18px;
+  width: 28px;
+  height: 14px;
 }
 
 .custom-switch-field.compact .custom-switch-thumb {
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
 }
 
 .custom-switch-field.compact input:checked + .custom-switch-track .custom-switch-thumb {
-  transform: translateX(12px);
+  transform: translateX(14px);
 }
 
 @media (prefers-reduced-motion: reduce) {
