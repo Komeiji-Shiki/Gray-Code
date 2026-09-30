@@ -56,6 +56,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
           context.signal.throwIfAborted();
           return runNoteGraphTool(args, view.messages, context.toolCallId, config ? activeContextHistory(view.messages, config) : []);
         }
+        if (!['read', 'write', 'append'].includes(String(args.action))) throw new Error('笔记操作无效。');
         if (typeof args.name !== 'string' || !args.name.trim()) throw new Error('需要提供笔记名称。');
         const key = noteKey(id, args.name);
         const previous = await app.storage.getVersionedRecord('context-notes', key);

@@ -1,7 +1,7 @@
 import type { RuntimeTool, ToolContext } from "@graycode/core";
 import { stat } from 'node:fs/promises';
 import { WorkspaceFiles } from "./files";
-import { getActualLanguage } from '../../../../backend/i18n';
+import { getActualLanguage, t } from '../../../../backend/i18n';
 import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
 import { WorkspaceProcesses, commandEffects, ProcessSessionError, type ProcessOwner, type ProcessResult } from "./processes";
 import type { ToolOutcome } from '@graycode/contracts';
@@ -19,10 +19,15 @@ function processOwner(context: ToolContext): ProcessOwner {
     runId: context.runId, workspaceId: context.workspace?.id };
 }
 function processOutcome(data: ProcessResult, stopped = false): ToolOutcome {
+  // 进程会话只有 read/input/stop；退出且没有未读输出时，不再给出等待建议。
+  const result = { ...data, ...(data.running || data.hasMore ? { nextActions: [{
+    tool: 'process_session', args: { action: 'read', id: data.id, cursor: data.nextCursor },
+    when: t(data.hasMore ? 'tools.terminal.nextActions.processMoreOutput' : 'tools.terminal.nextActions.processIntermediateOutput'),
+  }] } : {}) };
   // stop 的成功表示停止请求已完成；运行中或无退出码不推断成命令失败。
   return !stopped && !data.running && typeof data.exitCode === 'number' && data.exitCode !== 0
-    ? { success: false, code: 'COMMAND_EXIT_NONZERO', error: `Command exited with code ${data.exitCode}`, data }
-    : { success: true, data };
+    ? { success: false, code: 'COMMAND_EXIT_NONZERO', error: `Command exited with code ${data.exitCode}`, data: result }
+    : { success: true, data: result };
 }
 const optionalText = { type: "string" };
 export function workspaceTools(
@@ -213,7 +218,11 @@ export function workspaceTools(
             ? { cursor: args.cursor as number | undefined, maxChars: args.maxChars as number | undefined } : undefined), args.action === 'stop');
         } catch (error) {
           // 运行器会把普通异常统一成 TOOL_FAILED；这些可恢复状态需要保留明确错误码供模型决策。
-          if (error instanceof ProcessSessionError) return { success: false, code: error.code, error: error.message };
+          if (error instanceof ProcessSessionError) return { success: false, code: error.code, error: error.message,
+            ...(['EXITED', 'INPUT_CLOSED', 'INVALID_CURSOR'].includes(error.code) ? { data: { id: String(args.id), nextActions: [{
+              tool: 'process_session', args: { action: 'read', id: String(args.id) },
+              when: t('tools.terminal.nextActions.processInspect'),
+            }] } } : {}) };
           throw error;
         }
       },

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { call, subscribe } from '../api';
 import { report, state } from '../state';
+import { shellText as t } from '../i18n';
 interface PreviewGroupItem { id: string; title: string; mimeType?: string }
 interface Preview {
   id: string; title: string; content?: string; language?: string; data?: string; mimeType?: string;
@@ -10,7 +11,15 @@ interface Preview {
 const value = ref<Preview>();
 const dialog = ref<HTMLElement>();
 const stage = ref<HTMLElement>();
+const imageElement = ref<HTMLImageElement>();
+const imageMenu = ref<{ x: number; y: number }>();
+const imageMenuElement = ref<HTMLElement>();
+const copyingImage = ref(false);
+const imageAction = ref<{ message: string; failed: boolean }>();
+let imageCopyRequest = 0;
 const url = ref('');
+let menuFocus: HTMLElement | null = null;
+const copyShortcut = /Mac/i.test(navigator.platform) ? '⌘C' : 'Ctrl+C';
 let previousFocus: HTMLElement | null = null;
 function currentFocus(): HTMLElement | null {
   let element = document.activeElement as HTMLElement | null;
@@ -68,6 +77,9 @@ function closePreviews(target?: Preview) {
 }
 
 function resetImageState() {
+  dismissImageMenu(false);
+  imageCopyRequest++;
+  copyingImage.value = false; imageAction.value = undefined;
   rotation.value = 0; zoom.value = 1; pan.value = { x: 0, y: 0 };
   naturalSize.value = undefined; fitScale.value = 1;
   dragState = null; dragging.value = false;
@@ -85,7 +97,7 @@ function fitSize() {
 
 function updateFit() {
   const size = fitSize();
-  if (!size || size.width <= 0 || size.height <= 0) return;
+  if (!size || size.width <= 0 || size.height <= 0 || size.rect.width <= 0 || size.rect.height <= 0) return;
   fitScale.value = Math.min(size.rect.width / size.width, size.rect.height / size.height);
 }
 
@@ -108,7 +120,9 @@ function applyZoom(next: number, clientX?: number, clientY?: number) {
   const size = fitSize();
   if (!size) return;
   const maxZoom = Math.max(8, 2 / fitScale.value);
-  const clamped = Math.min(maxZoom, Math.max(0.1, next));
+  // 适应窗口可能把小图片放大十倍以上；100% 仍需能够回到原始像素尺寸。
+  const minZoom = Math.min(0.1, 1 / fitScale.value);
+  const clamped = Math.min(maxZoom, Math.max(minZoom, next));
   const k = clamped / zoom.value;
   const anchorX = clientX === undefined ? size.rect.width / 2 : clientX - size.rect.left;
   const anchorY = clientY === undefined ? size.rect.height / 2 : clientY - size.rect.top;
@@ -126,6 +140,8 @@ function fitToWindow() {
   zoom.value = 1; pan.value = { x: 0, y: 0 };
   updateFit();
 }
+
+function actualSize() { applyZoom(1 / fitScale.value); }
 
 function rotate(delta: number) {
   rotation.value = (rotation.value + delta + 360) % 360;
@@ -151,6 +167,96 @@ function onImageLoad(event: Event) {
   naturalSize.value = { width: image.naturalWidth, height: image.naturalHeight };
   updateFit();
   clampPan();
+}
+
+function onImageError() {
+  naturalSize.value = undefined;
+  imageAction.value = { message: t('previewImageLoadFailed'), failed: true };
+}
+
+// 剪贴板使用原始像素，查看器的缩放、旋转与平移不改变复制或保存的内容。
+function imagePng(image: HTMLImageElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) { reject(new Error(t('previewCopyFailed'))); return; }
+    try {
+      context.drawImage(image, 0, 0);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error(t('previewCopyFailed'))), 'image/png');
+    } catch (error) { reject(error); }
+  });
+}
+
+function pngBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error(t('previewCopyFailed')));
+    reader.onload = () => resolve(String(reader.result).split(',')[1]);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function copyImage() {
+  const image = imageElement.value;
+  if (!image || !naturalSize.value || copyingImage.value) return;
+  const request = ++imageCopyRequest;
+  copyingImage.value = true; imageAction.value = undefined;
+  try {
+    const desktop = window.graycode?.kind === 'desktop';
+    if (!desktop && (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined'))
+      throw new Error(t('previewCopyUnavailable'));
+    const png = imagePng(image);
+    if (desktop) await call('desktop.clipboard.writeImage', { data: await pngBase64(await png) });
+    // 在用户手势内发起写入，把异步编码放入 ClipboardItem，保留浏览器所需的激活状态。
+    else await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    if (request === imageCopyRequest) imageAction.value = { message: t('copied'), failed: false };
+  } catch (error) {
+    console.warn('图片复制失败：', error);
+    if (request === imageCopyRequest) imageAction.value = { message: error instanceof Error && error.message === t('previewCopyUnavailable')
+      ? error.message : t('previewCopyFailed'), failed: true };
+  } finally {
+    if (request === imageCopyRequest) copyingImage.value = false;
+  }
+}
+
+function dismissImageMenu(restoreFocus = true) {
+  if (!imageMenu.value) return;
+  imageMenu.value = undefined;
+  const target = menuFocus; menuFocus = null;
+  if (restoreFocus && target?.isConnected) target.focus({ preventScroll: true });
+}
+
+async function showImageMenu(event: MouseEvent) {
+  if (!url.value) return;
+  menuFocus = imageMenu.value ? menuFocus : currentFocus();
+  const rect = stage.value!.getBoundingClientRect();
+  imageMenu.value = { x: event.clientX || rect.left + rect.width / 2, y: event.clientY || rect.top + rect.height / 2 };
+  const opened = imageMenu.value;
+  await nextTick();
+  const element = imageMenuElement.value;
+  if (imageMenu.value !== opened || !element) return;
+  opened.x = Math.max(8, Math.min(opened.x, window.innerWidth - element.offsetWidth - 8));
+  opened.y = Math.max(8, Math.min(opened.y, window.innerHeight - element.offsetHeight - 8));
+  element.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+}
+
+function menuAction(action: () => unknown) { dismissImageMenu(); void action(); }
+
+function onMenuKeydown(event: KeyboardEvent) {
+  event.stopPropagation();
+  if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); dismissImageMenu(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') { event.preventDefault(); menuAction(copyImage); return; }
+  if (event.key === ' ' && document.activeElement?.tagName === 'A') {
+    event.preventDefault(); (document.activeElement as HTMLAnchorElement).click(); return;
+  }
+  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const items = [...imageMenuElement.value?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []];
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+    : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+  items[next]?.focus();
 }
 
 function onPointerDown(event: PointerEvent) {
@@ -183,6 +289,7 @@ async function switchTo(id: string) {
   if (!current?.group || current.id === id) return;
   const target = current.group.items.find(item => item.id === id);
   if (!target) return;
+  dismissImageMenu();
   const request = ++generation;
   const cached = urls.get(id);
   if (cached) {
@@ -205,18 +312,22 @@ async function switchTo(id: string) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (imageMenu.value) { onMenuKeydown(event); return; }
   if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); void close(); return; }
   if (event.key === 'Tab') { trapTab(event); return; }
   if (event.key === 'ArrowLeft') { event.preventDefault(); step(-1); return; }
   if (event.key === 'ArrowRight') { event.preventDefault(); step(1); return; }
   if (!isImage.value || !url.value) return;
-  if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.25); }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && document.getSelection()?.isCollapsed !== false) {
+    event.preventDefault(); void copyImage();
+  }
+  else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.25); }
   else if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomBy(1 / 1.25); }
   else if (event.key === '0') { event.preventDefault(); fitToWindow(); }
 }
 
 function trapTab(event: KeyboardEvent) {
-  const controls = [...dialog.value?.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),audio[controls],video[controls],iframe') ?? []];
+  const controls = [...dialog.value?.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),[tabindex="0"],audio[controls],video[controls],iframe') ?? []];
   const target = event.shiftKey ? controls.at(-1) : controls[0];
   const boundary = event.shiftKey ? controls[0] : controls.at(-1);
   if (target && document.activeElement === boundary) { event.preventDefault(); target.focus(); }
@@ -233,9 +344,13 @@ watch(value, async next => {
   dialog.value?.querySelector<HTMLButtonElement>('.preview-close')?.focus();
 });
 
+// 操作提示和工具文案会改变头部高度，重新按实际可用空间适配图片。
+watch([imageAction, copyingImage], async () => { await nextTick(); updateFit(); clampPan(); });
+
 // 画面尺寸变化后重算适配比例，保持缩放倍率与平移约束。
 function onResize() {
   if (!value.value) return;
+  dismissImageMenu();
   updateFit();
   clampPan();
 }
@@ -243,9 +358,11 @@ onMounted(() => window.addEventListener('resize', onResize));
 
 async function close() {
   generation++;
+  resetImageState();
   requestedPreviewId = undefined; state.contentPreviewOpen = false;
   const previous = value.value;
   value.value = undefined;
+  url.value = '';
   releaseUrls();
   const returnTo = previousFocus; previousFocus = null;
   await nextTick();
@@ -281,36 +398,53 @@ onUnmounted(() => { unsubscribe(); window.removeEventListener('resize', onResize
     <header>
       <strong>{{ value.title }}</strong>
       <span v-if="group" class="preview-counter">{{ groupIndex + 1 }} / {{ groupItems.length }}</span>
-      <div v-if="isImage && url" class="preview-tools" role="toolbar" aria-label="图片工具">
-        <button type="button" title="缩小" aria-label="缩小" @click="zoomBy(1 / 1.25)">−</button>
-        <span class="preview-zoom" title="当前缩放比例">{{ zoomPercent }}</span>
-        <button type="button" title="放大" aria-label="放大" @click="zoomBy(1.25)">＋</button>
-        <button type="button" title="适应窗口（重置缩放与平移）" aria-label="适应窗口" @click="fitToWindow">适应</button>
-        <button type="button" title="向左旋转" aria-label="向左旋转" @click="rotate(-90)">↺</button>
-        <button type="button" title="向右旋转" aria-label="向右旋转" @click="rotate(90)">↻</button>
+      <div v-if="isImage && url" class="preview-tools" role="toolbar" :aria-label="t('previewImageTools')">
+        <button type="button" :title="t('previewZoomOut')" :aria-label="t('previewZoomOut')" @click="zoomBy(1 / 1.25)">−</button>
+        <span class="preview-zoom" :title="t('previewZoomPercent')">{{ zoomPercent }}</span>
+        <button type="button" :title="t('previewZoomIn')" :aria-label="t('previewZoomIn')" @click="zoomBy(1.25)">＋</button>
+        <button type="button" :title="t('previewFitToWindow')" @click="fitToWindow">{{ t('previewFit') }}</button>
+        <button type="button" :title="t('previewRotateLeft')" :aria-label="t('previewRotateLeft')" @click="rotate(-90)">↺</button>
+        <button type="button" :title="t('previewRotateRight')" :aria-label="t('previewRotateRight')" @click="rotate(90)">↻</button>
+        <button type="button" :disabled="!naturalSize || copyingImage" :title="`${t('previewCopyImage')} (${copyShortcut})`" @click="copyImage">{{ t(copyingImage ? 'previewCopyingImage' : 'previewCopyImage') }}</button>
       </div>
-      <a v-if="url" :href="url" :download="value.title">保存附件</a>
-      <button class="preview-close" @click="close">关闭</button>
+      <a v-if="url" :href="url" :download="value.title">{{ t(isImage ? 'previewSaveImage' : 'previewSaveAttachment') }}</a>
+      <button class="preview-close" @click="close">{{ t('close') }}</button>
     </header>
+    <p v-if="imageAction" class="preview-action-status" :class="{ failed: imageAction.failed }" role="status">{{ imageAction.message }}</p>
     <div class="content-preview-body">
       <pre v-if="value.content !== undefined"><code>{{ value.content }}</code></pre>
       <template v-else-if="isImage">
-        <div ref="stage" class="preview-stage" :class="{ dragging }" @wheel.prevent="onWheel"
+        <div ref="stage" class="preview-stage" :class="{ dragging }" tabindex="0" :aria-label="t('previewImageTools')" @wheel.prevent="onWheel" @contextmenu.prevent.stop="showImageMenu"
           @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp">
-          <img v-if="url" :src="url" :alt="value.title" :style="imageStyle" :class="{ ready: !!naturalSize }" draggable="false"
-            title="双击在 100% 与适应窗口之间切换" @load="onImageLoad" @dblclick="onDoubleClick" />
-          <button v-if="hasPrevious" type="button" class="preview-nav previous" aria-label="上一张" title="上一张（←）" @pointerdown.stop @click="step(-1)">‹</button>
-          <button v-if="hasNext" type="button" class="preview-nav next" aria-label="下一张" title="下一张（→）" @pointerdown.stop @click="step(1)">›</button>
+          <img v-if="url" ref="imageElement" :src="url" :alt="value.title" :style="imageStyle" :class="{ ready: !!naturalSize }" draggable="false"
+            :title="t('previewDoubleClick')" @load="onImageLoad" @error="onImageError" @dblclick="onDoubleClick" />
+          <button v-if="hasPrevious" type="button" class="preview-nav previous" :aria-label="t('previewPrevious')" :title="`${t('previewPrevious')} (←)`" @pointerdown.stop @click="step(-1)">‹</button>
+          <button v-if="hasNext" type="button" class="preview-nav next" :aria-label="t('previewNext')" :title="`${t('previewNext')} (→)`" @pointerdown.stop @click="step(1)">›</button>
         </div>
       </template>
       <audio v-else-if="value.mimeType?.startsWith('audio/')" :src="url" controls />
       <video v-else-if="value.mimeType?.startsWith('video/')" :src="url" controls />
-      <iframe v-else-if="value.mimeType === 'application/pdf'" :src="url" title="PDF 预览" sandbox=""></iframe>
-      <p v-else>此格式可以保存后使用本机应用打开。</p>
+      <iframe v-else-if="value.mimeType === 'application/pdf'" :src="url" :title="t('previewPdf')" sandbox=""></iframe>
+      <p v-else>{{ t('previewUnsupported') }}</p>
     </div>
+    <template v-if="imageMenu && isImage && url">
+      <div class="preview-menu-backdrop" @pointerdown="dismissImageMenu()" @contextmenu.prevent="dismissImageMenu()"></div>
+      <div ref="imageMenuElement" class="preview-image-menu" role="menu" :aria-label="t('previewImageMenu')" :style="{ left: imageMenu.x + 'px', top: imageMenu.y + 'px' }" @keydown="onMenuKeydown">
+        <button type="button" role="menuitem" :disabled="!naturalSize || copyingImage" @click="menuAction(copyImage)"><span>{{ t(copyingImage ? 'previewCopyingImage' : 'previewCopyImage') }}</span><kbd>{{ copyShortcut }}</kbd></button>
+        <a role="menuitem" :href="url" :download="value.title" @click="dismissImageMenu()">{{ t('previewSaveImage') }}</a>
+        <div class="preview-menu-separator" role="separator"></div>
+        <button type="button" role="menuitem" :disabled="!naturalSize" @click="menuAction(actualSize)">{{ t('previewActualSize') }}</button>
+        <button type="button" role="menuitem" :disabled="!naturalSize" @click="menuAction(fitToWindow)">{{ t('previewFitToWindow') }}</button>
+        <button type="button" role="menuitem" :disabled="!naturalSize" @click="menuAction(() => rotate(-90))">{{ t('previewRotateLeft') }}</button>
+        <button type="button" role="menuitem" :disabled="!naturalSize" @click="menuAction(() => rotate(90))">{{ t('previewRotateRight') }}</button>
+        <div class="preview-menu-separator" role="separator"></div>
+        <button type="button" role="menuitem" @click="menuAction(close)"><span>{{ t('close') }}</span><kbd>Esc</kbd></button>
+      </div>
+    </template>
   </section></div>
 </template>
 <style scoped>
 .content-preview-backdrop{position:fixed;inset:0;z-index:9500;background:#000b;display:grid;place-items:center}.content-preview{width:min(1100px,94vw);height:88vh;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column}.content-preview header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}header strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.preview-counter{flex-shrink:0;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}.preview-tools{display:flex;align-items:center;gap:4px;flex-shrink:0}.preview-tools button{min-width:30px;padding:3px 8px;font-size:13px;line-height:1.4}.preview-zoom{flex-shrink:0;min-width:46px;text-align:center;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}header a{flex-shrink:0;color:var(--accent);white-space:nowrap}.preview-close{flex-shrink:0;border-radius:0;white-space:nowrap}.content-preview-body{flex:1;min-height:0;overflow:auto;padding:16px;display:flex;align-items:flex-start;justify-content:center}.content-preview-body pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;width:100%;font:13px/1.6 var(--code-font,monospace)}.preview-stage{position:relative;flex:1;align-self:stretch;min-width:0;overflow:hidden;cursor:grab;touch-action:none;user-select:none}.preview-stage.dragging{cursor:grabbing}.preview-stage img{position:absolute;left:50%;top:50%;margin:0;max-width:none;max-height:none;transform-origin:center;-webkit-user-drag:none;visibility:hidden}.preview-stage img.ready{visibility:visible}.preview-nav{position:absolute;top:50%;z-index:2;width:40px;height:64px;margin-top:-32px;padding:0;display:flex;align-items:center;justify-content:center;font-size:26px;line-height:1;color:#fff;background:#0009;border:0;cursor:pointer}.preview-nav:hover{background:#000c}.preview-nav.previous{left:8px}.preview-nav.next{right:8px}.content-preview-body video{max-width:100%;max-height:100%}.content-preview-body iframe{border:0;width:100%;height:100%;background:white}.content-preview-body audio{width:min(700px,100%)}
 @media(max-width:640px){.content-preview header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:10px 12px}.content-preview header strong{grid-column:1;grid-row:1}.preview-close{grid-column:2;grid-row:1}.preview-tools{grid-column:1;grid-row:2;min-width:0;flex-wrap:wrap}.content-preview header a{grid-column:2;grid-row:2}.preview-counter{grid-column:1/-1;grid-row:3}.content-preview-body{padding:12px}}
+.content-preview header{flex-wrap:wrap}.preview-tools{flex-wrap:wrap;max-width:100%}.preview-action-status{flex-shrink:0;margin:0;padding:8px 16px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--border)}.preview-action-status.failed{color:var(--error,#ef9494)}.preview-stage:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}.preview-menu-backdrop{position:fixed;inset:0;z-index:3}.preview-image-menu{position:fixed;z-index:4;width:240px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:4px;background:var(--panel);border:1px solid var(--border);box-shadow:0 8px 28px #0006;cursor:default}.preview-image-menu button,.preview-image-menu a{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;padding:9px 10px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:13px;text-align:left;text-decoration:none;white-space:nowrap}.preview-image-menu a:hover,.preview-image-menu button:not(:disabled):hover{background:var(--hover)}.preview-image-menu [role=menuitem]:focus-visible{outline:1px solid var(--accent);outline-offset:-1px;background:var(--hover)}.preview-image-menu kbd{color:var(--muted);font:11px/1.4 var(--code-font,monospace)}.preview-menu-separator{height:1px;margin:4px 6px;background:var(--border)}
 </style>

@@ -3414,6 +3414,7 @@ const zhCN = {
 
         tools: {
             presentation: sharedZhCN.components.tools.presentation,
+            contextNotes: sharedZhCN.components.tools.contextNotes,
             contextStatus: sharedZhCN.components.tools.contextStatus,
             automation: sharedZhCN.components.tools.automation,
             platform: sharedZhCN.components.tools.platform,

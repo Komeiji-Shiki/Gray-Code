@@ -17,6 +17,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  ClipboardItem,
   dialog,
   ipcMain,
   Menu,
@@ -595,6 +596,19 @@ async function main(): Promise<void> {
       if (method === 'desktop.clipboard.writeText') {
         if (typeof params.text !== 'string') throw new Error('复制内容必须是文本。');
         await clipboard.writeText(params.text); return { success: true };
+      }
+      if (method === 'desktop.clipboard.writeImage') {
+        // 图片来自查看器的原始像素；先约束编码大小，再交给原生解码，避免 IPC 分配无界数据。
+        const maxBytes = 50 * 1024 * 1024;
+        if (typeof params.data !== 'string' || params.data.length > Math.ceil(maxBytes / 3) * 4)
+          throw new Error(t('desktop.shell.previewCopyFailed'));
+        const bytes = Buffer.from(params.data, 'base64');
+        if (!bytes.length || bytes.length > maxBytes || bytes.toString('base64') !== params.data)
+          throw new Error(t('desktop.shell.previewCopyFailed'));
+        const image = nativeImage.createFromBuffer(bytes);
+        if (image.isEmpty()) throw new Error(t('desktop.shell.previewCopyFailed'));
+        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([Uint8Array.from(bytes)], { type: 'image/png' }) })]);
+        return { success: true };
       }
       if (method === 'files.download') {
         const file = await application.fileActions.download(client.actorId, params.workspaceId, params.path);

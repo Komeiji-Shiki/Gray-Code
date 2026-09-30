@@ -20,6 +20,7 @@ function recallStage(messages: PlatformMessage[], options: NoteRecallOptions) {
 interface ProvidedNote { messageId: string; reason: 'recorded' | 'recalled' | 'verbatim' }
 function providedNotes(messages: PlatformMessage[], notes: ContextNote[]): Map<string, ProvidedNote> {
   const result = new Map<string, ProvidedNote>();
+  const pending = new Map(notes.map(note => [note.id, note]));
   const strings = (value: unknown): string[] => typeof value === 'string' ? [value]
     : Array.isArray(value) ? value.flatMap(strings)
       : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -30,12 +31,16 @@ function providedNotes(messages: PlatformMessage[], notes: ContextNote[]): Map<s
       const response = part.functionResponse as { name?: string; response?: { success?: boolean; noteRecall?: RecallReceipt } } | undefined;
       const receipt = response?.response?.noteRecall;
       if (response?.name === 'context_notes' && response.response?.success === true && receipt?.version === 1)
-        for (const id of receipt.ids) result.set(id, { messageId: message.id, reason: 'recalled' });
+        for (const id of receipt.ids) { result.set(id, { messageId: message.id, reason: 'recalled' }); pending.delete(id); }
+      // 正文已经找到后无需继续展开大段工具参数；后续召回回执仍更新历史位置。
+      if (!pending.size) continue;
       const bodies = typeof part.text === 'string' ? [part.text]
         : part.functionCall ? strings((part.functionCall as { args?: unknown }).args)
           : part.functionResponse ? strings((part.functionResponse as { response?: unknown }).response) : [];
-      for (const note of notes) if (!result.has(note.id) && bodies.some(body => body.includes(note.text)))
+      for (const note of pending.values()) if (bodies.some(body => body.includes(note.text))) {
         result.set(note.id, { messageId: message.id, reason: message.id === note.anchorMessageId ? 'recorded' : 'verbatim' });
+        pending.delete(note.id);
+      }
     }
   }
   return result;
@@ -46,7 +51,7 @@ export function recallContextNotes(graph: ContextNoteGraph, messages: PlatformMe
   const stage = recallStage(messages, options);
   const terms = [...new Set(memorySearchTerms(options.query ?? ''))];
   const current = [...graph.notes.values()].filter(note => graph.states.get(note.id) === 'current');
-  const termSets = new Map(current.map(note => [note.id, new Set(memorySearchTerms(`${note.text}\n${note.about.join(' ')}`))]));
+  const termSets = new Map(terms.length ? current.map(note => [note.id, new Set(memorySearchTerms(`${note.text}\n${note.about.join(' ')}`))] as const) : []);
   const frequencies = new Map(terms.map(term => [term, current.filter(note => termSets.get(note.id)!.has(term)).length]));
   const lexicalScore = (note: ContextNote) => terms.reduce((score, term) => score + (termSets.get(note.id)!.has(term)
     ? Math.log(1 + current.length / (1 + frequencies.get(term)!)) : 0), 0);
@@ -85,7 +90,10 @@ export function recallContextNotes(graph: ContextNoteGraph, messages: PlatformMe
   const incoming = new Map<string, Array<{ note: ContextNote; kind: string }>>();
   for (const note of current) for (const relation of note.relations) {
     if (!['supports', 'applies_to', 'contradicts'].includes(relation.kind)) continue;
-    for (const target of currentNoteIds(graph, relation.target)) incoming.set(target, [...incoming.get(target) ?? [], { note, kind: relation.kind }]);
+    for (const target of currentNoteIds(graph, relation.target)) {
+      const edges = incoming.get(target) ?? [];
+      edges.push({ note, kind: relation.kind }); incoming.set(target, edges);
+    }
   }
   const traversed = new Set<string>();
   while (queue.length) {

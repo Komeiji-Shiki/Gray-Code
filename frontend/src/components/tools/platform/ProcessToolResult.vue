@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from '../../../i18n'
 import ToolResultPanel from '../common/ToolResultPanel.vue'
 import ToolReceiptDetails from '../common/ToolReceiptDetails.vue'
+import ToolNextActions from '../common/ToolNextActions.vue'
 import PlatformText from './PlatformText.vue'
 import ProcessOutput from './ProcessOutput.vue'
 import { label, number, object, pick, resultBody, strings, successfulResult, text, type PlatformToolProps } from './platformResult'
@@ -31,6 +32,7 @@ const state = computed(() => data.value.running === true ? 'running' : data.valu
         <span v-if="number(data.exitCode) !== undefined" class="process-exit-code">{{ t('components.tools.structured.fields.exitCode') }}: {{ data.exitCode }}</span>
       </div>
       <ProcessOutput :data="data" />
+      <ToolNextActions :value="data.nextActions" />
       <template v-if="args.action === 'input' && typeof args.text === 'string' && successfulResult(props)">
         <h4 class="platform-section-title">{{ t('components.tools.platform.process.input') }}</h4><PlatformText :text="args.text" code />
       </template>

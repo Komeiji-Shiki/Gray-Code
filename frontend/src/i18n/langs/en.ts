@@ -3412,6 +3412,7 @@ const en: LanguageMessages = {
 
         tools: {
             presentation: sharedEn.components.tools.presentation,
+            contextNotes: sharedEn.components.tools.contextNotes,
             contextStatus: sharedEn.components.tools.contextStatus,
             automation: sharedEn.components.tools.automation,
             platform: sharedEn.components.tools.platform,

@@ -11,7 +11,7 @@ import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '.
 import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
 import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../workspace/processes';
-import { getActualLanguage } from '../../../../backend/i18n';
+import { getActualLanguage, t } from '../../../../backend/i18n';
 
 interface TerminalRecord {
   id: string; actorId: string; conversationId: string; runId: string; workspaceId: string;
@@ -106,7 +106,11 @@ export class PlatformTerminals {
         record.data = { ...record.data, ...result.data, error: result.error };
         await this.finish(record);
       }
-      return { success: result.success, data: result.data, error: result.error,
+      const running = this.active.has(id) && ['queued', 'running'].includes(record.status);
+      const nativeTaskHandle = record.nativeCallId && running ? context.nativeTaskHandle : undefined;
+      const data = result.data ? this.withNextActions({ ...result.data, taskId: id, status: record.status, running,
+        ...(nativeTaskHandle ? { note: t('tools.terminal.nextActions.nativePending') } : {}) }, nativeTaskHandle) : undefined;
+      return { success: result.success, data, error: result.error,
         ...(record.nativeCallId && result.data?.background ? { deferred: true } : {}),
         ...(result.cancelled ? { code: 'CANCELLED' } : {}) };
     } catch (error) {
@@ -175,15 +179,17 @@ export class PlatformTerminals {
     const text = `[Background task ${record.status}]\nCommand: ${String(record.data.command)}\n` +
       (record.data.exitCode !== undefined ? `Exit code: ${String(record.data.exitCode)}\n` : '') +
       (record.data.error ? `Error: ${String(record.data.error)}\n` : '') + `\n${String(record.data.output ?? '')}`;
+    // 终态通知只补必要的诊断入口；已结束的命令不会重新建议等待。
+    const nextActions = this.withNextActions({ ...record.data, taskId: record.id, status: record.status, running: false }).nextActions;
     await this.app.subagents.feedback.enqueueMessage({ id: `terminal-result-${record.id}`, conversationId,
-      actorId: record.actorId, sourceRunId: record.runId, message: { id: `terminal-result-${record.id}`, role: 'user', parts: [{ text }], timestamp: Date.now(),
+      actorId: record.actorId, sourceRunId: record.runId, message: { id: `terminal-result-${record.id}`, role: 'user', parts: [{ text: Array.isArray(nextActions) ? `${text}\n\nnextActions: ${JSON.stringify(nextActions)}` : text }], timestamp: Date.now(),
         isUserInput: false, source: 'background_task', backgroundTask: { kind: 'terminal', taskId: record.id, status: record.status }, userFeedback: { kind: 'background_task', taskId: record.id } } });
   }
   private nativeOutcome(record: TerminalRecord): ToolOutcome {
     return { success: record.status === 'completed',
       ...(record.status === 'cancelled' ? { code: 'CANCELLED' } : record.status === 'interrupted' ? { code: 'INTERRUPTED' } : {}),
       ...(record.data.error ? { error: String(record.data.error) } : {}),
-      data: { ...record.data, taskId: record.id, status: record.status, running: false, output: record.data.output ?? record.outputBuffer?.output ?? '' } };
+      data: this.withNextActions({ ...record.data, taskId: record.id, status: record.status, running: false, output: record.data.output ?? record.outputBuffer?.output ?? '' }) };
   }
   async recoverNativeResult(runId: string, callId: string, conversationId: string): Promise<ToolOutcome | undefined> {
     for (const id of await this.app.storage.listRecords('terminal-records', conversationId)) {
@@ -237,6 +243,25 @@ export class PlatformTerminals {
       command: String(record.data.command ?? '').slice(0, 1000), background: record.data.background === true,
       startTime: record.startTime, updatedAt: record.updatedAt, exitCode: record.data.exitCode ?? null, error: record.data.error };
   }
+  private withNextActions(data: Record<string, unknown>, nativeTaskHandle?: string, outputRead = false) {
+    const nextActions: Array<{ tool: string; args: Record<string, unknown>; when: string }> = [];
+    const read = { tool: 'terminal_task', args: { action: 'read', taskId: data.taskId,
+      cursor: typeof data.nextCursor === 'number' ? data.nextCursor : 0 } };
+    // 原生调用等待用 task_handle，进程管理用 taskId；建议不改变任务归属或执行生命周期。
+    if (data.running === true) {
+      if (nativeTaskHandle) nextActions.push({ tool: 'wait_for_tasks', args: { task_handles: [nativeTaskHandle] },
+        when: t('tools.terminal.nextActions.nativeWait') });
+      nextActions.push({ tool: 'terminal_task', args: { action: 'status', taskId: data.taskId },
+        when: t('tools.terminal.nextActions.terminalStatus') });
+      nextActions.push({ ...read, when: t(data.hasMore === true ? 'tools.terminal.nextActions.terminalMoreOutput' : 'tools.terminal.nextActions.terminalIntermediateOutput') });
+    } else if (data.hasMore === true) {
+      nextActions.push({ ...read, when: t('tools.terminal.nextActions.terminalExitedMoreOutput') });
+    } else if (!outputRead && (data.truncated === true || !!data.truncatedNote
+      || typeof data.output !== 'string' && (!!data.error || typeof data.exitCode === 'number' && data.exitCode !== 0))) {
+      nextActions.push({ ...read, when: t('tools.terminal.nextActions.terminalExitedInspect') });
+    }
+    return nextActions.length ? { ...data, nextActions } : data;
+  }
   async manageTask(args: Record<string, unknown>, context: ToolContext) {
     if (!context.conversationId || !context.workspace) throw new Error('请先为当前会话选择工作区。');
     await this.app.conversation(context.actorId, context.conversationId);
@@ -254,9 +279,10 @@ export class PlatformTerminals {
         if (record && owned(record)) records.push(record);
       }
       records.sort((a, b) => b.startTime - a.startTime || a.id.localeCompare(b.id));
-      const tasks = records.slice(Number(offset), Number(offset) + Number(limit)).map(record => this.taskSummary(record));
+      const tasks = records.slice(Number(offset), Number(offset) + Number(limit)).map(record => this.withNextActions(this.taskSummary(record)));
       const nextOffset = Number(offset) + tasks.length < records.length ? Number(offset) + tasks.length : undefined;
-      return { success: true, data: { tasks, total: records.length, offset, nextOffset } };
+      return { success: true, data: { tasks, total: records.length, offset, nextOffset,
+        ...(nextOffset !== undefined ? { nextActions: [{ tool: 'terminal_task', args: { action: 'list', offset: nextOffset, limit }, when: t('tools.terminal.nextActions.terminalNextPage') }] } : {}) } };
     }
     if (typeof args.taskId !== 'string' || !args.taskId) throw new Error('需要 execute_command 返回的 taskId。');
     const record = this.active.get(args.taskId)?.record ?? await this.app.storage.getRecord('terminal-records', args.taskId) as TerminalRecord | null;
@@ -266,14 +292,14 @@ export class PlatformTerminals {
     if (args.action === 'stop') {
       context.signal.throwIfAborted();
       const stopped = await this.kill(context.actorId, record.id);
-      if (!stopped.success) return { success: false, code: 'STOP_FAILED', error: String(stopped.error ?? '终端进程停止失败。'), data: this.taskSummary(record) };
+      if (!stopped.success) return { success: false, code: 'STOP_FAILED', error: String(stopped.error ?? '终端进程停止失败。'), data: this.withNextActions(this.taskSummary(record)) };
     }
     const summary = this.taskSummary(record);
     const data = args.action === 'read' ? { ...summary, ...readProcessOutput(record.outputBuffer ?? {
       output: String(record.data.output ?? ''), outputOffset: 0, truncated: !!record.data.truncatedNote,
     }, { cursor: args.cursor as number | undefined, maxChars: (args.maxChars ?? 12000) as number }),
       cursorOriginKnown: !!record.outputBuffer } : summary;
-    return { success: true, data };
+    return { success: true, data: this.withNextActions(data, undefined, args.action === 'read') };
   }
   async detach(actorId: string, conversationId: string) {
     await this.app.conversation(actorId, conversationId);

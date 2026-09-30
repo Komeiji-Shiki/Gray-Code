@@ -1,5 +1,6 @@
 import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDescription } from '../../toolLocalization'
+import { t } from '../../../i18n'
 
 registerTool('agent_send_message', {
   name: 'agent_send_message', icon: 'codicon-send',
@@ -15,7 +16,12 @@ const ContextToolPanel = lazyToolComponent(() => import('../../../components/too
 for (const name of ['context_notes', 'context_history']) {
   registerTool(name, {
     name, icon: name === 'context_notes' ? 'codicon-note' : 'codicon-history',
-    descriptionFormatter: args => [args.name, args.query, args.messageId].find(value => typeof value === 'string' && value.length) as string || '',
+    descriptionFormatter: args => {
+      if (name === 'context_notes' && args.action === 'record' && Array.isArray(args.entries))
+        return t('components.tools.contextNotes.submitted', { count: args.entries.length })
+      return [args.name, args.query, args.noteId, args.taskId, args.messageId].find(value => typeof value === 'string' && value.length) as string
+        || (Array.isArray(args.ids) ? args.ids.filter(value => typeof value === 'string').join(' · ') : '')
+    },
     contentComponent: ContextToolPanel,
   })
 }

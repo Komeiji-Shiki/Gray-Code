@@ -23,10 +23,12 @@ GrayCode 集成代码检索、文件修改、差异审阅、终端和 Git 工作
 - **`search_in_files`**：代码检索的默认选择，支持正则、文件 glob、上下文及审阅后替换。搜索返回 `nextOffset` 时，将其作为下一次 `offset`，其余查询参数保持不变。每页重新搜索当前文件，文件变更后从 `offset: 0` 重查。非正则模式默认严格匹配完整短语，不自动扩大搜索；只有显式传 `keywordFallback: true` 才在完整短语零命中后按关键词 OR 重试，续查时保持该值不变。
 - **`search_files`**：只需要轻量、严格字面量 UTF-8 搜索时使用，每个匹配行返回一次，不自动拆分关键词；同样支持 `offset` / `nextOffset`。长行围绕命中位置返回约 1200 字符片段，`column` 是命中列、`previewStartColumn` 是片段起始列（均从 1 开始，按 UTF-16 计数），`matchLength` 是命中长度，`contentTruncated` 表示未返回完整行。二进制、非 UTF-8、大于 2 MiB 或读取失败的文件通过 `skippedCount` / `skippedFiles` 说明。
 - **搜索排除规则**：桌面和 Web 的三种查找默认遵循各自配置与工作区内的 `.gitignore`（包括嵌套规则）；轻量搜索复用 `search_in_files` 的配置。`includeIgnored: true` 跳过配置排除和 `.gitignore`，但 `find_files` 的显式 `exclude` 仍生效；`.git` 元数据和遍历中的符号链接始终跳过。返回 `effectiveExclude`、`respectsGitIgnore` 说明实际策略。旧 VS Code 宿主是否支持项目忽略规则以回执为准，续查时保持排除参数不变。
-- **截断原因**：`truncationReasons` 区分匹配数上限、输出预算与文件扫描上限。输出预算可能遗漏中间的长匹配，扫描上限之外的文件尚未检查；这些情况不会给出假装完整的续查位置，而是通过 `continuationHint` 提示缩小目录、文件模式或查询范围。
+- **截断原因**：`truncationReasons` 区分匹配数上限与输出预算。`search_in_files` 的只读搜索流式遍历候选文件，不再按 `maxFindFiles` 截断；该配置仅保留在替换模式。轻量 `search_files` 每次最多扫描 20,000 个候选文件，`scanComplete: false` 明确表示尚未搜完，此时零条匹配不能代表整个范围没有匹配。结果分页沿用 `nextOffset`；扫描达到上限后使用 `nextScanOffset` 并把匹配 `offset` 重置为 0，`nextPage` / `nextActions` 提供精确参数。续查保留原查询和排除规则，文件或配置变化后两个游标都从 0 重新开始。输出预算仍可能遗漏长匹配，`continuationHint` 会说明继续方式或建议缩小范围。
 - **`find_files`**：每个模式独立返回 `offset` / `nextOffset`，按宿主发现顺序取页，只对本页结果排序；续查某个模式时单独传入该模式及其游标。文件或排除设置变化后从 0 重查。`effectiveExclude` 和 `excludeSource` 说明实际排除模式及其来自配置还是显式参数；非空 `exclude` 整体覆盖配置，省略或空字符串使用配置；项目忽略规则另外叠加。多个工作区中有根目录失败时，保留其他根的文件和 `workspaceErrors`，但不提供可能漏项的续查游标。
 - **`read_file`**：普通代码阅读的默认选择，支持批量、行号范围及图片/PDF（取决于模型能力）；混合成功和失败的批次显示黄色边框及三角感叹号，单个失败项仍保留具体错误，全失败才显示整体红色失败。`find_files`、`list_files` 和读取工具使用一致的文本行数约定：末尾换行不额外计一行，空文本保留一个可读取的空行。
 - **语言服务（LSP）集成**：支持符号跳转（`goto_definition`）、查找引用（`find_references`）与结构大纲（`get_symbols`）。结构大纲默认 `maxDepth: 1` 只展示顶层，按源码位置排列；按需增大 `maxDepth` 或用 `kinds` 筛选。主动折叠与达到输出上限的截断分别说明。若语言服务只提供平面列表，会返回 `hierarchyAvailable: false`，不猜测父子关系，可用 `kinds` 精简。
+
+同一次符号查询中的重复实际路径共享文件读取和语言服务请求，输出仍按每个请求位置返回。启用 Responses 原生异步时，语言服务查询可以与独立工作重叠，启动受管语言服务所需的授权与审批继续保留。
 - **`find_references`**：默认每页最多 500 条，可用 `maxResults` 缩小页面、`offset` / `nextOffset` 续查，或用 `countOnly: true` 只获取总引用数与总文件数。引用按路径、行列稳定分页，每页代码片段预算为 60,000 字符；达到预算时把下一条完整留给下一页，不跳过引用。单条片段超长会标记 `contentTruncated`，可按其路径和行号另用 `read_file`；文件或语言索引变化后从 0 重查。
 - **`goto_definition`**：沿用每页最多 500 个位置、正文合计最多 60,000 字符的预算，保留语言服务的定义顺序；用 `maxResults` 缩小页面、`offset` / `nextOffset` 续查。`definitionCount` 是当前页数量，`totalCount` 是全部数量。超长单个定义标记 `contentTruncated`，其 `path` / `line` / `endLine` 仍指向源码范围，可据此读取剩余代码；文件或语言索引变化后从 0 重查。新增分页参数会使升级后的工具请求前缀改变一次。
 
@@ -50,6 +52,8 @@ GrayCode 集成代码检索、文件修改、差异审阅、终端和 Git 工作
 - **命令执行控制**：需要 Shell 管道、重定向、Shell 选择或后台完成通知时，使用 `execute_command`。已有可执行文件和独立参数时，优先用 `run_command(command, args)`，不经过 Shell，也不会展开管道或环境变量，避免多层转义。`run_command` 可传 `cwd` 选择工作区内目录；省略、空字符串或 `.` 沿用当前主根目录，多根工作区的其他相对路径使用 `@根名称/目录` 前缀。越界路径、指向工作区外的符号链接和文件路径会被拒绝。
 - **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。同一账号、对话及工作区的后续运行可继续使用原 ID，RPC 客户端仍按客户端身份隔离；没有对话上下文时仅允许原运行。错误码区分 `NOT_FOUND`、`FORBIDDEN`、`EXITED`、`INPUT_CLOSED`、`INVALID_CURSOR`，已退出的会话仍可读取。输入会等待管道写入结果；`INPUT_CLOSED` 表示输入管道不可用，进程可能仍在运行，其输出仍可读取。
 - **后台 Shell 任务**：`terminal_task` 管理 `execute_command` 返回的 `taskId`，提供 `list`、`status`、`read`、`stop`；与 `process_session` 的会话 ID 不混用。仅能访问同一账号、会话和工作区的任务，后续运行可继续查询。`read` 默认返回 12,000 字符，按 UTF-16 `cursor` / `nextCursor` 续读，最多保留最近 256,000 字符；旧记录标明游标起点未知，宿主重启后的运行任务标记为中断，不自动重放。后台完成通知仍保留，无需循环轮询；遇到无进展或需要中间结果时再按需查询。查询成功与命令成功是两回事，命令结果看 `status`、`exitCode`、`error`。
+
+- **后续操作提示**：进程与终端回执中的 `nextActions` 直接列出下一步工具和参数：`run_command` 的会话交给 `process_session`，普通后台 Shell 任务交给 `terminal_task`，原生异步任务用其真实句柄调用 `wait_for_tasks`。命令结束且没有未读输出时不继续建议等待，后续诊断和增量读取仍使用同一受管身份。
 - **命令失败**：`run_command` 及后续读取发现已结束命令的非零退出码时，返回 `success: false`、`COMMAND_EXIT_NONZERO` 和明确退出摘要，同时保留会话 ID、输出与游标，可继续读取。运行中或没有退出码时不推断失败；`stop` 的成功只表示停止请求完成，不代表原命令执行成功。
 - **增量输出**：`process_session(action: "read")` 可传上次返回的 `nextCursor` 和本次 `maxChars`，游标按 UTF-16 绝对字符位置计算。`outputOffset` 是本次输出起点，`hasMore` 表示还有已产生但未读的内容，`running` 表示进程是否仍在运行，两者含义不同。最多保留最近 256,000 个字符；游标早于保留区时返回剩余内容并标记 `outputLost`。省略游标仍返回全部保留输出，兼容旧调用。
 - **任务与输出展示**：`terminal_task` 列表直接显示命令、任务状态和退出码，详情包含任务编号和时间等回执。列表在限定高度内滚动，较多项目可分批展开。输出卡片分别提示早期内容截断与尚有输出可读，进程结束后也可能仍有后续输出页。

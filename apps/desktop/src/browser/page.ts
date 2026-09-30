@@ -177,9 +177,9 @@ export class BrowserPage {
           await this.pending(this.connect(), waiting);
           await this.documentReady(waiting);
           const epoch = this.epoch;
-          // AX 快照也需要渲染检查点；只等文档解析和绘制，不等待图片、长连接等所有网络资源。
+          // 后台隐藏页可能不派发绘制帧；AX 读取只需文档解析与同步布局，不能等 requestAnimationFrame。
           await this.command('Runtime.evaluate', {
-            expression: 'new Promise(resolve => { const paint = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))); if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", paint, { once: true }); else paint(); })',
+            expression: 'new Promise(resolve => { const ready = () => { document.documentElement?.getBoundingClientRect(); resolve(null); }; if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready, { once: true }); else ready(); })',
             awaitPromise: true, returnByValue: true,
           }, waiting);
           if (epoch !== this.epoch || this.mainDocumentPending) continue;

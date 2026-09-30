@@ -89,6 +89,7 @@ export function createNoteReceipt(messages: PlatformMessage[], toolCallId: strin
   if (!toolCallId || !anchor?.id) throw new Error('笔记记录缺少当前已保存的工具调用。');
   const previous = buildNoteGraph(messages, now, now);
   const byId = new Map(messages.map(message => [message.id, message]));
+  const sourceTexts = new Map<string, string>(), sourceDigests = new Map<string, string>();
   const localIds = new Map(entries.map(entry => [entry.key, `note_${digest([anchor.id, toolCallId, entry.key]).slice(0, 24)}`]));
   const resolveTarget = (target: string) => target.startsWith('@') ? localIds.get(target.slice(1)) : previous.notes.has(target) ? target : undefined;
   const records = entries.map(entry => {
@@ -103,11 +104,14 @@ export function createNoteReceipt(messages: PlatformMessage[], toolCallId: strin
         : source.messageId === 'last_assistant' ? messages.findLast(message => message.role === 'model' && message !== anchor
           && message.parts.some(part => !part.thought && typeof part.text === 'string')) : byId.get(source.messageId);
       if (!message?.id || message.memoryRedacted || message === anchor) throw new Error(`来源 ${source.messageId} 不在当前可读的历史中。`);
-      const body = contextMessageText(message);
+      // 同批笔记经常共用一个来源，完整工具结果的正文和指纹只计算一次。
+      if (!sourceTexts.has(message.id)) sourceTexts.set(message.id, contextMessageText(message));
+      if (!sourceDigests.has(message.id)) sourceDigests.set(message.id, sourceDigest(message));
+      const body = sourceTexts.get(message.id)!;
       const offset = source.quote === undefined ? undefined : body.indexOf(source.quote);
       if (offset === -1) throw new Error(`来源摘录必须逐字来自消息 ${message.id}。`);
       if (source.quote !== undefined && body.indexOf(source.quote, offset! + 1) !== -1) throw new Error('来源摘录出现多次，请提供更完整、唯一的片段。');
-      return { messageId: message.id, digest: sourceDigest(message),
+      return { messageId: message.id, digest: sourceDigests.get(message.id)!,
         ...(offset === undefined ? {} : { offset, length: source.quote!.length }) };
     });
     return { id: localIds.get(entry.key)!, key: entry.key, sources };
@@ -132,6 +136,11 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
   const byId = new Map(messages.map(message => [message.id, message]));
   const calls = new Map<string, { message: PlatformMessage; entries: unknown }>();
   const fingerprints = new Map<string, string>();
+  const sourceTexts = new Map<string, string>();
+  const sourceText = (message: PlatformMessage) => {
+    if (!sourceTexts.has(message.id!)) sourceTexts.set(message.id!, contextMessageText(message));
+    return sourceTexts.get(message.id!)!;
+  };
   const originsById = new Map<string, ContextNote['origin']>();
   let previousInput: PlatformMessage | undefined;
   for (const message of messages) {
@@ -166,7 +175,7 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
         const origin = origins.includes('fiction') ? 'fiction' : origins.includes('model') || entry.kind === 'hypothesis' ? 'model'
           : origins.every(origin => origin === 'user') ? 'user' : 'tool';
         // 引用存在只能证明来源可追溯，不能把模型转述提升为用户已确认的原话。
-        const confidence = origin !== 'model' && origin !== 'fiction' && sourceMessages.some(source => source && contextMessageText(source).includes(entry.text))
+        const confidence = origin !== 'model' && origin !== 'fiction' && sourceMessages.some(source => source && sourceText(source).includes(entry.text))
           ? 'confirmed' : 'inferred';
         const node: ContextNote = { id: record.id, kind: entry.kind, text: entry.text, about: entry.about,
           relations: entry.relations.map(relation => ({ ...relation, target: relation.target.startsWith('@') ? localIds.get(relation.target.slice(1))! : relation.target })),

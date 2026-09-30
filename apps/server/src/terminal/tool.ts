@@ -1,6 +1,7 @@
 import type { RuntimeTool } from '@graycode/core';
 import type { PlatformTerminals } from './service';
 import { ProcessSessionError } from '../workspace/processes';
+import { t } from '../../../../backend/i18n';
 
 export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
   return {
@@ -15,7 +16,14 @@ export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
     effects: args => args.action === 'stop' ? ['process_execute'] : ['workspace_read'],
     execute: async (args, context) => {
       try { return await terminals.manageTask(args, context); }
-      catch (error) { if (error instanceof ProcessSessionError) return { success: false, code: error.code, error: error.message }; throw error; }
+      catch (error) {
+        if (error instanceof ProcessSessionError) return { success: false, code: error.code, error: error.message,
+          ...(error.code === 'INVALID_CURSOR' ? { data: { taskId: args.taskId, nextActions: [{
+            tool: 'terminal_task', args: { action: 'read', taskId: args.taskId },
+            when: t('tools.terminal.nextActions.terminalResetCursor'),
+          }] } } : {}) };
+        throw error;
+      }
     },
   };
 }

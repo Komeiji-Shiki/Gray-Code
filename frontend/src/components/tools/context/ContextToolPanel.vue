@@ -4,12 +4,14 @@ import { useI18n } from '../../../i18n'
 import { recordValue } from '../../../utils/toolPresentation'
 import ToolResultPanel from '../common/ToolResultPanel.vue'
 import ToolReceiptDetails from '../common/ToolReceiptDetails.vue'
+import ContextNotesPanel from './ContextNotesPanel.vue'
 
 defineOptions({ inheritAttrs: false })
 const props = defineProps<{ args?: Record<string, unknown>; result?: unknown; error?: string; status?: string; toolName?: string }>()
 const { t } = useI18n()
 const data = computed(() => recordValue(props.result) ? recordValue(props.result.data) ? props.result.data : props.result : {})
 const notesTool = computed(() => props.toolName === 'context_notes')
+const graphAction = computed(() => notesTool.value && ['record', 'recall', 'inspect'].includes(String(props.args?.action)))
 const writing = computed(() => notesTool.value && ['write', 'append'].includes(String(props.args?.action)))
 const title = computed(() => notesTool.value
   ? props.args?.action === 'append' ? t('components.tools.presentation.appendedContent') : t('components.tools.presentation.noteContent')
@@ -24,7 +26,8 @@ const hasBody = computed(() => writing.value || typeof data.value.text === 'stri
 const count = computed(() => body.value.length)
 </script>
 <template>
-  <ToolResultPanel v-bind="props">
+  <ContextNotesPanel v-if="graphAction" v-bind="props" />
+  <ToolResultPanel v-else v-bind="props">
     <section v-if="hasBody" class="context-document">
       <header><span class="codicon" :class="notesTool ? 'codicon-note' : 'codicon-history'" aria-hidden="true" /><strong>{{ title }}</strong><span class="character-count">{{ t('components.tools.presentation.characters', { count }) }}</span></header>
       <p v-if="name" class="document-name">{{ name }}</p>

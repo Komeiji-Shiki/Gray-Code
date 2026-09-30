@@ -78,10 +78,30 @@ test('筛选发生在分页之前，后面的链接、描述和深层控件仍�
   expect(f.sendCommand).toHaveBeenCalledWith('Accessibility.getFullAXTree', { frameId: 'main-frame' }, undefined);
 });
 
-test('正文按父子顺序输出，长文本预算支持续查且查询片段不会被头部截断隐藏', async () => {
+test('正文按父子顺序聚合碎片且保留链接引用，长文本预算支持续查与查询片段', async () => {
   const f = fixture([ax('2', '第二节', '1'), ax('1', '正文'), ax('4', '第四段', '3'), ax('3', '第三节', '1')]);
   const ordered = await f.page.snapshot(signal(), { compact: false });
   expect((ordered.nodes as SnapshotNode[]).map(node => node.name)).toEqual(['正文', '第二节', '第三节', '第四段']);
+  let id = 10;
+  const characters = (text: string, parentId: string) => Array.from(text, name => ({ ...ax(String(id++), name, parentId), role: { value: 'StaticText' } }));
+  const fragmented = fixture([
+    { ...ax('1', '网页'), role: { value: 'RootWebArea' } },
+    { ...ax('2', '', '1'), role: { value: 'paragraph' } },
+    { ...ax('3', '', '2'), role: { value: 'generic' }, ignored: true }, ...characters('阅读', '3'),
+    { ...ax('4', '参考资料', '2'), role: { value: 'link' }, properties: [{ name: 'url', value: { value: 'https://fixture.test/reference' } }] },
+    ...characters('参考资料', '4'), ...characters('后继续。', '2'),
+    { ...ax('5', '', '1'), role: { value: 'paragraph' } }, ...characters('下一段。', '5'),
+  ]);
+  const paragraphs = await fragmented.page.snapshot(signal(), { compact: false });
+  expect((paragraphs.nodes as SnapshotNode[]).map(node => [node.role, node.name])).toEqual([
+    ['RootWebArea', '网页'], ['paragraph', '阅读参考资料后继续。'], ['link', '参考资料'], ['paragraph', '下一段。'],
+  ]);
+  const found = await fragmented.page.snapshot(signal(), { query: '阅读参考资料后继续。', maxNodes: 1, compact: false });
+  expect(found).toMatchObject({ total: 1, returned: 1, truncated: false });
+  const links = await fragmented.page.snapshot(signal(), { ref: (found.nodes as SnapshotNode[])[0].ref, interactiveOnly: true, compact: false });
+  expect((links.nodes as SnapshotNode[])[0]).toMatchObject({ role: 'link', name: '参考资料', url: 'https://fixture.test/reference', ref: expect.any(String) });
+  await fragmented.page.action({ action: 'press', ref: (links.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal());
+  expect(fragmented.sendCommand).toHaveBeenCalledWith('DOM.focus', { backendNodeId: 4 }, undefined);
   const long = fixture(Array.from({ length: 40 }, (_, index) => ax(String(index + 1), '长'.repeat(6000) + '关键结论')));
   const page = await long.page.snapshot(signal(), { query: '关键结论', compact: false });
   expect(page).toMatchObject({ total: 40, truncated: false });
@@ -219,15 +239,25 @@ test('原生绘制表面不可用时建议读快照，不要求可能重复提�
   await expect(f.page.snapshot(signal())).resolves.toMatchObject({ format: 'compact' });
 });
 
-test('动作后快照等主文档解析与绘制，不等全部网络资源或非匹配查询', async () => {
+test('动作后快照等主文档解析与同步布局，后台无绘制帧也能读取', async () => {
   const f = fixture([ax('1', '正文')]);
+  const command = f.sendCommand.getMockImplementation()!, layout = jest.fn(), paint = jest.fn();
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => {
+    if (method === 'Runtime.evaluate') {
+      // 隐藏网页的 requestAnimationFrame 不触发；直接执行实际注入的表达式检查等待条件。
+      await new Function('document', 'requestAnimationFrame', `return ${params.expression}`)(
+        { readyState: 'complete', documentElement: { getBoundingClientRect: layout } }, paint);
+      return {};
+    }
+    return command(method, params, sessionId);
+  });
   f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
   const reading = f.page.snapshotAfterAction(signal(), { query: '不存在的内容' });
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(f.sendCommand.mock.calls.some(([method]) => method === 'Accessibility.getFullAXTree')).toBe(false);
   f.contents.emit('dom-ready');
   expect(await reading).toMatchObject({ total: 0, partial: false });
-  expect(f.sendCommand).toHaveBeenCalledWith('Runtime.evaluate', expect.objectContaining({ expression: expect.stringContaining('requestAnimationFrame'), awaitPromise: true }), undefined);
+  expect(layout).toHaveBeenCalledTimes(1); expect(paint).not.toHaveBeenCalled();
   expect(f.contents.listenerCount('dom-ready')).toBe(1); expect(f.contents.listenerCount('destroyed')).toBe(0);
 });
 

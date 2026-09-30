@@ -17,6 +17,7 @@ import { useI18n } from '../../../composables/useI18n'
 import { copyToClipboard } from '../../../utils/format'
 import { showNotification } from '../../../utils/vscode'
 import { useMessageConversation } from '../../../composables/messageConversationContext'
+import ToolNextActions from '../common/ToolNextActions.vue'
 
 const { t } = useI18n()
 
@@ -126,6 +127,7 @@ const isRunning = computed(() => {
   
   if (killed.value) return false
   if (exitCode.value !== undefined) return false
+  if (typeof resultData.value.running === 'boolean') return resultData.value.running
   return props.status === 'executing'
 })
 
@@ -324,6 +326,7 @@ onBeforeUnmount(() => {
     </div>
     
     <!-- 运行中指示器 -->
+    <ToolNextActions :value="isRunning || resultData.running !== true ? resultData.nextActions : undefined" />
     <div v-if="isRunning" class="running-indicator">
       <span class="spinner"></span>
       <span>{{ t('components.tools.terminal.executeCommandPanel.executing') }}</span>

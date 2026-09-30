@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from '../../../i18n'
 import ToolResultPanel from '../common/ToolResultPanel.vue'
 import ToolReceiptDetails from '../common/ToolReceiptDetails.vue'
+import ToolNextActions from '../common/ToolNextActions.vue'
 import PlatformText from './PlatformText.vue'
 import { label, number, object, pick, records, resultBody, strings, successfulResult, text, type PlatformToolProps } from './platformResult'
 
@@ -14,6 +15,7 @@ const payload = computed(() => resultBody(props.result))
 const data = computed(() => object(payload.value))
 const action = computed(() => text(args.value.action))
 const search = computed(() => props.toolName === 'search_files')
+const hasNextActions = computed(() => Array.isArray(data.value.nextActions) && data.value.nextActions.length > 0)
 const succeeded = computed(() => successfulResult(props))
 const entries = computed(() => records(payload.value))
 const matches = computed(() => records(data.value.matches))
@@ -42,6 +44,10 @@ const mutation = computed(() => ['write', 'edit', 'delete'].includes(action.valu
     </div>
     <template #result="{ metadata }">
       <template v-if="search">
+        <!-- 未扫完不能将当前页的零匹配当作全范围结论，续查参数直接沿用服务回执。 -->
+        <div v-if="data.scanComplete === false" class="platform-notice warning" role="alert">
+          {{ t(matches.length ? 'components.tools.platform.file.scanIncomplete' : 'components.tools.platform.file.scanIncompleteEmpty') }}
+        </div>
         <div v-if="Array.isArray(data.matches)" class="platform-statbar">
           <span>{{ t('components.tools.platform.file.matches', { count: matches.length }) }}</span>
           <span v-if="number(data.scanned) !== undefined">{{ t('components.tools.platform.file.scanned', { count: data.scanned }) }}</span>
@@ -51,11 +57,12 @@ const mutation = computed(() => ['write', 'edit', 'delete'].includes(action.valu
           <PlatformText v-for="(hit, index) in group.hits" :key="index" :text="text(hit.text)" :start-line="number(hit.line)" code />
         </article>
         <button v-if="matches.length > visible" class="platform-more" type="button" @click="visible += 40">{{ t('components.tools.structured.showMore', { count: matches.length - visible }) }}</button>
-        <p v-if="!matches.length" class="platform-empty">{{ t(Array.isArray(data.matches) ? 'components.tools.platform.file.noMatches' : 'components.tools.platform.noData') }}</p>
-        <div v-if="data.truncated === true" class="platform-notice warning">
+        <p v-if="!matches.length && data.scanComplete !== false" class="platform-empty">{{ t(Array.isArray(data.matches) ? 'components.tools.platform.file.noMatches' : 'components.tools.platform.noData') }}</p>
+        <div v-if="data.truncated === true && data.scanComplete !== false" class="platform-notice warning">
           {{ t(strings(data.truncationReasons).includes('scanLimit') ? 'components.tools.platform.file.scanLimit' : number(data.nextOffset) !== undefined || strings(data.truncationReasons).includes('limit') ? 'components.tools.platform.file.matchLimit' : 'components.tools.platform.partial') }}
         </div>
-        <p v-if="number(data.nextOffset) !== undefined" class="platform-notice continuation">{{ t('components.tools.platform.nextOffset', { offset: data.nextOffset }) }}</p>
+        <p v-if="number(data.nextOffset) !== undefined && !hasNextActions" class="platform-notice continuation">{{ t('components.tools.platform.nextOffset', { offset: data.nextOffset }) }}</p>
+        <ToolNextActions :value="data.nextActions" />
       </template>
       <template v-else-if="action === 'list'">
         <ul class="platform-list file-entries">
@@ -82,7 +89,7 @@ const mutation = computed(() => ['write', 'edit', 'delete'].includes(action.valu
         </div>
       </template>
       <p v-else class="platform-empty">{{ t('components.tools.platform.noData') }}</p>
-      <ToolReceiptDetails :value="pick(data, ['hash', 'hashes', 'operationId', 'totalLines', 'offset', 'nextOffset', 'truncationReasons'])" :metadata="metadata" />
+      <ToolReceiptDetails :value="pick(data, ['hash', 'hashes', 'operationId', 'totalLines', 'offset', 'nextOffset', 'scanOffset', 'nextScanOffset', 'scanComplete', 'truncationReasons'])" :metadata="metadata" />
     </template>
   </ToolResultPanel></div>
 </template>
