@@ -39,6 +39,9 @@ export interface GetHistoryOptions {
     
     /** 渠道类型，用于选择对应格式的签名 */
     channelType?: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+
+    /** 可信运行器登记的待完成调用，仅 Responses 原生异步历史可保留。 */
+    pendingAsyncCallIds?: ReadonlySet<string>;
     
     /**
      * 多模态能力（可选）

@@ -257,7 +257,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
       send(socket, { type: 'response.created', response: { id: `migration-${rounds}` } });
       if (rounds === 1) {
         for (const [output_index, call] of [commandCall, browserCall].entries()) send(socket, { type: 'response.output_item.done', output_index, item: call });
-        completed(socket, 'migration-1', [commandCall, browserCall] as any);
+        completed(socket, 'migration-1', [commandCall, { ...browserCall, async: false }] as any);
       } else if (rounds === 2) {
         expect((event.input ?? []).some((value: any) => value.type === 'function_call_output')).toBe(false);
         completed(socket, 'migration-2', [{ type: 'function_call', id: 'fc-independent', call_id: 'independent', name: 'native_independent', arguments: '{}' }] as any);
@@ -268,7 +268,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     try {
       const draft = await app.product.draft();
       const providerId = await draft.configs.createConfig({ type: 'openai-responses', name: 'native migration', enabled: true,
-        url: profile.endpoint, model: 'fixture', apiKey: '', timeout: 10000 });
+        url: profile.endpoint, model: 'fixture', apiKey: '', timeout: 10000, multimodalToolsEnabled: true });
       await draft.configs.updateConfig(providerId, { responsesWebSocketEnabled: true, responsesAsyncToolsEnabled: true } as any);
       await app.product.save(draft); profile.id = providerId;
       const snapshot = app.settings.snapshot();
@@ -277,9 +277,16 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
         toolNames: ['execute_command', 'browser_action', 'native_independent'], toolApproval: { execute_command: 'auto', browser_action: 'auto' } });
       await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
       const conversation = await app.createConversation('owner', 'native migration');
+      await app.storage.appendHistory(conversation.id, [
+        { id: 'native-first', role: 'user', isUserInput: true, parts: [{ text: '保留当前任务。' }] },
+        { id: 'native-old', role: 'model', isSummarized: true, parts: [{ text: 'summarized-native-evidence' }] },
+        { id: 'native-boundary', role: 'user', isSummary: true, parts: [{ text: '继续当前窗口。' }] },
+      ]);
       const run = await app.runtime.start({ actorId: 'owner', agentId: 'native-migration', workspaceId: 'native-workspace', conversationId: conversation.id,
         requestKey: 'native-migration', message: { role: 'user', parts: [{ text: '启动命令并打开页面，同时继续其他工作。' }] } });
       expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(browserExecutions).toBe(1);
+      expect(requests[1].previous_response_id).toBe('migration-1');
+      expect(JSON.stringify(requests)).not.toContain('summarized-native-evidence');
       const history = (await app.storage.readFullHistory(conversation.id)).messages;
       const results = history.flatMap(message => message.parts).flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
       expect(results.filter(value => value.id === 'command-call')).toHaveLength(1);
@@ -297,7 +304,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     } finally { browserRelease.resolve(); await app.close(); await f.cleanup(); }
   }, 25000);
 
-  test('取消生成仍保留原生后台命令，完成后通过原调用交付而不重复通知', async () => {
+  test.each([false, true])('取消生成仍保留原生后台命令且只交付一次，清理期间完成：%s', async duringCancellation => {
     const f = await fixture(); await f.store.close();
     const ready = deferred(), delivered = deferred(); let rounds = 0;
     const app = await PlatformApplication.open({ dataDirectory: f.data, models: adapter });
@@ -309,6 +316,13 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
       await enqueue(pending, records);
       if (pending.message.parts.some(part => (part.functionResponse as any)?.id === 'cancel-command')) delivered.resolve();
     });
+    const heldFeedback = duringCancellation ? jest.spyOn(app.subagents.feedback, 'flush').mockResolvedValue(false) : undefined;
+    if (duringCancellation) {
+      const nativeTools = (app.runtime as any).nativeTools;
+      const interrupt = nativeTools.interrupt.bind(nativeTools);
+      // 固定命令先完成、取消后结算的顺序，不依赖定时竞争碰巧发生。
+      jest.spyOn(nativeTools, 'interrupt').mockImplementation(async runId => { await delivered.promise; return interrupt(runId); });
+    }
     await writeFile(path.join(f.root, 'native-cancel.cjs'), "console.log('native-ready'); setTimeout(() => { console.log('native-finished'); }, 1000);");
     const command = process.platform === 'win32' ? 'node native-cancel.cjs; exit $LASTEXITCODE' : 'node native-cancel.cjs; exit $?';
     const call = { type: 'function_call', id: 'fc-cancel-command', call_id: 'cancel-command', name: 'execute_command', async: true,
@@ -333,14 +347,23 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
       const run = await app.runtime.start({ actorId: 'owner', agentId: 'native-cancel', workspaceId: 'cancel-workspace', conversationId: conversation.id,
         requestKey: 'native-cancel', message: { role: 'user', parts: [{ text: '启动后台命令。' }] } });
       await ready.promise; await app.runtime.cancel(run.id, 'owner'); expect((await app.runtime.wait(run.id))?.status).toBe('cancelled');
-      expect(app.runtime.pendingAsyncToolCalls(conversation.id)).toEqual(['cancel-command']);
+      if (!duringCancellation) expect(app.runtime.pendingAsyncToolCalls(conversation.id)).toEqual(['cancel-command']);
       await delivered.promise;
+      if (duringCancellation) {
+        const beforeDelivery = (await app.storage.readFullHistory(conversation.id)).messages;
+        const callIndex = beforeDelivery.findIndex(message => message.parts.some(part => (part.functionCall as any)?.id === 'cancel-command'));
+        await app.conversations.settleCancelled('owner', conversation.id, callIndex, ['cancel-command']);
+        expect((await app.storage.readFullHistory(conversation.id)).messages.flatMap(message => message.parts)
+          .filter(part => (part.functionResponse as any)?.id === 'cancel-command')).toHaveLength(0);
+        heldFeedback!.mockRestore();
+        await app.subagents.feedback.flush(conversation.id);
+      }
       const history = (await app.storage.readFullHistory(conversation.id)).messages;
       const results = history.flatMap(message => message.parts).flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
       expect(results.filter(value => value.id === 'cancel-command')).toHaveLength(1);
       expect(results.find(value => value.id === 'cancel-command').response).toMatchObject({ success: true, data: { exitCode: 0 } });
       expect(results.find(value => value.id === 'cancel-command').response.data.output).toContain('native-finished');
       expect(history.filter(message => message.backgroundTask)).toHaveLength(0);
-    } finally { await app.close(); await f.cleanup(); }
+    } finally { heldFeedback?.mockRestore(); await app.close(); await f.cleanup(); }
   }, 25000);
 });

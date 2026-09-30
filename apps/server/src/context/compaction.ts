@@ -41,12 +41,13 @@ export function conversationContextSettings(app: PlatformApplication, conversati
 }
 
 /** 活跃边界记录保留的用户原文，避免按索引裁掉位于摘要以前的最新要求。 */
-export function activeContextHistory(messages: PlatformMessage[], config: ChannelConfig): PlatformMessage[] {
+export function activeContextHistory(messages: PlatformMessage[], config: ChannelConfig, pendingAsyncCallIds?: ReadonlySet<string>): PlatformMessage[] {
   const first = messages.find(message => isRealUserMessage(message as Content));
   const last = messages.findLastIndex(message => message.isSummary && !message.isSummarized);
   const retained = new Set<string>((messages[last]?.retainedUserMessageIds as string[] | undefined) ?? []);
   const active = messages.filter((message, index) => !message.isSummarized && (last < 0 || index >= last || message === first || retained.has(message.id!)));
-  return formatHistoryForAPI(active as Content[], { ...new MessageBuilderService().buildHistoryOptions(config), includeTurnDynamicContext: true }) as PlatformMessage[];
+  return formatHistoryForAPI(active as Content[], { ...new MessageBuilderService().buildHistoryOptions(config), includeTurnDynamicContext: true,
+    ...(pendingAsyncCallIds ? { pendingAsyncCallIds } : {}) }) as PlatformMessage[];
 }
 
 /** 摘要和窗口切换共用可恢复边界，重复切换也只覆盖本次仍活跃的消息。 */

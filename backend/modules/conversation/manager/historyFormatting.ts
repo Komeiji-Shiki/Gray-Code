@@ -324,8 +324,9 @@ export function formatHistoryForAPI(
         }
         for (const part of message.parts ?? []) {
             const callId = part.functionCall?.id;
-            // Responses 原生异步允许结果跨越其他模型回复，仍须在当前历史中实际配对。
-            if (part.functionCall?.async === true && callId && asyncResponseIds.has(callId) && !rejectedToolCallIds.has(callId)) {
+            // Responses 原生异步可跨轮配对；待完成身份只能由可信运行器登记。
+            if (part.functionCall?.async === true && callId && !rejectedToolCallIds.has(callId)
+                && (asyncResponseIds.has(callId) || channelType === 'openai-responses' && opts.pendingAsyncCallIds?.has(callId))) {
                 if (channelType === 'openai-responses') continue;
                 // 其他协议要求紧邻配对。迟到的异步证据转为正文，保留原消息与图片顺序。
                 if (!blockIds.has(callId)) { legacyAsyncCallIds.add(callId); continue; }

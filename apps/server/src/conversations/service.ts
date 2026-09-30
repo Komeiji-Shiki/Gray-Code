@@ -111,6 +111,12 @@ export class ConversationService {
     const paired = new Set(state.history.messages.flatMap(message => message.parts.flatMap(part => part.functionResponse ? [(part.functionResponse as { id: string }).id] : [])));
     const selected = new Set(toolCallIds);
     const detached = new Set(this.app.runtime.pendingAsyncToolCalls(id));
+    // 已进入持久反馈队列的原生结果还未追加历史时，也不能再补取消占位。
+    const queued = await Promise.all((await this.app.subagents.feedback.pendingIds(id)).map(key => this.app.storage.getRecord('subagent-feedback', key)));
+    for (const record of queued) {
+      const message = (record as { message: PlatformMessage } | null)?.message;
+      for (const part of message?.parts ?? []) if (part.functionResponse) detached.add((part.functionResponse as { id: string }).id);
+    }
     const calls = model.parts.flatMap(part => part.functionCall ? [part.functionCall as { id: string; name: string }] : []).filter(call => selected.has(call.id) && !paired.has(call.id) && !detached.has(call.id));
     if (!calls.length) return { success: true };
     const messages = structuredClone(state.history.messages);

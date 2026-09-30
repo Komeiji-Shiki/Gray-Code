@@ -45,7 +45,7 @@ export class NativeAsyncTools {
   private readonly lanes = new Map<string, { promises: Promise<void>[]; next: number }>();
   constructor(private readonly storage: PlatformStorage,
     private readonly deliver: (record: NativeToolRecord, detached: boolean) => Promise<void>,
-    private readonly active: (runId: string) => boolean) {}
+    private readonly lifecycle: (runId: string) => 'active' | 'settling' | 'finished') {}
 
   private key(runId: string, callId: string) { return `${runId}:${callId}`; }
   has(runId: string, callId: string) { return this.calls.has(this.key(runId, callId)); }
@@ -98,7 +98,7 @@ export class NativeAsyncTools {
     if (value.delivered) { value.resolve(); return true; }
     await this.persist(value);
     value.resolve();
-    if (value.published && value.record.detached && !this.active(runId)) await this.deliverOne(value, true);
+    if (value.published && value.record.detached && this.lifecycle(runId) !== 'active') await this.deliverOne(value, true);
     return true;
   }
 
@@ -120,7 +120,8 @@ export class NativeAsyncTools {
     value.delivering ??= this.deliver(structuredClone(value.record), detached).then(async () => {
       value.delivered = true;
       await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(value.record.run.id, value.record.call.id));
-      if (detached) this.calls.delete(this.key(value.record.run.id, value.record.call.id));
+      // 取消仍在清理时保留交付身份，防止已排队的终态被中断占位结果重复结算。
+      if (detached && this.lifecycle(value.record.run.id) === 'finished') this.calls.delete(this.key(value.record.run.id, value.record.call.id));
     });
     await value.delivering;
   }
@@ -178,7 +179,7 @@ export class NativeAsyncTools {
       this.calls.delete(this.key(runId, value.record.call.id)); value.resolve();
       await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(runId, value.record.call.id));
     }
-    return values.filter(value => value.record.detached && !value.delivered).map(value => value.record.call.id);
+    return values.filter(value => value.record.detached).map(value => value.record.call.id);
   }
   async release(runId: string) {
     this.lanes.delete(runId);

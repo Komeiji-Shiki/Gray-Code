@@ -58,8 +58,7 @@ export class PlatformContextService {
   }
   async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     const { run, input } = context;
-    // 异步结果必须回到当前可见调用；切窗、总结和裁剪推迟到调用结算后。
-    if (input.pendingToolCallIds?.length) return { history: context.history, messages: input.messages };
+    const pendingAsyncCallIds = input.pendingToolCallIds?.length ? new Set(input.pendingToolCallIds) : undefined;
     let config = await this.app.product.channel(input.providerId);
     if (!config) return { history: context.history, messages: input.messages };
     const management = this.configuration(context.history.metadata, config);
@@ -81,7 +80,7 @@ export class PlatformContextService {
     const pending = custom?.pendingContextWindow as { runId?: string; toolCallId?: string } | undefined;
     const switchRequested = pending?.runId === run.id && frame.state.history.messages.some(message => message.parts.some(part =>
       part.functionResponse && (part.functionResponse as { id?: string }).id === pending.toolCallId));
-    if (switchRequested && management.method === 'notes') {
+    if (switchRequested && management.method === 'notes' && !pendingAsyncCallIds) {
       await event('context.summary.started', { method: 'notes' });
       const result = await notesWindowBoundary(this.app, frame, true, config.type, management.userMessageRetention, 'model_requested');
       await commit(true);
@@ -89,7 +88,7 @@ export class PlatformContextService {
     }
     // 预览只在独立快照内估算，不发起远程 Token 计数或更新已保存的历史。
     const estimator = new TokenEstimationService(frame.store, new TokenCountService(settings.getEffectiveProxyUrl()), preview ? undefined : settings);
-    const options = this.builder.buildHistoryOptions(config);
+    const options = { ...this.builder.buildHistoryOptions(config), ...(pendingAsyncCallIds ? { pendingAsyncCallIds } : {}) };
     const promptText = [...input.promptContext?.beforeHistoryMessages ?? [], ...input.promptContext?.afterHistoryMessages ?? []]
       .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n') + additionalContextText;
     const fixedSystem = [input.systemPrompt, JSON.stringify(input.tools)].join('\n');
@@ -97,6 +96,14 @@ export class PlatformContextService {
       promptManager: { getSystemPrompt: () => fixedSystem, getDynamicContextText: () => promptText },
       messageBuilderService: this.builder, tokenEstimationService: estimator, log: this.log },
     run.conversationId, config, options, promptText, undefined, input.modelOverride, 'preserve', { allowStateAdvance: advance });
+    if (pendingAsyncCallIds) {
+      // 等待期间只冻结边界变化，仍复用既有窗口、裁剪点和渠道过滤，不能重新发送完整存档。
+      const policy = resolveContextManagementPolicy(config);
+      const messages = policy.mode === 'trim' ? (await evaluate(false)).history as PlatformMessage[]
+        : activeContextHistory(filterHistory?.(frame.state.history.messages) ?? frame.state.history.messages, config, pendingAsyncCallIds);
+      await commit();
+      return { history: frame.state, messages, notices };
+    }
     let info = await evaluate(context.iteration === 1);
     const turnId = [...frame.state.history.messages].reverse().find(message => isRealUserMessage({ ...message, isSummarized: false } as Content) && !message.userFeedback)?.id ?? run.id;
     const old = custom?.platformContext as TurnContextState | undefined;

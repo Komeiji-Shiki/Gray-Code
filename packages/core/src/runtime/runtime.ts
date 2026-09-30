@@ -109,7 +109,10 @@ export class PlatformRuntime {
   private readonly nativeTools: NativeAsyncTools;
   constructor(private readonly services: RuntimeServices) {
     this.nativeTools = new NativeAsyncTools(services.storage, (record, detached) => this.deliverNativeResult(record, detached),
-      id => this.active.has(id) && !this.active.get(id)!.controller.signal.aborted);
+      id => {
+        const active = this.active.get(id);
+        return !active ? 'finished' : active.controller.signal.aborted ? 'settling' : 'active';
+      });
     this.questions = new QuestionBroker(services.questionTimeoutMs ?? 180_000, feedback => {
       void this.event(feedback.request.runId, feedback.timedOut ? 'question.expired' : 'question.answered', {
         requestId: feedback.request.id, answers: feedback.answers, answeredBy: feedback.answeredBy,
@@ -425,6 +428,8 @@ export class PlatformRuntime {
             for (const { call } of early.values()) {
               const returned = generated.parts.find(part => (part.functionCall as FunctionCall | undefined)?.id === call.id)?.functionCall as FunctionCall | undefined;
               if (!returned || returned.name !== call.name || JSON.stringify(returned.args) !== JSON.stringify(call.args)) throw new Error('原生异步调用的终态与已发出的完整参数不一致。');
+              // 已接管的调用不能因流末标记变化再次执行，历史与等待继续使用原执行身份。
+              returned.async = true;
             }
           }
           finally { deltas.finish(); await streamingEvent; }
