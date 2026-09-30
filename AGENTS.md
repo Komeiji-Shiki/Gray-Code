@@ -62,7 +62,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 
 ## 前端与 i18n
 
-- 修改 `frontend/` 或 `apps/client/` 前，先查看所在目录的 `AGENTS.md`（若存在；这类本机文件记录 UI 参考截图，不进入 Git）；改动保持暗色、平面、直角风格，设置保留单一入口，模式切换不新建对话，文件树不撑高整个应用。
+- 修改 `frontend/` 或 `apps/client/` 前，先查看所在目录的 `AGENTS.md`（若存在；这类本机文件记录 UI 参考截图，不进入 Git）；改动保持暗色为主、平面、结构直角部件小圆角（圆角用 `--gc-radius-*`）；组件样式只引用 `--gc-*` 语义 token，色值只在 `shared/appearance.ts` 定义，设置保留单一入口，模式切换不新建对话，文件树不撑高整个应用。
 - 用户可见文案走 i18n：共享词条以 `backend/i18n/langs/` 为单一来源，映射登记在 `scripts/i18n-shared-manifest.json`，生成物 `frontend/src/i18n/langs/_shared/` 不可手改；改完后运行 `node scripts/i18n-sync.mjs`（校验用 `npm run i18n:check`）。
 - 工具展示元数据以 `backend/tools` 的 ToolDeclaration 为单一来源，生成到 `frontend/src/utils/tools/__generated__/toolMeta.ts`，不可手改；重新生成用 `node scripts/generate-tool-meta.mjs`。
 
@@ -72,6 +72,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 
 - Never 手改生成物与产物：`frontend/src/i18n/langs/_shared/**`、`frontend/src/utils/tools/__generated__/**`、`dist/**`、打包输出——改源头，然后跑生成脚本。
 - Never 提交本机文件与数据：`.tmp/`（含 UI 参考截图）、`.graycode/`、`release/`、`platform-data/`、`portable-data/`、`.env*`、`*.vsix`、根 `docs/`、`report.md` 及根目录本地计划/反馈类 Markdown；完整名单以 `.gitignore` 为准。
+- Never 在组件中直接引用 `--vscode-*`、外壳旧变量或写死色值——新增颜色角色先加到 `tokens.css` 与色板。
 - Never 在 `packages/core` 引入宿主依赖（Electron / VS Code / 界面目录）。
 - Never 未做全链路检查就给 `packages/contracts` 加字段。
 - Never 打乱模型请求的消息与图片顺序，或丢弃历史图片。
