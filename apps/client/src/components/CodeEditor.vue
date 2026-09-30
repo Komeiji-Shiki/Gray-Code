@@ -4,8 +4,8 @@ import type { LanguageDocumentStatus } from '@graycode/contracts';
 import * as monaco from '../monaco';
 import { appearance, report } from "../state";
 import { ensureEditorLanguage } from '../editorLanguages';
-import { resolvedTheme } from '../appearance';
-import { installWorkbenchTheme, workbenchEditorTheme } from "../editorAppearance";
+import { appearancePalette, resolvedTheme } from '../appearance';
+import { applyWorkbenchTheme, WORKBENCH_THEME } from "../editorAppearance";
 import { bindLanguageDocument, editorUri } from "../languages";
 import { bindEditorUndo, workspaceEditorServices } from '../editorWorkspaceEdits';
 import { bindEditorDebugging } from '../editorDebugging';
@@ -44,7 +44,7 @@ function options() {
       (appearance.value?.codeFontSize ?? 14) *
         (appearance.value?.lineHeight ?? 1.6),
     ),
-    theme: workbenchEditorTheme(resolvedTheme.value),
+    theme: WORKBENCH_THEME,
   };
 }
 onMounted(() => {
@@ -61,8 +61,7 @@ onMounted(() => {
     ...options(),
     theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
   }, workspaceEditorServices);
-  installWorkbenchTheme();
-  monaco.editor.setTheme(workbenchEditorTheme(resolvedTheme.value));
+  applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light');
   const initial = editor.getModel();
   const uri = editorUri(props.workspaceId, props.path);
   const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(props.value, editorLanguageId(documentLanguageId(props.path)), uri);
@@ -104,7 +103,7 @@ watch(
 watch(() => props.version, () => language?.updateMarkers());
 watch(() => props.selection, selection => { if (selection && editor) { editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus(); } });
 watch(appearance, () => editor?.updateOptions(options()), { deep: true });
-watch(resolvedTheme, value => { if (editor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
+watch([appearancePalette, resolvedTheme], () => { if (editor) applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light'); });
 onUnmounted(() => {
   debugBinding?.dispose();
   undoBinding?.dispose();

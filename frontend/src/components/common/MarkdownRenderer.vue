@@ -648,41 +648,35 @@ onUnmounted(()=> {
   display: block;
 }
 
+/* 语法色来自品牌代码配色，与编辑器、终端一致。 */
 .markdown-content :deep(.hljs-comment),
-.markdown-content :deep(.hljs-quote) {
-  color: var(--gc-text-muted);
-}
-
-/* 语法颜色跟随主题已有语义色，稍混入正文颜色以免长代码过于刺眼。 */
+.markdown-content :deep(.hljs-quote) { color: var(--gc-syntax-comment); font-style: italic; }
 .markdown-content :deep(.hljs-keyword),
 .markdown-content :deep(.hljs-selector-tag),
-.markdown-content :deep(.hljs-meta) {
-  color: color-mix(in srgb, var(--gc-info) 85%, var(--gc-text-primary));
-}
-
+.markdown-content :deep(.hljs-meta) { color: var(--gc-syntax-keyword); }
 .markdown-content :deep(.hljs-string),
-.markdown-content :deep(.hljs-regexp),
-.markdown-content :deep(.hljs-addition) {
-  color: color-mix(in srgb, var(--gc-success) 85%, var(--gc-text-primary));
-}
-
+.markdown-content :deep(.hljs-addition) { color: var(--gc-syntax-string); }
+.markdown-content :deep(.hljs-regexp) { color: var(--gc-syntax-regexp); }
 .markdown-content :deep(.hljs-number),
 .markdown-content :deep(.hljs-literal),
-.markdown-content :deep(.hljs-attr),
-.markdown-content :deep(.hljs-symbol),
-.markdown-content :deep(.hljs-type) {
-  color: color-mix(in srgb, var(--gc-warning) 85%, var(--gc-text-primary));
-}
-
+.markdown-content :deep(.hljs-symbol) { color: var(--gc-syntax-number); }
+.markdown-content :deep(.hljs-type),
+.markdown-content :deep(.hljs-title.class_) { color: var(--gc-syntax-type); }
 .markdown-content :deep(.hljs-title),
-.markdown-content :deep(.hljs-built_in),
-.markdown-content :deep(.hljs-section) {
-  color: var(--gc-link);
-}
-
-.markdown-content :deep(.hljs-deletion) {
-  color: var(--gc-danger);
-}
+.markdown-content :deep(.hljs-title.function_),
+.markdown-content :deep(.hljs-built_in) { color: var(--gc-syntax-function); }
+.markdown-content :deep(.hljs-attr),
+.markdown-content :deep(.hljs-attribute) { color: var(--gc-syntax-attribute); }
+.markdown-content :deep(.hljs-name),
+.markdown-content :deep(.hljs-selector-class),
+.markdown-content :deep(.hljs-section) { color: var(--gc-syntax-tag); }
+.markdown-content :deep(.hljs-variable),
+.markdown-content :deep(.hljs-template-variable),
+.markdown-content :deep(.hljs-params) { color: var(--gc-syntax-variable); }
+.markdown-content :deep(.hljs-property) { color: var(--gc-syntax-property); }
+.markdown-content :deep(.hljs-operator),
+.markdown-content :deep(.hljs-punctuation) { color: var(--gc-syntax-operator); }
+.markdown-content :deep(.hljs-deletion) { color: var(--gc-danger); }
 
 .markdown-content :deep(.hljs-strong) { font-weight: var(--gc-font-weight-semibold); }
 .markdown-content :deep(.hljs-emphasis) { font-style: italic; }

@@ -6,7 +6,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { call, subscribe } from '../api';
 import { appearance, guard, state } from '../state';
-import { appearancePalette } from '../appearance';
+import { appearancePalette, resolvedTheme } from '../appearance';
+import { terminalThemeData } from '../editorTheme';
 import { useWorkspaceRoots } from '../workspaceRoots';
 const { roots, directory } = useWorkspaceRoots();
 const props = withDefaults(defineProps<{ compact?: boolean; visible?: boolean; sessionId?: string }>(), { compact: false, visible: true });
@@ -117,8 +118,7 @@ const unsubscribe = subscribe(event => {
 });
 onMounted(() => {
   terminal = new Terminal({ fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize ?? 14,
-    cursorBlink: true, theme: { background: appearancePalette.value.background, foreground: appearancePalette.value.text,
-      cursor: appearancePalette.value.accent, selectionBackground: appearancePalette.value.selection } });
+    cursorBlink: true, theme: terminalThemeData(appearancePalette.value, resolvedTheme.value === 'light') });
   fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(root.value!);
   terminal.onData(data => { if (!replaying) void guard(() => send(data)); });
   observer = new ResizeObserver(() => {
@@ -130,7 +130,7 @@ onMounted(() => {
 watch(() => props.sessionId, target => { if (target && terminal && target !== id.value) void guard(() => attach(target)); });
 watch(() => props.visible, async value => { if (value) { await nextTick(); fitTerminal(); } });
 watch(appearance, value => { if (terminal && value) { terminal.options.fontFamily = value.codeFont; terminal.options.fontSize = value.codeFontSize; fitTerminal(); } }, { deep: true });
-watch(appearancePalette, value => { if (terminal) terminal.options.theme = { background: value.background, foreground: value.text, cursor: value.accent, selectionBackground: value.selection }; });
+watch([appearancePalette, resolvedTheme], () => { if (terminal) terminal.options.theme = terminalThemeData(appearancePalette.value, resolvedTheme.value === 'light'); });
 onUnmounted(() => { disposed = true; attachedId.value = ''; pending = []; ++attachEpoch; ++listEpoch; unsubscribe(); observer?.disconnect(); if (fitFrame !== undefined) cancelAnimationFrame(fitFrame); terminal?.dispose(); terminal = undefined; });
 </script>
 <template>

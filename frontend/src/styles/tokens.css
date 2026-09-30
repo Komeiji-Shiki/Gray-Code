@@ -117,6 +117,21 @@
   --gc-scrollbar: var(--vscode-scrollbarSlider-background, color-mix(in srgb, var(--gc-text-muted) 30%, transparent));
   --gc-scrollbar-hover: var(--vscode-scrollbarSlider-hoverBackground, color-mix(in srgb, var(--gc-text-muted) 50%, transparent));
 
+  /* 代码配色：平台写入品牌代码色板；以下仅为旧宿主默认值。 */
+  --gc-syntax-keyword: var(--gc-accent);
+  --gc-syntax-string: var(--gc-success);
+  --gc-syntax-number: var(--gc-warning);
+  --gc-syntax-constant: var(--gc-warning);
+  --gc-syntax-function: var(--gc-link);
+  --gc-syntax-type: var(--gc-warning);
+  --gc-syntax-comment: var(--gc-text-muted);
+  --gc-syntax-variable: var(--gc-text-primary);
+  --gc-syntax-property: var(--gc-text-primary);
+  --gc-syntax-tag: var(--gc-danger);
+  --gc-syntax-attribute: var(--gc-warning);
+  --gc-syntax-regexp: var(--gc-danger);
+  --gc-syntax-operator: var(--gc-text-muted);
+
   --gc-font-ui: var(--vscode-font-family, system-ui, sans-serif);
   --gc-font-text: var(--gc-font-ui);
   --gc-font-code: var(--vscode-editor-font-family, monospace);

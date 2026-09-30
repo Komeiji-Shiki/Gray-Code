@@ -66,3 +66,28 @@ export function resolveAppearancePalette(theme: AppearanceSettings['theme'] = 'd
   const name = resolvePaletteName(theme, systemLight, darkPalette);
   return { ...(name === 'ivory' ? ivory : darkPalettes[name]), ...colors };
 }
+
+export const SYNTAX_ROLES = ['keyword', 'string', 'number', 'function', 'type', 'comment', 'variable', 'property', 'tag', 'attribute', 'regexp', 'operator', 'constant'] as const;
+export type SyntaxRole = typeof SYNTAX_ROLES[number];
+type AnsiName = 'black' | 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | 'cyan' | 'white'
+  | 'brightBlack' | 'brightRed' | 'brightGreen' | 'brightYellow' | 'brightBlue' | 'brightMagenta' | 'brightCyan' | 'brightWhite';
+
+// 编辑器、Markdown 代码块与终端共用：深色「墨上彩」，浅色「纸上墨」；三套深色配色共用同一组，保证代码观感一致。
+const codePalettes: Record<'dark' | 'light', { syntax: Record<SyntaxRole, string>; ansi: Record<AnsiName, string> }> = {
+  dark: {
+    syntax: { keyword: '#b3a8ec', string: '#a9cb98', number: '#e5b27c', function: '#8fc8d8', type: '#e2c88c', comment: '#7f8391', variable: '#dcd7cc',
+      property: '#c9c3b6', tag: '#e89a8f', attribute: '#d9b98a', regexp: '#dca6c8', operator: '#aba89f', constant: '#e5b27c' },
+    ansi: { black: '#2a2d35', red: '#e8877f', green: '#8dc4a0', yellow: '#e3b566', blue: '#93a8e8', magenta: '#c4a8e4', cyan: '#8fc8d8', white: '#d9d5cb',
+      brightBlack: '#7f8391', brightRed: '#f0a49d', brightGreen: '#a9d6b8', brightYellow: '#eecb8c', brightBlue: '#b0c0f0', brightMagenta: '#d6c0ee', brightCyan: '#abd8e5', brightWhite: '#f7f5ee' },
+  },
+  light: {
+    syntax: { keyword: '#5b4bb3', string: '#44703a', number: '#a3551b', function: '#1d6b82', type: '#835f0c', comment: '#74778a', variable: '#232a42',
+      property: '#3d4460', tag: '#a3413a', attribute: '#86560f', regexp: '#94397a', operator: '#5e6270', constant: '#a3551b' },
+    ansi: { black: '#232a42', red: '#b3413a', green: '#376e49', yellow: '#8a6015', blue: '#3b4f9a', magenta: '#7d3f8f', cyan: '#1d6b82', white: '#60647a',
+      brightBlack: '#5e6270', brightRed: '#9c342e', brightGreen: '#316a44', brightYellow: '#74500f', brightBlue: '#2f4185', brightMagenta: '#69327a', brightCyan: '#175a6e', brightWhite: '#232a42' },
+  },
+};
+
+export function resolveCodePalette(theme: AppearanceSettings['theme'] = 'dark', systemLight = false) {
+  return codePalettes[resolveAppearanceTheme(theme, systemLight)];
+}

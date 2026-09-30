@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
-  DARK_PALETTES, DEFAULT_UI_FONT, LEGACY_DEFAULT_UI_FONT, PALETTE_KEYS,
-  resolveAppearancePalette, resolveDarkPalette, resolvePaletteName, resolveUiFont
+  DARK_PALETTES, DEFAULT_UI_FONT, LEGACY_DEFAULT_UI_FONT, PALETTE_KEYS, SYNTAX_ROLES,
+  resolveAppearancePalette, resolveCodePalette, resolveDarkPalette, resolvePaletteName, resolveUiFont
 } from '../../../../shared/appearance'
 
 const luminance = (hex: string) => {
@@ -63,5 +63,25 @@ describe('品牌色板', () => {
     expect(resolveUiFont(LEGACY_DEFAULT_UI_FONT)).toBe(DEFAULT_UI_FONT)
     expect(resolveUiFont(undefined)).toBe(DEFAULT_UI_FONT)
     expect(resolveUiFont('"LXGW WenKai"')).toBe('"LXGW WenKai"')
+  })
+})
+
+describe('代码与终端配色', () => {
+  test.each([
+    ['dark', ['#17181b', '#181817', '#161a26', '#121315', '#121211', '#10131c', '#1f2023', '#1e2333']],
+    ['light', ['#f7f5ee', '#efece4', '#fdfcf8']]
+  ] as const)('%s 语法色在所有代码底色上可读', (theme, backgrounds) => {
+    const { syntax, ansi } = resolveCodePalette(theme)
+    expect(Object.keys(syntax).sort()).toEqual([...SYNTAX_ROLES].sort())
+    for (const role of SYNTAX_ROLES) for (const background of backgrounds)
+      expect.soft(contrast(syntax[role], background), `${role}/${background}`).toBeGreaterThanOrEqual(role === 'comment' ? 3.5 : 4.5)
+    const skipped = theme === 'dark' ? 'black' : 'brightWhite'
+    for (const [name, color] of Object.entries(ansi)) if (name !== skipped) for (const background of backgrounds.slice(0, 3))
+      expect.soft(contrast(color, background), `ansi.${name}/${background}`).toBeGreaterThanOrEqual(4.5)
+  })
+
+  test('跟随系统按系统明暗选择代码配色', () => {
+    expect(resolveCodePalette('system', true).syntax.keyword).toBe('#5b4bb3')
+    expect(resolveCodePalette('system', false).syntax.keyword).toBe('#b3a8ec')
   })
 })

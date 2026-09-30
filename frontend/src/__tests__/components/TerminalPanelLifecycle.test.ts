@@ -16,7 +16,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, subscribe: (listener: typeof mocks.event) => { mocks.event = listener; return () => { mocks.event = undefined; }; } }));
 vi.mock('../../../../apps/client/src/state', () => ({ appearance: ref(undefined), state: { workspaceId: 'workspace' }, guard: (action: () => Promise<unknown>) => action().catch(mocks.errors) }));
-vi.mock('../../../../apps/client/src/appearance', () => ({ appearancePalette: ref({}) }));
+vi.mock('../../../../apps/client/src/appearance', () => ({ appearancePalette: ref({}), resolvedTheme: ref('dark') }));
 vi.mock('../../../../apps/client/src/workspaceRoots', () => ({ useWorkspaceRoots: () => ({ roots: ref([]), directory: ref('') }) }));
 const sessions = ['a', 'b'].map(id => ({ id, title: id, workspaceId: 'workspace', status: 'running', pid: 1 }));
 let wrapper: ReturnType<typeof mount> | undefined;

@@ -41,6 +41,14 @@ test('注入写出语义 token 与兼容别名，并随深色配色切换', asyn
   expect(document.documentElement.dataset.palette).toBe('ivory');
 });
 
+test('按明暗主题写出代码配色', async () => {
+  const { applyDesktopAppearance } = await import('../appearance');
+  applyDesktopAppearance(settings('dark'));
+  expect(document.documentElement.style.getPropertyValue('--gc-syntax-keyword')).toBe('#b3a8ec');
+  applyDesktopAppearance(settings('light'));
+  expect(document.documentElement.style.getPropertyValue('--gc-syntax-keyword')).toBe('#5b4bb3');
+});
+
 test('自定义颜色覆盖所选深色配色，旧默认界面字体按新默认写出', async () => {
   const { applyDesktopAppearance } = await import('../appearance');
   const config = { ...settings('dark'), darkPalette: 'graphite' as const, uiFont: 'Segoe UI, Microsoft YaHei, sans-serif', colors: { background: '#000000' } };

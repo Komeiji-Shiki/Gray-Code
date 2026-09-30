@@ -3,8 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as monaco from '../monaco';
 import { call, subscribe } from "../api";
 import { appearance } from '../state';
-import { resolvedTheme } from '../appearance';
-import { installWorkbenchTheme, workbenchEditorTheme } from '../editorAppearance';
+import { appearancePalette, resolvedTheme } from '../appearance';
+import { applyWorkbenchTheme } from '../editorAppearance';
 import { workspaceEditorServices } from '../editorWorkspaceEdits';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import { ensureEditorLanguage } from '../editorLanguages';
@@ -138,11 +138,10 @@ onMounted(() => {
     lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)),
     glyphMargin: false, lineNumbersMinChars: 4, padding: { top: 14, bottom: 16 },
   }, workspaceEditorServices);
-  installWorkbenchTheme();
-  monaco.editor.setTheme(workbenchEditorTheme(resolvedTheme.value));
+  applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light');
   showSelected();
 });
-watch(resolvedTheme, value => { if (diffEditor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
+watch([appearancePalette, resolvedTheme], () => { if (diffEditor) applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light'); });
 const unsubscribe = subscribe((event) => {
   if (event.type === "workspace.diff.changed" && event.workspaceId === props.workspaceId) void load();
   if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) void load();

@@ -1,5 +1,5 @@
 import type { AppearanceSettings } from '../packages/contracts/src/settings';
-import { resolveAppearancePalette, resolveAppearanceTheme, resolvePaletteName, resolveUiFont } from './appearance';
+import { resolveAppearancePalette, resolveAppearanceTheme, resolveCodePalette, resolvePaletteName, resolveUiFont } from './appearance';
 
 /** 色板键 → 组件唯一引用的语义 token。 */
 export const semanticTokens: Record<string, string[]> = {
@@ -63,6 +63,8 @@ export function applyAppearanceVariables(target: HTMLElement, config: Appearance
   for (const [token, value] of Object.entries(appearanceFontVariables(config))) target.style.setProperty(token, value);
   for (const [token, value] of Object.entries(appearanceCssVariables(palette)))
     if (CSS.supports('color', value)) target.style.setProperty(token, value);
+  for (const [role, value] of Object.entries(resolveCodePalette(config.theme, systemLight).syntax))
+    target.style.setProperty(`--gc-syntax-${role}`, value);
   const theme = resolveAppearanceTheme(config.theme, systemLight);
   target.dataset.theme = theme;
   target.dataset.palette = resolvePaletteName(config.theme, systemLight, config.darkPalette);
