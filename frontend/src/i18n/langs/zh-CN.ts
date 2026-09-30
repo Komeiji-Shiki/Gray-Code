@@ -1035,6 +1035,7 @@ const zhCN = {
         },
 
         settings: {
+            darkPalette: { title: '深色配色', description: '深色主题下使用的配色方案，浅色主题固定为象牙纸。', shell: '藏青外壳', graphite: '石墨纸', indigo: '藏青' },
             clawdSettings: sharedZhCN.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedZhCN.components.settings.backgroundGalleryPolicy,
             title: '设置',

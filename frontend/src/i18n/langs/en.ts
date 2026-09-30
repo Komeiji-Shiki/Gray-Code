@@ -1033,6 +1033,7 @@ const en: LanguageMessages = {
         },
 
         settings: {
+            darkPalette: { title: 'Dark palette', description: 'Palette used by the dark theme. The light theme always uses Ivory.', shell: 'Indigo shell', graphite: 'Graphite paper', indigo: 'Indigo' },
             clawdSettings: sharedEn.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedEn.components.settings.backgroundGalleryPolicy,
             title: 'Settings',

@@ -115,8 +115,8 @@ defineEmits<{
   padding: 0 var(--gc-space-3);
   background: transparent;
   border: none;
-  border-radius: 0;
-  color: var(--gc-text-primary);
+  border-radius: var(--gc-radius-sm);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition:
     background-color var(--gc-duration-fast) var(--gc-ease-standard),
@@ -125,6 +125,7 @@ defineEmits<{
 
 .settings-tab:hover {
   background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .settings-tab:focus-visible {
@@ -179,9 +180,11 @@ defineEmits<{
   visibility: visible;
 }
 
+/* 与导航侧栏一致：浅底加左侧强调条，不再用大块饱和色。 */
 .settings-tab.active {
-  background: var(--gc-surface-selected);
-  color: var(--gc-text-selected);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
+  box-shadow: inset 2px 0 0 var(--gc-accent);
 }
 
 .settings-tab .codicon {
@@ -194,7 +197,7 @@ defineEmits<{
 }
 
 .settings-tab.has-match.active {
-  color: var(--gc-text-selected);
+  color: var(--gc-text-primary);
 }
 
 .settings-tab.dimmed {

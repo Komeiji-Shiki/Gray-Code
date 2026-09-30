@@ -1033,6 +1033,7 @@ const ja: LanguageMessages = {
         },
 
         settings: {
+            darkPalette: { title: 'ダーク配色', description: 'ダークテーマで使う配色です。ライトテーマは常にアイボリーです。', shell: '藍色シェル', graphite: 'グラファイト', indigo: '藍色' },
             clawdSettings: sharedJa.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedJa.components.settings.backgroundGalleryPolicy,
             title: '設定',
