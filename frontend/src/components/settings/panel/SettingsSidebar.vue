@@ -74,7 +74,6 @@ defineEmits<{
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  border-right: 1px solid var(--gc-border-subtle);
   padding: var(--gc-space-2) var(--gc-space-1);
   display: flex;
   flex-direction: column;

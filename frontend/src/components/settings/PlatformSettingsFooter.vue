@@ -42,7 +42,7 @@ defineExpose({ requestClose });
   </Modal>
 </template>
 <style scoped>
-.platform-settings-footer { display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--gc-border-subtle); background: var(--gc-surface-panel); }
+.platform-settings-footer { display: flex; align-items: center; gap: 12px; padding: 16px 24px; background: var(--gc-surface-panel); }
 .platform-settings-footer > div { flex: 1; font-size: var(--gc-font-size-body); color: var(--gc-text-muted); }
 .platform-settings-footer p { margin: 8px 0 0; color: var(--gc-danger); }
 button { color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); background: var(--gc-surface-raised); padding: 8px 16px; font: inherit; cursor: pointer; border-radius: var(--gc-radius-sm); }

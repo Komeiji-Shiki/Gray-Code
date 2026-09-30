@@ -612,7 +612,6 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
   justify-content: space-between;
   align-items: center;
   padding: var(--gc-space-3) var(--gc-space-4);
-  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .settings-header h3 {

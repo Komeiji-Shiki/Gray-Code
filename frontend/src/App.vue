@@ -705,7 +705,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   position: relative;
 }
-.conversation-heading { min-height: 44px; display: flex; align-items: center; border-bottom: 1px solid var(--gc-border-subtle); padding: 10px 20px; font-size: 13px; font-weight: 500; flex-shrink: 0; }
+.conversation-heading { min-height: 44px; display: flex; align-items: center; padding: 10px 20px; font-size: 13px; font-weight: 500; flex-shrink: 0; }
 .conversation-heading span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 自动总结提示（显示在聊天区域底部） */
