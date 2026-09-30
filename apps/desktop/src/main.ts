@@ -207,7 +207,7 @@ function minimizeToTray(): void {
 }
 function desktopColors(): Record<string, string> {
   const appearance = application.settings.snapshot().settings.appearance;
-  return resolveAppearancePalette(appearance.theme, appearance.colors, !nativeTheme.shouldUseDarkColors);
+  return resolveAppearancePalette(appearance.theme, appearance.colors, !nativeTheme.shouldUseDarkColors, appearance.darkPalette);
 }
 async function confirmQuit(intent: 'quit' | 'window' = 'quit'): Promise<void> {
   if (exitPhase !== 'idle') return;
@@ -294,9 +294,9 @@ async function createWindow(): Promise<void> {
     minHeight: geometry.minHeight,
     title: "GrayCode",
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: colors.background, symbolColor: colors.text, height: 38 },
+    titleBarOverlay: { color: colors.chrome, symbolColor: colors.chromeText, height: 38 },
     autoHideMenuBar: true,
-    backgroundColor: colors.background,
+    backgroundColor: colors.chrome,
     show: process.env.GRAYCODE_DESKTOP_SMOKE !== "1",
     webPreferences: {
       preload,

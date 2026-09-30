@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog, ipcMain, screen } from 'electron';
 import path from 'node:path';
 import { desktopDialogHtml, type DesktopDialogContent } from './desktopDialogContent';
+import { resolveAppearancePalette } from '../../../shared/appearance';
 
 function createDialog(content: DesktopDialogContent, parent?: BrowserWindow) {
   const owner = parent && !parent.isDestroyed() && parent.isVisible() ? parent : undefined;
@@ -8,7 +9,8 @@ function createDialog(content: DesktopDialogContent, parent?: BrowserWindow) {
   const window = new BrowserWindow({
     width: Math.min(650, area.width), height: Math.min(content.items?.length ? 450 : 385, area.height),
     parent: owner, modal: !!owner, show: false, frame: false, resizable: false, minimizable: false, maximizable: false,
-    title: content.title, backgroundColor: '#17191e', autoHideMenuBar: true,
+    // 与对话框 HTML 相同，只接受十六进制字面值；手动输入的不完整颜色回落默认色板。
+    title: content.title, backgroundColor: /^#(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i.test(content.colors?.background ?? '') ? content.colors!.background : resolveAppearancePalette('dark').background, autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'desktopDialogPreload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   window.setMenu(null);
