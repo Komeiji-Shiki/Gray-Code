@@ -10,6 +10,7 @@
  * P2 回执窗口、interrupt 限频等已修 bug 注释原样保留，一行未改。
  */
 
+import { toRaw, triggerRef } from 'vue'
 import { MESSAGE_NAMES, type CancelStreamResponse, type ForegroundWorkTransition } from '@shared/protocol'
 import { contentToMessageEnhanced } from '../parsers'
 import type { Content, Message, Attachment } from '../../../types'
@@ -309,11 +310,54 @@ function mergeResponseWithCleanup(
   }
 }
 
+/** 隐藏发送在宿主接受前写入窗口的乐观结果；按对象身份撤回，不覆盖之后到达的更新。 */
+interface HiddenFunctionResponseUndo {
+  applied: Message
+  /** 合并前的原消息；为空表示本次是追加 */
+  previous?: Message
+  toolCallId?: string
+  appliedResponse: Record<string, unknown>
+  previousCachedResponse?: Record<string, unknown>
+}
+
+function revertHiddenMessages(all: Message[], undo: HiddenFunctionResponseUndo): Message[] {
+  const index = all.findIndex(message => toRaw(message) === undo.applied)
+  if (index === -1) return all
+  return undo.previous
+    ? all.map((message, i) => i === index ? undo.previous! : message)
+    : all.filter((_, i) => i !== index)
+}
+
+function isAppliedCachedResponse(toolCallId: string, response: unknown, undo: HiddenFunctionResponseUndo): boolean {
+  return toolCallId === undo.toolCallId && response !== undefined && toRaw(response) === undo.appliedResponse
+}
+
+/**
+ * 撤回隐藏发送的乐观写入。卡片“已执行/已生成”由这份响应的 continuationPrompt 推导，
+ * 宿主拒绝后若保留，按钮会显示完成却从未执行，也无法重试。活跃窗口与后台快照都要撤回。
+ */
+function revertHiddenFunctionResponse(state: ChatStoreState, undo: HiddenFunctionResponseUndo): void {
+  const index = state.allMessages.value.findIndex(message => toRaw(message) === undo.applied)
+  if (index !== -1 && undo.previous) replaceMessageAt(state, index, undo.previous)
+  else if (index !== -1) {
+    state.allMessages.value = state.allMessages.value.filter((_, i) => i !== index)
+    rebuildMessageIndexById(state)
+    setTotalMessagesFromWindow(state)
+  }
+  const cache = state.toolResponseCache.value
+  if (undo.toolCallId && isAppliedCachedResponse(undo.toolCallId, cache.get(undo.toolCallId), undo)) {
+    if (undo.previousCachedResponse) cache.set(undo.toolCallId, undo.previousCachedResponse)
+    else cache.delete(undo.toolCallId)
+    triggerRef(state.toolResponseCache)
+  }
+}
+
 function upsertHiddenFunctionResponseMessage(
   state: ChatStoreState,
   payload: HiddenFunctionResponsePayload
-): void {
+): HiddenFunctionResponseUndo {
   const all = state.allMessages.value
+  const previousCachedResponse = payload.id ? toRaw(state.toolResponseCache.value.get(payload.id)) : undefined
 
   // 1) 优先按 id 定位并替换已有 functionResponse（如 create_plan 的原始响应）
   if (payload.id) {
@@ -344,19 +388,17 @@ function upsertHiddenFunctionResponseMessage(
         // 增量缓存（指纹只校验首尾元素，直写数组会把旧消息对象留在可见缓存里）并递增结构
         // 版本（todoSnapshot / usedTokens 增量缓存持有同一数组代理，逐元素比较恒真）；
         // 尾部替换为流式安全模式，不递增。同 id 替换不改变消息位置，索引无需重建。
-        replaceMessageAt(state, i, { ...msg, parts: nextParts })
+        const nextMessage = { ...msg, parts: nextParts }
+        replaceMessageAt(state, i, nextMessage)
         // ★ 同步更新 toolResponseCache，避免 getToolResponseById 返回旧缓存
         // 导致 replayTodoStateFromMessages 看不到 planExecutionPrompt 等新合并字段
-        if (payload.id) {
-          const mergedResponse = nextParts
-            .find(p => p.functionResponse?.id === payload.id)
-            ?.functionResponse?.response as Record<string, unknown> | undefined
-          if (mergedResponse) {
-            // 带容量上限写入（超限淘汰最旧条目），见 state.ts setToolResponseCacheEntry
-            setToolResponseCacheEntry(state, payload.id, mergedResponse)
-          }
-        }
-        return
+        const mergedResponse = nextParts
+          .find(p => p.functionResponse?.id === payload.id)
+          ?.functionResponse?.response as Record<string, unknown>
+        // 带容量上限写入（超限淘汰最旧条目），见 state.ts setToolResponseCacheEntry
+        setToolResponseCacheEntry(state, payload.id, mergedResponse)
+        return { applied: nextMessage, previous: toRaw(msg), toolCallId: payload.id,
+          appliedResponse: mergedResponse, previousCachedResponse }
       }
     }
   }
@@ -379,6 +421,7 @@ function upsertHiddenFunctionResponseMessage(
   }
   // M3-2：与 appendMessage 对齐，增量维护 messageIndexById / toolResponseIndex
   appendMessage(state, responseMessage)
+  return { applied: responseMessage, toolCallId: payload.id, appliedResponse: toRaw(payload.response), previousCachedResponse }
 }
 
 export async function sendMessage(
@@ -397,6 +440,7 @@ export async function sendMessage(
 
   // 本次发送的 assistant 占位 id（catch 清理用；声明在 try 外，避免 try 早期抛错时 TDZ）
   let assistantMessageId: string | null = null
+  let hiddenUndo: HiddenFunctionResponseUndo | undefined
 
   // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
@@ -415,11 +459,12 @@ export async function sendMessage(
     return deliverInterruptMessage(state, messageText, attachments, options)
   }
 
-  // hidden 发送流式守卫：主会话流仍在活跃输出（isStreaming 与 activeStreamId 同时成立）时，
-  // 再发起一条新流会覆盖 activeStreamId，旧流后续 chunk 会被 streamHandler 按错流/迟到丢弃，
-  // 两条流互相踩踏。审批门闸暂停态不受影响——chunkTools 门闸处理会把 isStreaming /
-  // activeStreamId 置空（仅 isWaitingForResponse 可能保持 true），「等待态放行」语义保持不变。
-  if (isHiddenSend && state.isStreaming.value && state.activeStreamId.value) {
+  // hidden 发送流式守卫：流仍属于某个任务时，再发起一条新流会覆盖 activeStreamId，旧流后续
+  // chunk 会被 streamHandler 按错流/迟到丢弃，两条流互相踩踏。独立宿主的工具审批 keepStreamOpen
+  // 会让 isStreaming=false 但保留 activeStreamId，宿主此时也必然拒绝文档确认，因此只看流归属。
+  // 文档确认门闸暂停态不受影响——终结性 toolIteration 会把 activeStreamId 置空
+  // （仅 isWaitingForResponse 可能保持 true），「等待态放行」语义保持不变。
+  if (isHiddenSend && state.activeStreamId.value) {
     return false
   }
 
@@ -455,10 +500,15 @@ export async function sendMessage(
     if (isOriginCurrent()) {
       const ownsCurrent = ownsSend(state.streamingMessageId.value, state.activeStreamId.value)
       if (!ownsCurrent) {
-        if (discardUnsubmittedUser) cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId, true)
+        if (discardUnsubmittedUser) {
+          // 准备阶段被取消时隐藏确认同样没有提交，乐观写入要一并撤回。
+          if (hiddenUndo) revertHiddenFunctionResponse(state, hiddenUndo)
+          cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId, true)
+        }
         return
       }
       if (error && state._lastCancelledStreamId.value?.messageId !== assistantMessageId) state.error.value = error
+      if (hiddenUndo) revertHiddenFunctionResponse(state, hiddenUndo)
       cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId, discardUnsubmittedUser)
       const cancelled = state._lastCancelledStreamId.value
       resetPendingSendState(state)
@@ -470,6 +520,13 @@ export async function sendMessage(
     const ownsSnapshot = ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)
     if (!ownsSnapshot && !discardUnsubmittedUser) return
     if (error) snapshot.error = error
+    if (hiddenUndo) {
+      const undo = hiddenUndo
+      snapshot.allMessages = revertHiddenMessages(snapshot.allMessages, undo)
+      snapshot.toolResponseCache = snapshot.toolResponseCache?.flatMap(([id, response]): Array<[string, Record<string, unknown>]> =>
+        !isAppliedCachedResponse(id, response, undo) ? [[id, response]]
+          : undo.previousCachedResponse ? [[id, undo.previousCachedResponse]] : [])
+    }
     snapshot.allMessages = removeFailedSendPlaceholders(snapshot.allMessages, pendingUserMessageId, assistantMessageId,
       discardUnsubmittedUser, snapshot.windowStartIndex)
     snapshot.totalMessages = snapshot.windowStartIndex + snapshot.allMessages.length
@@ -534,7 +591,7 @@ export async function sendMessage(
 
     if (hiddenFunctionResponse) {
       // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
-      upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
+      hiddenUndo = upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
     } else {
       const userMessage: Message = {
         id: options?.messageId || generateId(),

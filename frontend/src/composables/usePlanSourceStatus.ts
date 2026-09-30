@@ -18,11 +18,12 @@ import {
 export function usePlanSourceStatus() {
   const planSourceStatusByPath = ref<Map<string, PlanSourceState>>(new Map())
 
-  async function refreshPlanSourceStatuses(cards: TaskCardItem[]) {
+  // 独立宿主按对话解析工作区读取来源文档；不带对话的查询必然被拒绝，来源阻断也就无从显示。
+  async function refreshPlanSourceStatuses(cards: TaskCardItem[], conversationId: string | null | undefined) {
     const next = new Map<string, PlanSourceState>()
     const uniquePlanCards = new Map<string, TaskCardItem>()
 
-    for (const card of cards) {
+    for (const card of conversationId ? cards : []) {
       if (card.kind !== 'plan' || !card.path) continue
       if (!uniquePlanCards.has(card.path)) {
         uniquePlanCards.set(card.path, card)
@@ -33,7 +34,8 @@ export function usePlanSourceStatus() {
       try {
         const result = await sendToExtension<unknown>(MESSAGE_NAMES['plan.getSourceStatus'], {
           path,
-          originalContent: card.content
+          originalContent: card.content,
+          conversationId
         })
         next.set(path, normalizePlanSourceState(result))
       } catch (error) {

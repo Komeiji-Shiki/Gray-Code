@@ -139,10 +139,23 @@ function isCardActionCompleted(card: TaskCardItem): boolean {
   return card.isActionCompleted
 }
 
+// 宿主拒绝且不是来源阻断时，这张卡的确认请求已被新消息或新文档取代；保留原因，
+// 不再提供一个必然失败的按钮。只是界面态，重新加载对话后以宿主为准。
+const expiredCardReasons = ref(new Map<string, string>())
+
+function isCardActionExpired(card: TaskCardItem): boolean {
+  return !card.isActionCompleted && expiredCardReasons.value.has(card.key)
+}
+
+function markCardActionExpired(card: TaskCardItem, reason: string) {
+  expiredCardReasons.value = new Map(expiredCardReasons.value).set(card.key, reason)
+}
+
 function getCardActionTitle(card: TaskCardItem): string {
   if (card.kind === 'plan' && isPlanSourceBlocked(card)) {
     return getPlanBlockedReason(card)
   }
+  if (isCardActionExpired(card)) return expiredCardReasons.value.get(card.key)!
   return getActionText(card)
 }
 
@@ -164,17 +177,20 @@ function getActionLabel(kind: TaskCardKind): string {
 function getActionText(card: TaskCardItem): string {
   if (card.kind === 'plan') {
     if (isCardActionCompleted(card)) return t('components.message.tool.planCard.executed')
+    if (isCardActionExpired(card)) return t('components.message.tool.planCard.expired')
     if (isExecutingPlan.value) return t('components.message.tool.planCard.executing')
     return t('components.message.tool.planCard.executePlan')
   }
 
   if (isCardActionCompleted(card)) return t('components.message.tool.designCard.generated')
+  if (isCardActionExpired(card)) return t('components.message.tool.designCard.expired')
   if (isGeneratingPlan.value) return t('components.message.tool.designCard.generating')
   return t('components.message.tool.designCard.generatePlan')
 }
 
 function getActionIconClass(card: TaskCardItem): string {
   if (isCardActionCompleted(card)) return 'codicon-check'
+  if (isCardActionExpired(card)) return 'codicon-circle-slash'
   if (isCardActionRunning(card.kind)) return 'codicon-loading codicon-modifier-spin'
   return card.kind === 'plan' ? 'codicon-play' : 'codicon-arrow-right'
 }
@@ -184,6 +200,7 @@ function isActionDisabled(card: TaskCardItem): boolean {
   return (
     isAnyTaskActionRunning.value ||
     isCardActionCompleted(card) ||
+    isCardActionExpired(card) ||
     (card.kind === 'plan' && isPlanSourceBlocked(card)) ||
     !modeId ||
     !selectedChannelId.value ||
@@ -191,9 +208,23 @@ function isActionDisabled(card: TaskCardItem): boolean {
   )
 }
 
+// 确认请求失败（会话不可访问、传输超时等）不能只写控制台，否则用户看到的就是“点击没有反应”。
+function notifyTaskActionFailure(error: unknown, fallback: string) {
+  console.error(fallback, error)
+  void showNotification(error instanceof Error && error.message.trim() ? error.message : fallback, 'error')
+}
+
+// 流仍属于某个任务（输出中或等待工具审批）时宿主必然拒绝文档确认；提前说明，不发起确认。
+function isWaitingForCurrentTask(): boolean {
+  if (!chatStore.activeStreamId) return false
+  void showNotification(t('components.message.tool.waitForCurrentTask'), 'warning')
+  return true
+}
+
 async function executePlan(card: TaskCardItem) {
   if (card.kind !== 'plan') return
-  if (isExecutingPlan.value || isCardActionCompleted(card) || isPlanSourceBlocked(card) || !card.content.trim()) return
+  if (isExecutingPlan.value || isCardActionCompleted(card) || isCardActionExpired(card) || isPlanSourceBlocked(card) || !card.content.trim()) return
+  if (isWaitingForCurrentTask()) return
 
   isExecutingPlan.value = true
   try {
@@ -223,7 +254,8 @@ async function executePlan(card: TaskCardItem) {
     if (!confirmResult?.success) {
       const message = String(confirmResult?.error || t('components.message.tool.planCard.executePlanFailed'))
       await showNotification(message, 'warning')
-      await refreshPlanSourceStatuses(taskCards.value)
+      if (confirmResult?.success === false && !confirmResult.blocked) markCardActionExpired(card, message)
+      await refreshPlanSourceStatuses(taskCards.value, chatStore.currentConversationId)
       return
     }
 
@@ -296,7 +328,7 @@ async function executePlan(card: TaskCardItem) {
       return
     }
   } catch (error) {
-    console.error(t('components.message.tool.planCard.executePlanFailed'), error)
+    notifyTaskActionFailure(error, t('components.message.tool.planCard.executePlanFailed'))
   } finally {
     isExecutingPlan.value = false
   }
@@ -304,7 +336,8 @@ async function executePlan(card: TaskCardItem) {
 
 async function generatePlan(card: TaskCardItem) {
   if (card.kind !== 'design') return
-  if (isGeneratingPlan.value || isCardActionCompleted(card) || !card.content.trim()) return
+  if (isGeneratingPlan.value || isCardActionCompleted(card) || isCardActionExpired(card) || !card.content.trim()) return
+  if (isWaitingForCurrentTask()) return
 
   isGeneratingPlan.value = true
   try {
@@ -323,7 +356,9 @@ async function generatePlan(card: TaskCardItem) {
     })
 
     if (!confirmResult?.success) {
-      await showNotification(String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed')), 'warning')
+      const message = String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed'))
+      await showNotification(message, 'warning')
+      if (confirmResult?.success === false) markCardActionExpired(card, message)
       return
     }
 
@@ -378,7 +413,7 @@ async function generatePlan(card: TaskCardItem) {
       return
     }
   } catch (error) {
-    console.error(t('components.message.tool.designCard.generatePlanFailed'), error)
+    notifyTaskActionFailure(error, t('components.message.tool.designCard.generatePlanFailed'))
   } finally {
     isGeneratingPlan.value = false
   }
@@ -386,7 +421,8 @@ async function generatePlan(card: TaskCardItem) {
 
 async function generatePlanFromReview(card: TaskCardItem) {
   if (card.kind !== 'review') return
-  if (isGeneratingPlan.value || isCardActionCompleted(card) || !card.content.trim()) return
+  if (isGeneratingPlan.value || isCardActionCompleted(card) || isCardActionExpired(card) || !card.content.trim()) return
+  if (isWaitingForCurrentTask()) return
 
   isGeneratingPlan.value = true
   try {
@@ -405,7 +441,9 @@ async function generatePlanFromReview(card: TaskCardItem) {
     })
 
     if (!confirmResult?.success) {
-      await showNotification(String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed')), 'warning')
+      const message = String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed'))
+      await showNotification(message, 'warning')
+      if (confirmResult?.success === false) markCardActionExpired(card, message)
       return
     }
 
@@ -457,7 +495,7 @@ async function generatePlanFromReview(card: TaskCardItem) {
       return
     }
   } catch (error) {
-    console.error(t('components.message.tool.reviewCard.generatePlanFailed'), error)
+    notifyTaskActionFailure(error, t('components.message.tool.reviewCard.generatePlanFailed'))
   } finally {
     isGeneratingPlan.value = false
   }
@@ -497,7 +535,7 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
 onMounted(() => {
   loadChannels()
   void loadPromptModes()
-  void refreshPlanSourceStatuses(taskCards.value)
+  void refreshPlanSourceStatuses(taskCards.value, chatStore.currentConversationId)
   void autoOpenPendingCardTabs(taskCards.value)
 
   // 设置面板中渠道/模型变更后刷新（新增模型无需重启扩展即可在下拉框看到）
@@ -521,7 +559,7 @@ const taskCards = computed<TaskCardItem[]>(() =>
 watch(
   () => taskCards.value,
   (cards) => {
-    void refreshPlanSourceStatuses(cards)
+    void refreshPlanSourceStatuses(cards, chatStore.currentConversationId)
     void autoOpenPendingCardTabs(cards)
   }
 )
@@ -535,7 +573,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
       <ReviewTaskCard
         v-if="c.kind === 'review' && c.reviewCardData"
         :card="c.reviewCardData"
-        :plan-generation-enabled="!c.isActionCompleted && !!c.path && !!c.content && c.reviewCardData?.status === 'completed'"
+        :plan-generation-enabled="!c.isActionCompleted && !isCardActionExpired(c) && !!c.path && !!c.content && c.reviewCardData?.status === 'completed'"
         :plan-generation-completed="c.isActionCompleted"
         :is-generating-plan="isGeneratingPlan"
         :content="c.content"
