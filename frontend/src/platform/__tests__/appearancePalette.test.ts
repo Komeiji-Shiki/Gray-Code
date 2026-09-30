@@ -3,6 +3,7 @@ import {
   DARK_PALETTES, DEFAULT_UI_FONT, LEGACY_DEFAULT_UI_FONT, PALETTE_KEYS, SYNTAX_ROLES,
   resolveAppearancePalette, resolveCodePalette, resolveDarkPalette, resolvePaletteName, resolveUiFont
 } from '../../../../shared/appearance'
+import { semanticTokens } from '../../../../shared/appearanceTokens'
 
 const luminance = (hex: string) => {
   const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
@@ -18,6 +19,12 @@ const hsl = (hex: string) => {
   const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2
   const h = d === 0 ? 0 : max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4)
   return { h: (h + 360) % 360, s: d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1)) }
+}
+/** 半透明颜色（#rrggbbaa）叠在底色上的实际颜色。 */
+const composite = (over: string, under: string) => {
+  const alpha = over.length === 9 ? parseInt(over.slice(7, 9), 16) / 255 : 1
+  return '#' + [1, 3, 5].map(i => Math.round(parseInt(over.slice(i, i + 2), 16) * alpha + parseInt(under.slice(i, i + 2), 16) * (1 - alpha))
+    .toString(16).padStart(2, '0')).join('')
 }
 const palettes = [
   ...DARK_PALETTES.map(id => [id, resolveAppearancePalette('dark', {}, false, id)] as const),
@@ -44,6 +51,18 @@ describe('品牌色板', () => {
     }
   })
 
+  test.each(palettes)('%s 分割线比控件描边更淡，但在底色与面板上仍可辨认', (_name, p) => {
+    for (const surface of ['background', 'panel']) {
+      const divider = contrast(composite(p.divider, p[surface]), p[surface])
+      expect.soft(divider, `divider/${surface}`).toBeLessThan(contrast(p.border, p[surface]))
+      expect.soft(divider, `divider/${surface}`).toBeGreaterThanOrEqual(1.08)
+    }
+  })
+
+  test('分割线与控件描边分成两个语义 token', () => {
+    expect(semanticTokens.divider).toEqual(['--gc-border-subtle'])
+    expect(semanticTokens.border).toEqual(['--gc-border-control'])
+  })
   test('深色按所选配色解析，未知或缺省配色回落藏青外壳', () => {
     expect(resolveAppearancePalette('dark', {}, false, 'graphite').background).toBe('#181817')
     expect(resolveAppearancePalette('dark', {}, false, 'indigo').background).toBe('#161a26')

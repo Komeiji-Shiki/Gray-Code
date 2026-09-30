@@ -87,6 +87,11 @@ describe('frontend visual and async architecture contracts', () => {
     expect(theme).not.toMatch(/--gc-radius-(xs|sm|md|lg):\s*0/)
   })
 
+  test('状态描边与不透明的控件描边混色，不随半透明分割线变淡', () => {
+    const tokens = readFileSync(path.resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8')
+    for (const role of ['success', 'warning', 'danger', 'info'])
+      expect(tokens).toMatch(new RegExp(`--gc-${role}-border: color-mix\\(in srgb, var\\(--gc-${role}\\) 45%, var\\(--gc-border-control\\)\\);`))
+  })
   test('两个文档的启动默认值与默认色板一致，避免加载设置前闪色', () => {
     const palette = resolveAppearancePalette('dark')
     const chat = readFileSync(path.resolve(process.cwd(), 'src/platform/theme.css'), 'utf8')

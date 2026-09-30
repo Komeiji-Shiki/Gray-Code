@@ -9,7 +9,7 @@ export const semanticTokens: Record<string, string[]> = {
   surface: ['--gc-surface-sunken'], input: ['--gc-surface-input'],
   text: ['--gc-text-primary'], muted: ['--gc-text-muted'], disabled: ['--gc-text-disabled'],
   accent: ['--gc-accent', '--gc-link', '--gc-focus-border'], linkActive: ['--gc-link-active'],
-  border: ['--gc-border-subtle', '--gc-border-control'], hover: ['--gc-surface-hover'],
+  border: ['--gc-border-control'], divider: ['--gc-border-subtle'], hover: ['--gc-surface-hover'],
   selection: ['--gc-surface-selected', '--gc-surface-active'], selectionText: ['--gc-text-selected'],
   button: ['--gc-button-primary'], buttonHover: ['--gc-button-primary-hover'], buttonText: ['--gc-text-on-primary'],
   buttonSecondary: ['--gc-button-secondary'], buttonSecondaryHover: ['--gc-button-secondary-hover'], buttonSecondaryText: ['--gc-text-on-secondary'],

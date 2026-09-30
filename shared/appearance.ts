@@ -21,12 +21,13 @@ export function resolveUiFont(uiFont?: string): string {
 
 // 品牌色：藏青 #232A42、象牙白 #F7F5EE、石板灰 #727682。工作台、聊天、原生标题栏与对话框共用。
 // chrome 系用于标题栏、导航侧栏与标签栏；surface 为凹陷底（代码与命令块）。
+// border 是输入框等控件的描边；divider 是半透明分割线，叠在任何底色上都只比底色亮一点。
 // 藏青外壳：外壳用饱和藏青，内容区取同一色相的低饱和石板色，避免冷外壳配暖灰内容。
 const darkPalettes: Record<DarkPaletteId, Record<string, string>> = {
   shell: {
     chrome: '#1a2033', chromeHover: '#232a42', chromeBorder: '#262d45', chromeText: '#e9e6de', chromeMuted: '#9aa0b5',
     background: '#17191f', panel: '#1f222a', surface: '#121419', input: '#1f222a', text: '#ece9e1', muted: '#9da2b0', disabled: '#6d7280',
-    border: '#2b2f39', hover: '#252933', selection: '#2a3350', selectionText: '#f7f5ee', accent: '#9fb0e8', linkActive: '#c3cdf2',
+    border: '#2b2f39', divider: '#9da2b017', hover: '#252933', selection: '#2a3350', selectionText: '#f7f5ee', accent: '#9fb0e8', linkActive: '#c3cdf2',
     button: '#f2eee5', buttonHover: '#faf8f2', buttonText: '#232a42',
     buttonSecondary: '#282c37', buttonSecondaryHover: '#30343f', buttonSecondaryText: '#e3e0d8',
     danger: '#e8877f', success: '#8dc4a0', warning: '#e3b566', scrollbar: '#6d728040', scrollbarHover: '#8b90a070',
@@ -34,7 +35,7 @@ const darkPalettes: Record<DarkPaletteId, Record<string, string>> = {
   graphite: {
     chrome: '#121211', chromeHover: '#1c1c1a', chromeBorder: '#242422', chromeText: '#ece9e1', chromeMuted: '#9a978e',
     background: '#181817', panel: '#21211f', surface: '#121211', input: '#21211f', text: '#ece9e1', muted: '#9a978e', disabled: '#6c6a64',
-    border: '#2e2e2b', hover: '#282826', selection: '#2d3348', selectionText: '#f7f5ee', accent: '#8fa2e0', linkActive: '#b9c5ef',
+    border: '#2e2e2b', divider: '#9a978e17', hover: '#282826', selection: '#2d3348', selectionText: '#f7f5ee', accent: '#8fa2e0', linkActive: '#b9c5ef',
     button: '#ece9e1', buttonHover: '#f7f5ee', buttonText: '#1b1b1a',
     buttonSecondary: '#2b2b28', buttonSecondaryHover: '#333330', buttonSecondaryText: '#e3e0d8',
     danger: '#e5857d', success: '#8cc19e', warning: '#e0b263', scrollbar: '#6b6a6540', scrollbarHover: '#8a887f70',
@@ -42,7 +43,7 @@ const darkPalettes: Record<DarkPaletteId, Record<string, string>> = {
   indigo: {
     chrome: '#10131c', chromeHover: '#1a1f2e', chromeBorder: '#1f2536', chromeText: '#ece8df', chromeMuted: '#8e93a3',
     background: '#161a26', panel: '#1e2333', surface: '#10131c', input: '#1e2333', text: '#ece8df', muted: '#8e93a3', disabled: '#666b7c',
-    border: '#2a3044', hover: '#242a3c', selection: '#2e3a5e', selectionText: '#f7f5ee', accent: '#9fb0e8', linkActive: '#c3cdf2',
+    border: '#2a3044', divider: '#8e93a317', hover: '#242a3c', selection: '#2e3a5e', selectionText: '#f7f5ee', accent: '#9fb0e8', linkActive: '#c3cdf2',
     button: '#f2eee5', buttonHover: '#faf8f2', buttonText: '#232a42',
     buttonSecondary: '#283049', buttonSecondaryHover: '#2f3854', buttonSecondaryText: '#e3e0d8',
     danger: '#e8877f', success: '#8dc4a0', warning: '#e3b566', scrollbar: '#6b738a40', scrollbarHover: '#8a92a870',
@@ -51,7 +52,7 @@ const darkPalettes: Record<DarkPaletteId, Record<string, string>> = {
 const ivory: Record<string, string> = {
   chrome: '#efece4', chromeHover: '#e5e1d6', chromeBorder: '#ddd8cc', chromeText: '#232a42', chromeMuted: '#5e6270',
   background: '#f7f5ee', panel: '#fdfcf8', surface: '#efece4', input: '#fdfcf8', text: '#232a42', muted: '#636776', disabled: '#9a9ca5',
-  border: '#e0dbcf', hover: '#efebe1', selection: '#dfe3f3', selectionText: '#1b2135', accent: '#3b4f9a', linkActive: '#2a3b7c',
+  border: '#e0dbcf', divider: '#63677624', hover: '#efebe1', selection: '#dfe3f3', selectionText: '#1b2135', accent: '#3b4f9a', linkActive: '#2a3b7c',
   button: '#232a42', buttonHover: '#2f3756', buttonText: '#f7f5ee',
   buttonSecondary: '#ebe7dc', buttonSecondaryHover: '#e2ddd0', buttonSecondaryText: '#232a42',
   danger: '#b3413a', success: '#3d7a52', warning: '#8a6015', scrollbar: '#7a7d8a40', scrollbarHover: '#5f627080',

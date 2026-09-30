@@ -95,10 +95,10 @@
   --gc-warning-bg: color-mix(in srgb, var(--gc-warning) 14%, var(--gc-surface-raised));
   --gc-danger-bg: color-mix(in srgb, var(--gc-danger) 14%, var(--gc-surface-raised));
   --gc-info-bg: color-mix(in srgb, var(--gc-info) 14%, var(--gc-surface-raised));
-  --gc-success-border: color-mix(in srgb, var(--gc-success) 45%, var(--gc-border-subtle));
-  --gc-warning-border: color-mix(in srgb, var(--gc-warning) 45%, var(--gc-border-subtle));
-  --gc-danger-border: color-mix(in srgb, var(--gc-danger) 45%, var(--gc-border-subtle));
-  --gc-info-border: color-mix(in srgb, var(--gc-info) 45%, var(--gc-border-subtle));
+  --gc-success-border: color-mix(in srgb, var(--gc-success) 45%, var(--gc-border-control));
+  --gc-warning-border: color-mix(in srgb, var(--gc-warning) 45%, var(--gc-border-control));
+  --gc-danger-border: color-mix(in srgb, var(--gc-danger) 45%, var(--gc-border-control));
+  --gc-info-border: color-mix(in srgb, var(--gc-info) 45%, var(--gc-border-control));
 
   --gc-badge-bg: var(--gc-surface-hover);
   --gc-badge-fg: var(--gc-text-primary);
