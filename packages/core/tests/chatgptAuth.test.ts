@@ -7,6 +7,7 @@ import { DIRECT_SCOPE, OPENAI_ISSUER } from '../../../apps/server/src/chatgpt/oa
 import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
 import { OpenAIResponsesFormatter } from '../../../backend/modules/channel/formatters/openai-responses';
 import { getModels } from '../../../backend/modules/channel/modelList';
+import * as productIdentity from '../../../backend/core/productIdentity';
 import { TokenCountService } from '../../../backend/modules/channel/TokenCountService';
 import type { ProviderDefinition } from '@graycode/contracts';
 
@@ -175,14 +176,19 @@ describe('ChatGPT 官方订阅登录', () => {
   });
 
   test('订阅模型列表读取账户目录，默认 Token 计数不调用不支持的远程接口', async () => {
+    jest.spyOn(productIdentity, 'getProductVersion').mockReturnValue('2.0.0-pre.4');
     const network = jest.spyOn(globalThis, 'fetch').mockResolvedValue(json({ models: [
+      { slug: 'gpt-6.1-sol', display_name: 'GPT-6.1-Sol', visibility: 'list' },
       { slug: 'account-model', display_name: 'Account model', visibility: 'list' },
       { slug: 'hidden-model', visibility: 'hidden' },
     ] }));
     const config = { id: 'models', name: 'models', type: 'openai-responses', authMode: 'chatgpt', url: 'https://example.test/v1',
       apiKey: 'synthetic-model-list-token', model: 'account-model', timeout: 1000 } as any;
-    expect(await getModels(config)).toEqual([{ id: 'account-model', name: 'Account model' }]);
-    expect(network.mock.calls[0][0]).toBe('https://api.openai.com/v1/models');
+    expect(await getModels(config)).toEqual([
+      { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol' },
+      { id: 'account-model', name: 'Account model' },
+    ]);
+    expect(network.mock.calls[0][0]).toBe('https://api.openai.com/v1/models?client_version=2.0.0-pre.4');
     network.mockClear();
     const count = await new TokenCountService().countTokensWithChannelConfig(config, [{ role: 'user', parts: [{ text: 'hello' }] }]);
     expect(count.success).toBe(true);

@@ -9,6 +9,7 @@ import { t } from '../../i18n';
 import type { ChannelConfig, ModelInfo } from '../config';
 import { createProxyFetch, extractUpstreamErrorMessage } from './proxyFetch';
 import { CHATGPT_API_BASE_URL } from './chatgpt';
+import { getProductVersion } from '../../core/productIdentity';
 
 // ModelInfo 类型下沉至 config 域（config/configs/base.ts，经 config 门面 re-export）。
 // 此处保留 re-export 壳：channel/index.ts、api/models/* 等既有导入方零改动。
@@ -392,10 +393,13 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
   const apiKey = config.apiKey;
   if (config.type === 'openai-responses' && config.authMode === 'chatgpt') {
     if (!apiKey) throw new ModelListRequestError(t('modules.chatgpt.modelsSignInRequired'));
-    const cacheKey = buildModelListCacheKey(config.type, CHATGPT_API_BASE_URL, config, proxyUrl);
+    // 官方订阅目录按客户端版本筛选；省略版本会返回旧目录，缓存也须随版本区分。
+    const modelsUrl = new URL(`${CHATGPT_API_BASE_URL}/models`);
+    modelsUrl.searchParams.set('client_version', getProductVersion());
+    const cacheKey = buildModelListCacheKey(config.type, modelsUrl.href, config, proxyUrl);
     const cached = getModelListCached(cacheKey);
     if (cached) return cached;
-    const response = await createProxyFetch(proxyUrl)(`${CHATGPT_API_BASE_URL}/models`, {
+    const response = await createProxyFetch(proxyUrl)(modelsUrl.href, {
       headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(config.timeout ?? 30_000),
     });
     if (!response.ok) await throwModelListRequestError(response, apiKey);
