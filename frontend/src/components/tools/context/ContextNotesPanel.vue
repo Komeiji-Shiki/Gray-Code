@@ -17,7 +17,7 @@ const records = (value: unknown) => Array.isArray(value) ? value.filter(recordVa
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 const receipt = computed(() => recordValue(data.value.noteEvent) ? data.value.noteEvent : {})
 const eventRecords = computed(() => records(receipt.value.records))
-const recordedNotes = computed(() => {
+const recordedNotes = computed<Record<string, unknown>[]>(() => {
   // 记录调用没有返回确认等级或有效状态；不把额外参数当成服务端确认的元数据。
   const submitted = records(props.args?.entries).map(entry => ({ key: entry.key, kind: entry.kind, text: entry.text,
     about: entry.about, sources: entry.sources, relations: entry.relations }))
