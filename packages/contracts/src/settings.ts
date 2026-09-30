@@ -11,6 +11,8 @@ import type { ProviderDefinition } from "./providers";
 
 export interface AppearanceSettings {
   theme: "dark" | "light" | "system";
+  /** 深色主题下的配色方案；旧设置没有该字段，读取方按 'shell' 处理。 */
+  darkPalette?: "shell" | "graphite" | "indigo";
   uiFont: string;
   textFont: string;
   codeFont: string;

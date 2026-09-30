@@ -6,6 +6,7 @@ import { validateDiscordSettings } from '../bots/config';
 import { validateRemoteAccess } from '../transport/webOrigin';
 import { validateDecisionProvider } from '../model/decisionReviewer';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
+import { DARK_PALETTES, DEFAULT_UI_FONT } from '../../../../shared/appearance';
 import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import type {
@@ -41,7 +42,8 @@ export function initialSettings(toolNames: string[]): AppSettings {
     version: 1,
     appearance: {
       theme: "dark",
-      uiFont: "Segoe UI, Microsoft YaHei, sans-serif",
+      darkPalette: "shell",
+      uiFont: DEFAULT_UI_FONT,
       textFont: "inherit",
       codeFont: "Cascadia Code, Consolas, monospace",
       fontSize: 14,
@@ -462,6 +464,7 @@ export class SettingsService<T = never> {
     if (
       !appearance ||
       !["dark", "light", "system"].includes(appearance.theme) ||
+      (appearance.darkPalette !== undefined && !(DARK_PALETTES as readonly string[]).includes(appearance.darkPalette)) ||
       !Number.isFinite(appearance.fontSize) ||
       appearance.fontSize < 10 ||
       appearance.fontSize > 30 ||
