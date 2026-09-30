@@ -276,8 +276,6 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   flex-direction: column;
   gap: var(--gc-space-2);
   padding: var(--gc-space-3);
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
 }
 

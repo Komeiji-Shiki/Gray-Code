@@ -470,7 +470,7 @@
   padding: 6px 12px;
   background: var(--gc-surface-active);
   color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;

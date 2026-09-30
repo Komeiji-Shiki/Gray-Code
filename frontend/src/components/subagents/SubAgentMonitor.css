@@ -148,7 +148,7 @@
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-pill);
   background: var(--gc-surface-panel);
   color: var(--gc-text-primary);
@@ -213,7 +213,7 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   background: transparent;
   color: var(--gc-text-primary);

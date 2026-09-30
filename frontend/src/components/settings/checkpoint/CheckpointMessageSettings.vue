@@ -153,9 +153,9 @@ defineProps<{
 .tools-table {
   display: flex;
   flex-direction: column;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   overflow: hidden;
   margin-top: 8px;
 }

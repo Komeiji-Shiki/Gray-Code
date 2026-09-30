@@ -707,9 +707,9 @@ function handleDragEnd() {
   gap: 10px;
   position: relative;
   padding: 12px;
-  background: var(--gc-surface-panel);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
 }
 
@@ -834,8 +834,8 @@ function handleDragEnd() {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  background: var(--gc-surface-raised);
-  border: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-muted);
+  border: 1px solid transparent;
   border-radius: var(--gc-radius-sm);
   color: var(--gc-text-muted);
 }

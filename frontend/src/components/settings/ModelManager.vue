@@ -413,10 +413,11 @@ async function selectModel(modelId: string) {
 .model-list-container {
   height: auto;
   max-height: 280px;
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-xs);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   display: flex;
   flex-direction: column;
+  background: var(--gc-surface-raised);
 }
 
 /* 筛选输入框 */
@@ -425,7 +426,6 @@ async function selectModel(modelId: string) {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--gc-border-subtle);
   background: var(--gc-surface-input);
 }
 

@@ -248,7 +248,7 @@ const emit = defineEmits<{
   font-size: 11px;
   background: transparent;
   color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
@@ -321,7 +321,6 @@ const emit = defineEmits<{
   gap: 10px;
   padding: 8px 10px;
   cursor: pointer;
-  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .tool-item:first-child {

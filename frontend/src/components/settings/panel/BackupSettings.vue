@@ -85,7 +85,7 @@ async function revealPrevious() {
 .backup-controls input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); background: var(--gc-surface-input); color: var(--gc-text-primary); }
 .backup-controls input:focus { outline: 1px solid var(--gc-focus-border); }
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-sm); background: var(--gc-button-secondary); color: var(--gc-text-on-secondary); font-size: 12px; cursor: pointer; }
+.action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); background: var(--gc-button-secondary); color: var(--gc-text-on-secondary); font-size: 12px; cursor: pointer; }
 .action-btn.primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); border-color: transparent; }
 .action-btn:disabled { opacity: .5; cursor: default; }
 .action-btn:hover:enabled { filter: brightness(1.12); }

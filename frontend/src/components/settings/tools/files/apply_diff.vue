@@ -472,7 +472,7 @@ onMounted(() => {
   padding: 4px 10px;
   background: var(--gc-button-secondary);
   color: var(--gc-text-on-secondary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
@@ -521,7 +521,7 @@ onMounted(() => {
   text-align: left;
   background: var(--gc-button-secondary);
   color: var(--gc-text-on-secondary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: all 0.15s;

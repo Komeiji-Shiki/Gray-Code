@@ -861,9 +861,9 @@ onMounted(async () => {
 .no-agents {
   flex: 1;
   padding: 8px 12px;
-  background: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   color: var(--gc-text-muted);
 }
 

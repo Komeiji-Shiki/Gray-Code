@@ -530,7 +530,7 @@ function cancelRename(): void {
 .branch-tree-trigger {
   width: 24px;
   height: 24px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--radius-sm, 2px);
 }
 .branch-tree-trigger:hover,

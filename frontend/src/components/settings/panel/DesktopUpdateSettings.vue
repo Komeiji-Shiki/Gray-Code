@@ -47,7 +47,7 @@ const { installation, busy, message, failed, percent, phase, action, formatDate 
 <style scoped>
 .desktop-update { display: grid; gap: 14px; min-width: 0; margin-top: 12px; font-size: var(--gc-font-size-control); }
 p { margin: 0; line-height: 1.65; color: var(--gc-text-muted); overflow-wrap: anywhere; }
-.update-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--gc-border-subtle); }
+.update-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px; padding-bottom: 16px; }
 .update-product { display: flex; align-items: center; gap: 12px; }
 .update-product strong { font-size: 19px; letter-spacing: -.02em; }
 .product-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--gc-accent); font-size: 24px; color: var(--gc-accent); }

@@ -330,7 +330,7 @@
 .footer-buttons .reject-btn {
   background: transparent;
   color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
 }
 
 .footer-buttons .reject-btn:hover {

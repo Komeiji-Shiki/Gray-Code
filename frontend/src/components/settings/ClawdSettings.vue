@@ -60,7 +60,7 @@ useDesktopSettingsDraft(save, () => ready.value);
 </template>
 
 <style scoped>
-.clawd-settings { display: grid; gap: 12px; margin-bottom: 24px; padding: 18px 0; border-top: 1px solid var(--gc-border-subtle); border-bottom: 1px solid var(--gc-border-subtle); }
+.clawd-settings { display: grid; gap: 12px; margin-bottom: 24px; padding: 18px 0; }
 h4 { margin: 0; font-size: var(--gc-font-size-title); } p { margin: 0; color: var(--gc-text-muted); line-height: 1.7; font-size: 12px; }
 .clawd-toggle, .clawd-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .clawd-toggle input { accent-color: var(--gc-focus-border); } .clawd-field { display: grid; gap: 8px; }

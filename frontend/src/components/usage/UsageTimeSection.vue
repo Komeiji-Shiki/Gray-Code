@@ -413,7 +413,7 @@ function formatShort(minutes: number): string {
 
 .time-range-btn {
   padding: 2px 8px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--gc-text-primary);

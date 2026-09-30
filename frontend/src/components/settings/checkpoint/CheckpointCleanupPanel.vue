@@ -440,9 +440,9 @@ defineEmits<{
 .conversations-list-wrapper {
   margin-top: 12px;
   height: 300px;
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
-  background: var(--gc-surface-base);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-surface-raised);
   overflow: hidden;
 }
 

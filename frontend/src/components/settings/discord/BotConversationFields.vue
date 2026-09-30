@@ -53,7 +53,7 @@ function changeTiming(patch: Partial<BotAutoSummarySettings>) { set('autoSummary
   </section>
 </template>
 <style scoped>
-.bot-conversation-fields { border-top: 1px solid var(--gc-border-control); margin-top: 20px; padding-top: 16px; min-width: 0; }
+.bot-conversation-fields {  margin-top: 20px; padding-top: 16px; min-width: 0; }
 h4 { margin: 0 0 10px; font-size: 15px; } p,small { color: var(--gc-text-muted); line-height: 1.7; } p { margin: 8px 0 12px; font-size: 12px; }
 label { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 12px 0; border-bottom: 1px solid var(--gc-border-subtle); }
 label>span { flex: 1; min-width: 0; } small { display: block; font-size: 12px; margin-top: 4px; } code { color: var(--gc-text-primary); }

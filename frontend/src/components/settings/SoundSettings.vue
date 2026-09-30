@@ -865,9 +865,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   flex-direction: column;
   gap: 12px;
   padding: 14px;
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-md);
-  background: var(--gc-surface-panel);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-surface-raised);
 }
 
 .section-header,
@@ -903,8 +903,6 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   flex-direction: column;
   gap: 6px;
   padding: 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -973,9 +971,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   justify-content: space-between;
   gap: 12px;
   padding: 8px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid transparent;
   border-radius: var(--gc-radius-sm);
-  background: var(--gc-surface-raised);
+  background: var(--gc-surface-muted);
 }
 
 .asset-row-left {

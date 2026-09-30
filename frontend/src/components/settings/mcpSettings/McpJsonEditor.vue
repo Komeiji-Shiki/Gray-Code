@@ -38,8 +38,8 @@ useDesktopSettingsDraft(apply, () => loaded.value && !cancelled && !saving.value
 <style scoped>
 .mcp-json-editor { display: flex; flex-direction: column; gap: 12px; }
 h3,p { margin: 0; } p { color: var(--gc-text-muted); }
-textarea { width: 100%; min-height: 420px; resize: vertical; background: var(--gc-surface-input); color: var(--gc-text-primary); border: 1px solid var(--gc-border-subtle); padding: 12px; font: 13px/1.5 var(--gc-font-code); }
+textarea { width: 100%; min-height: 420px; resize: vertical; background: var(--gc-surface-input); color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); padding: 12px; font: 13px/1.5 var(--gc-font-code); }
 .actions { display: flex; justify-content: flex-end; gap: 8px; }
-button { padding: 7px 12px; border: 1px solid var(--gc-border-subtle); background: var(--gc-button-primary); color: var(--gc-text-on-primary); cursor: pointer; }
+button { padding: 7px 12px; border: 1px solid var(--gc-border-control); background: var(--gc-button-primary); color: var(--gc-text-on-primary); cursor: pointer; }
 .error { color: var(--gc-danger); }
 </style>

@@ -533,7 +533,7 @@ const tabs = computed(() => ([
 
 .range-btn {
   padding: 3px 10px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--gc-text-primary);
@@ -702,7 +702,7 @@ const tabs = computed(() => ([
 
 .tab-btn {
   padding: 4px 12px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--gc-text-primary);

@@ -39,7 +39,6 @@
 /* 表单 */
 .config-form {
   padding-top: 8px;
-  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .btn {

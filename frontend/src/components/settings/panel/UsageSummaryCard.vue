@@ -156,8 +156,8 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   flex-direction: column;
   gap: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   background: var(--gc-surface-raised);
 }
 
@@ -210,7 +210,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 
 .usage-range-btn {
   padding: 2px 8px;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   background: transparent;
   color: var(--gc-text-primary);
@@ -309,7 +309,6 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 .usage-summary-footer {
   display: flex;
   justify-content: flex-end;
-  border-top: 1px solid var(--gc-border-subtle);
   padding-top: 10px;
 }
 

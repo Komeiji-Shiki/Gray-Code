@@ -160,7 +160,7 @@ select option:disabled {
     overflow: auto;
     margin-block: 5px;
     padding: 4px;
-    border: 1px solid var(--gc-border-subtle);
+    border: 1px solid var(--gc-border-control);
     border-radius: var(--gc-radius-lg);
     background: var(--gc-surface-raised);
     color: var(--gc-text-primary);

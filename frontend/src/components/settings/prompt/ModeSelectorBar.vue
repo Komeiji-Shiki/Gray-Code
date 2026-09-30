@@ -117,9 +117,9 @@ const emit = defineEmits<{
   justify-content: flex-start;
   align-items: center;
   padding: 10px 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   flex-wrap: wrap;
   gap: 8px 12px;
 }

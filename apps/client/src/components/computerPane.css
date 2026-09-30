@@ -1,5 +1,5 @@
 .computer-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--gc-text-primary); background: var(--gc-surface-base); font-size: 12px; container-type: inline-size; }
-.computer-pane button, .computer-pane input, .computer-pane textarea, .computer-pane select { border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-sm); background: var(--gc-surface-sunken); color: var(--gc-text-primary); font: inherit; padding: 6px 9px; min-width: 0; }
+.computer-pane button, .computer-pane input, .computer-pane textarea, .computer-pane select { border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); background: var(--gc-surface-sunken); color: var(--gc-text-primary); font: inherit; padding: 6px 9px; min-width: 0; }
 .computer-pane button { cursor: pointer; }
 .computer-pane button:hover:not(:disabled) { background: var(--gc-surface-hover); }
 .computer-pane button:disabled { opacity: .45; cursor: default; }

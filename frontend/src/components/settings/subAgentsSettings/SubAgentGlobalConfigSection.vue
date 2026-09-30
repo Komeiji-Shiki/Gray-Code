@@ -147,7 +147,6 @@ const { t } = useI18n()
   container-type: inline-size;
   margin-bottom: 16px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 /* 全局配置四参数 2×2 布局：一行四个过宽（label/hint 挤成多行），

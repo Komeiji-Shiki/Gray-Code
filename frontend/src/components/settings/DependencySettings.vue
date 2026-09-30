@@ -559,9 +559,10 @@ onUnmounted(() => {
 }
 
 .tool-panel {
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   overflow: hidden;
+  background: var(--gc-surface-raised);
 }
 
 .panel-header {
@@ -612,7 +613,6 @@ onUnmounted(() => {
 .panel-content {
   padding: 8px;
   background: var(--gc-surface-panel);
-  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .panel-content .dependency-item {

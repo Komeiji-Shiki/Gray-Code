@@ -675,7 +675,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </template>
 
 <style scoped>
-.memory-undo-button { border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-sm); color: var(--gc-text-primary); background: var(--gc-button-secondary); padding: 6px 10px; cursor: pointer; }
+.memory-undo-button { border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); color: var(--gc-text-primary); background: var(--gc-button-secondary); padding: 6px 10px; cursor: pointer; }
 .memory-settings {
   width: 100%;
 }

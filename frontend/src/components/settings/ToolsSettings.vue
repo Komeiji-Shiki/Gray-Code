@@ -447,9 +447,9 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .config-item {
@@ -595,9 +595,9 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   font-size: 13px;
   font-weight: 500;
 }
@@ -636,9 +636,9 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   transition: background-color 0.15s;
 }
 
@@ -694,7 +694,7 @@ onMounted(() => {
   width: 28px;
   height: 28px;
   background: transparent;
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   color: var(--gc-text-muted);
   cursor: pointer;

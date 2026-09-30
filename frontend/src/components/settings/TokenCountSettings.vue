@@ -595,9 +595,9 @@ Authorization: Bearer {apiKey}
 
 .settings-intro {
     padding: 12px;
-    background: var(--gc-surface-base);
-    border: 1px solid var(--gc-border-subtle);
-    border-radius: var(--gc-radius-sm);
+    background: var(--gc-surface-raised);
+    border: 1px solid transparent;
+    border-radius: var(--gc-radius-lg);
 }
 
 .settings-intro p {
@@ -614,9 +614,10 @@ Authorization: Bearer {apiKey}
 
 /* 渠道面板 */
 .channel-panel {
-    border: 1px solid var(--gc-border-subtle);
-    border-radius: var(--gc-radius-sm);
+    border: 1px solid transparent;
+    border-radius: var(--gc-radius-lg);
     overflow: hidden;
+    background: var(--gc-surface-raised);
 }
 
 .channel-panel.expanded {
@@ -677,7 +678,6 @@ Authorization: Bearer {apiKey}
 
 .panel-content {
     padding: 12px;
-    border-top: 1px solid var(--gc-border-subtle);
     display: flex;
     flex-direction: column;
     gap: 12px;

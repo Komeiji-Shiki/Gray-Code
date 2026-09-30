@@ -419,7 +419,7 @@ function onCustomPathInput(event: Event) {
   border-radius: var(--gc-radius-sm);
 }
 .platform-general .action-btn:not(.primary) {
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   background: var(--gc-surface-input);
 }
 
@@ -436,9 +436,9 @@ function onCustomPathInput(event: Event) {
 
 .info-text {
   padding: 8px 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .info-text p {
@@ -510,9 +510,9 @@ function onCustomPathInput(event: Event) {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .proxy-enable {
@@ -690,9 +690,9 @@ function onCustomPathInput(event: Event) {
   flex-direction: column;
   gap: 16px;
   padding: 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .path-badge {
@@ -757,7 +757,7 @@ function onCustomPathInput(event: Event) {
   padding: 0;
   background: var(--gc-button-secondary);
   color: var(--gc-text-on-secondary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;

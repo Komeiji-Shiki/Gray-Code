@@ -173,7 +173,6 @@ function handleModeChange(mode: string) {
   font-size: 12px;
   font-weight: 600;
   color: var(--gc-text-primary);
-  border-bottom: 1px solid var(--gc-border-strong);
 }
 
 .category-header i {
@@ -203,9 +202,9 @@ function handleModeChange(mode: string) {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   transition: background 0.15s;
 }
 

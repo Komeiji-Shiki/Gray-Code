@@ -195,7 +195,7 @@ label { display: flex; justify-content: space-between; align-items: center; gap:
 input,select,textarea { width: 58%; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); padding: 8px 10px; font: inherit; border-radius: var(--gc-radius-sm); }
 input[type=checkbox] { width: auto; } select[multiple] { height: 120px; }
 button { padding: 8px 14px; color: var(--gc-text-primary); background: var(--gc-surface-raised); border: 1px solid var(--gc-border-control); cursor: pointer; border-radius: var(--gc-radius-sm); }
-.integration-entry { padding: 12px 0 24px; margin-bottom: 20px; border-bottom: 1px solid var(--gc-border-control); }
+.integration-entry { padding: 12px 0 24px; margin-bottom: 20px; }
 .integration-header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
 .integration-header h4 { margin-bottom: 0; }
 .integration-status { padding: 6px 10px; border: 1px solid var(--gc-border-control); color: var(--gc-text-muted); font-size: 13px; }
@@ -204,7 +204,7 @@ button { padding: 8px 14px; color: var(--gc-text-primary); background: var(--gc-
 .integration-identity span { color: var(--gc-text-muted); }
 .connection-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 24px 0; }
 .integration-error { color: var(--gc-danger); overflow-wrap: anywhere; } .workspace-directory { overflow-wrap: anywhere; }
-.bot-access-settings{border:1px solid var(--gc-border-control);padding:18px;margin:24px 0}.bot-access-settings h3{font-size:17px;margin:0 0 12px}.bot-access-settings p{font-size:13px}.default-permission-editor{padding:18px 0;margin:8px 0 24px;border-bottom:1px solid var(--gc-border-control);scroll-margin-top:20px}.bot-user-rule{padding:12px;margin-top:14px;border:1px solid var(--gc-border-control)}.bot-user-rule.blocked{border-color:var(--gc-danger)}
+.bot-access-settings{border:1px solid transparent;padding:18px;margin:24px 0;background:var(--gc-surface-raised);border-radius:var(--gc-radius-lg)}.bot-access-settings h3{font-size:17px;margin:0 0 12px}.bot-access-settings p{font-size:13px}.default-permission-editor{padding:18px 0;margin:8px 0 24px;border-bottom:1px solid var(--gc-border-control);scroll-margin-top:20px}.bot-user-rule{padding:12px;margin-top:14px;border:1px solid var(--gc-border-control)}.bot-user-rule.blocked{border-color:var(--gc-danger)}
 @media (max-width: 560px) {
   label { flex-wrap: wrap; gap: 10px; }
   input:not([type=checkbox]), select, textarea { width: 100%; min-width: 0; box-sizing: border-box; }

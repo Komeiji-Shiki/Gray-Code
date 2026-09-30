@@ -139,9 +139,9 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .token-count-header {
@@ -216,7 +216,7 @@ const emit = defineEmits<{
   padding: 0;
   background: transparent;
   color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;

@@ -689,7 +689,7 @@ function getExpandedLabel(key: string): string {
 .section-action-btn {
   padding: 5px 12px;
   border-radius: var(--gc-radius-sm);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   background: transparent;
   color: var(--gc-text-primary);
   font-size: 12px;

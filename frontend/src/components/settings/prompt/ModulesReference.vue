@@ -163,7 +163,6 @@ const emit = defineEmits<{
 .modules-reference {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .modules-reference .reference-header {
@@ -263,7 +262,7 @@ const emit = defineEmits<{
   padding: 0;
   background: transparent;
   color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-subtle);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
