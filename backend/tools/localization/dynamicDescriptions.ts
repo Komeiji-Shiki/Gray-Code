@@ -116,7 +116,7 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
     // 它们仍通过 declaration 的 paramAliases/compatParams 被接受（见 read_file.ts 声明）。
     const lineRangeNote = pick(
         lang,
-        '\n\n行范围：单文件用顶层 startLine/endLine，批量在每个 files[] 项中设置。省略 endLine 会读到文件末尾。按搜索或符号结果定位；位置未知时先搜索，或从第 1 行分段浏览大文件，依据返回的 totalLines 继续读取，避免一次展开整份日志或长文档。',
+        '\n\n行范围：单文件用顶层 startLine/endLine，批量在每个 files[] 项中设置。省略 endLine 会读到文件末尾。按搜索或符号结果定位；位置未知时先搜索，或从第 1 行分段浏览大文件，依据返回的总行数继续读取，避免一次展开整份日志或长文档。',
         '\n\nLine ranges: use top-level startLine/endLine for one file, or set them per files[] item. Omitting endLine reads to EOF. Locate content with search or symbols; otherwise search first or browse a large file in ranges starting at line 1, using totalLines to continue instead of expanding an entire log or long document.'
     );
 

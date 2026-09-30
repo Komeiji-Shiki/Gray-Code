@@ -20,10 +20,11 @@ function processOwner(context: ToolContext): ProcessOwner {
 }
 function processOutcome(data: ProcessResult, stopped = false): ToolOutcome {
   // 进程会话只有 read/input/stop；退出且没有未读输出时，不再给出等待建议。
-  const result = { ...data, ...(data.running || data.hasMore ? { nextActions: [{
+  // 服务返回的是本次查询的独立快照，在原结果上补提示，保留既有调用方持有的结果引用。
+  const result = Object.assign(data, data.running || data.hasMore ? { nextActions: [{
     tool: 'process_session', args: { action: 'read', id: data.id, cursor: data.nextCursor },
     when: t(data.hasMore ? 'tools.terminal.nextActions.processMoreOutput' : 'tools.terminal.nextActions.processIntermediateOutput'),
-  }] } : {}) };
+  }] } : {});
   // stop 的成功表示停止请求已完成；运行中或无退出码不推断成命令失败。
   return !stopped && !data.running && typeof data.exitCode === 'number' && data.exitCode !== 0
     ? { success: false, code: 'COMMAND_EXIT_NONZERO', error: `Command exited with code ${data.exitCode}`, data: result }

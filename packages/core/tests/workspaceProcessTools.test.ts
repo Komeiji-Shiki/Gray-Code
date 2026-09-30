@@ -6,6 +6,7 @@ import type { StoredRecord, WorkspaceDefinition } from '@graycode/contracts';
 import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
 import { WorkspaceProcesses, ProcessSessionError, type ProcessResult } from '../../../apps/server/src/workspace/processes';
 import { workspaceTools } from '../../../apps/server/src/workspace/tools';
+import { t } from '../../../backend/i18n';
 
 let directory: string;
 let workspace: WorkspaceDefinition;
@@ -105,10 +106,15 @@ test('input 必须等待异步授权和写入成功才 read；stop 使用同一�
 test.each(['NOT_FOUND', 'FORBIDDEN', 'EXITED', 'INVALID_CURSOR'] as const)('process_session 保留错误码 %s，异步 input 拒绝时不伪报成功', async code => {
   const { session, processes } = fixture();
   processes.input.mockRejectedValueOnce(new ProcessSessionError(code, '明确原因'));
-  expect(await session.execute({ action: 'input', id: 'session', text: 'late' }, context)).toEqual({ success: false, code, error: '明确原因' });
+  // 错误码与失败语义保持不变，可诊断状态同时给出同一受管会话的准确读取入口。
+  const expected = { success: false, code, error: '明确原因',
+    ...(['EXITED', 'INVALID_CURSOR'].includes(code) ? { data: { id: 'session', nextActions: [{
+      tool: 'process_session', args: { action: 'read', id: 'session' }, when: t('tools.terminal.nextActions.processInspect'),
+    }] } } : {}) };
+  expect(await session.execute({ action: 'input', id: 'session', text: 'late' }, context)).toEqual(expected);
   expect(processes.read).not.toHaveBeenCalled();
   processes.read.mockRejectedValueOnce(new ProcessSessionError(code, '明确原因'));
-  expect(await session.execute({ action: 'read', id: 'session' }, context)).toEqual({ success: false, code, error: '明确原因' });
+  expect(await session.execute({ action: 'read', id: 'session' }, context)).toEqual(expected);
 });
 
 test('未知异常不被伪装为进程权限或状态错误', async () => {
