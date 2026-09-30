@@ -101,6 +101,13 @@ describe('tool approval through the real render projection', () => {
     expect(requests()[0][1].toolResponses[0]).toMatchObject({ approvalId: 'approval-1', choiceId: 'once', confirmed: true })
   })
 
+  test('等待确认的工具卡显示状态徽章与暖色描边', () => {
+    const { project } = createApproval()
+    wrapper = mount(ToolMessage, { props: { tools: project() } })
+    expect(wrapper.find('.tool-item.status-warning').exists()).toBe(true)
+    expect(wrapper.find('.tool-approval-badge').text()).toBe('components.message.responseViewer.toolStatuses.awaitingApproval')
+  })
+
   test('does not invent an approval identity from model functionCall data', () => {
     const entry = buildFunctionCallToolRenderEntry({ messageId: 'history', functionCall: {
       ...content.parts[0].functionCall!, approvalId: 'untrusted-model-field'
