@@ -86,6 +86,7 @@ export async function notesWindowBoundary(app: PlatformApplication, frame: Captu
   const latestUser = [...frame.state.history.messages].reverse().find(isHistoricalUserInput);
   const text = [`A new context window has started for the same task. Earlier messages and tool results remain available through context_history.`,
     `Read working notes with context_notes before continuing. Available note names: ${names.length ? names.join(', ') : '(none yet; recover the current task from history)'}.`,
+    `Recorded decisions and dependencies remain in history: use context_notes action=recall with the current intent or taskId and a tokenBudget.`,
     latestUser ? `The latest real user message has ID ${latestUser.id}. Read it and any relevant preceding history to recover the current request and constraints.` : '',
     `This is a context transition, not a new user request or task completion. Continue the unfinished work.`].filter(Boolean).join('\n');
   return applyContextBoundary(frame, text, 'notes', automatic, channelType, policy, reason);

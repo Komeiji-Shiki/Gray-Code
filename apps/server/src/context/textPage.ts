@@ -1,3 +1,17 @@
+import type { PlatformMessage } from '@graycode/contracts';
+
+/** 历史读取与笔记来源校验使用同一文本视图，确保引用偏移可以直接续读。 */
+export function contextMessageText(message: PlatformMessage): string {
+  return message.parts.map(part => {
+    if (typeof part.text === 'string') return part.text;
+    if (part.inlineData) return `[Attachment: ${(part.inlineData as { mimeType?: string }).mimeType ?? 'file'}]`;
+    if (part.functionCall) return JSON.stringify({ functionCall: part.functionCall });
+    if (part.functionResponse) return JSON.stringify({ functionResponse: part.functionResponse });
+    if (part.fileData) return JSON.stringify({ fileData: part.fileData });
+    return '';
+  }).join('\n');
+}
+
 /** 所有位置按 UTF-16 字符偏移计数，与字符串分段读取一致。 */
 export function textPage(text: string, offset: unknown, limit: unknown, fallback = 12000) {
   const start = offset ?? 0, count = limit ?? fallback;

@@ -1,8 +1,9 @@
 import type { RuntimeTool, ToolContext } from '@graycode/core';
-import type { PlatformMessage } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import { contextStatus } from './status';
-import { historyPreview, textPage } from './textPage';
+import { contextMessageText, historyPreview, textPage } from './textPage';
+import { NOTE_GRAPH_PROPERTIES, runNoteGraphTool } from './noteTool';
+import { activeContextHistory, type ModelPrefix } from './compaction';
 
 interface WorkingNote { text: string; updatedAt: number; sourceMessageId?: string }
 const noteKey = (id: string, name: string) => JSON.stringify([id, name]);
@@ -24,14 +25,6 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
     const view=await app.longMemoryPrompt.history.prepare(context.actorId,id,state.history.messages);
     return { id,state,view };
   };
-  const visible = (message: PlatformMessage) => message.parts.map(part => {
-    if (typeof part.text === 'string') return part.text;
-    if (part.inlineData) return `[Attachment: ${(part.inlineData as { mimeType?: string }).mimeType ?? 'file'}]`;
-    if (part.functionCall) return JSON.stringify({ functionCall: part.functionCall });
-    if (part.functionResponse) return JSON.stringify({ functionResponse: part.functionResponse });
-    if (part.fileData) return JSON.stringify({ fileData: part.fileData });
-    return '';
-  }).join('\n');
   const schema = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
   return [
     {
@@ -40,9 +33,9 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
       execute: async (_args, context) => contextStatus(app, context, await authorizeContext(context)),
     },
     {
-      declaration: { name: 'context_notes', description: '在当前会话保存和读取工作笔记。切换上下文前，用 write 或 append 记录目标、约束、进展、后续步骤及相关历史消息 ID；继续任务时用 list 或 read 恢复。',
-        parameters: schema({ action: { type: 'string', enum: ['list', 'read', 'write', 'append'] }, name: { type: 'string', minLength: 1, maxLength: 120 }, text: { type: 'string', maxLength: 100000 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20000 } }, ['action']) },
-      parallelRead: args => args.action === 'list' || args.action === 'read',
+      declaration: { name: 'context_notes', description: '管理当前会话的工作笔记。write/append 保存自由笔记，list/read 读取；record 批量记录有原文来源的约束、决定、观察、推测、任务和经验，并关联依赖、适用对象或替代关系。recall 按当前意图或 taskId 补齐有效依据，需 tokenBudget；已在当前可见上下文中提供的内容只返回引用，省略或缺少的依据会列明。inspect 按 noteId 明确重读。记录随当前分支和历史保存，时间与版本变化只影响下一次查询，不回写旧工具结果。',
+        parameters: schema({ action: { type: 'string', enum: ['list', 'read', 'write', 'append', 'record', 'recall', 'inspect'] }, name: { type: 'string', minLength: 1, maxLength: 120 }, text: { type: 'string', maxLength: 100000 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20000 }, ...NOTE_GRAPH_PROPERTIES }, ['action']) },
+      parallelRead: args => ['list', 'read', 'recall', 'inspect'].includes(String(args.action)),
       effects: () => [],
       execute: async (args, context) => {
         if (args.action === 'list') {
@@ -56,6 +49,13 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
           return { success: true, notes: notes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.name.localeCompare(b.name)) };
         }
         const { id, state,view } = await scope(context);
+        if (['record', 'recall', 'inspect'].includes(String(args.action))) {
+          const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as ModelPrefix | undefined;
+          const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
+          const config = args.action === 'recall' && providerId ? await app.product.channel(providerId) : undefined;
+          context.signal.throwIfAborted();
+          return runNoteGraphTool(args, view.messages, context.toolCallId, config ? activeContextHistory(view.messages, config) : []);
+        }
         if (typeof args.name !== 'string' || !args.name.trim()) throw new Error('需要提供笔记名称。');
         const key = noteKey(id, args.name);
         const previous = await app.storage.getVersionedRecord('context-notes', key);
@@ -100,7 +100,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         if (args.action === 'read') {
           const item = items.find(item => item.message.id === args.messageId && (!args.windowId || item.windowId === args.windowId));
           if (!item) throw new Error('当前会话中没有这条历史消息。');
-          const text = visible(item.message);
+          const text = contextMessageText(item.message);
           const attachments = item.message.parts.flatMap(part => {
             const data = part.inlineData as { mimeType?: string; data?: string; displayName?: string } | undefined;
             return data?.mimeType?.startsWith('image/') && data.data ? [{ mimeType: data.mimeType, data: data.data, name: data.displayName }] : [];
@@ -114,11 +114,11 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         const before = args.beforeId ? items.findIndex(item => item.message.id === args.beforeId) : items.length;
         if (before < 0) throw new Error('历史分页位置已变化。');
         const matches = items.slice(0, before).filter(item => (!args.windowId || item.windowId === args.windowId)
-          && (args.action !== 'search' || visible(item.message).includes(args.query as string)));
+          && (args.action !== 'search' || contextMessageText(item.message).includes(args.query as string)));
         const selected = matches.slice(-Math.min(50, Number(args.limit ?? 15)));
         return { success: true, total: matches.length, nextBeforeId: matches.length > selected.length ? selected[0]?.message.id : undefined,
           items: selected.map(item => ({ messageId: item.message.id, windowId: item.windowId, role: item.message.role,
-            ...historyPreview(visible(item.message), args.action === 'search' ? args.query as string : undefined) })) };
+            ...historyPreview(contextMessageText(item.message), args.action === 'search' ? args.query as string : undefined) })) };
       },
     },
     {
