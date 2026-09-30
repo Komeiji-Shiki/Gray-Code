@@ -211,6 +211,12 @@ async function main() {
   window.webContents.reload();
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
+  if (process.env.GRAYCODE_SMOKE_IMAGES_ONLY === '1') {
+    await require('./smoke-image-preview.cjs')({ window, evaluate, ui, until, root, output });
+    const report = { verified: ['image layout', 'image context menu', 'native PNG clipboard'], errors, output };
+    await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
+    process.stdout.write(JSON.stringify(report) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
+  }
   if (rendererBenchmark && process.env.GRAYCODE_BENCHMARK_ONLY === '1') {
     const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId });
     process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;

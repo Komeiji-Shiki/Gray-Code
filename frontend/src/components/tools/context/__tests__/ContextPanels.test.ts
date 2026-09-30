@@ -85,3 +85,27 @@ test('三类工具使用专用懒加载面板而非默认模板', () => {
     expect(getToolConfig(name)?.contentComponent).not.toBe(DefaultToolResult)
   }
 })
+
+test('关联笔记的记录、召回和明确重读展示正文、真实来源与缺失依据', () => {
+  const record = mount(ContextToolPanel, { props: { toolName: 'context_notes', args: { action: 'record', entries: [
+    { key: ' plan ', kind: 'task', text: ' 保留任务目标 ', sources: [{ messageId: 'last_user' }] },
+  ] }, result: { success: true, noteEvent: { version: 1, records: [{ key: 'plan', id: 'note-plan', sources: [{ messageId: 'real-source' }] }] } } } })
+  const recall = mount(ContextToolPanel, { props: { toolName: 'context_notes', args: { action: 'recall' }, result: { success: true, data: {
+    items: [{ id: 'note-decision', kind: 'decision', text: '本次召回的决定' }], alreadyProvided: [{ id: 'note-plan', messageId: 'real-source', reason: 'recorded' }],
+    missingDependencies: ['missing-note'], omitted: ['budget-note'], estimatedTokens: 240, tokenBudget: 256, truncated: true,
+  } } } })
+  const inspect = mount(ContextToolPanel, { props: { toolName: 'context_notes', args: { action: 'inspect' }, result: { success: true,
+    id: 'note-plan', kind: 'task', state: 'current', text: '明确重读正文', truncated: true, nextOffset: 12 } } })
+  try {
+    expect(record.find('.document-text').text()).toBe('保留任务目标')
+    expect(record.find('.note-sources').text()).toContain('real-source')
+    expect(record.find('.note-sources').text()).not.toContain('last_user')
+    expect(recall.find('.document-text').text()).toBe('本次召回的决定')
+    expect(recall.text()).toContain('real-source')
+    expect(recall.text()).toContain('missing-note')
+    expect(recall.text()).toContain('budget-note')
+    expect(recall.find('.context-empty').exists()).toBe(false)
+    expect(inspect.find('.document-text').text()).toBe('明确重读正文')
+    expect(inspect.find('.context-warning').text()).toContain('12')
+  } finally { record.unmount(); recall.unmount(); inspect.unmount() }
+})
