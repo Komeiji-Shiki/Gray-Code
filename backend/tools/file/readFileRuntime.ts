@@ -21,7 +21,7 @@ import {
     isPdfFile,
 } from '../shared/multimodal';
 import { mapWithConcurrency } from '../shared/concurrency';
-import { splitTextLines } from '../../../shared/textLines';
+import { selectTextLines, splitTextLines } from '../../../shared/textLines';
 import { calculateAspectRatio, type ImageDimensions } from '../shared/imageMath';
 import { formatFileSize } from '../shared/fileSize';
 // 修改原因：read_file 本地副本的 parseImageDimensions 与 media/imageUtils 重复实现且行为漂移
@@ -208,11 +208,13 @@ async function readSingleFile(
     multimodalEnabled: boolean,
     isMultiRoot: boolean,
     lineRange?: LineRange,
-    debug?: ReadFileDebugInfo
+    debug?: ReadFileDebugInfo,
+    signal?: AbortSignal
 ): Promise<{
     result: ReadResult;
     multimodal?: MultimodalData[];
 }> {
+    signal?.throwIfAborted();
     const { uri, workspace, error } = host.resolveUriWithInfo(filePath);
     if (!uri) {
         return {
@@ -250,6 +252,7 @@ async function readSingleFile(
         // 文件大小护栏：超大文件拒绝全量读取（对比 search_in_files 有 5MB 上限、
         // list_files 有 4MB 上限，read_file 之前无任何护栏）。
         const stat = await host.stat(uri);
+        signal?.throwIfAborted();
         if (stat.size > MAX_READ_FILE_BYTES) {
             return {
                 result: {
@@ -262,6 +265,7 @@ async function readSingleFile(
         }
 
         const content = await host.readFile(uri);
+        signal?.throwIfAborted();
         const fileName = path.basename(filePath);
         
         // 检查是否支持多模态返回
@@ -275,7 +279,9 @@ async function readSingleFile(
         if (shouldReturnMultimodal) {
             const mimeType = getMultimodalMimeType(filePath);
             if (mimeType) {
-                const base64Data = Buffer.from(content).toString('base64');
+                // 图片尺寸解析和编码共用字节视图，避免同一附件额外复制两份正文。
+                const bytes = Buffer.from(content.buffer, content.byteOffset, content.byteLength);
+                const base64Data = bytes.toString('base64');
                 
                 // 解析图片尺寸（仅对图片文件）
                 let dimensions: ImageDimensions | undefined;
@@ -283,7 +289,7 @@ async function readSingleFile(
                     // 复用 imageUtils.parseImageDimensions（返回 { width, height }），
                     // 再补 aspectRatio 以保持 ImageDimensions 形状。
                     // 注意：imageUtils 实现不解析 GIF 尺寸，GIF 图片不再返回 dimensions。
-                    const parsed = parseImageDimensionsFromImageUtils(Buffer.from(content), mimeType);
+                    const parsed = parseImageDimensionsFromImageUtils(bytes, mimeType);
                     if (parsed) {
                         dimensions = {
                             width: parsed.width,
@@ -326,11 +332,11 @@ async function readSingleFile(
         }
         
         // 文本文件：返回带行号的内容
-        const allLines = splitTextLines(new TextDecoder().decode(content));
-        const totalLines = allLines.length;
+        const text = new TextDecoder().decode(content);
         
         // 处理行范围
         let selectedLines: string[];
+        let totalLines: number;
         let actualStartLine: number | undefined;
         let actualEndLine: number | undefined;
         
@@ -338,6 +344,8 @@ async function readSingleFile(
             // 确定起始行：默认从第 1 行开始
             let startLine = lineRange.startLine ?? 1;
             if (startLine < 1) startLine = 1;
+            const selected = selectTextLines(text, startLine, Math.max(startLine, lineRange.endLine ?? Number.MAX_SAFE_INTEGER));
+            totalLines = selected.totalLines;
             if (startLine > totalLines) {
                 return {
                     result: {
@@ -357,9 +365,10 @@ async function readSingleFile(
             
             actualStartLine = startLine;
             actualEndLine = endLine;
-            selectedLines = allLines.slice(startLine - 1, endLine);
+            selectedLines = selected.lines;
         } else {
-            selectedLines = allLines;
+            selectedLines = splitTextLines(text);
+            totalLines = selectedLines.length;
         }
         
         // 添加行号前缀
@@ -388,6 +397,7 @@ async function readSingleFile(
         
         return { result };
     } catch (error) {
+        signal?.throwIfAborted();
         return {
             result: {
                 path: filePath,
@@ -491,6 +501,7 @@ export function createReadFileTool(
             }
         },
         handler: async (args, context): Promise<ToolResult> => {
+            context?.abortSignal?.throwIfAborted();
             // 修改原因：read_file handler 入口缺少工作区外策略兜底（绝对路径可读取工作区外文件）。
             // 修改方式：与其余文件工具一致，入口处调用 ensureOutsideWorkspaceAccessApproved（读策略 deny/ask/allow）。
             const accessError = host.ensureOutsideWorkspaceAccessApproved(args, context);
@@ -595,7 +606,8 @@ export function createReadFileTool(
                     multimodalEnabled,
                     isMultiRoot,
                     lineRange,
-                    debug
+                    debug,
+                    context?.abortSignal
                 );
             });
 

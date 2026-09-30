@@ -53,13 +53,8 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
   joinPath(root: FileLocation, file: string): FileLocation { return this.location(path.resolve(root.fsPath, file)); }
   file(absolute: string): FileLocation { return this.location(absolute); }
   /**
-   * 大小写不敏感匹配：单次工具调用内同一路径只解析一次。
-   *
-   * 修改原因：search_in_files 对每个文件依次做 stat / 读文件头 / 读全文，
-   * 每次都会经这里解析路径（带 realpath），大工作区下重复解析是显著开销；
-   * realpath 结果在一次调用内不会变化。
-   * 修改方式：缓存已解析成功的 Promise（并发调用共享），失败时不缓存。
-   * 修改目的：把每文件 3 次解析降为 1 次，且不改变失败与审批语义。
+   * stat、文件头和正文复用已批准的路径解析；只保留最近使用的路径，
+   * 流式扫描大工作区时缓存不会随扫描文件总数持续增长，失败仍不缓存。
    */
   private readonly resolvedPaths = new Map<string, Promise<string>>();
   private async safe(file: FileLocation): Promise<string> {
@@ -67,10 +62,13 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     const key = file.fsPath;
     const cached = this.resolvedPaths.get(key);
     if (cached) {
+      this.resolvedPaths.delete(key);
+      this.resolvedPaths.set(key, cached);
       return cached;
     }
     const task = this.readAccess ? this.readAccess.resolve(key) : this.app.files.resolveGranted(this.workspace(), key, this.context.fileWriteGrants);
     this.resolvedPaths.set(key, task);
+    if (this.resolvedPaths.size > 256) this.resolvedPaths.delete(this.resolvedPaths.keys().next().value!);
     try {
       return await task;
     } catch (error) {
@@ -84,10 +82,16 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     const value = await stat(await this.safe(file));
     return { size: value.size, type: value.isDirectory() ? 2 : value.isFile() ? 1 : 0 };
   }
-  async readFile(file: unknown): Promise<Uint8Array> { return readFile(await this.safe(file as FileLocation)); }
+  async readFile(file: unknown): Promise<Uint8Array> { return readFile(await this.safe(file as FileLocation), { signal: this.context.signal }); }
   async readHeader(file: FileLocation, bytes: number): Promise<Uint8Array> {
     const handle = await open(await this.safe(file), 'r');
-    try { const buffer = Buffer.alloc(Math.max(0, Math.floor(bytes))); const result = await handle.read(buffer, 0, buffer.length, 0); return buffer.subarray(0, result.bytesRead); }
+    try {
+      this.context.signal.throwIfAborted();
+      const buffer = Buffer.alloc(Math.max(0, Math.floor(bytes)));
+      const result = await handle.read(buffer, 0, buffer.length, 0);
+      this.context.signal.throwIfAborted();
+      return buffer.subarray(0, result.bytesRead);
+    }
     finally { await handle.close(); }
   }
   async readDirectory(file: FileLocation): Promise<[string, number][]> {

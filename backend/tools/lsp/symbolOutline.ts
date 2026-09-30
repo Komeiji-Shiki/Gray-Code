@@ -63,74 +63,48 @@ export function parseSymbolOutlineOptions(args: { maxDepth?: unknown; kinds?: un
     return { maxDepth, ...(args.kinds !== undefined ? { kinds: [...new Set(args.kinds as string[])] } : {}) };
 }
 
-interface OutlineNode {
-    name: string;
-    kind: string;
-    range: Range;
-    detail?: string;
-    children: OutlineNode[];
-}
-
 const comparePosition = (left: Position, right: Position) => left.line - right.line || left.character - right.character;
-const compareNode = (left: OutlineNode, right: OutlineNode) => comparePosition(left.range.start, right.range.start)
-    || comparePosition(right.range.end, left.range.end);
-function normalizeSymbols(symbols: readonly ProviderSymbol[], kindBase: 0 | 1) {
-    const roots: OutlineNode[] = [];
-    let hierarchyAvailable = true;
-    const pending = [{ symbols, output: roots }];
-    while (pending.length) {
-        const { symbols: siblings, output } = pending.pop()!;
-        for (const symbol of siblings) {
-            const document = 'range' in symbol;
-            const node: OutlineNode = {
-                name: symbol.name,
-                kind: SYMBOL_KIND_NAMES[symbol.kind - kindBase] ?? 'unknown',
-                range: document ? symbol.range : symbol.location.range,
-                ...(document && symbol.detail ? { detail: symbol.detail } : {}),
-                children: []
-            };
-            output.push(node);
-            if (document) {
-                if (symbol.children?.length) pending.push({ symbols: symbol.children, output: node.children });
-            } else {
-                // Neither location.range nor containerName in SymbolInformation guarantees
-                // AST containment. Keep the flat list instead of hiding symbols by guessing.
-                hierarchyAvailable = false;
-            }
-        }
-        output.sort(compareNode);
-    }
-    return { roots, hierarchyAvailable };
-}
+const symbolRange = (symbol: ProviderSymbol) => 'range' in symbol ? symbol.range : symbol.location.range;
+const compareSymbol = (left: ProviderSymbol, right: ProviderSymbol) => comparePosition(symbolRange(left).start, symbolRange(right).start)
+    || comparePosition(symbolRange(right).end, symbolRange(left).end);
 
 export function createSymbolOutline(
     symbols: readonly ProviderSymbol[], options: SymbolOutlineOptions, kindBase: 0 | 1
 ): SymbolOutline {
-    const { roots, hierarchyAvailable } = normalizeSymbols(symbols, kindBase);
     const result: SymbolOutline = {
-        symbols: [], symbolCount: 0, availableSymbolCount: 0, hierarchyAvailable,
+        symbols: [], symbolCount: 0, availableSymbolCount: 0, hierarchyAvailable: true,
         collapsedSymbolCount: 0, filteredSymbolCount: 0, truncated: false
     };
     const kinds = options.kinds?.length ? new Set(options.kinds) : undefined;
     const returned: SymbolInfo[] = [];
-    const pending = roots.slice().reverse().map(node => ({ node, depth: 1, output: result.symbols }));
-    // Iterative traversal also handles deeply nested providers without making maxDepth a way
-    // to bypass the shared output budget or overflow the JS call stack.
+    const pending: Array<{ symbols: readonly ProviderSymbol[]; index: number; depth: number; output: SymbolInfo[] }> = [
+        { symbols: [...symbols].sort(compareSymbol), index: 0, depth: 1, output: result.symbols }
+    ];
+    // 直接遍历 provider 的树，不再复制所有隐藏节点；帧只保存当前层的位置，深层结构不会溢出调用栈。
+    // 折叠或已超过输出预算的子树只需计数，排序仅用于仍有机会展示的层级。
     while (pending.length) {
-        const { node, depth, output } = pending.pop()!;
+        const frame = pending[pending.length - 1];
+        if (frame.index >= frame.symbols.length) { pending.pop(); continue; }
+        const symbol = frame.symbols[frame.index++];
+        const { depth, output } = frame;
+        const document = 'range' in symbol;
+        const children = document ? symbol.children : undefined;
+        if (!document) result.hierarchyAvailable = false;
         result.availableSymbolCount++;
         let childOutput = output;
+        const kind = SYMBOL_KIND_NAMES[symbol.kind - kindBase] ?? 'unknown';
         if (depth > options.maxDepth) result.collapsedSymbolCount++;
-        else if (kinds && !kinds.has(node.kind)) result.filteredSymbolCount++;
+        else if (kinds && !kinds.has(kind)) result.filteredSymbolCount++;
         else if (result.symbolCount >= MAX_SYMBOLS_PER_FILE) result.truncated = true;
         else {
+            const range = symbolRange(symbol);
             const info: SymbolInfo = {
-                name: node.name, kind: node.kind, line: node.range.start.line + 1,
-                column: node.range.start.character + 1, endLine: node.range.end.line + 1, depth,
-                ...(node.detail ? { detail: node.detail } : {})
+                name: symbol.name, kind, line: range.start.line + 1,
+                column: range.start.character + 1, endLine: range.end.line + 1, depth,
+                ...(document && symbol.detail ? { detail: symbol.detail } : {})
             };
-            if (node.children.length) {
-                info.childCount = node.children.length;
+            if (children?.length) {
+                info.childCount = children.length;
                 if (depth >= options.maxDepth) info.childrenCollapsed = true;
                 else info.children = childOutput = [];
             }
@@ -138,8 +112,9 @@ export function createSymbolOutline(
             returned.push(info);
             result.symbolCount++;
         }
-        for (let index = node.children.length - 1; index >= 0; index--) {
-            pending.push({ node: node.children[index], depth: depth + 1, output: childOutput });
+        if (children?.length) {
+            pending.push({ symbols: depth < options.maxDepth && result.symbolCount < MAX_SYMBOLS_PER_FILE
+                ? [...children].sort(compareSymbol) : children, index: 0, depth: depth + 1, output: childOutput });
         }
     }
     for (const info of returned) if (info.children?.length === 0) delete info.children;

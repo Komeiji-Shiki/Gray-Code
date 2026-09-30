@@ -16,7 +16,6 @@ import type {
 } from './types';
 import {
     normalizeLineEndings,
-    findAllExactMatchIndexes,
     getCharOffsetForLine,
     getLineNumberAtIndex,
     countTextLines,
@@ -65,7 +64,9 @@ function splicePlannedEntries(
     for (const item of entries) {
         output.push(normalizedOriginal.slice(cursor, item.startIndex), item.newContent);
         const startLine = item.originalStartLine + lineDelta;
-        const endLine = startLine + Math.max(countTextLines(item.newContent), 1) - 1;
+        // 展示范围与后续行号偏移共享这次计数，避免大段替换内容重复扫描。
+        const newLineBreaks = countLineBreaks(item.newContent);
+        const endLine = startLine + newLineBreaks;
         results.push({
             index: item.index,
             success: true,
@@ -75,7 +76,7 @@ function splicePlannedEntries(
             matchKind: 'exact'
         });
         blocks.push({ index: item.index, startLine, endLine });
-        lineDelta += countLineBreaks(item.newContent) - countLineBreaks(item.oldContent);
+        lineDelta += newLineBreaks - countLineBreaks(item.oldContent);
         cursor = item.endIndex;
     }
     output.push(normalizedOriginal.slice(cursor));
@@ -89,8 +90,37 @@ function splicePlannedEntries(
     };
 }
 
+function earlierChangesCreateExactMatch(
+    normalizedOriginal: string,
+    entries: StructuredHunkPlanEntry[],
+    oldContent: string
+): boolean {
+    // 原文中的唯一目标在这些修改之后且不重叠；新增匹配必然接触替换内容或删除后连接的边界。
+    // 两侧各保留匹配长度减一的原文即可覆盖跨边界匹配，相邻范围合并以包含多个前序修改共同形成的匹配。
+    const contextLength = oldContent.length - 1;
+    let parts: string[] = [];
+    let previous: StructuredHunkPlanEntry | undefined;
+
+    for (const entry of entries) {
+        if (previous && entry.startIndex - previous.endIndex <= contextLength * 2) {
+            parts.push(normalizedOriginal.slice(previous.endIndex, entry.startIndex), entry.newContent);
+        } else {
+            if (previous) {
+                parts.push(normalizedOriginal.slice(previous.endIndex, previous.endIndex + contextLength));
+                if (parts.join('').includes(oldContent)) return true;
+            }
+            parts = [normalizedOriginal.slice(Math.max(0, entry.startIndex - contextLength), entry.startIndex), entry.newContent];
+        }
+        previous = entry;
+    }
+
+    if (!previous) return false;
+    parts.push(normalizedOriginal.slice(previous.endIndex, previous.endIndex + contextLength));
+    return parts.join('').includes(oldContent);
+}
+
 function tryApplyIndependentExactStructuredHunks(
-    originalContent: string,
+    normalizedOriginal: string,
     hunks: StructuredDiffHunk[],
     applyIndices?: Set<number>
 ): {
@@ -109,8 +139,9 @@ function tryApplyIndependentExactStructuredHunks(
     /** 本次应用的独立精确匹配计划：供后续任意子集重放复用，跳过重复扫描 */
     plan: StructuredHunkPlan;
 } | undefined {
-    const normalizedOriginal = normalizeLineEndings(originalContent);
     const planned: StructuredHunkPlanEntry[] = [];
+    let lineCursor = 0;
+    let originalStartLine = 1;
 
     for (let index = 0; index < hunks.length; index++) {
         if (applyIndices && !applyIndices.has(index)) continue;
@@ -119,32 +150,24 @@ function tryApplyIndependentExactStructuredHunks(
 
         const oldContent = normalizeLineEndings(hunk.oldContent);
         if (!oldContent) return undefined;
-        const matches = findAllExactMatchIndexes(normalizedOriginal, oldContent);
-        // matches === null 表示候选超限（歧义过多），与多匹配一样放弃独立应用
-        if (matches === null || matches.length === 0) return undefined;
-
-        let startIndex: number;
-        if (matches.length === 1) {
-            startIndex = matches[0];
-        } else {
-            // 多匹配：仅当 hunk 携带 startLine 且能唯一消歧时才纳入计划。
-            // 计划内 hunk 按原始坐标互不重叠且顺序应用时，慢路径的 lineDelta 补偿映射回
-            // 原始坐标即为 startLine 本身，故此处 lineDelta=0 消歧与慢路径结果一致。
-            if (typeof hunk.startLine !== 'number' || !Number.isFinite(hunk.startLine)) return undefined;
-            const startOffset = getCharOffsetForLine(normalizedOriginal, hunk.startLine);
-            if (startOffset === undefined) return undefined;
-            const selected = matches.find(index => index >= startOffset);
-            if (selected === undefined) return undefined;
-            startIndex = selected;
-        }
+        // 只需判断原文是否唯一，重叠出现也必须计入。多匹配交给顺序路径，才能正确处理
+        // 前序删除消除候选、startLine 消歧与实际匹配数量；原文唯一时仍忽略过时的 startLine。
+        const startIndex = normalizedOriginal.indexOf(oldContent);
+        if (startIndex === -1 || normalizedOriginal.indexOf(oldContent, startIndex + 1) !== -1) return undefined;
 
         const previous = planned[planned.length - 1];
         if (previous && startIndex < previous.endIndex) return undefined;
+        if (previous && earlierChangesCreateExactMatch(normalizedOriginal, planned, oldContent)) return undefined;
+        // 计划中的匹配位置已经单调递增，行号只需累计扫描一次原文，避免每个 hunk 都从文件头重数。
+        while (lineCursor < startIndex) {
+            if (normalizedOriginal.charCodeAt(lineCursor) === 10) originalStartLine++;
+            lineCursor++;
+        }
         planned.push({
             index,
             startIndex,
             endIndex: startIndex + oldContent.length,
-            originalStartLine: getLineNumberAtIndex(normalizedOriginal, startIndex),
+            originalStartLine,
             oldContent,
             newContent: normalizeLineEndings(hunk.newContent)
         });
@@ -212,13 +235,13 @@ export function applyStructuredDiffHunksBestEffort(
         }
     }
 
-    const fastResult = tryApplyIndependentExactStructuredHunks(originalContent, hunks, options?.applyIndices);
+    const fastResult = tryApplyIndependentExactStructuredHunks(normalizedOriginal, hunks, options?.applyIndices);
     if (fastResult) return fastResult;
 
     // 为什么要把结构化 hunk 应用逻辑做成导出函数：工具入口和 DiffManager 块级接受/拒绝都需要同一套重放语义，不能各写一份。
     // 怎么改：逐 hunk 处理；先保持 exact 匹配原有语义，exact 为 0 时才启用行首缩进容错，并根据已应用 hunk 的行数变化维护偏移。
     // 目的：同时解决 JSON 转义误写、多个修改点行号漂移、AI 缩进误差、以及块级拒绝后重新计算内容的一致性问题。
-    let currentContent = normalizeLineEndings(originalContent);
+    let currentContent = normalizedOriginal;
     let lineDelta = 0;
 
     const results: Array<{
@@ -277,9 +300,8 @@ export function applyStructuredDiffHunksBestEffort(
         }
 
         const { match } = resolved;
-        const oldLineCount = countTextLines(match.matchedOldContent);
-        const newLineCount = countTextLines(match.replacementContent);
-        const endLine = match.startLine + Math.max(newLineCount, 1) - 1;
+        const newLineBreaks = countLineBreaks(match.replacementContent);
+        const endLine = match.startLine + newLineBreaks;
 
         // 修改原因：缩进 fallback 的真实替换范围可能不同于模型给出的 oldContent 字符串，不能再用 oldContent.length 拼接。
         // 修改方式：统一使用解析后的 startIndex/endIndex 和 replacementContent 执行 splice。
@@ -289,7 +311,7 @@ export function applyStructuredDiffHunksBestEffort(
             match.replacementContent +
             currentContent.substring(match.endIndex);
 
-        lineDelta += countLineBreaks(match.replacementContent) - countLineBreaks(match.matchedOldContent);
+        lineDelta += newLineBreaks - countLineBreaks(match.matchedOldContent);
         results.push({
             index: i,
             success: true,

@@ -39,6 +39,53 @@ describe('diff application algorithms', () => {
         expect(result.newContent).toBe('delta\nbeta');
     });
 
+    test.each([
+        {
+            name: 'a complete earlier replacement',
+            original: 'alpha\nbeta',
+            hunks: [{ oldContent: 'alpha', newContent: 'beta' }, { oldContent: 'beta', newContent: 'delta' }],
+            expected: 'beta\nbeta'
+        },
+        {
+            name: 'a deletion joining both boundaries',
+            original: 'aXb\nab',
+            hunks: [{ oldContent: 'X', newContent: '' }, { oldContent: 'ab', newContent: 'updated' }],
+            expected: 'ab\nab'
+        },
+        {
+            name: 'an overlapping match across the next target',
+            original: 'Xaa',
+            hunks: [{ oldContent: 'X', newContent: 'a' }, { oldContent: 'aa', newContent: 'updated' }],
+            expected: 'aaa'
+        },
+        {
+            name: 'two adjacent earlier replacements',
+            original: 'XYc\nabc',
+            hunks: [{ oldContent: 'X', newContent: 'a' }, { oldContent: 'Y', newContent: 'b' }, { oldContent: 'abc', newContent: 'updated' }],
+            expected: 'abc\nabc'
+        }
+    ])('rejects ambiguity introduced by $name', ({ original, hunks, expected }) => {
+        const result = applyStructuredDiffHunksBestEffort(original, hunks);
+
+        expect(result.plan).toBeUndefined();
+        expect(result.newContent).toBe(expected);
+        expect(result.appliedCount).toBe(hunks.length - 1);
+        expect(result.failedCount).toBe(1);
+        expect(result.results[result.results.length - 1]).toMatchObject({ success: false, matchCount: 2 });
+    });
+
+    test('keeps startLine disambiguation when earlier hunks introduce an extra match', () => {
+        const result = applyStructuredDiffHunksBestEffort('alpha\nbeta', [
+            { oldContent: 'alpha', newContent: 'beta' },
+            { oldContent: 'beta', newContent: 'delta', startLine: 2 }
+        ]);
+
+        expect(result.plan).toBeUndefined();
+        expect(result.failedCount).toBe(0);
+        expect(result.newContent).toBe('beta\ndelta');
+        expect(result.results[1]).toMatchObject({ success: true, startLine: 2, matchCount: 2, candidateLines: [1, 2] });
+    });
+
     test('applies a unified hunk with mixed context, deletes, and additions', () => {
         const parsed = parseUnifiedDiff([
             '--- a/file.txt',
@@ -55,6 +102,27 @@ describe('diff application algorithms', () => {
 
         expect(result.results).toEqual([{ index: 0, ok: true, startLine: 1, endLine: 4 }]);
         expect(result.newContent).toBe('alpha\nbravo\ngamma\ntail');
+    });
+
+    test('applies a large unified hunk followed by a shrinking hunk without losing the tail', () => {
+        const additions = Array.from({ length: 130_000 }, (_, index) => `new-${index}`);
+        const parsed = parseUnifiedDiff([
+            `@@ -2,1 +2,${additions.length} @@`,
+            '-target',
+            additions.map(line => `+${line}`).join('\n'),
+            `@@ -3,2 +${additions.length + 2},1 @@`,
+            '-remove-a',
+            '-remove-b',
+            '+merged'
+        ].join('\n'));
+
+        const result = applyUnifiedDiffBestEffort('head\ntarget\nremove-a\nremove-b\ntail', parsed);
+
+        expect(result.newContent).toBe(`head\n${additions.join('\n')}\nmerged\ntail`);
+        expect(result.results).toEqual([
+            { index: 0, ok: true, startLine: 2, endLine: additions.length + 1 },
+            { index: 1, ok: true, startLine: additions.length + 2, endLine: additions.length + 2 }
+        ]);
     });
 
     test('finds a uniquely relocated unified hunk through fallback search', () => {

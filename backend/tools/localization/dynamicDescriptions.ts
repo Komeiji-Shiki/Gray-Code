@@ -116,8 +116,8 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
     // 它们仍通过 declaration 的 paramAliases/compatParams 被接受（见 read_file.ts 声明）。
     const lineRangeNote = pick(
         lang,
-        '\n\n行范围：单文件读取时使用顶层 startLine/endLine；批量读取时在每个 files[] 项中分别设置 startLine/endLine。只有已经知道准确行号时才填写（例如来自 get_symbols、goto_definition、find_references、list_files、find_files 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。',
-        '\n\nLine ranges: in single-file mode use the top-level startLine/endLine; in batch mode set startLine/endLine on each files[] item. Only fill in line ranges when you already know the exact line numbers (e.g. from get_symbols, goto_definition, find_references, list_files, find_files, or a previous read_file result). Do not guess line numbers; when unsure, omit the line range and read the whole file or use a search tool to locate the content.'
+        '\n\n行范围：单文件用顶层 startLine/endLine，批量在每个 files[] 项中设置。省略 endLine 会读到文件末尾。按搜索或符号结果定位；位置未知时先搜索，或从第 1 行分段浏览大文件，依据返回的 totalLines 继续读取，避免一次展开整份日志或长文档。',
+        '\n\nLine ranges: use top-level startLine/endLine for one file, or set them per files[] item. Omitting endLine reads to EOF. Locate content with search or symbols; otherwise search first or browse a large file in ranges starting at line 1, using totalLines to continue instead of expanding an entire log or long document.'
     );
 
     // 多模态/二进制行范围限制说明（多模态开启时强调）

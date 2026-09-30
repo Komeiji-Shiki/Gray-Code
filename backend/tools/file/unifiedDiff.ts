@@ -73,7 +73,7 @@ export interface ApplyUnifiedDiffBestEffortResult extends ApplyUnifiedDiffResult
 }
 
 function normalizeLineEndings(text: string): string {
-    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return text.replace(/\r\n?/g, '\n');
 }
 
 /**
@@ -285,9 +285,15 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
     return { oldFile, newFile, hunks };
 }
 
-function computeHunkNewLen(hunk: UnifiedDiffHunk): number {
-    // newLen = context + add
-    return hunk.lines.reduce((acc, l) => acc + (l.type === 'del' ? 0 : 1), 0);
+function replaceLineRange(lines: string[], startIndex: number, removedCount: number, replacementLines: string[]): void {
+    // 超大 hunk 不能把整段新行展开为 splice 实参，否则会触发 JavaScript 的实参数量上限。
+    // copyWithin 按重叠方向搬移尾段，扩容先于右移、缩容晚于左移，仍只在 hunk 校验完整后修改当前内容。
+    const previousLength = lines.length;
+    const delta = replacementLines.length - removedCount;
+    if (delta > 0) lines.length = previousLength + delta;
+    if (delta !== 0) lines.copyWithin(startIndex + replacementLines.length, startIndex + removedCount, previousLength);
+    if (delta < 0) lines.length = previousLength + delta;
+    for (let index = 0; index < replacementLines.length; index++) lines[startIndex + index] = replacementLines[index];
 }
 
 /**
@@ -331,7 +337,7 @@ export function applyUnifiedDiffHunks(
         let removed = 0;
         let added = 0;
         // hunk 输出段：context 行原样保留、del 行删除、add 行插入。
-        // 收集完成后一次性 splice，避免逐行 splice 的 O(n) 数组移位（hunk 行数多时退化为 O(n·m)）。
+        // 收集完成后一次性替换行段，避免逐行 splice 的 O(n) 数组移位（hunk 行数多时退化为 O(n·m)）。
         const hunkOutput: string[] = [];
 
         for (const line of hunk.lines) {
@@ -365,10 +371,10 @@ export function applyUnifiedDiffHunks(
         }
 
         // 一次性替换 [startIndex, idx) 区间：context 行重新写回、del 行真正移除、add 行插入，
-        // 与逐行 splice 的最终结果逐字节一致。
-        lines.splice(startIndex, idx - startIndex, ...hunkOutput);
+        // 与逐行 splice 的最终结果逐字节一致，且新行数量不受函数实参上限限制。
+        replaceLineRange(lines, startIndex, idx - startIndex, hunkOutput);
 
-        const newLen = computeHunkNewLen(hunk);
+        const newLen = hunkOutput.length;
         const startLine = startIndex + 1;
         const endLine = startLine + Math.max(newLen, 1) - 1;
         appliedHunks.push({ index: hunkIndex, startLine, endLine });
@@ -410,12 +416,13 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
 
     for (let hunkIndex = 0; hunkIndex < parsed.hunks.length; hunkIndex++) {
         const hunk = parsed.hunks[hunkIndex];
-        const oldLines = hunk.lines
-            .filter(line => line.type === 'context' || line.type === 'del')
-            .map(line => line.content);
-        const replacementLines = hunk.lines
-            .filter(line => line.type === 'context' || line.type === 'add')
-            .map(line => line.content);
+        const oldLines: string[] = [];
+        const replacementLines: string[] = [];
+        // 一次读取 hunk 行即可得到校验段与替换段，避免 filter/map 反复创建大数组。
+        for (const line of hunk.lines) {
+            if (line.type === 'context' || line.type === 'del') oldLines.push(line.content);
+            if (line.type === 'context' || line.type === 'add') replacementLines.push(line.content);
+        }
 
         const matchesAt = (startIndex: number): boolean => {
             if (startIndex < 0 || startIndex + oldLines.length > lines.length) return false;
@@ -426,7 +433,7 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
         };
 
         const applyAt = (startIndex: number): void => {
-            lines.splice(startIndex, oldLines.length, ...replacementLines);
+            replaceLineRange(lines, startIndex, oldLines.length, replacementLines);
         };
 
         const recordSuccess = (startIndex: number): void => {

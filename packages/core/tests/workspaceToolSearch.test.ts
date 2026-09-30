@@ -40,13 +40,18 @@ describe('独立平台轻量搜索与工具选择说明', () => {
     await expect(toolsFixture().search.handler({ query: 'hit', offset })).rejects.toThrow('offset');
   });
 
-  test('扫描上限给出缩小目录建议，而不是无效续查位置', async () => {
+  test('扫描上限明确标记未搜完，文件游标能继续读取未扫描文件', async () => {
     const { host, search } = toolsFixture(Object.fromEntries(Array.from({ length: 20_001 }, (_, index) => [`${index}.txt`, ''])));
+    host.readFile.mockImplementation(async file => Buffer.from(file.fsPath === '20000.txt' ? 'missing' : ''));
     const result = (await search.handler({ query: 'missing' })).data;
-    expect(result).toMatchObject({ scanned: 20_000, truncated: true, truncationReasons: ['scanLimit'] });
+    expect(result).toMatchObject({ scanned: 20_000, truncated: true, truncationReasons: ['scanLimit'], scanComplete: false, nextScanOffset: 20_000 });
     expect(result.nextOffset).toBeUndefined();
-    expect(result.continuationHint).toContain('narrow directory');
+    expect(result.continuationHint).toContain('not complete');
     expect(host.readFile).toHaveBeenCalledTimes(20_000);
+    const next = (await search.handler(result.nextActions[0].args)).data;
+    expect(next).toMatchObject({ scanned: 1, scanComplete: true, truncated: false, matches: [{ path: '20000.txt', text: 'missing' }] });
+    expect(next.nextScanOffset).toBeUndefined();
+    expect(host.readFile).toHaveBeenCalledTimes(20_001);
   });
 
   test('文件读取中的取消不会被当作跳过的文件', async () => {

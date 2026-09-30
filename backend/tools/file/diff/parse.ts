@@ -179,10 +179,10 @@ export function formatCandidateLinesForMessage(candidateLines: number[]): string
 
 export function countTextLines(normalizedText: string): number {
     // 为什么要统一计算展示行数：diff block 的 endLine 需要描述替换内容在审阅面板里的可见范围。
-    // 怎么改：按 normalize 后的 LF 分割计算展示意义上的行数，空字符串按 0 行处理；lineDelta 另用 countLineBreaks 计算真实行号偏移。
+    // 展示行数等于 LF 数量加一，直接计数避免为大段替换内容创建分割数组；空字符串仍按 0 行处理。
     // 目的：区分“展示范围”和“后续 startLine 偏移”，避免删除整行时把后续定位多减一行。
     if (!normalizedText) return 0;
-    return normalizedText.split('\n').length;
+    return countLineBreaks(normalizedText) + 1;
 }
 
 export function countLineBreaks(normalizedText: string): number {

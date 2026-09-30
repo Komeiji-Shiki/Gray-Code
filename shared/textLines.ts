@@ -18,6 +18,26 @@ export function splitTextLines(text: string, preserveLineEndings = false): strin
     return lines;
 }
 
+/** 范围读取仍统计全文行数，但只保留选中的行，避免为短片段创建整份文件的行数组。 */
+export function selectTextLines(text: string, startLine: number, endLine: number): { lines: string[]; totalLines: number } {
+    const lines: string[] = [];
+    const separators = /\r\n?|\n/g;
+    let line = 1;
+    let start = 0;
+    let separator: RegExpExecArray | null;
+    while ((separator = separators.exec(text)) !== null) {
+        if (line >= startLine && line <= endLine) lines.push(text.slice(start, separator.index));
+        start = separators.lastIndex;
+        line++;
+    }
+    // 尾部换行不额外计行；空文件仍提供可读取的第 1 行。
+    if (start < text.length || line === 1) {
+        if (line >= startLine && line <= endLine) lines.push(text.slice(start));
+        return { lines, totalLines: line };
+    }
+    return { lines, totalLines: line - 1 };
+}
+
 /**
  * 与 splitTextLines 相同的 UTF-8 字节流计数，不解码、不保留完整内容。
  * CR/LF 不会出现在 UTF-8 多字节字符内部；仅需保留前一个字节以合并跨块 CRLF。

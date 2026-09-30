@@ -42,18 +42,15 @@ export class WorkspaceSearch {
       const host = new NodeFileHost(this.app, { runId: requestId, actorId: session.actorId, workspace,
         signal: controller.signal, progress() {}, askUser: async () => { throw new Error('搜索不执行任务询问。'); } });
       const config = host.searchConfig();
-      const fileLimit = Math.max(1, config.maxFindFiles ?? 1000);
       const matchLimit = 1000;
       const result: ProjectSearchResult = { files: [], count: 0, truncated: false, skipped: [] };
       const drafts = new Map(this.app.files.clientDocuments(session.clientId, workspaceId).map(document => [document.path, document]));
-      let scanned = 0;
       for (const root of host.getAllWorkspaces()) {
         // 界面尚无 includeIgnored 开关，保留其原有配置/显式 glob 范围，不随模型工具的默认值改变。
         const files = host.iterateFiles(root.uri, options.include?.trim() || '**/*',
-          buildExcludePattern([...config.excludePatterns ?? [], ...(options.exclude?.trim() ? [options.exclude.trim()] : [])]), fileLimit + 1, { includeIgnored: true });
+          buildExcludePattern([...config.excludePatterns ?? [], ...(options.exclude?.trim() ? [options.exclude.trim()] : [])]), Number.MAX_SAFE_INTEGER, { includeIgnored: true });
         for await (const file of files) {
           controller.signal.throwIfAborted();
-          if (scanned++ >= fileLimit) { result.truncated = true; return result; }
           const relative = host.toRelativePath(file);
           try {
             const value = await this.content(session, workspace, relative, drafts);

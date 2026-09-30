@@ -128,7 +128,8 @@ test('多文件混合失败、空结果与成功依输入顺序聚合，且仍�
   const capped = await call({ paths: Array.from({ length: 21 }, () => 'main.ts') });
   expect(capped.data).toMatchObject({ successCount: 20, totalCount: 21, totalSymbolCount: 20, truncated: true });
   expect(capped.data.results).toHaveLength(20);
-  expect(provider).toHaveBeenCalledTimes(20);
+  // 同一次批量调用的重复路径共享提纲，返回条目和20条预算仍按输入计数。
+  expect(provider).toHaveBeenCalledTimes(1);
 });
 
 test.each([{ maxDepth: 0 }, { maxDepth: 1.5 }, { maxDepth: '2' }, { kinds: 'class' }, { kinds: ['not_a_kind'] }])('平台拒绝无效提纲参数：%j', async options => {

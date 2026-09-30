@@ -30,11 +30,14 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
         includeIgnored: { type: 'boolean', default: false },
         limit: { type: 'integer', minimum: 1, maximum: 200 },
         offset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '跳过的匹配行数，续查用 nextOffset。' : 'Matching lines to skip; use nextOffset to continue.' },
+        scanOffset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '候选文件扫描起点；达到扫描上限后使用 nextScanOffset，匹配 offset 重置为 0。' : 'Candidate file scan position. Continue with nextScanOffset after the scan limit, resetting offset to 0.' },
       }, required: ['query'] },
     },
     handler: async (args, context) => {
       const limit = args.limit ?? 100, offset = args.offset ?? 0;
+      const scanOffset = args.scanOffset ?? 0;
       if (!Number.isSafeInteger(offset) || Number(offset) < 0) throw new Error('offset must be a non-negative safe integer');
+      if (!Number.isSafeInteger(scanOffset) || Number(scanOffset) < 0) throw new Error('scanOffset must be a non-negative safe integer');
       if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 200) throw new Error('limit must be an integer between 1 and 200');
       if (typeof args.query !== 'string' || !args.query.length) throw new Error('query must be nonempty text');
       if (args.includeIgnored !== undefined && typeof args.includeIgnored !== 'boolean') throw new Error('includeIgnored must be a boolean');
@@ -50,11 +53,13 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
       const expression = new RegExp(escapeRegExp(args.query), args.caseSensitive ? '' : 'i');
       const matches: Array<{ path: string; line: number } & ReturnType<typeof literalMatchPreview>> = [];
       const skippedFiles: Array<{ file: string; reason: string }> = [];
-      let remaining = Number(offset), scanned = 0, filesTruncated = false, skippedCount = 0;
+      let remaining = Number(offset), scanned = 0, discovered = 0, filesTruncated = false, skippedCount = 0;
       const skip = (file: string, reason: string) => { skippedCount++; if (skippedFiles.length < 50) skippedFiles.push({ file, reason }); };
       search: for (const root of targets) {
-        for await (const file of host.iterateFiles(root.uri, '**/*', exclude, 20_001, { includeIgnored })) {
+        // 扫描游标跳过的是发现顺序中的文件，不能在游标以前先截断发现结果，否则下一页仍到不了后续文件。
+        for await (const file of host.iterateFiles(root.uri, '**/*', exclude, Number.MAX_SAFE_INTEGER, { includeIgnored })) {
           context?.abortSignal?.throwIfAborted();
+          if (discovered++ < Number(scanOffset)) continue;
           if (scanned >= 20_000) { filesTruncated = true; break search; }
           scanned++;
           const relative = host.toRelativePath(file);
@@ -83,14 +88,19 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
       const matchesTruncated = matches.length > Number(limit);
       if (matchesTruncated) matches.length = Number(limit);
       const nextOffset = matchesTruncated ? Number(offset) + matches.length : undefined;
-      return { success: true, data: { matches, scanned, offset, nextOffset, includeIgnored, effectiveExclude: exclude,
+      const nextScanOffset = filesTruncated ? Number(scanOffset) + scanned : undefined;
+      const nextPage = nextOffset !== undefined ? { scanOffset, offset: nextOffset }
+        : nextScanOffset !== undefined ? { scanOffset: nextScanOffset, offset: 0 } : undefined;
+      return { success: true, data: { matches, scanned, scanOffset, offset, nextOffset, nextScanOffset, nextPage,
+        scanComplete: !matchesTruncated && !filesTruncated, includeIgnored, effectiveExclude: exclude,
         respectsGitIgnore: !includeIgnored, skippedCount, skippedFiles: skippedFiles.length ? skippedFiles : undefined,
         skippedFilesTruncated: skippedCount > skippedFiles.length,
         truncated: matchesTruncated || filesTruncated,
         truncationReasons: matchesTruncated ? ['limit'] : filesTruncated ? ['scanLimit'] : undefined,
         continuationHint: nextOffset !== undefined
-          ? `Continue with offset=${nextOffset} and unchanged query/directory/caseSensitive/includeIgnored; restart at 0 if files or exclusions changed.`
-          : filesTruncated ? 'File scan limit reached; narrow directory. Offset cannot reach unscanned files.' : undefined } };
+          ? `Continue with offset=${nextOffset}, scanOffset=${scanOffset} and unchanged search parameters; restart both at 0 if files or exclusions changed.`
+          : filesTruncated ? `Search is not complete. Continue with scanOffset=${nextScanOffset}, offset=0 and unchanged search parameters; restart both at 0 if files or exclusions changed.` : undefined,
+        nextActions: nextPage ? [{ tool: 'search_files', args: { ...args, ...nextPage } }] : undefined } };
     },
   };
 }

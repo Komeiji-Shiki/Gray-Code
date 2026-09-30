@@ -150,7 +150,8 @@ async function listDirectoryRecursive(
     ignorePatterns: string[],
     pendingLineCounts: PendingLineCount[],
     depth: number,
-    state: RecursiveTraversalState
+    state: RecursiveTraversalState,
+    signal?: AbortSignal
 ): Promise<void> {
     // 深度上限：到达最大深度后不再下钻。该目录的条目已由父层记录，但其子内容未展开，
     // 结果不完整，标记 truncated 让模型知道可针对性列出子目录。
@@ -158,22 +159,20 @@ async function listDirectoryRecursive(
         state.truncated = true;
         return;
     }
-    if (state.truncated) {
-        return;
-    }
-
+    signal?.throwIfAborted();
     const items = await host.readDirectory(dirUri);
+    signal?.throwIfAborted();
     
     for (const [name, type] of items) {
-        // 条目总数上限：预算已满且仍有未处理条目，停止收集并标记截断
+        // 跳过忽略的目录和文件
+        if (shouldIgnore(name, ignorePatterns) || (type !== 1 && type !== 2)) {
+            continue;
+        }
+        if (type === 2 && RECURSIVE_SKIP_DIRS.some(skipDir => skipDir.toLowerCase() === name.toLowerCase())) continue;
+        // 深度截断只影响当前子树；只有条目预算耗尽才停止后续兄弟目录。
         if (state.entryCount >= MAX_RECURSIVE_ENTRIES) {
             state.truncated = true;
             break;
-        }
-        
-        // 跳过忽略的目录和文件
-        if (shouldIgnore(name, ignorePatterns)) {
-            continue;
         }
         
         // 统一使用 "/" 作为分隔符：path.join 在 Windows 上返回 "\\"，
@@ -181,17 +180,11 @@ async function listDirectoryRecursive(
         const relativePath = basePath ? `${basePath}/${name}` : name;
         
         if (type === 2) {
-            // 跳过常见巨型目录，防止递归无界（不影响非递归的顶层显式列出）。
-            // 目录名比较转小写：Windows/macOS 文件系统大小写不敏感，
-            // 避免 NodeModules / Dist 等大小写变体漏网被整树遍历。
-            if (RECURSIVE_SKIP_DIRS.some(skipDir => skipDir.toLowerCase() === name.toLowerCase())) {
-                continue;
-            }
             entries.push({ name: relativePath + '/', type: 'directory' });
             state.entryCount++;
             // 递归进入子目录
             const subDirUri = host.joinPath(dirUri, name);
-            await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns, pendingLineCounts, depth + 1, state);
+            await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns, pendingLineCounts, depth + 1, state, signal);
         } else if (type === 1) {
             const fileUri = host.joinPath(dirUri, name);
             // 行数不在遍历循环里逐个 await，而是收集后统一受控并发填充
@@ -302,6 +295,7 @@ function createTool(): Tool {
 
             for (const dirPath of pathList) {
                 try {
+                    context?.abortSignal?.throwIfAborted();
                     const { uri: dirUri, workspace, relativePath, isExplicit } = host.resolveUriWithInfo(dirPath);
                     if (!dirUri) {
                         results.push({
@@ -324,7 +318,7 @@ function createTool(): Tool {
                     if (recursive) {
                         // 递归列出（带深度与条目上限，超出即截断）
                         const state: RecursiveTraversalState = { entryCount: 0, truncated: false };
-                        await listDirectoryRecursive(dirUri, '', entries, ignorePatterns, pendingLineCounts, 0, state);
+                        await listDirectoryRecursive(dirUri, '', entries, ignorePatterns, pendingLineCounts, 0, state, context?.abortSignal);
                         truncated = state.truncated;
                     } else {
                         // 只列出顶层
@@ -332,7 +326,7 @@ function createTool(): Tool {
                         
                         for (const [name, type] of items) {
                             // 跳过忽略的目录和文件
-                            if (shouldIgnore(name, ignorePatterns)) {
+                            if (shouldIgnore(name, ignorePatterns) || (type !== 1 && type !== 2)) {
                                 continue;
                             }
 
@@ -356,7 +350,9 @@ function createTool(): Tool {
 
                     // 受控并发填充行数：替代遍历循环里的逐文件串行 await
                     await mapWithConcurrency(pendingLineCounts, LINE_COUNT_CONCURRENCY, async pending => {
+                        context?.abortSignal?.throwIfAborted();
                         pending.entry.lineCount = await host.countTextFileLines(pending.uri, pending.filePath);
+                        context?.abortSignal?.throwIfAborted();
                     });
                     
                     // 排序：目录在前，文件在后，各自按名称排序
@@ -382,6 +378,7 @@ function createTool(): Tool {
                     totalFiles += fileCount;
                     totalDirs += dirCount;
                 } catch (error) {
+                    context?.abortSignal?.throwIfAborted();
                     results.push({
                         path: dirPath,
                         entries: [],
