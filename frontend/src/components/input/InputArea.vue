@@ -102,7 +102,8 @@ const channelOptions = computed<ChannelOption[]>(() =>
       id: config.id,
       name: config.name,
       model: config.model || '',
-      type: config.type
+      type: config.type,
+      authMode: config.authMode
     }))
 )
 

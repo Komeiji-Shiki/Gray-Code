@@ -103,6 +103,8 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
       const config = await draft.configs.getConfig(data.configId);
       if (!config) throw new Error('渠道不存在。');
       if (config.apiKey === '••••••••') config.apiKey = (await app.product.channel(data.configId))?.apiKey ?? '';
+      if (config.type === 'openai-responses' && config.authMode === 'chatgpt')
+        config.apiKey = await app.chatgpt.accessToken(config.id, new AbortController().signal);
       return getModels(config, settings.getEffectiveProxyUrl());
     },
     'models.setActiveModel': async data => { await draft.configs.updateConfig(data.configId, { model: data.modelId }); return { success: true }; },

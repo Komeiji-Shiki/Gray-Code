@@ -183,6 +183,7 @@ export interface ChannelConfig {
   sendHistoryThoughtSignatures?: boolean
   sendCurrentThoughtSignatures?: boolean
   reasoningSignatureMode?: 'official' | 'codex' | 'deepseek'
+  authMode?: 'api-key' | 'chatgpt'
   sendHistoryThoughts?: boolean
   /** Responses 专用：是否回传 reasoning 输入项（未设置 = 回传，false = 不回传）。 */
   replayReasoningContent?: boolean

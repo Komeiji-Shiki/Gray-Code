@@ -8,6 +8,7 @@
 import { t } from '../../i18n';
 import type { ChannelConfig, ModelInfo } from '../config';
 import { createProxyFetch, extractUpstreamErrorMessage } from './proxyFetch';
+import { CHATGPT_API_BASE_URL } from './chatgpt';
 
 // ModelInfo 类型下沉至 config 域（config/configs/base.ts，经 config 门面 re-export）。
 // 此处保留 re-export 壳：channel/index.ts、api/models/* 等既有导入方零改动。
@@ -389,6 +390,22 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
  */
 export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
   const apiKey = config.apiKey;
+  if (config.type === 'openai-responses' && config.authMode === 'chatgpt') {
+    if (!apiKey) throw new ModelListRequestError(t('modules.chatgpt.modelsSignInRequired'));
+    const cacheKey = buildModelListCacheKey(config.type, CHATGPT_API_BASE_URL, config, proxyUrl);
+    const cached = getModelListCached(cacheKey);
+    if (cached) return cached;
+    const response = await createProxyFetch(proxyUrl)(`${CHATGPT_API_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(config.timeout ?? 30_000),
+    });
+    if (!response.ok) await throwModelListRequestError(response, apiKey);
+    const data = await response.json() as { models?: { slug?: string; display_name?: string; visibility?: string }[] };
+    if (!Array.isArray(data.models)) throw new ModelListRequestError(t('modules.chatgpt.invalidModels'));
+    const models = data.models.filter(model => model.visibility === 'list' && typeof model.slug === 'string' && model.slug)
+      .map(model => ({ id: model.slug!, name: model.display_name || model.slug! }));
+    cacheModelList(cacheKey, models);
+    return models;
+  }
   let url = config.url || 'https://api.openai.com/v1';
 
   if (url.endsWith('/')) {

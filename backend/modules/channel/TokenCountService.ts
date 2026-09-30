@@ -162,7 +162,7 @@ export class TokenCountService {
                     actualMethod = 'anthropic';
                     break;
                 case 'openai-responses':
-                    actualMethod = 'openai_responses';
+                    actualMethod = channelConfig.authMode === 'chatgpt' ? 'local' : 'openai_responses';
                     break;
                 case 'openai':
                 default:

@@ -8,6 +8,7 @@
  * - 所有变更通过 emits 回传父组件（update:field / update:option / 输入类事件）。
  */
 import ModelManager from '../ModelManager.vue'
+import ChannelChatGPTAuthentication from './ChannelChatGPTAuthentication.vue'
 import { CustomSelect, type SelectOption } from '../../common'
 import { t } from '@/i18n'
 import type { ChannelConfig } from '@/types'
@@ -52,7 +53,18 @@ const emit = defineEmits<{
     </label>
   </div>
 
-  <div class="form-group" data-search-anchor="api-url">
+  <div v-if="isPlatformHost && config.type === 'openai-responses'" class="form-group">
+    <label>{{ t('desktop.chatgpt.authLabel') }}</label>
+    <CustomSelect :model-value="config.authMode || 'api-key'"
+      :options="[{ value: 'api-key', label: t('desktop.chatgpt.apiKey') }, { value: 'chatgpt', label: t('desktop.chatgpt.subscription') }]"
+      @update:model-value="(value: string) => emit('update:field', 'authMode', value)" />
+    <template v-if="config.authMode === 'chatgpt'">
+      <p class="field-hint">{{ t('desktop.chatgpt.hint') }}</p>
+      <ChannelChatGPTAuthentication :key="config.id" :config-id="config.id" :prepare="prepareModelFetch" />
+    </template>
+  </div>
+
+  <div v-if="config.authMode !== 'chatgpt'" class="form-group" data-search-anchor="api-url">
     <label>{{ t('components.settings.channelSettings.form.apiUrl.label') }}</label>
     <input
       :value="config.url"
@@ -64,7 +76,7 @@ const emit = defineEmits<{
     />
   </div>
 
-  <div class="form-group" data-search-anchor="api-key">
+  <div v-if="config.authMode !== 'chatgpt'" class="form-group" data-search-anchor="api-key">
     <label>{{ t('components.settings.channelSettings.form.apiKey.label') }}</label>
     <div class="input-with-action">
       <input
@@ -125,7 +137,8 @@ const emit = defineEmits<{
     <label class="custom-checkbox">
       <input
         type="checkbox"
-        :checked="config.options?.stream ?? true"
+        :checked="config.authMode === 'chatgpt' || (config.options?.stream ?? true)"
+        :disabled="config.authMode === 'chatgpt'"
         @change="(e: any) => emit('update:option', 'stream', e.target.checked)"
       />
       <span class="checkmark"></span>

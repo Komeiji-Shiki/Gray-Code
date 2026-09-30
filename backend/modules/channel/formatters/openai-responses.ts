@@ -1,6 +1,7 @@
 import { responsesMessageFields, responsesMessageParts, responsesMessageStart, responsesTextPart, sameResponsesMessage } from './responsesMessage';
 import { parseToolArguments } from './toolArguments';
 import { resolveConfiguredStream } from '../../config/configs/base';
+import { CHATGPT_API_BASE_URL, chatgptHeaders, normalizeChatGPTBody } from '../chatgpt';
 /**
  * GrayCode - OpenAI Responses 格式转换器
  *
@@ -169,16 +170,16 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // - 非 DeepSeek 的 content-only reasoning：不构造 reasoning item，也不降级成普通文本，
         //   避免把不被当前 Responses endpoint 接受的 reasoning_text 发出去。
         // reasoningSignatureMode 只有 official/codex/deepseek 三种字符串取值，用 `??` 取默认值即可。
-        const reasoningSignatureMode = config.reasoningSignatureMode ?? 'official';
+        const reasoningSignatureMode = config.authMode === 'chatgpt' ? 'codex' : config.reasoningSignatureMode ?? 'official';
         // DeepSeek Responses 端点只支持明文 content 形式的 reasoning：官方文档列出
         // summary、encrypted_content 与 include 均不受支持。该模式强制走明文路径，
         // 同时打开 useDeepSeekReasoningTextFallback（模型名不认识时也能补空占位）。
         const deepSeekSignatureCompat = reasoningSignatureMode === 'deepseek';
         // providerReasoningContentEnabled 会被渠道配置显式写成布尔 false，只能用 === true 判断：
         // 若按「缺省即取默认值」处理，渠道显式关闭的意图会被模型名推断覆盖。
-        const isDeepSeek = deepSeekSignatureCompat
+        const isDeepSeek = config.authMode !== 'chatgpt' && (deepSeekSignatureCompat
             || config.providerReasoningContentEnabled === true
-            || isDeepSeekModel(config.model);
+            || isDeepSeekModel(config.model));
         const input = this.convertToResponsesInput(processedHistory, {
             // plain reasoning_text 回传不再按模型名门控：未设置即回传，只有渠道显式写下
             // replayReasoningContent=false 时才停止回传（兼容不支持 reasoning 输入的端点）。
@@ -245,12 +246,12 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         const finalBody = applyCustomBody(body, config.customBody, config.customBodyEnabled);
 
         return {
-            url,
+            url: config.authMode === 'chatgpt' ? `${CHATGPT_API_BASE_URL}/responses` : url,
             method: 'POST',
-            headers,
-            body: finalBody,
+            headers: config.authMode === 'chatgpt' ? chatgptHeaders(headers, config.apiKey) : headers,
+            body: config.authMode === 'chatgpt' ? normalizeChatGPTBody(finalBody) : finalBody,
             timeout: config.timeout,
-            stream: useStream
+            stream: config.authMode === 'chatgpt' || useStream
         };
     }
 

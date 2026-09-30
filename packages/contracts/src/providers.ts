@@ -39,6 +39,14 @@ export interface ProviderModel {
   name?: string;
   capabilities?: Partial<ProviderCapabilities>;
 }
+export interface ChatGPTAuthStatus {
+  storageAvailable: boolean;
+  activeClientId?: string;
+  accounts: { clientId: string; email?: string; name?: string; connected: boolean; planEnabled: boolean }[];
+  usageUrl: string;
+  needsUsageNotice: boolean;
+  login?: { state: 'pending' | 'exchanging' | 'completed' | 'failed' | 'cancelled'; error?: string };
+}
 export interface ProviderDefinition {
   id: string;
   name: string;
@@ -47,6 +55,8 @@ export interface ProviderDefinition {
   model: string;
   models: ProviderModel[];
   credentialRef?: string;
+  /** 缺省使用 API Key；ChatGPT 订阅凭据独立保存在加密存储中。 */
+  authMode?: 'api-key' | 'chatgpt';
   stream: boolean;
   timeoutMs: number;
   capabilities: ProviderCapabilities;

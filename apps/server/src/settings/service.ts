@@ -144,11 +144,30 @@ export class SettingsService<T = never> {
     )) as { encrypted: Uint8Array } | null;
     return record ? this.secrets.decrypt(record.encrypted) : null;
   }
+  get supportsEncryptedCredentials(): boolean { return !!this.secrets; }
   save(draft: SettingsDraft, extension?: T): Promise<SettingsSnapshot> {
     // Freeze caller-owned drafts before waiting, and serialize publication with persistence.
     const input = structuredClone(draft);
     const value = structuredClone(extension);
     const operation = this.queue.catch(() => {}).then(() => this.commit(input, value));
+    this.queue = operation;
+    return operation;
+  }
+  /** OAuth 只更新加密记录；复用事务队列，但不改变设置草稿的 CAS 版本。 */
+  updateCredential(reference: string, update: (current: string | null) => string | null): Promise<void> {
+    const operation = this.queue.catch(() => {}).then(async () => {
+      if (!identifier.test(reference) || !this.secrets) throw new Error('加密凭据存储不可用。');
+      const record = await this.storage.getVersionedRecord(secretNamespace, reference);
+      const current = record.value as { encrypted: Uint8Array } | null;
+      const value = update(current ? await this.secrets.decrypt(current.encrypted) : null);
+      await this.storage.commitRecords([{ namespace: secretNamespace, id: reference,
+        ...(value === null ? { delete: true } : { value: { encrypted: await this.secrets.encrypt(value) } }),
+        expectedRevision: record.revision }]);
+      const ids = new Set(this.current.credentialIds);
+      if (value === null) ids.delete(reference); else ids.add(reference);
+      this.current = { ...this.current, credentialIds: [...ids] };
+      await this.afterSave?.();
+    });
     this.queue = operation;
     return operation;
   }
@@ -321,6 +340,10 @@ export class SettingsService<T = never> {
           "Provider endpoint must be HTTP(S) without embedded credentials.",
         );
       // 未选模型的渠道可以保存，具体发送时再要求有效模型，与旧版设置保持一致。
+      if (profile.authMode !== undefined && !['api-key', 'chatgpt'].includes(profile.authMode))
+        throw new Error('渠道认证方式无效。');
+      if (profile.authMode === 'chatgpt' && profile.protocol !== 'openai-responses')
+        throw new Error('ChatGPT 订阅登录需要使用 OpenAI Responses 渠道。');
       if (typeof profile.model !== 'string') throw new Error(`渠道「${profile.name || profile.id}」的默认模型格式无效。`);
       if (!Number.isFinite(profile.timeoutMs) || profile.timeoutMs <= 0)
         throw new Error(`渠道「${profile.name || profile.id}」的请求超时必须是大于 0 的毫秒数，请在该渠道的高级设置中修改。`);

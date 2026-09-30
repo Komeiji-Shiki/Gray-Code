@@ -1,3 +1,4 @@
+import { t } from "../../../../backend/i18n";
 import type {
   ModelInput,
   ModelProvider,
@@ -16,6 +17,7 @@ import type { ToolDeclaration } from "../../../../backend/tools/types";
 import type { ChannelConfig } from "../../../../backend/modules/config/types";
 import { modelRequestMetrics } from './requestMetrics';
 import { ResponsesWebSocket } from './responsesWebSocket';
+import { CHATGPT_API_BASE_URL, chatgptHeaders, normalizeChatGPTBody } from '../../../../backend/modules/channel/chatgpt';
 import {
   applyProviderCapabilities,
   buildChannelConfig,
@@ -26,6 +28,7 @@ import {
 export interface ModelAdapterServices {
   profile: (id: string) => Promise<ProviderDefinition | null>;
   credential: (reference: string) => Promise<string | null>;
+  chatgpt?: (providerId: string, signal: AbortSignal) => Promise<{ token: string; identity: string }>;
   channel?: (id: string) => Promise<ChannelConfig | null>;
   proxyUrl?: () => string | undefined;
   prepareVision?: (messages: Content[], model: string, signal?: AbortSignal) => Promise<Content[]>;
@@ -34,7 +37,7 @@ export interface ModelAdapterServices {
 /** Composition adapter reuses the existing provider codecs and HTTP stream parser. */
 export class ProviderModelAdapter implements ModelProvider {
   private readonly http: ChannelHttpExecutor;
-  private readonly sockets = new Map<string, { socket: ResponsesWebSocket; formatInput: (messages: PlatformMessage[]) => any[] }>();
+  private readonly sockets = new Map<string, { socket: ResponsesWebSocket; identity: string; formatInput: (messages: PlatformMessage[]) => any[] }>();
   hasContinuation(runId: string): boolean { return this.sockets.get(runId)?.socket.hasContinuation() ?? false; }
   endRun(runId: string): void { this.sockets.get(runId)?.socket.close(); this.sockets.delete(runId); }
   async steer(runId: string, message: PlatformMessage): Promise<boolean> {
@@ -52,7 +55,11 @@ export class ProviderModelAdapter implements ModelProvider {
       if(!Number.isSafeInteger(input.maxOutputTokens)||input.maxOutputTokens<1)throw new Error('请求输出预算无效。');
       profile={...profile,generation:{...profile.generation,maxOutputTokens:input.maxOutputTokens}};
     }
-    const secret = authenticate && profile.credentialRef
+    const subscription = profile.authMode === 'chatgpt';
+    if (subscription) profile = { ...profile, stream: true, endpoint: CHATGPT_API_BASE_URL };
+    if (authenticate && subscription && !this.services.chatgpt) throw new Error(t('modules.chatgpt.unsupportedHost'));
+    const subscriptionCredential = authenticate && subscription ? await this.services.chatgpt!(profile.id, input.signal) : undefined;
+    const secret = subscriptionCredential ? subscriptionCredential.token : authenticate && profile.credentialRef
       ? await this.services.credential(profile.credentialRef)
       : "";
     if (secret === null)
@@ -65,6 +72,7 @@ export class ProviderModelAdapter implements ModelProvider {
       ...(input.maxOutputTokens!==undefined?{options:{...channel.options,max_tokens:input.maxOutputTokens,max_output_tokens:input.maxOutputTokens,maxOutputTokens:input.maxOutputTokens},
         optionsEnabled:{...channel.optionsEnabled,max_tokens:true,max_output_tokens:true,maxOutputTokens:true}}:{}),
     } as ChannelConfig : overrides;
+    if (config.type === 'openai-responses' && subscription) config.authMode = 'chatgpt';
     if (!config.model?.trim()) throw new Error(`渠道「${profile.name || profile.id}」尚未选择模型，请在输入栏选择模型后发送。`);
     const capabilities = resolveCapabilities(profile, config.model);
     const formatter = new FormatterRegistry().get(profile.protocol);
@@ -127,7 +135,14 @@ export class ProviderModelAdapter implements ModelProvider {
         body[field]=limit;
       }
     }
-    return { profile, config, formatter, options };
+    // 能力覆盖和内部输出预算晚于格式器；订阅参数在最终请求边界统一收敛。
+    if (subscription) {
+      options.body = normalizeChatGPTBody(options.body);
+      options.headers = chatgptHeaders(options.headers ?? {}, secret ?? '');
+      options.url = `${CHATGPT_API_BASE_URL}/responses`;
+      options.stream = true;
+    }
+    return { profile, config, formatter, options, credentialIdentity: subscriptionCredential?.identity };
   }
   /** 使用真实协议格式器生成正文；预览不读取凭据，也不执行 HTTP 请求。 */
   async preview(input: ModelInput) {
@@ -135,22 +150,26 @@ export class ProviderModelAdapter implements ModelProvider {
     return { protocol: profile.protocol, model: config.model, body: options.body };
   }
   async generate(input: ModelInput): Promise<PlatformMessage> {
-    const { profile, config, formatter, options } = await this.prepare(input, true);
+    const { profile, config, formatter, options, credentialIdentity } = await this.prepare(input, true);
     input.signal.throwIfAborted();
     const native = profile.protocol === 'openai-responses' && (config as any).responsesWebSocketEnabled === true && input.runId && !input.purpose;
     let socket: ResponsesWebSocket | undefined;
     let source: AsyncIterable<any> | undefined;
     const capture = async (body: any) => { await input.onRequest?.({ protocol: profile.protocol, model: config.model, body, metrics: modelRequestMetrics(body) }); };
     if (native) {
+      // 同一账户的令牌轮换不重建已认证连接；账户、端点或模型变化仍受原有续接保护。
+      const identity = credentialIdentity ? JSON.stringify([options.url, options.body?.model, credentialIdentity,
+        Object.fromEntries(Object.entries(options.headers ?? {}).filter(([key]) => key.toLowerCase() !== 'authorization'))])
+        : ResponsesWebSocket.identity(options);
       const previous = this.sockets.get(input.runId!);
-      if (previous && previous.socket.identity !== ResponsesWebSocket.identity(options)) {
+      if (previous && previous.identity !== identity) {
         if (previous.socket.hasContinuation()) throw new Error('原生响应尚未续接完成，不能在当前任务中更换渠道或模型。');
         this.endRun(input.runId!);
       }
       socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal);
       const formatInput = (messages: PlatformMessage[]) => formatter.buildRequest({ configId: config.id, conversationId: input.conversationId,
         history: messages as Content[], dynamicContextStrategy: 'preserve', skipTools: true }, config).body.input;
-      this.sockets.set(input.runId!, { socket, formatInput });
+      this.sockets.set(input.runId!, { socket, formatInput, identity });
       const context = socket.context(input.messages, input.promptContext);
       source = socket.response((messages, full) => ({ ...options.body, input: full ? options.body.input : formatInput(messages) }), input.messages, context.full, capture);
     } else {
@@ -175,7 +194,8 @@ export class ProviderModelAdapter implements ModelProvider {
     source ??= this.http.executeStreamRequest(options, input.signal);
     const issued = new Set<string>();
     let blocked = false;
-    const asyncNames = new Set((options.body.tools ?? []).filter((tool: any) => tool.async === true).map((tool: any) => tool.name));
+    const asyncNames = new Set((options.body.tools ?? []).flatMap((tool: any) => tool.type === 'namespace' ? tool.tools ?? [] : [tool])
+      .filter((tool: any) => tool.async === true).map((tool: any) => tool.name));
     const dispatch = (item: any) => {
       if (item?.type !== 'function_call' || issued.has(item.call_id)) return;
       if (blocked || item.async !== true || !asyncNames.has(item.name)) { blocked = true; return; }

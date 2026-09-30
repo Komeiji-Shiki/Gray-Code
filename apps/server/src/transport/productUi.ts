@@ -1,4 +1,5 @@
 import { PlatformPromptService } from '../prompt/service';
+import { t } from "../../../../backend/i18n";
 import packageMetadata from '../../../../package.json';
 import { getDistributionInfo } from '../../../../shared/distribution';
 import { previewPrompt } from '../prompt/preview';
@@ -57,6 +58,8 @@ export class ProductUi {
     return sessions.some(session => session.status === 'fulfilled' && session.value.editing && session.value.preferences.dirty);
   }
   async call(client: ClientSession, type: string, data: Record<string, any> = {}): Promise<unknown> {
+    // 回调交换不能挡住状态查询和取消；开始登录仍串行，避免同客户端遗留多个监听器。
+    if (['chatgpt.status', 'chatgpt.complete', 'chatgpt.cancel', 'chatgpt.disconnect'].includes(type)) return this.invoke(client, type, data);
     // 总结由会话级控制器和提交版本约束，模型等待期间不能占住整个界面的交互队列。
     if (type === 'summarizeContext') return this.invoke(client, type, data);
     // 全局统计不依赖当前工作区，也不能占住此客户端的设置与交互队列。
@@ -130,6 +133,20 @@ export class ProductUi {
     if (['plan.getSourceStatus', 'plan.confirmExecution', 'design.confirmPlanGeneration', 'review.confirmPlanGeneration'].includes(type)) return new ArtifactApproval(this.app).confirm(client.actorId, type, data);
     if (type.startsWith('characters.conversation.')) return characterConversation(this.app, client, type, data);
     const ui = await this.client(client.clientId);
+    if (type.startsWith('chatgpt.')) {
+      const config = await ui.preferences.configs.getConfig(data.configId);
+      if (!config || config.type !== 'openai-responses') throw new Error(t('modules.chatgpt.channelRequired'));
+      switch (type) {
+        case 'chatgpt.status': return this.app.chatgpt.status(config.id, client.clientId);
+        case 'chatgpt.start': return this.app.chatgpt.start(config.id, client.clientId, data.accountId, data.newAccount === true);
+        case 'chatgpt.complete': return this.app.chatgpt.complete(config.id, client.clientId, data.url);
+        case 'chatgpt.cancel': return this.app.chatgpt.cancel(config.id, client.clientId);
+        case 'chatgpt.select': return this.app.chatgpt.select(config.id, client.clientId, data.accountId);
+        case 'chatgpt.disconnect': return this.app.chatgpt.disconnect(config.id, client.clientId, data.accountId);
+        case 'chatgpt.acknowledge': return this.app.chatgpt.acknowledge(config.id);
+        default: throw new Error(t('modules.chatgpt.unknownOperation'));
+      }
+    }
     // Only refresh idle clients. An open or dirty draft retains its original CAS revision.
     if (!ui.editing && !ui.preferences.dirty && ui.preferences.revision !== this.app.settings.snapshot().revision)
       ui.preferences = await this.app.product.draft();

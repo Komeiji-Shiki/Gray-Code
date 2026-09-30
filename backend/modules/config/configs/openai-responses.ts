@@ -50,6 +50,8 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
     
     /** API 密钥 */
     apiKey: string;
+    /** 订阅授权与 API Key 分开保存，切换认证方式不会覆盖密钥。 */
+    authMode?: 'api-key' | 'chatgpt';
     
     /** 当前使用的模型名称 */
     model: string;

@@ -62,6 +62,7 @@ import {
   createAskUserTool,
 } from "@graycode/core";
 import { ProviderModelAdapter } from "./model/adapter";
+import { ChatGPTService } from './chatgpt/service';
 import { reviewWithSystemOne } from './model/decisionReviewer';
 import { ChannelHttpExecutor } from '../../../backend/modules/channel/channelManager/channelHttpExecutor';
 import { SettingsService, type SecretCodec } from "./settings/service";
@@ -180,6 +181,7 @@ export class PlatformApplication {
   readonly subagents: SubagentExecutionService;
   readonly teams: TeamService;
   readonly product: ProductConfiguration;
+  readonly chatgpt: ChatGPTService;
   readonly productUi: ProductUi;
   readonly conversations: ConversationService;
   readonly usage: PlatformUsage;
@@ -276,6 +278,7 @@ export class PlatformApplication {
       () => this.persistConfiguration(),
     );
     this.product = new ProductConfiguration(this);
+    this.chatgpt = new ChatGPTService(this);
     this.terminals = new PlatformTerminals(this);
     this.interactiveTerminals = new InteractiveTerminals(this);
     this.remoteAccess = options.remoteAccess?.(this);
@@ -295,6 +298,7 @@ export class PlatformApplication {
     this.modelAdapter = new ProviderModelAdapter({
         profile: async (id) => this.settings.find('providers', id) ?? null,
         credential: (reference) => this.settings.credential(reference),
+        chatgpt: (id, signal) => this.chatgpt.credentials(id, signal),
         channel: id => this.product.channel(id),
         // 复用原图片/PDF 预处理；调用位于当前应用的可选依赖作用域内。
         prepareVision: (history, model, signal) => prepareDeepSeekVisionHistory(history, model, true, signal),
@@ -621,6 +625,7 @@ export class PlatformApplication {
     const services: Array<[string, () => void | Promise<void>]> = [
       // 构造失败时只会取得其中一部分资源；正常启动后的关闭顺序仍保持原有依赖关系。
       ['屏幕感知', () => this.screenSense?.close()],
+      ['ChatGPT 授权', () => this.chatgpt?.close()],
       ['桌宠', () => this.pets?.close()],
       ['Clawd 联动', () => this.clawd?.close()],
       ['执行节点', () => this.nodes?.close()],

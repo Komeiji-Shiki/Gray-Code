@@ -7,6 +7,7 @@ export interface ChannelOption {
   name: string
   model: string
   type: string
+  authMode?: 'api-key' | 'chatgpt'
 }
 
 export type DynamicContextStrategy = 'single' | 'preserve'

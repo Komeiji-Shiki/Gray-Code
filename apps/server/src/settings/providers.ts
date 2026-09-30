@@ -16,6 +16,7 @@ export function projectChannels(profiles: ProviderDefinition[], channels: Channe
       ...(priorChannel?.autoSummarizeMethod !== undefined ? { autoSummarizeMethod: priorChannel.autoSummarizeMethod } : {}),
       id: profile.id, name: profile.name, type: profile.protocol,
       url: profile.endpoint, model: profile.model, timeout: profile.timeoutMs, preferStream: profile.stream, apiKey: '',
+      ...(profile.protocol === 'openai-responses' ? { authMode: profile.authMode } : {}),
       models: profile.models.map(model => ({ ...old?.models?.find(item => item.id === model.id), id: model.id, name: model.name ?? model.id })),
     } as ChannelConfig;
     const options: Options = { ...channel.options };
@@ -65,6 +66,7 @@ export function channelProfile(channel: ChannelConfig, previous?: ProviderDefini
     id: channel.id, name: channel.name, protocol: channel.type, endpoint: channel.url, model: channel.model ?? '',
     models: (channel.models ?? []).map(model => ({ id: model.id, name: model.name, capabilities: previous?.models.find(item => item.id === model.id)?.capabilities })),
     credentialRef, stream: channel.preferStream !== false, timeoutMs: channel.timeout ?? previous?.timeoutMs ?? 120_000,
+    authMode: channel.type === 'openai-responses' ? channel.authMode : undefined,
     generation: { ...previous?.generation,
       ...(previous?.generation.reasoningEffort !== undefined ? { reasoningEffort: channel.type.startsWith('gemini')
         ? enabled.thinkingConfig ? options.thinkingConfig?.thinkingLevel : undefined

@@ -1,0 +1,17 @@
+# ChatGPT 订阅登录
+
+在设置的渠道页新建或选择 OpenAI Responses 渠道，将认证方式改为“ChatGPT 订阅”，点击 **Continue with ChatGPT**，在系统浏览器中登录并允许 GrayCode 使用订阅额度。完成后返回 GrayCode 获取模型、选择模型，再保存设置即可发送请求。
+
+授权直接使用 OpenAI 的 Sign in with ChatGPT 流程和公开 Responses API。GrayCode 自己管理登录与令牌续期，无需单独运行 Codex 或中转服务。首次成功授权会说明订阅用量，并提供 ChatGPT 的用量管理入口。
+
+桌面版使用系统加密存储。独立服务器需要通过 --key-env 指定含有 32 字节十六进制密钥的环境变量；没有加密存储时，登录入口会说明原因并禁用授权操作。
+
+同一渠道可以保存多个账户或工作区注册，选择器会同时显示账户名称和注册标识末尾，便于区分相同邮箱的不同工作区。重新登录已有账户会复用它的应用注册；添加账户或工作区会进行新的授权。退出会尝试撤销该账户的可续期会话，并清除本机令牌；远程撤销未确认时，界面会明确提示。
+
+登录回调监听在运行 GrayCode 的机器的 `127.0.0.1`。如果浏览器没有自动返回应用，或者浏览器与服务运行在不同机器上，可将浏览器最终地址栏里的完整回调地址粘贴到渠道设置中完成登录。离开渠道认证界面会取消未完成的登录，不会退出已经保存的账户。
+
+订阅请求始终使用流式输出并关闭远程存储，每轮发送所需历史，保留工具结果和有效思考签名。温度、Top P、输出 Token 上限及其他订阅接口不支持的参数不会发送；普通 API Key 渠道继续保留其原有参数。订阅渠道的默认 Token 计数使用本地估算，模型列表来自当前授权账户。
+
+API Key 和订阅令牌分别存放在平台的加密凭据存储中。设置界面、配置导出和模型状态只返回必要账户信息；订阅凭据随平台数据备份保留。切换认证方式不会覆盖已有 API Key。遇到登录失效时重新登录，遇到订阅用量限制时通过“管理订阅用量”查看账户或应用的限制。
+
+接口要求以 [官方注册与登录文档](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[模型与推理文档](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) 和 [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations) 为准。

@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | **快速上手** | 安装、数据目录、渠道配置与首次任务 | [开始使用](Getting-Started.md) |
 | **模型与上下文** | 协议选择、Prompt Caching 优化与上下文注入控制 | [模型、图片与上下文](Models-and-Context.md) |
+| **ChatGPT 订阅** | 浏览器授权、账户与工作区切换、自动续期和用量管理 | [ChatGPT 订阅登录](ChatGPT-Subscription.md) |
 | **编码与工作流** | 工作区管理、代码编辑、差异审阅与 Git 工作树 | [编码、审阅与工作树](Coding-and-Worktrees.md) |
 | **工具与代理** | MCP 服务连接、Skills 技能扩展、子代理与外部 ACP 代理 | [工具、Skills 与代理](Agents-and-MCP.md) |
 | **视觉与电脑操作** | 屏幕截图、UI Automation 控件树、浏览器操作与桌面控制 | [截图与坐标工具](Visual-Tools.md) |

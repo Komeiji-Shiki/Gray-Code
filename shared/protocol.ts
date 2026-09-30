@@ -96,6 +96,13 @@ export const MESSAGE_NAMES = {
   'config.deleteConfig': 'config.deleteConfig',
   'config.getConfig': 'config.getConfig',
   'config.revealApiKey': 'config.revealApiKey',
+  'chatgpt.status': 'chatgpt.status',
+  'chatgpt.start': 'chatgpt.start',
+  'chatgpt.complete': 'chatgpt.complete',
+  'chatgpt.cancel': 'chatgpt.cancel',
+  'chatgpt.select': 'chatgpt.select',
+  'chatgpt.disconnect': 'chatgpt.disconnect',
+  'chatgpt.acknowledge': 'chatgpt.acknowledge',
   'config.listConfigs': 'config.listConfigs',
   'config.updateConfig': 'config.updateConfig',
 
@@ -419,6 +426,9 @@ export type PushMessageName = (typeof PUSH_MESSAGE_NAMES)[keyof typeof PUSH_MESS
  * ⚠️ 与 NON_BLOCKING_MESSAGE_TYPES（非阻塞 fire-and-forget）语义不同，禁止合并。
  */
 export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
+  // 交换令牌和远程撤销有各自的 30 秒网络上限，不受普通界面请求的短超时截断。
+  MESSAGE_NAMES['chatgpt.complete'],
+  MESSAGE_NAMES['chatgpt.disconnect'],
   MESSAGE_NAMES.chatStream,
   MESSAGE_NAMES.retryStream,
   MESSAGE_NAMES['chat.rerollStream'],

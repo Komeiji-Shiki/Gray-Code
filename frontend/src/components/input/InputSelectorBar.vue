@@ -35,6 +35,10 @@ const emit = defineEmits<{
 
 <template>
   <div class="selector-bar">
+    <div v-if="props.channelOptions.find(option => option.id === props.configId)?.authMode === 'chatgpt'" class="chatgpt-plan-status">
+      <span>{{ t('desktop.chatgpt.usingPlan') }}</span>
+      <a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">{{ t('desktop.chatgpt.usage') }}</a>
+    </div>
     <div class="mode-selector-wrapper">
       <ModeSelector
         :model-value="props.currentModeId"
@@ -71,6 +75,8 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+.chatgpt-plan-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--text-secondary); }
+.chatgpt-plan-status a { color: var(--accent-color, #95b6ff); }
 .selector-bar {
   display: grid;
   grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1fr) minmax(0, 2.2fr);
