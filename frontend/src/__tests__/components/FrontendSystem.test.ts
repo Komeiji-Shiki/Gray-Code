@@ -41,6 +41,19 @@ describe('frontend visual and async architecture contracts', () => {
     expect(ToolItemSource).not.toMatch(/#555555|#777777/)
   })
 
+  test('语义 token 覆盖全部角色，圆角不再全局置零', () => {
+    const tokens = readFileSync(path.resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8')
+    for (const token of ['--gc-surface-chrome', '--gc-surface-sunken', '--gc-surface-input', '--gc-surface-overlay',
+      '--gc-button-primary', '--gc-button-secondary', '--gc-text-on-primary', '--gc-text-on-secondary',
+      '--gc-danger-bg', '--gc-warning-border', '--gc-info-bg', '--gc-badge-bg', '--gc-code-bg', '--gc-quote-bg',
+      '--gc-git-added', '--gc-chart-orange', '--gc-scrollbar', '--gc-font-code', '--gc-text-placeholder']) {
+      expect(tokens).toContain(`${token}:`)
+    }
+    expect(tokens).toMatch(/--gc-radius-sm:\s*6px/)
+    const theme = readFileSync(path.resolve(process.cwd(), 'src/platform/theme.css'), 'utf8')
+    expect(theme).not.toMatch(/--gc-radius-(xs|sm|md|lg):\s*0/)
+  })
+
   test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {
     expect(ViteConfigSource).toContain('assetFileNames: resolveWebviewAssetFileName')
     expect(resolveWebviewAssetFileName({ name: 'index.css' })).toBe('index.css')

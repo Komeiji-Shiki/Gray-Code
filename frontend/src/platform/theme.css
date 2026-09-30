@@ -40,7 +40,6 @@
   --vscode-scrollbarSlider-activeBackground: #8d9bb4aa;
 }
 body { margin: 0; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); }
-html.platform-host { --gc-radius-xs: 0; --gc-radius-sm: 0; --gc-radius-md: 0; --gc-radius-lg: 0; }
 .mobile-settings-category{display:none}
 .platform-host body .settings-sidebar { width: 195px; padding: 16px 10px; overflow-y: auto; overflow-x: hidden; gap: 2px; }
 .platform-host body .settings-tab::after { display: none; }
