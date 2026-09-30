@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, 
 import { appearance, guard, initialize, loadSettings, report, state } from './state';
 import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
+import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
 import { useNavigationIntent } from './navigationIntent';
 import { shellText as t, setShellLanguage } from './i18n';
 import { appearanceCssVariables } from '../../../shared/appearanceTokens';
@@ -32,8 +33,14 @@ function jumpToMessage(target: { conversationId: string; messageIndex: number; m
     window.location.origin === 'null' ? '*' : window.location.origin);
 }
 function openWorkspacePanel(event: MessageEvent) {
-  if (event.source === productChatFrame.value?.contentWindow && event.origin === window.location.origin
-    && event.data?.type === 'graycode.language' && typeof event.data.language === 'string') setShellLanguage(event.data.language);
+  if (event.source === productChatFrame.value?.contentWindow && event.origin === window.location.origin) {
+    if (event.data?.type === 'graycode.language' && typeof event.data.language === 'string') setShellLanguage(event.data.language);
+    if (event.data?.type === CHAT_INITIALIZATION_MESSAGE && ['ready', 'failed'].includes(event.data.status)) {
+      chatInitialized.value = event.data.status === 'ready'; chatLoadFailed.value = !chatInitialized.value;
+      chatInitializationError.value = typeof event.data.error === 'string' ? event.data.error : '';
+      clearTimeout(chatReadyTimer);
+    }
+  }
   const panel = readWorkspacePanelMessage(event, productChatFrame.value?.contentWindow, window.location.origin);
   if (panel === 'memory') openLibrary('memory');
   else if (panel === 'pets') petManagerOpen.value = true;
@@ -48,16 +55,18 @@ const libraryInitialTab = ref<'resources' | 'memory'>('resources');
 function openLibrary(tab: 'resources' | 'memory' = 'resources') { libraryInitialTab.value = tab; libraryOpen.value = true; }
 const automationsOpen = ref(false);
 const chatReady = ref(false);
+const chatInitialized = ref(false);
 const chatLoadFailed = ref(false);
+const chatInitializationError = ref('');
 const chatFrameVersion = ref(0);
 let chatReadyTimer: ReturnType<typeof setTimeout> | undefined;
 function watchChatReady() {
   clearTimeout(chatReadyTimer);
-  if (chatReady.value || !state.ready || lifetime.signal.aborted) return;
-  chatReadyTimer = setTimeout(() => { if (!chatReady.value) chatLoadFailed.value = true; }, 20_000);
+  if (chatInitialized.value || chatLoadFailed.value || !state.ready || lifetime.signal.aborted) return;
+  chatReadyTimer = setTimeout(() => { if (!chatInitialized.value) chatLoadFailed.value = true; }, 20_000);
 }
 function reloadChat() {
-  chatReady.value = false; chatLoadFailed.value = false; chatFrameVersion.value++;
+  chatReady.value = false; chatInitialized.value = false; chatLoadFailed.value = false; chatInitializationError.value = ''; chatFrameVersion.value++;
   void nextTick().then(watchChatReady);
 }
 watch(() => state.ready, ready => { if (ready) void nextTick().then(watchChatReady); else clearTimeout(chatReadyTimer); });
@@ -186,7 +195,7 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', updateViewport);
   unsubscribeHost = subscribe(event => {
     if (lifetime.signal.aborted) return;
-    if (event.type === 'ui.ready') { chatReady.value = true; chatLoadFailed.value = false; clearTimeout(chatReadyTimer); }
+    if (event.type === 'ui.ready') chatReady.value = true;
     if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
     if (event.type === 'pets.open') petManagerOpen.value = true;
     if (event.type === 'screenSense.open') screenSenseOpen.value = true;
@@ -221,7 +230,7 @@ onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?
     </header>
     <ErrorBanner v-if="state.error" :message="state.error" @dismiss="state.error = ''" />
     <div v-if="state.notice" class="notice-banner" :data-severity="state.notice.severity" role="status"><span>{{ state.notice.message }}</span><button @click="state.notice = null">{{ t('close') }}</button></div>
-    <div v-if="state.ready && chatLoadFailed" class="notice-banner" data-severity="warning" role="alert"><span>{{ t('chatInitializationFailed') }}</span><button @click="reloadChat">{{ t('retryChat') }}</button></div>
+    <div v-if="state.ready && chatLoadFailed" class="notice-banner" data-severity="warning" role="alert"><span>{{ t('chatInitializationFailed') }}<template v-if="chatInitializationError"> {{ chatInitializationError }}</template></span><button @click="reloadChat">{{ t('retryChat') }}</button></div>
     <ComputerStatus v-if="state.ready" /><ScreenSenseStatus v-if="state.ready" @manage="screenSenseOpen = true" />
     <ScreenSenseSettings v-if="screenSenseOpen" @close="screenSenseOpen = false" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />

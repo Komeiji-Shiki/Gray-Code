@@ -8,6 +8,7 @@ export interface HostTransport {
   /** 桌面宿主通过原生剪贴板复制，避免浏览器权限限制。 */
   writeClipboardText?(text: string): Promise<void>;
   getDefaultPromptModeId?(): string;
+  reportInitialization?(error?: string): void;
   postMessage(message: unknown): void;
   getState(): unknown;
   setState(state: unknown): void;

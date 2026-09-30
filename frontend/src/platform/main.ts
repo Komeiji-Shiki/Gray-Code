@@ -6,16 +6,17 @@ import type { HostTransport } from '../utils/hostTransport';
 import { watch } from 'vue';
 import { actualLanguage } from '../i18n';
 import { WORKSPACE_PANEL_MESSAGE } from '@shared/workspacePanelNavigation';
+import { CHAT_INITIALIZATION_MESSAGE } from '@shared/chatInitialization';
+import { callDesktopBridge, type DesktopBridge } from '@shared/desktopBridge';
 import './theme.css';
 import '@vscode/codicons/dist/codicon.css';
 import { applyDesktopAppearance } from './appearance';
 import { invalidateWorkspaceAssets } from '../components/common/markdown/markdownItCore';
 import { trackPreferenceRequest, desktopSettingsDraft, saveDesktopSettings } from './settingsDraft';
 
-type DesktopBridge = { kind?: 'desktop' | 'web'; call(method: string, params?: Record<string, unknown>): Promise<any>; subscribe(listener: (event: Record<string, any>) => void): () => void };
-const desktop = (window.parent as unknown as { graycode: DesktopBridge }).graycode;
-watch(actualLanguage, language => window.parent.postMessage({ type: 'graycode.language', language }, window.location.origin === 'null' ? '*' : window.location.origin), { immediate: true });
-if (!desktop) throw new Error('The desktop host is unavailable.');
+const bridge = (window.parent as unknown as { graycode: DesktopBridge }).graycode;
+if (!bridge) throw new Error('The desktop host is unavailable.');
+const desktop: DesktopBridge = { ...bridge, call: (method, params) => callDesktopBridge(bridge, method, params) };
 const viewQuery = new URLSearchParams(window.location.search);
 const isMonitorView = viewQuery.get('view') === 'subagents';
 if (isMonitorView) {
@@ -23,18 +24,35 @@ if (isMonitorView) {
   (window as unknown as { __GRAYCODE_INITIAL_RUN_ID?: string }).__GRAYCODE_INITIAL_RUN_ID = viewQuery.get('runId') ?? undefined;
 }
 const subscribers = new Set<(message: unknown) => void>();
+const lifetime = new AbortController();
+let unsubscribeDesktop: (() => void) | undefined;
+let activityTimer: number | undefined;
+let assetTimer: ReturnType<typeof setTimeout> | undefined;
+const stopLanguageWatch = watch(actualLanguage, language => window.parent.postMessage({ type: 'graycode.language', language }, window.location.origin === 'null' ? '*' : window.location.origin), { immediate: true });
+function disposePlatform() {
+  lifetime.abort(); unsubscribeDesktop?.(); stopLanguageWatch(); subscribers.clear();
+  window.clearInterval(activityTimer); clearTimeout(assetTimer);
+  window.removeEventListener('pagehide', disposePlatform);
+}
+// 父页面比聊天 iframe 活得更久，卸载必须主动解除父页面持有的回调。
+window.addEventListener('pagehide', disposePlatform, { once: true });
 let defaultPromptModeId = 'code';
-let persistedState = await desktop.call('ui.state.get');
-const dispatch = (message: unknown) => { for (const listener of subscribers) listener(message); };
+let persistedState: unknown;
+const dispatch = (message: unknown) => { if (!lifetime.signal.aborted) for (const listener of subscribers) listener(message); };
 const host: HostTransport = {
   kind: desktop.kind,
   openWorkspacePanel: panel => window.parent.postMessage({ type: WORKSPACE_PANEL_MESSAGE, panel }, window.location.origin),
   writeClipboardText: desktop.kind === 'web' ? undefined : text => desktop.call('desktop.clipboard.writeText', { text }),
   getDefaultPromptModeId: () => defaultPromptModeId,
+  reportInitialization: error => {
+    if (!isMonitorView && !lifetime.signal.aborted) window.parent.postMessage({ type: CHAT_INITIALIZATION_MESSAGE,
+      status: error === undefined ? 'ready' : 'failed', error }, window.location.origin === 'null' ? '*' : window.location.origin);
+  },
   getState: () => persistedState,
-  setState: value => { persistedState = value; void desktop.call('ui.state.set', { value }); },
+  setState: value => { if (!lifetime.signal.aborted) { persistedState = value; void desktop.call('ui.state.set', { value }); } },
   subscribe: listener => { subscribers.add(listener); return () => subscribers.delete(listener); },
   postMessage: value => {
+    if (lifetime.signal.aborted) return;
     const message = value as { type: string; data: unknown; requestId: string };
     const data = isMonitorView && message.type.startsWith('subagents.')
       ? { conversationId: viewQuery.get('conversationId') ?? undefined, runId: viewQuery.get('runId') ?? undefined, ...message.data as Record<string, unknown> }
@@ -46,9 +64,6 @@ const host: HostTransport = {
     );
   },
 };
-window.__GRAYCODE_HOST = host;
-window.__GRAYCODE_BUILTIN_SOUND_ASSETS = { warning: { url: warningSound, name: 'warning.mp3' }, error: { url: errorSound, name: 'error.mp3' },
-  taskComplete: { url: completeSound, name: 'taskComplete.mp3' }, taskError: { url: taskErrorSound, name: 'taskError.mp3' } };
 let lastUserActivity = Date.now();
 let lastActivitySent = 0;
 function recordActivity() {
@@ -57,31 +72,10 @@ function recordActivity() {
   lastActivitySent = lastUserActivity;
   void desktop.call('activity.pulse').catch(() => {});
 }
-window.addEventListener('pointerdown', recordActivity, { passive: true });
-window.addEventListener('keydown', recordActivity, { passive: true });
-window.addEventListener('focus', recordActivity);
-const activityTimer = window.setInterval(() => {
-  if (document.hasFocus() && Date.now() - lastUserActivity < 5 * 60_000) {
-    lastActivitySent = Date.now(); void desktop.call('activity.pulse').catch(() => {});
-  }
-}, 60_000);
-window.addEventListener('pagehide', () => window.clearInterval(activityTimer), { once: true });
-recordActivity();
-document.documentElement.classList.add('platform-host');
-const [platformSettings, startupSettings, startupPresets] = await Promise.all([
-  desktop.call('ui.request', { type: 'platform.settings.get', data: {} }),
-  isMonitorView ? Promise.resolve(undefined) : desktop.call('ui.request', { type: 'getSettings', data: {} }),
-  desktop.call('ui.request', { type: 'getPromptModes', data: {} }),
-]);
-defaultPromptModeId = startupPresets.currentModeId || 'code';
-// 主界面挂载前读取已保存偏好，查看子代理不重复播放启动动画。
-window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.settings?.ui?.appearance?.splashEnabled !== false;
-applyDesktopAppearance(platformSettings.appearance);
-let assetTimer: ReturnType<typeof setTimeout> | undefined;
 const changedAssetPaths = new Set<string>();
 function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; changedAssetPaths.clear(); invalidateWorkspaceAssets(); }
-window.addEventListener('pagehide', () => { if (assetTimer) clearTimeout(assetTimer); }, { once: true });
-desktop.subscribe(event => {
+function receiveDesktopEvent(event: Record<string, any>) {
+  if (lifetime.signal.aborted) return;
   if (event.type === 'desktop.saveAll' && !isMonitorView) {
     void (async () => {
       let error: string | undefined;
@@ -126,5 +120,42 @@ desktop.subscribe(event => {
     if (event.message?.command === 'platform.settingsDraftChanged') desktopSettingsDraft.dirty = event.message.data.dirty;
     dispatch(event.message);
   }
-});
-await import('../main');
+}
+
+async function initializePlatform() {
+  persistedState = await desktop.call('ui.state.get');
+  if (lifetime.signal.aborted) return;
+  window.__GRAYCODE_HOST = host;
+  window.__GRAYCODE_BUILTIN_SOUND_ASSETS = { warning: { url: warningSound, name: 'warning.mp3' }, error: { url: errorSound, name: 'error.mp3' },
+    taskComplete: { url: completeSound, name: 'taskComplete.mp3' }, taskError: { url: taskErrorSound, name: 'taskError.mp3' } };
+  window.addEventListener('pointerdown', recordActivity, { passive: true, signal: lifetime.signal });
+  window.addEventListener('keydown', recordActivity, { passive: true, signal: lifetime.signal });
+  window.addEventListener('focus', recordActivity, { signal: lifetime.signal });
+  activityTimer = window.setInterval(() => {
+    if (document.hasFocus() && Date.now() - lastUserActivity < 5 * 60_000) {
+      lastActivitySent = Date.now(); void desktop.call('activity.pulse').catch(() => {});
+    }
+  }, 60_000);
+  recordActivity();
+
+  document.documentElement.classList.add('platform-host');
+  const [platformSettings, startupSettings, startupPresets] = await Promise.all([
+    desktop.call('ui.request', { type: 'platform.settings.get', data: {} }),
+    isMonitorView ? Promise.resolve(undefined) : desktop.call('ui.request', { type: 'getSettings', data: {} }),
+    desktop.call('ui.request', { type: 'getPromptModes', data: {} }),
+  ]);
+  if (lifetime.signal.aborted) return;
+  defaultPromptModeId = startupPresets.currentModeId || 'code';
+  // 主界面挂载前读取已保存偏好，查看子代理不重复播放启动动画。
+  window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.settings?.ui?.appearance?.splashEnabled !== false;
+  applyDesktopAppearance(platformSettings.appearance);
+  unsubscribeDesktop = desktop.subscribe(receiveDesktopEvent);
+  await import('../main');
+}
+
+try { await initializePlatform(); }
+catch (error) {
+  host.reportInitialization?.(error instanceof Error ? error.message : String(error));
+  disposePlatform();
+  throw error;
+}

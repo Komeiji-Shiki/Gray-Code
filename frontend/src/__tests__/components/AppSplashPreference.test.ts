@@ -271,7 +271,8 @@ describe('App 开屏动画启动偏好', () => {
     const previousHost = window.__GRAYCODE_HOST
     const initialization = deferred<void>()
     const save = vi.fn()
-    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({ desktopConversationId: 'saved-conversation', otherSetting: 7 }), setState: save }
+    const reportInitialization = vi.fn()
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({ desktopConversationId: 'saved-conversation', otherSetting: 7 }), setState: save, reportInitialization }
     runtime.chatStore.conversations = [{ id: 'saved-conversation' }]
     runtime.chatStore.initialize.mockImplementation(() => { runtime.chatStore.activeTabId = 'initial-tab'; return initialization.promise })
     runtime.chatStore.openConversationInTab.mockImplementation(async () => {
@@ -281,13 +282,34 @@ describe('App 开屏动画启动偏好', () => {
     try {
       wrapper = mount(App)
       expect(save).not.toHaveBeenCalled()
+      expect(reportInitialization).not.toHaveBeenCalled()
       settingsRequest.resolve(makeSettingsResponse(true))
       initialization.resolve()
       await flushPromises()
       expect(runtime.chatStore.openConversationInTab).toHaveBeenCalledWith('saved-conversation')
       expect(runtime.chatStore.currentConversationId).toBe('saved-conversation')
       expect(save).toHaveBeenLastCalledWith({ desktopConversationId: 'saved-conversation', otherSetting: 7 })
+      expect(reportInitialization).toHaveBeenCalledWith()
     } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
+  })
+
+  test('聊天初始化失败通知宿主，命令握手不会被当作内容就绪', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    const initialization = deferred<void>()
+    const reportInitialization = vi.fn()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({}), setState: vi.fn(), reportInitialization }
+    runtime.chatStore.initialize.mockReturnValue(initialization.promise)
+    try {
+      wrapper = mount(App)
+      settingsRequest.resolve(makeSettingsResponse(true))
+      await flushPromises()
+      expect(runtime.sendToExtension).toHaveBeenCalledWith('webviewReady', {})
+      expect(reportInitialization).not.toHaveBeenCalled()
+      initialization.reject(new Error('history unavailable'))
+      await flushPromises()
+      expect(reportInitialization).toHaveBeenCalledExactlyOnceWith('history unavailable')
+    } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost; log.mockRestore() }
   })
 
   test('恢复摘要在途时的新输入会放弃旧会话焦点，草稿保持原样', async () => {

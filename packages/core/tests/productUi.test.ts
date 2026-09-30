@@ -5,6 +5,50 @@ import { fixture } from './fixtures';
 import { pathToFileURL } from 'node:url';
 import type { WorkspaceDiff } from '../../../apps/server/src/workspace/diffs';
 
+test('客户端清理后恢复代码模式和项目，空白会话首条输入不改变归属', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'reconnected-code-client' };
+  const ui = (type: string, data = {}) => app.productUi.call(client, type, data) as Promise<any>;
+  try {
+    const draft = await app.product.draft();
+    draft.app.workspaces.push({ id: 'project', name: '原项目', directory: f.source, deviceId: 'local' });
+    await app.product.save(draft);
+    await ui('ui.context.set', { workspaceId: 'project', mode: 'code' });
+    await app.productUi.clientClosed(client.clientId);
+    await new Promise(resolve => setImmediate(resolve));
+    const createDraft = jest.spyOn(app.product, 'draft');
+    try {
+      await ui('ui.conversation.focus', { conversationId: null, resynchronized: true });
+      expect(createDraft).toHaveBeenCalledTimes(1);
+      expect(await ui('getWorkspaceUri')).toBe(pathToFileURL(f.source).toString());
+      const created = await ui('conversation.createConversation', { conversationId: 'after-reconnect', title: '重连后输入' });
+      expect(created.workspaceId).toBe('project');
+      expect((await app.conversation('owner', 'after-reconnect')).custom).toMatchObject({ platformMode: 'code' });
+    } finally { createDraft.mockRestore(); }
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('界面状态按客户端隔离，固定桌面身份兼容旧记录并跨启动恢复', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const desktop = { actorId: 'owner', clientId: 'desktop-process-one', uiStateKey: 'desktop' };
+  const first = { actorId: 'owner', clientId: 'browser-tab-one' }, second = { actorId: 'owner', clientId: 'browser-tab-two' };
+  const legacy = { desktopConversationId: 'legacy-conversation', preference: '保留' };
+  try {
+    await app.storage.putRecord({ namespace: 'ui-state', id: 'owner', value: legacy });
+    expect(await app.productUi.call(desktop, 'ui.state.get')).toEqual(legacy);
+    expect(await app.productUi.call(first, 'ui.state.get')).toEqual({ preference: '保留' });
+    for (const [client, conversationId] of [[desktop, 'desktop-conversation'], [first, 'first-conversation'], [second, null]] as const)
+      await app.productUi.call(client, 'ui.state.set', { value: { desktopConversationId: conversationId } });
+    expect(await app.productUi.call(first, 'ui.state.get')).toEqual({ desktopConversationId: 'first-conversation' });
+    expect(await app.productUi.call(second, 'ui.state.get')).toEqual({ desktopConversationId: null });
+    expect(await app.productUi.call({ ...desktop, clientId: 'desktop-process-two' }, 'ui.state.get'))
+      .toEqual({ desktopConversationId: 'desktop-conversation' });
+    expect(await app.storage.getRecord('ui-state', 'owner')).toEqual(legacy);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
 test('手动总结等待模型时仍能切换会话和读取设置，取消后原文保持不变', async () => {
   const f = await fixture(); await f.store.close();
   let entered!: () => void;

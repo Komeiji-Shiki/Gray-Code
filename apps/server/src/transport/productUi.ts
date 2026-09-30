@@ -41,6 +41,7 @@ export class ProductUi {
   readonly chat: ProductChat;
   private readonly checkpointUi: CheckpointUi;
   private readonly clients = new Map<string, Promise<UiSession>>();
+  private readonly clientContexts = new Map<string, Pick<UiSession, 'mode' | 'workspaceId'>>();
   private readonly disconnectedClients = new Set<string>();
   private readonly accountActions = new Map<string, 'revoke' | 'delete'>();
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -52,7 +53,11 @@ export class ProductUi {
   }
   private client(id: string): Promise<UiSession> {
     let result = this.clients.get(id);
-    if (!result) { result = this.app.product.draft().then(preferences => ({ preferences, editing: false })); this.clients.set(id, result); }
+    if (!result) {
+      const context = this.clientContexts.get(id);
+      result = this.app.product.draft().then(preferences => ({ preferences, editing: false, ...context }));
+      this.clients.set(id, result); this.clientContexts.delete(id);
+    }
     return result;
   }
   async hasDirtyPreferences(includeDisconnected = false, excludeClientId?: string): Promise<boolean> {
@@ -77,7 +82,11 @@ export class ProductUi {
       await queued?.catch(() => {});
       const ui = await session?.catch(() => undefined);
       if (!this.disconnectedClients.has(clientId)) return;
-      if (session && this.clients.get(clientId) === session && ui && !ui.preferences.dirty) this.clients.delete(clientId);
+      if (session && this.clients.get(clientId) === session && ui && !ui.editing && !ui.preferences.dirty) {
+        // 释放完整设置草稿时保留导航上下文，重连后的首条输入仍属于原模式和项目。
+        this.clientContexts.set(clientId, { mode: ui.mode, workspaceId: ui.workspaceId });
+        this.clients.delete(clientId);
+      }
       if (this.queues.get(clientId) === queued) this.queues.delete(clientId);
     })().catch(() => {});
   }
@@ -354,8 +363,18 @@ export class ProductUi {
         this.app.publish({ type: 'workspace.diff.open', clientId: client.clientId, conversationId: value.conversationId,
           workspaceId: value.workspaceId, path: value.path, toolCallId: value.toolCallId, id: value.id }); return { success: true };
       }
-      case 'ui.state.get': return await this.app.storage.getRecord('ui-state', client.actorId) ?? {};
-      case 'ui.state.set': await this.app.storage.putRecord({ namespace: 'ui-state', id: client.actorId, value: data.value }); return;
+      case 'ui.state.get': {
+        const id = JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]);
+        const state = await this.app.storage.getRecord('ui-state', id);
+        if (state !== null && state !== undefined) return state;
+        const legacy = await this.app.storage.getRecord('ui-state', client.actorId) as Record<string, unknown> | null;
+        if (!legacy) return {};
+        // 旧记录没有标签页归属，只让固定桌面身份继承旧会话位置；其它偏好仍可读取。
+        const { desktopConversationId, ...preferences } = legacy;
+        return client.uiStateKey === 'desktop' ? legacy : preferences;
+      }
+      case 'ui.state.set':
+        await this.app.storage.putRecord({ namespace: 'ui-state', id: JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]), value: data.value }); return;
       case 'ui.command': notify({ type: 'command', command: data.command, data: data.data }); return;
       case 'ui.view.set': this.app.publish({ type: 'ui.view.changed', clientId: client.clientId, view: data.view }); return;
       case 'ui.conversation.focus': {

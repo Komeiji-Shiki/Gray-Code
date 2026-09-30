@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import '../../../apps/desktop/src/preload';
+import { callDesktopBridge, desktopRpcReply, type DesktopBridge } from '../../../shared/desktopBridge';
 
 jest.mock('electron', () => {
   const ipcRenderer = new (require('node:events').EventEmitter)();
@@ -7,10 +8,23 @@ jest.mock('electron', () => {
   return { ipcRenderer, contextBridge: { exposeInMainWorld: jest.fn() } };
 });
 
-const bridge = (contextBridge.exposeInMainWorld as jest.Mock).mock.calls[0][1] as {
-  kind: 'desktop';
-  subscribe(listener: (event: Record<string, unknown>) => void): () => void;
-};
+const bridge = (contextBridge.exposeInMainWorld as jest.Mock).mock.calls[0][1] as DesktopBridge;
+
+test('桌面 RPC 经过两次跨上下文复制后仍保留取消错误码', async () => {
+  (ipcRenderer.invoke as jest.Mock).mockImplementationOnce(async () => structuredClone(await desktopRpcReply(async () => {
+    throw Object.assign(new Error('Cancelled by user.'), { code: 'CANCELLED_ERROR' });
+  })));
+  const renderer: DesktopBridge = { ...bridge, call: async (method, params) => structuredClone(await bridge.call(method, params)) };
+  await expect(callDesktopBridge(renderer, 'ui.request', { type: 'chatStream', data: {} }))
+    .rejects.toMatchObject({ code: 'CANCELLED_ERROR', message: 'Cancelled by user.' });
+});
+
+test('桌面 RPC 成功结果与 Web 原始结果保持业务数据原样', async () => {
+  const value = { success: false, code: 'RUN_CANCEL_TIMEOUT' };
+  (ipcRenderer.invoke as jest.Mock).mockResolvedValueOnce(await desktopRpcReply(async () => value));
+  expect(await callDesktopBridge(bridge, 'ui.request', { type: 'cancelStream', data: {} })).toEqual(value);
+  expect(await callDesktopBridge({ ...bridge, kind: 'web', call: async () => value }, 'ui.request')).toBe(value);
+});
 
 test('多个编辑器订阅共用一个 IPC 监听，并各自收到一次事件', () => {
   expect(bridge.kind).toBe('desktop');

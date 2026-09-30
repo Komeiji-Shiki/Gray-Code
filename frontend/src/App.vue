@@ -483,24 +483,28 @@ onMounted(async () => {
     console.error('[App] Failed to notify extension that webview is ready:', error)
   })
 
-  await languageSettingsPromise
+  try {
+    await languageSettingsPromise
+    if (disposed) return
 
-  agentStopNotificationController = createAgentStopNotificationController({
-    chatStore,
-    sendToExtension
-  })
+    agentStopNotificationController = createAgentStopNotificationController({
+      chatStore,
+      sendToExtension
+    })
 
-  // 关闭开屏动画时，专属占位持续到聊天初始化结束。
-  const chatInitialization = await chatInitializationPromise
-  if (!chatInitialization.ok) {
-    console.error('[App] chatStore.initialize failed', chatInitialization.error)
+    // 命令握手已完成，内容和历史仍须单独确认就绪，不能提前关闭外壳的故障检测。
+    const chatInitialization = await chatInitializationPromise
+    if (!chatInitialization.ok) throw chatInitialization.error
+    if (disposed) return
+    if (isDesktopHost) await restoreDesktopConversation(startupTabId, startupNavigationRevision)
+    if (!disposed) window.__GRAYCODE_HOST?.reportInitialization?.()
+  } catch (error) {
+    console.error('[App] chat initialization failed', error)
+    if (!disposed) window.__GRAYCODE_HOST?.reportInitialization?.(error instanceof Error ? error.message : String(error))
+  } finally {
+    stopDesktopNavigationWatcher?.()
+    if (!disposed) mainViewInitialized.value = true
   }
-
-  if (isDesktopHost && chatInitialization.ok)
-    await restoreDesktopConversation(startupTabId, startupNavigationRevision)
-  stopDesktopNavigationWatcher?.()
-
-  mainViewInitialized.value = true
 })
 
 onBeforeUnmount(() => {

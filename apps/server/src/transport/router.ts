@@ -12,6 +12,8 @@ import { hasRpcHandler, rpcRequest } from './rpcHandlers';
 export interface ClientSession {
   actorId: string;
   clientId: string;
+  /** 由可信宿主指定持久界面身份；浏览器默认使用各标签页的客户端身份。 */
+  uiStateKey?: string;
 }
 export class ApplicationRouter {
   constructor(private readonly application: PlatformApplication) {}

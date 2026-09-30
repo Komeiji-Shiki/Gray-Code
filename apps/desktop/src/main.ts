@@ -49,6 +49,7 @@ import { bindDesktopAppearance } from './appearance';
 import { resolveAppearancePalette } from '../../../shared/appearance';
 import { isTrustedApplicationFrame } from './trustedFrame';
 import { openWorkspaceInExplorer, revealWorkspaceFile } from './workspaceExplorer';
+import { desktopRpcReply } from '../../../shared/desktopBridge';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: import('../../../shared/distribution').DistributionInfo & { buildTime: string };
@@ -96,7 +97,7 @@ let windowState: DesktopWindowState | undefined;
 let dirtyDocuments = 0;
 let dirtySettings = false;
 const trustedWindows = new Set<number>();
-const client = { actorId: "owner", clientId: randomUUID() };
+const client = { actorId: "owner", clientId: randomUUID(), uiStateKey: 'desktop' };
 const preload = path.join(__dirname, "preload.cjs");
 const clientDirectory = path.resolve(__dirname, "../../client/dist");
 const editorRegistration = new DesktopEditorRegistration(process.execPath, app.isPackaged);
@@ -430,7 +431,7 @@ async function main(): Promise<void> {
   });
   ipcMain.handle(
     "graycode:rpc",
-    async (event, method: string, params: Record<string, any> = {}) => {
+    (event, method: string, params: Record<string, any> = {}) => desktopRpcReply(async () => {
       const trustedContents = trustedWindows.has(event.sender.id);
       if (!isTrustedApplicationFrame(trustedContents, event.senderFrame, event.sender.mainFrame)) {
         throw new Error("Untrusted application frame.");
@@ -613,7 +614,7 @@ async function main(): Promise<void> {
         return;
       }
       return router.call(client, method, params);
-    },
+    }),
   );
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([

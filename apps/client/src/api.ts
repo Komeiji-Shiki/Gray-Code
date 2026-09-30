@@ -1,10 +1,6 @@
 import type { RpcCall } from '@graycode/contracts';
-
-export interface DesktopBridge {
-  kind?: 'desktop' | 'web';
-  call(method: string, params?: Record<string, unknown>): Promise<any>;
-  subscribe(listener: (event: Record<string, any>) => void): () => void;
-}
+import { callDesktopBridge, type DesktopBridge } from '../../../shared/desktopBridge';
+export type { DesktopBridge } from '../../../shared/desktopBridge';
 declare global {
   interface Window {
     graycode: DesktopBridge;
@@ -19,9 +15,9 @@ export function call<T = any>(
   // Vue 表单中的代理对象不能直接交给 Electron 的结构化克隆。
   if (method === 'files.upload' && 'bytes' in params && params.bytes instanceof Uint8Array) {
     const { bytes, ...fields } = params;
-    return window.graycode.call(method, { ...JSON.parse(JSON.stringify(fields)), bytes });
+    return callDesktopBridge<T>(window.graycode, method, { ...JSON.parse(JSON.stringify(fields)), bytes });
   }
-  return window.graycode.call(method, JSON.parse(JSON.stringify(params)));
+  return callDesktopBridge<T>(window.graycode, method, JSON.parse(JSON.stringify(params)));
 }
 export function subscribe(
   listener: (event: Record<string, any>) => void,

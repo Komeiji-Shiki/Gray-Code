@@ -12,12 +12,8 @@ contextBridge.exposeInMainWorld("graycode", {
   kind: 'desktop',
   call: async (method: string, params: Record<string, unknown> = {}) => {
     validateRpcParams(method, params);
-    try { return await ipcRenderer.invoke('graycode:rpc', method, params); }
-    catch (error) {
-      // 界面显示后端的具体原因，不显示 Electron 通信包装的内部前缀。
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(message.replace(/^Error invoking remote method 'graycode:rpc': (?:Error: )?/, ''));
-    }
+    // 原样传递结构化回执，不能在隔离桥内重新抛出带自定义字段的异常。
+    return ipcRenderer.invoke('graycode:rpc', method, params);
   },
   subscribe: (listener: (event: Record<string, unknown>) => void) => {
     const callback = (value: Record<string, unknown>) => listener(value);
