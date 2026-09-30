@@ -71,8 +71,9 @@ defineProps<{
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--gc-space-1) var(--gc-space-3);
-  margin-top: var(--gc-space-3);
+  margin-top: var(--gc-space-2);
   font-size: var(--gc-font-size-caption);
+  transition: opacity var(--gc-duration-fast) var(--gc-ease-standard);
   color: var(--gc-text-muted);
   font-variant-numeric: tabular-nums;
 }
