@@ -940,17 +940,18 @@ watch(() => settingsStore.promptModesVersion, () => {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: var(--gc-space-2);
+  gap: var(--gc-space-1);
   margin: var(--gc-space-2);
   padding: var(--gc-space-2);
-  background: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-lg);
   transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
+/* 聚焦只加深描边，不用强调色整圈高亮，避免输入区成为页面上最亮的元素。 */
 .input-area:focus-within {
-  border-color: var(--gc-focus-border);
+  border-color: var(--gc-border-strong);
 }
 
 .input-box-container {

@@ -189,8 +189,10 @@ onBeforeUnmount(() => {
   transition: opacity 0.6s ease;
 }
 
+/* 只在生成时出现；空闲时保留占位，避免底部工具栏跳动。 */
 .tps-bar.is-idle {
-  opacity: 0.4;
+  opacity: 0;
+  visibility: hidden;
 }
 
 .tps-label {
