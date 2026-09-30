@@ -69,23 +69,23 @@ watch(() => props.graph.root, () => { if (autoFit.value) fit(); else center(); }
 </template>
 
 <style scoped>
-.memory-graph { margin: 14px 0; border: 1px solid var(--border); min-width: 0; }
-.memory-graph-toolbar, footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 12px; color: var(--muted); font-size: 11px; line-height: 1.7; }
-.memory-graph-toolbar { border-bottom: 1px solid var(--border); }
+.memory-graph { margin: 14px 0; border: 1px solid var(--gc-border-subtle); min-width: 0; }
+.memory-graph-toolbar, footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 12px; color: var(--gc-text-muted); font-size: 11px; line-height: 1.7; }
+.memory-graph-toolbar { border-bottom: 1px solid var(--gc-border-subtle); }
 .memory-graph-toolbar>div { display: flex; gap: 7px; align-items: center; }
 .memory-graph-toolbar button, footer button { padding: 4px 7px; font-size: 11px; }
-.memory-graph-viewport { height: 380px; max-height: 55dvh; min-height: 260px; overflow: auto; background: var(--background); }
+.memory-graph-viewport { height: 380px; max-height: 55dvh; min-height: 260px; overflow: auto; background: var(--gc-surface-base); }
 svg { display: block; margin: auto; }
-marker path { fill: var(--muted); }
-.memory-graph-edge { stroke: var(--muted); stroke-width: 1; fill: none; opacity: .65; }
-.memory-graph-edge.association { stroke: var(--accent); stroke-dasharray: 5 4; }
-.memory-graph-node { box-sizing: border-box; display: flex; flex-direction: column; gap: 7px; width: 100%; height: 100%; margin: 0; padding: 11px 13px; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 0; color: var(--text); cursor: pointer; font: inherit; }
-.memory-graph-node.selected { border: 2px solid var(--accent); }
+marker path { fill: var(--gc-text-muted); }
+.memory-graph-edge { stroke: var(--gc-text-muted); stroke-width: 1; fill: none; opacity: .65; }
+.memory-graph-edge.association { stroke: var(--gc-accent); stroke-dasharray: 5 4; }
+.memory-graph-node { box-sizing: border-box; display: flex; flex-direction: column; gap: 7px; width: 100%; height: 100%; margin: 0; padding: 11px 13px; text-align: left; background: var(--gc-surface-raised); border: 1px solid var(--gc-border-subtle); border-radius: 0; color: var(--gc-text-primary); cursor: pointer; font: inherit; }
+.memory-graph-node.selected { border: 2px solid var(--gc-accent); }
 .memory-graph-node.inactive { border-style: dashed; }
-.memory-graph-node:hover:not(:disabled) { background: var(--hover); }
-.memory-graph-node:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
-.memory-graph-node-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: var(--muted); }
+.memory-graph-node:hover:not(:disabled) { background: var(--gc-surface-hover); }
+.memory-graph-node:focus-visible { outline: 2px solid var(--gc-accent); outline-offset: -4px; }
+.memory-graph-node-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: var(--gc-text-muted); }
 .memory-graph-node strong { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memory-graph-preview { font-size: 12px; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-footer { border-top: 1px solid var(--border); }
+footer { border-top: 1px solid var(--gc-border-subtle); }
 </style>

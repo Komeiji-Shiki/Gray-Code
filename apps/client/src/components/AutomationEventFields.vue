@@ -22,8 +22,8 @@ defineProps<{ options: AutomationOptions }>();
   </fieldset>
 </template>
 <style scoped>
-.event-fields { min-width: 0; margin: 0; border: 1px solid var(--border); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.event-fields { min-width: 0; margin: 0; border: 1px solid var(--gc-border-subtle); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 legend, label { font-size: 13px; } label { display: flex; flex-direction: column; gap: 7px; }
-input, select { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; background: var(--bg); color: var(--text); font: inherit; border: 1px solid var(--border); border-radius: 0; }
-p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+input, select { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; background: var(--bg); color: var(--gc-text-primary); font: inherit; border: 1px solid var(--gc-border-subtle); border-radius: 0; }
+p { margin: 0; color: var(--gc-text-muted); font-size: 12px; line-height: 1.65; }
 </style>

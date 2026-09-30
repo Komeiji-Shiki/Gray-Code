@@ -31,5 +31,5 @@ function toggle(name: string) { expanded.value = expanded.value.includes(name) ?
   </div>
 </template>
 <style scoped>
-.debug-variables{min-width:0;font-size:12px}.debug-variable>.debug-variables{margin-left:12px;border-left:1px solid var(--border);padding-left:4px}.variable-row{display:flex;align-items:baseline;gap:6px;min-width:0;padding:4px 0}.variable-row button,.variable-spacer{width:14px;flex-shrink:0}.variable-row strong{font-weight:500;overflow-wrap:anywhere;color:var(--accent)}code{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}button{padding:0;background:transparent;border:0;color:var(--text);cursor:pointer}.variables-loading{color:var(--muted)}p{color:var(--danger,#f08080)}
+.debug-variables{min-width:0;font-size:12px}.debug-variable>.debug-variables{margin-left:12px;border-left:1px solid var(--gc-border-subtle);padding-left:4px}.variable-row{display:flex;align-items:baseline;gap:6px;min-width:0;padding:4px 0}.variable-row button,.variable-spacer{width:14px;flex-shrink:0}.variable-row strong{font-weight:500;overflow-wrap:anywhere;color:var(--gc-accent)}code{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}button{padding:0;background:transparent;border:0;color:var(--gc-text-primary);cursor:pointer}.variables-loading{color:var(--gc-text-muted)}p{color:var(--gc-danger)}
 </style>

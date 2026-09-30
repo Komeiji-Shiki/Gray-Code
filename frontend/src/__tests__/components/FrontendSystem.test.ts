@@ -41,6 +41,15 @@ describe('frontend visual and async architecture contracts', () => {
     expect(offenders([path.resolve(process.cwd(), 'src')], /--vscode-[A-Za-z][\w-]*/g, TOKEN_SOURCES)).toEqual([])
   })
 
+  test('外壳组件只引用 --gc-* 语义 token', () => {
+    const shellRoot = path.join(repoRoot, 'apps/client/src')
+    // 桌宠窗口是独立页面，在 floating.css 中自带一套变量；PetSurface.vue 同时挂在该页面。
+    const petWindow = new Set(collectSources(path.join(shellRoot, 'pets')).concat(path.join(shellRoot, 'components/PetSurface.vue')))
+    const legacy = /var\(\s*--(background|panel|surface|input|text|muted|disabled|accent|border|hover|selection|selection-text|button|button-hover|button-text|danger|success|warning|scrollbar|scrollbar-hover|code-font|ui-font|text-font|font-size|line-height)\s*[,)]/g
+    expect(offenders([shellRoot], /--vscode-[A-Za-z][\w-]*/g, petWindow)).toEqual([])
+    expect(offenders([shellRoot], legacy, petWindow)).toEqual([])
+  })
+
   test('visual system defines semantic tokens, compatibility aliases and accessible primitives', () => {
     const stylesRoot = path.resolve(process.cwd(), 'src/styles')
     const tokensSource = readFileSync(path.join(stylesRoot, 'tokens.css'), 'utf8')

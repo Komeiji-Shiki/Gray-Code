@@ -25,5 +25,5 @@ async function load() {
   </div>
 </template>
 <style scoped>
-.memory-source-files{margin:12px 0}.source-file-list{display:flex;gap:8px;flex-wrap:wrap}.source-file-list button{max-width:100%;overflow-wrap:anywhere;text-align:left}.source-file-list small{color:var(--muted);font-size:11px;margin-left:7px}
+.memory-source-files{margin:12px 0}.source-file-list{display:flex;gap:8px;flex-wrap:wrap}.source-file-list button{max-width:100%;overflow-wrap:anywhere;text-align:left}.source-file-list small{color:var(--gc-text-muted);font-size:11px;margin-left:7px}
 </style>
