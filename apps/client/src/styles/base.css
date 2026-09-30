@@ -1,8 +1,30 @@
-:root {
+/* 外壳启动默认值：与聊天 theme.css 一致，设置加载前使用默认色板（藏青外壳）。 */
+:root:root {
   color-scheme: dark;
-  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-  background: #111215;
-  color: #e5e7eb;
+  --gc-surface-base: #17181b;
+  --gc-surface-panel: #17181b;
+  --gc-surface-chrome: #1a2033;
+  --gc-surface-raised: #1f2023;
+  --gc-surface-overlay: #1f2023;
+  --gc-surface-sunken: #121315;
+  --gc-surface-input: #1f2023;
+  --gc-surface-hover: #26272b;
+  --gc-surface-selected: #2a3350;
+  --gc-text-primary: #ece9e1;
+  --gc-text-muted: #9c9a94;
+  --gc-text-disabled: #6e6c67;
+  --gc-border-subtle: #2c2d31;
+  --gc-border-control: #2c2d31;
+  --gc-accent: #9fb0e8;
+  --gc-link: #9fb0e8;
+  --gc-focus-border: #9fb0e8;
+  --gc-button-primary: #f2eee5;
+  --gc-text-on-primary: #232a42;
+  --gc-font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --gc-font-code: "Cascadia Code", Consolas, monospace;
+  font-family: var(--gc-font-ui);
+  background: var(--gc-surface-chrome);
+  color: var(--gc-text-primary);
   font-synthesis: none;
   font-weight: 400;
 }
@@ -238,27 +260,13 @@ details > summary {
   flex-wrap: wrap;
 }
 .application {
-  color-scheme: dark;
-  --background: #111215;
-  --panel: #181a1f;
-  --text: #e5e7eb;
-  --muted: #9197a2;
-  --accent: #6ba6ff;
-  --border: #30333b;
-  --input: #111318;
-  --hover: #242730;
-  --ui-font: "Segoe UI", "Microsoft YaHei", sans-serif;
-  --text-font: inherit;
-  --code-font: "Cascadia Code", Consolas, monospace;
-  --font-size: 14px;
-  --line-height: 1.6;
-  font-family: var(--ui-font);
-  font-size: var(--font-size);
-  color: var(--text);
+  font-family: var(--gc-font-ui);
+  font-size: var(--gc-font-size-ui);
+  color: var(--gc-text-primary);
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--background);
+  background: var(--gc-surface-chrome);
   position: relative;
   isolation: isolate;
 }
@@ -273,7 +281,7 @@ details > summary {
   z-index: -1;
   pointer-events: none;
 }
-.application[data-theme="light"] {
+:root[data-theme="light"] .application {
   color-scheme: light;
 }
 .application[data-density="compact"] {

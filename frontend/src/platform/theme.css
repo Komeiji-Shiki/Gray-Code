@@ -1,45 +1,32 @@
-/* Desktop host values for the existing semantic theme tokens. Component layout stays shared. */
-:root {
+/*
+ * 聊天文档的启动默认值：设置加载前使用默认色板（藏青外壳），避免首帧闪色。
+ * :root:root 提高优先级，不受 tokens.css 引入顺序影响；运行时由 platform/appearance.ts 以内联样式覆盖。
+ */
+:root:root {
   color-scheme: dark;
-  --vscode-font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-  --vscode-font-size: 14px;
-  --vscode-editor-font-family: "Cascadia Code", Consolas, monospace;
-  --vscode-editor-font-size: 14px;
-  --vscode-foreground: #dedee3;
-  --vscode-descriptionForeground: #969ba6;
-  --vscode-disabledForeground: #747a85;
-  --vscode-editor-background: #17191e;
-  --vscode-sideBar-background: #17191e;
-  --vscode-editorWidget-background: #22252c;
-  --vscode-input-background: #2a2e36;
-  --vscode-input-foreground: #ededf1;
-  --vscode-input-border: #3c424e;
-  --vscode-panel-border: #323742;
-  --vscode-widget-border: #434b59;
-  --vscode-focusBorder: #6ba6ff;
-  --vscode-button-background: #2674cd;
-  --vscode-button-hoverBackground: #3585df;
-  --vscode-button-foreground: #fff;
-  --vscode-textLink-foreground: #79afff;
-  --vscode-textLink-activeForeground: #a2c7ff;
-  --vscode-list-activeSelectionBackground: #163b69;
-  --vscode-list-activeSelectionForeground: #fff;
-  --vscode-list-hoverBackground: #252d39;
-  --vscode-toolbar-hoverBackground: #2c3340;
-  --vscode-toolbar-activeBackground: #364256;
-  --vscode-editor-inactiveSelectionBackground: #303c50;
-  --vscode-editor-selectionBackground: #27466d;
-  --vscode-errorForeground: #f08080;
-  --vscode-testing-iconPassed: #88c7a2;
-  --vscode-editorWarning-foreground: #e8bc72;
-  --vscode-charts-blue: #6ba6ff;
-  --vscode-charts-green: #88c7a2;
-  --vscode-charts-yellow: #e8bc72;
-  --vscode-scrollbarSlider-background: #5b63714d;
-  --vscode-scrollbarSlider-hoverBackground: #78839680;
-  --vscode-scrollbarSlider-activeBackground: #8d9bb4aa;
+  --gc-surface-base: #17181b;
+  --gc-surface-panel: #17181b;
+  --gc-surface-chrome: #1a2033;
+  --gc-surface-raised: #1f2023;
+  --gc-surface-overlay: #1f2023;
+  --gc-surface-sunken: #121315;
+  --gc-surface-input: #1f2023;
+  --gc-surface-hover: #26272b;
+  --gc-surface-selected: #2a3350;
+  --gc-text-primary: #ece9e1;
+  --gc-text-muted: #9c9a94;
+  --gc-text-disabled: #6e6c67;
+  --gc-border-subtle: #2c2d31;
+  --gc-border-control: #2c2d31;
+  --gc-accent: #9fb0e8;
+  --gc-link: #9fb0e8;
+  --gc-focus-border: #9fb0e8;
+  --gc-button-primary: #f2eee5;
+  --gc-text-on-primary: #232a42;
+  --gc-font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --gc-font-code: "Cascadia Code", Consolas, monospace;
 }
-body { margin: 0; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); }
+body { margin: 0; font-family: var(--gc-font-ui); background: var(--gc-surface-base); }
 .mobile-settings-category{display:none}
 .platform-host body .settings-sidebar { width: 195px; padding: 16px 10px; overflow-y: auto; overflow-x: hidden; gap: 2px; }
 .platform-host body .settings-tab::after { display: none; }

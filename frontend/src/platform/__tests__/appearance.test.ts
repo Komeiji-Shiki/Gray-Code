@@ -27,6 +27,28 @@ test('跟随系统会更新聊天及菜单配色，手动选定主题后不再�
   expect(scheme.addEventListener).toHaveBeenCalledTimes(1);
 });
 
+test('注入写出语义 token 与兼容别名，并随深色配色切换', async () => {
+  const { applyDesktopAppearance } = await import('../appearance');
+  const style = document.documentElement.style;
+  applyDesktopAppearance({ ...settings('dark'), darkPalette: 'graphite' });
+  expect(style.getPropertyValue('--gc-surface-base')).toBe('#181817');
+  expect(style.getPropertyValue('--gc-button-primary')).toBe('#ece9e1');
+  expect(style.getPropertyValue('--vscode-editor-background')).toBe('#181817');
+  expect(document.documentElement.dataset.palette).toBe('graphite');
+  applyDesktopAppearance({ ...settings('dark'), darkPalette: 'indigo' });
+  expect(style.getPropertyValue('--gc-surface-chrome')).toBe('#10131c');
+  applyDesktopAppearance({ ...settings('light'), darkPalette: 'indigo' });
+  expect(document.documentElement.dataset.palette).toBe('ivory');
+});
+
+test('自定义颜色覆盖所选深色配色，旧默认界面字体按新默认写出', async () => {
+  const { applyDesktopAppearance } = await import('../appearance');
+  const config = { ...settings('dark'), darkPalette: 'graphite' as const, uiFont: 'Segoe UI, Microsoft YaHei, sans-serif', colors: { background: '#000000' } };
+  applyDesktopAppearance(config);
+  expect(document.documentElement.style.getPropertyValue('--gc-surface-base')).toBe('#000000');
+  expect(document.documentElement.style.getPropertyValue('--gc-font-ui')).toContain('Segoe UI Variable Text');
+});
+
 test('切换主题保留主动指定的强调色，移除自定义值恢复主题颜色', async () => {
   const { applyDesktopAppearance } = await import('../appearance');
   const config = settings('light'); config.colors.accent = '#a020f0';

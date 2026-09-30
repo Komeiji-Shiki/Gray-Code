@@ -6,6 +6,7 @@ import SettingsPanelSource from '../../components/settings/SettingsPanel.vue?raw
 import ToolItemSource from '../../components/message/toolMessage/ToolItem.vue?raw'
 import ViteConfigSource from '../../../vite.config.ts?raw'
 import { resolveWebviewAssetFileName } from '../../build/webviewAssetNaming'
+import { resolveAppearancePalette } from '../../../../shared/appearance'
 
 function collectTypeScriptFiles(directory: string): string[] {
   const files: string[] = []
@@ -52,6 +53,17 @@ describe('frontend visual and async architecture contracts', () => {
     expect(tokens).toMatch(/--gc-radius-sm:\s*6px/)
     const theme = readFileSync(path.resolve(process.cwd(), 'src/platform/theme.css'), 'utf8')
     expect(theme).not.toMatch(/--gc-radius-(xs|sm|md|lg):\s*0/)
+  })
+
+  test('两个文档的启动默认值与默认色板一致，避免加载设置前闪色', () => {
+    const palette = resolveAppearancePalette('dark')
+    const chat = readFileSync(path.resolve(process.cwd(), 'src/platform/theme.css'), 'utf8')
+    const shell = readFileSync(path.resolve(process.cwd(), '../apps/client/src/styles/base.css'), 'utf8')
+    for (const [token, key] of [['--gc-surface-base', 'background'], ['--gc-surface-chrome', 'chrome'], ['--gc-text-primary', 'text'],
+      ['--gc-surface-raised', 'panel'], ['--gc-button-primary', 'button'], ['--gc-accent', 'accent']] as const) {
+      expect(chat).toContain(`${token}: ${palette[key]};`)
+      expect(shell).toContain(`${token}: ${palette[key]};`)
+    }
   })
 
   test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {

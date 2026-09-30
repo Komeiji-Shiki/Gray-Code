@@ -15,14 +15,14 @@ const galleryOpen = ref(false);
 const systemScheme = matchMedia('(prefers-color-scheme: light)');
 const systemLight = ref(systemScheme.matches);
 const updateSystemTheme = () => { systemLight.value = systemScheme.matches; };
-const appearanceColors = computed(() => resolveAppearancePalette(settings.value?.appearance.theme, settings.value?.appearance.colors, systemLight.value));
+const appearanceColors = computed(() => resolveAppearancePalette(settings.value?.appearance.theme, settings.value?.appearance.colors, systemLight.value, settings.value?.appearance.darkPalette));
 const previewText = '### 从想法到实现\n\n这是统一正文预览，包含 **粗体**、*斜体*、~~删除线~~ 和 `行内代码`。\n\n> “把问题说明白，再把事情做好。”\n\n- 普通列表与 [链接](https://example.com)\n- [x] 已完成的事项\n- [ ] 接下来的工作\n\n```typescript\nconst greeting: string = "你好，主人";\nconsole.log(greeting);\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 正文排版 | 即时预览 |\n| 字体与配色 | 统一呈现 |\n\n行内公式 $E = mc^2$，以及分隔线：\n\n---\n';
 const previewStyle = computed(() => {
   const config = settings.value?.appearance; if (!config) return {};
   return { fontFamily: config.textFont === 'inherit' ? config.uiFont : config.textFont, fontSize: `${config.fontSize}px`, lineHeight: config.lineHeight,
     color: appearanceColors.value.text, backgroundColor: appearanceColors.value.background,
-    '--vscode-editor-font-family': config.codeFont, '--vscode-editor-font-size': `${config.codeFontSize}px`,
-    '--vscode-textLink-foreground': appearanceColors.value.accent, '--gc-accent': appearanceColors.value.accent };
+    '--gc-font-code': config.codeFont, '--gc-font-size-code': `${config.codeFontSize}px`,
+    '--gc-link': appearanceColors.value.accent, '--gc-accent': appearanceColors.value.accent };
 });
 async function applyBackground(url: string, opacity: number) {
   if (!settings.value) return;

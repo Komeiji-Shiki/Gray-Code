@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { appearance, guard, initialize, loadSettings, report, state } from './state';
-import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
+import { appearanceSystemLight, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
 import { useNavigationIntent } from './navigationIntent';
 import { shellText as t, setShellLanguage } from './i18n';
-import { appearanceCssVariables } from '../../../shared/appearanceTokens';
+import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
 const navigate = useNavigationIntent();
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import Workbench from './components/Workbench.vue';
@@ -179,13 +179,8 @@ function endSidebar(event?: PointerEvent) {
   localStorage.setItem('graycode.sidebarWidth', String(sidebarWidth.value));
 }
 function resizeSidebarBy(amount: number) { sidebarWidth.value = visibleSidebarWidth.value + amount; endSidebar(); }
-const variables = computed(() => {
-  const config = appearance.value;
-  if (!config) return {};
-  return { '--ui-font': config.uiFont, '--code-font': config.codeFont, '--text-font': config.textFont,
-    '--font-size': config.fontSize + 'px', '--line-height': String(config.lineHeight),
-    ...appearanceCssVariables(Object.fromEntries(Object.entries(appearancePalette.value).filter(([name, value]) => /^[a-zA-Z-]+$/.test(name) && CSS.supports('color', value)))) };
-});
+// 与聊天文档一致：变量写到根元素，tokens.css 的派生色才能拿到当前色板。
+watchEffect(() => { if (appearance.value) applyAppearanceVariables(document.documentElement, appearance.value, appearanceSystemLight.value); });
 useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
 onMounted(() => {
@@ -208,7 +203,7 @@ onMounted(() => {
 onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?.(); clearTimeout(chatReadyTimer); window.removeEventListener('message', openWorkspacePanel); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
 </script>
 <template>
-  <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="resolvedTheme" :data-density="appearance?.density">
+  <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="{ '--viewport-height': viewportHeight + 'px' }" :data-density="appearance?.density">
     <header class="titlebar">
       <button v-if="!state.settingsOpen" class="sidebar-toggle" :title="navigationCollapsed ? '展开对话列表' : '收起对话列表'" :aria-expanded="!navigationCollapsed" aria-label="切换对话列表" @click="navigationCollapsed = !navigationCollapsed"><NavigationIcon name="panel" /></button>
       <div class="mode-switcher" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) modeMenuOpen = false; }">
