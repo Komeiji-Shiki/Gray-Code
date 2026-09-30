@@ -188,7 +188,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   padding: 2px 8px;
   background: color-mix(in srgb, var(--gc-info) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--gc-info) 28%, transparent);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
@@ -207,7 +207,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
 
 .context-tag .codicon {
   font-size: 12px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   flex-shrink: 0;
 }
 
@@ -234,8 +234,8 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   left: 0;
   right: 0;
   margin-bottom: 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: var(--gc-layer-popover);
@@ -248,13 +248,13 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-base);
 }
 
 .preview-header .codicon {
   font-size: 14px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .preview-title {
@@ -268,21 +268,21 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
 
 .preview-hint {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .preview-content {
   margin: 0;
   padding: 12px;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   line-height: 1.5;
   overflow-y: auto;
   max-height: 220px;
   white-space: pre-wrap;
   word-break: break-all;
-  color: var(--vscode-foreground);
-  background: var(--vscode-textBlockQuote-background);
+  color: var(--gc-text-primary);
+  background: var(--gc-quote-bg);
 }
 
 /* 淡入淡出动画 */

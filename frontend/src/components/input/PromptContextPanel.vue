@@ -414,8 +414,8 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   left: 8px;
   right: 8px;
   margin-bottom: 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
@@ -440,7 +440,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .panel-title {
@@ -453,7 +453,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 
 .panel-title .codicon {
   font-size: 14px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .count-badge {
@@ -464,8 +464,8 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   font-weight: 500;
   line-height: 16px;
   text-align: center;
-  color: var(--vscode-badge-foreground);
-  background: var(--vscode-badge-background);
+  color: var(--gc-badge-fg);
+  background: var(--gc-badge-bg);
   border-radius: var(--gc-radius-md);
 }
 
@@ -478,8 +478,8 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 .panel-description {
   padding: 6px 12px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .panel-content {
@@ -494,7 +494,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   flex-direction: column;
   gap: 8px;
   padding: 8px;
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   border-radius: var(--gc-radius-sm);
   margin-bottom: 8px;
 }
@@ -503,21 +503,21 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   width: 100%;
   padding: 6px 8px;
   font-size: 12px;
-  color: var(--vscode-input-foreground);
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   outline: none;
 }
 
 .text-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .content-input {
   resize: vertical;
   min-height: 60px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .form-actions {
@@ -541,21 +541,21 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 }
 
 .btn-primary {
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
+  color: var(--gc-text-on-primary);
+  background: var(--gc-button-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .btn-secondary {
-  color: var(--vscode-button-secondaryForeground);
-  background: var(--vscode-button-secondaryBackground);
+  color: var(--gc-text-on-secondary);
+  background: var(--gc-button-secondary);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .btn-sm {
@@ -571,7 +571,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   justify-content: center;
   gap: 8px;
   padding: 24px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .empty-state .codicon {
@@ -592,7 +592,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 }
 
 .context-item {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
@@ -606,12 +606,12 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .item-checkbox {
   cursor: pointer;
-  accent-color: var(--vscode-checkbox-foreground);
+  accent-color: var(--gc-text-primary);
 }
 
 .item-header .codicon {
@@ -631,8 +631,8 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 .item-type-badge {
   font-size: 10px;
   padding: 1px 6px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-textBlockQuote-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
@@ -651,9 +651,9 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   margin: 0;
   padding: 8px;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-textBlockQuote-background);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-muted);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-xs);
   white-space: pre-wrap;
   word-break: break-all;
@@ -666,17 +666,17 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   width: 100%;
   padding: 8px;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-input-foreground);
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   resize: vertical;
   min-height: 80px;
 }
 
 .edit-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
   outline: none;
 }
 
@@ -690,7 +690,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 /* 底部 */
 .panel-footer {
   padding: 8px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .footer-hint {
@@ -698,7 +698,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .footer-hint .codicon {
@@ -708,7 +708,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
 
 /* 拖拽状态 */
 .prompt-context-panel.drag-over {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .drag-overlay {
@@ -722,18 +722,18 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
+  background: color-mix(in srgb, var(--gc-surface-base) 95%, transparent);
   border-radius: var(--gc-radius-sm);
   z-index: 10;
 }
 
 .drag-overlay .codicon {
   font-size: 32px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .drag-overlay span {
   font-size: 13px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 </style>

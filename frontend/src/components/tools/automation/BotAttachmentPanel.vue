@@ -47,4 +47,4 @@ watch(() => props.result, () => { visible.value = 20 })
 </template>
 
 <style scoped src="./automation.css"></style>
-<style scoped>.attachment-next{display:block;margin-top:5px}.attachment-next code{font-family:var(--vscode-editor-font-family,monospace)}</style>
+<style scoped>.attachment-next{display:block;margin-top:5px}.attachment-next code{font-family:var(--gc-font-code)}</style>

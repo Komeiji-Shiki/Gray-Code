@@ -314,12 +314,12 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
 }
 
 .close-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .edit-form {
@@ -335,7 +335,7 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
   display: block;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-bottom: 8px;
 }
 
@@ -346,12 +346,12 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
 .form-group label {
   display: block;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-bottom: 4px;
 }
 
 .form-group label .required {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .form-input,
@@ -360,9 +360,9 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
   padding: 6px 10px;
   font-size: 13px;
   font-family: inherit;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
@@ -370,12 +370,12 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
 
 .form-input:focus,
 .form-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .form-textarea {
   resize: vertical;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
 }
 
 /* ID 输入相关样式 */
@@ -398,44 +398,44 @@ fieldset.edit-form { border: 0; margin: 0; padding: 0; min-width: 0; }
 }
 
 .id-status.checking {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .id-status.valid {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .id-status.invalid {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .id-error {
   font-size: 11px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   margin-top: 4px;
 }
 
 .id-display {
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   font-size: 12px;
   padding: 6px 10px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .form-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-top: 4px;
 }
 
 .form-input.input-error {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 .form-input.input-success {
-  border-color: var(--vscode-terminal-ansiGreen);
+  border-color: var(--gc-success);
 }
 
 /* 隐藏数字输入框的上下箭头 */
@@ -461,8 +461,8 @@ input[type="number"] {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -471,12 +471,12 @@ input[type="number"] {
 }
 
 .transport-tab:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .transport-tab.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .form-row {
@@ -491,11 +491,11 @@ input[type="number"] {
   gap: 6px;
   padding: 8px 12px;
   margin-bottom: 16px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .form-actions {
@@ -503,7 +503,7 @@ input[type="number"] {
   justify-content: flex-end;
   gap: 8px;
   padding-top: 16px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .action-button {
@@ -521,21 +521,21 @@ input[type="number"] {
 }
 
 .action-button.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .action-button.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .action-button.secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .action-button.secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-button:disabled {

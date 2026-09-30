@@ -142,7 +142,7 @@ onMounted(() => {
 <style scoped>
 .find-files-config {
   padding: 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
@@ -159,18 +159,18 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 .section-header .hint {
   font-size: 11px;
   font-weight: normal;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .section-content {
@@ -191,11 +191,11 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .remove-btn {
@@ -205,7 +205,7 @@ onMounted(() => {
   padding: 0;
   background: none;
   border: none;
-  color: var(--vscode-badge-foreground);
+  color: var(--gc-badge-fg);
   opacity: 0.6;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -228,21 +228,21 @@ onMounted(() => {
 .pattern-input {
   flex: 1;
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .pattern-input:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .pattern-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .add-btn {
@@ -250,8 +250,8 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -260,7 +260,7 @@ onMounted(() => {
 }
 
 .add-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .add-btn:disabled {
@@ -278,7 +278,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 保存状态 */
@@ -287,7 +287,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .codicon-modifier-spin {

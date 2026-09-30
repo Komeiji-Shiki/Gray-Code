@@ -74,7 +74,7 @@ const { t } = useI18n()
         <span class="field-hint">{{ t('components.settings.subagents.defaultMaxRuntimeSecondsHint') }}</span>
       </div>
     </div>
-    <p v-if="globalNumberError" class="field-hint global-number-error" role="alert" style="color: var(--vscode-errorForeground)">{{ globalNumberError }}</p>
+    <p v-if="globalNumberError" class="field-hint global-number-error" role="alert" style="color: var(--gc-danger)">{{ globalNumberError }}</p>
     <div class="form-group">
       <CustomCheckbox
         :modelValue="generalWorkerEnabled"
@@ -104,7 +104,7 @@ const { t } = useI18n()
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .form-group {
@@ -115,16 +115,16 @@ const { t } = useI18n()
 
 .form-group label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .form-group input,
 .form-group textarea {
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: 0;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 13px;
   font-family: inherit;
   resize: vertical;
@@ -133,13 +133,13 @@ const { t } = useI18n()
 .form-group input:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .field-hint {
   font-size: 11px;
   line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-top: 2px;
 }
 
@@ -147,7 +147,7 @@ const { t } = useI18n()
   container-type: inline-size;
   margin-bottom: 16px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 /* 全局配置四参数 2×2 布局：一行四个过宽（label/hint 挤成多行），

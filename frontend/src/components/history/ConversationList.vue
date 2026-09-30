@@ -180,7 +180,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
   align-items: center;
   justify-content: center;
   padding: var(--spacing-xl, 32px) var(--spacing-md, 16px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .list-loading .codicon {
@@ -205,7 +205,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
 
 .empty-text {
   font-size: 13px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .list-items {
@@ -218,7 +218,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
   align-items: center;
   justify-content: center;
   padding: var(--spacing-sm, 8px) 0;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .list-loading-more .codicon {
@@ -232,7 +232,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
   padding: var(--spacing-sm, 8px) var(--spacing-md, 16px);
   cursor: pointer;
   transition: background-color var(--transition-fast, 0.1s);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .conversation-item:last-child {
@@ -240,11 +240,11 @@ function getIntegrityTooltip(conversation: Conversation): string {
 }
 
 .conversation-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .conversation-item.active {
-  background: var(--vscode-list-activeSelectionBackground);
+  background: var(--gc-surface-selected);
 }
 
 .item-content {
@@ -258,7 +258,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
 .item-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 4px);
@@ -273,7 +273,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
 .item-integrity-icon {
   flex-shrink: 0;
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   overflow: hidden;
 }
 
@@ -282,7 +282,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .item-time {
@@ -295,7 +295,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
 
 .item-preview {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -303,7 +303,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
 }
 
 .conversation-item:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: -1px;
 }
 
@@ -321,7 +321,7 @@ function getIntegrityTooltip(conversation: Conversation): string {
 
 .deleting-indicator {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .codicon-modifier-spin {

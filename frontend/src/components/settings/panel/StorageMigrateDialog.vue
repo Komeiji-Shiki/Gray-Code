@@ -67,7 +67,7 @@ defineEmits<{
   padding: 10px 12px;
   background: rgba(255, 200, 0, 0.1);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
 }
 
 .migrate-warning .codicon {
@@ -78,8 +78,8 @@ defineEmits<{
 .dialog-btn {
   padding: 6px 14px;
   font-size: 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -87,15 +87,15 @@ defineEmits<{
 }
 
 .dialog-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .dialog-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .dialog-btn.primary:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 </style>

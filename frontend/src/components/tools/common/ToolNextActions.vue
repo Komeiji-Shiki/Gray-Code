@@ -19,5 +19,5 @@ const actions = computed(() => Array.isArray(props.value) ? props.value.filter((
 </template>
 
 <style scoped>
-.tool-next-actions{border-top:1px solid var(--vscode-panel-border);padding-top:8px;display:flex;flex-direction:column;gap:8px}.next-action-call{display:flex;align-items:flex-start;gap:6px;color:var(--vscode-foreground)}.next-action-call>code{font:11px/1.6 var(--vscode-editor-font-family,monospace);white-space:pre-wrap;overflow-wrap:anywhere}.next-action-call>.codicon{margin-top:2px;color:var(--vscode-descriptionForeground)}.tool-next-action>p{margin:2px 0 0 20px;color:var(--vscode-descriptionForeground);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+.tool-next-actions{border-top:1px solid var(--gc-border-subtle);padding-top:8px;display:flex;flex-direction:column;gap:8px}.next-action-call{display:flex;align-items:flex-start;gap:6px;color:var(--gc-text-primary)}.next-action-call>code{font:11px/1.6 var(--gc-font-code);white-space:pre-wrap;overflow-wrap:anywhere}.next-action-call>.codicon{margin-top:2px;color:var(--gc-text-muted)}.tool-next-action>p{margin:2px 0 0 20px;color:var(--gc-text-muted);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
 </style>

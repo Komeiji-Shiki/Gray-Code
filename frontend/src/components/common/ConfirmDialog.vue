@@ -127,7 +127,7 @@ const iconClass = computed(() => props.isDanger ? 'codicon-warning' : 'codicon-i
 }
 
 .danger-confirm {
-  color: var(--vscode-button-foreground, var(--gc-text-on-accent));
+  color: var(--gc-text-on-primary);
   background: var(--gc-danger);
 }
 

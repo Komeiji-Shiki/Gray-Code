@@ -120,14 +120,14 @@ defineProps<{
 }
 
 .token-prompt .token-arrow {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .token-candidates .token-arrow {
-  color: var(--vscode-charts-blue, #75beff);
+  color: var(--gc-chart-blue);
 }
 
 .token-cached .token-arrow {
-  color: var(--vscode-charts-yellow, #e2c08d);
+  color: var(--gc-chart-yellow);
 }
 </style>

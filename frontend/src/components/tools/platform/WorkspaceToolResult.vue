@@ -96,5 +96,5 @@ const mutation = computed(() => ['write', 'edit', 'delete'].includes(action.valu
 
 <style scoped src="./platform.css"></style>
 <style scoped>
-.file-entries>li{display:flex;gap:9px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--vscode-panel-border)}.file-entries .codicon{color:var(--vscode-descriptionForeground)}.file-hits :deep(.platform-text)+:deep(.platform-text){margin-top:3px}.file-hits :deep(pre){max-height:140px;padding:6px 8px}
+.file-entries>li{display:flex;gap:9px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--gc-border-subtle)}.file-entries .codicon{color:var(--gc-text-muted)}.file-hits :deep(.platform-text)+:deep(.platform-text){margin-top:3px}.file-hits :deep(pre){max-height:140px;padding:6px 8px}
 </style>

@@ -44,7 +44,7 @@ let lastRealRing: number[] = []
 function resolveChartColor(): string {
   try {
     const v = getComputedStyle(document.documentElement)
-      .getPropertyValue('--vscode-charts-blue')
+      .getPropertyValue('--gc-chart-blue')
       .trim()
     if (v) return v
   } catch {
@@ -182,7 +182,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   min-width: 0;
   flex: 1 1 auto;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
   line-height: 1;
   /* 完全空闲后整条自然淡出（保留占位不跳动），重新活跃时恢复 */
@@ -234,11 +234,11 @@ onBeforeUnmount(() => {
 }
 
 .tps-source.is-tokenizer .codicon {
-  color: var(--vscode-charts-green, var(--vscode-foreground));
+  color: var(--gc-chart-green);
 }
 
 .tps-source.is-estimate .codicon {
-  color: var(--vscode-charts-yellow, var(--vscode-foreground));
+  color: var(--gc-chart-yellow);
 }
 
 /* 窄面板：隐藏 canvas 只留数值，避免把右侧按钮挤出 */

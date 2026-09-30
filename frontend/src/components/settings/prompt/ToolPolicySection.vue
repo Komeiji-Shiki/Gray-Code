@@ -139,8 +139,8 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -161,7 +161,7 @@ const emit = defineEmits<{
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 工具策略 */
@@ -177,7 +177,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .radio-option input {
@@ -189,15 +189,15 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-inputValidation-infoBackground);
-  border: 1px solid var(--vscode-inputValidation-infoBorder);
+  background: var(--gc-info-bg);
+  border: 1px solid var(--gc-info-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-policy-notice .codicon {
-  color: var(--vscode-notificationsInfoIcon-foreground);
+  color: var(--gc-info);
 }
 
 .tool-policy-toolbar {
@@ -215,14 +215,14 @@ const emit = defineEmits<{
   flex: 1;
   min-width: 220px;
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
 }
 
 .tool-search .codicon {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .tool-search-input {
@@ -231,7 +231,7 @@ const emit = defineEmits<{
   border: none;
   outline: none;
   background: transparent;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
 }
 
@@ -247,16 +247,16 @@ const emit = defineEmits<{
   padding: 5px 10px;
   font-size: 11px;
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
 }
 
 .small-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder);
+  background: var(--gc-surface-hover);
+  border-color: var(--gc-focus-border);
 }
 
 .small-btn:disabled {
@@ -271,20 +271,20 @@ const emit = defineEmits<{
   gap: 8px;
   padding: 10px 12px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .tool-policy-list {
   margin-top: 8px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
   overflow: auto;
   max-height: 260px;
 }
 
 .tool-category + .tool-category {
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .tool-category-header {
@@ -293,21 +293,21 @@ const emit = defineEmits<{
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .tool-category-name {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-category-count {
   font-size: 10px;
   padding: 1px 8px;
   border-radius: var(--gc-radius-pill);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .tool-items {
@@ -321,7 +321,7 @@ const emit = defineEmits<{
   gap: 10px;
   padding: 8px 10px;
   cursor: pointer;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .tool-item:first-child {
@@ -329,7 +329,7 @@ const emit = defineEmits<{
 }
 
 .tool-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .tool-item input[type="checkbox"] {
@@ -346,14 +346,14 @@ const emit = defineEmits<{
 
 .tool-name {
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code), monospace;
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
 .tool-desc {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.35;
   word-break: break-word;
 }
@@ -363,9 +363,9 @@ const emit = defineEmits<{
   font-size: 10px;
   padding: 2px 8px;
   border-radius: var(--gc-radius-pill);
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
-  color: var(--vscode-foreground);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
+  color: var(--gc-text-primary);
   white-space: nowrap;
 }
 
@@ -375,15 +375,15 @@ const emit = defineEmits<{
   gap: 8px;
   padding: 10px 12px;
   margin-top: 8px;
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-policy-warning .codicon {
-  color: var(--vscode-notificationsWarningIcon-foreground);
+  color: var(--gc-warning);
 }
 
 /* Loading 动画 */

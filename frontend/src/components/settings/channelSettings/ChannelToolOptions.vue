@@ -54,8 +54,8 @@ const emit = defineEmits<{
   gap: 6px;
   width: 100%;
   padding: 8px 10px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
@@ -64,7 +64,7 @@ const emit = defineEmits<{
 }
 
 .advanced-toggle:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .advanced-toggle .codicon {
@@ -74,7 +74,7 @@ const emit = defineEmits<{
 .custom-panel-wrapper {
   margin-top: 12px;
   padding: 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-xs);
 }
 </style>

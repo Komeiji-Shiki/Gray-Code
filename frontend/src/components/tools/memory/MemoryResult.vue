@@ -194,9 +194,9 @@ function truncate(s: string, max: number): string {
   font-weight: 500;
 }
 
-.section.success .section-title { color: var(--vscode-terminal-ansiGreen); }
-.section.error .section-title   { color: var(--vscode-errorForeground); }
-.section.pending .section-title { color: var(--vscode-descriptionForeground); }
+.section.success .section-title { color: var(--gc-success); }
+.section.error .section-title   { color: var(--gc-danger); }
+.section.pending .section-title { color: var(--gc-text-muted); }
 
 .result-header {
   display: flex;
@@ -204,15 +204,15 @@ function truncate(s: string, max: number): string {
   gap: 8px;
   flex-wrap: wrap;
   padding: 6px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
-  border-left: 3px solid var(--vscode-terminal-ansiGreen);
+  border-left: 3px solid var(--gc-success);
 }
 
 .header-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-stats {
@@ -228,26 +228,26 @@ function truncate(s: string, max: number): string {
   gap: 2px;
   padding: 1px 6px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-badge-background);
+  background: var(--gc-badge-bg);
   font-size: 10px;
   line-height: 1.4;
 }
 
 .stat-label {
-  color: var(--vscode-badge-foreground);
+  color: var(--gc-badge-fg);
   opacity: 0.7;
 }
 
 .stat-value {
-  color: var(--vscode-badge-foreground);
+  color: var(--gc-badge-fg);
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
 }
 
 /* ——— 参数区域 ——— */
 .args-section {
   padding: 6px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -260,7 +260,7 @@ function truncate(s: string, max: number): string {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .args-body {
@@ -278,19 +278,19 @@ function truncate(s: string, max: number): string {
 .arg-label {
   font-size: 10px;
   font-weight: 500;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .arg-value {
   margin: 0;
   padding: 4px 8px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-xs);
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -298,7 +298,7 @@ function truncate(s: string, max: number): string {
 /* ——— 结果文本区域 ——— */
 .result-body {
   padding: 8px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -311,15 +311,15 @@ function truncate(s: string, max: number): string {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .memory-text {
   margin: 0;
-  font-family: var(--vscode-editor-font-family), 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  font-family: var(--gc-font-code), 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
   font-size: 11px;
   line-height: 1.55;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre;
   tab-size: 2;
   max-width: 100%;
@@ -328,8 +328,8 @@ function truncate(s: string, max: number): string {
 }
 
 .memory-text::-webkit-scrollbar { height: 8px; }
-.memory-text::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); }
-.memory-text:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.memory-text::-webkit-scrollbar-thumb { background: var(--gc-scrollbar); }
+.memory-text:focus-visible { outline: 1px solid var(--gc-focus-border); outline-offset: 2px; }
 
 .memory-text code {
   font-family: inherit;
@@ -339,27 +339,27 @@ function truncate(s: string, max: number): string {
 
 /* 记忆块样式 */
 .raw-block {
-  color: var(--vscode-terminal-ansiCyan);
+  color: var(--gc-info);
 }
 
 .summary-block {
-  color: var(--vscode-terminal-ansiYellow);
+  color: var(--gc-warning);
   opacity: 0.85;
 }
 
 .awake-line {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
   font-weight: 600;
 }
 
 .empty-line {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-style: italic;
 }
 
 .error-detail {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 4px 10px;
 }
 </style>

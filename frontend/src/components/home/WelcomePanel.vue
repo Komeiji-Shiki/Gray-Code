@@ -111,7 +111,7 @@ async function handleDelete(id: string) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   overflow: hidden;
 }
 
@@ -134,20 +134,20 @@ async function handleDelete(id: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-lg);
 }
 
 .logo .logo-svg {
   width: 40px;
   height: 40px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   /* 与开屏动画（Splash.vue）同款的灰阶配色：从 currentColor 派生，亮/暗主题自适应 */
-  --ink-hair: color-mix(in srgb, var(--vscode-foreground) 92%, var(--vscode-editor-background));
-  --ink-cap: color-mix(in srgb, var(--vscode-foreground) 45%, var(--vscode-editor-background));
-  --ink-body: color-mix(in srgb, var(--vscode-foreground) 30%, var(--vscode-editor-background));
-  --paper: var(--vscode-editor-background);
+  --ink-hair: color-mix(in srgb, var(--gc-text-primary) 92%, var(--gc-surface-base));
+  --ink-cap: color-mix(in srgb, var(--gc-text-primary) 45%, var(--gc-surface-base));
+  --ink-body: color-mix(in srgb, var(--gc-text-primary) 30%, var(--gc-surface-base));
+  --paper: var(--gc-surface-base);
 }
 
 .logo-svg .fill-body {
@@ -181,20 +181,20 @@ async function handleDelete(id: string) {
   margin: 0 0 6px;
   font-size: 20px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .welcome-subtitle {
   margin: 0 0 12px;
   font-size: 13px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 
 .welcome-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
 }
 
@@ -204,7 +204,7 @@ async function handleDelete(id: string) {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .section-header {
@@ -219,7 +219,7 @@ async function handleDelete(id: string) {
   margin: 0;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.8;
 }
 
@@ -229,7 +229,7 @@ async function handleDelete(id: string) {
   gap: 4px;
   padding: 4px 8px;
   background: transparent;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
@@ -238,7 +238,7 @@ async function handleDelete(id: string) {
 }
 
 .view-all-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .view-all-btn .codicon {
@@ -264,6 +264,6 @@ async function handleDelete(id: string) {
 .no-history-text {
   margin: 0;
   font-size: 13px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

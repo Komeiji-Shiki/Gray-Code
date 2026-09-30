@@ -150,9 +150,9 @@ defineEmits<{
   transform: translateY(-50%);
   margin-left: 8px;
   padding: 4px 8px;
-  background: var(--vscode-editorWidget-background);
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
   white-space: nowrap;
@@ -180,8 +180,8 @@ defineEmits<{
 }
 
 .settings-tab.active {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .settings-tab .codicon {
@@ -190,11 +190,11 @@ defineEmits<{
 
 /* 搜索生效时侧边栏：命中页签高亮，未命中置灰 */
 .settings-tab.has-match {
-  color: var(--vscode-textLink-foreground, #3794ff);
+  color: var(--gc-link);
 }
 
 .settings-tab.has-match.active {
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+  color: var(--gc-text-selected);
 }
 
 .settings-tab.dimmed {

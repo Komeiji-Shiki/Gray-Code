@@ -103,19 +103,19 @@ const definitionData = computed(() => {
 </template>
 
 <style scoped>
-.pagination-info { margin: 0; padding: 4px 8px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+.pagination-info { margin: 0; padding: 4px 8px; color: var(--gc-text-muted); font-size: 11px; }
 .goto-definition-content {
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .error-section {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   padding: 8px;
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -130,21 +130,21 @@ const definitionData = computed(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
   font-size: 11px;
 }
 
 .source-info .label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .source-info .value {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .source-info .symbol {
-  color: var(--vscode-symbolIcon-methodForeground, #b180d7);
+  color: var(--gc-chart-purple);
   font-weight: 500;
 }
 
@@ -156,7 +156,7 @@ const definitionData = computed(() => {
 
 .list-header {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 4px 8px;
 }
 
@@ -164,9 +164,9 @@ const definitionData = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
-  border-left: 2px solid var(--vscode-textLink-foreground);
+  border-left: 2px solid var(--gc-link);
   overflow: hidden;
 }
 
@@ -175,20 +175,20 @@ const definitionData = computed(() => {
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .location .codicon {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-size: 12px;
 }
 
 .location .path {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .location .line {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .code-content {
@@ -199,10 +199,10 @@ const definitionData = computed(() => {
 .code-content pre {
   margin: 0;
   padding: 8px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre;
 }
 
@@ -210,12 +210,12 @@ const definitionData = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 8px;
 }
 
 .loading {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 8px;
   text-align: center;
 }

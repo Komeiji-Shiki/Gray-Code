@@ -156,9 +156,9 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   flex-direction: column;
   gap: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editorWidget-background, transparent);
+  background: var(--gc-surface-raised);
 }
 
 .usage-summary-header {
@@ -189,12 +189,12 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   border: none;
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
 }
 
 .usage-summary-refresh:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .usage-summary-refresh:disabled {
@@ -210,22 +210,22 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 
 .usage-range-btn {
   padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   font-size: 10px;
 }
 
 .usage-range-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .usage-range-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .usage-range-btn:disabled {
@@ -239,7 +239,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   align-items: center;
   gap: 6px;
   padding: 16px 8px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 
@@ -248,22 +248,22 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 }
 
 .usage-summary-state.is-error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .usage-retry-btn {
   margin-top: 2px;
   padding: 3px 10px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   cursor: pointer;
   font-size: 11px;
 }
 
 .usage-retry-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .usage-summary-totals {
@@ -291,7 +291,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 
 .usage-summary-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .usage-skipped-hint {
@@ -299,7 +299,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
 }
 
 .usage-skipped-hint .codicon {
@@ -309,7 +309,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 .usage-summary-footer {
   display: flex;
   justify-content: flex-end;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
   padding-top: 10px;
 }
 
@@ -320,7 +320,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
   padding: 4px 10px;
   font-size: 11px;
   background: transparent;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -328,7 +328,7 @@ function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | n
 }
 
 .usage-open-full-btn:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .usage-open-full-btn .codicon {

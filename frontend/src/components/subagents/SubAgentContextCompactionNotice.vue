@@ -98,28 +98,28 @@ const titleText = computed(() => {
   gap: 8px;
   margin: 8px 16px;
   padding: 9px 11px;
-  border: 1px solid var(--vscode-panel-border);
-  border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
+  border: 1px solid var(--gc-border-subtle);
+  border-left: 2px solid var(--gc-chart-yellow);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-textBlockQuote-background);
-  color: var(--vscode-foreground);
+  background: var(--gc-quote-bg);
+  color: var(--gc-text-primary);
 }
 
 .variant-boundary {
   margin-block: 10px;
   border-style: dashed;
-  background: color-mix(in srgb, var(--vscode-textBlockQuote-background) 65%, transparent);
+  background: color-mix(in srgb, var(--gc-quote-bg) 65%, transparent);
 }
 
 .status-failed,
 .status-fallback {
-  border-left-color: var(--vscode-editorWarning-foreground, #cca700);
+  border-left-color: var(--gc-warning);
 }
 
 .compaction-icon {
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .compaction-copy {
@@ -137,7 +137,7 @@ const titleText = computed(() => {
   overflow-wrap: anywhere;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .compaction-detail {

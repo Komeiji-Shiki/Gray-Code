@@ -242,8 +242,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
   transition: opacity 0.45s ease;
 }
 
@@ -283,13 +283,13 @@ onBeforeUnmount(() => {
 
 .girl {
   display: block;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.95;
   /* 主题自适应灰阶：从 currentColor 派生，亮/暗主题自动成立 */
-  --ink-hair: color-mix(in srgb, var(--vscode-foreground) 92%, var(--vscode-editor-background));
-  --ink-cap: color-mix(in srgb, var(--vscode-foreground) 45%, var(--vscode-editor-background));
-  --ink-body: color-mix(in srgb, var(--vscode-foreground) 30%, var(--vscode-editor-background));
-  --paper: var(--vscode-editor-background);
+  --ink-hair: color-mix(in srgb, var(--gc-text-primary) 92%, var(--gc-surface-base));
+  --ink-cap: color-mix(in srgb, var(--gc-text-primary) 45%, var(--gc-surface-base));
+  --ink-body: color-mix(in srgb, var(--gc-text-primary) 30%, var(--gc-surface-base));
+  --paper: var(--gc-surface-base);
   /* 完稿定影：2.0s 起轻微提亮再回落（0% 帧在 delay 期间压低透明度） */
   animation: girl-settle 0.5s ease-out 2s both;
 }
@@ -435,11 +435,11 @@ onBeforeUnmount(() => {
 
 .t-code {
   font-weight: 300;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .caret {
-  color: var(--vscode-charts-blue, #0050b3);
+  color: var(--gc-chart-blue);
   font-weight: 300;
   animation: caret-blink 1.1s steps(1, end) 1.35s infinite;
 }
@@ -475,7 +475,7 @@ onBeforeUnmount(() => {
   font-size: 10px;
   letter-spacing: 0.42em;
   text-indent: 0.42em;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0;
   animation: fade-up 0.6s ease-out 1.15s both;
 }
@@ -550,12 +550,12 @@ onBeforeUnmount(() => {
 .gray-line.is-ready .bit {
   animation: none;
   opacity: 1;
-  background: var(--vscode-charts-blue, #0050b3);
+  background: var(--gc-chart-blue);
 }
 
 @keyframes line-flash {
   30% {
-    filter: drop-shadow(0 0 6px var(--vscode-charts-blue, #0050b3));
+    filter: drop-shadow(0 0 6px var(--gc-chart-blue));
   }
   100% {
     filter: none;

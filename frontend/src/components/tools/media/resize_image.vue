@@ -71,7 +71,7 @@ function formatSize(width: number, height: number): string {
 const taskTitle = (task: ResizeTask) => truncateText(task.image_path, 25)
 
 const metaItems = (task: ResizeTask): MediaMetaItem[] => [
-  { icon: 'codicon-arrow-both', text: formatSize(task.width, task.height), accentColor: 'var(--vscode-charts-purple)' },
+  { icon: 'codicon-arrow-both', text: formatSize(task.width, task.height), accentColor: 'var(--gc-chart-purple)' },
   { icon: 'codicon-arrow-right', text: truncateText(task.output_path, 20) }
 ]
 
@@ -102,7 +102,7 @@ const imageLabel = (img: MultimodalData, index: number) =>
     :is-batch="isBatchMode"
     :ns="NS"
     icon="codicon-arrow-both"
-    running-badge-color="var(--vscode-charts-green)"
+    running-badge-color="var(--gc-chart-green)"
     :dependencies="['sharp']"
     batch-title-key="batchResize"
     single-title-key="resizeTask"

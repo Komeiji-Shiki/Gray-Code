@@ -111,13 +111,13 @@ function handleModeChange(mode: string) {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .form-group {
@@ -128,7 +128,7 @@ function handleModeChange(mode: string) {
 
 .form-group label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 工具列表 */
@@ -138,8 +138,8 @@ function handleModeChange(mode: string) {
   gap: 16px;
   margin-top: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-widget-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-strong);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -148,15 +148,15 @@ function handleModeChange(mode: string) {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-link);
   border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .tools-mode-hint i {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .tool-category {
@@ -172,20 +172,20 @@ function handleModeChange(mode: string) {
   padding: 8px 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
-  border-bottom: 1px solid var(--vscode-widget-border);
+  color: var(--gc-text-primary);
+  border-bottom: 1px solid var(--gc-border-strong);
 }
 
 .category-header i {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .tool-count {
   margin-left: auto;
   padding: 2px 6px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: normal;
@@ -203,14 +203,14 @@ function handleModeChange(mode: string) {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   transition: background 0.15s;
 }
 
 .tool-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .tool-info {
@@ -233,16 +233,16 @@ function handleModeChange(mode: string) {
   overflow: hidden;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tool-id {
   overflow: hidden;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -252,9 +252,9 @@ function handleModeChange(mode: string) {
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
-  background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
-  color: var(--vscode-textLink-foreground);
-  border: 1px solid var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--gc-link) 10%, transparent);
+  color: var(--gc-link);
+  border: 1px solid var(--gc-link);
   border-radius: var(--gc-radius-sm);
   font-size: 10px;
   opacity: 0.8;
@@ -268,7 +268,7 @@ function handleModeChange(mode: string) {
 .tool-description {
   overflow: hidden;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -278,7 +278,7 @@ function handleModeChange(mode: string) {
   align-items: center;
   gap: 8px;
   padding: 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 </style>

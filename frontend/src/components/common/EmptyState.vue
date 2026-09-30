@@ -29,14 +29,14 @@ defineEmits<{
   justify-content: center;
   height: 100%;
   padding: var(--spacing-xl, 32px) var(--spacing-md, 16px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .empty-title {
   margin: 0 0 var(--spacing-sm, 8px) 0;
   font-size: 14px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -54,8 +54,8 @@ defineEmits<{
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--vscode-editor-background);
-  background-color: var(--vscode-foreground);
+  color: var(--gc-surface-base);
+  background-color: var(--gc-text-primary);
   border: none;
   border-radius: var(--radius-sm, 2px);
   cursor: pointer;

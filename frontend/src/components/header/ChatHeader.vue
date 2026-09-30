@@ -62,8 +62,8 @@ defineEmits<{
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-sm, 8px) var(--spacing-md, 16px);
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-base);
   flex-shrink: 0;
 }
 
@@ -76,7 +76,7 @@ defineEmits<{
 .header-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

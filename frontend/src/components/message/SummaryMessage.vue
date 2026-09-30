@@ -225,21 +225,21 @@ async function handleRestore() {
 
 <style scoped>
 .summary-editor { padding: 12px 16px; border-top: 1px solid var(--gc-border-control); }
-.summary-editor textarea { box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--vscode-input-background); color: var(--gc-text-primary); padding: 10px 12px; font: inherit; line-height: 1.6; }
+.summary-editor textarea { box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-input); color: var(--gc-text-primary); padding: 10px 12px; font: inherit; line-height: 1.6; }
 .summary-editor p { color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; margin: 8px 0; }
-.summary-editor .summary-edit-error { color: var(--vscode-errorForeground); }
+.summary-editor .summary-edit-error { color: var(--gc-danger); }
 .summary-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .summary-edit-actions button { border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-raised); color: var(--gc-text-primary); padding: 6px 14px; cursor: pointer; }
-.summary-edit-actions .summary-save { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.summary-edit-actions .summary-save { background: var(--gc-button-primary); color: var(--gc-text-on-primary); }
 .summary-edit-actions button:disabled { opacity: .5; cursor: default; }
 .summary-right .summary-edit-button { opacity: .8; border-radius: 0; }
 .summary-edited-badge { font-size: 11px; color: var(--gc-text-muted); border: 1px solid var(--gc-border-control); padding: 1px 5px; }
 .summary-message {
   margin: 2px 0;
   border: none;
-  border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
+  border-left: 2px solid var(--gc-chart-yellow);
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   box-shadow: inset 0 0 0 1px rgba(221, 185, 47, 0.08);
 }
 
@@ -283,44 +283,44 @@ async function handleRestore() {
 
 .summary-toggle .codicon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .summary-toggle .summary-icon {
   flex-shrink: 0;
   font-size: 14px;
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .summary-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 楼层号徽标（总结标题右侧） */
 .message-floor {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.6;
   user-select: none;
 }
 
 .summary-count {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-badge-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-badge-bg);
   padding: 2px 8px;
   border-radius: var(--gc-radius-md);
 }
 
 .summary-auto-badge {
   font-size: 11px;
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
   background: rgba(221, 185, 47, 0.1);
   padding: 2px 8px;
   border-radius: var(--gc-radius-md);
-  border: 1px solid var(--vscode-focusBorder);
+  border: 1px solid var(--gc-focus-border);
 }
 
 .summary-right {
@@ -334,24 +334,24 @@ async function handleRestore() {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .token-before {
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.7;
 }
 
 .token-mode,
 .token-saved {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
 }
 
 .token-after {
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .token-arrow {
@@ -361,7 +361,7 @@ async function handleRestore() {
 
 .summary-time {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
 }
 
@@ -375,7 +375,7 @@ async function handleRestore() {
   border: none;
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s, background-color 0.15s, color 0.15s;
@@ -387,8 +387,8 @@ async function handleRestore() {
 
 .delete-button:hover {
   opacity: 1 !important;
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-errorForeground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-danger);
 }
 
 .delete-button:disabled {
@@ -403,7 +403,7 @@ async function handleRestore() {
 .summary-preview {
   padding: 6px 16px 8px 42px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.45;
   border-top: 1px solid rgba(221, 185, 47, 0.1);
   background: rgba(221, 185, 47, 0.035);
@@ -412,12 +412,12 @@ async function handleRestore() {
 .summary-content {
   padding: 12px 16px 14px 42px;
   border-top: 1px solid rgba(221, 185, 47, 0.15);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .summary-text {
   font-size: 13px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.6;
 }
 

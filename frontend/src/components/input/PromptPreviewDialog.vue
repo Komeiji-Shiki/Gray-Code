@@ -87,19 +87,19 @@ onBeforeUnmount(() => { requestEpoch++ })
 .prompt-preview { display: flex; flex-direction: column; gap: 10px; min-width: 0; height: min(76vh, 900px); }
 .preview-toolbar, .preview-views { display: flex; flex-wrap: wrap; gap: 6px; }
 .preview-views { margin-right: auto; }
-button, input { font: inherit; font-size: 12px; color: var(--vscode-foreground); border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--vscode-input-background); padding: 7px 10px; }
-button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; } button[aria-pressed=true] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border-color: var(--vscode-button-background); }
+button, input { font: inherit; font-size: 12px; color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-input); padding: 7px 10px; }
+button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; } button[aria-pressed=true] { color: var(--gc-text-on-primary); background: var(--gc-button-primary); border-color: var(--gc-button-primary); }
 input { width: 100%; min-width: 0; box-sizing: border-box; }
 .preview-meta, .preview-notice, .preview-error, .preview-caption { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.preview-meta, .preview-caption, .preview-empty { color: var(--vscode-descriptionForeground); }
-.preview-notice { padding: 7px 10px; background: var(--vscode-textBlockQuote-background); border-left: 2px solid var(--vscode-focusBorder); }
-.preview-error { color: var(--vscode-errorForeground); }
-.preview-content { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--gc-border-control); background: var(--vscode-editor-background); }
+.preview-meta, .preview-caption, .preview-empty { color: var(--gc-text-muted); }
+.preview-notice { padding: 7px 10px; background: var(--gc-quote-bg); border-left: 2px solid var(--gc-focus-border); }
+.preview-error { color: var(--gc-danger); }
+.preview-content { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--gc-border-control); background: var(--gc-surface-base); }
 .preview-group { border-bottom: 1px solid var(--gc-border-control); }
 .preview-group:last-child { border-bottom: 0; }
-summary { padding: 10px 12px; cursor: pointer; color: var(--vscode-foreground); font-size: 12px; font-weight: 600; background: var(--vscode-sideBar-background); }
-summary span { float: right; color: var(--vscode-descriptionForeground); font-weight: 400; margin-left: 10px; }
-pre { margin: 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; font: 12px/1.7 var(--vscode-editor-font-family, monospace); color: var(--vscode-foreground); }
+summary { padding: 10px 12px; cursor: pointer; color: var(--gc-text-primary); font-size: 12px; font-weight: 600; background: var(--gc-surface-panel); }
+summary span { float: right; color: var(--gc-text-muted); font-weight: 400; margin-left: 10px; }
+pre { margin: 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; font: 12px/1.7 var(--gc-font-code); color: var(--gc-text-primary); }
 .preview-empty { padding: 12px; font-size: 13px; }
 @media (max-width: 520px) { .preview-views { flex-basis: 100%; } .preview-views button { flex: 1; } .prompt-preview { height: 78vh; gap: 8px; } summary span { float: none; display: block; margin: 4px 0 0 16px; } }
 </style>

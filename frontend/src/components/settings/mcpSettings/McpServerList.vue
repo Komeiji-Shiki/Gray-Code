@@ -33,10 +33,10 @@ const emit = defineEmits<{
 
 const statusColor = (status: McpServerStatus) => {
   switch (status) {
-    case 'connected': return 'var(--vscode-terminal-ansiGreen)'
-    case 'connecting': return 'var(--vscode-terminal-ansiYellow)'
-    case 'error': return 'var(--vscode-terminal-ansiRed)'
-    default: return 'var(--vscode-descriptionForeground)'
+    case 'connected': return 'var(--gc-success)'
+    case 'connecting': return 'var(--gc-warning)'
+    case 'error': return 'var(--gc-danger)'
+    default: return 'var(--gc-text-muted)'
   }
 }
 
@@ -194,8 +194,8 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -204,7 +204,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 }
 
 .toolbar-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .toolbar-btn:disabled {
@@ -213,12 +213,12 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 }
 
 .toolbar-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .toolbar-btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 /* 加载和空状态 */
@@ -230,7 +230,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   justify-content: center;
   padding: 40px 20px;
   text-align: center;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .loading-state {
@@ -244,19 +244,19 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--vscode-button-background);
+  background: var(--gc-button-primary);
   border-radius: 50%;
   margin-bottom: 16px;
 }
 
 .empty-icon .codicon {
   font-size: 28px;
-  color: var(--vscode-button-foreground);
+  color: var(--gc-text-on-primary);
 }
 
 .empty-state h4 {
   margin: 0 0 8px 0;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .empty-state p {
@@ -274,15 +274,15 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 .server-card {
   display: flex;
   align-items: center;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   padding: 12px 16px;
   transition: border-color 0.15s;
 }
 
 .server-card:hover {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .server-card.disabled {
@@ -316,7 +316,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 .server-name {
   font-size: 14px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-bottom: 4px;
 }
 
@@ -329,8 +329,8 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 
 .transport-badge {
   padding: 2px 6px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-xs);
   font-size: 10px;
   font-weight: 500;
@@ -343,7 +343,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 }
 
 .status-text {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .server-actions {
@@ -360,7 +360,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.15s, background-color 0.15s;
@@ -368,7 +368,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 
 .action-btn:hover:not(:disabled) {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .action-btn:disabled {
@@ -377,12 +377,12 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 }
 
 .action-btn.danger:hover:not(:disabled) {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .server-description {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-bottom: 8px;
 }
 
@@ -393,9 +393,9 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 .transport-detail {
   font-size: 11px;
   padding: 4px 8px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   display: inline-block;
   max-width: 100%;
   overflow: hidden;
@@ -415,8 +415,8 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   gap: 4px;
   font-size: 11px;
   padding: 2px 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-pill);
 }
 
@@ -430,11 +430,11 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   gap: 6px;
   margin-top: 8px;
   padding: 8px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .form-error {
@@ -443,11 +443,11 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
   gap: 6px;
   padding: 8px 12px;
   margin-bottom: 16px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 /* Loading 动画 */

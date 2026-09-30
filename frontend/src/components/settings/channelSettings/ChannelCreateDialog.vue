@@ -103,11 +103,11 @@ const emit = defineEmits<{
 }
 
 .config-name-input.input-error {
-  border-color: var(--vscode-inputValidation-errorBorder, var(--gc-danger));
+  border-color: var(--gc-danger-border);
 }
 
 .config-name-error {
-  color: var(--vscode-inputValidation-errorForeground, var(--gc-danger));
+  color: var(--gc-danger);
   font-size: var(--gc-font-size-caption);
 }
 </style>

@@ -186,7 +186,7 @@ async function handleContextClick(ctx: PromptContextItem) {
 
   background: rgba(0, 122, 204, 0.16);
   border: 1px solid rgba(0, 122, 204, 0.28);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 
   user-select: none;
   cursor: pointer;
@@ -202,7 +202,7 @@ async function handleContextClick(ctx: PromptContextItem) {
 .context-chip .codicon,
 .context-chip .icon {
   font-size: 12px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   flex-shrink: 0;
 }
 
@@ -220,8 +220,8 @@ async function handleContextClick(ctx: PromptContextItem) {
   left: 0;
   right: 0;
   margin-bottom: 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: 100;
@@ -234,13 +234,13 @@ async function handleContextClick(ctx: PromptContextItem) {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-base);
 }
 
 .preview-header .codicon {
   font-size: 14px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .preview-title {
@@ -256,14 +256,14 @@ async function handleContextClick(ctx: PromptContextItem) {
   margin: 0;
   padding: 10px 12px;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   line-height: 1.5;
   overflow-y: auto;
   max-height: 180px;
   white-space: pre-wrap;
   word-break: break-all;
-  color: var(--vscode-foreground);
-  background: var(--vscode-textBlockQuote-background);
+  color: var(--gc-text-primary);
+  background: var(--gc-quote-bg);
 }
 
 .fade-enter-active,

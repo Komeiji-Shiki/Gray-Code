@@ -33,5 +33,5 @@ const conflicts = computed(() => strings(props.evidence?.conflicts))
 
 <style scoped src="./platform.css"></style>
 <style scoped>
-.memory-card>.platform-breadcrumb{margin-bottom:6px}.memory-version{font-size:10px;color:var(--vscode-descriptionForeground);font-weight:400;margin-left:auto}.memory-source{border-left:2px solid var(--vscode-panel-border);padding-left:10px}.platform-badge.disputed{color:var(--vscode-editorWarning-foreground)}.platform-badge.inferred{border-style:dashed}.platform-badge.confirmed{color:var(--vscode-testing-iconPassed)}
+.memory-card>.platform-breadcrumb{margin-bottom:6px}.memory-version{font-size:10px;color:var(--gc-text-muted);font-weight:400;margin-left:auto}.memory-source{border-left:2px solid var(--gc-border-subtle);padding-left:10px}.platform-badge.disputed{color:var(--gc-warning)}.platform-badge.inferred{border-style:dashed}.platform-badge.confirmed{color:var(--gc-success)}
 </style>

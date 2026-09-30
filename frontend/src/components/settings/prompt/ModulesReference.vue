@@ -163,7 +163,7 @@ const emit = defineEmits<{
 .modules-reference {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .modules-reference .reference-header {
@@ -182,16 +182,16 @@ const emit = defineEmits<{
 }
 
 .modules-reference .reference-header:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: 2px;
 }
 
 .modules-reference .reference-header:hover .reference-title {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .modules-reference .reference-header .codicon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 14px;
 }
 
@@ -211,14 +211,14 @@ const emit = defineEmits<{
 }
 
 .module-item {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
 .module-item.expanded {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .module-header {
@@ -244,14 +244,14 @@ const emit = defineEmits<{
 .module-id {
   font-size: 11px;
   padding: 2px 6px;
-  background: var(--vscode-textCodeBlock-background);
+  background: var(--gc-code-bg);
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-textPreformat-foreground);
+  color: var(--gc-text-primary);
 }
 
 .module-name {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .insert-btn {
@@ -262,8 +262,8 @@ const emit = defineEmits<{
   height: 24px;
   padding: 0;
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
@@ -283,9 +283,9 @@ const emit = defineEmits<{
 }
 
 .insert-btn:hover:not(:disabled) {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .insert-btn:disabled {
@@ -295,14 +295,14 @@ const emit = defineEmits<{
 
 .module-details {
   padding: 10px 12px;
-  background: var(--vscode-sideBar-background);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .module-description {
   margin: 0 0 8px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .module-requires {
@@ -311,7 +311,7 @@ const emit = defineEmits<{
   gap: 6px;
   margin-bottom: 8px;
   font-size: 11px;
-  color: var(--vscode-notificationsInfoIcon-foreground);
+  color: var(--gc-info);
 }
 
 .module-example {
@@ -322,16 +322,16 @@ const emit = defineEmits<{
 
 .module-example label {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .module-example pre {
   margin: 0;
   padding: 8px;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   line-height: 1.4;
-  background: var(--vscode-textCodeBlock-background);
+  background: var(--gc-code-bg);
   border-radius: var(--gc-radius-sm);
   overflow-x: auto;
   white-space: pre-wrap;
@@ -342,8 +342,8 @@ const emit = defineEmits<{
 .modules-group {
   margin-bottom: 16px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -360,13 +360,13 @@ const emit = defineEmits<{
 
 .group-header .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .group-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .group-badge {
@@ -377,19 +377,19 @@ const emit = defineEmits<{
 }
 
 .static-badge {
-  background: var(--vscode-charts-green);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-green);
+  color: var(--gc-surface-base);
 }
 
 .dynamic-badge {
-  background: var(--vscode-charts-blue);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-blue);
+  color: var(--gc-surface-base);
 }
 
 .group-description {
   margin: 0 0 12px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.5;
 }
 </style>

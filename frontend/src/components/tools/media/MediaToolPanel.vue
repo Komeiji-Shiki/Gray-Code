@@ -123,8 +123,8 @@ const {
 
 // 主题色 CSS 变量
 const cssVars = computed(() => ({
-  '--media-accent': props.accentColor ?? 'var(--vscode-charts-green)',
-  '--media-running-badge': props.runningBadgeColor ?? 'var(--vscode-charts-blue)'
+  '--media-accent': props.accentColor ?? 'var(--gc-chart-green)',
+  '--media-running-badge': props.runningBadgeColor ?? 'var(--gc-chart-blue)'
 }))
 
 // 获取结果数据
@@ -528,7 +528,7 @@ function getImagePath(index: number): string | undefined {
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .status-badge {
@@ -539,38 +539,38 @@ function getImagePath(index: number): string | undefined {
 }
 
 .status-badge.success {
-  background: var(--vscode-testing-iconPassed);
-  color: var(--vscode-editor-background);
+  background: var(--gc-success);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.error {
-  background: var(--vscode-testing-iconFailed);
-  color: var(--vscode-editor-background);
+  background: var(--gc-danger);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.warning {
-  background: var(--vscode-charts-orange);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-orange);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.running {
   background: var(--media-running-badge);
-  color: var(--vscode-editor-background);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.pending {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .status-badge.cancelled {
-  background: var(--vscode-charts-orange);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-orange);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.disabled {
-  background: var(--vscode-disabledForeground);
-  color: var(--vscode-editor-background);
+  background: var(--gc-text-disabled);
+  color: var(--gc-surface-base);
 }
 
 .header-actions {
@@ -581,8 +581,8 @@ function getImagePath(index: number): string | undefined {
 
 .header-extra {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
 }
 
 /* 区块样式 */
@@ -596,19 +596,19 @@ function getImagePath(index: number): string | undefined {
 .section-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 任务列表 */
 .tasks-section {
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -620,8 +620,8 @@ function getImagePath(index: number): string | undefined {
 
 .task-item {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -639,7 +639,7 @@ function getImagePath(index: number): string | undefined {
   align-items: center;
   justify-content: center;
   background: var(--media-accent);
-  color: var(--vscode-editor-background);
+  color: var(--gc-surface-base);
   border-radius: 50%;
   font-size: 10px;
   font-weight: 600;
@@ -647,10 +647,10 @@ function getImagePath(index: number): string | undefined {
 
 .task-paths {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.4;
   word-break: break-word;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .task-paths.plain {
@@ -669,7 +669,7 @@ function getImagePath(index: number): string | undefined {
   align-items: center;
   gap: 2px;
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .meta-item .codicon {
@@ -687,7 +687,7 @@ function getImagePath(index: number): string | undefined {
   gap: var(--spacing-xs, 4px);
   margin-top: var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .tasks-hint .codicon {
@@ -701,20 +701,20 @@ function getImagePath(index: number): string | undefined {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -724,28 +724,28 @@ function getImagePath(index: number): string | undefined {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .cancelled-icon {
-  color: var(--vscode-charts-orange);
+  color: var(--gc-chart-orange);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .cancelled-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
   line-height: 1.4;
 }
 
 /* 结果区域 */
 .result-section {
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -755,25 +755,25 @@ function getImagePath(index: number): string | undefined {
   gap: var(--spacing-xs, 4px);
   margin-bottom: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--radius-sm, 2px);
   font-size: 11px;
   flex-wrap: wrap;
 }
 
 .dim-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .dim-value {
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   font-weight: 500;
 }
 
 .dim-arrow {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin: 0 var(--spacing-xs, 4px);
 }
 
@@ -784,8 +784,8 @@ function getImagePath(index: number): string | undefined {
 }
 
 .image-card {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
@@ -798,9 +798,9 @@ function getImagePath(index: number): string | undefined {
   border: 0;
   border-radius: 0;
   cursor: zoom-in;
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
 }
-.image-wrapper:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.image-wrapper:focus-visible { outline: 1px solid var(--gc-focus-border); outline-offset: 2px; }
 
 /* 透明背景棋盘格图案（抠图结果用） */
 .image-wrapper.transparent-bg {
@@ -828,13 +828,13 @@ function getImagePath(index: number): string | undefined {
   flex-direction: column;
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-xs, 4px);
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .image-label {
   font-size: 10px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .image-actions {
@@ -848,17 +848,17 @@ function getImagePath(index: number): string | undefined {
   gap: 2px;
   padding: 2px 6px;
   background: transparent;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   font-size: 10px;
   transition: all var(--transition-fast, 0.1s);
 }
 
 .action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .action-btn:disabled {
@@ -867,13 +867,13 @@ function getImagePath(index: number): string | undefined {
 }
 
 .cancel-btn {
-  color: var(--vscode-testing-iconFailed);
-  border-color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
+  border-color: var(--gc-danger);
 }
 
 .cancel-btn:hover:not(:disabled) {
-  background: var(--vscode-testing-iconFailed);
-  color: var(--vscode-editor-background);
+  background: var(--gc-danger);
+  color: var(--gc-surface-base);
 }
 
 .btn-text {
@@ -886,23 +886,23 @@ function getImagePath(index: number): string | undefined {
   gap: var(--spacing-xs, 4px);
   margin-top: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px);
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
   border-radius: var(--radius-sm, 2px);
   font-size: 10px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
 }
 
 /* 结果摘要 */
 .result-summary {
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
 }
 
 .summary-message {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre-wrap;
   line-height: 1.5;
 }
@@ -914,7 +914,7 @@ function getImagePath(index: number): string | undefined {
 .paths-header {
   font-size: 10px;
   font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-bottom: var(--spacing-xs, 4px);
 }
 
@@ -923,7 +923,7 @@ function getImagePath(index: number): string | undefined {
   align-items: center;
   gap: var(--spacing-xs, 4px);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 2px 0;
 }
 
@@ -939,7 +939,7 @@ function getImagePath(index: number): string | undefined {
 }
 
 .path-text.clickable:hover {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 /* 运行中指示器 */
@@ -948,9 +948,9 @@ function getImagePath(index: number): string | undefined {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 11px;
 }
 
@@ -975,9 +975,9 @@ function getImagePath(index: number): string | undefined {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 </style>

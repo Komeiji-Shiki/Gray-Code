@@ -317,9 +317,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   width: 100%;
   padding: 8px 12px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
@@ -330,8 +330,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 .select-input {
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--vscode-foreground) 50%),
-    linear-gradient(135deg, var(--vscode-foreground) 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--gc-text-primary) 50%),
+    linear-gradient(135deg, var(--gc-text-primary) 50%, transparent 50%);
   background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
@@ -356,8 +356,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   gap: 6px;
   padding: 6px 12px;
   font-size: var(--gc-font-size-body);
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -365,7 +365,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 }
 
 .action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-btn:disabled {
@@ -374,12 +374,12 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 }
 
 .action-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .action-btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .save-message {
@@ -387,11 +387,11 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 }
 
 .save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .save-message.error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 /* Loading 动画 */

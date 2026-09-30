@@ -19,8 +19,8 @@ const chars = computed(() => Array.from(props.text))
     :aria-label="text"
     :style="{
       '--loading-duration': '2.8s',
-      '--loading-idle-color': 'var(--vscode-descriptionForeground, #8a8a8a)',
-      '--loading-active-color': 'var(--vscode-charts-blue, #0050b3)',
+      '--loading-idle-color': 'var(--gc-text-muted)',
+      '--loading-active-color': 'var(--gc-chart-blue)',
       '--loading-amp': '4px'
     }"
   >

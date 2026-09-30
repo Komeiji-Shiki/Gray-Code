@@ -434,7 +434,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.iterations-error { color: var(--vscode-errorForeground); font-size: 12px; line-height: 1.6; }
+.iterations-error { color: var(--gc-danger); font-size: 12px; line-height: 1.6; }
 .tools-settings {
   display: flex;
   flex-direction: column;
@@ -447,8 +447,8 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -469,12 +469,12 @@ onMounted(() => {
 .label-text {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .label-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .config-control {
@@ -487,9 +487,9 @@ onMounted(() => {
 .iterations-input {
   width: 70px;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 13px;
   text-align: center;
@@ -507,7 +507,7 @@ onMounted(() => {
 
 .iterations-input:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .iterations-input:disabled {
@@ -517,12 +517,12 @@ onMounted(() => {
 
 .unit {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .saving-indicator {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 操作按钮 */
@@ -537,8 +537,8 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -547,7 +547,7 @@ onMounted(() => {
 }
 
 .action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-btn:disabled {
@@ -568,7 +568,7 @@ onMounted(() => {
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .loading-state .codicon,
@@ -595,8 +595,8 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: 13px;
   font-weight: 500;
@@ -604,14 +604,14 @@ onMounted(() => {
 
 .category-header .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .category-count {
   margin-left: auto;
   padding: 2px 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: 500;
@@ -636,19 +636,19 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   transition: background-color 0.15s;
 }
 
 .tool-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .tool-item.tool-disabled {
   opacity: 0.7;
-  border-color: var(--vscode-inputValidation-warningBorder);
+  border-color: var(--gc-warning-border);
 }
 
 .tool-info {
@@ -666,12 +666,12 @@ onMounted(() => {
 .tool-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-description {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-top: 2px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -694,22 +694,22 @@ onMounted(() => {
   width: 28px;
   height: 28px;
   background: transparent;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .config-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .config-btn.active {
-  background: var(--vscode-button-secondaryBackground);
-  border-color: var(--vscode-focusBorder);
-  color: var(--vscode-foreground);
+  background: var(--gc-button-secondary);
+  border-color: var(--gc-focus-border);
+  color: var(--gc-text-primary);
 }
 
 .config-btn .codicon {
@@ -737,11 +737,11 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-md);
   font-size: 10px;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
 }
 
 .dependency-badge .codicon {

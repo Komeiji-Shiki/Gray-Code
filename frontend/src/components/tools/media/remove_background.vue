@@ -145,13 +145,13 @@ const imageWrapperClass = (img: MultimodalData): string | undefined => {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .warning-icon {
-  color: var(--vscode-charts-orange);
+  color: var(--gc-chart-orange);
   font-size: 14px;
   flex-shrink: 0;
 }
@@ -165,20 +165,20 @@ const imageWrapperClass = (img: MultimodalData): string | undefined => {
 .warning-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
 }
 
 .warning-text {
   font-size: 11px;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
 }
 
 .install-cmd {
   display: inline-block;
   padding: 2px 6px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--radius-sm, 2px);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   margin-top: var(--spacing-xs, 4px);
 }

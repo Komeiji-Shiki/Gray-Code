@@ -197,8 +197,8 @@ function truncate(text: string, maxLen = 80): string {
   flex-direction: column;
   gap: 2px;
   padding: 6px 8px;
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  background: var(--gc-quote-bg);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   margin-bottom: 6px;
   max-height: 150px;
@@ -210,24 +210,24 @@ function truncate(text: string, maxLen = 80): string {
   align-items: center;
   gap: 4px;
   padding-bottom: 4px;
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.15));
+  border-bottom: 1px solid var(--gc-border-subtle);
   margin-bottom: 2px;
 }
 
 .queue-icon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .queue-title {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-weight: 500;
 }
 
 .queue-count {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
 }
 
@@ -248,7 +248,7 @@ function truncate(text: string, maxLen = 80): string {
 }
 
 .queue-item:hover {
-  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.1));
+  background: var(--gc-surface-hover);
 }
 
 /* 正在被拖拽的项：半透明 */
@@ -258,7 +258,7 @@ function truncate(text: string, maxLen = 80): string {
 
 /* 拖拽悬停目标：顶部指示线 */
 .queue-item--drag-over {
-  border-top: 2px solid var(--vscode-focusBorder, #007fd4);
+  border-top: 2px solid var(--gc-focus-border);
   padding-top: 2px;
 }
 
@@ -271,7 +271,7 @@ function truncate(text: string, maxLen = 80): string {
   height: 20px;
   flex-shrink: 0;
   cursor: grab;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0;
   transition: opacity 0.1s;
   border-radius: var(--gc-radius-xs);
@@ -287,7 +287,7 @@ function truncate(text: string, maxLen = 80): string {
 
 .queue-drag-handle:hover {
   opacity: 1 !important;
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .queue-drag-handle .codicon {
@@ -302,8 +302,8 @@ function truncate(text: string, maxLen = 80): string {
   height: 18px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--vscode-badge-foreground, #fff);
-  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--gc-badge-fg);
+  background: var(--gc-badge-bg);
   border-radius: var(--gc-radius-md);
   flex-shrink: 0;
 }
@@ -311,7 +311,7 @@ function truncate(text: string, maxLen = 80): string {
 .queue-item-content {
   flex: 1;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -324,7 +324,7 @@ function truncate(text: string, maxLen = 80): string {
   gap: 2px;
   margin-left: 4px;
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
 }
 
@@ -355,7 +355,7 @@ function truncate(text: string, maxLen = 80): string {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.1s, background-color 0.1s;
@@ -363,7 +363,7 @@ function truncate(text: string, maxLen = 80): string {
 
 .queue-action-btn:hover {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .queue-action-btn .codicon {
@@ -371,14 +371,14 @@ function truncate(text: string, maxLen = 80): string {
 }
 
 .edit-btn:hover {
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .send-now-btn:hover {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .remove-btn:hover {
-  color: var(--vscode-charts-red, #f14c4c);
+  color: var(--gc-chart-red);
 }
 </style>

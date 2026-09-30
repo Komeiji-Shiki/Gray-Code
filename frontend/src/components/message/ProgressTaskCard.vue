@@ -463,23 +463,23 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border: none;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   cursor: pointer;
   font-size: 11px;
 }
 
 .progress-card-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .progress-card-btn.secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .progress-card-btn.secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+  background: var(--gc-button-secondary-hover);
 }
 
 .progress-card-btn:disabled {
@@ -499,22 +499,22 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .progress-summary-label {
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .progress-summary-value {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -528,7 +528,7 @@ onBeforeUnmount(() => {
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .progress-artifact-tags {
@@ -544,9 +544,9 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 4px 8px;
   border-radius: var(--gc-radius-pill);
-  border: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  border: 1px solid var(--gc-border-subtle);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   font-size: 11px;
   line-height: 1.4;
   max-width: 100%;
@@ -558,15 +558,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .progress-latest-milestone-title {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-weight: 600;
 }
 
@@ -578,9 +578,9 @@ onBeforeUnmount(() => {
 
 .progress-rich-content,
 .progress-raw-result {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
   overflow: hidden;
 }
 
@@ -613,9 +613,9 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: flex-start;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .progress-issue-badge {
@@ -623,24 +623,24 @@ onBeforeUnmount(() => {
   border-radius: var(--gc-radius-pill);
   padding: 2px 8px;
   font-size: 10px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .progress-issue-badge.error {
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-errorForeground);
+  background: var(--gc-danger-bg);
+  color: var(--gc-danger);
 }
 
 .progress-issue-badge.warning {
-  background: var(--vscode-inputValidation-warningBackground);
-  color: var(--vscode-editorWarning-foreground);
+  background: var(--gc-warning-bg);
+  color: var(--gc-warning);
 }
 
 .progress-issue-text {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .progress-warning-item {
@@ -648,29 +648,29 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-inputValidation-warningBackground, var(--vscode-sideBar-background));
+  background: var(--gc-warning-bg);
 }
 
 .progress-warning-icon {
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
   flex-shrink: 0;
 }
 
 .progress-warning-text {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
 .progress-error-box {
   padding: 8px 10px;
-  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-panel-border));
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-inputValidation-errorBackground, var(--vscode-sideBar-background));
-  color: var(--vscode-errorForeground);
+  background: var(--gc-danger-bg);
+  color: var(--gc-danger);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;

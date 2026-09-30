@@ -109,8 +109,8 @@ onBeforeUnmount(() => {
 .virtual-diff-scroll {
   overflow: auto;
   position: relative;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: var(--vscode-editor-font-size, 12px);
+  font-family: var(--gc-font-code);
+  font-size: var(--gc-font-size-code);
 }
 
 .virtual-diff-spacer {
@@ -142,10 +142,10 @@ onBeforeUnmount(() => {
 .line-unchanged { background: transparent; }
 .line-deleted { background: rgba(255, 0, 0, 0.10); }
 .line-added { background: rgba(0, 255, 0, 0.10); }
-.line-omitted { color: var(--vscode-descriptionForeground); font-style: italic; }
+.line-omitted { color: var(--gc-text-muted); font-style: italic; }
 
 .line-nums {
-  color: var(--vscode-editorLineNumber-foreground);
+  color: var(--gc-text-disabled);
   display: inline-flex;
   flex: 0 0 auto;
   user-select: none;
@@ -165,8 +165,8 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
-.marker.deleted { color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c); }
-.marker.added { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
-.marker.omitted { color: var(--vscode-descriptionForeground); }
+.marker.deleted { color: var(--gc-git-deleted); }
+.marker.added { color: var(--gc-git-added); }
+.marker.omitted { color: var(--gc-text-muted); }
 .line-content { padding-right: 12px; }
 </style>

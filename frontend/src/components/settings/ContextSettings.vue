@@ -634,7 +634,7 @@ useDesktopSettingsDraft(async () => {
   align-items: center;
   gap: 8px;
   padding: 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .settings-form {
@@ -659,13 +659,13 @@ useDesktopSettingsDraft(async () => {
 
 .group-label .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .field-description {
   margin: 4px 0 8px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .setting-block {
@@ -673,8 +673,8 @@ useDesktopSettingsDraft(async () => {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -715,9 +715,9 @@ useDesktopSettingsDraft(async () => {
   width: 80px;
   padding: 4px 8px;
   font-size: 12px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   /* 隐藏数字输入框的上下箭头 */
@@ -734,17 +734,17 @@ useDesktopSettingsDraft(async () => {
 }
 
 .number-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .divider {
   height: 1px;
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
   margin: 4px 0;
 }
 
@@ -766,14 +766,14 @@ useDesktopSettingsDraft(async () => {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
 .pattern-item code {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
 }
 
@@ -800,7 +800,7 @@ useDesktopSettingsDraft(async () => {
 .empty-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-style: italic;
 }
 
@@ -813,15 +813,15 @@ useDesktopSettingsDraft(async () => {
   flex: 1;
   padding: 6px 10px;
   font-size: 12px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
 .pattern-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .add-btn {
@@ -830,15 +830,15 @@ useDesktopSettingsDraft(async () => {
   gap: 4px;
   padding: 6px 12px;
   font-size: 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
 }
 
 .add-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .add-btn:disabled {
@@ -849,15 +849,15 @@ useDesktopSettingsDraft(async () => {
 .pattern-help {
   margin-top: 4px;
   padding: 8px 12px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textBlockQuote-border);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-quote-border);
   border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .pattern-help p {
   margin: 0 0 4px 0;
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .pattern-help ul {
@@ -867,15 +867,15 @@ useDesktopSettingsDraft(async () => {
 
 .pattern-help li {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin: 2px 0;
 }
 
 .pattern-help code {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   padding: 0 3px;
-  background: var(--vscode-textCodeBlock-background);
+  background: var(--gc-code-bg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -894,8 +894,8 @@ useDesktopSettingsDraft(async () => {
   padding: 2px 6px;
   font-size: 10px;
   font-weight: normal;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -908,8 +908,8 @@ useDesktopSettingsDraft(async () => {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -922,7 +922,7 @@ useDesktopSettingsDraft(async () => {
 .preview-label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .preview-content {
@@ -933,9 +933,9 @@ useDesktopSettingsDraft(async () => {
   display: inline-block;
   padding: 2px 6px;
   margin: 2px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
-  background: var(--vscode-textCodeBlock-background);
+  background: var(--gc-code-bg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -947,12 +947,12 @@ useDesktopSettingsDraft(async () => {
 
 .truncated {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-style: italic;
 }
 
 .empty {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-style: italic;
 }
 
@@ -962,11 +962,11 @@ useDesktopSettingsDraft(async () => {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .save-status .success {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 /* Loading 动画 */
@@ -994,18 +994,18 @@ useDesktopSettingsDraft(async () => {
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   font-size: 12px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   transition: all 0.15s;
 }
 
 .severity-checkbox:hover:not(.disabled) {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .severity-checkbox.checked {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-activeSelectionBackground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-selected);
 }
 
 .severity-checkbox.disabled {
@@ -1023,18 +1023,18 @@ useDesktopSettingsDraft(async () => {
 }
 
 .severity-label.error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .severity-label.warning {
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
 }
 
 .severity-label.information {
-  color: var(--vscode-editorInfo-foreground);
+  color: var(--gc-info);
 }
 
 .severity-label.hint {
-  color: var(--vscode-editorHint-foreground, var(--vscode-descriptionForeground));
+  color: var(--gc-text-muted);
 }
 </style>

@@ -345,21 +345,21 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-link);
   border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .feature-description .codicon {
   flex-shrink: 0;
   font-size: 16px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .feature-description p {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.5;
 }
 
@@ -369,8 +369,8 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -381,7 +381,7 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   margin: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-title .codicon {
@@ -397,29 +397,29 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
 
 .form-group label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .form-group input[type="text"],
 .form-group input[type="password"] {
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
 }
 
 .form-group input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .field-hint {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 带操作按钮的输入框 */
@@ -438,15 +438,15 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   justify-content: center;
   width: 28px;
   padding: 0;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
 }
 
 .input-action-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 /* 使用说明 */
@@ -468,8 +468,8 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   justify-content: center;
   width: 20px;
   height: 20px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border-radius: 50%;
   font-size: 11px;
   font-weight: 500;
@@ -478,7 +478,7 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
 
 .note-text {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 20px;
 }
 
@@ -488,26 +488,26 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-top: 8px;
 }
 
 .warning-hint .codicon {
   font-size: 14px;
-  color: var(--vscode-list-warningForeground);
+  color: var(--gc-warning);
 }
 
 /* 数字输入框 */
 .form-group input[type="number"] {
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
@@ -526,7 +526,7 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
 }
 
 .form-group input[type="number"]:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 /* 限制摘要 */
@@ -535,16 +535,16 @@ useDesktopSettingsDraft(async () => { cancelDesktopDraftTimer(); await persistCo
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-top: 4px;
 }
 
 .limits-summary .codicon {
   font-size: 14px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 /* 禁用状态 */

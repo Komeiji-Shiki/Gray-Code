@@ -697,10 +697,10 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-panel {
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  background: var(--gc-surface-raised);
 }
 
 .task-header {
@@ -708,8 +708,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .task-info {
@@ -726,17 +726,17 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-icon.plan {
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .task-icon.design {
-  color: var(--vscode-charts-yellow, #d7ba7d);
+  color: var(--gc-chart-yellow);
 }
 
 .task-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -748,9 +748,9 @@ const hasAny = computed(() => taskCards.value.length > 0)
   margin-left: var(--spacing-xs, 4px);
 }
 
-.task-status.success { color: var(--vscode-testing-iconPassed); }
-.task-status.running { color: var(--vscode-charts-blue); }
-.task-status.error { color: var(--vscode-testing-iconFailed); }
+.task-status.success { color: var(--gc-success); }
+.task-status.running { color: var(--gc-chart-blue); }
+.task-status.error { color: var(--gc-danger); }
 
 .task-actions {
   display: flex;
@@ -767,14 +767,14 @@ const hasAny = computed(() => taskCards.value.length > 0)
   background: transparent;
   border: none;
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: all var(--transition-fast, 0.1s);
 }
 
 .action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .action-btn:disabled {
@@ -784,16 +784,16 @@ const hasAny = computed(() => taskCards.value.length > 0)
 
 .action-btn:disabled:hover {
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .task-path {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-raised);
+  border-bottom: 1px solid var(--gc-border-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -802,34 +802,34 @@ const hasAny = computed(() => taskCards.value.length > 0)
 .task-source {
   padding: 4px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .task-source.status-up_to_date {
-  color: var(--vscode-testing-iconPassed, #73c991);
+  color: var(--gc-success);
 }
 
 .task-source.status-untracked {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .task-source.status-mismatched,
 .task-source.status-missing_source {
-  color: var(--vscode-testing-iconFailed, #f48771);
+  color: var(--gc-danger);
 }
 
 .task-source.status-mismatched {
-  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-inputValidation-errorBackground, #5a1d1d) 18%);
+  background: color-mix(in srgb, var(--gc-surface-base) 82%, var(--gc-danger-bg) 18%);
 }
 
 .task-source.status-missing_source {
-  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-inputValidation-warningBackground, #4d2d00) 18%);
+  background: color-mix(in srgb, var(--gc-surface-base) 82%, var(--gc-warning-bg) 18%);
 }
 
 .task-content {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .task-preview {
@@ -842,8 +842,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
   justify-content: space-between;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .task-selector {
@@ -856,7 +856,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
 
 .task-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
 }
 
@@ -882,8 +882,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
   align-items: center;
   gap: var(--spacing-xs, 4px);
   padding: 4px 10px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   border-radius: var(--radius-sm, 2px);
   font-size: 11px;
@@ -893,17 +893,17 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .task-btn.done {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   opacity: 0.85;
 }
 
 .task-btn.done:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryBackground);
+  background: var(--gc-button-secondary);
 }
 
 .task-btn:disabled {
@@ -912,8 +912,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-btn.done:disabled {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   opacity: 0.7;
 }
 
@@ -922,22 +922,22 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-footer :deep(.model-trigger) {
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   padding: 4px 8px;
 }
 
 .task-footer :deep(.model-trigger:hover:not(:disabled)) {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
 }
 
 .task-footer :deep(.model-selector.open .model-trigger) {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
 }
 </style>

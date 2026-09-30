@@ -864,7 +864,7 @@ watch(() => settingsStore.promptModesVersion, () => {
               cy="11"
               :r="ringRadius"
               fill="none"
-              stroke="var(--vscode-panel-border)"
+              stroke="var(--gc-border-subtle)"
               stroke-width="2"
             />
             <circle
@@ -943,7 +943,7 @@ watch(() => settingsStore.promptModesVersion, () => {
   gap: var(--gc-space-2);
   margin: var(--gc-space-2);
   padding: var(--gc-space-2);
-  background: var(--vscode-input-background, var(--gc-surface-raised));
+  background: var(--gc-surface-input);
   border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-lg);
   transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
@@ -1048,8 +1048,8 @@ watch(() => settingsStore.promptModesVersion, () => {
   bottom: calc(100% + 6px);
   right: 0;
   padding: 4px 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: var(--gc-shadow-sm);
   white-space: nowrap;
@@ -1074,7 +1074,7 @@ watch(() => settingsStore.promptModesVersion, () => {
   top: 100%;
   right: 8px;
   border: 4px solid transparent;
-  border-top-color: var(--vscode-editorWidget-border);
+  border-top-color: var(--gc-border-subtle);
 }
 
 .token-tooltip::before {
@@ -1083,7 +1083,7 @@ watch(() => settingsStore.promptModesVersion, () => {
   top: 100%;
   right: 9px;
   border: 3px solid transparent;
-  border-top-color: var(--vscode-editorWidget-background);
+  border-top-color: var(--gc-surface-raised);
   z-index: 1;
 }
 
@@ -1096,12 +1096,12 @@ watch(() => settingsStore.promptModesVersion, () => {
 }
 
 .token-tooltip-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .token-tooltip-value {
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code);
   font-size: var(--gc-font-size-caption);
 }
 </style>

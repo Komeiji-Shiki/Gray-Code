@@ -558,20 +558,20 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
 
 /* 活动正文尾块：流式尾巴（CharFlow）与同容器 md 渲染字体规格对齐。
  * 正文 md 默认 13px/1.6 正常色（未定义 --lim-md-* 变量时），
- * 若不固定，CharFlow 会继承全局 --vscode-font-size，用户调大字号后
+ * 若不固定，CharFlow 会继承全局 --gc-font-size-ui，用户调大字号后
  * 已提升的 md 段落与正在流式的尾巴同样会出现字号跳变 */
 .tail-stream {
   font-size: var(--lim-md-font-size, 13px);
   line-height: var(--lim-md-line-height, 1.6);
-  color: var(--lim-md-color, var(--vscode-foreground));
+  color: var(--lim-md-color, var(--gc-text-primary));
   word-break: break-word;
 }
 
 .empty-response {
   padding: 8px 10px;
   border-radius: var(--gc-radius-sm);
-  border: 1px dashed var(--vscode-panel-border);
-  color: var(--vscode-descriptionForeground);
+  border: 1px dashed var(--gc-border-subtle);
+  color: var(--gc-text-muted);
   font-size: 12px;
   opacity: 0.85;
 }

@@ -143,8 +143,8 @@ function handleRemove(attachmentId: string) {
   flex-direction: column;
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: 0;
   margin-bottom: var(--spacing-sm, 8px);
 }
@@ -155,13 +155,13 @@ function handleRemove(attachmentId: string) {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: 0;
   transition: background-color var(--transition-fast, 0.1s);
 }
 
 .attachment-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .attachment-icon {
@@ -190,7 +190,7 @@ function handleRemove(attachmentId: string) {
 }
 
 .media-preview-wrapper:focus-visible {
-  outline: 2px solid var(--vscode-focusBorder);
+  outline: 2px solid var(--gc-focus-border);
   outline-offset: 2px;
 }
 
@@ -235,7 +235,7 @@ function handleRemove(attachmentId: string) {
   bottom: 2px;
   right: 2px;
   font-size: 10px;
-  color: var(--vscode-button-foreground, #fff);
+  color: var(--gc-text-on-primary);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
@@ -243,14 +243,14 @@ function handleRemove(attachmentId: string) {
 /* 居中图标（用于音频） */
 .media-center-icon {
   font-size: 16px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.8;
 }
 
 .attachment-name {
   flex: 1;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -258,7 +258,7 @@ function handleRemove(attachmentId: string) {
 
 .attachment-size {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -274,7 +274,7 @@ function handleRemove(attachmentId: string) {
   border: none;
   cursor: pointer;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   transition: background-color 0.15s, color 0.15s;
   flex-shrink: 0;
   opacity: 0;
@@ -286,8 +286,8 @@ function handleRemove(attachmentId: string) {
 }
 
 .remove-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-errorForeground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-danger);
 }
 
 .remove-btn .codicon {

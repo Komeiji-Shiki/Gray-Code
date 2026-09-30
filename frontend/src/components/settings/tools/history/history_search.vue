@@ -264,7 +264,7 @@ onMounted(() => {
 <style scoped>
 .history-search-config {
   padding: 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--gc-radius-sm);
   margin-top: 8px;
   display: flex;
@@ -276,7 +276,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -292,12 +292,12 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-purple, #a855f7);
+  color: var(--gc-chart-purple);
 }
 
 .section-content {
@@ -313,8 +313,8 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -328,12 +328,12 @@ onMounted(() => {
 .item-label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .item-description {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .number-input-wrapper {
@@ -345,9 +345,9 @@ onMounted(() => {
 .number-input {
   width: 60px;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   text-align: center;
@@ -368,7 +368,7 @@ onMounted(() => {
 }
 
 .number-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .number-input:disabled {
@@ -381,7 +381,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .codicon-modifier-spin {
@@ -400,9 +400,9 @@ onMounted(() => {
 
 .config-select {
   padding: 4px 8px;
-  background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   outline: none;

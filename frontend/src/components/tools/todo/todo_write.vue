@@ -325,29 +325,29 @@ onBeforeUnmount(() => {
 }
 
 .todo-icon {
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .mode-badge {
   font-size: 9px;
   padding: 1px 4px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   margin-left: var(--spacing-xs, 4px);
   font-weight: 500;
 }
 
 .source-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
   margin-left: var(--spacing-xs, 4px);
   white-space: nowrap;
@@ -364,19 +364,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .stat.progress {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .stat.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .stat.error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 /* 全局错误 - 继承 write_file 风格 */
@@ -385,8 +385,8 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -396,32 +396,32 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-warningBackground, rgba(255, 170, 0, 0.1));
-  border: 1px solid var(--vscode-inputValidation-warningBorder, #ffaa00);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .warning-icon {
-  color: var(--vscode-editorWarning-foreground, #ffaa00);
+  color: var(--gc-warning);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .warning-text {
   font-size: 12px;
-  color: var(--vscode-editorWarning-foreground, #ffaa00);
+  color: var(--gc-warning);
   line-height: 1.4;
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -440,7 +440,7 @@ onBeforeUnmount(() => {
 
 /* 单个 TODO 项 - 继承 file-panel 风格 */
 .todo-item {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
@@ -459,8 +459,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .item-info {
@@ -477,24 +477,24 @@ onBeforeUnmount(() => {
 }
 
 .todo-item.pending .item-icon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .todo-item.in_progress .item-icon {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .todo-item.completed .item-icon {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .todo-item.cancelled .item-icon {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 .item-content {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -519,22 +519,22 @@ onBeforeUnmount(() => {
 }
 
 .status-badge.pending {
-  background: var(--vscode-descriptionForeground);
-  color: var(--vscode-editor-background);
+  background: var(--gc-text-muted);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.in_progress {
-  background: var(--vscode-charts-blue);
+  background: var(--gc-chart-blue);
   color: #fff;
 }
 
 .status-badge.completed {
-  background: var(--vscode-testing-iconPassed);
+  background: var(--gc-success);
   color: #fff;
 }
 
 .status-badge.cancelled {
-  background: var(--vscode-testing-iconFailed);
+  background: var(--gc-danger);
   color: #fff;
 }
 
@@ -542,9 +542,9 @@ onBeforeUnmount(() => {
 .item-id {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editor-background);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-base);
 }
 
 /* 底部操作 */
@@ -563,7 +563,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--radius-sm, 2px);
   font-size: 10px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   cursor: pointer;
   transition: opacity var(--transition-fast, 0.1s);
 }
@@ -573,7 +573,7 @@ onBeforeUnmount(() => {
 }
 
 .action-btn.copied {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .btn-text {
@@ -587,7 +587,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 </style>

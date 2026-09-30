@@ -452,15 +452,15 @@ function onSendThoughtsChange(e: any) {
 .option-item label {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.9;
 }
 
 .option-item input[type="number"] {
   padding: 5px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
   appearance: textfield;
@@ -476,7 +476,7 @@ function onSendThoughtsChange(e: any) {
 
 .option-item input[type="number"]:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .option-item input.disabled {
@@ -486,7 +486,7 @@ function onSendThoughtsChange(e: any) {
 
 .option-hint {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
 }
 
@@ -512,8 +512,8 @@ function onSendThoughtsChange(e: any) {
 .option-section {
   margin-top: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -523,7 +523,7 @@ function onSendThoughtsChange(e: any) {
   align-items: center;
   margin-bottom: 12px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .option-section-title {
@@ -532,16 +532,16 @@ function onSendThoughtsChange(e: any) {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .option-section-title .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .option-section-title .codicon-lightbulb {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .thinking-backfill-section {
@@ -551,14 +551,14 @@ function onSendThoughtsChange(e: any) {
 .backfill-group-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   letter-spacing: 0.4px;
 }
 
 .backfill-group-label:not(:first-child) {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .option-section-content {
@@ -593,8 +593,8 @@ function onSendThoughtsChange(e: any) {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background-color: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
@@ -606,25 +606,25 @@ function onSendThoughtsChange(e: any) {
   width: 10px;
   left: 2px;
   bottom: 2px;
-  background-color: var(--vscode-foreground);
+  background-color: var(--gc-text-primary);
   opacity: 0.6;
   border-radius: var(--gc-radius-xs);
   transition: all 0.2s;
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background-color: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
   transform: translateX(16px);
-  background-color: var(--vscode-button-foreground);
+  background-color: var(--gc-text-on-primary);
   opacity: 1;
 }
 
 .toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 /* 小号开关 */
@@ -663,7 +663,7 @@ function onSendThoughtsChange(e: any) {
 .option-header label:first-child {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.9;
 }
 
@@ -694,19 +694,19 @@ function onSendThoughtsChange(e: any) {
   transform: translateY(-50%);
   height: 16px;
   width: 16px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
 .custom-checkbox:hover .checkmark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .custom-checkbox input:checked ~ .checkmark {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .custom-checkbox .checkmark::after {
@@ -717,7 +717,7 @@ function onSendThoughtsChange(e: any) {
   top: 2px;
   width: 4px;
   height: 8px;
-  border: solid var(--vscode-button-foreground);
+  border: solid var(--gc-text-on-primary);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }

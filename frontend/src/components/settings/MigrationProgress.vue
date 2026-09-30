@@ -33,7 +33,7 @@ const bytes = (value: number) => value >= 1048576 ? `${(value / 1048576).toFixed
 <style scoped>
 .migration-progress{margin-top:14px;padding:14px;border:1px solid var(--gc-border-subtle);background:var(--gc-surface-base);font-size:12px}
 .progress-heading,.progress-detail{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.progress-heading{margin-bottom:12px}.progress-heading span{color:var(--gc-text-muted);font-variant-numeric:tabular-nums}
-.progress-track{height:5px;overflow:hidden;background:var(--gc-border-subtle);margin-bottom:10px}.progress-fill{height:100%;background:var(--vscode-button-background);transition:width .15s linear}.indeterminate .progress-fill{width:30%;animation:migration-progress 1.6s linear infinite}
+.progress-track{height:5px;overflow:hidden;background:var(--gc-border-subtle);margin-bottom:10px}.progress-fill{height:100%;background:var(--gc-button-primary);transition:width .15s linear}.indeterminate .progress-fill{width:30%;animation:migration-progress 1.6s linear infinite}
 p{margin:7px 0 0;line-height:1.6;color:var(--gc-text-muted)}.progress-item{overflow-wrap:anywhere}.progress-wait{color:var(--gc-text-primary)}
 @keyframes migration-progress{from{transform:translateX(-100%)}to{transform:translateX(334%)}}@media(prefers-reduced-motion:reduce){.indeterminate .progress-fill{animation:none}.progress-fill{transition:none}}
 </style>

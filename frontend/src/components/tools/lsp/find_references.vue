@@ -138,16 +138,16 @@ function isFileExpanded(path: string): boolean {
 <style scoped>
 .find-references-content {
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .error-section {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   padding: 8px;
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -162,32 +162,32 @@ function isFileExpanded(path: string): boolean {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
   font-size: 11px;
 }
 
 .source-info .label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .source-info .value {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .source-info .symbol {
-  color: var(--vscode-symbolIcon-methodForeground, #b180d7);
+  color: var(--gc-chart-purple);
   font-weight: 600;
 }
 
 .stats {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 4px 8px;
 }
 
 .stats strong {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .references-list {
@@ -197,7 +197,7 @@ function isFileExpanded(path: string): boolean {
 }
 
 .file-group {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
@@ -214,35 +214,35 @@ function isFileExpanded(path: string): boolean {
   padding: 6px 8px;
   cursor: pointer;
   transition: background 0.1s;
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .file-header:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .expand-icon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .file-path {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-weight: 500;
 }
 
 .ref-count {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
   margin-left: auto;
 }
 
 .ref-list {
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .ref-item {
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .ref-item:last-child {
@@ -251,11 +251,11 @@ function isFileExpanded(path: string): boolean {
 
 .ref-header {
   padding: 4px 8px 4px 28px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .line-num {
-  color: var(--vscode-editorLineNumber-foreground);
+  color: var(--gc-text-disabled);
   font-size: 11px;
 }
 
@@ -267,10 +267,10 @@ function isFileExpanded(path: string): boolean {
 .code-content pre {
   margin: 0;
   padding: 4px 8px 4px 28px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre;
 }
 
@@ -278,12 +278,12 @@ function isFileExpanded(path: string): boolean {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 8px;
 }
 
 .loading {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 8px;
   text-align: center;
 }

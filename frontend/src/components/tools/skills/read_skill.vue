@@ -93,19 +93,19 @@ const contentLength = computed(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section.success .section-title {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .section.error .section-title {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .section.pending .section-title {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .skill-details {
@@ -113,9 +113,9 @@ const contentLength = computed(() => {
   flex-direction: column;
   gap: 4px;
   padding: 6px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
-  border-left: 3px solid var(--vscode-terminal-ansiGreen);
+  border-left: 3px solid var(--gc-success);
 }
 
 .detail-item {
@@ -126,13 +126,13 @@ const contentLength = computed(() => {
 }
 
 .detail-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
 .detail-value {
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code), monospace;
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -140,7 +140,7 @@ const contentLength = computed(() => {
 
 .error-detail {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 4px 10px;
 }
 </style>

@@ -357,20 +357,20 @@ defineExpose({
 .header-title {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-subtitle {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex: 1;
 }
 
 .query-badge {
   padding: 2px 6px;
   font-size: 11px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-xs);
   max-width: 150px;
   overflow: hidden;
@@ -397,7 +397,7 @@ defineExpose({
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -421,8 +421,8 @@ defineExpose({
 }
 
 .file-item.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .file-item .codicon {
@@ -445,11 +445,11 @@ defineExpose({
 }
 
 .file-item.is-open.selected {
-  background: var(--vscode-list-activeSelectionBackground);
+  background: var(--gc-surface-selected);
 }
 
 .open-badge {
-  color: var(--vscode-textLink-foreground, #3794ff);
+  color: var(--gc-link);
   font-size: 16px;
   flex-shrink: 0;
   margin-left: auto;
@@ -464,7 +464,7 @@ defineExpose({
 }
 
 .file-path :deep(mark) {
-  background: var(--vscode-editor-findMatchHighlightBackground);
+  background: var(--gc-highlight-bg);
   color: inherit;
   border-radius: var(--gc-radius-xs);
   padding: 0 1px;
@@ -473,13 +473,13 @@ defineExpose({
 /* 底部提示 */
 .panel-footer {
   padding: 6px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
 .hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 kbd {
@@ -487,11 +487,11 @@ kbd {
   padding: 1px 4px;
   margin: 0 2px;
   font-size: 10px;
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-keybindingLabel-background);
-  border: 1px solid var(--vscode-keybindingLabel-border);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
-  box-shadow: 0 1px 0 var(--vscode-keybindingLabel-bottomBorder);
+  box-shadow: 0 1px 0 var(--gc-border-strong);
 }
 
 /* 动画 */

@@ -248,7 +248,7 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .skills-button.has-skills :deep(i.codicon) {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 .skills-badge {
@@ -262,8 +262,8 @@ watch(() => chatStore.currentConversationId, async () => {
   font-weight: 500;
   line-height: 14px;
   text-align: center;
-  color: var(--vscode-badge-foreground);
-  background: var(--vscode-badge-background);
+  color: var(--gc-badge-fg);
+  background: var(--gc-badge-bg);
   border-radius: var(--gc-radius-md);
 }
 
@@ -273,8 +273,8 @@ watch(() => chatStore.currentConversationId, async () => {
   left: 8px;
   right: 8px;
   margin-bottom: 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
@@ -288,7 +288,7 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .skills-header-actions {
@@ -306,14 +306,14 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .skills-title .codicon {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 .skills-description {
   padding: 6px 10px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .skills-content {
@@ -329,7 +329,7 @@ watch(() => chatStore.currentConversationId, async () => {
   justify-content: center;
   gap: 8px;
   padding: 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -345,13 +345,13 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
   transition: background-color 0.15s;
 }
 
 .skill-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .skill-item.disabled {
@@ -359,11 +359,11 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .skill-item.not-exists {
-  border: 1px dashed var(--vscode-editorWarning-foreground);
+  border: 1px dashed var(--gc-warning);
 }
 
 .skill-item.not-exists .codicon-warning {
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
 }
 
 .skill-checkbox-wrapper {
@@ -384,9 +384,9 @@ watch(() => chatStore.currentConversationId, async () => {
 .skill-checkbox-custom {
   width: 14px;
   height: 14px;
-  border: 1px solid var(--vscode-checkbox-border, rgba(255, 255, 255, 0.3));
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-checkbox-background, rgba(255, 255, 255, 0.1));
+  background: var(--gc-surface-input);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -394,15 +394,15 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .skill-checkbox-wrapper input:checked + .skill-checkbox-custom {
-  background: var(--vscode-badge-background, rgba(255, 255, 255, 0.2));
-  border-color: var(--vscode-badge-background, rgba(255, 255, 255, 0.4));
+  background: var(--gc-badge-bg);
+  border-color: var(--gc-badge-bg);
 }
 
 .skill-checkbox-wrapper input:checked + .skill-checkbox-custom::after {
   content: '';
   width: 4px;
   height: 8px;
-  border: solid var(--vscode-checkbox-foreground, #fff);
+  border: solid var(--gc-text-primary);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
   margin-bottom: 2px;
@@ -422,7 +422,7 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .skill-info .codicon-lightbulb {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
   flex-shrink: 0;
 }
 
@@ -435,7 +435,7 @@ watch(() => chatStore.currentConversationId, async () => {
 
 .skill-not-exists-hint {
   font-size: 10px;
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
   padding: 1px 4px;
   background: rgba(255, 200, 0, 0.1);
   border-radius: var(--gc-radius-xs);
@@ -451,7 +451,7 @@ watch(() => chatStore.currentConversationId, async () => {
 
 .skills-footer {
   padding: 6px 10px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .skills-hint {
@@ -459,7 +459,7 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .skills-hint .codicon {

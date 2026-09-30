@@ -73,8 +73,8 @@ defineProps<{
   flex-direction: column;
   gap: 4px;
   padding: 6px 8px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -83,11 +83,11 @@ defineProps<{
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .diff-action-file .codicon {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .diff-action-file-path {
@@ -116,13 +116,13 @@ defineProps<{
   top: 0;
   left: 0;
   height: 100%;
-  background: var(--vscode-charts-blue);
+  background: var(--gc-chart-blue);
   transition: width 0.05s linear;
 }
 
 .timer-text {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   min-width: 24px;
   text-align: right;
 }
@@ -158,7 +158,7 @@ defineProps<{
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .diff-action-error {
@@ -167,28 +167,28 @@ defineProps<{
   gap: 6px;
   padding: 6px 8px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
-  color: var(--vscode-inputValidation-errorForeground);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
+  color: var(--gc-danger);
   font-size: 11px;
 }
 
 .confirm-btn-primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .confirm-btn-primary:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .reject-btn-secondary {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .reject-btn-secondary:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 </style>

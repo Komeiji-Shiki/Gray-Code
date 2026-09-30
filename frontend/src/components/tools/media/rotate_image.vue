@@ -74,7 +74,7 @@ const taskTitle = (task: RotateTask) => truncateText(task.image_path, 25)
 
 const metaItems = (task: RotateTask): MediaMetaItem[] => {
   const items: MediaMetaItem[] = [
-    { icon: 'codicon-sync', text: formatAngle(task.angle), accentColor: 'var(--vscode-charts-green)' }
+    { icon: 'codicon-sync', text: formatAngle(task.angle), accentColor: 'var(--gc-chart-green)' }
   ]
   if (task.format) {
     items.push({ icon: 'codicon-file-media', text: task.format.toUpperCase() })
@@ -112,7 +112,7 @@ const imageLabel = (img: MultimodalData, index: number) =>
     :is-batch="isBatchMode"
     :ns="NS"
     icon="codicon-sync"
-    running-badge-color="var(--vscode-charts-green)"
+    running-badge-color="var(--gc-chart-green)"
     :dependencies="['sharp']"
     batch-title-key="batchRotate"
     single-title-key="rotateTask"

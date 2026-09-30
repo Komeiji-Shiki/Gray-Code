@@ -360,7 +360,7 @@ async function selectModel(modelId: string) {
 .section-header label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-actions {
@@ -382,21 +382,21 @@ async function selectModel(modelId: string) {
 }
 
 .fetch-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .fetch-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .clear-btn {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .clear-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .clear-btn:disabled {
@@ -413,7 +413,7 @@ async function selectModel(modelId: string) {
 .model-list-container {
   height: auto;
   max-height: 280px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-xs);
   display: flex;
   flex-direction: column;
@@ -425,13 +425,13 @@ async function selectModel(modelId: string) {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-input-background);
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-input);
 }
 
 .filter-input-container .codicon-search {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -440,14 +440,14 @@ async function selectModel(modelId: string) {
   min-width: 0;
   padding: 0;
   background: transparent;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   border: none;
   font-size: 12px;
   outline: none;
 }
 
 .filter-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .filter-clear-btn {
@@ -460,13 +460,13 @@ async function selectModel(modelId: string) {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .filter-clear-btn:hover {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .filter-clear-btn .codicon {
@@ -483,7 +483,7 @@ async function selectModel(modelId: string) {
   padding: 24px 16px;
   text-align: center;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .no-results .codicon {
@@ -521,7 +521,7 @@ async function selectModel(modelId: string) {
   align-items: stretch;
   gap: var(--gc-space-1);
   padding: 0;
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   border-left: 2px solid transparent;
   border-radius: var(--gc-radius-sm);
   transition:
@@ -544,12 +544,12 @@ async function selectModel(modelId: string) {
 
 .model-item:hover .model-select-button,
 .model-select-button:focus-visible {
-  background: var(--vscode-list-activeSelectionBackground);
+  background: var(--gc-surface-selected);
 }
 
 .model-item.enabled {
-  background: var(--vscode-list-activeSelectionBackground);
-  border-left-color: var(--vscode-focusBorder);
+  background: var(--gc-surface-selected);
+  border-left-color: var(--gc-focus-border);
 }
 
 .model-status {
@@ -559,11 +559,11 @@ async function selectModel(modelId: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .model-item.enabled .model-status {
-  color: var(--vscode-charts-blue, #007acc);
+  color: var(--gc-chart-blue);
 }
 
 .model-status .codicon {
@@ -580,20 +580,20 @@ async function selectModel(modelId: string) {
 
 .model-id {
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   font-weight: 500;
 }
 
 .model-name {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.8;
 }
 
 .model-desc {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -614,7 +614,7 @@ async function selectModel(modelId: string) {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   opacity: 0;
 }
@@ -625,7 +625,7 @@ async function selectModel(modelId: string) {
 }
 
 .model-remove-btn:hover {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 /* 空状态 */
@@ -638,8 +638,8 @@ async function selectModel(modelId: string) {
   padding: 32px 16px;
   text-align: center;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-textBlockQuote-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -657,20 +657,20 @@ async function selectModel(modelId: string) {
 .add-model input {
   flex: 1;
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
 }
 
 .add-model input:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .add-model input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .add-btn {
@@ -680,8 +680,8 @@ async function selectModel(modelId: string) {
   width: 28px;
   height: 28px;
   padding: 0;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   cursor: pointer;
@@ -689,7 +689,7 @@ async function selectModel(modelId: string) {
 }
 
 .add-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .add-btn:disabled {

@@ -140,8 +140,8 @@ function removeAt(index: number) {
   gap: 6px;
   min-height: 30px;
   padding: 6px 8px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border, transparent);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -151,14 +151,14 @@ function removeAt(index: number) {
   gap: 4px;
   max-width: 100%;
   padding: 2px 4px 2px 8px;
-  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
-  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
 .pattern-text {
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -192,7 +192,7 @@ function removeAt(index: number) {
 
 .pattern-empty {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 2px 0;
 }
 
@@ -206,21 +206,21 @@ function removeAt(index: number) {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   font-size: 12px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, transparent);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
 .pattern-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .pattern-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .pattern-input:disabled {
@@ -230,16 +230,16 @@ function removeAt(index: number) {
 .pattern-add-btn {
   flex-shrink: 0;
   padding: 5px 12px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .pattern-add-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .pattern-add-btn:disabled {

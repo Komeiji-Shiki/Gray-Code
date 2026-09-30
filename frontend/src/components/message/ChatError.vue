@@ -35,14 +35,14 @@ const { t } = useI18n()
 </template>
 
 <style scoped>
-.error-message { display: flex; flex-direction: column; margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px); background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1)); border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3)); border-radius: var(--gc-radius-sm); flex-shrink: 0; overflow: hidden; }
-.error-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(0, 0, 0, 0.1); border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2)); }
-.error-icon { flex-shrink: 0; font-size: 14px; color: var(--vscode-errorForeground, #f48771); }
-.error-title { flex: 1; font-size: 13px; font-weight: 500; color: var(--vscode-foreground); }
+.error-message { display: flex; flex-direction: column; margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px); background: var(--gc-quote-bg); border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-sm); flex-shrink: 0; overflow: hidden; }
+.error-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(0, 0, 0, 0.1); border-bottom: 1px solid var(--gc-border-subtle); }
+.error-icon { flex-shrink: 0; font-size: 14px; color: var(--gc-danger); }
+.error-title { flex: 1; font-size: 13px; font-weight: 500; color: var(--gc-text-primary); }
 .error-body { padding: 12px; }
-.error-text-code { font-size: 11px; color: var(--vscode-foreground); line-height: 1.4; word-break: break-word; white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); background: rgba(0, 0, 0, 0.15); padding: 8px; border-radius: var(--gc-radius-sm); margin: 0; }
+.error-text-code { font-size: 11px; color: var(--gc-text-primary); line-height: 1.4; word-break: break-word; white-space: pre-wrap; font-family: var(--gc-font-code); background: rgba(0, 0, 0, 0.15); padding: 8px; border-radius: var(--gc-radius-sm); margin: 0; }
 .error-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.error-retry, .error-dismiss { flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--vscode-foreground); opacity: 0.6; cursor: pointer; font-size: 14px; border-radius: var(--gc-radius-sm); transition: opacity 0.2s, background 0.2s; }
-.error-retry:hover, .error-dismiss:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+.error-retry, .error-dismiss { flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--gc-text-primary); opacity: 0.6; cursor: pointer; font-size: 14px; border-radius: var(--gc-radius-sm); transition: opacity 0.2s, background 0.2s; }
+.error-retry:hover, .error-dismiss:hover { opacity: 1; background: var(--gc-surface-hover); }
 .error-retry .codicon { font-size: 14px; }
 </style>

@@ -387,7 +387,7 @@ onMounted(() => {
 <style scoped>
 .apply-diff-config {
   padding: 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--gc-radius-sm);
   margin-top: 8px;
   display: flex;
@@ -400,7 +400,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -417,12 +417,12 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-purple, #a855f7);
+  color: var(--gc-chart-purple);
 }
 
 .section-content {
@@ -439,8 +439,8 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -454,12 +454,12 @@ onMounted(() => {
 .item-label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .item-description {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 延迟选择器 */
@@ -470,9 +470,9 @@ onMounted(() => {
 
 .delay-btn {
   padding: 4px 10px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: pointer;
@@ -480,13 +480,13 @@ onMounted(() => {
 }
 
 .delay-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .delay-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .delay-btn:disabled {
@@ -519,22 +519,22 @@ onMounted(() => {
   flex-direction: column;
   gap: 3px;
   text-align: left;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .access-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .access-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .access-btn:disabled {
@@ -561,15 +561,15 @@ onMounted(() => {
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .config-tip.warning {
-  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
-  background: var(--vscode-inputValidation-warningBackground, rgba(255, 193, 7, 0.08));
-  border-color: var(--vscode-inputValidation-warningBorder, rgba(255, 193, 7, 0.45));
+  color: var(--gc-warning);
+  background: var(--gc-warning-bg);
+  border-color: var(--gc-warning-border);
 }
 
 .config-tip .codicon {
@@ -580,9 +580,9 @@ onMounted(() => {
 .threshold-number-input {
   width: 60px;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   text-align: center;
@@ -590,7 +590,7 @@ onMounted(() => {
 }
 
 .threshold-number-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .threshold-number-input:disabled {
@@ -600,7 +600,7 @@ onMounted(() => {
 
 .threshold-unit {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-weight: 500;
 }
 
@@ -610,14 +610,14 @@ onMounted(() => {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-inputValidation-infoBackground, rgba(0, 120, 212, 0.1));
-  border: 1px solid var(--vscode-inputValidation-infoBorder, #007fd4);
+  background: var(--gc-info-bg);
+  border: 1px solid var(--gc-info-border);
   border-radius: var(--gc-radius-sm);
 }
 
 .info-box .codicon {
   font-size: 14px;
-  color: var(--vscode-inputValidation-infoForeground, #007fd4);
+  color: var(--gc-info);
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -630,12 +630,12 @@ onMounted(() => {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .info-content strong {
   font-weight: 600;
-  color: var(--vscode-charts-purple, #a855f7);
+  color: var(--gc-chart-purple);
 }
 
 /* 保存状态 */
@@ -644,7 +644,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* Loading 动画 */

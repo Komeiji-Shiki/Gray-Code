@@ -177,16 +177,16 @@ function handleCopyBody(text: string): void {
 
 .viewer-section,
 .viewer-details {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .section-title {
   padding: 14px 18px;
   font-size: 13px;
   font-weight: 600;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .section-content,
@@ -196,7 +196,7 @@ function handleCopyBody(text: string): void {
 
 .empty-block {
   padding: 16px 18px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -233,13 +233,13 @@ function handleCopyBody(text: string): void {
 }
 
 .summary-badge {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .status-badge {
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.16));
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-muted);
+  color: var(--gc-text-primary);
 }
 
 .status-streaming,
@@ -247,28 +247,28 @@ function handleCopyBody(text: string): void {
 .status-awaiting_approval,
 .status-executing,
 .status-awaiting_apply {
-  background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
-  color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--gc-link) 14%, transparent);
+  color: var(--gc-link);
 }
 
 .status-success {
-  background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 16%, transparent);
-  color: var(--vscode-terminal-ansiGreen);
+  background: color-mix(in srgb, var(--gc-success) 16%, transparent);
+  color: var(--gc-success);
 }
 
 .status-error {
-  background: color-mix(in srgb, var(--vscode-errorForeground) 16%, transparent);
-  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--gc-danger) 16%, transparent);
+  color: var(--gc-danger);
 }
 
 .status-warning {
-  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 16%, transparent);
-  color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--gc-warning) 16%, transparent);
+  color: var(--gc-warning);
 }
 
 .status-unknown {
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.16));
-  color: var(--vscode-descriptionForeground);
+  background: var(--gc-surface-muted);
+  color: var(--gc-text-muted);
 }
 
 .tool-list {
@@ -297,8 +297,8 @@ function handleCopyBody(text: string): void {
 .tool-card {
   padding: 14px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .tool-card-header {
@@ -316,7 +316,7 @@ function handleCopyBody(text: string): void {
 .tool-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-summary-row {
@@ -330,19 +330,19 @@ function handleCopyBody(text: string): void {
 }
 
 .summary-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   min-width: 84px;
   flex-shrink: 0;
 }
 
 .summary-value {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .error-row .summary-value {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .info-grid {
@@ -364,12 +364,12 @@ function handleCopyBody(text: string): void {
 
 .info-label {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .info-value {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -382,15 +382,15 @@ function handleCopyBody(text: string): void {
 .section-action-btn {
   padding: 5px 12px;
   border-radius: var(--gc-radius-sm);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .section-action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .viewer-mode :deep(.viewer-markdown p:first-child),
@@ -405,7 +405,7 @@ function handleCopyBody(text: string): void {
 
 .thought-markdown {
   --lim-md-font-style: italic;
-  --lim-md-color: var(--vscode-descriptionForeground);
+  --lim-md-color: var(--gc-text-muted);
 }
 
 @media (max-width: 768px) {

@@ -188,8 +188,8 @@ onUnmounted(() => {
   padding: 0 8px;
   border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-input-background, var(--gc-surface-base));
-  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
   transition:
     border-color var(--gc-duration-fast) var(--gc-ease-standard),
     box-shadow var(--gc-duration-fast) var(--gc-ease-standard);
@@ -203,7 +203,7 @@ onUnmounted(() => {
 .settings-search-icon {
   font-size: 12px;
   flex-shrink: 0;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
+  color: var(--gc-text-muted);
 }
 
 .settings-search-box input {
@@ -219,7 +219,7 @@ onUnmounted(() => {
 }
 
 .settings-search-box input::placeholder {
-  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground, #9d9d9d));
+  color: var(--gc-text-placeholder);
 }
 
 .settings-search-clear {
@@ -232,7 +232,7 @@ onUnmounted(() => {
   border: none;
   border-radius: var(--gc-radius-xs);
   background: transparent;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
+  color: var(--gc-text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -255,8 +255,8 @@ onUnmounted(() => {
   max-height: 300px;
   overflow-y: auto;
   padding: 4px 0;
-  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
-  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   box-shadow: var(--gc-shadow-md);
   font-size: var(--gc-font-size-body);
@@ -274,8 +274,8 @@ onUnmounted(() => {
 
 .settings-search-result:hover,
 .settings-search-result.active {
-  background: var(--vscode-list-activeSelectionBackground, #094771);
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .settings-search-result .codicon {
@@ -298,12 +298,12 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
+  color: var(--gc-text-muted);
 }
 
 .settings-search-result:hover .settings-search-result-tab,
 .settings-search-result.active .settings-search-result-tab {
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+  color: var(--gc-text-selected);
   opacity: 0.8;
 }
 
@@ -313,7 +313,7 @@ onUnmounted(() => {
   gap: 6px;
   padding: 10px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
+  color: var(--gc-text-muted);
 }
 
 .settings-search-no-results .codicon {

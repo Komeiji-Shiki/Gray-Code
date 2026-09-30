@@ -53,15 +53,15 @@ p { margin: 0; line-height: 1.65; color: var(--gc-text-muted); overflow-wrap: an
 .product-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--gc-accent); font-size: 24px; color: var(--gc-accent); }
 .version-summary { display: grid; gap: 4px; justify-items: end; }
 .version-label, time { color: var(--gc-text-muted); font-size: 12px; }
-.version-summary strong, .version-chip { font-family: var(--vscode-editor-font-family, monospace); }
+.version-summary strong, .version-chip { font-family: var(--gc-font-code); }
 .version-chip { padding: 2px 7px; border: 1px solid var(--gc-border-subtle); font-size: 12px; }
-.path { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+.path { font-family: var(--gc-font-code); font-size: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .actions button { min-height: 34px; white-space: normal; }
 .ready, .recovery { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--gc-border-subtle); background: var(--gc-surface-muted); border-radius: 2px; min-width: 0; }
 .ready { border-left: 2px solid var(--gc-accent); }
 .section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.status-dot { width: 6px; height: 6px; background: var(--gc-success, var(--gc-accent)); }
+.status-dot { width: 6px; height: 6px; background: var(--gc-success); }
 .update-progress { display: grid; gap: 8px; }.update-progress > div { display: flex; justify-content: space-between; gap: 10px; }
 progress { appearance: none; width: 100%; height: 4px; border: 0; accent-color: var(--gc-accent); }
 progress::-webkit-progress-bar { background: var(--gc-border-subtle); }progress::-webkit-progress-value { background: var(--gc-accent); }

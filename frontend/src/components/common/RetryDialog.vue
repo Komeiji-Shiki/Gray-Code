@@ -152,13 +152,13 @@ function handleRestoreAndRetry() {
 .checkpoint-hint {
   margin: 12px 0 0;
   padding: 8px 10px;
-  background: var(--vscode-editorInfo-background, rgba(0, 120, 212, 0.1));
+  background: var(--gc-info-bg);
   border-radius: var(--gc-radius-sm);
   display: flex;
   align-items: flex-start;
   gap: 8px;
   font-size: 12px;
-  color: var(--vscode-editorInfo-foreground, #3794ff);
+  color: var(--gc-info);
 }
 
 .checkpoint-hint .codicon {
@@ -180,16 +180,16 @@ function handleRestoreAndRetry() {
 
 .dialog-btn.cancel {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .dialog-btn.cancel:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .dialog-btn.restore {
-  background: var(--vscode-editorInfo-foreground);
+  background: var(--gc-info);
   color: #fff;
 }
 
@@ -202,11 +202,11 @@ function handleRestoreAndRetry() {
 }
 
 .dialog-btn.confirm {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .dialog-btn.confirm:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 </style>

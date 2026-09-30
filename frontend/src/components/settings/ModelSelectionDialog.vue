@@ -280,8 +280,8 @@ watch(() => props.visible, (visible) => {
   gap: 6px;
   flex-shrink: 0;
   padding: 4px 10px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 11px;
@@ -290,7 +290,7 @@ watch(() => props.visible, (visible) => {
 }
 
 .select-all-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .select-all-btn .codicon {
@@ -312,7 +312,7 @@ watch(() => props.visible, (visible) => {
   justify-content: center;
   gap: 8px;
   padding: 48px 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .loading-state .codicon,
@@ -322,14 +322,14 @@ watch(() => props.visible, (visible) => {
 }
 
 .error-state {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .retry-btn {
   margin-top: 8px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
@@ -338,7 +338,7 @@ watch(() => props.visible, (visible) => {
 }
 
 .retry-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 /* 旋转动画 */
@@ -358,14 +358,14 @@ watch(() => props.visible, (visible) => {
   gap: 6px;
   padding: 8px;
   margin-bottom: 8px;
-  border: 1px solid var(--vscode-input-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input);
 }
 
 .filter-input-container .codicon-search {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -374,14 +374,14 @@ watch(() => props.visible, (visible) => {
   min-width: 0;
   padding: 0;
   background: transparent;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   border: none;
   font-size: 12px;
   outline: none;
 }
 
 .filter-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .filter-clear-btn {
@@ -394,13 +394,13 @@ watch(() => props.visible, (visible) => {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .filter-clear-btn:hover {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .filter-clear-btn .codicon {
@@ -417,7 +417,7 @@ watch(() => props.visible, (visible) => {
   padding: 24px 16px;
   text-align: center;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .no-results .codicon {
@@ -444,30 +444,30 @@ watch(() => props.visible, (visible) => {
   gap: 12px;
   width: 100%;
   padding: 10px 12px;
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   border: none;
   border-radius: var(--gc-radius-xs);
   font: inherit;
   text-align: left;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .model-item:hover {
-  background: var(--vscode-list-activeSelectionBackground);
+  background: var(--gc-surface-selected);
 }
 
 .model-item.is-selected {
-  background: color-mix(in srgb, var(--vscode-charts-blue) 15%, var(--vscode-list-hoverBackground));
+  background: color-mix(in srgb, var(--gc-chart-blue) 15%, var(--gc-surface-hover));
 }
 
 .model-item.added {
-  background: color-mix(in srgb, var(--vscode-charts-green) 10%, var(--vscode-list-hoverBackground));
+  background: color-mix(in srgb, var(--gc-chart-green) 10%, var(--gc-surface-hover));
 }
 
 .model-item.added:hover {
-  background: color-mix(in srgb, var(--vscode-charts-green) 15%, var(--vscode-list-hoverBackground));
+  background: color-mix(in srgb, var(--gc-chart-green) 15%, var(--gc-surface-hover));
 }
 
 .model-checkbox {
@@ -477,16 +477,16 @@ watch(() => props.visible, (visible) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--vscode-input-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input);
   transition: all 0.15s;
 }
 
 .model-item.is-selected .model-checkbox {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .model-checkbox .codicon {
@@ -503,20 +503,20 @@ watch(() => props.visible, (visible) => {
 
 .model-id {
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   font-weight: 500;
 }
 
 .model-name {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.8;
 }
 
 .model-desc {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -526,16 +526,16 @@ watch(() => props.visible, (visible) => {
   flex-shrink: 0;
   padding: 3px 8px;
   font-size: 11px;
-  color: var(--vscode-charts-green, #89d185);
-  background: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
+  color: var(--gc-chart-green);
+  background: color-mix(in srgb, var(--gc-chart-green) 20%, transparent);
   border-radius: var(--gc-radius-xs);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .added-badge:hover {
-  color: var(--vscode-errorForeground);
-  background: color-mix(in srgb, var(--vscode-errorForeground) 20%, transparent);
+  color: var(--gc-danger);
+  background: color-mix(in srgb, var(--gc-danger) 20%, transparent);
 }
 
 /* 底部 */
@@ -549,7 +549,7 @@ watch(() => props.visible, (visible) => {
 
 .selection-count {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .dialog-actions {
@@ -567,12 +567,12 @@ watch(() => props.visible, (visible) => {
 }
 
 .btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .btn.primary:disabled {
@@ -581,11 +581,11 @@ watch(() => props.visible, (visible) => {
 }
 
 .btn.secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .btn.secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 </style>

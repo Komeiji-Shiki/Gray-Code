@@ -85,7 +85,7 @@ function toggle(event: Event) {
   transform: translateY(-50%);
   height: 16px;
   width: 16px;
-  background: var(--vscode-input-background, var(--gc-surface-base));
+  background: var(--gc-surface-input);
   border: 1.5px solid var(--gc-border-strong);
   border-radius: var(--gc-radius-sm);
   transition:

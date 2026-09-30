@@ -351,22 +351,22 @@ async function copyAllEntries() {
 }
 
 .folder-icon {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .recursive-badge {
   font-size: 10px;
   padding: 1px 4px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .header-meta {
@@ -377,7 +377,7 @@ async function copyAllEntries() {
 
 .total-count {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .action-btn {
@@ -389,14 +389,14 @@ async function copyAllEntries() {
   background: transparent;
   border: none;
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: all var(--transition-fast, 0.1s);
 }
 
 .action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 /* 全局错误 */
@@ -405,20 +405,20 @@ async function copyAllEntries() {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -431,13 +431,13 @@ async function copyAllEntries() {
 
 /* 单个目录面板 */
 .dir-panel {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
 
 .dir-panel.is-error {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 /* 目录头部 */
@@ -446,8 +446,8 @@ async function copyAllEntries() {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .dir-info {
@@ -460,19 +460,19 @@ async function copyAllEntries() {
 
 .dir-icon {
   font-size: 12px;
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
   flex-shrink: 0;
 }
 
 .dir-panel.is-error .dir-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
 }
 
 .dir-path {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -480,7 +480,7 @@ async function copyAllEntries() {
 
 .dir-count {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -494,8 +494,8 @@ async function copyAllEntries() {
 .dir-error {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-inputValidation-errorForeground);
-  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
 }
 
 /* 文件列表 */
@@ -511,33 +511,33 @@ async function copyAllEntries() {
   align-items: center;
   gap: var(--spacing-xs, 4px);
   padding: 2px var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   transition: background-color var(--transition-fast, 0.1s);
   min-width: 0;
 }
 
 .file-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .file-item:not(:last-child) {
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .file-item .file-icon {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
 .file-item.is-directory .file-icon {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 .file-path {
   font-size: 10px;
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -551,8 +551,8 @@ async function copyAllEntries() {
   line-height: 1;
   padding: 2px 5px;
   border-radius: var(--gc-radius-pill);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 /* 展开区域 */
@@ -560,8 +560,8 @@ async function copyAllEntries() {
   display: flex;
   justify-content: center;
   padding: 2px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .expand-btn {
@@ -572,7 +572,7 @@ async function copyAllEntries() {
   background: transparent;
   border: none;
   font-size: 10px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   cursor: pointer;
   transition: opacity var(--transition-fast, 0.1s);
 }
@@ -588,7 +588,7 @@ async function copyAllEntries() {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 </style>

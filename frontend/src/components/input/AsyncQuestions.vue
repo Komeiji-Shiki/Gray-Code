@@ -58,7 +58,7 @@ onBeforeUnmount(() => { disposed = true; refreshEpoch++; dispose(); });
 .async-question { padding: 16px; border: 1px solid var(--gc-border-control); border-left: 3px solid var(--gc-accent); background: var(--gc-surface-raised); }
 .async-question p { color: var(--gc-text-muted); font-size: var(--gc-font-size-body); margin: 8px 0 14px; }
 label { display: grid; gap: 7px; margin-bottom: 13px; }
-input, select { padding: 8px; color: var(--gc-text-primary); background: var(--vscode-input-background); border: 1px solid var(--gc-border-control); font: inherit; border-radius: 0; }
-button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; padding: 8px 14px; cursor: pointer; }
+input, select { padding: 8px; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); font: inherit; border-radius: 0; }
+button { background: var(--gc-button-primary); color: var(--gc-text-on-primary); border: 0; padding: 8px 14px; cursor: pointer; }
 button:disabled { opacity: .4; cursor: default; }
 </style>

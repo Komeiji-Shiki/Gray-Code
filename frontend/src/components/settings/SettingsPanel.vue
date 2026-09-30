@@ -682,7 +682,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
 
 @keyframes settings-search-flash {
   0%, 60% {
-    background-color: var(--vscode-editor-findMatchHighlightBackground, color-mix(in srgb, var(--gc-warning) 28%, transparent));
+    background-color: var(--gc-highlight-bg);
   }
   100% {
     background-color: transparent;

@@ -489,9 +489,9 @@ function getExpandedLabel(key: string): string {
 .viewer-section,
 .detail-card,
 .attachment-card {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .attachment-card {
@@ -502,7 +502,7 @@ function getExpandedLabel(key: string): string {
   padding: 14px 18px;
   font-size: 13px;
   font-weight: 600;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .section-content,
@@ -512,7 +512,7 @@ function getExpandedLabel(key: string): string {
 
 .empty-block {
   padding: 16px 18px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -539,14 +539,14 @@ function getExpandedLabel(key: string): string {
 }
 
 .detail-index {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .status-badge,
 .detail-type {
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.16));
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-muted);
+  color: var(--gc-text-primary);
 }
 
 .status-streaming,
@@ -554,28 +554,28 @@ function getExpandedLabel(key: string): string {
 .status-awaiting_approval,
 .status-executing,
 .status-awaiting_apply {
-  background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
-  color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--gc-link) 14%, transparent);
+  color: var(--gc-link);
 }
 
 .status-success {
-  background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 16%, transparent);
-  color: var(--vscode-terminal-ansiGreen);
+  background: color-mix(in srgb, var(--gc-success) 16%, transparent);
+  color: var(--gc-success);
 }
 
 .status-error {
-  background: color-mix(in srgb, var(--vscode-errorForeground) 16%, transparent);
-  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--gc-danger) 16%, transparent);
+  color: var(--gc-danger);
 }
 
 .status-warning {
-  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 16%, transparent);
-  color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--gc-warning) 16%, transparent);
+  color: var(--gc-warning);
 }
 
 .status-unknown {
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.16));
-  color: var(--vscode-descriptionForeground);
+  background: var(--gc-surface-muted);
+  color: var(--gc-text-muted);
 }
 
 .detail-list,
@@ -605,18 +605,18 @@ function getExpandedLabel(key: string): string {
 .detail-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .detail-preview,
 .raw-json-hint {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .error-json {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .info-grid {
@@ -654,12 +654,12 @@ function getExpandedLabel(key: string): string {
 
 .info-label {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .info-value {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -674,7 +674,7 @@ function getExpandedLabel(key: string): string {
 .detail-preview {
   flex: 1;
   text-align: right;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -689,15 +689,15 @@ function getExpandedLabel(key: string): string {
 .section-action-btn {
   padding: 5px 12px;
   border-radius: var(--gc-radius-sm);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .section-action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .json-section {
@@ -716,14 +716,14 @@ function getExpandedLabel(key: string): string {
 
 .json-title {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .inline-link-btn {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-size: 12px;
   cursor: pointer;
 }
@@ -736,9 +736,9 @@ function getExpandedLabel(key: string): string {
   margin: 0;
   padding: 12px;
   border-radius: var(--gc-radius-sm);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   background: rgba(0, 0, 0, 0.15);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -748,7 +748,7 @@ function getExpandedLabel(key: string): string {
 }
 
 .json-preview-block {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .nested-raw {
@@ -756,7 +756,7 @@ function getExpandedLabel(key: string): string {
 }
 
 .nested-raw summary {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-size: 12px;
 }
 
@@ -779,21 +779,21 @@ function getExpandedLabel(key: string): string {
 
 .dialog-btn.cancel {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .dialog-btn.cancel:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .dialog-btn.confirm {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .dialog-btn.confirm:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .viewer-mode :deep(.viewer-markdown p:first-child),
@@ -808,7 +808,7 @@ function getExpandedLabel(key: string): string {
 
 .thought-markdown {
   --lim-md-font-style: italic;
-  --lim-md-color: var(--vscode-descriptionForeground);
+  --lim-md-color: var(--gc-text-muted);
 }
 
 @media (max-width: 768px) {

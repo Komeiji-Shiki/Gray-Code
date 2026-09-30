@@ -338,9 +338,9 @@ function toggleDelete(nodeId: string): void {
   width: fit-content;
   margin: 2px 0 6px var(--spacing-md, 16px);
   padding: 2px 4px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   user-select: none;
 }
 
@@ -369,7 +369,7 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-switcher-bar.compact .branch-switcher-position:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .branch-switcher-bar.compact .branch-switcher-position-text {
@@ -390,14 +390,14 @@ function toggleDelete(nodeId: string): void {
   border: none;
   border-radius: var(--radius-sm, 2px);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 
 .branch-switcher-btn:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .branch-switcher-center {
@@ -411,8 +411,8 @@ function toggleDelete(nodeId: string): void {
   padding: 1px 6px;
   border: none;
   border-radius: var(--radius-sm, 2px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-muted);
+  color: var(--gc-text-primary);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -420,7 +420,7 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-switcher-position:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .branch-switcher-position-text {
@@ -435,9 +435,9 @@ function toggleDelete(nodeId: string): void {
   box-sizing: border-box;
   min-width: 0;
   overflow: auto;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
@@ -445,7 +445,7 @@ function toggleDelete(nodeId: string): void {
   display: flex;
   align-items: center;
   gap: 4px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .branch-candidate-row:last-child {
@@ -453,7 +453,7 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-candidate-row.active {
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
 }
 
 .branch-candidate-main {
@@ -468,14 +468,14 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-candidate-main:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .branch-candidate-preview {
   flex: 1;
   min-width: 0;
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -484,7 +484,7 @@ function toggleDelete(nodeId: string): void {
 .branch-candidate-active {
   flex-shrink: 0;
   font-size: 10px;
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .branch-candidate-delete {
@@ -497,26 +497,26 @@ function toggleDelete(nodeId: string): void {
   border: none;
   border-radius: var(--radius-sm, 2px);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   flex-shrink: 0;
   transition: background 0.12s, color 0.12s;
 }
 
 .branch-candidate-delete:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-testing-iconFailed, #f14c4c);
+  background: var(--gc-surface-hover);
+  color: var(--gc-danger);
 }
 
 .branch-candidate-delete.confirming {
-  color: var(--vscode-testing-iconFailed, #f14c4c);
-  background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, 0.12));
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
 }
 
 .branch-switcher-loading {
   display: flex;
   align-items: center;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -528,16 +528,16 @@ function toggleDelete(nodeId: string): void {
   width: 100%;
   margin-top: 10px;
   padding: 6px 14px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.15));
-  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .workspace-confirm-secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.25));
+  background: var(--gc-button-secondary-hover);
 }
 </style>

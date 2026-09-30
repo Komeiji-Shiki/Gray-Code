@@ -196,16 +196,16 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
 <style scoped>
 .get-symbols-content {
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .error-section {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   padding: 8px;
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -217,12 +217,12 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
 
 .summary {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 4px 8px;
 }
 
 .fail-count {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .files-list {
@@ -232,7 +232,7 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
 }
 
 .file-group {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
@@ -244,48 +244,48 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
   padding: 6px 8px;
   cursor: pointer;
   transition: background 0.1s;
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .file-header:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .file-header.has-error {
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
 }
 
 .expand-icon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .file-path {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-weight: 500;
 }
 
 .symbol-count {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
   margin-left: auto;
 }
 
 .error-badge {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   font-size: 10px;
   margin-left: auto;
   padding: 1px 4px;
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
   border-radius: var(--gc-radius-xs);
 }
 
 .symbols-content {
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .file-error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   padding: 8px;
   font-size: 11px;
 }
@@ -300,7 +300,7 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .symbol-item:last-child {
@@ -308,7 +308,7 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
 }
 
 .symbol-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .symbol-icon {
@@ -316,38 +316,38 @@ function flattenSymbols(symbols: SymbolInfo[], level = 0): FlatSymbol[] {
   flex-shrink: 0;
 }
 
-.symbol-class { color: var(--vscode-symbolIcon-classForeground, #ee9d28); }
-.symbol-interface { color: var(--vscode-symbolIcon-interfaceForeground, #75beff); }
-.symbol-function { color: var(--vscode-symbolIcon-methodForeground, #b180d7); }
-.symbol-property { color: var(--vscode-symbolIcon-propertyForeground, #75beff); }
-.symbol-variable { color: var(--vscode-symbolIcon-variableForeground, #75beff); }
-.symbol-constant { color: var(--vscode-symbolIcon-constantForeground, #ee9d28); }
-.symbol-enum { color: var(--vscode-symbolIcon-enumeratorForeground, #ee9d28); }
+.symbol-class { color: var(--gc-chart-orange); }
+.symbol-interface { color: var(--gc-chart-green); }
+.symbol-function { color: var(--gc-chart-purple); }
+.symbol-property { color: var(--gc-chart-blue); }
+.symbol-variable { color: var(--gc-chart-blue); }
+.symbol-constant { color: var(--gc-chart-yellow); }
+.symbol-enum { color: var(--gc-chart-orange); }
 
 .symbol-name {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-weight: 500;
 }
 
 .symbol-kind {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 10px;
 }
 
 .symbol-line {
   margin-left: auto;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 10px;
 }
 
 .no-symbols {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 8px;
   text-align: center;
 }
 
 .loading {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 8px;
   text-align: center;
 }

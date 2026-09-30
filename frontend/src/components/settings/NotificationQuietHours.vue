@@ -31,8 +31,8 @@ function localZone() { emit('update:modelValue', { ...props.modelValue, timeZone
 </template>
 
 <style scoped>
-.notification-quiet-hours { border: 1px solid var(--vscode-panel-border); padding: 16px; margin-bottom: 16px; }
-h3 { margin: 0 0 8px; font-size: 14px; } p { color: var(--vscode-descriptionForeground); line-height: 1.6; margin: 0 0 12px; }
-label { display: flex; flex-direction: column; gap: 6px; min-width: 0; } select, input, button { font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 0; padding: 7px 9px; min-width: 0; }
+.notification-quiet-hours { border: 1px solid var(--gc-border-subtle); padding: 16px; margin-bottom: 16px; }
+h3 { margin: 0 0 8px; font-size: 14px; } p { color: var(--gc-text-muted); line-height: 1.6; margin: 0 0 12px; }
+label { display: flex; flex-direction: column; gap: 6px; min-width: 0; } select, input, button { font: inherit; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); border-radius: 0; padding: 7px 9px; min-width: 0; }
 .quiet-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; } .zone { grid-column: 1 / -1; } button { justify-self: start; grid-column: 1 / -1; cursor: pointer; }
 </style>

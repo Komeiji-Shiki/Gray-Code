@@ -302,7 +302,7 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .pinned-files-button.has-files :deep(i.codicon) {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .pinned-files-badge {
@@ -316,8 +316,8 @@ watch(() => chatStore.currentConversationId, async () => {
   font-weight: 500;
   line-height: 14px;
   text-align: center;
-  color: var(--vscode-badge-foreground);
-  background: var(--vscode-badge-background);
+  color: var(--gc-badge-fg);
+  background: var(--gc-badge-bg);
   border-radius: var(--gc-radius-md);
 }
 
@@ -327,8 +327,8 @@ watch(() => chatStore.currentConversationId, async () => {
   left: 8px;
   right: 8px;
   margin-bottom: 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
@@ -342,7 +342,7 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .pinned-files-title {
@@ -361,8 +361,8 @@ watch(() => chatStore.currentConversationId, async () => {
 .pinned-files-description {
   padding: 6px 12px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .pinned-files-content {
@@ -379,7 +379,7 @@ watch(() => chatStore.currentConversationId, async () => {
   justify-content: center;
   gap: 8px;
   padding: 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -394,7 +394,7 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -408,12 +408,12 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .pinned-file-item.not-exists .codicon-warning {
-  color: var(--vscode-notificationsWarningIcon-foreground, #cca700);
+  color: var(--gc-warning);
 }
 
 .file-not-exists-hint {
   font-size: 10px;
-  color: var(--vscode-errorForeground, #f14c4c);
+  color: var(--gc-danger);
   flex-shrink: 0;
   padding: 1px 4px;
   background: rgba(255, 100, 100, 0.15);
@@ -422,7 +422,7 @@ watch(() => chatStore.currentConversationId, async () => {
 
 .pinned-file-checkbox {
   cursor: pointer;
-  accent-color: var(--vscode-checkbox-foreground);
+  accent-color: var(--gc-text-primary);
 }
 
 .pinned-file-item .icon,
@@ -442,7 +442,7 @@ watch(() => chatStore.currentConversationId, async () => {
 
 .pinned-files-footer {
   padding: 8px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .drag-hint {
@@ -451,8 +451,8 @@ watch(() => chatStore.currentConversationId, async () => {
   gap: 6px;
   padding: 6px 8px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-textBlockQuote-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -462,8 +462,8 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .pinned-files-panel.drag-over {
-  border-color: var(--vscode-focusBorder);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-focusBorder) 30%, transparent);
+  border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gc-focus-border) 30%, transparent);
 }
 
 .drag-overlay {
@@ -477,19 +477,19 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
+  background: color-mix(in srgb, var(--gc-surface-base) 95%, transparent);
   border-radius: var(--gc-radius-sm);
   z-index: 10;
 }
 
 .drag-overlay .codicon {
   font-size: 32px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .drag-overlay span {
   font-size: 13px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .codicon-modifier-spin {

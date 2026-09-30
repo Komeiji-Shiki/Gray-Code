@@ -249,28 +249,28 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
 .option-header label {
     font-size: 11px;
     font-weight: 500;
-    color: var(--vscode-foreground);
+    color: var(--gc-text-primary);
     opacity: 0.9;
 }
 
 .option-item input[type="text"],
 .option-item input[type="password"] {
     padding: 5px 8px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border);
+    background: var(--gc-surface-input);
+    color: var(--gc-text-primary);
+    border: 1px solid var(--gc-border-control);
     border-radius: var(--gc-radius-xs);
     font-size: 12px;
 }
 
 .option-item input:focus {
     outline: none;
-    border-color: var(--vscode-focusBorder);
+    border-color: var(--gc-focus-border);
 }
 
 .option-hint {
     font-size: 10px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--gc-text-muted);
     opacity: 0.8;
 }
 
@@ -278,8 +278,8 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
 .api-config-section {
     margin-top: 8px;
     padding: 12px;
-    background: var(--vscode-editor-background);
-    border: 1px solid var(--vscode-panel-border);
+    background: var(--gc-surface-base);
+    border: 1px solid var(--gc-border-subtle);
     border-radius: var(--gc-radius-sm);
     display: flex;
     flex-direction: column;
@@ -292,9 +292,9 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
     gap: 6px;
     font-size: 11px;
     font-weight: 500;
-    color: var(--vscode-foreground);
+    color: var(--gc-text-primary);
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--vscode-panel-border);
+    border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .api-config-title .codicon {
@@ -317,14 +317,14 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
     justify-content: center;
     width: 28px;
     padding: 0;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
+    background: var(--gc-button-secondary);
+    color: var(--gc-text-on-secondary);
     border: none;
     border-radius: var(--gc-radius-xs);
     cursor: pointer;
 }
 
 .input-action-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
+    background: var(--gc-button-secondary-hover);
 }
 </style>

@@ -46,7 +46,7 @@ defineExpose({ requestClose });
 .platform-settings-footer > div { flex: 1; font-size: var(--gc-font-size-body); color: var(--gc-text-muted); }
 .platform-settings-footer p { margin: 8px 0 0; color: var(--gc-danger); }
 button { color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); background: var(--gc-surface-raised); padding: 8px 16px; font: inherit; cursor: pointer; border-radius: 0; }
-button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+button.primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); }
 .platform-close-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 .save-error { color: var(--gc-danger); white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 0; }
 </style>

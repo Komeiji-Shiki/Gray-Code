@@ -15,10 +15,10 @@
  * 不复刻正式 Splash 的 Logo 描绘叙事。
  */
 .startup-backdrop {
-  --graphite-base: var(--vscode-editor-background, #1e1e1e);
-  --graphite-panel: var(--vscode-sideBar-background, var(--graphite-base));
-  --graphite-raised: var(--vscode-editorWidget-background, var(--graphite-panel));
-  --graphite-ink: var(--vscode-foreground, #cccccc);
+  --graphite-base: var(--gc-surface-base);
+  --graphite-panel: var(--gc-surface-panel);
+  --graphite-raised: var(--gc-surface-raised);
+  --graphite-ink: var(--gc-text-primary);
   --graphite-whisper: color-mix(in srgb, var(--graphite-ink) 4%, transparent);
   --graphite-sheen: color-mix(in srgb, var(--graphite-ink) 9%, transparent);
   --graphite-edge: color-mix(in srgb, var(--graphite-ink) 15%, transparent);

@@ -368,7 +368,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .user-message .role-label {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 用户正文和时间之间只保留短间距，与标签到正文的距离一致。 */
@@ -377,7 +377,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .assistant-message .role-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .assistant-message {
@@ -395,7 +395,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* 工具消息标签 */
 .message-item[class*="tool"] .role-label {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .message-body {
@@ -404,8 +404,8 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* 总结消息样式 */
 .summary-message {
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-link);
 }
 
 /* 后台任务回流卡片 */

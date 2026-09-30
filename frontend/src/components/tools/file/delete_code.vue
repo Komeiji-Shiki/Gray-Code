@@ -201,14 +201,14 @@ function getFileNameWithoutExt(fp: string): string {
 }
 
 .files-icon {
-  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  color: var(--gc-git-deleted);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-stats {
@@ -222,15 +222,15 @@ function getFileNameWithoutExt(fp: string): string {
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .stat.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .stat.error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 /* 全局错误 */
@@ -239,20 +239,20 @@ function getFileNameWithoutExt(fp: string): string {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -265,13 +265,13 @@ function getFileNameWithoutExt(fp: string): string {
 
 /* 单个文件面板 */
 .file-panel {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
 
 .file-panel.is-error {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 /* 文件头部 */
@@ -280,8 +280,8 @@ function getFileNameWithoutExt(fp: string): string {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .file-info {
@@ -294,12 +294,12 @@ function getFileNameWithoutExt(fp: string): string {
 
 .file-icon {
   font-size: 12px;
-  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  color: var(--gc-git-deleted);
   flex-shrink: 0;
 }
 
 .file-panel.is-error .file-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
 }
 
 .file-name.clickable,
@@ -311,19 +311,19 @@ function getFileNameWithoutExt(fp: string): string {
 .file-name.clickable:hover,
 .file-ext.clickable:hover,
 .file-path.clickable:hover {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   text-decoration: underline;
 }
 
 .file-name {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .file-ext {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .delete-badge {
@@ -332,13 +332,13 @@ function getFileNameWithoutExt(fp: string): string {
   border-radius: var(--gc-radius-xs);
   margin-left: var(--spacing-xs, 4px);
   font-weight: 500;
-  background: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
-  color: var(--vscode-editor-background);
+  background: var(--gc-git-deleted);
+  color: var(--gc-surface-base);
 }
 
 .line-count {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-left: auto;
   flex-shrink: 0;
 }
@@ -347,10 +347,10 @@ function getFileNameWithoutExt(fp: string): string {
 .file-path {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editor-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-base);
+  border-bottom: 1px solid var(--gc-border-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -363,8 +363,8 @@ function getFileNameWithoutExt(fp: string): string {
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-inputValidation-errorForeground);
-  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
 }
 
 /* 成功信息 */
@@ -374,8 +374,8 @@ function getFileNameWithoutExt(fp: string): string {
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-testing-iconPassed);
-  background: var(--vscode-editor-background);
+  color: var(--gc-success);
+  background: var(--gc-surface-base);
 }
 
 /* 信息栏 */
@@ -385,7 +385,7 @@ function getFileNameWithoutExt(fp: string): string {
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
 }
 </style>

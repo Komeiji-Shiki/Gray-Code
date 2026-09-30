@@ -43,5 +43,5 @@ const state = computed(() => data.value.running === true ? 'running' : data.valu
 
 <style scoped src="./platform.css"></style>
 <style scoped>
-.process-argument{background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-panel-border);font:11px/1.6 var(--vscode-editor-font-family,monospace);padding:1px 4px;white-space:pre-wrap;overflow-wrap:anywhere}.process-exit-code{font-family:var(--vscode-editor-font-family,monospace)}
+.process-argument{background:var(--gc-surface-base);border-bottom:1px solid var(--gc-border-subtle);font:11px/1.6 var(--gc-font-code);padding:1px 4px;white-space:pre-wrap;overflow-wrap:anywhere}.process-exit-code{font-family:var(--gc-font-code)}
 </style>

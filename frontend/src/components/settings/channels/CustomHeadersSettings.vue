@@ -155,7 +155,7 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
 
 .headers-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .headers-list-wrapper {
@@ -201,19 +201,19 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
 .header-checkmark {
   width: 14px;
   height: 14px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
 .header-checkbox:hover .header-checkmark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .header-checkbox input:checked ~ .header-checkmark {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .header-checkbox input:checked ~ .header-checkmark::after {
@@ -223,7 +223,7 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
   top: 9px;
   width: 3px;
   height: 6px;
-  border: solid var(--vscode-button-foreground);
+  border: solid var(--gc-text-on-primary);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
 }
@@ -247,9 +247,9 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
   width: 100%;
   box-sizing: border-box;
   padding: 5px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
 }
@@ -257,16 +257,16 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
 .header-key:focus,
 .header-value:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .header-key.has-error {
-  border-color: var(--vscode-errorForeground);
+  border-color: var(--gc-danger);
 }
 
 .key-error {
   font-size: 10px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .header-remove {
@@ -279,15 +279,15 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0.7;
 }
 
 .header-remove:hover:not(:disabled) {
   opacity: 1;
-  color: var(--vscode-errorForeground);
-  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--gc-danger);
+  background: var(--gc-surface-hover);
 }
 
 .header-remove:disabled {
@@ -299,7 +299,7 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
   padding: 16px;
   text-align: center;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
 }
 
@@ -310,8 +310,8 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
   gap: 6px;
   width: 100%;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
@@ -320,7 +320,7 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
 }
 
 .add-header-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .add-header-btn:disabled {

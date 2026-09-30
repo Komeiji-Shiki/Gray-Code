@@ -115,4 +115,4 @@ function logTime(value: unknown) {
 </template>
 
 <style scoped src="./automation.css"></style>
-<style scoped>.snapshot-node{padding-top:6px;padding-bottom:6px;border-bottom:1px solid var(--vscode-panel-border)}</style>
+<style scoped>.snapshot-node{padding-top:6px;padding-bottom:6px;border-bottom:1px solid var(--gc-border-subtle)}</style>

@@ -365,9 +365,9 @@ function formatShort(minutes: number): string {
   gap: 12px;
   margin-bottom: 16px;
   padding: 12px 14px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editorWidget-background, transparent);
+  background: var(--gc-surface-raised);
 }
 
 .time-header {
@@ -391,12 +391,12 @@ function formatShort(minutes: number): string {
   border: none;
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
 }
 
 .time-refresh:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .time-refresh:disabled {
@@ -413,22 +413,22 @@ function formatShort(minutes: number): string {
 
 .time-range-btn {
   padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   font-size: 10px;
 }
 
 .time-range-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .time-range-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .time-range-btn:disabled {
@@ -442,7 +442,7 @@ function formatShort(minutes: number): string {
   align-items: center;
   gap: 6px;
   padding: 16px 8px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 
@@ -451,7 +451,7 @@ function formatShort(minutes: number): string {
 }
 
 .time-state.is-error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 /* 总览卡片 */
@@ -475,12 +475,12 @@ function formatShort(minutes: number): string {
 }
 
 .time-total-value.is-active {
-  color: var(--vscode-charts-green, var(--vscode-foreground));
+  color: var(--gc-chart-green);
 }
 
 .time-total-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 区块 */
@@ -492,12 +492,12 @@ function formatShort(minutes: number): string {
 
 .time-block-title {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .time-block-empty {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 4px 0;
 }
 
@@ -516,7 +516,7 @@ function formatShort(minutes: number): string {
 
 .time-day-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   width: 32px;
   flex-shrink: 0;
   text-align: right;
@@ -526,7 +526,7 @@ function formatShort(minutes: number): string {
   flex: 1;
   height: 8px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
   position: relative;
   overflow: hidden;
 }
@@ -537,12 +537,12 @@ function formatShort(minutes: number): string {
   top: 0;
   height: 100%;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-progressBar-background, var(--vscode-button-background));
+  background: var(--gc-accent);
 }
 
 .time-day-value {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   width: 40px;
   flex-shrink: 0;
 }
@@ -570,12 +570,12 @@ function formatShort(minutes: number): string {
 }
 
 .time-month-row:hover {
-  background: var(--vscode-list-hoverBackground, transparent);
+  background: var(--gc-surface-hover);
 }
 
 .time-month-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   width: 32px;
   flex-shrink: 0;
   text-align: right;
@@ -583,20 +583,20 @@ function formatShort(minutes: number): string {
 
 .time-month-value {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   width: 40px;
   flex-shrink: 0;
 }
 
 .time-month-days {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
 .time-month-row .codicon {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -605,7 +605,7 @@ function formatShort(minutes: number): string {
   flex-direction: column;
   gap: 3px;
   padding: 4px 0 4px 38px;
-  border-top: 1px dashed var(--vscode-panel-border);
+  border-top: 1px dashed var(--gc-border-subtle);
 }
 
 /* 作息热力网格 */
@@ -619,7 +619,7 @@ function formatShort(minutes: number): string {
   display: flex;
   justify-content: space-between;
   font-size: 9px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding-left: 32px;
   padding-right: 0;
 }
@@ -632,7 +632,7 @@ function formatShort(minutes: number): string {
 
 .time-heat-label {
   font-size: 9px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   width: 32px;
   flex-shrink: 0;
   text-align: right;
@@ -648,12 +648,12 @@ function formatShort(minutes: number): string {
   flex: 1;
   height: 10px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-progressBar-background, var(--vscode-button-background));
+  background: var(--gc-accent);
   opacity: 0.08;
   cursor: default;
 }
 
 .time-heat-cell:hover {
-  outline: 1px solid var(--vscode-focusBorder, var(--vscode-foreground));
+  outline: 1px solid var(--gc-focus-border);
 }
 </style>

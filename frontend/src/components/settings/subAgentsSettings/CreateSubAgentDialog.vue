@@ -177,7 +177,7 @@ function onNameInput(event: Event) {
 .preset-card > .codicon {
   margin-top: 2px;
   flex-shrink: 0;
-  color: var(--vscode-symbolIcon-classForeground, var(--gc-info));
+  color: var(--gc-chart-orange);
   font-size: var(--gc-icon-size-md);
 }
 

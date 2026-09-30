@@ -18,7 +18,29 @@ function collectTypeScriptFiles(directory: string): string[] {
   return files
 }
 
+const repoRoot = path.resolve(process.cwd(), '..')
+// 只有 token 定义与启动默认值文件可以出现 --vscode-*；其余组件只引用 --gc-*。
+const TOKEN_SOURCES = new Set(['frontend/src/styles/tokens.css', 'frontend/src/platform/theme.css'].map(file => path.join(repoRoot, file)))
+function collectSources(directory: string, extensions = ['.vue', '.css', '.ts']): string[] {
+  const files: string[] = []
+  for (const name of readdirSync(directory)) {
+    const fullPath = path.join(directory, name)
+    if (/__tests__|__generated__|node_modules|[\\/]i18n[\\/]langs/.test(fullPath)) continue
+    if (statSync(fullPath).isDirectory()) files.push(...collectSources(fullPath, extensions))
+    else if (extensions.some(extension => name.endsWith(extension)) && !/\.test\.ts$/.test(name)) files.push(fullPath)
+  }
+  return files
+}
+function offenders(roots: string[], pattern: RegExp, allow: Set<string>) {
+  return roots.flatMap(root => collectSources(root)).filter(file => !allow.has(file))
+    .flatMap(file => [...readFileSync(file, 'utf8').matchAll(pattern)].map(match => `${path.relative(repoRoot, file)}: ${match[0]}`))
+}
+
 describe('frontend visual and async architecture contracts', () => {
+  test('聊天前端组件只引用 --gc-* 语义 token', () => {
+    expect(offenders([path.resolve(process.cwd(), 'src')], /--vscode-[A-Za-z][\w-]*/g, TOKEN_SOURCES)).toEqual([])
+  })
+
   test('visual system defines semantic tokens, compatibility aliases and accessible primitives', () => {
     const stylesRoot = path.resolve(process.cwd(), 'src/styles')
     const tokensSource = readFileSync(path.join(stylesRoot, 'tokens.css'), 'utf8')

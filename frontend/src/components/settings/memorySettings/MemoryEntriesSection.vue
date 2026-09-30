@@ -266,8 +266,8 @@ const emit = defineEmits<{
 <style scoped>
 /* 分区 */
 .section {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   padding: 14px 16px;
 }
@@ -279,7 +279,7 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-title i {
@@ -296,14 +296,14 @@ const emit = defineEmits<{
   font-size: 10px;
   font-weight: 600;
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   margin-left: 4px;
 }
 
 .field-description {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin: 0;
 }
 
@@ -318,8 +318,8 @@ const emit = defineEmits<{
   gap: 4px;
   margin-bottom: 12px;
   padding: 3px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -334,18 +334,18 @@ const emit = defineEmits<{
   border: none;
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .scope-tab:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .scope-tab.active {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .scope-tab i {
@@ -364,16 +364,16 @@ const emit = defineEmits<{
   max-width: 320px;
   padding: 5px 8px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
 }
 
 .scope-workspace-select:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 /* ─── 批量删除工具栏 ─── */
@@ -389,13 +389,13 @@ const emit = defineEmits<{
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   user-select: none;
 }
 
 .entry-checkbox {
-  accent-color: var(--vscode-focusBorder);
+  accent-color: var(--gc-focus-border);
   flex-shrink: 0;
   margin: 2px 0 0 0;
 }
@@ -408,7 +408,7 @@ const emit = defineEmits<{
   gap: 8px;
   min-height: 96px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .entries-loading i {
@@ -421,7 +421,7 @@ const emit = defineEmits<{
   gap: 8px;
   padding: 24px 0;
   font-size: 13px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   justify-content: center;
 }
 
@@ -436,30 +436,30 @@ const emit = defineEmits<{
   align-items: flex-start;
   gap: 8px;
   padding: 8px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
 .entry-row:hover {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .entry-id {
   font-size: 11px;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-charts-blue);
+  font-family: var(--gc-font-code), monospace;
+  color: var(--gc-chart-blue);
   min-width: 28px;
   flex-shrink: 0;
 }
 
 .entry-date {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   min-width: 72px;
   flex-shrink: 0;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
 }
 
 .entry-text-wrap {
@@ -470,8 +470,8 @@ const emit = defineEmits<{
 .entry-text {
   margin: 0;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code), monospace;
+  color: var(--gc-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.4;
@@ -487,10 +487,10 @@ const emit = defineEmits<{
   width: 100%;
   padding: 6px 8px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editor-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-focusBorder);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-focus-border);
   border-radius: var(--gc-radius-xs);
   resize: vertical;
   line-height: 1.4;
@@ -508,12 +508,12 @@ const emit = defineEmits<{
 
 .char-count {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-left: auto;
 }
 
 .char-overflow {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   font-weight: 600;
 }
 
@@ -547,10 +547,10 @@ const emit = defineEmits<{
   min-height: 200px;
   padding: 8px 10px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   resize: vertical;
   line-height: 1.5;
@@ -558,7 +558,7 @@ const emit = defineEmits<{
 
 .form-textarea:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .form-textarea:disabled {
@@ -573,8 +573,8 @@ const emit = defineEmits<{
   margin-bottom: 10px;
   padding: 8px 10px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-textBlockQuote-background);
-  color: var(--vscode-descriptionForeground);
+  background: var(--gc-quote-bg);
+  color: var(--gc-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -614,21 +614,21 @@ const emit = defineEmits<{
 }
 
 .btn-primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .btn-secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .btn-sm {
@@ -641,13 +641,13 @@ const emit = defineEmits<{
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
 }
 
 .btn-icon:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .btn-icon i {
@@ -655,8 +655,8 @@ const emit = defineEmits<{
 }
 
 .btn-danger {
-  background: var(--vscode-errorForeground, #f14c4c);
-  color: var(--vscode-button-foreground, #ffffff);
+  background: var(--gc-danger);
+  color: var(--gc-text-on-primary);
 }
 
 .btn-danger:hover:not(:disabled) {

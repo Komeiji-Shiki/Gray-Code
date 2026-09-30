@@ -141,7 +141,7 @@ onMounted(() => {
 <style scoped>
 .media-tool-config {
   padding: 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
@@ -158,12 +158,12 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .section-content {
@@ -178,7 +178,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 配置选项 */
@@ -210,12 +210,12 @@ onMounted(() => {
 .config-item-label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .config-item-description {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.5;
 }
 
@@ -225,10 +225,10 @@ onMounted(() => {
   align-items: flex-start;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .tool-description .codicon {
@@ -243,7 +243,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .codicon-modifier-spin {

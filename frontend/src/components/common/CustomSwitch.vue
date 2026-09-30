@@ -88,12 +88,12 @@ function handleChange(event: Event) {
 
 .custom-switch-track {
   position: relative;
-  width: 32px;
-  height: 16px;
+  width: 36px;
+  height: 20px;
   flex-shrink: 0;
   border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  background: var(--vscode-input-background, var(--gc-surface-muted));
+  border-radius: var(--gc-radius-pill);
+  background: var(--gc-surface-input);
   transition:
     background-color var(--gc-duration-normal) var(--gc-ease-standard),
     border-color var(--gc-duration-normal) var(--gc-ease-standard);
@@ -103,23 +103,21 @@ function handleChange(event: Event) {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: var(--gc-radius-xs);
   background: var(--gc-text-primary);
-  opacity: 0.6;
   transition: transform var(--gc-duration-normal) var(--gc-ease-emphasized);
 }
 
 .custom-switch input:checked + .custom-switch-track {
-  border-color: var(--vscode-button-background, var(--gc-accent));
-  background: var(--vscode-button-background, var(--gc-accent));
+  border-color: var(--gc-accent);
+  background: var(--gc-accent);
 }
 
 .custom-switch input:checked + .custom-switch-track .custom-switch-thumb {
   transform: translateX(16px);
-  background: var(--vscode-button-foreground, var(--gc-text-on-accent));
-  opacity: 1;
+  background: var(--gc-text-on-accent);
 }
 
 /* 悬停边框覆盖开启状态的边框色，保证四周高亮可见。 */
@@ -148,17 +146,17 @@ function handleChange(event: Event) {
 }
 
 .custom-switch-field.compact .custom-switch-track {
-  width: 28px;
-  height: 14px;
+  width: 30px;
+  height: 18px;
 }
 
 .custom-switch-field.compact .custom-switch-thumb {
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
 }
 
 .custom-switch-field.compact input:checked + .custom-switch-track .custom-switch-thumb {
-  transform: translateX(14px);
+  transform: translateX(12px);
 }
 
 @media (prefers-reduced-motion: reduce) {

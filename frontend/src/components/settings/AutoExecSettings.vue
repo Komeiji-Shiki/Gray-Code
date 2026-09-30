@@ -285,14 +285,14 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
 .settings-intro .codicon {
   font-size: 24px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   flex-shrink: 0;
 }
 
@@ -306,13 +306,13 @@ onMounted(() => {
   margin: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .intro-desc {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 
@@ -328,8 +328,8 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -338,7 +338,7 @@ onMounted(() => {
 }
 
 .action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-btn:disabled {
@@ -359,7 +359,7 @@ onMounted(() => {
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .loading-state .codicon,
@@ -386,8 +386,8 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: 13px;
   font-weight: 500;
@@ -395,14 +395,14 @@ onMounted(() => {
 
 .category-header .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .category-count {
   margin-left: auto;
   padding: 2px 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: 500;
@@ -422,18 +422,18 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   transition: background-color 0.15s;
 }
 
 .tool-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .tool-item.dangerous {
-  border-left: 3px solid var(--vscode-inputValidation-warningBorder);
+  border-left: 3px solid var(--gc-warning-border);
 }
 
 .tool-info {
@@ -450,7 +450,7 @@ onMounted(() => {
 .tool-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .danger-badge {
@@ -458,9 +458,9 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
-  background: var(--vscode-inputValidation-warningBackground);
-  color: var(--vscode-inputValidation-warningForeground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  color: var(--gc-warning);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-sm);
   font-size: 10px;
 }
@@ -474,9 +474,9 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
-  background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
-  color: var(--vscode-textLink-foreground);
-  border: 1px solid var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--gc-link) 10%, transparent);
+  color: var(--gc-link);
+  border: 1px solid var(--gc-link);
   border-radius: var(--gc-radius-sm);
   font-size: 10px;
   opacity: 0.8;
@@ -487,12 +487,12 @@ onMounted(() => {
 }
 
 .tool-item.mcp-tool {
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  border-left: 3px solid var(--gc-link);
 }
 
 .tool-description {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-top: 2px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -514,13 +514,13 @@ onMounted(() => {
 
 .toggle-label {
   font-size: 11px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   min-width: 50px;
   text-align: right;
 }
 
 .toggle-label.auto-exec {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 /* Diff 审阅类工具的状态徽标 */
@@ -529,9 +529,9 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  background: var(--vscode-textBlockQuote-background);
-  color: var(--vscode-textLink-foreground);
-  border: 1px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  color: var(--gc-link);
+  border: 1px solid var(--gc-link);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
   cursor: help;
@@ -547,14 +547,14 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   padding: 8px 10px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-link);
   border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .settings-tips .codicon {
   flex-shrink: 0;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-size: 14px;
 }
 
@@ -567,7 +567,7 @@ onMounted(() => {
 .tips-content p {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 

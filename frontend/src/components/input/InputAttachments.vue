@@ -106,7 +106,7 @@ function isMediaTile(attachment: Attachment): boolean {
   padding: 8px;
   max-height: 148px; /* 约两行 64px 缩略图块，超出滚动，避免挤占输入框 */
   overflow-y: auto;
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -127,11 +127,11 @@ function isMediaTile(attachment: Attachment): boolean {
   border: 0;
   border-radius: 0;
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .tile-media:focus-visible {
-  outline: 2px solid var(--vscode-focusBorder);
+  outline: 2px solid var(--gc-focus-border);
   outline-offset: -2px;
 }
 
@@ -151,7 +151,7 @@ function isMediaTile(attachment: Attachment): boolean {
 
 .tile-icon {
   font-size: 20px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.8;
 }
 
@@ -171,7 +171,7 @@ function isMediaTile(attachment: Attachment): boolean {
   right: 2px;
   opacity: 0;
   transition: opacity 0.15s;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: 50%;
 }
 
@@ -190,8 +190,8 @@ function isMediaTile(attachment: Attachment): boolean {
   max-width: 240px;
   padding: 0 4px 0 8px;
   border-radius: var(--gc-radius-lg);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-input-border, transparent);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-control);
 }
 
 .chip-icon {
@@ -202,7 +202,7 @@ function isMediaTile(attachment: Attachment): boolean {
 
 .chip-name {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -211,7 +211,7 @@ function isMediaTile(attachment: Attachment): boolean {
 
 .chip-size {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 </style>

@@ -304,11 +304,11 @@ function hourTitle(row: HeatRow, hour: number): string {
   align-items: center;
   gap: 6px;
   padding: 8px 4px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .as-state.is-error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .as-state .codicon {
@@ -329,17 +329,17 @@ function hourTitle(row: HeatRow, hour: number): string {
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .as-title .codicon {
-  color: var(--vscode-charts-blue, var(--vscode-foreground));
+  color: var(--gc-chart-blue);
 }
 
 .as-generated {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code), monospace;
 }
 
 /* 总览卡片 */
@@ -347,9 +347,9 @@ function hourTitle(row: HeatRow, hour: number): string {
   display: flex;
   gap: 12px;
   padding: 8px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
-  border-left: 3px solid var(--vscode-charts-blue, var(--vscode-foreground));
+  border-left: 3px solid var(--gc-chart-blue);
 }
 
 .as-total-item {
@@ -364,16 +364,16 @@ function hourTitle(row: HeatRow, hour: number): string {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .as-total-value.is-active {
-  color: var(--vscode-charts-green, var(--vscode-foreground));
+  color: var(--gc-chart-green);
 }
 
 .as-total-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 区块 */
@@ -386,7 +386,7 @@ function hourTitle(row: HeatRow, hour: number): string {
 .as-block-title {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .as-block-note {
@@ -415,14 +415,14 @@ function hourTitle(row: HeatRow, hour: number): string {
   width: 34px;
   text-align: right;
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code), monospace;
 }
 
 .as-day-track {
   flex: 1;
   height: 8px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
   overflow: hidden;
 }
@@ -430,7 +430,7 @@ function hourTitle(row: HeatRow, hour: number): string {
 .as-day-bar {
   height: 100%;
   min-width: 2px;
-  background: var(--vscode-charts-blue, var(--vscode-foreground));
+  background: var(--gc-chart-blue);
   border-radius: var(--gc-radius-xs);
   opacity: 0.85;
 }
@@ -439,8 +439,8 @@ function hourTitle(row: HeatRow, hour: number): string {
   flex-shrink: 0;
   width: 48px;
   font-size: 10px;
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code), monospace;
   text-align: right;
 }
 
@@ -450,12 +450,12 @@ function hourTitle(row: HeatRow, hour: number): string {
   gap: 6px;
   flex-shrink: 0;
   font-size: 10px;
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code), monospace;
 }
 
 .as-month-days {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 热力图 */
@@ -470,7 +470,7 @@ function hourTitle(row: HeatRow, hour: number): string {
   justify-content: space-between;
   padding-left: 42px;
   font-size: 9px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .as-heat-row {
@@ -484,8 +484,8 @@ function hourTitle(row: HeatRow, hour: number): string {
   width: 34px;
   text-align: right;
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code), monospace;
 }
 
 .as-heat-cells {
@@ -498,7 +498,7 @@ function hourTitle(row: HeatRow, hour: number): string {
   flex: 1;
   aspect-ratio: 1;
   min-width: 4px;
-  background: var(--vscode-charts-blue, var(--vscode-foreground));
+  background: var(--gc-chart-blue);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -512,14 +512,14 @@ function hourTitle(row: HeatRow, hour: number): string {
 .as-session {
   padding: 1px 6px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border, transparent);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   font-size: 10px;
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code), monospace;
+  color: var(--gc-text-primary);
 }
 
 .as-session.is-muted {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

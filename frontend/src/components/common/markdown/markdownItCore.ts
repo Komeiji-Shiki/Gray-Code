@@ -171,7 +171,7 @@ export async function renderMermaid(containerRef: Ref<HTMLElement | null>, isCur
           useMaxWidth: true
         },
         securityLevel: 'strict',
-        fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
+        fontFamily: 'var(--gc-font-code)'
       })
 
       await mermaid.run({

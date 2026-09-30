@@ -51,8 +51,8 @@ function goToDependencySettings() {
 <style scoped>
 .dependency-warning {
   padding: var(--spacing-sm, 8px) var(--spacing-md, 12px);
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -69,7 +69,7 @@ function goToDependencySettings() {
 }
 
 .warning-icon {
-  color: var(--vscode-charts-orange);
+  color: var(--gc-chart-orange);
   font-size: 14px;
   flex-shrink: 0;
 }
@@ -77,7 +77,7 @@ function goToDependencySettings() {
 .warning-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
 }
 
 .compact .warning-title {
@@ -87,7 +87,7 @@ function goToDependencySettings() {
 .warning-message {
   margin: var(--spacing-xs, 4px) 0 0 0;
   font-size: 11px;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
   line-height: 1.5;
 }
 
@@ -97,13 +97,13 @@ function goToDependencySettings() {
 
 .dep-list {
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .warning-hint {
   margin-top: var(--spacing-xs, 4px);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .compact .warning-hint {
@@ -111,12 +111,12 @@ function goToDependencySettings() {
 }
 
 .dep-link {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   cursor: pointer;
   text-decoration: underline;
 }
 
 .dep-link:hover {
-  color: var(--vscode-textLink-activeForeground);
+  color: var(--gc-link-active);
 }
 </style>

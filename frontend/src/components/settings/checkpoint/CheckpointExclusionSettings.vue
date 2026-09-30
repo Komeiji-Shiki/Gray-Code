@@ -275,13 +275,13 @@ defineEmits<{
 
 .group-title .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .setting-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 表单行 */
@@ -300,15 +300,15 @@ defineEmits<{
   width: 100px;
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
 .number-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .number-input:disabled {
@@ -317,7 +317,7 @@ defineEmits<{
 
 .hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* Loading 动画 */
@@ -348,7 +348,7 @@ defineEmits<{
 
 .profile-patterns {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
 }
 
@@ -360,15 +360,15 @@ defineEmits<{
   padding: 2px 8px;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
   cursor: pointer;
   border-radius: var(--gc-radius-xs);
 }
 
 .profile-edit-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .profile-edit-btn:disabled {
@@ -388,8 +388,8 @@ defineEmits<{
   padding: 1px 7px;
   margin-left: 6px;
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
-  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   font-size: 10px;
   font-weight: 500;
   vertical-align: middle;
@@ -402,8 +402,8 @@ defineEmits<{
   gap: 8px;
   margin: 8px 0;
   padding: 10px 12px;
-  background: var(--vscode-textBlockQuote-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-quote-bg);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -431,15 +431,15 @@ defineEmits<{
   padding: 2px 8px;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
   cursor: pointer;
   border-radius: var(--gc-radius-xs);
 }
 
 .profile-edit-clear:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .profile-edit-clear:disabled {
@@ -463,21 +463,21 @@ defineEmits<{
 }
 
 .profile-edit-save {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .profile-edit-save:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .profile-edit-cancel {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .profile-edit-cancel:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .exclusion-error {
@@ -487,9 +487,9 @@ defineEmits<{
   margin: 6px 0;
   padding: 6px 8px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
-  border: 1px solid var(--vscode-inputValidation-errorBorder, rgba(255, 0, 0, 0.4));
-  color: var(--vscode-errorForeground, #f14c4c);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
+  color: var(--gc-danger);
   font-size: 12px;
   word-break: break-all;
 }
@@ -503,16 +503,16 @@ defineEmits<{
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .preview-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .preview-btn:disabled {
@@ -522,7 +522,7 @@ defineEmits<{
 
 .preview-result {
   margin-top: 10px;
-  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
@@ -534,23 +534,23 @@ defineEmits<{
   padding: 8px 10px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--vscode-editorWidget-background, rgba(0, 0, 0, 0.1));
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  background: var(--gc-surface-raised);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .preview-partial {
   font-weight: 400;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .preview-empty {
   padding: 10px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .preview-row {
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .preview-row:last-child {
@@ -565,14 +565,14 @@ defineEmits<{
   padding: 7px 10px;
   background: transparent;
   border: none;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   font-size: 12px;
   text-align: left;
 }
 
 .preview-row-header:hover {
-  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
+  background: var(--gc-surface-hover);
 }
 
 .preview-row-label {
@@ -580,7 +580,7 @@ defineEmits<{
 }
 
 .preview-row-stats {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -591,7 +591,7 @@ defineEmits<{
 
 .preview-sample {
   padding: 4px 0;
-  border-bottom: 1px dashed var(--vscode-panel-border, rgba(128, 128, 128, 0.15));
+  border-bottom: 1px dashed var(--gc-border-subtle);
   font-size: 12px;
 }
 
@@ -609,16 +609,16 @@ defineEmits<{
   gap: 8px;
   margin-top: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .sample-reason {
-  color: var(--vscode-charts-yellow, #cca700);
+  color: var(--gc-chart-yellow);
 }
 
 .preview-no-samples {
   padding: 6px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

@@ -51,6 +51,6 @@ function updateWorkspaces(selected: string[]) {
 
 <style scoped>
 label,.grant-row{display:flex;justify-content:space-between;gap:30px;padding:16px 0;border-bottom:1px solid var(--gc-border-subtle)}
-label{align-items:center}select{width:58%;color:var(--gc-text-primary);background:var(--vscode-input-background);border:1px solid var(--gc-border-control);padding:8px 10px;font:inherit;border-radius:0}
+label{align-items:center}select{width:58%;color:var(--gc-text-primary);background:var(--gc-surface-input);border:1px solid var(--gc-border-control);padding:8px 10px;font:inherit;border-radius:0}
 .grant-row>span{padding-top:9px}.grant-options{width:58%;display:grid;gap:7px}p{color:var(--gc-text-muted);font-size:13px;line-height:1.7;margin:12px 0 20px}
 </style>

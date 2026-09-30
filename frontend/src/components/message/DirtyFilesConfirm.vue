@@ -113,7 +113,7 @@ function confirmDiscard(): void {
   margin-top: 8px;
   max-height: 180px;
   overflow: auto;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   padding: 4px 8px;
 }
@@ -124,12 +124,12 @@ function confirmDiscard(): void {
   gap: 6px;
   padding: 2px 0;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .dirty-file-item .codicon {
   flex-shrink: 0;
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
   font-size: 12px;
 }
 
@@ -139,12 +139,12 @@ function confirmDiscard(): void {
   white-space: nowrap;
   direction: rtl;
   text-align: left;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
 }
 
 .dirty-file-more {
   padding: 2px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

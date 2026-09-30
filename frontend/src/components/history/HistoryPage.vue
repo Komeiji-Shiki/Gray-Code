@@ -201,7 +201,7 @@ async function handleDelete(id: string) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .page-header {
@@ -209,7 +209,7 @@ async function handleDelete(id: string) {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .page-header h3 {
@@ -229,13 +229,13 @@ async function handleDelete(id: string) {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
 .filter-label {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
 }
 
@@ -246,7 +246,7 @@ async function handleDelete(id: string) {
 /* 搜索栏 */
 .search-bar {
   padding: 8px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
@@ -255,14 +255,14 @@ async function handleDelete(id: string) {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border: 1px solid var(--vscode-input-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input);
 }
 
 .search-input-container .codicon-search {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -271,14 +271,14 @@ async function handleDelete(id: string) {
   min-width: 0;
   padding: 0;
   background: transparent;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   border: none;
   font-size: 12px;
   outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .search-clear-btn {
@@ -291,13 +291,13 @@ async function handleDelete(id: string) {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .search-clear-btn:hover {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .search-clear-btn .codicon {
@@ -314,7 +314,7 @@ async function handleDelete(id: string) {
   padding: 32px 16px;
   text-align: center;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .no-results .codicon {
@@ -325,7 +325,7 @@ async function handleDelete(id: string) {
 .header-btn {
   background: transparent;
   border: none;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -335,7 +335,7 @@ async function handleDelete(id: string) {
 }
 
 .header-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .page-content {

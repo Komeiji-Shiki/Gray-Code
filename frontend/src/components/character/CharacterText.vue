@@ -37,5 +37,5 @@ onUnmounted(() => { clearTimeout(timer); window.removeEventListener('message', o
   <MarkdownRenderer v-else :content="content" :latex-only="user" :is-streaming="streaming" />
 </template>
 <style scoped>
-.character-fragment{position:relative;min-width:0}.character-fragment iframe{display:block;width:100%;border:0;background:transparent}.source-toggle{display:block;margin-left:auto;background:transparent;border:0;color:var(--vscode-descriptionForeground);font-size:11px;cursor:pointer;padding:3px 6px}.character-fragment pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 var(--vscode-editor-font-family,monospace)}
+.character-fragment{position:relative;min-width:0}.character-fragment iframe{display:block;width:100%;border:0;background:transparent}.source-toggle{display:block;margin-left:auto;background:transparent;border:0;color:var(--gc-text-muted);font-size:11px;cursor:pointer;padding:3px 6px}.character-fragment pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 var(--gc-font-code)}
 </style>

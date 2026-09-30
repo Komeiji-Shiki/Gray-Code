@@ -181,8 +181,8 @@ function handleKeydown(event: KeyboardEvent) {
   justify-content: space-between;
   width: 100%;
   padding: 4px 8px;
-  background: var(--vscode-input-background, var(--gc-surface-base));
-  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
   border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
@@ -214,7 +214,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .select-arrow {
@@ -235,8 +235,8 @@ function handleKeydown(event: KeyboardEvent) {
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
-  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   box-shadow: var(--gc-shadow-md);
   z-index: var(--gc-layer-popover);
@@ -247,7 +247,7 @@ function handleKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--vscode-dropdown-border);
+  border-bottom: 1px solid var(--gc-border-control);
   min-width: 0;
   overflow: hidden;
 }
@@ -257,17 +257,17 @@ function handleKeydown(event: KeyboardEvent) {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   padding: 4px 8px;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .channels-list {
@@ -285,12 +285,12 @@ function handleKeydown(event: KeyboardEvent) {
 
 .channel-item:hover,
 .channel-item.highlighted {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .channel-item.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .channel-content {
@@ -310,14 +310,14 @@ function handleKeydown(event: KeyboardEvent) {
 
 .channel-model {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .channel-item.selected .channel-model {
-  color: var(--vscode-list-activeSelectionForeground);
+  color: var(--gc-text-selected);
   opacity: 0.8;
 }
 
@@ -332,7 +332,7 @@ function handleKeydown(event: KeyboardEvent) {
   padding: 12px 8px;
   text-align: center;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 动画 */

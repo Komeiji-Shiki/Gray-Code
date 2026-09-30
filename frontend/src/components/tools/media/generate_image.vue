@@ -97,7 +97,7 @@ const headerExtra = (result: MediaToolResultData) =>
     :is-batch="isBatchMode"
     :ns="NS"
     icon="codicon-file-media"
-    accent-color="var(--vscode-charts-purple)"
+    accent-color="var(--gc-chart-purple)"
     batch-title-key="batchTasks"
     single-title-key="generateTask"
     cancel-title-key="cancelGeneration"

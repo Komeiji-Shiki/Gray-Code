@@ -853,23 +853,23 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border: none;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   cursor: pointer;
   font-size: 11px;
 }
 
 .review-card-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .review-card-btn.secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .review-card-btn.secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+  background: var(--gc-button-secondary-hover);
 }
 
 .review-card-btn:disabled {
@@ -889,34 +889,34 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .review-summary-item.tone-success {
-  border-color: var(--vscode-testing-iconPassed);
+  border-color: var(--gc-success);
 }
 
 .review-summary-item.tone-warning {
-  border-color: var(--vscode-editorWarning-foreground);
+  border-color: var(--gc-warning);
 }
 
 .review-summary-item.tone-error {
-  border-color: var(--vscode-errorForeground);
+  border-color: var(--gc-danger);
 }
 
 .review-summary-label {
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .review-summary-value {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -932,24 +932,24 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 4px 8px;
   border-radius: var(--gc-radius-pill);
-  border: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  border: 1px solid var(--gc-border-subtle);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   font-size: 11px;
   line-height: 1.4;
 }
 
 .review-module-tag.finding-id {
-  font-family: var(--vscode-editor-font-family), monospace;
-  background: var(--vscode-editorWidget-background, var(--vscode-badge-background));
+  font-family: var(--gc-font-code), monospace;
+  background: var(--gc-surface-raised);
   max-width: 100%;
   white-space: normal;
   word-break: break-all;
 }
 
 .review-module-tag.finding-meta {
-  background: var(--vscode-editorInfo-background);
-  color: var(--vscode-editorInfo-foreground);
+  background: var(--gc-info-bg);
+  color: var(--gc-info);
 }
 
 .review-compare-endpoint {
@@ -957,15 +957,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 4px;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .review-compare-endpoint-value {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -983,9 +983,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .review-finding-header {
@@ -1005,7 +1005,7 @@ onBeforeUnmount(() => {
 .review-finding-title {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-weight: 600;
   flex: 1;
 }
@@ -1021,7 +1021,7 @@ onBeforeUnmount(() => {
 .review-evidence-item {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -1037,7 +1037,7 @@ onBeforeUnmount(() => {
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .review-finding-rich {
@@ -1056,7 +1056,7 @@ onBeforeUnmount(() => {
 .review-detail-value {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -1070,13 +1070,13 @@ onBeforeUnmount(() => {
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .review-change-value {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
@@ -1090,14 +1090,14 @@ onBeforeUnmount(() => {
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .review-rich-content,
 .review-raw-result {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
   overflow: hidden;
 }
 
@@ -1132,9 +1132,9 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: flex-start;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .review-issue-badge {
@@ -1142,24 +1142,24 @@ onBeforeUnmount(() => {
   border-radius: var(--gc-radius-pill);
   padding: 2px 8px;
   font-size: 10px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .review-issue-badge.error {
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-errorForeground);
+  background: var(--gc-danger-bg);
+  color: var(--gc-danger);
 }
 
 .review-issue-badge.warning {
-  background: var(--vscode-inputValidation-warningBackground);
-  color: var(--vscode-editorWarning-foreground);
+  background: var(--gc-warning-bg);
+  color: var(--gc-warning);
 }
 
 .review-issue-text {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .review-raw-text {
@@ -1168,7 +1168,7 @@ onBeforeUnmount(() => {
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code), monospace;
 }
 </style>

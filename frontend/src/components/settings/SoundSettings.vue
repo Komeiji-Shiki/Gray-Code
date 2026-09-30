@@ -865,9 +865,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   flex-direction: column;
   gap: 12px;
   padding: 14px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .section-header,
@@ -880,21 +880,21 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 .section-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-description {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .loading {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: 16px 0;
 }
 
@@ -903,8 +903,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   flex-direction: column;
   gap: 6px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -923,7 +923,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 .field-description {
   margin: 0 0 8px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .slider-row {
@@ -940,7 +940,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   min-width: 70px;
   text-align: right;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .cues-grid {
@@ -958,7 +958,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 .cue-group-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .assets-list {
@@ -973,9 +973,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   justify-content: space-between;
   gap: 12px;
   padding: 8px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editorWidget-background);
+  background: var(--gc-surface-raised);
 }
 
 .asset-row-left {
@@ -992,7 +992,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 .asset-row-value {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1018,7 +1018,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 .inline-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .template-grid {
@@ -1043,9 +1043,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   width: 100%;
   padding: 8px 10px;
   font-size: 12px;
-  color: var(--vscode-input-foreground);
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border, transparent);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   box-sizing: border-box;
 }
@@ -1064,8 +1064,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 .variable-chip {
   padding: 2px 6px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .actions {
@@ -1080,8 +1080,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   gap: 6px;
   padding: 6px 12px;
   font-size: 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -1089,7 +1089,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 }
 
 .action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-btn:disabled {
@@ -1098,8 +1098,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 }
 
 .action-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .save-message,
@@ -1109,11 +1109,11 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 .save-message.success,
 .test-message.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .save-message.error,
 .test-message.error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 </style>

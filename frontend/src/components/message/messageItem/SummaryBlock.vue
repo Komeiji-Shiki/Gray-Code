@@ -42,9 +42,9 @@ const isSummaryExpanded = ref(false)
 
 <style scoped>
 .summary-block {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   overflow: hidden;
 }
 
@@ -56,42 +56,42 @@ const isSummaryExpanded = ref(false)
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
 }
 
 .summary-header:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .summary-header .codicon {
   font-size: 12px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .summary-icon {
-  color: var(--vscode-textLink-foreground) !important;
+  color: var(--gc-link) !important;
 }
 
 .summary-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .summary-count {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-left: 4px;
 }
 
 .summary-content {
   padding: 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .summary-text {
   font-size: 13px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.5;
 }
 

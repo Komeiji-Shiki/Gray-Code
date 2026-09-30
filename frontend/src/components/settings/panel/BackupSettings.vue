@@ -75,28 +75,28 @@ async function revealPrevious() {
 <style scoped>
 .backup-settings { min-width: 0; }
 .group-label { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; font-weight: 600; }
-.field-description, .field-hint { color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.7; }
+.field-description, .field-hint { color: var(--gc-text-muted); font-size: 12px; line-height: 1.7; }
 .field-description { margin: 0 0 15px; }
 .field-hint { margin: 0 0 3px; }
-.error-hint { color: var(--vscode-errorForeground); overflow-wrap: anywhere; font-size: 12px; }
+.error-hint { color: var(--gc-danger); overflow-wrap: anywhere; font-size: 12px; }
 .backup-controls { display: grid; gap: 9px; }
 .backup-controls label { font-size: 12px; font-weight: 600; }
-.backup-controls label span { margin-left: 6px; color: var(--vscode-descriptionForeground); font-weight: 400; }
-.backup-controls input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 0; background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-.backup-controls input:focus { outline: 1px solid var(--vscode-focusBorder); }
+.backup-controls label span { margin-left: 6px; color: var(--gc-text-muted); font-weight: 400; }
+.backup-controls input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--gc-border-control); border-radius: 0; background: var(--gc-surface-input); color: var(--gc-text-primary); }
+.backup-controls input:focus { outline: 1px solid var(--gc-focus-border); }
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--vscode-panel-border); border-radius: 0; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); font-size: 12px; cursor: pointer; }
-.action-btn.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
+.action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--gc-border-subtle); border-radius: 0; background: var(--gc-button-secondary); color: var(--gc-text-on-secondary); font-size: 12px; cursor: pointer; }
+.action-btn.primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); border-color: transparent; }
 .action-btn:disabled { opacity: .5; cursor: default; }
 .action-btn:hover:enabled { filter: brightness(1.12); }
-.backup-progress, .backup-pending { margin-top: 14px; padding: 12px; background: var(--vscode-textBlockQuote-background); border: 1px solid var(--vscode-panel-border); }
+.backup-progress, .backup-pending { margin-top: 14px; padding: 12px; background: var(--gc-quote-bg); border: 1px solid var(--gc-border-subtle); }
 .backup-progress > div { display: flex; align-items: center; gap: 8px; }
 .backup-progress span { margin-left: auto; }
-.backup-progress progress { display: block; width: 100%; height: 3px; margin: 10px 0; accent-color: var(--vscode-focusBorder); }
-.backup-progress code { display: block; margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 11px; }
-.backup-pending p, .backup-scope p { color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.7; }
+.backup-progress progress { display: block; width: 100%; height: 3px; margin: 10px 0; accent-color: var(--gc-focus-border); }
+.backup-progress code { display: block; margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gc-text-muted); font-size: 11px; }
+.backup-pending p, .backup-scope p { color: var(--gc-text-muted); font-size: 12px; line-height: 1.7; }
 .backup-previous { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
 .backup-previous code { overflow-wrap: anywhere; }
 .backup-scope { margin-top: 16px; font-size: 12px; }
-.backup-scope summary { cursor: pointer; color: var(--vscode-descriptionForeground); }
+.backup-scope summary { cursor: pointer; color: var(--gc-text-muted); }
 </style>
