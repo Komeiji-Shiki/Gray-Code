@@ -1028,6 +1028,8 @@ export interface ContentPart {
     functionCall?: {
         /** Responses 原生异步调用标记；只有运行器允许的调用才提前执行。 */
         async?: boolean;
+        /** Responses 命名空间属于上游调用身份，回放时必须原样保留；本地派发仍使用 name。 */
+        namespace?: string;
         name: string;
         args: Record<string, unknown>;
         /** 增量解析时的原始 JSON 字符串（用于流式输出） */

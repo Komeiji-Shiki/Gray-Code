@@ -27,7 +27,8 @@ export function nativeToolDeclaration(tool: ToolDeclaration, description?: strin
   const properties = Object.fromEntries(Object.entries(tool.parameters.properties as Record<string, object> ?? {})
     .map(([name, schema]) => [name, parameterDescriptions[name] ? { ...schema, description: parameterDescriptions[name] } : schema]));
   return { ...tool, async: true,
-    description: `${tool.description}\nNative async: choose a fresh task_handle unique in this conversation. Continue independent work while the call is pending; use wait_for_tasks before work that needs its result.${description ? `\n${description}` : ''}`,
+    // 通用等待规则由 wait_for_tasks 统一说明；工具自身只补宿主特有边界，减少稳定前缀中的重复文本。
+    description: `${tool.description}${description ? `\n${description}` : ''}`,
     parameters: { ...tool.parameters, properties: { ...properties,
       task_handle: { type: 'string', minLength: 1, maxLength: 120, description: 'Unique handle for this call, including earlier completed tasks. Use it with wait_for_tasks.' } },
       required: [...new Set([...(tool.parameters.required as string[] ?? []), 'task_handle'])] } };

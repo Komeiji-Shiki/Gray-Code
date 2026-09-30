@@ -27,6 +27,8 @@ export interface ToolContext {
   signal: AbortSignal;
   /** 仅由运行器设置，后台宿主据此把终态返回原始调用。 */
   nativeAsync?: boolean;
+  /** 原生异步调用经过运行器接管后的句柄，供宿主返回正确的等待入口；不取自普通工具参数。 */
+  nativeTaskHandle?: string;
   askUser: (questions: UserQuestion[]) => Promise<QuestionRequest>;
   progress: (value: Record<string, unknown>) => void;
 }

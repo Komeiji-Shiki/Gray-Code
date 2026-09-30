@@ -67,7 +67,7 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
 interface ActiveRun { conversationId: string; controller: AbortController; done: Promise<void> }
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
-interface FunctionCall { id: string; name: string; args: Record<string, unknown>; async?: boolean }
+interface FunctionCall extends ModelToolCall {}
 export interface PreparedConversationChange {
   /** 仅由可信宿主提供的来源记录；公开请求不能直接提交此对象。 */
   messageMetadata?: Record<string, unknown>;
@@ -380,9 +380,11 @@ export class PlatformRuntime {
             if (early.has(call.id) || earlySignal.aborted || call.async !== true || !request.tools.some(tool => tool.name === call.name && tool.async)
               || !this.nativeCall(call, agent, catalog)) return false;
             const saved = structuredClone(call);
+            // 排队调用可能跨过后续模型迭代，工具的审批与副作用记录仍归属发出它的原始轮次。
+            const toolRun = structuredClone(run);
             const accepted = this.nativeTools.launch(run, saved, state.history.messages, async () => earlySignal.aborted
               ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
-              : this.executeTool(run, agent, workspace, catalog, saved, earlySignal, request, true));
+              : this.executeTool(toolRun, agent, workspace, catalog, saved, earlySignal, request, true));
             if (accepted) early.set(call.id, { call: saved });
             return accepted;
           },
@@ -427,7 +429,7 @@ export class PlatformRuntime {
             generated = await this.services.models.generate(request);
             for (const { call } of early.values()) {
               const returned = generated.parts.find(part => (part.functionCall as FunctionCall | undefined)?.id === call.id)?.functionCall as FunctionCall | undefined;
-              if (!returned || returned.name !== call.name || JSON.stringify(returned.args) !== JSON.stringify(call.args)) throw new Error('原生异步调用的终态与已发出的完整参数不一致。');
+              if (!returned || returned.name !== call.name || returned.namespace !== call.namespace || JSON.stringify(returned.args) !== JSON.stringify(call.args)) throw new Error('原生异步调用的终态与已发出的完整参数不一致。');
               // 已接管的调用不能因流末标记变化再次执行，历史与等待继续使用原执行身份。
               returned.async = true;
             }
@@ -491,8 +493,11 @@ export class PlatformRuntime {
           }
           if (nativeEnabled && next.async && request.tools.some(tool => tool.name === next.name && tool.async) && this.nativeCall(next, agent, catalog)) {
             index++;
-            if (!this.nativeTools.has(run.id, next.id)) this.nativeTools.launch(run, next, page.messages,
-              () => this.executeTool(run, agent, workspace, catalog, next, earlySignal, request, true));
+            if (!this.nativeTools.has(run.id, next.id)) {
+              const toolRun = structuredClone(run);
+              this.nativeTools.launch(run, next, page.messages,
+                () => this.executeTool(toolRun, agent, workspace, catalog, next, earlySignal, request, true));
+            }
             await this.nativeTools.publish(run.id, [next]); continue;
           }
           const batch = [calls[index++]];
@@ -541,7 +546,8 @@ export class PlatformRuntime {
       const id = source.id ?? randomUUID();
       if (typeof id !== 'string' || ids.has(id) || typeof source.name !== 'string') throw new Error('Model returned invalid or duplicate tool identities.');
       ids.add(id);
-      const call = { id, name: source.name, args: source.args ?? {}, ...(source.async === true ? { async: true } : {}) };
+      const call = { id, name: source.name, args: source.args ?? {}, ...(source.async === true ? { async: true } : {}),
+        ...(typeof source.namespace === 'string' ? { namespace: source.namespace } : {}) };
       part.functionCall = { ...source, id };
       calls.push(call);
     }
@@ -568,6 +574,7 @@ export class PlatformRuntime {
   }
 
   private async executeTool(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, call: FunctionCall, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>, nativeAsync = false): Promise<ToolOutcome> {
+    const nativeTaskHandle = nativeAsync && typeof call.args.task_handle === 'string' ? call.args.task_handle : undefined;
     try {
       const entry = catalog.entries.get(call.name);
       if (!entry) return { success: false, code: 'UNKNOWN_TOOL', error: 'Tool is absent from the configured catalog.' };
@@ -597,7 +604,7 @@ export class PlatformRuntime {
       }
       signal.throwIfAborted();
       await this.event(run.id, 'tool.started', { toolCallId: call.id, toolName: call.name });
-      const context: ToolContext = { runId: run.id, conversationId: run.conversationId, toolCallId: call.id, iteration: run.iteration, actorId: run.actorId, workspace, signal, nativeAsync,
+      const context: ToolContext = { runId: run.id, conversationId: run.conversationId, toolCallId: call.id, iteration: run.iteration, actorId: run.actorId, workspace, signal, nativeAsync, nativeTaskHandle,
         approvedByToolConfirmation: approval,
         actor: current ?? undefined,
         requestApproval: async reason => {

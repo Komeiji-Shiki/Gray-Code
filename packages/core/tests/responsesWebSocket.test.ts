@@ -83,6 +83,10 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     expect(requests[1].previous_response_id).toBe('resp1'); expect(requests[1].input).toHaveLength(1);
     expect(requests[1].input[0]).toMatchObject({ type: 'function_call_output', call_id: 'call1' });
     expect(requests[1].stream).toBeUndefined();
+    // 认证续接约束位于两种传输共用的发送入口，换模型不能复用当前任务的原生状态。
+    profile = { ...profile, model: 'different-model' };
+    await expect(adapter.generate(input)).rejects.toThrow('账户、端点或模型已经变化');
+    expect(requests).toHaveLength(2);
   });
 
   test('consumes an automatic successor and never resends accepted steering', async () => {

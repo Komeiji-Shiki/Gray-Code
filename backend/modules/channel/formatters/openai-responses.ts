@@ -514,6 +514,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         type: 'function_call',
                         name: part.functionCall.name,
                         call_id: part.functionCall.id,
+                        ...(typeof part.functionCall.namespace === 'string' ? { namespace: part.functionCall.namespace } : {}),
                         ...(part.functionCall.async === true ? { async: true } : {}),
                         arguments: typeof part.functionCall.args === 'string'
                             ? part.functionCall.args
@@ -713,6 +714,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         name: item.name,
                         args,
                         id: item.call_id,
+                        ...(typeof item.namespace === 'string' ? { namespace: item.namespace } : {}),
                         ...(typeof item.async === 'boolean' ? { async: item.async } : {})
                     }
                 });
@@ -781,6 +783,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             args: {},
                             partialArgs: '',
                             id: chunk.item.call_id,
+                            ...(typeof chunk.item.namespace === 'string' ? { namespace: chunk.item.namespace } : {}),
                             ...(typeof chunk.item.async === 'boolean' ? { async: chunk.item.async } : {}),
                             itemId: chunk.item.id,
                             index: chunk.output_index
@@ -802,6 +805,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             args: {},
                             partialArgs: chunk.item.arguments,
                             id: chunk.item.call_id,
+                            ...(typeof chunk.item.namespace === 'string' ? { namespace: chunk.item.namespace } : {}),
+                            ...(typeof chunk.item.namespace === 'string' ? { namespace: chunk.item.namespace } : {}),
                             ...(typeof chunk.item.async === 'boolean' ? { async: chunk.item.async } : {}),
                             itemId: chunk.item.id,
                             index: chunk.output_index,

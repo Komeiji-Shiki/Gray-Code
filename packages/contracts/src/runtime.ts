@@ -29,7 +29,7 @@ export interface WorkspaceDefinition {
   /** 完整目录列表，首项为命令等操作的默认目录；旧单目录记录继续使用 directory。 */
   roots?: WorkspaceRootDefinition[];
 }
-export interface ModelToolCall { id: string; name: string; args: Record<string, unknown>; async?: boolean }
+export interface ModelToolCall { id: string; name: string; args: Record<string, unknown>; async?: boolean; namespace?: string }
 export interface ToolDeclaration {
   /** 运行器允许的原生异步工具；供应方仍须显式开启此能力。 */
   async?: boolean;

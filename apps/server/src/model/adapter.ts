@@ -37,9 +37,10 @@ export interface ModelAdapterServices {
 /** Composition adapter reuses the existing provider codecs and HTTP stream parser. */
 export class ProviderModelAdapter implements ModelProvider {
   private readonly http: ChannelHttpExecutor;
-  private readonly sockets = new Map<string, { socket: ResponsesWebSocket; identity: string; formatInput: (messages: PlatformMessage[]) => any[] }>();
+  private readonly sockets = new Map<string, { socket: ResponsesWebSocket; formatInput: (messages: PlatformMessage[]) => any[] }>();
+  private readonly runIdentities = new Map<string, string>();
   hasContinuation(runId: string): boolean { return this.sockets.get(runId)?.socket.hasContinuation() ?? false; }
-  endRun(runId: string): void { this.sockets.get(runId)?.socket.close(); this.sockets.delete(runId); }
+  endRun(runId: string): void { this.sockets.get(runId)?.socket.close(); this.sockets.delete(runId); this.runIdentities.delete(runId); }
   async steer(runId: string, message: PlatformMessage): Promise<boolean> {
     const session = this.sockets.get(runId);
     return session && message.id ? session.socket.steer(message.id, session.formatInput([message])) : false;
@@ -166,24 +167,24 @@ export class ProviderModelAdapter implements ModelProvider {
   async generate(input: ModelInput): Promise<PlatformMessage> {
     const { profile, config, formatter, options, credentialIdentity } = await this.prepare(input, true);
     input.signal.throwIfAborted();
+    // 密文与原生调用会跨多次请求回放。两种传输都固定本任务的认证身份，订阅只比较账号，允许同账号令牌刷新。
+    const identity = credentialIdentity ? JSON.stringify([options.url, options.body?.model, credentialIdentity,
+      Object.fromEntries(Object.entries(options.headers ?? {}).filter(([key]) => key.toLowerCase() !== 'authorization'))])
+      : ResponsesWebSocket.identity(options);
+    if (profile.protocol === 'openai-responses' && input.runId && !input.purpose) {
+      const previous = this.runIdentities.get(input.runId);
+      if (previous !== undefined && previous !== identity) throw new Error('当前任务的账户、端点或模型已经变化，请结束当前任务后使用新设置继续，避免混用原生调用与旧推理状态。');
+      this.runIdentities.set(input.runId, identity);
+    }
     const native = profile.protocol === 'openai-responses' && (config as any).responsesWebSocketEnabled === true && input.runId && !input.purpose;
     let socket: ResponsesWebSocket | undefined;
     let source: AsyncIterable<any> | undefined;
     const capture = async (body: any) => { await input.onRequest?.({ protocol: profile.protocol, model: config.model, body, metrics: modelRequestMetrics(body) }); };
     if (native) {
-      // 同一账户的令牌轮换不重建已认证连接；账户、端点或模型变化仍受原有续接保护。
-      const identity = credentialIdentity ? JSON.stringify([options.url, options.body?.model, credentialIdentity,
-        Object.fromEntries(Object.entries(options.headers ?? {}).filter(([key]) => key.toLowerCase() !== 'authorization'))])
-        : ResponsesWebSocket.identity(options);
-      const previous = this.sockets.get(input.runId!);
-      if (previous && previous.identity !== identity) {
-        if (previous.socket.hasContinuation()) throw new Error('原生响应尚未续接完成，不能在当前任务中更换渠道或模型。');
-        this.endRun(input.runId!);
-      }
       socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal);
       const formatInput = (messages: PlatformMessage[]) => formatter.buildRequest({ configId: config.id, conversationId: input.conversationId,
         history: messages as Content[], dynamicContextStrategy: 'preserve', skipTools: true }, config).body.input;
-      this.sockets.set(input.runId!, { socket, formatInput, identity });
+      this.sockets.set(input.runId!, { socket, formatInput });
       const context = socket.context(input.messages, input.promptContext);
       source = socket.response((messages, full) => ({ ...options.body, input: full ? options.body.input : formatInput(messages) }), input.messages, context.full, capture);
     } else {
@@ -214,7 +215,8 @@ export class ProviderModelAdapter implements ModelProvider {
       if (item?.type !== 'function_call' || issued.has(item.call_id)) return;
       if (blocked || item.async !== true || !asyncNames.has(item.name)) { blocked = true; return; }
       const call = formatter.parseResponse({ output: [item] }).content.parts[0]?.functionCall;
-      if (call?.id && input.onToolCallReady?.({ id: call.id, name: call.name, args: call.args, async: true })) issued.add(call.id);
+      if (call?.id && input.onToolCallReady?.({ id: call.id, name: call.name, args: call.args, async: true,
+        ...(typeof call.namespace === 'string' ? { namespace: call.namespace } : {}) })) issued.add(call.id);
       else blocked = true;
     };
     for await (const raw of source) {

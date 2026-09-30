@@ -18,12 +18,14 @@ describe('无明文推理经过存储和历史格式化后回放', () => {
     test.each(['stream', 'nonstream'])('Responses 无摘要密文保留在工具调用之前：%s', mode => {
         const formatter = new OpenAIResponsesFormatter();
         const reasoning = { type: 'reasoning', id: 'rs_1', status: 'completed', summary: [], encrypted_content: 'encrypted-reasoning' };
-        const call = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'read_file', arguments: '{"path":"a.txt"}' };
+        const call = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'read_file', namespace: 'graycode', async: true, arguments: '{"path":"a.txt"}' };
         let model: Content;
         if (mode === 'stream') {
             const accumulator = new StreamAccumulator();
             accumulator.setProviderType('openai-responses');
             for (const [output_index, item] of [reasoning, call].entries()) {
+                if (item.type === 'function_call') accumulator.add(formatter.parseStreamChunk({ type: 'response.output_item.added', output_index,
+                    item: { ...item, namespace: undefined, arguments: '' } }));
                 accumulator.add(formatter.parseStreamChunk({ type: 'response.output_item.done', output_index, item }));
             }
             model = accumulator.getFinalContent();
@@ -35,6 +37,7 @@ describe('无明文推理经过存储和历史格式化后回放', () => {
         expect(body.input.map((item: any) => item.type)).toEqual(['message', 'reasoning', 'function_call', 'function_call_output']);
         expect(body.input[1]).toEqual(reasoning);
         expect(body.input[2].call_id).toBe('call_1');
+        expect(body.input[2]).toMatchObject({ namespace: 'graycode', async: true });
         expect(body.input[3].call_id).toBe('call_1');
     });
 

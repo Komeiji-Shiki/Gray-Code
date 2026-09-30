@@ -594,6 +594,11 @@ export class StreamAccumulator {
                             lastFc.async = fc.async;
                             visibleFieldChanged = true;
                         }
+                        // namespace 可能只在完整调用到达时给出，不能在分段合并中丢掉其上游作用域。
+                        if (typeof fc.namespace === 'string' && lastFc.namespace !== fc.namespace) {
+                            lastFc.namespace = fc.namespace;
+                            visibleFieldChanged = true;
+                        }
                         // itemId 仅用于后续流式片段定位，最终Content 会统一删除。
                         if (fc.itemId && !lastFc.itemId) {
                             lastFc.itemId = fc.itemId;
