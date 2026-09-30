@@ -414,7 +414,10 @@ export class PlatformRuntime {
           const allowed = runtimeTool?.nativeAsync !== false && agent.toolApproval?.[tool.name] !== 'deny' && (runtimeTool?.nativeAsync === true
             || runtimeTool?.parallelRead === true && agent.toolApproval?.[tool.name] !== 'ask'
               && !(agent.reviewerProviderId && agent.reviewerToolNames?.includes(tool.name)));
-          return nativeEnabled && allowed ? nativeToolDeclaration(tool, runtimeTool?.nativeAsyncDescription, runtimeTool?.nativeAsyncParameterDescriptions) : { ...tool, async: undefined };
+          if (nativeEnabled && allowed) return nativeToolDeclaration(tool, runtimeTool?.nativeAsyncDescription, runtimeTool?.nativeAsyncParameterDescriptions);
+          // 存储会省略 undefined；同步声明直接移除标记，让保存前后的完整前缀保持同一结构。
+          const { async: _async, ...synchronous } = tool;
+          return synchronous;
         });
         if (request.tools.some(tool => tool.async)) request.tools.push(structuredClone(waitForTasksDeclaration));
         const prepared = await this.services.prepareModel?.({ run, agent, workspace, iteration, input: request, history: state });

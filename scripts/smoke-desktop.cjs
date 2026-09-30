@@ -7,6 +7,9 @@ const { createServer } = require('node:http');
 const { randomUUID } = require('node:crypto');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
+// 与正式界面共用隔离桥回执解包，不能把 { ok, value } 当成设置或任务正文。
+const bridgeSource = require('esbuild').buildSync({ entryPoints: [path.join(root, 'shared/desktopBridge.ts')],
+  bundle: true, write: false, format: 'iife', globalName: 'GraycodeSmokeBridge' }).outputFiles[0].text;
 const output = process.env.GRAYCODE_SMOKE_OUTPUT || path.join(root, '.tmp', `desktop-smoke-${randomUUID().slice(0, 8)}`);
 assert(path.dirname(path.resolve(output)) === path.join(root, '.tmp') && path.basename(output).startsWith('desktop-smoke-'));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -184,7 +187,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const window = await until(() => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().startsWith('graycode://app/index')), 'main window');
   const evaluate = source => window.webContents.executeJavaScript(source, true);
-  const rpc = (method, params = {}) => evaluate(`window.graycode.call(${JSON.stringify(method)}, ${JSON.stringify(params)})`);
+  const rpc = (method, params = {}) => evaluate(`(() => { ${bridgeSource}\nreturn GraycodeSmokeBridge.callDesktopBridge(window.graycode, ${JSON.stringify(method)}, ${JSON.stringify(params)}); })()`);
   const ui = (type, data = {}) => rpc('ui.request', { type, data });
   const chat = source => {
     const frame = window.webContents.mainFrame.frames.find(frame => frame.url.includes('/chat/platform.html'));
