@@ -57,12 +57,19 @@ export function appearanceFontVariables(config: Pick<AppearanceSettings, 'uiFont
   };
 }
 
+/** 共享模块也由不含 DOM 库的根 tsconfig 检查，这里只描述用到的根元素能力。 */
+export interface AppearanceTarget {
+  style: { setProperty(name: string, value: string): void };
+  dataset: Record<string, string | undefined>;
+}
+
 /** 写到文档根元素：tokens.css 的派生色在 :root 计算，基础值必须落在同一元素上。 */
-export function applyAppearanceVariables(target: HTMLElement, config: AppearanceSettings, systemLight: boolean): void {
+export function applyAppearanceVariables(target: AppearanceTarget, config: AppearanceSettings, systemLight: boolean): void {
+  const css = (globalThis as { CSS?: { supports(property: string, value: string): boolean } }).CSS;
   const palette = resolveAppearancePalette(config.theme, config.colors, systemLight, config.darkPalette);
   for (const [token, value] of Object.entries(appearanceFontVariables(config))) target.style.setProperty(token, value);
   for (const [token, value] of Object.entries(appearanceCssVariables(palette)))
-    if (CSS.supports('color', value)) target.style.setProperty(token, value);
+    if (!css || css.supports('color', value)) target.style.setProperty(token, value);
   for (const [role, value] of Object.entries(resolveCodePalette(config.theme, systemLight).syntax))
     target.style.setProperty(`--gc-syntax-${role}`, value);
   const theme = resolveAppearanceTheme(config.theme, systemLight);
