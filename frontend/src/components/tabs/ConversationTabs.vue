@@ -295,7 +295,7 @@ watch(() => props.tabs.length, () => {
   height: 26px;
   min-height: 26px;
   background: var(--gc-surface-chrome);
-  border-bottom: 1px solid var(--gc-border-subtle);
+  border-bottom: 1px solid var(--gc-border-chrome);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -341,11 +341,10 @@ watch(() => props.tabs.length, () => {
   height: 100%;
   cursor: pointer;
   white-space: nowrap;
-  border-right: 1px solid var(--gc-border-subtle);
+  border-right: 1px solid var(--gc-border-chrome);
   background: transparent;
-  color: var(--gc-text-muted);
-  opacity: 0.7;
-  transition: opacity var(--transition-fast, 0.1s ease),
+  color: var(--gc-text-on-chrome-muted);
+  transition: color var(--transition-fast, 0.1s ease),
               background var(--transition-fast, 0.1s ease);
   position: relative;
   z-index: 20;
@@ -353,8 +352,8 @@ watch(() => props.tabs.length, () => {
 }
 
 .tab-item:hover {
-  opacity: 1;
-  background: var(--gc-surface-hover);
+  color: var(--gc-text-on-chrome);
+  background: var(--gc-surface-chrome-hover);
 }
 
 .tab-item.active {

@@ -309,7 +309,7 @@ details > summary {
   color-scheme: light;
 }
 .application[data-density="compact"] {
-  --font-size: 12px;
+  --gc-font-size-ui: 12px;
 }
 .application[data-density="compact"] button {
   padding-top: 4px;
@@ -322,9 +322,10 @@ details > summary {
   align-items: center;
   justify-content: space-between;
   padding: 0 17px;
-  border-bottom: 1px solid var(--gc-border-subtle);
+  border-bottom: 1px solid var(--gc-border-chrome);
   gap: 24px;
-  background: var(--gc-surface-base);
+  background: var(--gc-surface-chrome);
+  color: var(--gc-text-on-chrome);
 }
 .wordmark {
   display: flex;

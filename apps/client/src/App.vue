@@ -258,7 +258,7 @@ onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?
 </template>
 <style>
 .loading-state.startup-error{flex-direction:column;gap:12px;padding:24px;text-align:center}.startup-error p{max-width:640px;overflow-wrap:anywhere;color:var(--gc-text-muted);margin:0}
-.mode-navigation{display:flex;gap:2px;-webkit-app-region:no-drag}.mode-navigation button{border:0;border-radius:0;background:transparent;color:var(--gc-text-muted);padding:7px 12px;cursor:pointer}.mode-navigation button[aria-pressed="true"]{color:var(--gc-text-primary);box-shadow:inset 0 -2px var(--gc-accent);background:var(--gc-surface-sunken)}.desktop-workspace.chat-focused .product-chat{border-right:0}
+.mode-navigation{display:flex;gap:2px;-webkit-app-region:no-drag}.mode-navigation button{border:0;border-radius:0;background:transparent;color:var(--gc-text-on-chrome-muted);padding:7px 12px;cursor:pointer}.mode-navigation button:hover{color:var(--gc-text-on-chrome);background:var(--gc-surface-chrome-hover)}.mode-navigation button[aria-pressed="true"]{color:var(--gc-text-on-chrome);box-shadow:inset 0 -2px var(--gc-accent);background:transparent}.desktop-workspace.chat-focused .product-chat{border-right:0}
 .desktop-workspace { display: grid; grid-template-columns: minmax(300px, var(--chat-width, 48%)) 5px minmax(0, 1fr); flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .application-body { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
 .application-body .desktop-workspace { min-width: 0; }

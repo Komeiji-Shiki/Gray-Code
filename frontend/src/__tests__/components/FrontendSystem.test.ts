@@ -124,6 +124,18 @@ describe('frontend visual and async architecture contracts', () => {
     expect(shell).toMatch(/\nbutton\s*\{[^}]*border:\s*1px solid transparent/)
   })
 
+  test('外壳结构使用外壳色，选中项为浅底加左侧强调条', () => {
+    const sidebar = readFileSync(path.join(repoRoot, 'apps/client/src/components/navigation/conversationSidebar.css'), 'utf8')
+    expect(sidebar).toMatch(/\.conversation-sidebar\{[^}]*background:var\(--gc-surface-chrome\)/)
+    expect(sidebar).toMatch(/\.navigation-draft\.active\{[^}]*box-shadow:inset 2px 0 0 var\(--gc-accent\)/)
+    const tabs = readFileSync(path.resolve(process.cwd(), 'src/components/tabs/ConversationTabs.vue'), 'utf8')
+    expect(tabs).toMatch(/\.tab-item\.active\s*\{[^}]*background:\s*var\(--gc-surface-base\)/)
+    const base = readFileSync(path.join(repoRoot, 'apps/client/src/styles/base.css'), 'utf8')
+    expect(base).toMatch(/\n\.titlebar \{[^}]*background: var\(--gc-surface-chrome\)/)
+    // 紧凑密度必须改写外壳实际读取的字号 token。
+    expect(base).toMatch(/\.application\[data-density="compact"\] \{\s*--gc-font-size-ui: 12px;/)
+  })
+
   test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {
     expect(ViteConfigSource).toContain('assetFileNames: resolveWebviewAssetFileName')
     expect(resolveWebviewAssetFileName({ name: 'index.css' })).toBe('index.css')
