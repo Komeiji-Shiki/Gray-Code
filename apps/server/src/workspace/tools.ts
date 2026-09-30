@@ -64,6 +64,7 @@ export function workspaceTools(
             ? ["workspace_write"]
             : ["workspace_read"],
       parallelRead: true,
+      nativeAsync: false,
       execute: async (args, context) => {
         const target = workspace(context);
         const file = String(args.path);

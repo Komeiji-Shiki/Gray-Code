@@ -1,6 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
 import { once } from 'node:events';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ModelInput, PlatformMessage, ProviderDefinition } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
@@ -8,6 +10,8 @@ import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
 import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
 import { channelProfile, projectChannels } from '../../../apps/server/src/settings/providers';
+import { formatHistoryForAPI } from '../../../backend/modules/conversation/manager/historyFormatting';
+import { validateHistoryIntegrity } from '../../../backend/modules/channel/HistoryIntegrityValidator';
 
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 const send = (socket: WebSocket, event: object) => socket.send(JSON.stringify(event));
@@ -178,7 +182,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     const app = await PlatformApplication.open({ dataDirectory: f.data, models: adapter });
     const router = new ApplicationRouter(app);
     const started = deferred(), release = deferred(); let executions = 0;
-    const callItem = { type: 'function_call', id: 'fc-platform', call_id: 'platform-call', name: 'native_read_fixture', arguments: '{}', async: true };
+    const callItem = { type: 'function_call', id: 'fc-platform', call_id: 'platform-call', name: 'native_read_fixture', arguments: '{"task_handle":"platform-read"}', async: true };
     app.tools.register({ declaration: { name: 'native_read_fixture', description: 'isolated read', parameters: { type: 'object', properties: {} } },
       parallelRead: true, effects: () => ['public_read'], execute: async () => { executions++; started.resolve(); await release.promise; return { success: true, data: 'observed value' }; } });
     handler = (socket, event) => {
@@ -229,4 +233,114 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     await expect(adapter.generate(base())).rejects.toThrow('连接已关闭');
     expect(connections).toBe(1); expect(requests).toHaveLength(1);
   });
+
+  test('真实后台命令与浏览器跨轮执行，原始结果和截图只回传一次', async () => {
+    const f = await fixture(); await f.store.close();
+    const browserStarted = deferred(), browserRelease = deferred(); let browserExecutions = 0, rounds = 0;
+    const image = 'aW1hZ2U=';
+    const app = await PlatformApplication.open({ dataDirectory: f.data, models: adapter, browser: () => ({
+      tool: async (name, args, context) => {
+        expect(name).toBe('browser_action'); expect(args.task_handle).toBeUndefined(); expect(context.nativeAsync).toBe(true);
+        browserExecutions++; browserStarted.resolve(); await browserRelease.promise;
+        return { success: true, data: { observationId: 'new-observation', url: args.url }, attachments: [{ mimeType: 'image/png', data: image }] };
+      }, call: async () => ({}), finishRun: () => {}, close: () => {},
+    }) });
+    app.tools.register({ declaration: { name: 'native_independent', description: '独立工作', parameters: { type: 'object', properties: {} } },
+      effects: () => [], execute: async () => { await browserStarted.promise; browserRelease.resolve(); return { success: true }; } });
+    const command = process.platform === 'win32' ? 'node native-terminal.cjs; exit $LASTEXITCODE' : 'node native-terminal.cjs; exit $?';
+    await writeFile(path.join(f.root, 'native-terminal.cjs'), "console.log('native-output'); setTimeout(() => { process.exitCode = 7; }, 500);");
+    const nativeCall = (id: string, name: string, args: object) => ({ type: 'function_call', id: `fc-${id}`, call_id: id, name, arguments: JSON.stringify(args), async: true });
+    const commandCall = nativeCall('command-call', 'execute_command', { command, shell: process.platform === 'win32' ? 'powershell' : 'default', background: true, task_handle: 'command' });
+    const browserCall = nativeCall('browser-call', 'browser_action', { action: 'navigate', tabId: 'fixture-tab', url: 'https://fixture.test/', task_handle: 'browser' });
+    handler = async (socket, event) => {
+      expect(event.type).toBe('response.create'); rounds++;
+      send(socket, { type: 'response.created', response: { id: `migration-${rounds}` } });
+      if (rounds === 1) {
+        for (const [output_index, call] of [commandCall, browserCall].entries()) send(socket, { type: 'response.output_item.done', output_index, item: call });
+        completed(socket, 'migration-1', [commandCall, browserCall] as any);
+      } else if (rounds === 2) {
+        expect((event.input ?? []).some((value: any) => value.type === 'function_call_output')).toBe(false);
+        completed(socket, 'migration-2', [{ type: 'function_call', id: 'fc-independent', call_id: 'independent', name: 'native_independent', arguments: '{}' }] as any);
+      } else if (rounds === 3) {
+        completed(socket, 'migration-3', [{ type: 'function_call', id: 'fc-wait', call_id: 'wait', name: 'wait_for_tasks', arguments: '{"task_handles":["command","browser"]}' }] as any);
+      } else completed(socket, `migration-${rounds}`, [item('finished')]);
+    };
+    try {
+      const draft = await app.product.draft();
+      const providerId = await draft.configs.createConfig({ type: 'openai-responses', name: 'native migration', enabled: true,
+        url: profile.endpoint, model: 'fixture', apiKey: '', timeout: 10000 });
+      await draft.configs.updateConfig(providerId, { responsesWebSocketEnabled: true, responsesAsyncToolsEnabled: true } as any);
+      await app.product.save(draft); profile.id = providerId;
+      const snapshot = app.settings.snapshot();
+      snapshot.settings.workspaces.push({ id: 'native-workspace', name: 'Native fixture', directory: f.root, deviceId: 'local' });
+      snapshot.settings.agents.push({ ...snapshot.settings.agents[0], id: 'native-migration', providerId, maxIterations: 8,
+        toolNames: ['execute_command', 'browser_action', 'native_independent'], toolApproval: { execute_command: 'auto', browser_action: 'auto' } });
+      await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+      const conversation = await app.createConversation('owner', 'native migration');
+      const run = await app.runtime.start({ actorId: 'owner', agentId: 'native-migration', workspaceId: 'native-workspace', conversationId: conversation.id,
+        requestKey: 'native-migration', message: { role: 'user', parts: [{ text: '启动命令并打开页面，同时继续其他工作。' }] } });
+      expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(browserExecutions).toBe(1);
+      const history = (await app.storage.readFullHistory(conversation.id)).messages;
+      const results = history.flatMap(message => message.parts).flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
+      expect(results.filter(value => value.id === 'command-call')).toHaveLength(1);
+      expect(results.find(value => value.id === 'command-call').response).toMatchObject({ success: false, data: { exitCode: 7, status: 'error', running: false } });
+      expect(results.find(value => value.id === 'command-call').response.data.output).toContain('native-output');
+      expect(results.filter(value => value.id === 'browser-call')).toHaveLength(1);
+      expect(history.filter(message => message.backgroundTask)).toHaveLength(0);
+      expect(requests.flatMap(event => event.input ?? []).filter((value: any) => value.type === 'function_call_output' && value.call_id === 'command-call')).toHaveLength(1);
+      expect(JSON.stringify(requests)).toContain(`data:image/png;base64,${image}`);
+      const legacyHistory = formatHistoryForAPI(history as any, { channelType: 'openai' });
+      expect(validateHistoryIntegrity(legacyHistory, { detectOrphanFunctionCall: true }).valid).toBe(true);
+      expect(JSON.stringify(legacyHistory)).toContain('native-output');
+      expect(legacyHistory.flatMap(message => message.parts).flatMap(part => part.inlineData ? [part.inlineData.data] : [])).toEqual([image]);
+      expect(await app.storage.listRecords('native-tool-calls')).toEqual([]);
+    } finally { browserRelease.resolve(); await app.close(); await f.cleanup(); }
+  }, 25000);
+
+  test('取消生成仍保留原生后台命令，完成后通过原调用交付而不重复通知', async () => {
+    const f = await fixture(); await f.store.close();
+    const ready = deferred(), delivered = deferred(); let rounds = 0;
+    const app = await PlatformApplication.open({ dataDirectory: f.data, models: adapter });
+    app.subscribe(event => {
+      if (event.type === 'tool.progress' && String((event as any).payload?.text).includes('native-ready')) ready.resolve();
+    });
+    const enqueue = app.subagents.feedback.enqueueMessage.bind(app.subagents.feedback);
+    jest.spyOn(app.subagents.feedback, 'enqueueMessage').mockImplementation(async (pending, records) => {
+      await enqueue(pending, records);
+      if (pending.message.parts.some(part => (part.functionResponse as any)?.id === 'cancel-command')) delivered.resolve();
+    });
+    await writeFile(path.join(f.root, 'native-cancel.cjs'), "console.log('native-ready'); setTimeout(() => { console.log('native-finished'); }, 1000);");
+    const command = process.platform === 'win32' ? 'node native-cancel.cjs; exit $LASTEXITCODE' : 'node native-cancel.cjs; exit $?';
+    const call = { type: 'function_call', id: 'fc-cancel-command', call_id: 'cancel-command', name: 'execute_command', async: true,
+      arguments: JSON.stringify({ command, shell: process.platform === 'win32' ? 'powershell' : 'default', background: true, task_handle: 'cancel-command' }) };
+    handler = socket => {
+      rounds++; send(socket, { type: 'response.created', response: { id: `cancel-${rounds}` } });
+      if (rounds === 1) send(socket, { type: 'response.output_item.done', output_index: 0, item: call });
+      else completed(socket, `cancel-${rounds}`, [item('background consumed')]);
+    };
+    try {
+      const draft = await app.product.draft();
+      const providerId = await draft.configs.createConfig({ type: 'openai-responses', name: 'native cancel', enabled: true,
+        url: profile.endpoint, model: 'fixture', apiKey: '', timeout: 10000 });
+      await draft.configs.updateConfig(providerId, { responsesWebSocketEnabled: true, responsesAsyncToolsEnabled: true } as any);
+      await app.product.save(draft); profile.id = providerId;
+      const snapshot = app.settings.snapshot();
+      snapshot.settings.workspaces.push({ id: 'cancel-workspace', name: 'Cancel fixture', directory: f.root, deviceId: 'local' });
+      snapshot.settings.agents.push({ ...snapshot.settings.agents[0], id: 'native-cancel', providerId, maxIterations: 6,
+        toolNames: ['execute_command'], toolApproval: { execute_command: 'auto' } });
+      await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+      const conversation = await app.createConversation('owner', 'native cancel');
+      const run = await app.runtime.start({ actorId: 'owner', agentId: 'native-cancel', workspaceId: 'cancel-workspace', conversationId: conversation.id,
+        requestKey: 'native-cancel', message: { role: 'user', parts: [{ text: '启动后台命令。' }] } });
+      await ready.promise; await app.runtime.cancel(run.id, 'owner'); expect((await app.runtime.wait(run.id))?.status).toBe('cancelled');
+      expect(app.runtime.pendingAsyncToolCalls(conversation.id)).toEqual(['cancel-command']);
+      await delivered.promise;
+      const history = (await app.storage.readFullHistory(conversation.id)).messages;
+      const results = history.flatMap(message => message.parts).flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
+      expect(results.filter(value => value.id === 'cancel-command')).toHaveLength(1);
+      expect(results.find(value => value.id === 'cancel-command').response).toMatchObject({ success: true, data: { exitCode: 0 } });
+      expect(results.find(value => value.id === 'cancel-command').response.data.output).toContain('native-finished');
+      expect(history.filter(message => message.backgroundTask)).toHaveLength(0);
+    } finally { await app.close(); await f.cleanup(); }
+  }, 25000);
 });

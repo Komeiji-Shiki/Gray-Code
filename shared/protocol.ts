@@ -1026,7 +1026,7 @@ export interface ContentPart {
 
     /** 函数调用（模型请求） */
     functionCall?: {
-        /** Responses 原生异步调用标记；只有运行器允许的只读调用才提前执行。 */
+        /** Responses 原生异步调用标记；只有运行器允许的调用才提前执行。 */
         async?: boolean;
         name: string;
         args: Record<string, unknown>;

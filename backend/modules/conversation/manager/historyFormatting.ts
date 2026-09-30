@@ -304,6 +304,9 @@ export function formatHistoryForAPI(
     // 两种形态都会产生「assistant tool_calls 无配对 tool 消息」→ OpenAI/Anthropic 400。
     // 被剔除调用的配对 functionResponse 一并剔除（否则变成孤儿 tool 消息 400）。
     const droppedCallIds = new Set<string>();
+    const asyncResponseIds = new Set(history.flatMap(message =>
+        (message.parts ?? []).flatMap(part => part.functionResponse?.id ? [part.functionResponse.id] : [])));
+    const legacyAsyncCallIds = new Set<string>();
     for (let i = 0; i < history.length; i++) {
         const message = history[i];
         const blockIds = new Set<string>();
@@ -321,6 +324,12 @@ export function formatHistoryForAPI(
         }
         for (const part of message.parts ?? []) {
             const callId = part.functionCall?.id;
+            // Responses 原生异步允许结果跨越其他模型回复，仍须在当前历史中实际配对。
+            if (part.functionCall?.async === true && callId && asyncResponseIds.has(callId) && !rejectedToolCallIds.has(callId)) {
+                if (channelType === 'openai-responses') continue;
+                // 其他协议要求紧邻配对。迟到的异步证据转为正文，保留原消息与图片顺序。
+                if (!blockIds.has(callId)) { legacyAsyncCallIds.add(callId); continue; }
+            }
             if (callId && !blockIds.has(callId)) {
                 droppedCallIds.add(callId);
             }
@@ -347,6 +356,10 @@ export function formatHistoryForAPI(
     const cleanFunctionCall = (part: ContentPart): ContentPart | null => {
         if (!part.functionCall) {
             return part;
+        }
+        if (part.functionCall.id && legacyAsyncCallIds.has(part.functionCall.id)) {
+            const { functionCall, ...rest } = part;
+            return { ...rest, text: JSON.stringify({ tool_call: { id: functionCall.id, name: functionCall.name, arguments: functionCall.args } }) };
         }
         
         if (part.functionCall.id && droppedCallIds.has(part.functionCall.id)) {
@@ -397,6 +410,10 @@ export function formatHistoryForAPI(
             part.functionResponse.response as Record<string, unknown>,
             isHistoryMessage
         );
+        if (part.functionResponse.id && legacyAsyncCallIds.has(part.functionResponse.id)) {
+            const { functionResponse, ...rest } = part;
+            return { ...rest, text: JSON.stringify({ tool_result: { id: functionResponse.id, name: functionResponse.name, response: cleanedResponse } }) };
+        }
         
         return {
             ...part,

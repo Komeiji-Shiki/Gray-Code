@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type {
   ActorIdentity, AgentDefinition, ApprovalRequest, ApprovalChoice, ApprovalDecision, ModelProvider, PlatformMessage, RunEvent, RunRecord,
   StartRunInput, ToolEffect, ToolOutcome, WorkspaceDefinition, ModelInput,
-  ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation, ModelRequestSnapshot,
+  ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation, ModelRequestSnapshot, ModelToolCall,
 } from '@graycode/contracts';
 import { PlatformStorage } from '../storage/client';
 import { RuntimeToolRegistry, authorizeEffects, needsApproval, type ToolCatalog, type ToolContext } from './tools';
 import { QuestionBroker } from './questions';
 import { normalizeToolArguments } from './toolArguments';
 import { DeltaCoalescer } from './deltas';
+import { NativeAsyncTools, NATIVE_ASYNC_NAMESPACE, WAIT_FOR_TASKS, nativeToolDeclaration, waitForTasksDeclaration, type NativeToolRecord } from './nativeAsync';
 
 export interface RuntimeServices {
   executionNodeId?: () => string;
@@ -42,6 +43,10 @@ export interface RuntimeServices {
   runInScope?: (run: RunRecord, execute: () => Promise<void>) => Promise<void>;
   /** 在模型边界接收已持久化的后台任务结果，返回是否追加了新消息。 */
   deliverFeedback?: (run: RunRecord) => Promise<boolean>;
+  /** 已脱离原生成任务的异步结果复用宿主的持久反馈队列。 */
+  deliverAsyncToolResult?: (run: RunRecord, message: PlatformMessage) => Promise<void>;
+  /** 重启仅恢复已保存的终态，不能重新执行原操作。 */
+  recoverAsyncToolResult?: (record: NativeToolRecord) => Promise<ToolOutcome | undefined>;
   review?: (input: { agent: AgentDefinition; toolName: string; args: Record<string, unknown>; effects: ToolEffect[]; signal: AbortSignal }) => Promise<{ requireApproval: boolean; reason?: string }>;
 }
 export interface ModelRequestContext {
@@ -101,7 +106,10 @@ export class PlatformRuntime {
   private readonly listeners = new Set<(event: RuntimeNotification) => void>();
   private closing = false;
   private readonly questions: QuestionBroker;
+  private readonly nativeTools: NativeAsyncTools;
   constructor(private readonly services: RuntimeServices) {
+    this.nativeTools = new NativeAsyncTools(services.storage, (record, detached) => this.deliverNativeResult(record, detached),
+      id => this.active.has(id) && !this.active.get(id)!.controller.signal.aborted);
     this.questions = new QuestionBroker(services.questionTimeoutMs ?? 180_000, feedback => {
       void this.event(feedback.request.runId, feedback.timedOut ? 'question.expired' : 'question.answered', {
         requestId: feedback.request.id, answers: feedback.answers, answeredBy: feedback.answeredBy,
@@ -121,6 +129,26 @@ export class PlatformRuntime {
   }
 
   async initialize(): Promise<void> {
+    for (const id of await this.services.storage.listRecords(NATIVE_ASYNC_NAMESPACE)) {
+      const record = await this.services.storage.getRecord(NATIVE_ASYNC_NAMESPACE, id) as NativeToolRecord | null;
+      if (!record) continue;
+      if (!await this.services.storage.getConversation(record.run.conversationId)) {
+        await this.services.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, id); continue;
+      }
+      const history = (await this.services.storage.readFullHistory(record.run.conversationId)).messages;
+      const hasCall = history.some(message => message.parts.some(part => (part.functionCall as ModelToolCall | undefined)?.id === record.call.id));
+      if (!hasCall && record.published) { await this.services.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, id); continue; }
+      if (!hasCall) {
+        await this.services.storage.appendHistory(record.run.conversationId, [{ id: randomUUID(), role: 'model', runId: record.run.id,
+          timestamp: Date.now(), parentId: history.at(-1)?.id ?? null, incompleteReason: 'interrupted', parts: [{ functionCall: record.call }] }]);
+      }
+      if (!history.some(message => message.parts.some(part => (part.functionResponse as { id?: string } | undefined)?.id === record.call.id))) {
+        const outcome = record.outcome ?? await this.services.recoverAsyncToolResult?.(record)
+          ?? { success: false, code: 'INTERRUPTED', error: '服务重启，原异步操作未自动重放。' };
+        await this.saveToolResult(record.run, record.call, outcome);
+      }
+      await this.services.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, id);
+    }
     // Previously executing operations are settled as interrupted, never replayed on service startup.
     for (;;) {
       const runs = await this.services.storage.listRuns({ activeOnly: true });
@@ -131,6 +159,12 @@ export class PlatformRuntime {
       }
     }
   }
+
+  /** 仅供持有后台任务的宿主交付终态，公开 RPC 不暴露这个入口。 */
+  completeAsyncTool(runId: string, callId: string, outcome: ToolOutcome): Promise<boolean> {
+    return this.nativeTools.complete(runId, callId, outcome);
+  }
+  pendingAsyncToolCalls(conversationId: string): string[] { return this.nativeTools.pendingIds(conversationId); }
 
   /** 第三个参数仅由可信宿主传入，不从公共任务请求或模型参数读取。 */
   start(input: StartRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
@@ -296,7 +330,7 @@ export class PlatformRuntime {
 
   private async execute(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext'>): Promise<void> {
     const executionController = new AbortController();
-    const runningEarly = new Set<Promise<ToolOutcome>>();
+    let interrupted = false;
     try {
       signal.throwIfAborted();
       await this.event(run.id, 'run.started', {}, { status: 'running' });
@@ -305,6 +339,9 @@ export class PlatformRuntime {
       let historyRevision: number | undefined;
       for (let iteration = 1; agent.maxIterations === -1 || iteration <= agent.maxIterations; iteration++) {
         signal.throwIfAborted();
+        if (this.nativeTools.pendingIds(run.conversationId).length)
+          await this.nativeTools.reconcile(run.conversationId, (await this.services.storage.readFullHistory(run.conversationId)).messages);
+        await this.nativeTools.flush(run.conversationId);
         await this.services.deliverFeedback?.(run);
         await this.drainFeedback(run);
         const actor = await this.services.actor(run.actorId, run);
@@ -330,25 +367,21 @@ export class PlatformRuntime {
           }
           this.notify({ type: 'model.delta', runId: run.id, parts });
         });
-        const early = new Map<string, { call: FunctionCall; outcome: Promise<ToolOutcome> }>();
+        const early = new Map<string, { call: FunctionCall }>();
         const earlyController = new AbortController();
         const earlySignal = AbortSignal.any([signal, executionController.signal, earlyController.signal]);
-        const lanes: Promise<unknown>[] = Array.from({ length: 4 }, () => Promise.resolve());
         const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
           runId: run.id,
+          pendingToolCallIds: this.nativeTools.pendingIds(run.conversationId),
           onToolCallReady: call => {
             if (early.has(call.id) || earlySignal.aborted || call.async !== true || !request.tools.some(tool => tool.name === call.name && tool.async)
-              || !this.parallelRead(call, agent, catalog)) return false;
-            const lane = early.size % lanes.length;
+              || !this.nativeCall(call, agent, catalog)) return false;
             const saved = structuredClone(call);
-            const outcome = lanes[lane].then(() => earlySignal.aborted
+            const accepted = this.nativeTools.launch(run, saved, state.history.messages, async () => earlySignal.aborted
               ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
-              : this.executeTool(run, agent, workspace, catalog, saved, earlySignal, request));
-            runningEarly.add(outcome);
-            void outcome.then(() => runningEarly.delete(outcome), () => runningEarly.delete(outcome));
-            lanes[lane] = outcome;
-            early.set(call.id, { call: saved, outcome });
-            return true;
+              : this.executeTool(run, agent, workspace, catalog, saved, earlySignal, request, true));
+            if (accepted) early.set(call.id, { call: saved });
+            return accepted;
           },
           onRequest: async captured => {
             const id = `${run.id}:${iteration}`;
@@ -370,9 +403,15 @@ export class PlatformRuntime {
             deltas.push(parts);
           },
         };
-        request.tools = request.tools.map(tool => ({ ...tool, async: catalog.entries.get(tool.name)?.tool.parallelRead === true
-          && agent.toolApproval?.[tool.name] !== 'ask' && agent.toolApproval?.[tool.name] !== 'deny'
-          && !(agent.reviewerProviderId && agent.reviewerToolNames?.includes(tool.name)) ? true : undefined }));
+        const nativeEnabled = await this.services.models.supportsAsyncTools?.(request) ?? false;
+        request.tools = request.tools.map(tool => {
+          const runtimeTool = catalog.entries.get(tool.name)?.tool;
+          const allowed = runtimeTool?.nativeAsync !== false && agent.toolApproval?.[tool.name] !== 'deny' && (runtimeTool?.nativeAsync === true
+            || runtimeTool?.parallelRead === true && agent.toolApproval?.[tool.name] !== 'ask'
+              && !(agent.reviewerProviderId && agent.reviewerToolNames?.includes(tool.name)));
+          return nativeEnabled && allowed ? nativeToolDeclaration(tool, runtimeTool?.nativeAsyncDescription, runtimeTool?.nativeAsyncParameterDescriptions) : { ...tool, async: undefined };
+        });
+        if (request.tools.some(tool => tool.async)) request.tools.push(structuredClone(waitForTasksDeclaration));
         const prepared = await this.services.prepareModel?.({ run, agent, workspace, iteration, input: request, history: state });
         if (prepared) { state = prepared.history; request.messages = prepared.messages; }
         const page = state.history;
@@ -392,7 +431,6 @@ export class PlatformRuntime {
           signal.throwIfAborted();
         } catch (error) {
           earlyController.abort(error);
-          await Promise.allSettled([...early.values()].map(value => value.outcome));
           // 完整发出的只读调用已经执行或取消，必须保留配对身份，后续不再重复执行。
           for (const { call } of early.values()) partialParts.push({ functionCall: call });
           if (partialParts.some(part => part.functionCall || typeof part.text === 'string' && part.text.trim())) {
@@ -402,6 +440,7 @@ export class PlatformRuntime {
             // 沿用来源标注钩子，使记忆遗忘与角色会话仍能追溯这段输出的依据。
             if (this.services.transformOutput) partial = await this.services.transformOutput({ run, message: partial, request });
             await this.services.storage.appendHistory(run.conversationId, [partial], { expectedRevision: page.revision });
+            await this.nativeTools.publish(run.id, [...early.values()].map(value => value.call));
             this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(partial) });
             await this.event(run.id, 'message.saved', { messageId: partial.id, incompleteReason: partial.incompleteReason, streaming: deltas.statistics() }, { iteration });
           }
@@ -413,10 +452,16 @@ export class PlatformRuntime {
         if (this.services.transformOutput) content = await this.services.transformOutput({ run, message: content, request });
         const calls = this.calls(content);
         await this.services.storage.appendHistory(run.conversationId, [content], { expectedRevision: page.revision });
+        await this.nativeTools.publish(run.id, calls);
         this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(content) });
         await this.event(run.id, 'message.saved', { messageId: content.id, streaming: deltas.statistics() }, { iteration });
         await this.services.modelBoundary?.(run, workspace, signal, 'after', iteration, content);
+        const deliveredNative = await this.nativeTools.flush(run.conversationId);
         if (!calls.length) {
+          if (deliveredNative) continue;
+          if (this.nativeTools.pendingIds(run.conversationId).length) {
+            await this.nativeTools.waitAny(run.conversationId, signal); continue;
+          }
           if (this.services.models.hasContinuation?.(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (await this.services.deliverFeedback?.(run)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (this.questions.hasFeedback(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); await this.drainFeedback(run); continue; }
@@ -431,16 +476,31 @@ export class PlatformRuntime {
           await this.event(run.id, 'run.completed', {}, { status: 'completed' }); return;
         }
         for (let index = 0; index < calls.length;) {
+          const next = calls[index];
+          if (next.name === WAIT_FOR_TASKS && request.tools.some(tool => tool.name === WAIT_FOR_TASKS)) {
+            index++;
+            const outcome = Object.keys(next.args).some(key => key !== 'task_handles')
+              ? { success: false, code: 'INVALID_ARGUMENTS', error: 'wait_for_tasks 只接受 task_handles。' }
+              : await this.nativeTools.wait(run.conversationId, next.args.task_handles, signal);
+            await this.saveToolResult(run, next, outcome); continue;
+          }
+          if (nativeEnabled && next.async && request.tools.some(tool => tool.name === next.name && tool.async) && this.nativeCall(next, agent, catalog)) {
+            index++;
+            if (!this.nativeTools.has(run.id, next.id)) this.nativeTools.launch(run, next, page.messages,
+              () => this.executeTool(run, agent, workspace, catalog, next, earlySignal, request, true));
+            await this.nativeTools.publish(run.id, [next]); continue;
+          }
           const batch = [calls[index++]];
           if (this.parallelRead(batch[0], agent, catalog)) {
-            while (batch.length < 4 && index < calls.length && this.parallelRead(calls[index], agent, catalog)) batch.push(calls[index++]);
+            while (batch.length < 4 && index < calls.length && !calls[index].async && this.parallelRead(calls[index], agent, catalog)) batch.push(calls[index++]);
           }
           const outcomes = await Promise.all(batch.map(call => signal.aborted
             ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
-            : early.get(call.id)?.outcome ?? this.executeTool(run, agent, workspace, catalog, call, signal, request)));
+            : this.executeTool(run, agent, workspace, catalog, call, signal, request)));
           // 完成时间可以不同，持久化和后续模型输入始终服从原始调用顺序。
           for (let item = 0; item < batch.length; item++) await this.saveToolResult(run, batch[item], outcomes[item]);
         }
+        await this.nativeTools.flush(run.conversationId);
         const afterTools = await this.services.afterTools?.(run, workspace, signal, content);
         if (afterTools?.stop) {
           await this.event(run.id, 'run.completed', { reason: afterTools.reason ?? 'document_confirmation' }, { status: 'completed' }); return;
@@ -449,14 +509,19 @@ export class PlatformRuntime {
       throw new Error(`The configured iteration limit (${agent.maxIterations}) was reached.`);
     } catch (error) {
       executionController.abort(error);
-      await Promise.allSettled([...runningEarly]);
-      await this.settleInterrupted(run, signal.aborted ? 'CANCELLED' : 'INTERRUPTED');
+      const detached = await this.nativeTools.interrupt(run.id);
+      await this.settleInterrupted(run, signal.aborted ? 'CANCELLED' : 'INTERRUPTED', detached);
+      interrupted = true;
       await this.event(run.id, signal.aborted ? 'run.cancelled' : 'run.failed', { error: error instanceof Error ? error.message : String(error) }, {
         status: signal.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : String(error),
       });
     } finally {
       executionController.abort();
-      await Promise.allSettled([...runningEarly]);
+      if (!interrupted && this.nativeTools.pendingIds(run.conversationId).length) {
+        const detached = await this.nativeTools.interrupt(run.id);
+        await this.settleInterrupted(run, 'CANCELLED', detached);
+      }
+      await this.nativeTools.release(run.id);
       this.services.models.endRun?.(run.id);
     }
   }
@@ -471,11 +536,18 @@ export class PlatformRuntime {
       const id = source.id ?? randomUUID();
       if (typeof id !== 'string' || ids.has(id) || typeof source.name !== 'string') throw new Error('Model returned invalid or duplicate tool identities.');
       ids.add(id);
-      const call = { id, name: source.name, args: source.args ?? {} };
+      const call = { id, name: source.name, args: source.args ?? {}, ...(source.async === true ? { async: true } : {}) };
       part.functionCall = { ...source, id };
       calls.push(call);
     }
     return calls;
+  }
+
+  private nativeCall(call: FunctionCall, agent: AgentDefinition, catalog: ToolCatalog): boolean {
+    if (catalog.entries.get(call.name)?.tool.nativeAsync === false) return false;
+    if (catalog.entries.get(call.name)?.tool.nativeAsync === true) return agent.toolApproval?.[call.name] !== 'deny';
+    const { task_handle: _handle, ...args } = call.args;
+    return this.parallelRead({ ...call, args }, agent, catalog);
   }
 
   private parallelRead(call: FunctionCall, agent: AgentDefinition, catalog: ToolCatalog): boolean {
@@ -490,11 +562,12 @@ export class PlatformRuntime {
     } catch { return false; }
   }
 
-  private async executeTool(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, call: FunctionCall, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>): Promise<ToolOutcome> {
+  private async executeTool(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, call: FunctionCall, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>, nativeAsync = false): Promise<ToolOutcome> {
     try {
       const entry = catalog.entries.get(call.name);
       if (!entry) return { success: false, code: 'UNKNOWN_TOOL', error: 'Tool is absent from the configured catalog.' };
-      call = { ...call, args: normalizeToolArguments(call.args, entry.tool.declaration.parameters) };
+      const { task_handle: _handle, ...nativeArgs } = call.args;
+      call = { ...call, args: normalizeToolArguments(nativeAsync ? nativeArgs : call.args, entry.tool.declaration.parameters) };
       if (!entry.validate(call.args)) return { success: false, code: 'INVALID_ARGUMENTS', error: 'Tool arguments do not match its schema.' };
       const effects = entry.tool.effects(call.args);
       const actor = await this.services.actor(run.actorId, run);
@@ -519,7 +592,7 @@ export class PlatformRuntime {
       }
       signal.throwIfAborted();
       await this.event(run.id, 'tool.started', { toolCallId: call.id, toolName: call.name });
-      const context: ToolContext = { runId: run.id, conversationId: run.conversationId, toolCallId: call.id, iteration: run.iteration, actorId: run.actorId, workspace, signal,
+      const context: ToolContext = { runId: run.id, conversationId: run.conversationId, toolCallId: call.id, iteration: run.iteration, actorId: run.actorId, workspace, signal, nativeAsync,
         approvedByToolConfirmation: approval,
         actor: current ?? undefined,
         requestApproval: async reason => {
@@ -601,7 +674,21 @@ export class PlatformRuntime {
     await this.event(run.id, 'tool.completed', { toolCallId: call.id, toolName: call.name, messageId: message.id, success: outcome.success, code: outcome.code });
   }
 
-  private async settleInterrupted(run: RunRecord, code = 'INTERRUPTED'): Promise<void> {
+  private async deliverNativeResult(record: NativeToolRecord, detached: boolean): Promise<void> {
+    if (detached && this.services.deliverAsyncToolResult) {
+      const history = (await this.services.storage.readFullHistory(record.run.conversationId)).messages;
+      if (!history.some(message => message.parts.some(part => (part.functionCall as ModelToolCall | undefined)?.id === record.call.id))
+        || history.some(message => message.parts.some(part => (part.functionResponse as { id?: string } | undefined)?.id === record.call.id))) return;
+      const { attachments, ...response } = record.outcome!;
+      const message: PlatformMessage = { id: `native-result-${record.run.id}-${record.call.id}`, role: 'user', runId: record.run.id,
+        timestamp: Date.now(), isFunctionResponse: true, isUserInput: false,
+        parts: [{ functionResponse: { id: record.call.id, name: record.call.name, response } },
+          ...(attachments ?? []).map(item => ({ inlineData: { mimeType: item.mimeType, data: item.data }, ...(item.name ? { displayName: item.name } : {}) }))] };
+      await this.services.deliverAsyncToolResult(record.run, message);
+    } else await this.saveToolResult(record.run, record.call, record.outcome!);
+  }
+
+  private async settleInterrupted(run: RunRecord, code = 'INTERRUPTED', detached: string[] = []): Promise<void> {
     const page = await this.services.storage.readFullHistory(run.conversationId);
     const pending = new Map<string, FunctionCall>();
     for (const message of page.messages) {
@@ -613,7 +700,7 @@ export class PlatformRuntime {
         if (response) pending.delete(response.id);
       }
     }
-    for (const call of pending.values()) await this.saveToolResult(run, call, { success: false, code, error: 'Execution was interrupted; side effects are not automatically retried.' });
+    for (const call of pending.values()) if (!detached.includes(call.id)) await this.saveToolResult(run, call, { success: false, code, error: 'Execution was interrupted; side effects are not automatically retried.' });
   }
 
   private async drainFeedback(run: RunRecord): Promise<void> {

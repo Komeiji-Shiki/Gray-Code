@@ -38,6 +38,7 @@ export function readTools(app: PlatformApplication): RuntimeTool[] {
     const declaration = factory(catalog).declaration;
     return { declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters },
       parallelRead: true,
+      nativeAsync: declaration.name === 'search_in_files' ? false : true,
       effects: args => declaration.name === 'search_in_files' && args.mode === 'replace' ? ['workspace_write'] : ['workspace_read'],
       execute: async (args, context: ToolContext) => {
         const readAccess = declaration.name === 'search_in_files' && args.mode === 'replace' ? undefined : new FileReadAccess(app, context);

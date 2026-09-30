@@ -74,7 +74,7 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
     promptCacheKeyEnabled?: boolean;
     /** 独立平台通过任务专属 WebSocket 接收生成中补充消息。缺省关闭。 */
     responsesWebSocketEnabled?: boolean;
-    /** 仅将运行器确认的并行只读工具声明为原生异步工具。缺省关闭。 */
+    /** 运行器允许的读取、命令和浏览器工具使用原生异步，权限规则不变。缺省关闭。 */
     responsesAsyncToolsEnabled?: boolean;
 
     /**

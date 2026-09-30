@@ -58,6 +58,8 @@ export class PlatformContextService {
   }
   async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     const { run, input } = context;
+    // 异步结果必须回到当前可见调用；切窗、总结和裁剪推迟到调用结算后。
+    if (input.pendingToolCallIds?.length) return { history: context.history, messages: input.messages };
     let config = await this.app.product.channel(input.providerId);
     if (!config) return { history: context.history, messages: input.messages };
     const management = this.configuration(context.history.metadata, config);

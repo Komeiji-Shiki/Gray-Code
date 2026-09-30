@@ -31,7 +31,7 @@ export interface WorkspaceDefinition {
 }
 export interface ModelToolCall { id: string; name: string; args: Record<string, unknown>; async?: boolean }
 export interface ToolDeclaration {
-  /** 运行器标注可并行只读工具；供应方仍须显式开启原生异步。 */
+  /** 运行器允许的原生异步工具；供应方仍须显式开启此能力。 */
   async?: boolean;
   name: string;
   description: string;
@@ -116,6 +116,8 @@ export interface ModelInput {
   runId?: string;
   /** 只接收完整且可执行的原生调用，返回是否已由运行器接管。 */
   onToolCallReady?: (call: ModelToolCall) => boolean;
+  /** 可信运行器登记且仍待结果的调用；仅用于支持原生异步的请求完整性检查。 */
+  pendingToolCallIds?: string[];
   /** 仅标注内部请求用途，不改变渠道、模型、工具或缓存标识。 */
   purpose?: 'summary' | 'memory';
   /** 核心捕获的回合资料，供应方适配器不直接发送此对象。 */
@@ -138,11 +140,15 @@ export interface ModelInput {
 }
 export interface ModelProvider {
   generate(input: ModelInput): Promise<PlatformMessage>;
+  /** 按实际渠道和传输判断，内部整理请求不启用异步工具。 */
+  supportsAsyncTools?: (input: ModelInput) => Promise<boolean> | boolean;
   steer?: (runId: string, message: PlatformMessage) => Promise<boolean>;
   hasContinuation?: (runId: string) => boolean;
   endRun?: (runId: string) => void;
 }
 export interface ToolOutcome {
+  /** 已交给宿主持有的后台任务，最终结果由运行器的完成入口交付。 */
+  deferred?: boolean;
   attachments?: { mimeType: string; data: string; name?: string }[];
   success: boolean;
   code?: string;

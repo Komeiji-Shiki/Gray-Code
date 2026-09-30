@@ -36,7 +36,7 @@ export function browserTools(host?: BrowserHost): RuntimeTool[] {
         url: { type: 'string', description: '最近读取的页面地址，用于确认文件传输目标。' }, paths: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20 },
         path: { type: 'string', description: '下载文件的工作区目标路径。' }, expectedHash: { type: ['string', 'null'], description: '现有文件的哈希，新文件填写 null。' } }, required: ['action', 'tabId', 'ref', 'url'], additionalProperties: false } },
   ];
-  return declarations.map(declaration => ({ declaration,
+  return declarations.map(declaration => ({ declaration, nativeAsync: true,
     effects: (args): ToolEffect[] => declaration.name === 'browser_files' ? ['private_browser', 'external_send', args.action === 'download' ? 'workspace_write' : 'workspace_read']
       : declaration.name === 'browser_action' && ['click', 'hover', 'type', 'fill', 'select', 'check', 'press', 'drag'].includes(String(args.action))
       ? ['private_browser', 'external_send'] : declaration.name === 'browser_tabs' && args.action === 'close'

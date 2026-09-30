@@ -30,6 +30,8 @@ export interface ValidateHistoryIntegrityOptions {
      * 默认关闭以保持向后兼容。
      */
     detectOrphanFunctionCall?: boolean;
+    /** 可信运行器登记的原生异步调用可以暂时没有结果，其他完整性规则不变。 */
+    pendingAsyncCallIds?: ReadonlySet<string>;
 }
 
 /** 归一化调用 ID（trim 后比较；导出供 ContextTrimService 的 O(n) 后缀有效性预计算复用同一口径） */
@@ -50,6 +52,7 @@ export function validateHistoryIntegrity(
     // 非 rejected 的 functionCall id：同一 id 可能同时存在 rejected 与非 rejected 实例，
     // 只有"全部实例都 rejected"才可跳过孤儿检测，否则非 rejected 实例仍应被检出
     const nonRejectedCallIds = new Set<string>();
+    const pendingAsyncCallIds = new Set<string>();
 
     for (let messageIndex = 0; messageIndex < history.length; messageIndex++) {
         const message = history[messageIndex];
@@ -75,6 +78,7 @@ export function validateHistoryIntegrity(
                 } else {
                     nonRejectedCallIds.add(functionCallId);
                 }
+                if (part.functionCall?.async === true && options.pendingAsyncCallIds?.has(functionCallId)) pendingAsyncCallIds.add(functionCallId);
             }
 
             const functionResponseId = normalizeCallId(part.functionResponse?.id);
@@ -113,7 +117,7 @@ export function validateHistoryIntegrity(
         for (const callId of seenFunctionCallIds) {
             // 跳过"全部实例都 rejected"：无响应是设计语义（中断/取消残留），且 formatter 已过滤不会发送；
             // 但只要存在非 rejected 实例（nonRejectedCallIds），该实例仍按孤儿检出
-            if (!seenFunctionResponseIds.has(callId) && nonRejectedCallIds.has(callId)) {
+            if (!seenFunctionResponseIds.has(callId) && nonRejectedCallIds.has(callId) && !pendingAsyncCallIds.has(callId)) {
                 issues.push({
                     kind: 'orphan_function_call',
                     callId,

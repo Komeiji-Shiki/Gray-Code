@@ -1,7 +1,7 @@
 import { shellCommandEffects } from '../workspace/commandRisk';
 import { randomUUID } from 'node:crypto';
 import type { RuntimeTool, ToolContext } from '@graycode/core';
-import type { ToolDeclaration } from '@graycode/contracts';
+import type { ToolDeclaration, ToolOutcome } from '@graycode/contracts';
 import type { TaskEvent } from '../../../../backend/tools/taskManager';
 import { createTerminalRuntime } from '../../../../backend/tools/terminal/processRunnerRuntime';
 import { createShellRuntime } from '../../../../backend/tools/terminal/shellConfigRuntime';
@@ -18,6 +18,8 @@ interface TerminalRecord {
   status: 'queued' | 'running' | 'completed' | 'cancelled' | 'error' | 'interrupted';
   startTime: number; updatedAt: number; data: Record<string, unknown>;
   outputBuffer?: ProcessOutputBuffer;
+  /** 原生异步只保存原调用关联，进程仍由已有终端任务持有。 */
+  nativeCallId?: string;
 }
 type Runner = ReturnType<typeof createTerminalRuntime>;
 
@@ -51,7 +53,9 @@ export class PlatformTerminals {
     declaration.description += getActualLanguage() === 'zh-CN'
       ? '\n后台 taskId 可交给 terminal_task 查询状态、增量读取或停止。默认等待完成通知；需要诊断无进展的任务时按需查询，不循环轮询。'
       : '\nUse terminal_task with the returned background taskId to inspect status, read incremental output or stop the managed task. Prefer automatic completion notices; inspect stalled tasks when needed without polling loops.';
-    return { declaration: declaration as ToolDeclaration,
+    return { declaration: declaration as ToolDeclaration, nativeAsync: true,
+      nativeAsyncDescription: 'In native async mode, background=true returns the final command output on the original call. Use run_command for persistent servers that should return a managed process session without waiting for exit.',
+      nativeAsyncParameterDescriptions: { background: 'Keep the command running if the current generation is cancelled; ignore the foreground timeout. The native async call stays pending until exit and returns the final output on its original call, without a separate background message. Continue independent work; use wait_for_tasks when its result is needed.' },
       effects: args => shellCommandEffects(String(args.command)),
       execute: (args, context) => this.execute(args, context, declaration, structuredClone(config)) };
   }
@@ -69,6 +73,7 @@ export class PlatformTerminals {
       runId: context.runId, workspaceId: context.workspace.id, status: 'queued', startTime: Date.now(), updatedAt: Date.now(),
       data: { command: args.command, cwd, shell: args.shell ?? 'default', background: args.background === true },
       outputBuffer: { output: '', outputOffset: 0, truncated: false } };
+    if (context.nativeAsync && args.background === true && context.toolCallId) record.nativeCallId = context.toolCallId;
     const tasks = new TerminalTaskPort(event => this.queue(record, event));
     const runner = this.runtime(config, tasks, context.workspace.directory);
     const unsubscribe = runner.onTerminalOutput(event => {
@@ -102,6 +107,7 @@ export class PlatformTerminals {
         await this.finish(record);
       }
       return { success: result.success, data: result.data, error: result.error,
+        ...(record.nativeCallId && result.data?.background ? { deferred: true } : {}),
         ...(result.cancelled ? { code: 'CANCELLED' } : {}) };
     } catch (error) {
       if (this.active.has(id)) {
@@ -158,6 +164,10 @@ export class PlatformTerminals {
   }
   private async feedback(record: TerminalRecord) {
     if (record.data.background !== true) return;
+    if (record.nativeCallId) {
+      await this.app.runtime.completeAsyncTool(record.runId, record.nativeCallId, this.nativeOutcome(record));
+      return;
+    }
     const root = this.app.subagents.rootConversationId(record.conversationId);
     const conversationId = root !== record.conversationId &&
       !(await this.app.storage.listRuns({ conversationId: record.conversationId, activeOnly: true, limit: 1 })).length
@@ -168,6 +178,21 @@ export class PlatformTerminals {
     await this.app.subagents.feedback.enqueueMessage({ id: `terminal-result-${record.id}`, conversationId,
       actorId: record.actorId, sourceRunId: record.runId, message: { id: `terminal-result-${record.id}`, role: 'user', parts: [{ text }], timestamp: Date.now(),
         isUserInput: false, source: 'background_task', backgroundTask: { kind: 'terminal', taskId: record.id, status: record.status }, userFeedback: { kind: 'background_task', taskId: record.id } } });
+  }
+  private nativeOutcome(record: TerminalRecord): ToolOutcome {
+    return { success: record.status === 'completed',
+      ...(record.status === 'cancelled' ? { code: 'CANCELLED' } : record.status === 'interrupted' ? { code: 'INTERRUPTED' } : {}),
+      ...(record.data.error ? { error: String(record.data.error) } : {}),
+      data: { ...record.data, taskId: record.id, status: record.status, running: false, output: record.data.output ?? record.outputBuffer?.output ?? '' } };
+  }
+  async recoverNativeResult(runId: string, callId: string, conversationId: string): Promise<ToolOutcome | undefined> {
+    for (const id of await this.app.storage.listRecords('terminal-records', conversationId)) {
+      const record = await this.app.storage.getRecord('terminal-records', id) as TerminalRecord | null;
+      if (record?.runId !== runId || record.nativeCallId !== callId) continue;
+      if (['queued', 'running'].includes(record.status)) return this.nativeOutcome({ ...record, status: 'interrupted',
+        data: { ...record.data, error: '宿主已重启，原后台命令未自动重放。' } });
+      return this.nativeOutcome(record);
+    }
   }
   async initialize() {
     for (const id of await this.app.storage.listRecords('terminal-active')) {

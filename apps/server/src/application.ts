@@ -307,6 +307,7 @@ export class PlatformApplication {
     const models = options.models ?? this.modelAdapter;
     this.models = {
       generate: input => this.automations.meter.generate(input, () => withDependencyRuntime(this.dependencies, () => models.generate(input))),
+      supportsAsyncTools: input => models.supportsAsyncTools?.(input) ?? false,
       steer: (runId, message) => withDependencyRuntime(this.dependencies, () => models.steer?.(runId, message) ?? Promise.resolve(false)),
       hasContinuation: runId => models.hasContinuation?.(runId) ?? false,
       endRun: runId => models.endRun?.(runId),
@@ -374,6 +375,11 @@ export class PlatformApplication {
         await this.subagents.feedback.continuation.consume(run);
         return delivered;
       },
+      deliverAsyncToolResult: async (run, message) => {
+        await this.subagents.feedback.enqueueMessage({ id: message.id!, conversationId: run.conversationId,
+          actorId: run.actorId, sourceRunId: run.id, message });
+      },
+      recoverAsyncToolResult: record => this.terminals.recoverNativeResult(record.run.id, record.call.id, record.run.conversationId),
       actor: (id, run) => actorForBotRun(this, id, run),
       canAccessConversation: (actor, conversation) => canReadBotConversation(this, actor, conversation.id),
       agent: async (id, actor, conversationId) => {

@@ -43,7 +43,7 @@ export type ToolProgressEmitter = (event: ToolProgressEvent) => void | Promise<v
  * 工具声明（Gemini Function Calling 格式）
  */
 export interface ToolDeclaration {
-    /** 由平台运行器提供的并行只读资格，仍需渠道显式开启原生异步。 */
+    /** 由平台运行器提供的原生异步资格，仍需渠道显式开启该能力。 */
     async?: boolean;
     /** 工具名称 */
     name: string;

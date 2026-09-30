@@ -47,6 +47,16 @@ export class ProviderModelAdapter implements ModelProvider {
   constructor(private readonly services: ModelAdapterServices) {
     this.http = new ChannelHttpExecutor(services.proxyUrl ?? (() => undefined));
   }
+  async supportsAsyncTools(input: ModelInput): Promise<boolean> {
+    if (!input.runId || input.purpose) return false;
+    const profile = await this.services.profile(input.providerId);
+    if (!profile || profile.protocol !== 'openai-responses') return false;
+    const channel = await this.services.channel?.(input.providerId);
+    const capabilities = resolveCapabilities(profile, input.modelOverride ?? profile.model);
+    const enabled = channel ? (channel as any).responsesAsyncToolsEnabled === true : capabilities.responsesAsyncTools === true;
+    const websocket = channel ? (channel as any).responsesWebSocketEnabled === true : capabilities.responsesWebSocket === true;
+    return enabled && (profile.stream || profile.authMode === 'chatgpt' || websocket);
+  }
   private async prepare(input: ModelInput, authenticate: boolean) {
     input.signal.throwIfAborted();
     let profile = await this.services.profile(input.providerId);
@@ -96,8 +106,12 @@ export class ProviderModelAdapter implements ModelProvider {
     // 被完整性校验拒绝。这里在只影响本次请求的副本上清理，保证请求可用；存储由对话读取路径修复。
     const repairedHistory = repairDuplicateFunctionResponses(history);
     if (repairedHistory.changed) history = repairedHistory.history;
+    const nativeAsync = profile.protocol === 'openai-responses' && (config as any).responsesAsyncToolsEnabled === true
+      && (profile.stream || (config as any).responsesWebSocketEnabled === true && !!input.runId && !input.purpose);
+    if (input.pendingToolCallIds?.length && !nativeAsync) throw new Error('当前渠道不支持待完成的原生异步调用，请等待原任务结算后再切换渠道。');
     const integrity = validateHistoryIntegrity(history, {
       detectOrphanFunctionCall: true,
+      ...(nativeAsync ? { pendingAsyncCallIds: new Set(input.pendingToolCallIds ?? []) } : {}),
     });
     if (!integrity.valid)
       throw new Error(`Unpaired tool history: ${integrity.issues[0].kind}`);

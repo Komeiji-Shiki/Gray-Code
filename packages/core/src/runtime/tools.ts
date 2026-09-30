@@ -25,6 +25,8 @@ export interface ToolContext {
   requestPermission?: (reason: string, choices: ApprovalChoice[], signal?: AbortSignal) => Promise<ApprovalDecision>;
   workspace?: WorkspaceDefinition;
   signal: AbortSignal;
+  /** 仅由运行器设置，后台宿主据此把终态返回原始调用。 */
+  nativeAsync?: boolean;
   askUser: (questions: UserQuestion[]) => Promise<QuestionRequest>;
   progress: (value: Record<string, unknown>) => void;
 }
@@ -34,6 +36,12 @@ export interface RuntimeTool {
   validationSchema?: ToolDeclaration['parameters'];
   /** 明确独立的读取允许同批并行；混合工具可按参数纯分类，实际效果与审批仍限制并行。 */
   parallelRead?: boolean | ((args: Record<string, unknown>) => boolean);
+  /** 支持待完成调用的生命周期；实际执行仍经过完整授权和审批。 */
+  nativeAsync?: boolean;
+  /** 只在实际启用原生异步时补充模型侧的生命周期约束。 */
+  nativeAsyncDescription?: string;
+  /** 原生模式的参数说明可以替换原回执语义，参数类型与执行校验保持不变。 */
+  nativeAsyncParameterDescriptions?: Record<string, string>;
   /** Pure classification. Must not read files, contact a service, or create a snapshot. */
   effects: (args: Record<string, unknown>) => ToolEffect[];
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolOutcome>;

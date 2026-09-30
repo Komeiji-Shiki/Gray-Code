@@ -12,8 +12,8 @@ const en: BackendLanguageMessages = {
                 "hint": "Off by default. The desktop and Web platform reuse a Responses connection within each task and send user updates during generation. Requires Responses WebSocket and steering support from the model and gateway."
             },
             "asyncTools": {
-                "title": "Native async read-only tools",
-                "hint": "Off by default. Existing parallel read-only tools can run while the model keeps generating, with up to 4 concurrent tools. Results retain call order and all permission and approval rules apply. Requires async tool support."
+                "title": "Native async tools",
+                "hint": "Off by default. Read, command and browser tools can run while the model continues working, with up to 4 concurrent calls. The model can wait for selected tasks; results return on their original calls. Background commands keep task management and browser operations retain tab order. Permissions and approvals still apply. Requires async tool support."
             }
         },
         "discardQuit": "Discard changes and quit",

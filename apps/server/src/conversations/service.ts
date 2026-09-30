@@ -110,7 +110,8 @@ export class ConversationService {
     if (!model || model.role !== 'model') return { success: true };
     const paired = new Set(state.history.messages.flatMap(message => message.parts.flatMap(part => part.functionResponse ? [(part.functionResponse as { id: string }).id] : [])));
     const selected = new Set(toolCallIds);
-    const calls = model.parts.flatMap(part => part.functionCall ? [part.functionCall as { id: string; name: string }] : []).filter(call => selected.has(call.id) && !paired.has(call.id));
+    const detached = new Set(this.app.runtime.pendingAsyncToolCalls(id));
+    const calls = model.parts.flatMap(part => part.functionCall ? [part.functionCall as { id: string; name: string }] : []).filter(call => selected.has(call.id) && !paired.has(call.id) && !detached.has(call.id));
     if (!calls.length) return { success: true };
     const messages = structuredClone(state.history.messages);
     const responses: PlatformMessage[] = calls.map(call => ({ id: randomUUID(), role: 'user', isFunctionResponse: true, timestamp: Date.now(),
