@@ -55,10 +55,10 @@ export function sameResponsesMessage(a?: MessageMetadata, b?: MessageMetadata): 
     return a.phase === b.phase && a.status === b.status;
 }
 
-export function responsesMessageFields(value?: MessageMetadata): Record<string, unknown> {
+export function responsesMessageFields(value?: MessageMetadata, includeStatus = true): Record<string, unknown> {
     return value ? {
         ...(value.id !== undefined ? { id: value.id } : {}),
-        ...(value.status !== undefined ? { status: value.status } : {}),
+        ...(includeStatus && value.status !== undefined ? { status: value.status } : {}),
         ...(value.phase !== undefined ? { phase: value.phase } : {})
     } : {};
 }

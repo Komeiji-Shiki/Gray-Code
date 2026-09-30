@@ -340,7 +340,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     input.push({
                         type: 'message',
                         role,
-                        ...responsesMessageFields(messageMetadata),
+                        // Codex 兼容端点也不接受 message.status，历史元数据仍保留供界面读取。
+                        ...responsesMessageFields(messageMetadata, options?.reasoningSignatureMode !== 'codex'),
                         content: messageParts
                     });
                     messageParts = [];

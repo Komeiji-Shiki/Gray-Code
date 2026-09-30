@@ -48,7 +48,8 @@ export function projectChannels(profiles: ProviderDefinition[], channels: Channe
         openCodeSessionEnabled: caps.compatibility.openCodeSession,
         deepSeekUserIdEnabled: caps.compatibility.deepSeekUserId, deepSeekVisionEnabled: caps.compatibility.deepSeekVision,
         pdfAttachmentEnabled: caps.compatibility.nativePdf, sendHistoryThoughtSignatures: caps.reasoningSignature !== 'none',
-        reasoningSignatureMode: caps.reasoningSignature === 'codex' ? 'codex' : caps.reasoningSignature === 'deepseek' ? 'deepseek' : 'official',
+        reasoningSignatureMode: caps.reasoningSignature === 'codex' ? 'codex' : caps.reasoningSignature === 'deepseek' ? 'deepseek'
+          : caps.reasoningSignature === 'none' && old?.type === 'openai-responses' ? old.reasoningSignatureMode ?? 'official' : 'official',
         providerReasoningContentEnabled: caps.reasoningSignature === 'deepseek',
         ...(caps.strictTools !== 'protocol_default' ? { strictToolsEnabled: caps.strictTools === 'enabled' } : {}),
       });
@@ -76,11 +77,13 @@ export function channelProfile(channel: ChannelConfig, previous?: ProviderDefini
       maxOutputTokens: enabled[tokenKey] ? options[tokenKey] : undefined },
     capabilities: {
       outputTokenParameter: 'protocol_default', reasoningParameter: 'protocol_default', reasoningLevels: [],
-      // reasoningSignatureMode 只存在于 Responses 渠道配置上（ChannelConfig 是联合类型），
-      // 同文件其他可选项一致用断言读取；非 Responses 渠道该值为 undefined，不会命中。
-      reasoningSignature: (channel as any).reasoningSignatureMode === 'deepseek' ? 'deepseek'
-        : channel.sendHistoryThoughtSignatures === false ? 'none' : 'native',
       ...previous?.capabilities,
+      // Responses 的格式和发送开关以当前渠道为准，旧能力不能覆盖刚保存的选择。
+      reasoningSignature: channel.type === 'openai-responses'
+        ? channel.reasoningSignatureMode === 'deepseek' ? 'deepseek'
+          : channel.sendHistoryThoughtSignatures === false ? 'none'
+          : channel.reasoningSignatureMode === 'codex' ? 'codex' : 'native'
+        : previous?.capabilities.reasoningSignature ?? (channel.sendHistoryThoughtSignatures === false ? 'none' : 'native'),
       responsesWebSocket: (channel as any).responsesWebSocketEnabled === true,
       responsesAsyncTools: (channel as any).responsesAsyncToolsEnabled === true,
       strictTools: channel.strictToolsEnabled === undefined ? previous?.capabilities.strictTools ?? 'protocol_default' : channel.strictToolsEnabled ? 'enabled' : 'disabled',

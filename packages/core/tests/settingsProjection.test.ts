@@ -62,6 +62,43 @@ describe('one settings transaction across legacy and platform entry points', () 
     expect((await call('config.getConfig', { configId: 'first' })).name).toBe('Visible immediately');
   });
 
+  test('Responses 的 Codex 回传格式在保存、能力投影和重启后保留，并允许切回官方格式', async () => {
+    const draft = await app.product.draft();
+    const id = await draft.configs.createConfig({ type: 'openai-responses', enabled: true, timeout: 5000,
+      url: 'http://localhost:1234/v1', name: 'Responses', model: 'fixture', apiKey: '' });
+    await draft.configs.updateConfig(id, { sendHistoryThoughtSignatures: true });
+    await app.product.save(draft);
+    const update = async (updates: Record<string, unknown>) => {
+      await call('ui.settings.begin');
+      await call('config.updateConfig', { configId: id, updates });
+      await call('ui.settings.save'); await call('ui.settings.end');
+    };
+    const signature = () => app.settings.snapshot().settings.providers.find(value => value.id === id)?.capabilities.reasoningSignature;
+    const projectCapability = async (enabled: boolean) => {
+      const snapshot = app.settings.snapshot();
+      snapshot.settings.providers.find(value => value.id === id)!.capabilities.compatibility.openCodeSession = enabled;
+      await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    };
+
+    await update({ reasoningSignatureMode: 'codex' });
+    expect(signature()).toBe('codex');
+    await projectCapability(true);
+    expect(await call('config.getConfig', { configId: id })).toMatchObject({ reasoningSignatureMode: 'codex', sendHistoryThoughtSignatures: true });
+
+    await update({ sendHistoryThoughtSignatures: false });
+    expect(signature()).toBe('none');
+    await projectCapability(false);
+    expect(await app.product.channel(id)).toMatchObject({ reasoningSignatureMode: 'codex', sendHistoryThoughtSignatures: false });
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: codec }); router = new ApplicationRouter(app);
+    expect(await call('config.getConfig', { configId: id })).toMatchObject({ reasoningSignatureMode: 'codex', sendHistoryThoughtSignatures: false });
+
+    await update({ sendHistoryThoughtSignatures: true });
+    expect(signature()).toBe('codex');
+    await update({ reasoningSignatureMode: 'official' });
+    expect(signature()).toBe('native');
+    expect(await app.product.channel(id)).toMatchObject({ reasoningSignatureMode: 'official', sendHistoryThoughtSignatures: true });
+  });
+
   test('seals custom payloads and feature credentials with the same revision and restores them on restart', async () => {
     const draft = await app.product.draft();
     const id = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Secrets', model: 'fixture',

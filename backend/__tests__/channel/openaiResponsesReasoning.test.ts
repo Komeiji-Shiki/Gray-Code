@@ -207,7 +207,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(reasoningItem).not.toHaveProperty('content');
     });
 
-    test('Codex 反代兼容模式回传 encrypted_content 但省略 status', () => {
+    test('Codex 反代兼容模式回传 encrypted_content 且所有 input 项省略 status', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -221,7 +221,10 @@ describe('OpenAI Responses reasoning 与 usage', () => {
                         status: 'completed',
                         summary: [{ type: 'summary_text', text: 'Check the inputs' }]
                     }
-                }, { text: 'The answer is 42.' }]
+                }, {
+                    text: 'The answer is 42.',
+                    openaiResponsesMessage: { id: 'msg_1', status: 'completed', phase: 'commentary', contentIndex: 0, contentType: 'output_text' }
+                }]
             },
             { role: 'user', parts: [{ text: 'Continue.' }] }
         ];
@@ -251,6 +254,13 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         });
         expect(reasoningItem).not.toHaveProperty('status');
         expect(reasoningItem).not.toHaveProperty('content');
+        expect(request.body.input.map((item: any) => item.type)).toEqual(['reasoning', 'message', 'message']);
+        expect(request.body.input[1]).toEqual({
+            type: 'message', role: 'assistant', id: 'msg_1', phase: 'commentary',
+            content: [{ type: 'output_text', text: 'The answer is 42.' }]
+        });
+        expect(request.body.input.every((item: any) => !Object.prototype.hasOwnProperty.call(item, 'status'))).toBe(true);
+        expect(history[0].parts[1].openaiResponsesMessage?.status).toBe('completed');
     });
 
     test('关闭「发送思考签名」时不回传 reasoning item（兼容不支持 reasoning 输入的第三方端点）', () => {
