@@ -29,7 +29,10 @@ export interface WorkspaceDefinition {
   /** 完整目录列表，首项为命令等操作的默认目录；旧单目录记录继续使用 directory。 */
   roots?: WorkspaceRootDefinition[];
 }
+export interface ModelToolCall { id: string; name: string; args: Record<string, unknown>; async?: boolean }
 export interface ToolDeclaration {
+  /** 运行器标注可并行只读工具；供应方仍须显式开启原生异步。 */
+  async?: boolean;
   name: string;
   description: string;
   parameters: Record<string, unknown>;
@@ -109,6 +112,10 @@ export interface ApprovalRequest {
 }
 export interface ModelRequestMetrics { inputItems: number; inputImages: number; nativeTools: number }
 export interface ModelInput {
+  /** 原生连接归属当前任务，内部总结等独立请求不复用此连接。 */
+  runId?: string;
+  /** 只接收完整且可执行的原生调用，返回是否已由运行器接管。 */
+  onToolCallReady?: (call: ModelToolCall) => boolean;
   /** 仅标注内部请求用途，不改变渠道、模型、工具或缓存标识。 */
   purpose?: 'summary' | 'memory';
   /** 核心捕获的回合资料，供应方适配器不直接发送此对象。 */
@@ -129,7 +136,12 @@ export interface ModelInput {
   signal: AbortSignal;
   onDelta?: (parts: Record<string, unknown>[]) => void;
 }
-export interface ModelProvider { generate(input: ModelInput): Promise<PlatformMessage> }
+export interface ModelProvider {
+  generate(input: ModelInput): Promise<PlatformMessage>;
+  steer?: (runId: string, message: PlatformMessage) => Promise<boolean>;
+  hasContinuation?: (runId: string) => boolean;
+  endRun?: (runId: string) => void;
+}
 export interface ToolOutcome {
   attachments?: { mimeType: string; data: string; name?: string }[];
   success: boolean;

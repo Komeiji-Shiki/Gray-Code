@@ -556,6 +556,8 @@ export function formatHistoryForAPI(
         // preserve 动态上下文策略需要在 formatter 构建请求时读取旧回合缓存。
         // 字段本身仍会在 formatter.cleanInternalFields 中被过滤，不会直接发送给模型。
         if (opts.includeTurnDynamicContext && message.id) result.id = message.id;
+        // 平台适配器用连接归属排除已在上游上下文中的输出，formatter 仍只发送 role/parts。
+        if (opts.includeTurnDynamicContext && message.nativeResponse) result.nativeResponse = { ...message.nativeResponse };
         if (opts.includeTurnDynamicContext && message.turnDynamicContext) {
             result.turnDynamicContext = message.turnDynamicContext;
             result.turnDynamicContextStrategy = message.turnDynamicContextStrategy;

@@ -330,6 +330,9 @@ export class SettingsService<T = never> {
         !profile.capabilities.compatibility
       )
         throw new Error("Provider capabilities must be explicit.");
+      for (const flag of ['responsesWebSocket', 'responsesAsyncTools'] as const) {
+        if (profile.capabilities[flag] !== undefined && typeof profile.capabilities[flag] !== 'boolean') throw new Error('Responses 原生能力开关必须是布尔值。');
+      }
       if (
         Object.keys(profile.customHeaders ?? {}).some((key) =>
           /authorization|api[-_]?key|cookie/i.test(key),

@@ -81,6 +81,8 @@ export interface ChannelTokenCounts {
  * Gemini API 的标准消息格式
  */
 export interface Content {
+    /** 平台原生 Responses 连接的内部归属，不能作为上游输入字段发送。 */
+    nativeResponse?: { connectionId: string; responseId?: string };
     /** 宿主内部的记忆来源追踪，不发送给界面或供应方。 */
     longMemoryInputIds?: string[];
     longMemoryReferences?: Array<{ scopeId: string; id: string; version: number }>;

@@ -51,12 +51,15 @@ async function sendInterruptMessage(app: PlatformApplication, client: ClientSess
     if ((await app.storage.listRecords('subagent-feedback', data.conversationId)).length >= AGENT_INBOX_MAX_MESSAGES) throw new Error('待处理消息已达到上限，请等待当前任务处理。');
     const timestamp = Date.now();
     const receipt: InterruptReceipt = { success: true, queued: true, messageId: id, runId: run.id };
-    // 与普通发送共用 parts 构建。消息和回执一起保存，只在既有模型边界交付；不取消/确认工具。
+    // 与普通发送共用 parts 构建。消息和回执一起保存，历史在模型边界交付；原生连接额外接收 steering。
     await app.subagents.feedback.enqueueMessages([{ id, conversationId: data.conversationId, actorId: client.actorId, sourceRunId: run.id,
       message: { ...input, id, timestamp, source: 'user', actorId: client.actorId, isUserInput: true, userFeedback: { kind: 'interrupt' } } }], [
       { namespace: 'user-interrupt-rate', id: data.conversationId, ownerId: data.conversationId, expectedRevision: rate.revision, value: { timestamp } },
       { namespace: 'user-interrupt-receipts', id, ownerId: data.conversationId, expectedRevision: null, value: { fingerprint, receipt } },
     ]);
+    // 先持久接收，再尝试原生 steering。边界等待此决定，避免本地交付与上游接收重复。
+    try { await app.models.steer?.(run.id, { ...input, id, timestamp }); }
+    catch (error) { app.publish({ type: 'notification', severity: 'error', message: `用户输入已保存，原生连接未能确认接收：${String(error)}` }); }
     return receipt;
   });
   // 入队事务先释放边界等待，再尝试空闲交付；不能让两者相互等待。

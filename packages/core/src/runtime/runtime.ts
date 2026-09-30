@@ -61,7 +61,7 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
 interface ActiveRun { controller: AbortController; done: Promise<void> }
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
-interface FunctionCall { id: string; name: string; args: Record<string, unknown> }
+interface FunctionCall { id: string; name: string; args: Record<string, unknown>; async?: boolean }
 export interface PreparedConversationChange {
   /** 仅由可信宿主提供的来源记录；公开请求不能直接提交此对象。 */
   messageMetadata?: Record<string, unknown>;
@@ -269,6 +269,8 @@ export class PlatformRuntime {
   }
 
   private async execute(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext'>): Promise<void> {
+    const executionController = new AbortController();
+    const runningEarly = new Set<Promise<ToolOutcome>>();
     try {
       signal.throwIfAborted();
       await this.event(run.id, 'run.started', {}, { status: 'running' });
@@ -302,7 +304,26 @@ export class PlatformRuntime {
           }
           this.notify({ type: 'model.delta', runId: run.id, parts });
         });
+        const early = new Map<string, { call: FunctionCall; outcome: Promise<ToolOutcome> }>();
+        const earlyController = new AbortController();
+        const earlySignal = AbortSignal.any([signal, executionController.signal, earlyController.signal]);
+        const lanes: Promise<unknown>[] = Array.from({ length: 4 }, () => Promise.resolve());
         const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
+          runId: run.id,
+          onToolCallReady: call => {
+            if (early.has(call.id) || earlySignal.aborted || call.async !== true || !request.tools.some(tool => tool.name === call.name && tool.async)
+              || !this.parallelRead(call, agent, catalog)) return false;
+            const lane = early.size % lanes.length;
+            const saved = structuredClone(call);
+            const outcome = lanes[lane].then(() => earlySignal.aborted
+              ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
+              : this.executeTool(run, agent, workspace, catalog, saved, earlySignal, request));
+            runningEarly.add(outcome);
+            void outcome.then(() => runningEarly.delete(outcome), () => runningEarly.delete(outcome));
+            lanes[lane] = outcome;
+            early.set(call.id, { call: saved, outcome });
+            return true;
+          },
           onRequest: async captured => {
             const id = `${run.id}:${iteration}`;
             await this.services.storage.putRecord({ namespace: 'model-requests', id, ownerId: run.conversationId,
@@ -323,6 +344,9 @@ export class PlatformRuntime {
             deltas.push(parts);
           },
         };
+        request.tools = request.tools.map(tool => ({ ...tool, async: catalog.entries.get(tool.name)?.tool.parallelRead === true
+          && agent.toolApproval?.[tool.name] !== 'ask' && agent.toolApproval?.[tool.name] !== 'deny'
+          && !(agent.reviewerProviderId && agent.reviewerToolNames?.includes(tool.name)) ? true : undefined }));
         const prepared = await this.services.prepareModel?.({ run, agent, workspace, iteration, input: request, history: state });
         if (prepared) { state = prepared.history; request.messages = prepared.messages; }
         const page = state.history;
@@ -331,11 +355,21 @@ export class PlatformRuntime {
         await this.event(run.id, 'model.started', { iteration });
         let generated: PlatformMessage;
         try {
-          try { generated = await this.services.models.generate(request); }
+          try {
+            generated = await this.services.models.generate(request);
+            for (const { call } of early.values()) {
+              const returned = generated.parts.find(part => (part.functionCall as FunctionCall | undefined)?.id === call.id)?.functionCall as FunctionCall | undefined;
+              if (!returned || returned.name !== call.name || JSON.stringify(returned.args) !== JSON.stringify(call.args)) throw new Error('原生异步调用的终态与已发出的完整参数不一致。');
+            }
+          }
           finally { deltas.finish(); await streamingEvent; }
           signal.throwIfAborted();
         } catch (error) {
-          if (partialParts.some(part => typeof part.text === 'string' && part.text.trim())) {
+          earlyController.abort(error);
+          await Promise.allSettled([...early.values()].map(value => value.outcome));
+          // 完整发出的只读调用已经执行或取消，必须保留配对身份，后续不再重复执行。
+          for (const { call } of early.values()) partialParts.push({ functionCall: call });
+          if (partialParts.some(part => part.functionCall || typeof part.text === 'string' && part.text.trim())) {
             let partial: PlatformMessage = { role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
               parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now(), parts: partialParts, modelVersion: request.modelOverride,
               incompleteReason: signal.aborted ? 'cancelled' : 'interrupted', usageMetadataPartial: true };
@@ -357,6 +391,7 @@ export class PlatformRuntime {
         await this.event(run.id, 'message.saved', { messageId: content.id, streaming: deltas.statistics() }, { iteration });
         await this.services.modelBoundary?.(run, workspace, signal, 'after', iteration, content);
         if (!calls.length) {
+          if (this.services.models.hasContinuation?.(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (await this.services.deliverFeedback?.(run)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (this.questions.hasFeedback(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); await this.drainFeedback(run); continue; }
           if (this.questions.list(run.id).length) {
@@ -376,7 +411,7 @@ export class PlatformRuntime {
           }
           const outcomes = await Promise.all(batch.map(call => signal.aborted
             ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
-            : this.executeTool(run, agent, workspace, catalog, call, signal, request)));
+            : early.get(call.id)?.outcome ?? this.executeTool(run, agent, workspace, catalog, call, signal, request)));
           // 完成时间可以不同，持久化和后续模型输入始终服从原始调用顺序。
           for (let item = 0; item < batch.length; item++) await this.saveToolResult(run, batch[item], outcomes[item]);
         }
@@ -387,10 +422,16 @@ export class PlatformRuntime {
       }
       throw new Error(`The configured iteration limit (${agent.maxIterations}) was reached.`);
     } catch (error) {
+      executionController.abort(error);
+      await Promise.allSettled([...runningEarly]);
       await this.settleInterrupted(run, signal.aborted ? 'CANCELLED' : 'INTERRUPTED');
       await this.event(run.id, signal.aborted ? 'run.cancelled' : 'run.failed', { error: error instanceof Error ? error.message : String(error) }, {
         status: signal.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      executionController.abort();
+      await Promise.allSettled([...runningEarly]);
+      this.services.models.endRun?.(run.id);
     }
   }
 

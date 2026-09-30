@@ -802,6 +802,16 @@ const sharedEn = {
         recoveryHint: backendEn.desktop.recoveryHint,
         recoveryRescue: backendEn.desktop.recoveryRescue,
         releasePage: backendEn.desktop.releasePage,
+        responsesNative: {
+            asyncTools: {
+                hint: backendEn.desktop.responsesNative.asyncTools.hint,
+                title: backendEn.desktop.responsesNative.asyncTools.title,
+            },
+            websocket: {
+                hint: backendEn.desktop.responsesNative.websocket.hint,
+                title: backendEn.desktop.responsesNative.websocket.title,
+            },
+        },
         restart: backendEn.desktop.restart,
         restartInstall: backendEn.desktop.restartInstall,
         restarting: backendEn.desktop.restarting,

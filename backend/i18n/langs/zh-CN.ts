@@ -8,6 +8,16 @@
 
 const zhCN = {
     desktop: {
+        responsesNative: {
+            "websocket": {
+                "title": "原生 WebSocket 与生成中补充消息",
+                "hint": "默认关闭。开启后，独立桌面与 Web 平台在任务内复用 Responses 连接，并将生成中发送的补充消息交给模型。需要模型与上游网关支持 Responses WebSocket 和 steering。"
+            },
+            "asyncTools": {
+                "title": "原生异步只读工具",
+                "hint": "默认关闭。开启后，已有可并行只读工具可在模型继续生成时执行，最多同时执行 4 个，结果按调用顺序保存。权限与确认规则继续生效，需要上游模型支持 async 工具。"
+            }
+        },
         "discardQuit": "放弃修改并退出",
         "saveAllProgress": "正在保存文件与设置…",
         "saveAllDetail": "可以先保存全部文件和设置再退出。选择“放弃修改并退出”会丢弃未保存的内容。退出时后台任务和连接将停止。",

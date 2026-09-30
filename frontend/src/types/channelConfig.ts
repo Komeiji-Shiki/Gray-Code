@@ -213,6 +213,8 @@ export interface ChannelConfig {
   deepSeekVisionEnabled?: boolean
   pdfAttachmentEnabled?: boolean
   promptCacheKeyEnabled?: boolean
+  responsesWebSocketEnabled?: boolean
+  responsesAsyncToolsEnabled?: boolean
   promptCacheKey?: string
   promptCachingEnabled?: boolean
   promptCachingTtl?: '5m' | '1h'

@@ -153,6 +153,22 @@ function onReasoningSignatureModeChange(value: string) {
 
 <template>
   <div class="openai-responses-options">
+    <div v-for="option in [
+      { field: 'responsesWebSocketEnabled', key: 'websocket' },
+      { field: 'responsesAsyncToolsEnabled', key: 'asyncTools' }
+    ]" :key="option.field" class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">{{ t(`desktop.responsesNative.${option.key}.title`) }}</span>
+        <label class="toggle-switch" :title="t(`desktop.responsesNative.${option.key}.title`)">
+          <input type="checkbox" :aria-label="t(`desktop.responsesNative.${option.key}.title`)" :checked="config[option.field] === true"
+            @change="(e: any) => emit('update:field', option.field, e.target.checked)" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t(`desktop.responsesNative.${option.key}.hint`) }}</span>
+      </div>
+    </div>
     <!-- Prompt Cache Key（会话缓存透传） -->
     <div class="option-section">
       <div class="option-section-header">

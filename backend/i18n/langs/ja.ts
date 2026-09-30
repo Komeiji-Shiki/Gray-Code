@@ -6,6 +6,16 @@ import type { BackendLanguageMessages } from '../types';
 
 const ja: BackendLanguageMessages = {
     desktop: {
+        responsesNative: {
+            "websocket": {
+                "title": "ネイティブ WebSocket と生成中の追加メッセージ",
+                "hint": "初期状態では無効です。デスクトップと Web ではタスク内の Responses 接続を再利用し、生成中の追加メッセージを送信します。モデルとゲートウェイが WebSocket と steering に対応している必要があります。"
+            },
+            "asyncTools": {
+                "title": "ネイティブ非同期の読み取り専用ツール",
+                "hint": "初期状態では無効です。既存の並列読み取りツールを、モデルの生成中に最大 4 個実行します。結果の順序と権限・承認ルールを維持します。モデルの async ツール対応が必要です。"
+            }
+        },
         "discardQuit": "変更を破棄して終了",
         "saveAllProgress": "ファイルと設定を保存中…",
         "saveAllDetail": "すべてのファイルと設定を保存して終了するか、未保存の変更を破棄できます。終了するとバックグラウンドの作業と接続は停止します。",

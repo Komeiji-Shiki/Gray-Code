@@ -22,6 +22,8 @@ export * from './nodes';
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PlatformMessage {
+  /** 仅供持有对应连接的适配器识别原生输出；旧存档与其它连接不依赖此标识。 */
+  nativeResponse?: { connectionId: string; responseId?: string };
   id?: string;
   role: string;
   parts: Record<string, unknown>[];

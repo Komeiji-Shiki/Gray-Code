@@ -512,6 +512,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         type: 'function_call',
                         name: part.functionCall.name,
                         call_id: part.functionCall.id,
+                        ...(part.functionCall.async === true ? { async: true } : {}),
                         arguments: typeof part.functionCall.args === 'string'
                             ? part.functionCall.args
                             : JSON.stringify(part.functionCall.args)
@@ -709,7 +710,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     functionCall: {
                         name: item.name,
                         args,
-                        id: item.call_id
+                        id: item.call_id,
+                        ...(typeof item.async === 'boolean' ? { async: item.async } : {})
                     }
                 });
             }
@@ -777,6 +779,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             args: {},
                             partialArgs: '',
                             id: chunk.item.call_id,
+                            ...(typeof chunk.item.async === 'boolean' ? { async: chunk.item.async } : {}),
                             itemId: chunk.item.id,
                             index: chunk.output_index
                         } as any
@@ -797,6 +800,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             args: {},
                             partialArgs: chunk.item.arguments,
                             id: chunk.item.call_id,
+                            ...(typeof chunk.item.async === 'boolean' ? { async: chunk.item.async } : {}),
                             itemId: chunk.item.id,
                             index: chunk.output_index,
                             finalArgs: true
@@ -1053,6 +1057,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 description: tool.description,
                 parameters: strict ? ensureStrictSchema(tool.parameters, true) : tool.parameters,
                 strict,
+                ...(tool.async === true ? { async: true } : {}),
             };
         });
     }

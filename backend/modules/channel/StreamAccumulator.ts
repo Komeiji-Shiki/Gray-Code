@@ -589,6 +589,11 @@ export class StreamAccumulator {
                                 visibleFieldChanged = true;
                             }
                         }
+                        // async 可能只在完整 item 到达时给出，需保留到最终历史。
+                        if (typeof fc.async === 'boolean' && lastFc.async !== fc.async) {
+                            lastFc.async = fc.async;
+                            visibleFieldChanged = true;
+                        }
                         // itemId 仅用于后续流式片段定位，最终Content 会统一删除。
                         if (fc.itemId && !lastFc.itemId) {
                             lastFc.itemId = fc.itemId;

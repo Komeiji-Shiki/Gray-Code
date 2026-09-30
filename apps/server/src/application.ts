@@ -301,7 +301,12 @@ export class PlatformApplication {
         proxyUrl: () => { const proxy = this.product.runtimeSettings().getProxySettings(); return proxy.enabled ? proxy.url : undefined; },
       });
     const models = options.models ?? this.modelAdapter;
-    this.models = { generate: input => this.automations.meter.generate(input, () => withDependencyRuntime(this.dependencies, () => models.generate(input))) };
+    this.models = {
+      generate: input => this.automations.meter.generate(input, () => withDependencyRuntime(this.dependencies, () => models.generate(input))),
+      steer: (runId, message) => withDependencyRuntime(this.dependencies, () => models.steer?.(runId, message) ?? Promise.resolve(false)),
+      hasContinuation: runId => models.hasContinuation?.(runId) ?? false,
+      endRun: runId => models.endRun?.(runId),
+    };
     this.runtime = new PlatformRuntime({
       executionNodeId: () => this.nodes.identity.id,
       currentNodeOrigin: () => this.nodes.currentOrigin(),

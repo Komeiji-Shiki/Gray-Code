@@ -6,6 +6,16 @@ import type { BackendLanguageMessages } from '../types';
 
 const en: BackendLanguageMessages = {
     desktop: {
+        responsesNative: {
+            "websocket": {
+                "title": "Native WebSocket and mid-turn updates",
+                "hint": "Off by default. The desktop and Web platform reuse a Responses connection within each task and send user updates during generation. Requires Responses WebSocket and steering support from the model and gateway."
+            },
+            "asyncTools": {
+                "title": "Native async read-only tools",
+                "hint": "Off by default. Existing parallel read-only tools can run while the model keeps generating, with up to 4 concurrent tools. Results retain call order and all permission and approval rules apply. Requires async tool support."
+            }
+        },
         "discardQuit": "Discard changes and quit",
         "saveAllProgress": "Saving files and settings…",
         "saveAllDetail": "Save all files and settings before quitting, or discard unsaved changes. Quitting stops background tasks and connections.",

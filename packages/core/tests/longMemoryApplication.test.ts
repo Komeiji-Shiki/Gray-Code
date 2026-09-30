@@ -14,7 +14,7 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
   const run=async(id:string,text:string)=>{const value=await app.runtime.start(request(id,text));const done=await app.runtime.wait(value.id);expect(done?.status).toBe('completed');return value;};
   beforeEach(async()=>{
     f=await fixture();await f.store.close();seen=[];generate=async()=>({role:'model',parts:[{text:'已处理。'}]});
-    app=await PlatformApplication.open({dataDirectory:f.data,documentsDirectory:f.root,models:{generate:async input=>{const {signal,onRequest,onDelta,...snapshot}=input;seen.push({...structuredClone(snapshot),signal});return generate(input);}}});
+    app=await PlatformApplication.open({dataDirectory:f.data,documentsDirectory:f.root,models:{generate:async input=>{const {signal,onRequest,onDelta,onToolCallReady,...snapshot}=input;seen.push({...structuredClone(snapshot),signal});return generate(input);}}});
     router=new ApplicationRouter(app);
     const draft=await app.product.draft();providerId=await draft.configs.createConfig({name:'记忆测试渠道',type:'openai',url:'http://127.0.0.1:1/v1',model:'fixture-model',apiKey:'',enabled:true,contextManagementEnabled:false,timeout:1000});await app.product.save(draft);
     await app.createConversation('owner','记忆测试',undefined,{},[],{id:'memory-chat'});

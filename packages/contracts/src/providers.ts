@@ -19,6 +19,9 @@ export type ReasoningParameter =
 
 /** Explicit endpoint/model capabilities; model names are not authorization or capability signals. */
 export interface ProviderCapabilities {
+  /** 缺省保留 HTTP 和同步工具；仅 Responses 渠道使用。 */
+  responsesWebSocket?: boolean;
+  responsesAsyncTools?: boolean;
   outputTokenParameter: OutputTokenParameter;
   strictTools: "protocol_default" | "enabled" | "disabled";
   reasoningParameter: ReasoningParameter;

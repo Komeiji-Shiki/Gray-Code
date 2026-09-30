@@ -42,7 +42,9 @@ export function projectChannels(profiles: ProviderDefinition[], channels: Channe
     channel.options = options; channel.optionsEnabled = enabled;
     if (!old || JSON.stringify(before?.capabilities) !== JSON.stringify(profile.capabilities)) {
       const caps = profile.capabilities;
-      Object.assign(channel, { openCodeSessionEnabled: caps.compatibility.openCodeSession,
+      Object.assign(channel, { responsesWebSocketEnabled: caps.responsesWebSocket === true,
+        responsesAsyncToolsEnabled: caps.responsesAsyncTools === true,
+        openCodeSessionEnabled: caps.compatibility.openCodeSession,
         deepSeekUserIdEnabled: caps.compatibility.deepSeekUserId, deepSeekVisionEnabled: caps.compatibility.deepSeekVision,
         pdfAttachmentEnabled: caps.compatibility.nativePdf, sendHistoryThoughtSignatures: caps.reasoningSignature !== 'none',
         reasoningSignatureMode: caps.reasoningSignature === 'codex' ? 'codex' : caps.reasoningSignature === 'deepseek' ? 'deepseek' : 'official',
@@ -77,6 +79,8 @@ export function channelProfile(channel: ChannelConfig, previous?: ProviderDefini
       reasoningSignature: (channel as any).reasoningSignatureMode === 'deepseek' ? 'deepseek'
         : channel.sendHistoryThoughtSignatures === false ? 'none' : 'native',
       ...previous?.capabilities,
+      responsesWebSocket: (channel as any).responsesWebSocketEnabled === true,
+      responsesAsyncTools: (channel as any).responsesAsyncToolsEnabled === true,
       strictTools: channel.strictToolsEnabled === undefined ? previous?.capabilities.strictTools ?? 'protocol_default' : channel.strictToolsEnabled ? 'enabled' : 'disabled',
       compatibility: { openCodeSession: channel.openCodeSessionEnabled === true,
         deepSeekUserId: (channel as any).deepSeekUserIdEnabled === true, deepSeekVision: (channel as any).deepSeekVisionEnabled === true,

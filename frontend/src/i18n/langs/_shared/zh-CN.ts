@@ -802,6 +802,16 @@ const sharedZhCN = {
         recoveryHint: backendZhCN.desktop.recoveryHint,
         recoveryRescue: backendZhCN.desktop.recoveryRescue,
         releasePage: backendZhCN.desktop.releasePage,
+        responsesNative: {
+            asyncTools: {
+                hint: backendZhCN.desktop.responsesNative.asyncTools.hint,
+                title: backendZhCN.desktop.responsesNative.asyncTools.title,
+            },
+            websocket: {
+                hint: backendZhCN.desktop.responsesNative.websocket.hint,
+                title: backendZhCN.desktop.responsesNative.websocket.title,
+            },
+        },
         restart: backendZhCN.desktop.restart,
         restartInstall: backendZhCN.desktop.restartInstall,
         restarting: backendZhCN.desktop.restarting,

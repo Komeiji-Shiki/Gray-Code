@@ -101,6 +101,8 @@ export function buildChannelConfig(
         : capability.reasoningSignature === "deepseek"
           ? "deepseek"
           : "official",
+    responsesWebSocketEnabled: capability.responsesWebSocket === true,
+    responsesAsyncToolsEnabled: capability.responsesAsyncTools === true,
     deepSeekUserIdEnabled: capability.compatibility.deepSeekUserId,
     deepSeekVisionEnabled: capability.compatibility.deepSeekVision,
     openCodeSessionEnabled: capability.compatibility.openCodeSession,

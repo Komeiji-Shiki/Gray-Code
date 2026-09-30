@@ -32,6 +32,12 @@ export function mergeResponsesMessagePart(parts: ContentPart[], incoming: Conten
  */
 export function reconcileResponsesOutput(previous: ContentPart[], snapshot: ContentPart[]): { parts: ContentPart[]; delta: ContentPart[] } {
     const parts = snapshot.map(part => {
+        if (part.functionCall) {
+            const old = previous.find(candidate => candidate.functionCall?.id === part.functionCall?.id)?.functionCall;
+            // 终态可能省略先前完整 item 的 async 扩展；显式新值仍以终态为准。
+            return { ...part, functionCall: { ...part.functionCall,
+                ...(part.functionCall.async === undefined && old?.async !== undefined ? { async: old.async } : {}) } };
+        }
         if (part.openaiResponsesMessage) {
             const old = previous.find(candidate => sameResponsesMessage(candidate.openaiResponsesMessage, part.openaiResponsesMessage)
                 && (candidate.openaiResponsesMessage?.contentIndex ?? 0) === (part.openaiResponsesMessage?.contentIndex ?? 0));

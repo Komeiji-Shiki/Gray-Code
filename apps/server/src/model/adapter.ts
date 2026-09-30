@@ -15,6 +15,7 @@ import type { GenerateRequest } from "../../../../backend/modules/channel/types"
 import type { ToolDeclaration } from "../../../../backend/tools/types";
 import type { ChannelConfig } from "../../../../backend/modules/config/types";
 import { modelRequestMetrics } from './requestMetrics';
+import { ResponsesWebSocket } from './responsesWebSocket';
 import {
   applyProviderCapabilities,
   buildChannelConfig,
@@ -33,6 +34,13 @@ export interface ModelAdapterServices {
 /** Composition adapter reuses the existing provider codecs and HTTP stream parser. */
 export class ProviderModelAdapter implements ModelProvider {
   private readonly http: ChannelHttpExecutor;
+  private readonly sockets = new Map<string, { socket: ResponsesWebSocket; formatInput: (messages: PlatformMessage[]) => any[] }>();
+  hasContinuation(runId: string): boolean { return this.sockets.get(runId)?.socket.hasContinuation() ?? false; }
+  endRun(runId: string): void { this.sockets.get(runId)?.socket.close(); this.sockets.delete(runId); }
+  async steer(runId: string, message: PlatformMessage): Promise<boolean> {
+    const session = this.sockets.get(runId);
+    return session && message.id ? session.socket.steer(message.id, session.formatInput([message])) : false;
+  }
   constructor(private readonly services: ModelAdapterServices) {
     this.http = new ChannelHttpExecutor(services.proxyUrl ?? (() => undefined));
   }
@@ -65,8 +73,9 @@ export class ProviderModelAdapter implements ModelProvider {
     let history = (structuredClone(input.messages) as Content[]).flatMap(message => {
       if (message.role !== 'model' || !message.incompleteReason) return [message];
       // 部分思考保存在历史中供用户查看，但没有完整供应方签名，不能作为下一次请求的有效思考块。
-      const parts = message.parts.filter(part => !part.thought && typeof part.text === 'string').map(part => ({ text: part.text }));
-      return parts.some(part => part.text?.trim()) ? [{ ...message, parts }] : [];
+      const parts = message.parts.flatMap(part => part.functionCall && part.functionCall.async === true
+        ? [part] : !part.thought && typeof part.text === 'string' ? [{ text: part.text }] : []);
+      return parts.length ? [{ ...message, parts }] : [];
     });
     if (capabilities.compatibility.deepSeekVision) {
       if (!this.services.prepareVision)
@@ -98,7 +107,10 @@ export class ProviderModelAdapter implements ModelProvider {
       formatter.buildRequest(
         request,
         config,
-        input.tools as unknown as ToolDeclaration[],
+        input.tools.map(tool => ({ ...tool, async: profile.protocol === 'openai-responses'
+          && (config as any).responsesAsyncToolsEnabled === true && !!input.onToolCallReady && tool.async === true
+          && (profile.stream || (config as any).responsesWebSocketEnabled === true && !!input.runId && !input.purpose)
+          ? true : undefined })) as unknown as ToolDeclaration[],
       ),
       profile,
       input,
@@ -125,9 +137,27 @@ export class ProviderModelAdapter implements ModelProvider {
   async generate(input: ModelInput): Promise<PlatformMessage> {
     const { profile, config, formatter, options } = await this.prepare(input, true);
     input.signal.throwIfAborted();
-    await input.onRequest?.({ protocol: profile.protocol, model: config.model, body: options.body, metrics: modelRequestMetrics(options.body) });
+    const native = profile.protocol === 'openai-responses' && (config as any).responsesWebSocketEnabled === true && input.runId && !input.purpose;
+    let socket: ResponsesWebSocket | undefined;
+    let source: AsyncIterable<any> | undefined;
+    const capture = async (body: any) => { await input.onRequest?.({ protocol: profile.protocol, model: config.model, body, metrics: modelRequestMetrics(body) }); };
+    if (native) {
+      const previous = this.sockets.get(input.runId!);
+      if (previous && previous.socket.identity !== ResponsesWebSocket.identity(options)) {
+        if (previous.socket.hasContinuation()) throw new Error('原生响应尚未续接完成，不能在当前任务中更换渠道或模型。');
+        this.endRun(input.runId!);
+      }
+      socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal);
+      const formatInput = (messages: PlatformMessage[]) => formatter.buildRequest({ configId: config.id, conversationId: input.conversationId,
+        history: messages as Content[], dynamicContextStrategy: 'preserve', skipTools: true }, config).body.input;
+      this.sockets.set(input.runId!, { socket, formatInput });
+      const context = socket.context(input.messages, input.promptContext);
+      source = socket.response((messages, full) => ({ ...options.body, input: full ? options.body.input : formatInput(messages) }), input.messages, context.full, capture);
+    } else {
+      await capture(options.body);
+    }
     input.signal.throwIfAborted();
-    if (!profile.stream) {
+    if (!profile.stream && !native) {
       const requestStartedAt = Date.now();
       const response = await this.http.executeRequest(options, input.signal);
       const responseDuration = Date.now() - requestStartedAt;
@@ -142,9 +172,25 @@ export class ProviderModelAdapter implements ModelProvider {
     const accumulator = new StreamAccumulator(config.toolMode ?? "function_call");
     accumulator.setProviderType(profile.protocol);
     accumulator.setRequestStartTime(Date.now());
-    const source = this.http.executeStreamRequest(options, input.signal);
+    source ??= this.http.executeStreamRequest(options, input.signal);
+    const issued = new Set<string>();
+    let blocked = false;
+    const asyncNames = new Set((options.body.tools ?? []).filter((tool: any) => tool.async === true).map((tool: any) => tool.name));
+    const dispatch = (item: any) => {
+      if (item?.type !== 'function_call' || issued.has(item.call_id)) return;
+      if (blocked || item.async !== true || !asyncNames.has(item.name)) { blocked = true; return; }
+      const call = formatter.parseResponse({ output: [item] }).content.parts[0]?.functionCall;
+      if (call?.id && input.onToolCallReady?.({ id: call.id, name: call.name, args: call.args, async: true })) issued.add(call.id);
+      else blocked = true;
+    };
     for await (const raw of source) {
       input.signal.throwIfAborted();
+      if (profile.protocol === 'openai-responses') {
+        if (raw.type === 'response.output_item.added' && raw.item?.type === 'function_call'
+          && (raw.item.async !== true || !asyncNames.has(raw.item.name))) blocked = true;
+        if (raw.type === 'response.output_item.done') dispatch(raw.item);
+        if (['response.completed', 'response.incomplete'].includes(raw.type)) for (const item of raw.response?.output ?? []) dispatch(item);
+      }
       const chunk = formatter.parseStreamChunk(raw);
       const delta = accumulator.add(chunk);
       if (delta.length) input.onDelta?.(delta as Record<string, unknown>[]);
@@ -153,8 +199,8 @@ export class ProviderModelAdapter implements ModelProvider {
     if (!accumulator.isComplete())
       throw new Error("The model stream ended before a completion event.");
     const content = accumulator.getFinalContent();
-    if (!content.parts.length)
+    if (!content.parts.length && !socket?.hasContinuation())
       throw new Error("The model returned no content.");
-    return content as PlatformMessage;
+    return { ...content, ...(socket ? { nativeResponse: socket.reference() } : {}) } as PlatformMessage;
   }
 }
