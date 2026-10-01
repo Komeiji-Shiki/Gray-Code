@@ -76,8 +76,23 @@ describe('独立平台轻量搜索与工具选择说明', () => {
     expect(result).toMatchObject({ column: 7295, matchLength: 12, contentTruncated: true });
     expect(result.text).toContain('browser_read');
     expect(result.text).toBe(value.slice(result.previewStartColumn - 1, result.previewStartColumn - 1 + result.text.length));
-    expect(result.text.length).toBeLessThanOrEqual(1201);
+    expect(result.text.length).toBeLessThanOrEqual(300);
+    expect(result.previewEndTruncated).toBe(true);
     expect(literalMatchPreview('hit', 0, 3)).toMatchObject({ text: 'hit', column: 1, previewStartColumn: 1, contentTruncated: false });
+    expect(literalMatchPreview('hit', 0, 3).previewEndTruncated).toBeUndefined();
+    const tail = literalMatchPreview('a'.repeat(1000) + 'hit', 1000, 3);
+    expect(tail).toMatchObject({ contentTruncated: true });
+    expect(tail.previewEndTruncated).toBeUndefined();
+  });
+
+  test('pattern 传给文件遍历，空 pattern 被拒绝', async () => {
+    const { host, search } = toolsFixture();
+    const iterate = jest.spyOn(host, 'iterateFiles');
+    await search.handler({ query: 'hit', pattern: '**/*.txt' });
+    expect(iterate.mock.calls[0][1]).toBe('**/*.txt');
+    await search.handler({ query: 'hit' });
+    expect(iterate.mock.calls[1][1]).toBe('**/*');
+    await expect(search.handler({ query: 'hit', pattern: ' ' })).rejects.toThrow('pattern');
   });
 
   test('超长命中与代理对边界仍给出有效的预览坐标', () => {

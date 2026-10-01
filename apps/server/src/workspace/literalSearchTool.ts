@@ -6,14 +6,18 @@ import { escapeRegExp } from '../../../../backend/tools/shared/textUtils';
 import { splitTextLines } from '../../../../shared/textLines';
 import type { NodeFileHost } from './fileHost';
 
-/** 预览保留真实列号；裁剪围绕命中而不是固定取行首，并避免切开 UTF-16 代理对。 */
-export function literalMatchPreview(value: string, index: number, length: number, limit = 1200) {
+/**
+ * 预览保留真实列号；裁剪围绕命中而不是固定取行首，并避免切开 UTF-16 代理对。
+ * 300 字符足够看清一行代码的上下文；更长的行用 read_file 按行号读取，不在搜索结果里整行返回。
+ */
+export function literalMatchPreview(value: string, index: number, length: number, limit = 300) {
   let start = Math.max(0, Math.min(index - Math.floor(Math.max(0, limit - length) / 2), value.length - limit));
   let end = Math.min(value.length, start + limit);
   if (start > 0 && /[\uDC00-\uDFFF]/.test(value[start]) && /[\uD800-\uDBFF]/.test(value[start - 1])) start--;
   if (end < value.length && /[\uDC00-\uDFFF]/.test(value[end]) && /[\uD800-\uDBFF]/.test(value[end - 1])) end--;
   return { text: value.slice(start, end), column: index + 1, matchLength: length,
-    previewStartColumn: start + 1, contentTruncated: start > 0 || end < value.length };
+    previewStartColumn: start + 1, contentTruncated: start > 0 || end < value.length,
+    ...(end < value.length ? { previewEndTruncated: true } : {}) };
 }
 
 /** 轻量搜索与高级搜索共用文件宿主及排除配置，保留每个匹配行只返回一次的语义。 */
@@ -23,10 +27,14 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
     declaration: {
       name: 'search_files', readOnly: true, category: 'search',
       description: isZh
-        ? '轻量、严格字面量搜索 UTF-8 文本，每个匹配行返回一次，不自动拆词。沿用 search_in_files 的排除配置及项目 .gitignore；includeIgnored=true 可显式搜索忽略文件，仍跳过 .git 元数据、符号链接、二进制和大文件。长行返回命中附近片段及 column/previewStartColumn/contentTruncated。需要正则、glob、上下文或替换时使用 search_in_files。用 nextOffset 续查并保持参数不变；文件或排除设置变化后从 0 重查。'
-        : 'Lightweight strict literal UTF-8 search, one result per matching line without keyword fallback. Uses search_in_files exclusions and project .gitignore; includeIgnored=true explicitly searches ignored files, still skipping .git metadata, symlinks, binary and large files. Long lines return a match-centered preview with column/previewStartColumn/contentTruncated. Use search_in_files for regex, globs, context or replacement. Continue with nextOffset and unchanged parameters; restart at 0 after files or exclusions change.',
+        ? '轻量、严格字面量搜索 UTF-8 文本，每个匹配行返回一次，不自动拆词。沿用 search_in_files 的排除配置及项目 .gitignore；includeIgnored=true 可显式搜索忽略文件，仍跳过 .git 元数据、符号链接、二进制和大文件。结果按文件分组，命中行写成 "行:列: 内容"；长行只返回命中附近的片段，被裁剪的一端用 … 标出，列号是原行中的位置。需要正则、上下文或替换时使用 search_in_files。用 nextOffset 续查并保持参数不变；文件或排除设置变化后从 0 重查。'
+        : 'Lightweight strict literal UTF-8 search, one result per matching line without keyword fallback. Uses search_in_files exclusions and project .gitignore; includeIgnored=true explicitly searches ignored files, still skipping .git metadata, symlinks, binary and large files. Results are grouped by file as "line:col: text"; long lines return a match-centered snippet with … on trimmed ends, and columns refer to the original line. Use search_in_files for regex, context or replacement. Continue with nextOffset and unchanged parameters; restart at 0 after files or exclusions change.',
       parameters: { type: 'object', additionalProperties: false, properties: {
-        query: { type: 'string', minLength: 1 }, directory: { type: 'string' }, caseSensitive: { type: 'boolean' },
+        query: { type: 'string', minLength: 1 }, directory: { type: 'string' },
+        pattern: { type: 'string', minLength: 1, description: isZh
+          ? '可选文件 glob，相对于 directory（默认工作区根目录），例如 "**/*.ts"。省略时搜索全部文件。'
+          : 'Optional file glob relative to directory (default workspace root), e.g. "**/*.ts". Omit to search all files.' },
+        caseSensitive: { type: 'boolean' },
         includeIgnored: { type: 'boolean', default: false },
         limit: { type: 'integer', minimum: 1, maximum: 200 },
         offset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '跳过的匹配行数，续查用 nextOffset。' : 'Matching lines to skip; use nextOffset to continue.' },
@@ -42,6 +50,8 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
       if (typeof args.query !== 'string' || !args.query.length) throw new Error('query must be nonempty text');
       if (args.includeIgnored !== undefined && typeof args.includeIgnored !== 'boolean') throw new Error('includeIgnored must be a boolean');
       if (args.directory !== undefined && typeof args.directory !== 'string') throw new Error('directory must be a string');
+      if (args.pattern !== undefined && (typeof args.pattern !== 'string' || !args.pattern.trim())) throw new Error('pattern must be a nonempty glob');
+      const pattern = typeof args.pattern === 'string' ? args.pattern.trim() : '**/*';
       const includeIgnored = args.includeIgnored === true;
       const exclude = includeIgnored ? '**/.git/**' : buildExcludePattern(host.searchConfig().excludePatterns);
       const roots = host.getAllWorkspaces();
@@ -57,7 +67,7 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
       const skip = (file: string, reason: string) => { skippedCount++; if (skippedFiles.length < 50) skippedFiles.push({ file, reason }); };
       search: for (const root of targets) {
         // 扫描游标跳过的是发现顺序中的文件，不能在游标以前先截断发现结果，否则下一页仍到不了后续文件。
-        for await (const file of host.iterateFiles(root.uri, '**/*', exclude, Number.MAX_SAFE_INTEGER, { includeIgnored })) {
+        for await (const file of host.iterateFiles(root.uri, pattern, exclude, Number.MAX_SAFE_INTEGER, { includeIgnored })) {
           context?.abortSignal?.throwIfAborted();
           if (discovered++ < Number(scanOffset)) continue;
           if (scanned >= 20_000) { filesTruncated = true; break search; }
