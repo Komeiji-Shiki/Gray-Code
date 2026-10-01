@@ -78,7 +78,7 @@ jobs:
         if: steps.should.outputs.build == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       # fast-tavern py 的 venv 缓存（E-11）：key 含 runner.os 与 python 版本，避免跨版本复用损坏的 venv。
@@ -290,7 +290,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies

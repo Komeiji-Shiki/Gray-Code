@@ -5,7 +5,7 @@
   "main": "dist/index.cjs",
   "types": "dist/types/core/src/index.d.ts",
   "engines": {
-    "node": ">=22.15.0"
+    "node": ">=24.11.0"
   },
   "dependencies": {
     "@graycode/contracts": "0.1.0",

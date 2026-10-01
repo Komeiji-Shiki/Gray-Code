@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
         run: npm run ci
 
   windows-desktop:
-    # Node 22 自带的 node-gyp 尚不能识别 VS 2026，原生依赖使用 VS 2022 工具链。
+    # 原生依赖固定使用 VS 2022 工具链；换用新版 Windows 镜像前，先确认 Node 自带的 node-gyp 能识别其中的 Visual Studio。
     runs-on: windows-2022
     timeout-minutes: 20
     permissions:
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             package-lock.json

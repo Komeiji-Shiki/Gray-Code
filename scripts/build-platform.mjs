@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const common = {
   absWorkingDir: root, bundle: true, platform: 'node', format: 'cjs',
-  target: 'node22', sourcemap: true, logLevel: 'warning',
+  target: 'node24', sourcemap: true, logLevel: 'warning',
   define: { __GRAYCODE_DISTRIBUTION__: JSON.stringify(readDistributionInfo(root)) },
 };
 await build({ ...common, entryPoints: ['packages/contracts/src/index.ts'], outfile: 'packages/contracts/dist/index.cjs' });

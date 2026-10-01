@@ -12,7 +12,7 @@ async function launch() {
   await fs.mkdir(output, { recursive: true });
   await require('esbuild').build({
     stdin: { contents: 'export { DesktopBrowser } from "./apps/desktop/src/browser"; export { PlatformApplication } from "./apps/server/src/application";', resolveDir: root, loader: 'ts' },
-    outfile: path.join(output, 'host.cjs'), bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+    outfile: path.join(output, 'host.cjs'), bundle: true, platform: 'node', format: 'cjs', target: 'node24',
     external: ['electron', 'sharp', 'jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'],
   });
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
