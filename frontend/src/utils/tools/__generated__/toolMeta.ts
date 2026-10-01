@@ -308,7 +308,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/memory/memory_noteRuntime.ts",
   },
   'memory_recall': {
-    description: "搜索全部永久记忆（逐字匹配）。支持正则表达式。\n搜索范围包括全局记忆与当前工作区记忆（按工作区隔离），命中结果以 --- Global memory --- / --- Workspace memory --- 标注来源。\n搜索范围包括已被压缩摘要的原始记忆——压缩不会丢失信息。\n结果限制在单次输出容量内，如果被截断会提示缩小正则范围。",
+    description: "用正则逐字搜索工程日志记忆（memory_note 写入的项目约定与经验）。用户个人长期记忆不在这里，请用 memory_search。\n搜索范围包括全局记忆与当前工作区记忆（按工作区隔离），命中结果以 --- Global memory --- / --- Workspace memory --- 标注来源。\n搜索范围包括已被压缩摘要的原始记忆——压缩不会丢失信息。\n结果限制在单次输出容量内，如果被截断会提示缩小正则范围。",
     parameters: {
       "regex": {"type":"string","description":"搜索正则表达式（大小写不敏感）。搜索范围包括 ID 和日期。","required":true},
     },
@@ -441,6 +441,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "includeIgnored": {"type":"boolean","default":false},
       "caseSensitive": {"type":"boolean"},
       "maxResults": {"type":"number","default":100},
+      "context": {"type":"integer"},
       "offset": {"type":"integer","default":0},
       "replace": {"type":"string"},
       "maxFiles": {"type":"number","default":50},

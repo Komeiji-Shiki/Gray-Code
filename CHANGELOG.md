@@ -16,9 +16,12 @@
   - `search_in_files` 只读搜索按命中行返回结果：同一行的多处命中合并为一条并列出全部列号，`maxResults` 与 `offset` 改按命中行计算。发给模型的结果按文件分组，路径只写一次，相邻命中的上下文合并显示；`find_files` 不再把与 `fileDetails` 相同的路径列表重复发给模型。工具说明变化会使升级后的请求前缀改变一次，界面与存储格式不变。
   - `history_search` 与 `context_history` 的工具结果改为模型当时收到的文本，正文不再 JSON 转义，也不含只给界面使用的字段。已有笔记引用工具结果的来源位置会自动换算到新文本，无法对应时只保留来源消息。
   - 测试提速并降低内存占用：ts-jest 改为只转译（类型由 `typecheck:test` / `typecheck:platform` 检查），jest worker 限制为半数核心并回收空闲内存过高的 worker；`test:platform` 不再串行执行；前端 Vitest 改用 `vmThreads` 复用 jsdom。本机 20 核实测：后端冷缓存 92 秒 → 23 秒、峰值约 6 GB；平台测试从串行 3 分钟以上降到 47 秒；前端 40 秒 → 13 秒。
-  - `memory_note` / `memory_wake` 的说明明确为工程日志，并指向记录和查阅用户个人长期记忆的 `memory_remember` / `memory_search`，减少两套记忆工具混用。
+  - `memory_note` / `memory_wake` 的说明明确为工程日志，并指向记录和查阅用户个人长期记忆的 `memory_remember` / `memory_search`，减少两套记忆工具混用；`memory_recall` 同样注明只搜索工程日志。
+  - 发给模型的工具结果更紧凑：记忆、`history_search`、工作笔记与历史读取的正文原样输出，不再 JSON 转义；`memory_wake` 不再把记忆条目和压缩提示重复发送三份；`search_files` 按文件分组输出 `行:列: 内容`，长行预览缩短到 300 字符并用 … 标出裁剪端；零命中搜索只给提示；批量文件工具全部成功时省略默认计数与 false 标志；失败结果的退出码等元数据放在输出正文之前。工具结果文本变化只影响新产生的结果，已发送的历史每次按同一规则重新序列化，升级后的请求前缀会变化一次。笔记回执引用工具结果的旧偏移自动去掉，来源仍可追溯。
+  - `search_files` 新增相对 `directory` 的 `pattern` 文件 glob；`search_in_files` 新增 `context`（0-10）按次指定上下文行数。`context_notes` 的来源可写 `last_tool_result` 或 `tool:<调用 ID>`，记录时解析为真实消息。`history_search` 在一轮内有多次模型回复时加 `Step` 标题和行范围。工具说明变化会使升级后的请求前缀改变一次。
 
 ### Fixed
+  - 正则语法错误只保留一次 "Invalid regular expression" 前缀，不再暴露搜索内部附加的 `g`/`m` 修饰符；`history_search`、`memory_recall` 与项目搜索不再叠加重复前缀。
   - 修复文件读取卡片在参数写成 `file_path` 或参数缺失时标题显示 `?` 的问题：卡片识别与后端一致的别名，参数缺少路径时改用结果里的实际文件，都没有时显示“无文件”。对话历史卡片按列出、搜索、读取等动作显示摘要，不再为空。
   - 修复 `read_file` 收到 `file_path` 后误报缺少路径的问题：兼容转换为 `path`，桌面/Web 在校验与审批前复用参数规范化，成功或失败均保留参数 warning；未知参数和缺少路径的错误直接提示合法参数名与调用示例。
   - ChatGPT 订阅续期在合并并发请求后重新读取当前凭据，避免延迟返回的旧记录再次消耗已轮换的令牌；沿用官方 SDK 的续期窗口，并保留脱敏后的上游失败原因与请求 ID。
