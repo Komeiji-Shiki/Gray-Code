@@ -53,8 +53,8 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -80,14 +80,14 @@ const emit = defineEmits<{
 }
 
 .section-badge.cacheable {
-  background: var(--vscode-charts-green);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-green);
+  color: var(--gc-surface-base);
 }
 
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .reset-btn {
@@ -97,15 +97,15 @@ const emit = defineEmits<{
   padding: 4px 8px;
   font-size: 11px;
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
 
 .reset-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .reset-btn:disabled {
@@ -117,18 +117,18 @@ const emit = defineEmits<{
   width: 100%;
   padding: 8px 10px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   line-height: 1.5;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   resize: vertical;
   outline: none;
 }
 
 .template-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .template-textarea:disabled {

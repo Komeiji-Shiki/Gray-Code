@@ -47,21 +47,21 @@ const { installation, busy, message, failed, percent, phase, action, formatDate 
 <style scoped>
 .desktop-update { display: grid; gap: 14px; min-width: 0; margin-top: 12px; font-size: var(--gc-font-size-control); }
 p { margin: 0; line-height: 1.65; color: var(--gc-text-muted); overflow-wrap: anywhere; }
-.update-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--gc-border-subtle); }
+.update-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px; padding-bottom: 16px; }
 .update-product { display: flex; align-items: center; gap: 12px; }
 .update-product strong { font-size: 19px; letter-spacing: -.02em; }
-.product-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--gc-accent); font-size: 24px; color: var(--gc-accent); }
+.product-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--gc-accent); border-radius: var(--gc-radius-md); font-size: 24px; color: var(--gc-accent); }
 .version-summary { display: grid; gap: 4px; justify-items: end; }
 .version-label, time { color: var(--gc-text-muted); font-size: 12px; }
-.version-summary strong, .version-chip { font-family: var(--vscode-editor-font-family, monospace); }
+.version-summary strong, .version-chip { font-family: var(--gc-font-code); }
 .version-chip { padding: 2px 7px; border: 1px solid var(--gc-border-subtle); font-size: 12px; }
-.path { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+.path { font-family: var(--gc-font-code); font-size: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .actions button { min-height: 34px; white-space: normal; }
 .ready, .recovery { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--gc-border-subtle); background: var(--gc-surface-muted); border-radius: 2px; min-width: 0; }
 .ready { border-left: 2px solid var(--gc-accent); }
 .section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.status-dot { width: 6px; height: 6px; background: var(--gc-success, var(--gc-accent)); }
+.status-dot { width: 6px; height: 6px; background: var(--gc-success); }
 .update-progress { display: grid; gap: 8px; }.update-progress > div { display: flex; justify-content: space-between; gap: 10px; }
 progress { appearance: none; width: 100%; height: 4px; border: 0; accent-color: var(--gc-accent); }
 progress::-webkit-progress-bar { background: var(--gc-border-subtle); }progress::-webkit-progress-value { background: var(--gc-accent); }

@@ -27,11 +27,11 @@
 }
 
 body {
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
+  font-family: var(--gc-font-ui);
+  font-size: var(--gc-font-size-ui);
   line-height: var(--gc-line-height-normal);
-  color: var(--vscode-foreground);
-  background-color: var(--vscode-editor-background);
+  color: var(--gc-text-primary);
+  background-color: var(--gc-surface-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -54,18 +54,18 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background);
+  background: var(--gc-scrollbar);
   border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--vscode-scrollbarSlider-hoverBackground);
+  background: var(--gc-scrollbar-hover);
 }
 
 /* 选中文本样式 */
 ::selection {
-  background: var(--vscode-editor-selectionBackground);
-  color: var(--vscode-editor-foreground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-primary);
 }
 
 /* 焦点样式 - 扁平化 */

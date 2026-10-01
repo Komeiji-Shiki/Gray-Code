@@ -8,15 +8,16 @@ export function bindDesktopAppearance(window: BrowserWindow, application: Platfo
   let current = application.settings.snapshot().settings.appearance;
   const paint = () => {
     if (window.isDestroyed()) return;
-    const defaults = resolveAppearancePalette(current.theme, {}, !nativeTheme.shouldUseDarkColors);
+    const defaults = resolveAppearancePalette(current.theme, {}, !nativeTheme.shouldUseDarkColors, current.darkPalette);
     const colors = { ...defaults, ...current.colors };
+    // 标题栏覆盖层与外壳标题栏同色，窗口控件按钮不会浮在另一块颜色上。
     try {
-      if (process.platform === 'win32' || process.platform === 'linux') window.setTitleBarOverlay({ color: colors.background, symbolColor: colors.text, height: 38 });
-      window.setBackgroundColor(colors.background);
+      if (process.platform === 'win32' || process.platform === 'linux') window.setTitleBarOverlay({ color: colors.chrome, symbolColor: colors.chromeText, height: 38 });
+      window.setBackgroundColor(colors.chrome);
     } catch {
       // 手动输入的颜色尚不完整时，保持原生窗口可用。
-      if (process.platform === 'win32' || process.platform === 'linux') window.setTitleBarOverlay({ color: defaults.background, symbolColor: defaults.text, height: 38 });
-      window.setBackgroundColor(defaults.background);
+      if (process.platform === 'win32' || process.platform === 'linux') window.setTitleBarOverlay({ color: defaults.chrome, symbolColor: defaults.chromeText, height: 38 });
+      window.setBackgroundColor(defaults.chrome);
     }
   };
   const apply = (config: AppearanceSettings) => { current = config; nativeTheme.themeSource = config.theme; paint(); };

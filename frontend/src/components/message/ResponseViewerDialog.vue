@@ -171,7 +171,7 @@ async function handleCopyBody(text: string): Promise<void> {
   gap: 8px;
   padding: 4px;
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.12));
+  background: var(--gc-surface-muted);
   align-self: flex-start;
   margin-left: 2px;
 }
@@ -179,7 +179,7 @@ async function handleCopyBody(text: string): Promise<void> {
 .mode-btn {
   border: none;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   padding: 6px 12px;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -187,12 +187,12 @@ async function handleCopyBody(text: string): Promise<void> {
 }
 
 .mode-btn:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .mode-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .dialog-btn {
@@ -206,11 +206,11 @@ async function handleCopyBody(text: string): Promise<void> {
 
 .dialog-btn.cancel {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .dialog-btn.cancel:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 </style>

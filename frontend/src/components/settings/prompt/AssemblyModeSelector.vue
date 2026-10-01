@@ -61,8 +61,8 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -83,7 +83,7 @@ const emit = defineEmits<{
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .radio-option {
@@ -91,7 +91,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .radio-option input {
@@ -99,7 +99,7 @@ const emit = defineEmits<{
 }
 
 .assembly-section {
-  border-color: var(--vscode-button-background);
+  border-color: var(--gc-button-primary);
 }
 
 .assembly-options {
@@ -112,8 +112,8 @@ const emit = defineEmits<{
 .assembly-option {
   align-items: flex-start;
   padding: 10px 12px;
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -122,7 +122,7 @@ const emit = defineEmits<{
 }
 
 .assembly-option-desc {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.45;
 }
 </style>

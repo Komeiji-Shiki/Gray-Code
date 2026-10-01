@@ -73,5 +73,5 @@ const status = (value: unknown) => toolStatusLabel(value) ?? text(value)
 
 <style scoped src="./platform.css"></style>
 <style scoped>
-.team-events>.team-event{border-left:1px solid var(--vscode-panel-border);padding-left:12px;margin-left:4px}.team-events .codicon-circle-small-filled{margin-left:-19px;color:var(--vscode-textLink-foreground);background:var(--vscode-editor-background)}.task-dependency-titles{padding-left:8px;border-left:2px solid var(--vscode-panel-border)}.ready-tasks{color:var(--vscode-textLink-foreground)}
+.team-events>.team-event{border-left:1px solid var(--gc-border-subtle);padding-left:12px;margin-left:4px}.team-events .codicon-circle-small-filled{margin-left:-19px;color:var(--gc-link);background:var(--gc-surface-base)}.task-dependency-titles{padding-left:8px;border-left:2px solid var(--gc-border-subtle)}.ready-tasks{color:var(--gc-link)}
 </style>

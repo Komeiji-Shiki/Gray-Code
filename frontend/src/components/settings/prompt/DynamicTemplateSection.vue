@@ -92,13 +92,13 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
 .template-section.dynamic-section {
-  border-color: var(--vscode-charts-blue);
+  border-color: var(--gc-chart-blue);
   border-style: dashed;
 }
 
@@ -130,14 +130,14 @@ const emit = defineEmits<{
 }
 
 .section-badge.realtime {
-  background: var(--vscode-charts-blue);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-blue);
+  color: var(--gc-surface-base);
 }
 
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .reset-btn {
@@ -147,15 +147,15 @@ const emit = defineEmits<{
   padding: 4px 8px;
   font-size: 11px;
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
 
 .reset-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .reset-btn:disabled {
@@ -167,18 +167,18 @@ const emit = defineEmits<{
   width: 100%;
   padding: 8px 10px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   line-height: 1.5;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   resize: vertical;
   outline: none;
 }
 
 .template-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .template-textarea:disabled {
@@ -189,7 +189,7 @@ const emit = defineEmits<{
 .dynamic-strategy-inline {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px dashed var(--vscode-panel-border);
+  border-top: 1px dashed var(--gc-border-subtle);
 }
 
 .dynamic-strategy-inline .section-label {
@@ -218,8 +218,8 @@ const emit = defineEmits<{
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background-color: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   transition: 0.2s;
 }
@@ -231,24 +231,24 @@ const emit = defineEmits<{
   width: 14px;
   left: 2px;
   bottom: 2px;
-  background-color: var(--vscode-foreground);
+  background-color: var(--gc-text-primary);
   border-radius: var(--gc-radius-xs);
   transition: 0.2s;
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background-color: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
   transform: translateX(16px);
-  background-color: var(--vscode-button-foreground);
+  background-color: var(--gc-text-on-primary);
 }
 
 .toggle-switch:hover input:not(:disabled) + .toggle-slider,
 .toggle-switch input:focus + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 /* 禁用提示 */
@@ -257,14 +257,14 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-inputValidation-infoBackground);
-  border: 1px solid var(--vscode-inputValidation-infoBorder);
+  background: var(--gc-info-bg);
+  border: 1px solid var(--gc-info-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .disabled-notice .codicon {
-  color: var(--vscode-notificationsInfoIcon-foreground);
+  color: var(--gc-info);
 }
 </style>

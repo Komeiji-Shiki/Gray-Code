@@ -60,7 +60,7 @@ withDefaults(defineProps<{
 
 .loading-text {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 @keyframes pulse-line {

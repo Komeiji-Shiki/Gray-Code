@@ -41,5 +41,5 @@ async function bind() {
   </div>
 </template>
 <style scoped>
-.binding{display:grid;gap:10px;border-top:1px solid var(--gc-border-subtle);padding:16px 0}.binding>code{overflow-wrap:anywhere}.root-binding{display:grid;gap:8px}.root-binding span{font-weight:500}.root-binding small{display:block;color:var(--gc-text-muted);overflow-wrap:anywhere;font-weight:400;margin-top:5px}select,button{width:100%;min-width:0;padding:8px 10px;border:1px solid var(--gc-border-control);border-radius:0;background:var(--gc-surface-base);color:var(--gc-text-primary);font:inherit}button{justify-self:start;width:auto;cursor:pointer}button:disabled{opacity:.45;cursor:default}
+.binding{display:grid;gap:10px;border-top:1px solid var(--gc-border-subtle);padding:16px 0}.binding>code{overflow-wrap:anywhere}.root-binding{display:grid;gap:8px}.root-binding span{font-weight:500}.root-binding small{display:block;color:var(--gc-text-muted);overflow-wrap:anywhere;font-weight:400;margin-top:5px}select,button{width:100%;min-width:0;padding:8px 10px;border:1px solid var(--gc-border-control);border-radius:var(--gc-radius-sm);background:var(--gc-surface-base);color:var(--gc-text-primary);font:inherit}button{justify-self:start;width:auto;cursor:pointer}button:disabled{opacity:.45;cursor:default}
 </style>

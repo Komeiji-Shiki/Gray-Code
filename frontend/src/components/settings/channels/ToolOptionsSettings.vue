@@ -109,8 +109,8 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 
 /* 工具分组 */
 .tool-section {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
@@ -120,19 +120,19 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .tool-header .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .tool-name {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-content {
@@ -173,19 +173,19 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   transform: translateY(-50%);
   height: 16px;
   width: 16px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
 .custom-checkbox:hover .checkmark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .custom-checkbox input:checked ~ .checkmark {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .custom-checkbox .checkmark::after {
@@ -196,7 +196,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   top: 2px;
   width: 4px;
   height: 8px;
-  border: solid var(--vscode-button-foreground);
+  border: solid var(--gc-text-on-primary);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -207,14 +207,14 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 
 .checkbox-text {
   margin-left: 4px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 选项描述 */
 .option-description {
   margin-left: 24px;
   padding: 8px 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
 }
@@ -227,26 +227,26 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .desc-item .codicon-check {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .desc-item .codicon-close {
-  color: var(--vscode-charts-orange, #cca700);
+  color: var(--gc-chart-orange);
 }
 
 .desc-text {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .coord-examples {
   margin: 6px 0 6px 20px;
   padding: 0;
   list-style: none;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .coord-examples li {
@@ -255,9 +255,9 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 
 .coord-examples code {
   padding: 1px 4px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-xs);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 10px;
 }
 
@@ -266,7 +266,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
   align-items: center;
   gap: 6px;
   margin-top: 6px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .desc-note .codicon {
@@ -274,10 +274,10 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 }
 
 .desc-note .codicon-lightbulb {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .desc-note .codicon-info {
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 </style>

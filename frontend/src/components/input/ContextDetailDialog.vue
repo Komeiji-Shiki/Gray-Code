@@ -423,8 +423,8 @@ watch(
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -437,17 +437,17 @@ watch(
 }
 
 .detail-section {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   padding: var(--gc-space-3);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .detail-section-title {
   margin: 0 0 var(--gc-space-2) 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .detail-row {
@@ -460,12 +460,12 @@ watch(
 }
 
 .detail-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
 .detail-value {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   text-align: right;
   word-break: break-all;
 }
@@ -478,7 +478,7 @@ watch(
   gap: 8px;
   padding: var(--gc-space-4);
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-align: center;
 }
 
@@ -487,11 +487,11 @@ watch(
   align-items: flex-start;
   gap: 6px;
   padding: 8px 12px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .summary-list {
@@ -501,7 +501,7 @@ watch(
 }
 
 .summary-card {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   padding: var(--gc-space-3);
 }
@@ -517,7 +517,7 @@ watch(
 .summary-index {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .summary-badge {
@@ -525,20 +525,20 @@ watch(
   padding: 2px 8px;
   border-radius: var(--gc-radius-md);
   background: rgba(221, 185, 47, 0.1);
-  color: var(--vscode-charts-yellow, #ddb92f);
-  border: 1px solid var(--vscode-focusBorder);
+  color: var(--gc-chart-yellow);
+  border: 1px solid var(--gc-focus-border);
 }
 
 .summary-badge.manual {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-color: transparent;
 }
 
 .summary-count {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-badge-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-badge-bg);
   padding: 2px 8px;
   border-radius: var(--gc-radius-md);
 }
@@ -547,7 +547,7 @@ watch(
   margin: 0 0 var(--gc-space-2) 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -557,7 +557,7 @@ watch(
   flex-wrap: wrap;
   gap: var(--gc-space-2);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-bottom: var(--gc-space-2);
 }
 
@@ -569,13 +569,13 @@ watch(
 .detail-preview {
   margin: var(--gc-space-3) 0 0 0;
   padding: var(--gc-space-3);
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   max-height: 320px;
   overflow: auto;
 }

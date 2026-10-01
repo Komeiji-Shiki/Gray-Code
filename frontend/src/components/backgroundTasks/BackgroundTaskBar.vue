@@ -226,17 +226,17 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   align-items: center;
   gap: 5px;
   padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   font-size: 11px;
   cursor: pointer;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
   max-width: 100%;
 }
 
 .task-chip:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .task-chip .codicon {
@@ -244,23 +244,23 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
 }
 
 .status-icon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .task-chip.status-completed .status-icon {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .task-chip.status-error .status-icon {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 .task-chip.status-cancelled .status-icon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .task-chip.unreported {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .task-label {
@@ -271,7 +271,7 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
 }
 
 .task-duration {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -281,12 +281,12 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
 }
 
 .chip-btn:hover {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 一键清除已完成任务按钮：与 task-chip 同高，弱化视觉 */
@@ -295,25 +295,25 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border: 1px dashed var(--vscode-panel-border);
+  border: 1px dashed var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   background: transparent;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .clear-completed-btn:hover {
-  color: var(--vscode-foreground);
-  background: var(--vscode-list-hoverBackground);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-hover);
 }
 
 .task-output-panel {
   margin-top: 4px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   overflow: hidden;
 }
 
@@ -322,12 +322,12 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   align-items: center;
   justify-content: space-between;
   padding: 3px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .output-title {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -338,7 +338,7 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   padding: 6px 8px;
   max-height: 180px;
   overflow: auto;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;

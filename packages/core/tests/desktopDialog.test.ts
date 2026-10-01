@@ -31,6 +31,14 @@ test('对话框转义动态文本，只有安全颜色可进入 CSS，取消按�
   expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>'); expect(html).toContain('&lt;img src=x&gt;');
   expect(html).toContain('--accent:#aabbcc'); expect(html).not.toContain('http://evil'); expect(html).toContain('data-dialog-cancel="true" autofocus'); expect(html).toContain("default-src 'none'");
 });
+test('对话框默认取品牌色板，主按钮使用主按钮配色，窗口底色跟随传入色板', async () => {
+  const html = desktopDialogHtml(content);
+  expect(html).toContain('--background:#17191f'); expect(html).toContain('--button:#f2eee5'); expect(html).toContain('--button-text:#232a42');
+  expect(html).toMatch(/button\.primary\{[^}]*background:var\(--button\);color:var\(--button-text\)/);
+  const promise = showDesktopConfirmation({ ...content, colors: { background: '#181817' } });
+  expect(windows().at(-1).options.backgroundColor).toBe('#181817');
+  windows().at(-1).destroy(); expect(await promise).toBe('cancel');
+});
 test('只有本窗口主框架和允许的动作可完成确认，完成后移除监听', async () => {
   const promise = showDesktopConfirmation(content); const window = windows().at(-1);
   expect(window.options.webPreferences).toMatchObject({ sandbox: true, nodeIntegration: false, contextIsolation: true });

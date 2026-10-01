@@ -6,7 +6,8 @@ import { useDesktopSettingsDraft } from '../../platform/settingsDraft';
 import BackgroundGallery from './BackgroundGallery.vue';
 import MarkdownRenderer from '../common/MarkdownRenderer.vue';
 import { resourceUrl } from '../../platform/resources';
-import { resolveAppearancePalette } from '../../../../shared/appearance';
+import { DARK_PALETTES, resolveAppearancePalette, resolveDarkPalette, type DarkPaletteId } from '../../../../shared/appearance';
+import { useI18n } from '../../i18n';
 const settings = ref<AppSettings>();
 const fonts = ref<string[]>([]);
 const filter = ref('');
@@ -15,18 +16,28 @@ const galleryOpen = ref(false);
 const systemScheme = matchMedia('(prefers-color-scheme: light)');
 const systemLight = ref(systemScheme.matches);
 const updateSystemTheme = () => { systemLight.value = systemScheme.matches; };
-const appearanceColors = computed(() => resolveAppearancePalette(settings.value?.appearance.theme, settings.value?.appearance.colors, systemLight.value));
+const appearanceColors = computed(() => resolveAppearancePalette(settings.value?.appearance.theme, settings.value?.appearance.colors, systemLight.value, settings.value?.appearance.darkPalette));
 const previewText = '### 从想法到实现\n\n这是统一正文预览，包含 **粗体**、*斜体*、~~删除线~~ 和 `行内代码`。\n\n> “把问题说明白，再把事情做好。”\n\n- 普通列表与 [链接](https://example.com)\n- [x] 已完成的事项\n- [ ] 接下来的工作\n\n```typescript\nconst greeting: string = "你好，主人";\nconsole.log(greeting);\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 正文排版 | 即时预览 |\n| 字体与配色 | 统一呈现 |\n\n行内公式 $E = mc^2$，以及分隔线：\n\n---\n';
 const previewStyle = computed(() => {
   const config = settings.value?.appearance; if (!config) return {};
   return { fontFamily: config.textFont === 'inherit' ? config.uiFont : config.textFont, fontSize: `${config.fontSize}px`, lineHeight: config.lineHeight,
     color: appearanceColors.value.text, backgroundColor: appearanceColors.value.background,
-    '--vscode-editor-font-family': config.codeFont, '--vscode-editor-font-size': `${config.codeFontSize}px`,
-    '--vscode-textLink-foreground': appearanceColors.value.accent, '--gc-accent': appearanceColors.value.accent };
+    '--gc-font-code': config.codeFont, '--gc-font-size-code': `${config.codeFontSize}px`,
+    '--gc-link': appearanceColors.value.accent, '--gc-accent': appearanceColors.value.accent };
 });
 async function applyBackground(url: string, opacity: number) {
   if (!settings.value) return;
   settings.value.appearance.backgroundImage = url; settings.value.appearance.backgroundOpacity = opacity; galleryOpen.value = false;
+  await save();
+}
+const { t } = useI18n();
+// 色卡取各配色自身的外壳、画布、卡片、主按钮与强调色，不受当前自定义颜色影响。
+const darkPaletteOptions = computed(() => DARK_PALETTES.map(id => ({ id, label: t(`components.settings.darkPalette.${id}`),
+  swatches: ['chrome', 'background', 'panel', 'button', 'accent'].map(key => resolveAppearancePalette('dark', {}, false, id)[key]) })));
+const selectedDarkPalette = computed(() => resolveDarkPalette(settings.value?.appearance.darkPalette));
+async function chooseDarkPalette(id: DarkPaletteId) {
+  if (!settings.value) return;
+  settings.value.appearance.darkPalette = id;
   await save();
 }
 const fontFields = [ { key: 'uiFont', name: '界面字体' }, { key: 'textFont', name: '正文字体' }, { key: 'codeFont', name: '代码字体' } ] as const;
@@ -56,6 +67,15 @@ useDesktopSettingsDraft(save, () => !!settings.value);
   <section v-if="settings" class="platform-appearance" @change="save">
     <h3>桌面外观</h3>
     <div class="appearance-row"><div><strong>主题</strong><p>切换聊天、设置、编辑器与终端的外观。</p></div><select v-model="settings.appearance.theme" aria-label="外观主题"><option value="dark">暗色</option><option value="light">亮色</option><option value="system">跟随系统</option></select></div>
+    <div class="appearance-row"><div><strong>{{ t('components.settings.darkPalette.title') }}</strong><p>{{ t('components.settings.darkPalette.description') }}</p></div>
+      <div class="palette-options" role="radiogroup" :aria-label="t('components.settings.darkPalette.title')">
+        <button v-for="option in darkPaletteOptions" :key="option.id" type="button" role="radio" class="palette-option"
+          :aria-checked="selectedDarkPalette === option.id" @click.stop="chooseDarkPalette(option.id)">
+          <span class="palette-swatches" aria-hidden="true"><span v-for="(color, index) in option.swatches" :key="index" :style="{ background: color }"></span></span>
+          <span>{{ option.label }}</span>
+        </button>
+      </div>
+    </div>
     <div class="appearance-row"><div><strong>系统字体</strong><p>读取系统已安装的字体，包括当前用户安装的字体。</p></div><button @click="loadFonts(true)">刷新 {{ fonts.length }} 个字体</button></div>
     <input v-model="filter" placeholder="搜索系统字体…" aria-label="搜索系统字体" data-preference-transient @change.stop />
     <div v-for="field in fontFields" :key="field.key" class="appearance-row">
@@ -73,20 +93,26 @@ useDesktopSettingsDraft(save, () => !!settings.value);
     <div class="color-grid"><label v-for="color in colors" :key="color.key"><span>{{ color.name }}</span><input type="color" :value="settings.appearance.colors[color.key] ?? color.value" @input="settings.appearance.colors[color.key] = ($event.target as HTMLInputElement).value" :aria-label="color.name" /><input class="color-code" :value="settings.appearance.colors[color.key] ?? color.value" @input="settings.appearance.colors[color.key] = ($event.target as HTMLInputElement).value" :aria-label="color.name + '颜色代码'" /></label></div>
     <div class="appearance-row"><div><strong>对话背景</strong><p>{{ settings.appearance.backgroundImage ? '已启用背景图片' : '保持纯色背景' }}</p></div><button @click="galleryOpen = true">管理背景</button></div>
     <section class="unified-preview" :style="previewStyle"><header>正文预览 <span>字体、配色与排版统一呈现</span></header><div class="preview-content"><div class="preview-background" :style="{ backgroundImage: settings.appearance.backgroundImage ? `url(${JSON.stringify(resourceUrl(settings.appearance.backgroundImage))})` : 'none', opacity: settings.appearance.backgroundOpacity }"></div><MarkdownRenderer :content="previewText" /></div></section>
-    <details class="css-editor"><summary>自定义 CSS</summary><textarea v-model="settings.appearance.customCss" rows="5" spellcheck="false" placeholder=":root { --gc-accent: #6ba6ff; }"></textarea></details>
+    <details class="css-editor"><summary>自定义 CSS</summary><textarea v-model="settings.appearance.customCss" rows="5" spellcheck="false" placeholder=":root { --gc-accent: rgb(159 176 232); }"></textarea></details>
     <BackgroundGallery :visible="galleryOpen" :value="settings.appearance.backgroundImage" :opacity="settings.appearance.backgroundOpacity" @close="galleryOpen = false" @apply="applyBackground" />
     <p v-if="error" role="alert">{{ error }}</p>
   </section>
 </template>
 <style scoped>
 .platform-appearance { margin-bottom: 32px; }
-.appearance-row { display: flex; gap: 20px; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--gc-border-subtle); padding: 10px 0; min-height: 35px; }
+.appearance-row { display: flex; gap: 20px; justify-content: space-between; align-items: center; padding: 10px 0; min-height: 35px; }
 .appearance-row strong { font-size: var(--gc-font-size-control); font-weight: 500; }
 .appearance-row p { color: var(--gc-text-muted); font-size: var(--gc-font-size-body); margin: 6px 0 0; }
 .appearance-row input, .appearance-row select { max-width: 46%; min-width: 120px; }
 .appearance-row input[type=number] { width: 88px; min-width: 0; }
-input, select, textarea { background: var(--vscode-input-background); color: var(--vscode-foreground); border: 1px solid var(--gc-border-control); padding: 7px 10px; font: inherit; border-radius: 0; }
+input, select, textarea { background: var(--gc-surface-input); color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); padding: 7px 10px; font: inherit; border-radius: var(--gc-radius-sm); }
 .css-editor { display: grid; gap: 12px; padding-top: 24px; }
-textarea { resize: vertical; font-family: var(--vscode-editor-font-family); }
-.color-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:18px 0}.color-grid label{display:grid;grid-template-columns:1fr 28px;align-items:center;gap:7px;font-size:12px}.color-grid input[type=color]{width:28px;height:26px;padding:2px;min-width:0}.color-code{grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box;font-size:11px;padding:5px!important}.unified-preview{border:1px solid var(--gc-border-subtle);margin-top:22px}.unified-preview>header{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--gc-border-subtle);padding:11px 16px;font:12px var(--vscode-font-family)}.unified-preview header span{color:var(--gc-text-muted)}.preview-content{position:relative;padding:18px 22px;overflow:hidden}.preview-background{position:absolute;inset:0;background-size:cover;background-position:center;pointer-events:none}.preview-content :deep(.markdown-content){position:relative;font-family:inherit!important;font-size:inherit!important;line-height:inherit!important}.css-editor textarea{width:100%;box-sizing:border-box;margin-top:12px}.css-editor summary{cursor:pointer;color:var(--gc-text-muted);font-size:12px}
+.palette-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.palette-option { display: grid; gap: 6px; min-width: 112px; padding: 8px; border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-md); background: var(--gc-surface-raised); color: var(--gc-text-primary); text-align: left; cursor: pointer; }
+.palette-option:hover { border-color: var(--gc-border-strong); }
+.palette-option[aria-checked="true"] { border-color: var(--gc-accent); box-shadow: 0 0 0 1px var(--gc-accent); }
+.palette-swatches { display: flex; gap: 3px; }
+.palette-swatches span { width: 16px; height: 16px; border-radius: var(--gc-radius-xs); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+textarea { resize: vertical; font-family: var(--gc-font-code); }
+.color-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:18px 0}.color-grid label{display:grid;grid-template-columns:1fr 28px;align-items:center;gap:7px;font-size:12px}.color-grid input[type=color]{width:28px;height:26px;padding:2px;min-width:0}.color-code{grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box;font-size:11px;padding:5px!important}.unified-preview{border:1px solid transparent;margin-top:22px;background:var(--gc-surface-raised);border-radius:var(--gc-radius-lg)}.unified-preview>header{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--gc-border-subtle);padding:11px 16px;font:12px var(--gc-font-ui)}.unified-preview header span{color:var(--gc-text-muted)}.preview-content{position:relative;padding:18px 22px;overflow:hidden}.preview-background{position:absolute;inset:0;background-size:cover;background-position:center;pointer-events:none}.preview-content :deep(.markdown-content){position:relative;font-family:inherit!important;font-size:inherit!important;line-height:inherit!important}.css-editor textarea{width:100%;box-sizing:border-box;margin-top:12px}.css-editor summary{cursor:pointer;color:var(--gc-text-muted);font-size:12px}
 </style>

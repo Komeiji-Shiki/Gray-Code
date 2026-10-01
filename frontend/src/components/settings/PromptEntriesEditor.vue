@@ -585,10 +585,10 @@ function handleDragEnd() {
 </template>
 
 <style scoped>
-.character-entry-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); }
+.character-entry-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px; background:var(--gc-surface-raised); border:1px solid transparent;border-radius:var(--gc-radius-lg) }
 .character-entry-tools label { display: flex; flex: 1 1 210px; flex-direction: column; gap: 6px; font-size: 12px; min-width: 0; }
-.character-entry-tools select { min-width: 0; width: 100%; padding: 6px 8px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 0; }
-.character-entry-tools p { flex-basis: 100%; margin: 0; color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.6; }
+.character-entry-tools select { min-width: 0; width: 100%; padding: 6px 8px; font: inherit; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); }
+.character-entry-tools p { flex-basis: 100%; margin: 0; color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; }
 .character-entry-tools code { margin-left: 8px; overflow-wrap: anywhere; }
 .prompt-entries-editor {
   display: flex;
@@ -614,12 +614,12 @@ function handleDragEnd() {
 .entries-count {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .entries-hint {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.45;
 }
 
@@ -638,10 +638,10 @@ function handleDragEnd() {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
 }
@@ -652,9 +652,9 @@ function handleDragEnd() {
 }
 
 .small-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .icon-btn,
@@ -666,7 +666,7 @@ function handleDragEnd() {
 
 .drag-handle {
   cursor: grab;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .drag-handle:active {
@@ -676,17 +676,17 @@ function handleDragEnd() {
 .small-btn:hover:not(:disabled),
 .icon-btn:hover:not(:disabled),
 .drag-handle:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder);
+  background: var(--gc-surface-hover);
+  border-color: var(--gc-focus-border);
 }
 
 .small-btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .icon-btn.danger:hover:not(:disabled) {
-  color: var(--vscode-errorForeground);
-  border-color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
+  border-color: var(--gc-danger);
 }
 
 .small-btn:disabled,
@@ -707,9 +707,9 @@ function handleDragEnd() {
   gap: 10px;
   position: relative;
   padding: 12px;
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
 }
 
@@ -725,7 +725,7 @@ function handleDragEnd() {
   right: 10px;
   height: 2px;
   border-radius: var(--gc-radius-pill);
-  background: var(--vscode-focusBorder);
+  background: var(--gc-focus-border);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s;
@@ -741,13 +741,13 @@ function handleDragEnd() {
 
 .entry-card.chat-history-card {
   border-style: dashed;
-  border-color: var(--vscode-charts-purple, var(--vscode-focusBorder));
+  border-color: var(--gc-chart-purple);
 }
 
 .entry-card.drop-before,
 .entry-card.drop-after {
-  border-color: var(--vscode-focusBorder);
-  box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 1px var(--gc-focus-border);
 }
 
 .entry-card.drop-before::before,
@@ -772,12 +772,12 @@ function handleDragEnd() {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: nowrap;
 }
 
 .entry-enabled.locked {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .entry-enabled input {
@@ -788,9 +788,9 @@ function handleDragEnd() {
 .entry-role-select,
 .entry-content-textarea {
   width: 100%;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
 }
@@ -808,10 +808,10 @@ function handleDragEnd() {
   align-items: center;
   gap: 6px;
   width: 100%;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
 }
 
 .entry-content-textarea {
@@ -819,14 +819,14 @@ function handleDragEnd() {
   resize: vertical;
   min-height: 120px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   line-height: 1.5;
 }
 
 .entry-name-input:focus,
 .entry-role-select:focus,
 .entry-content-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .chat-history-note {
@@ -834,16 +834,16 @@ function handleDragEnd() {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-muted);
+  border: 1px solid transparent;
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .chat-history-note strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
 }
 
@@ -855,7 +855,7 @@ function handleDragEnd() {
 
 .entry-modules {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .entry-fake-thought {
@@ -863,8 +863,8 @@ function handleDragEnd() {
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px dashed var(--vscode-charts-purple, var(--vscode-panel-border));
+  background: var(--gc-surface-raised);
+  border: 1px dashed var(--gc-chart-purple);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -874,13 +874,13 @@ function handleDragEnd() {
   gap: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .fake-thought-hint {
   font-weight: 400;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 
@@ -889,18 +889,18 @@ function handleDragEnd() {
   padding: 8px 10px;
   resize: vertical;
   min-height: 56px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   line-height: 1.5;
 }
 
 .fake-thought-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .entry-modules summary {
@@ -918,27 +918,27 @@ function handleDragEnd() {
 
 .chip-group-label {
   margin-right: 2px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 
 .module-chip {
   padding: 2px 7px;
   border-radius: var(--gc-radius-pill);
-  border: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-background);
-  color: var(--vscode-textPreformat-foreground);
+  border: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   cursor: pointer;
 }
 
 .module-chip.dynamic {
-  border-color: var(--vscode-charts-blue);
+  border-color: var(--gc-chart-blue);
 }
 
 .module-chip:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 @media (max-width: 980px) {

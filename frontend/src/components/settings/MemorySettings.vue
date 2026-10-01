@@ -675,7 +675,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 </template>
 
 <style scoped>
-.memory-undo-button { border: 1px solid var(--vscode-panel-border); border-radius: 0; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); padding: 6px 10px; cursor: pointer; }
+.memory-undo-button { border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); color: var(--gc-text-primary); background: var(--gc-button-secondary); padding: 6px 10px; cursor: pointer; }
 .memory-settings {
   width: 100%;
 }
@@ -692,7 +692,7 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   gap: 8px;
   padding: 40px 0;
   font-size: 13px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   justify-content: center;
 }
 
@@ -700,9 +700,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textBlockQuote-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-info-bg);
+  border-radius: var(--gc-radius-lg);
   font-size: 12px;
 }
 
@@ -719,6 +718,6 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 .info-box p {
   margin: 0;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

@@ -114,16 +114,16 @@ defineExpose({ focusEdit })
 .config-input {
   flex: 1;
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 13px;
 }
 
 .config-input:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .icon-btn {
@@ -136,12 +136,12 @@ defineExpose({ focusEdit })
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
 }
 
 .icon-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .icon-btn:disabled {
@@ -150,14 +150,14 @@ defineExpose({ focusEdit })
 }
 
 .icon-btn.danger:hover:not(:disabled) {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .icon-btn.confirm:hover {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .icon-btn.cancel:hover {
-  color: var(--vscode-errorForeground, #f48771);
+  color: var(--gc-danger);
 }
 </style>

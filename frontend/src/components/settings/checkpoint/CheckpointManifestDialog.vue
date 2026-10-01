@@ -143,7 +143,7 @@ const emit = defineEmits<{
 }
 
 .manifest-loading .codicon {
-  color: var(--vscode-progressBar-background, var(--gc-info));
+  color: var(--gc-accent);
 }
 
 .manifest-error,

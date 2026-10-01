@@ -32,5 +32,5 @@ const recipient = computed(() => {
   </ToolResultPanel>
 </template>
 <style scoped>
-.agent-message-body{border-left:2px solid var(--vscode-focusBorder);padding:10px 12px;margin-bottom:12px;min-width:0;background:var(--vscode-textCodeBlock-background)}header{display:flex;align-items:center;gap:8px;font-size:12px}.recipient{display:flex;align-items:baseline;gap:10px;color:var(--vscode-descriptionForeground);font-size:11px;margin:9px 0}.recipient code{overflow-wrap:anywhere;white-space:pre-wrap}.message-text{margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.65;max-height:480px;overflow:auto}.delivery-note,.unavailable{color:var(--vscode-descriptionForeground);font-size:11px;line-height:1.6;margin:8px 0}
+.agent-message-body{border-left:2px solid var(--gc-focus-border);padding:10px 12px;margin-bottom:12px;min-width:0;background:var(--gc-code-bg)}header{display:flex;align-items:center;gap:8px;font-size:12px}.recipient{display:flex;align-items:baseline;gap:10px;color:var(--gc-text-muted);font-size:11px;margin:9px 0}.recipient code{overflow-wrap:anywhere;white-space:pre-wrap}.message-text{margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.65;max-height:480px;overflow:auto}.delivery-note,.unavailable{color:var(--gc-text-muted);font-size:11px;line-height:1.6;margin:8px 0}
 </style>

@@ -75,73 +75,65 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.chatgpt-plan-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--text-secondary); }
-.chatgpt-plan-status a { color: var(--accent-color, #95b6ff); }
+.chatgpt-plan-status { flex-basis: 100%; display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--gc-text-muted); }
+.chatgpt-plan-status a { color: var(--gc-link); }
 .selector-bar {
-  display: grid;
-  grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1fr) minmax(0, 2.2fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--gc-space-2);
+  gap: var(--gc-space-1);
   min-width: 0;
-  padding-top: var(--gc-space-2);
-  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .mode-selector-wrapper,
 .channel-selector-wrapper,
 .model-selector-wrapper {
   min-width: 0;
+  max-width: 100%;
 }
-.model-selector-wrapper { display:flex;align-items:center;gap:8px; }
-.model-selector-wrapper :deep(.model-selector) { flex:1; }
+.model-selector-wrapper { display: flex; align-items: center; gap: var(--gc-space-1); }
 
-.mode-selector-wrapper :deep(.mode-selector),
-.channel-selector-wrapper :deep(.channel-selector),
-.model-selector-wrapper :deep(.model-selector) {
-  width: 100%;
-  min-width: 0;
-}
-
+/* 胶囊：宽度随内容，过长时截断；下拉面板位置沿用组件自身逻辑。 */
 .selector-bar :deep(.mode-trigger),
 .selector-bar :deep(.selector-trigger),
-.selector-bar :deep(.model-trigger) {
-  width: 100%;
+.selector-bar :deep(.model-trigger),
+.selector-bar :deep(.select-trigger) {
+  width: auto;
   min-width: 0;
-  max-width: none;
-  height: var(--gc-control-height-md);
+  max-width: 220px;
+  height: 24px;
+  min-height: 0;
   padding: 0 var(--gc-space-2);
-  background: var(--gc-surface-base);
+  border: 0;
+  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-caption);
+}
+
+.selector-bar :deep(.mode-trigger:hover),
+.selector-bar :deep(.selector-trigger:hover),
+.selector-bar :deep(.model-trigger:hover),
+.selector-bar :deep(.select-trigger:hover) {
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-active);
 }
 
 .selector-bar :deep(.mode-name),
-.selector-bar :deep(.placeholder) {
+.selector-bar :deep(.placeholder),
+.selector-bar :deep(.selected-label) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.channel-selector-wrapper :deep(.selector-dropdown) {
-  left: auto;
-  right: 0;
-  width: max(100%, 180px);
-  min-width: 0;
-  max-width: calc(100vw - var(--gc-space-8));
+.selector-bar :deep(.select-arrow),
+.selector-bar :deep(.arrow-icon) {
+  font-size: 12px;
+  margin-left: var(--gc-space-1);
 }
 
-.model-selector-wrapper :deep(.model-dropdown) {
-  width: max(100%, 240px);
-  min-width: 0;
-  max-width: calc(100vw - var(--gc-space-8));
-}
-
-@media (max-width: 640px) {
-  .selector-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .model-selector-wrapper {
-    grid-column: 1 / -1;
-  }
-}
+.channel-selector-wrapper :deep(.selector-dropdown) { min-width: 180px; max-width: calc(100vw - var(--gc-space-8)); }
+.model-selector-wrapper :deep(.model-dropdown) { min-width: 240px; max-width: calc(100vw - var(--gc-space-8)); }
 </style>

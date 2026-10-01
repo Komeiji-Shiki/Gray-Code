@@ -304,14 +304,14 @@ function formatLineCount(file: FoundFileDetail): string {
 }
 
 .search-icon {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-stats {
@@ -325,15 +325,15 @@ function formatLineCount(file: FoundFileDetail): string {
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .stat.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .stat.error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 /* 全局错误 */
@@ -342,20 +342,20 @@ function formatLineCount(file: FoundFileDetail): string {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 0;
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
+  border-radius: var(--gc-radius-md);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -368,13 +368,13 @@ function formatLineCount(file: FoundFileDetail): string {
 
 /* 单个模式面板 */
 .pattern-panel {
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 0;
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
 .pattern-panel.is-error {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 /* 模式头部 */
@@ -383,8 +383,8 @@ function formatLineCount(file: FoundFileDetail): string {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .pattern-info {
@@ -397,23 +397,23 @@ function formatLineCount(file: FoundFileDetail): string {
 
 .pattern-icon {
   font-size: 12px;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
   flex-shrink: 0;
 }
 
 .pattern-panel.is-error .pattern-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
 }
 
 .pattern-text {
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
 }
 
 .file-count {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-left: auto;
   flex-shrink: 0;
 }
@@ -422,15 +422,15 @@ function formatLineCount(file: FoundFileDetail): string {
 .partial-badge {
   font-size: 9px;
   padding: 1px 4px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  border-radius: 0;
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
+  border-radius: var(--gc-radius-xs);
   margin-left: var(--spacing-xs, 4px);
 }
 
 .partial-badge {
-  color: var(--vscode-errorForeground);
-  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
 }
 
 .exclusion-policy,
@@ -442,22 +442,22 @@ function formatLineCount(file: FoundFileDetail): string {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
   line-height: 1.6;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   min-width: 0;
 }
 
 .exclusion-policy {
-  border-left: 2px solid var(--vscode-panel-border);
+  border-left: 2px solid var(--gc-border-subtle);
 }
 
 .exclude-source,
 .next-offset {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .effective-exclude {
   flex-basis: 100%;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   overflow-wrap: anywhere;
 }
 
@@ -487,13 +487,13 @@ function formatLineCount(file: FoundFileDetail): string {
 .pattern-error {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-inputValidation-errorForeground);
-  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
 }
 
 /* 文件列表 */
 .file-list {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .file-items {
@@ -507,7 +507,7 @@ function formatLineCount(file: FoundFileDetail): string {
   gap: var(--spacing-xs, 4px);
   padding: 2px var(--spacing-sm, 8px);
   font-size: 11px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   min-width: 0;
 }
 
@@ -517,20 +517,20 @@ function formatLineCount(file: FoundFileDetail): string {
 
 .file-icon {
   font-size: 12px;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
   flex-shrink: 0;
 }
 
 .file-name {
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   flex-shrink: 0;
 }
 
 .file-dir {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -543,9 +543,9 @@ function formatLineCount(file: FoundFileDetail): string {
   font-size: 9px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 0;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  border-radius: var(--gc-radius-xs);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 /* 展开区域 */
@@ -553,8 +553,8 @@ function formatLineCount(file: FoundFileDetail): string {
   display: flex;
   justify-content: center;
   padding: 2px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .expand-btn {
@@ -565,7 +565,7 @@ function formatLineCount(file: FoundFileDetail): string {
   background: transparent;
   border: none;
   font-size: 10px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   cursor: pointer;
   transition: opacity var(--transition-fast, 0.1s);
 }
@@ -576,7 +576,7 @@ function formatLineCount(file: FoundFileDetail): string {
 
 .expand-btn:focus-visible,
 .continuation-details > summary:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: 2px;
 }
 
@@ -587,7 +587,7 @@ function formatLineCount(file: FoundFileDetail): string {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 </style>

@@ -184,10 +184,10 @@ function handleKeydown(event: KeyboardEvent) {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--vscode-input-background, var(--gc-surface-base));
+  background: var(--gc-surface-input);
   border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  color: var(--gc-text-primary);
   font-size: var(--gc-font-size-body);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -225,7 +225,7 @@ function handleKeydown(event: KeyboardEvent) {
 
 .arrow-icon {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--gc-font-size-body);
   transition: transform 0.15s ease;
 }
 
@@ -240,8 +240,8 @@ function handleKeydown(event: KeyboardEvent) {
   margin-top: 4px;
   min-width: 200px;
   width: 200px;
-  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
-  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   box-shadow: var(--gc-shadow-md);
   z-index: var(--gc-layer-popover);
@@ -260,7 +260,7 @@ function handleKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--vscode-dropdown-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   min-width: 0;
   overflow: hidden;
 }
@@ -270,17 +270,17 @@ function handleKeydown(event: KeyboardEvent) {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   padding: 4px 8px;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .mode-list {
@@ -299,12 +299,12 @@ function handleKeydown(event: KeyboardEvent) {
 
 .mode-item:hover,
 .mode-item.highlighted {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .mode-item.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .mode-item .codicon {
@@ -328,13 +328,13 @@ function handleKeydown(event: KeyboardEvent) {
 .no-results {
   padding: 12px;
   text-align: center;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
 .mode-divider {
   height: 1px;
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
   margin: 4px 0;
 }
 
@@ -346,14 +346,14 @@ function handleKeydown(event: KeyboardEvent) {
   padding: 8px 14px;
   background: transparent;
   border: none;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.1s ease;
 }
 
 .mode-settings-btn:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .mode-settings-btn .codicon {

@@ -4,18 +4,18 @@
   grid-template-columns: 170px minmax(0, 1fr);
 }
 .workbench.monitor-active { display: flex; flex-direction: column; min-height: 0; }
-.monitor-workbench-heading { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); }
+.monitor-workbench-heading { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--gc-border-subtle); }
 .monitor-workbench-heading strong { flex: 1; font-size: 13px; font-weight: 500; }
 .monitor-frame { border: 0; width: 100%; flex: 1; min-height: 0; }
 .file-tree {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--gc-border-subtle);
   overflow: auto;
-  background: var(--background);
+  background: var(--gc-surface-base);
 }
 .file-tree .panel-heading {
   position: sticky;
   top: 0;
-  background: var(--background);
+  background: var(--gc-surface-base);
   z-index: 2;
 }
 .tree-row {
@@ -33,15 +33,15 @@
   text-overflow: ellipsis;
 }
 .file-glyph {
-  color: var(--muted);
-  font-family: var(--code-font);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
   font-size: 14px;
   width: 12px;
   flex-shrink: 0;
 }
 .empty-note {
   padding: 20px;
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 12px;
   line-height: 1.8;
 }
@@ -56,14 +56,14 @@
   display: flex;
   height: 37px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   overflow: auto;
-  background: var(--panel);
+  background: var(--gc-surface-raised);
 }
 .editor-tabs button {
   font-size: 11px;
   border: 0;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--gc-border-subtle);
   display: flex;
   gap: 10px;
   align-items: center;
@@ -72,18 +72,18 @@
   padding: 8px 12px;
 }
 .editor-tabs button.active {
-  background: var(--background);
-  box-shadow: inset 0 2px var(--accent);
+  background: var(--gc-surface-base);
+  box-shadow: inset 0 2px var(--gc-accent);
 }
 .tab-close {
   font-size: 16px;
-  color: var(--muted);
+  color: var(--gc-text-muted);
 }
 .tab-spacer {
   flex: 1;
 }
 .dirty-indicator {
-  color: var(--accent);
+  color: var(--gc-accent);
   font-size: 7px;
 }
 .editors {
@@ -112,41 +112,41 @@
   font-weight: 800;
   font-size: 70px;
   letter-spacing: -15px;
-  color: #383b42;
+  color: var(--gc-text-disabled);
   margin: 0 10px 28px 0;
 }
 .brand-mark span {
-  color: var(--accent);
+  color: var(--gc-accent);
   font-weight: 300;
 }
 .editor-empty h2 {
   font-size: 19px;
-  color: var(--text);
+  color: var(--gc-text-primary);
   font-weight: 400;
 }
 .editor-empty p {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--gc-text-muted);
   margin-bottom: 25px;
 }
 .shortcut-hints {
   display: flex;
   flex-direction: column;
   gap: 15px;
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 10px;
 }
 kbd {
-  border: 1px solid var(--border);
+  border: 1px solid var(--gc-border-subtle);
   padding: 2px 5px;
   font-size: 9px;
-  background: var(--panel);
+  background: var(--gc-surface-raised);
 }
 .bottom-tabs {
   display: flex;
   height: 31px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--gc-border-subtle);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 .bottom-tabs button {
@@ -154,11 +154,11 @@ kbd {
   padding: 5px 14px;
   border: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--gc-text-muted);
 }
 .bottom-tabs button.active {
-  color: var(--text);
-  box-shadow: inset 0 -1px var(--accent);
+  color: var(--gc-text-primary);
+  box-shadow: inset 0 -1px var(--gc-accent);
 }
 .bottom-tabs button:last-child {
   margin-left: auto;
@@ -174,8 +174,8 @@ kbd {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--background);
-  color: var(--text);
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
 }
 .terminal-root {
   flex: 1;
@@ -204,7 +204,7 @@ kbd {
   min-width: 170px;
   overflow: auto;
   padding: 8px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--gc-border-subtle);
 }
 .git-file {
   display: flex;
@@ -223,8 +223,8 @@ kbd {
   flex: 1;
 }
 .git-code {
-  color: var(--accent);
-  font-family: var(--code-font);
+  color: var(--gc-accent);
+  font-family: var(--gc-font-code);
   margin-right: 8px;
 }
 .git-files textarea {
@@ -241,21 +241,21 @@ kbd {
   overflow: auto;
   font-size: 11px;
   flex: 1;
-  color: var(--muted);
+  color: var(--gc-text-muted);
 }
 
-.diff-panel { display: flex; min-height: 0; height: 100%; background: var(--panel); }
-.diff-list { width: 280px; overflow: auto; border-right: 1px solid var(--border); }
-.diff-row { display: flex; width: 100%; gap: 8px; align-items: center; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.diff-row.active { background: var(--selection); }
+.diff-panel { display: flex; min-height: 0; height: 100%; background: var(--gc-surface-raised); }
+.diff-list { width: 280px; overflow: auto; border-right: 1px solid var(--gc-border-subtle); }
+.diff-row { display: flex; width: 100%; gap: 8px; align-items: center; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--gc-border-subtle); background: transparent; color: var(--gc-text-primary); text-align: left; cursor: pointer; }
+.diff-row.active { background: var(--gc-surface-selected); }
 .diff-row-path, .diff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-row-path { flex: 1; }
-.diff-status { font-size: 10px; text-transform: uppercase; color: var(--muted); }
-.status-pending { color: var(--accent); }
-.status-accepted { color: var(--success, #7bd88f); }
-.status-rejected, .status-cancelled, .diff-error { color: var(--danger, #e06c75); }
+.diff-status { font-size: 10px; text-transform: uppercase; color: var(--gc-text-muted); }
+.status-pending { color: var(--gc-accent); }
+.status-accepted { color: var(--gc-success); }
+.status-rejected, .status-cancelled, .diff-error { color: var(--gc-danger); }
 .diff-view { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.diff-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.diff-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
 .diff-path { flex: 1; font-size: 12px; }
 .diff-toolbar button { padding: 4px 10px; }
 .diff-editor { flex: 1; min-height: 180px; }

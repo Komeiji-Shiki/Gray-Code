@@ -412,15 +412,15 @@ function onCustomPathInput(event: Event) {
 }
 
 .platform-general :is(input, button, .info-text, .proxy-settings, .storage-settings) {
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
 }
 .platform-general a.update-now-btn {
   text-decoration: none;
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
 }
 .platform-general .action-btn:not(.primary) {
-  border: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-input-background);
+  border: 1px solid var(--gc-border-control);
+  background: var(--gc-surface-input);
 }
 
 .form-group {
@@ -436,9 +436,9 @@ function onCustomPathInput(event: Event) {
 
 .info-text {
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .info-text p {
@@ -449,7 +449,7 @@ function onCustomPathInput(event: Event) {
 .info-text .version {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .executable-path code { overflow-wrap: anywhere; user-select: text; font-size: inherit; }
@@ -467,7 +467,7 @@ function onCustomPathInput(event: Event) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   text-decoration: none;
   font-size: 12px;
   padding: 4px 8px;
@@ -476,7 +476,7 @@ function onCustomPathInput(event: Event) {
 }
 
 .github-link:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
   text-decoration: underline;
 }
 
@@ -496,13 +496,13 @@ function onCustomPathInput(event: Event) {
 
 .group-label .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .field-description {
   margin: 4px 0 12px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .proxy-settings {
@@ -510,9 +510,9 @@ function onCustomPathInput(event: Event) {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .proxy-enable {
@@ -534,38 +534,38 @@ function onCustomPathInput(event: Event) {
 
 .proxy-url-group label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .proxy-url-input {
   width: 100%;
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
 }
 
 .proxy-url-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .proxy-url-input:disabled {
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input);
   opacity: 0.6;
 }
 
 .proxy-url-input.invalid {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 .error-hint {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .proxy-actions {
@@ -582,8 +582,8 @@ function onCustomPathInput(event: Event) {
   min-width: 60px;
   padding: 6px 12px;
   font-size: 12px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -591,7 +591,7 @@ function onCustomPathInput(event: Event) {
 }
 
 .save-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .save-btn:disabled {
@@ -601,15 +601,15 @@ function onCustomPathInput(event: Event) {
 
 .save-message {
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .save-message.info {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 更新设置 */
@@ -627,13 +627,13 @@ function onCustomPathInput(event: Event) {
 
 .update-channel-row .field-label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .update-channel-row .field-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .update-check-row {
@@ -643,8 +643,8 @@ function onCustomPathInput(event: Event) {
 }
 
 .update-now-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   padding: 6px 16px;
   border-radius: var(--gc-radius-sm);
@@ -655,7 +655,7 @@ function onCustomPathInput(event: Event) {
 }
 
 .update-now-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .update-now-btn:disabled {
@@ -665,7 +665,7 @@ function onCustomPathInput(event: Event) {
 
 .divider {
   height: 1px;
-  background: var(--vscode-panel-border);
+  background: none;
   margin: 8px 0;
 }
 
@@ -690,9 +690,9 @@ function onCustomPathInput(event: Event) {
   flex-direction: column;
   gap: 16px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .path-badge {
@@ -705,13 +705,13 @@ function onCustomPathInput(event: Event) {
 }
 
 .path-badge.default {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .path-badge.custom {
-  background: var(--vscode-statusBarItem-prominentBackground);
-  color: var(--vscode-statusBarItem-prominentForeground);
+  background: var(--gc-surface-active);
+  color: var(--gc-text-primary);
 }
 
 .storage-custom-path {
@@ -723,7 +723,7 @@ function onCustomPathInput(event: Event) {
 .storage-custom-path label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .path-input-group {
@@ -738,10 +738,10 @@ function onCustomPathInput(event: Event) {
   min-width: 0;
   padding: 8px 12px;
   font-size: 13px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
@@ -755,16 +755,16 @@ function onCustomPathInput(event: Event) {
   width: 32px;
   height: 32px;
   padding: 0;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
 
 .path-picker-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .path-picker-btn .codicon {
@@ -778,7 +778,7 @@ function onCustomPathInput(event: Event) {
   flex-wrap: wrap;
   margin-top: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .path-note-value {
@@ -786,25 +786,25 @@ function onCustomPathInput(event: Event) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
 }
 
 .path-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .path-input.valid {
-  border-color: var(--vscode-terminal-ansiGreen);
+  border-color: var(--gc-success);
 }
 
 .path-input.invalid {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 .field-hint {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .storage-actions, .import-export-actions {
@@ -819,8 +819,8 @@ function onCustomPathInput(event: Event) {
   gap: 4px;
   padding: 6px 12px;
   font-size: 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -828,7 +828,7 @@ function onCustomPathInput(event: Event) {
 }
 
 .action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-btn:disabled {
@@ -837,12 +837,12 @@ function onCustomPathInput(event: Event) {
 }
 
 .action-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .action-btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .storage-message {
@@ -856,12 +856,12 @@ function onCustomPathInput(event: Event) {
 
 .storage-message.success {
   background: rgba(0, 200, 0, 0.1);
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .storage-message.error {
   background: rgba(200, 0, 0, 0.1);
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .reload-btn {
@@ -871,8 +871,8 @@ function onCustomPathInput(event: Event) {
   margin-left: 12px;
   padding: 4px 10px;
   font-size: 12px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -880,6 +880,6 @@ function onCustomPathInput(event: Event) {
 }
 
 .reload-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 </style>

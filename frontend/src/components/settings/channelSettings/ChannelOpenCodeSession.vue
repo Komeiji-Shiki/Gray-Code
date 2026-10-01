@@ -48,7 +48,7 @@ const emit = defineEmits<{
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -68,19 +68,19 @@ const emit = defineEmits<{
 
 .session-title-row .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .session-title {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .session-hint {
   font-size: 10px;
   line-height: 1.45;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .toggle-switch {
@@ -102,8 +102,8 @@ const emit = defineEmits<{
 .toggle-slider {
   position: absolute;
   inset: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background-color: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
@@ -115,24 +115,24 @@ const emit = defineEmits<{
   width: 10px;
   height: 10px;
   content: '';
-  background-color: var(--vscode-foreground);
+  background-color: var(--gc-text-primary);
   border-radius: var(--gc-radius-xs);
   opacity: 0.6;
   transition: all 0.2s;
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background-color: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
-  background-color: var(--vscode-button-foreground);
+  background-color: var(--gc-text-on-primary);
   transform: translateX(16px);
   opacity: 1;
 }
 
 .toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 </style>

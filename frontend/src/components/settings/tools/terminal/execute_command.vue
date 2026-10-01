@@ -324,8 +324,8 @@ onMounted(() => {
 <style scoped>
 .execute-command-config {
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-top: none;
   border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
 }
@@ -337,19 +337,19 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
 .error-state {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .retry-btn {
   margin-left: auto;
   padding: 4px 8px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
@@ -357,7 +357,7 @@ onMounted(() => {
 }
 
 .retry-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 /* 配置内容 */
@@ -380,7 +380,7 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
@@ -389,7 +389,7 @@ onMounted(() => {
 
 .saving-indicator {
   margin-left: auto;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* Shell 列表 */
@@ -404,8 +404,8 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 8px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   transition: all 0.15s;
 }
@@ -419,11 +419,11 @@ onMounted(() => {
 }
 
 .shell-item.unavailable {
-  border-color: var(--vscode-inputValidation-warningBorder);
+  border-color: var(--gc-warning-border);
 }
 
 .shell-item.is-default {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .shell-main {
@@ -440,7 +440,7 @@ onMounted(() => {
 
 .shell-icon {
   font-size: 14px;
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .shell-name {
@@ -450,8 +450,8 @@ onMounted(() => {
 
 .default-badge {
   padding: 1px 6px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-md);
   font-size: 10px;
 }
@@ -468,19 +468,19 @@ onMounted(() => {
 }
 
 .status-badge.available {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .status-badge.unavailable {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 .available-icon {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .unavailable-icon {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 .shell-actions {
@@ -498,20 +498,20 @@ onMounted(() => {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .set-default-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 /* 路径配置 */
 .shell-path {
   padding-top: 4px;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .path-label {
@@ -519,27 +519,27 @@ onMounted(() => {
   flex-direction: column;
   gap: 4px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .path-input {
   width: 100%;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 .path-input:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .path-input.path-error {
-  border-color: var(--vscode-inputValidation-warningBorder);
+  border-color: var(--gc-warning-border);
 }
 
 .path-error-hint {
@@ -548,7 +548,7 @@ onMounted(() => {
   gap: 4px;
   margin-top: 4px;
   font-size: 10px;
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
 }
 
 .path-error-hint .codicon {
@@ -568,7 +568,7 @@ onMounted(() => {
 
 .timeout-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 最大输出行数配置 */
@@ -584,7 +584,7 @@ onMounted(() => {
 
 .output-lines-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 提示信息 */
@@ -592,14 +592,14 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   padding: 8px 10px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-link);
   border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
 }
 
 .config-tips .codicon {
   flex-shrink: 0;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   font-size: 14px;
 }
 
@@ -612,7 +612,7 @@ onMounted(() => {
 .tips-content p {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 

@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.file-waiting { display: flex; align-items: center; gap: 8px; color: var(--vscode-descriptionForeground); }
+.file-waiting { display: flex; align-items: center; gap: 8px; color: var(--gc-text-muted); }
 .read-file-panel {
   display: flex;
   flex-direction: column;
@@ -377,14 +377,14 @@ onBeforeUnmount(() => {
 }
 
 .files-icon {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-stats {
@@ -398,15 +398,15 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .stat.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .stat.error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 /* 全局错误 */
@@ -415,20 +415,20 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -441,13 +441,13 @@ onBeforeUnmount(() => {
 
 /* 单个文件面板 */
 .file-panel {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
 
 .file-panel.is-error {
-  border-color: var(--vscode-inputValidation-errorBorder);
+  border-color: var(--gc-danger-border);
 }
 
 /* 文件头部 */
@@ -456,8 +456,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .file-info {
@@ -470,12 +470,12 @@ onBeforeUnmount(() => {
 
 .file-icon {
   font-size: 12px;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
   flex-shrink: 0;
 }
 
 .file-panel.is-error .file-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
 }
 
 .file-name.clickable,
@@ -487,24 +487,24 @@ onBeforeUnmount(() => {
 .file-name.clickable:hover,
 .file-ext.clickable:hover,
 .file-path.clickable:hover {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   text-decoration: underline;
 }
 
 .file-name {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .file-ext {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .line-count {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-left: auto;
   flex-shrink: 0;
 }
@@ -524,28 +524,28 @@ onBeforeUnmount(() => {
   background: transparent;
   border: none;
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: all var(--transition-fast, 0.1s);
 }
 
 .action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .action-btn.copied {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 /* 文件路径 */
 .file-path {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editor-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-base);
+  border-bottom: 1px solid var(--gc-border-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -558,18 +558,18 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 4px var(--spacing-sm, 8px);
   font-size: 11px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .line-range-info .codicon {
   font-size: 12px;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .line-range-info .range-text {
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-primary);
+  font-family: var(--gc-font-code);
 }
 
 .line-range-info .partial-badge {
@@ -577,7 +577,7 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.95);
-  background: var(--vscode-charts-orange, #e69500);
+  background: var(--gc-chart-orange);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -585,8 +585,8 @@ onBeforeUnmount(() => {
 .file-error {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  color: var(--vscode-inputValidation-errorForeground);
-  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
 }
 
 /* 二进制文件 */
@@ -596,16 +596,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 /* 文件内容 */
 .file-content {
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .content-wrapper {
@@ -621,8 +621,8 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   line-height: 1.4;
   white-space: pre;
 }
@@ -636,8 +636,8 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   padding: 2px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .expand-btn {
@@ -648,7 +648,7 @@ onBeforeUnmount(() => {
   background: transparent;
   border: none;
   font-size: 10px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   cursor: pointer;
   transition: opacity var(--transition-fast, 0.1s);
 }
@@ -664,7 +664,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 </style>

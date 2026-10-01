@@ -356,14 +356,14 @@ onBeforeUnmount(() => {
 }
 
 .terminal-icon {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .status-badge {
@@ -374,28 +374,28 @@ onBeforeUnmount(() => {
 }
 
 .status-badge.success {
-  background: var(--vscode-testing-iconPassed);
-  color: var(--vscode-editor-background);
+  background: var(--gc-success);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.error {
-  background: var(--vscode-testing-iconFailed);
-  color: var(--vscode-editor-background);
+  background: var(--gc-danger);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.warning {
-  background: var(--vscode-charts-yellow);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-yellow);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.running {
-  background: var(--vscode-charts-blue);
-  color: var(--vscode-editor-background);
+  background: var(--gc-chart-blue);
+  color: var(--gc-surface-base);
 }
 
 .status-badge.pending {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .header-actions {
@@ -406,7 +406,7 @@ onBeforeUnmount(() => {
 
 .duration {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .action-btn {
@@ -415,17 +415,17 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 2px 6px;
   background: transparent;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   font-size: 11px;
   transition: all var(--transition-fast, 0.1s);
 }
 
 .action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .action-btn:disabled {
@@ -434,17 +434,17 @@ onBeforeUnmount(() => {
 }
 
 .action-btn.copied {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .kill-btn {
-  color: var(--vscode-testing-iconFailed);
-  border-color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
+  border-color: var(--gc-danger);
 }
 
 .kill-btn:hover {
-  background: var(--vscode-testing-iconFailed);
-  color: var(--vscode-editor-background);
+  background: var(--gc-danger);
+  color: var(--gc-surface-base);
 }
 
 .btn-text {
@@ -457,8 +457,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 4px;
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-terminal-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -469,16 +469,16 @@ onBeforeUnmount(() => {
 }
 
 .prompt {
-  color: var(--vscode-terminal-ansiGreen);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-success);
+  font-family: var(--gc-font-code);
   font-weight: bold;
   flex-shrink: 0;
 }
 
 .command-text {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 12px;
-  color: var(--vscode-terminal-foreground, var(--vscode-foreground));
+  color: var(--gc-text-primary);
   word-break: break-all;
   white-space: pre-wrap;
 }
@@ -488,12 +488,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--spacing-xs, 4px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding-left: 16px;
 }
 
 .meta-text {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
 }
 
 /* 错误显示 */
@@ -502,26 +502,26 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
 /* 输出区域 */
 .output-section {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
@@ -531,14 +531,14 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .output-title {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .output-header-right {
@@ -549,7 +549,7 @@ onBeforeUnmount(() => {
 
 .truncated-info {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .auto-scroll-toggle {
@@ -568,11 +568,11 @@ onBeforeUnmount(() => {
 
 .auto-scroll-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .output-content {
-  background: var(--vscode-terminal-background, var(--vscode-editor-background));
+  background: var(--gc-surface-base);
 }
 
 .content-wrapper {
@@ -583,8 +583,8 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-terminal-foreground, var(--vscode-foreground));
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   line-height: 1.4;
   white-space: pre;
 }
@@ -600,7 +600,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-md, 16px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -610,16 +610,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 11px;
 }
 
 .spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid var(--vscode-charts-blue);
+  border: 2px solid var(--gc-chart-blue);
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 1s linear infinite;

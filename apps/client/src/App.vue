@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { appearance, guard, initialize, loadSettings, report, state } from './state';
-import { appearancePalette, resolvedTheme, useSystemAppearance } from './appearance';
+import { appearanceSystemLight, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
 import { useNavigationIntent } from './navigationIntent';
 import { shellText as t, setShellLanguage } from './i18n';
-import { appearanceCssVariables } from '../../../shared/appearanceTokens';
+import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
 const navigate = useNavigationIntent();
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import Workbench from './components/Workbench.vue';
@@ -179,13 +179,8 @@ function endSidebar(event?: PointerEvent) {
   localStorage.setItem('graycode.sidebarWidth', String(sidebarWidth.value));
 }
 function resizeSidebarBy(amount: number) { sidebarWidth.value = visibleSidebarWidth.value + amount; endSidebar(); }
-const variables = computed(() => {
-  const config = appearance.value;
-  if (!config) return {};
-  return { '--ui-font': config.uiFont, '--code-font': config.codeFont, '--text-font': config.textFont,
-    '--font-size': config.fontSize + 'px', '--line-height': String(config.lineHeight),
-    ...appearanceCssVariables(Object.fromEntries(Object.entries(appearancePalette.value).filter(([name, value]) => /^[a-zA-Z-]+$/.test(name) && CSS.supports('color', value)))) };
-});
+// 与聊天文档一致：变量写到根元素，tokens.css 的派生色才能拿到当前色板。
+watchEffect(() => { if (appearance.value) applyAppearanceVariables(document.documentElement, appearance.value, appearanceSystemLight.value); });
 useSystemAppearance();
 watch(() => state.workspaceId, id => { localStorage.setItem('graycode.workspaceId', id); if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode })); });
 onMounted(() => {
@@ -208,7 +203,7 @@ onMounted(() => {
 onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?.(); clearTimeout(chatReadyTimer); window.removeEventListener('message', openWorkspacePanel); unsubscribeHost?.(); compactQuery.removeEventListener('change', updateViewport); window.removeEventListener('resize', updateViewport); window.visualViewport?.removeEventListener('resize', updateViewport); });
 </script>
 <template>
-  <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="[variables, { '--viewport-height': viewportHeight + 'px' }]" :data-theme="resolvedTheme" :data-density="appearance?.density">
+  <div class="application" :class="{ 'web-host': isWeb, 'compact-host': compactViewport }" :style="{ '--viewport-height': viewportHeight + 'px' }" :data-density="appearance?.density">
     <header class="titlebar">
       <button v-if="!state.settingsOpen" class="sidebar-toggle" :title="navigationCollapsed ? '展开对话列表' : '收起对话列表'" :aria-expanded="!navigationCollapsed" aria-label="切换对话列表" @click="navigationCollapsed = !navigationCollapsed"><NavigationIcon name="panel" /></button>
       <div class="mode-switcher" @focusout="event => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) modeMenuOpen = false; }">
@@ -262,25 +257,25 @@ onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?
   </div>
 </template>
 <style>
-.loading-state.startup-error{flex-direction:column;gap:12px;padding:24px;text-align:center}.startup-error p{max-width:640px;overflow-wrap:anywhere;color:var(--muted);margin:0}
-.mode-navigation{display:flex;gap:2px;-webkit-app-region:no-drag}.mode-navigation button{border:0;border-radius:0;background:transparent;color:var(--muted);padding:7px 12px;cursor:pointer}.mode-navigation button[aria-pressed="true"]{color:var(--text);box-shadow:inset 0 -2px var(--accent);background:var(--surface)}.desktop-workspace.chat-focused .product-chat{border-right:0}
+.loading-state.startup-error{flex-direction:column;gap:12px;padding:24px;text-align:center}.startup-error p{max-width:640px;overflow-wrap:anywhere;color:var(--gc-text-muted);margin:0}
+.mode-navigation{display:flex;gap:2px;-webkit-app-region:no-drag}.mode-navigation button{border:0;border-radius:0;background:transparent;color:var(--gc-text-on-chrome-muted);padding:7px 12px;cursor:pointer}.mode-navigation button:hover{color:var(--gc-text-on-chrome);background:var(--gc-surface-chrome-hover)}.mode-navigation button[aria-pressed="true"]{color:var(--gc-text-on-chrome);box-shadow:inset 0 -2px var(--gc-accent);background:transparent}.desktop-workspace.chat-focused .product-chat{border-right:0}
 .desktop-workspace { display: grid; grid-template-columns: minmax(300px, var(--chat-width, 48%)) 5px minmax(0, 1fr); flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .application-body { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
 .application-body .desktop-workspace { min-width: 0; }
 .conversation-navigation{display:flex;min-height:0;flex-shrink:0;position:relative}
 .navigation-resize{position:absolute;right:-3px;top:0;bottom:0;width:7px;z-index:3;cursor:col-resize;touch-action:none;outline:none}
-.navigation-resize:hover::after,.navigation-resize:focus-visible::after,.resizing .navigation-resize::after{content:'';position:absolute;inset:0 2px;background:var(--accent,#91a4be)}
+.navigation-resize:hover::after,.navigation-resize:focus-visible::after,.resizing .navigation-resize::after{content:'';position:absolute;inset:0 2px;background:var(--gc-accent)}
 .conversation-navigation[inert]{opacity:.55}
 .sidebar-toggle { display: flex; align-items: center; justify-content: center; background: transparent; border: 0; padding: 7px; flex-shrink: 0; }
 .desktop-workspace.chat-focused { grid-template-columns: minmax(0, 1fr); }
-.product-chat { width: 100%; height: 100%; min-height: 0; border: 0; border-right: 1px solid var(--border); }
-.split-handle { cursor: col-resize; touch-action: none; background: var(--border); }
-.split-handle:hover, .split-handle:focus-visible { background: var(--accent, #91a4be); }
+.product-chat { width: 100%; height: 100%; min-height: 0; border: 0; border-right: 1px solid var(--gc-border-subtle); }
+.split-handle { cursor: col-resize; touch-action: none; background: var(--gc-border-subtle); }
+.split-handle:hover, .split-handle:focus-visible { background: var(--gc-accent); }
 .resizing { user-select: none; cursor: col-resize; }.resizing iframe { pointer-events: none; }
 .application > .titlebar { -webkit-app-region: drag; justify-content: flex-start; padding-right: 148px; height: 40px; min-height: 40px; padding-block: 0; box-sizing: border-box; }
 .titlebar button,.titlebar select { -webkit-app-region: no-drag; }
-.app-menu { display: flex; gap: 1px; }.app-menu button { background: transparent; border: 0; color: var(--text); padding: 7px 8px; font: inherit; cursor: pointer; }
-.app-menu button:hover { background: var(--surface-hover, #ffffff10); }
+.app-menu { display: flex; gap: 1px; }.app-menu button { background: transparent; border: 0; color: var(--gc-text-primary); padding: 7px 8px; font: inherit; cursor: pointer; }
+.app-menu button:hover { background: var(--gc-surface-hover); }
 .workspace-add { font-size: 21px; padding: 2px 8px; }
 .application.web-host > .titlebar { padding-right: 14px; -webkit-app-region: no-drag; }
 .application.web-host{height:100dvh}.application.compact-host{height:var(--viewport-height,100dvh)}
@@ -288,11 +283,11 @@ onUnmounted(() => { lifetime.abort(); initialization?.abort(); unsubscribeState?
 </style>
 
 <style>
-.compact-host .conversation-navigation{position:absolute;inset:0 auto 0 0;width:min(290px,86%);z-index:21}.compact-host .conversation-sidebar{position:static;width:100%;flex-basis:auto}.mobile-tools{position:relative}.mobile-tools summary{cursor:pointer;padding:10px 8px;font-size:13px;list-style:none}.mobile-tools summary::-webkit-details-marker{display:none}.mobile-tools>div{position:absolute;top:100%;right:0;min-width:160px;display:grid;background:var(--panel);border:1px solid var(--border);z-index:10001;padding:5px}.mobile-tools button{text-align:left;border:0;background:transparent}.compact-host .mode-trigger strong{font-size:16px}
+.compact-host .conversation-navigation{position:absolute;inset:0 auto 0 0;width:min(290px,86%);z-index:21}.compact-host .conversation-sidebar{position:static;width:100%;flex-basis:auto}.mobile-tools{position:relative}.mobile-tools summary{cursor:pointer;padding:10px 8px;font-size:13px;list-style:none}.mobile-tools summary::-webkit-details-marker{display:none}.mobile-tools>div{position:absolute;top:100%;right:0;min-width:160px;display:grid;background:var(--gc-surface-raised);border:1px solid var(--gc-border-subtle);z-index:10001;padding:5px}.mobile-tools button{text-align:left;border:0;background:transparent}.compact-host .mode-trigger strong{font-size:16px}
 </style>
 
 <style>
-.mode-switcher{position:relative;-webkit-app-region:no-drag;flex-shrink:0}.mode-trigger{display:flex;align-items:center;gap:10px;border:0;background:transparent;min-height:38px;padding:6px 12px}.mode-trigger strong{font-size:17px}.mode-trigger>span{color:var(--muted);font-size:13px}.mode-menu{position:absolute;top:calc(100% + 7px);left:0;width:270px;padding:6px;background:var(--panel);border:1px solid var(--border);box-shadow:0 10px 30px #0006;z-index:10000}.mode-menu button{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px;text-align:left;border:0;background:transparent}.mode-menu button[aria-checked=true]{background:var(--hover)}.mode-menu strong,.mode-menu small{display:block}.mode-menu small{color:var(--muted);font-size:12px;margin-top:5px}.titlebar-center{min-width:0}.application{overflow:hidden}.product-chat{min-width:0;display:block}.statusbar{flex-shrink:0}.titlebar{flex-shrink:0}
+.mode-switcher{position:relative;-webkit-app-region:no-drag;flex-shrink:0}.mode-trigger{display:flex;align-items:center;gap:10px;border:0;background:transparent;min-height:38px;padding:6px 12px}.mode-trigger strong{font-size:17px}.mode-trigger>span{color:var(--gc-text-muted);font-size:13px}.mode-menu{position:absolute;top:calc(100% + 7px);left:0;width:270px;padding:6px;background:var(--gc-surface-raised);border:1px solid var(--gc-border-subtle);box-shadow:0 10px 30px #0006;z-index:10000}.mode-menu button{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px;text-align:left;border:0;background:transparent}.mode-menu button[aria-checked=true]{background:var(--gc-surface-hover)}.mode-menu strong,.mode-menu small{display:block}.mode-menu small{color:var(--gc-text-muted);font-size:12px;margin-top:5px}.titlebar-center{min-width:0}.application{overflow:hidden}.product-chat{min-width:0;display:block}.statusbar{flex-shrink:0}.titlebar{flex-shrink:0}
 </style>
 
 <style>.titlebar>.panel-toggle{margin-left:auto}.desktop-workspace.workbench-expanded{grid-template-columns:minmax(0,1fr)}.desktop-workspace.workbench-expanded>.product-chat,.desktop-workspace.workbench-expanded>.split-handle{display:none}.desktop-workspace.workbench-expanded>.workbench{grid-column:1}</style>

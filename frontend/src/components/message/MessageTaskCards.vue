@@ -139,10 +139,23 @@ function isCardActionCompleted(card: TaskCardItem): boolean {
   return card.isActionCompleted
 }
 
+// 宿主拒绝且不是来源阻断时，这张卡的确认请求已被新消息或新文档取代；保留原因，
+// 不再提供一个必然失败的按钮。只是界面态，重新加载对话后以宿主为准。
+const expiredCardReasons = ref(new Map<string, string>())
+
+function isCardActionExpired(card: TaskCardItem): boolean {
+  return !card.isActionCompleted && expiredCardReasons.value.has(card.key)
+}
+
+function markCardActionExpired(card: TaskCardItem, reason: string) {
+  expiredCardReasons.value = new Map(expiredCardReasons.value).set(card.key, reason)
+}
+
 function getCardActionTitle(card: TaskCardItem): string {
   if (card.kind === 'plan' && isPlanSourceBlocked(card)) {
     return getPlanBlockedReason(card)
   }
+  if (isCardActionExpired(card)) return expiredCardReasons.value.get(card.key)!
   return getActionText(card)
 }
 
@@ -164,17 +177,20 @@ function getActionLabel(kind: TaskCardKind): string {
 function getActionText(card: TaskCardItem): string {
   if (card.kind === 'plan') {
     if (isCardActionCompleted(card)) return t('components.message.tool.planCard.executed')
+    if (isCardActionExpired(card)) return t('components.message.tool.planCard.expired')
     if (isExecutingPlan.value) return t('components.message.tool.planCard.executing')
     return t('components.message.tool.planCard.executePlan')
   }
 
   if (isCardActionCompleted(card)) return t('components.message.tool.designCard.generated')
+  if (isCardActionExpired(card)) return t('components.message.tool.designCard.expired')
   if (isGeneratingPlan.value) return t('components.message.tool.designCard.generating')
   return t('components.message.tool.designCard.generatePlan')
 }
 
 function getActionIconClass(card: TaskCardItem): string {
   if (isCardActionCompleted(card)) return 'codicon-check'
+  if (isCardActionExpired(card)) return 'codicon-circle-slash'
   if (isCardActionRunning(card.kind)) return 'codicon-loading codicon-modifier-spin'
   return card.kind === 'plan' ? 'codicon-play' : 'codicon-arrow-right'
 }
@@ -184,6 +200,7 @@ function isActionDisabled(card: TaskCardItem): boolean {
   return (
     isAnyTaskActionRunning.value ||
     isCardActionCompleted(card) ||
+    isCardActionExpired(card) ||
     (card.kind === 'plan' && isPlanSourceBlocked(card)) ||
     !modeId ||
     !selectedChannelId.value ||
@@ -191,9 +208,23 @@ function isActionDisabled(card: TaskCardItem): boolean {
   )
 }
 
+// 确认请求失败（会话不可访问、传输超时等）不能只写控制台，否则用户看到的就是“点击没有反应”。
+function notifyTaskActionFailure(error: unknown, fallback: string) {
+  console.error(fallback, error)
+  void showNotification(error instanceof Error && error.message.trim() ? error.message : fallback, 'error')
+}
+
+// 流仍属于某个任务（输出中或等待工具审批）时宿主必然拒绝文档确认；提前说明，不发起确认。
+function isWaitingForCurrentTask(): boolean {
+  if (!chatStore.activeStreamId) return false
+  void showNotification(t('components.message.tool.waitForCurrentTask'), 'warning')
+  return true
+}
+
 async function executePlan(card: TaskCardItem) {
   if (card.kind !== 'plan') return
-  if (isExecutingPlan.value || isCardActionCompleted(card) || isPlanSourceBlocked(card) || !card.content.trim()) return
+  if (isExecutingPlan.value || isCardActionCompleted(card) || isCardActionExpired(card) || isPlanSourceBlocked(card) || !card.content.trim()) return
+  if (isWaitingForCurrentTask()) return
 
   isExecutingPlan.value = true
   try {
@@ -223,7 +254,8 @@ async function executePlan(card: TaskCardItem) {
     if (!confirmResult?.success) {
       const message = String(confirmResult?.error || t('components.message.tool.planCard.executePlanFailed'))
       await showNotification(message, 'warning')
-      await refreshPlanSourceStatuses(taskCards.value)
+      if (confirmResult?.success === false && !confirmResult.blocked) markCardActionExpired(card, message)
+      await refreshPlanSourceStatuses(taskCards.value, chatStore.currentConversationId)
       return
     }
 
@@ -296,7 +328,7 @@ async function executePlan(card: TaskCardItem) {
       return
     }
   } catch (error) {
-    console.error(t('components.message.tool.planCard.executePlanFailed'), error)
+    notifyTaskActionFailure(error, t('components.message.tool.planCard.executePlanFailed'))
   } finally {
     isExecutingPlan.value = false
   }
@@ -304,7 +336,8 @@ async function executePlan(card: TaskCardItem) {
 
 async function generatePlan(card: TaskCardItem) {
   if (card.kind !== 'design') return
-  if (isGeneratingPlan.value || isCardActionCompleted(card) || !card.content.trim()) return
+  if (isGeneratingPlan.value || isCardActionCompleted(card) || isCardActionExpired(card) || !card.content.trim()) return
+  if (isWaitingForCurrentTask()) return
 
   isGeneratingPlan.value = true
   try {
@@ -323,7 +356,9 @@ async function generatePlan(card: TaskCardItem) {
     })
 
     if (!confirmResult?.success) {
-      await showNotification(String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed')), 'warning')
+      const message = String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed'))
+      await showNotification(message, 'warning')
+      if (confirmResult?.success === false) markCardActionExpired(card, message)
       return
     }
 
@@ -378,7 +413,7 @@ async function generatePlan(card: TaskCardItem) {
       return
     }
   } catch (error) {
-    console.error(t('components.message.tool.designCard.generatePlanFailed'), error)
+    notifyTaskActionFailure(error, t('components.message.tool.designCard.generatePlanFailed'))
   } finally {
     isGeneratingPlan.value = false
   }
@@ -386,7 +421,8 @@ async function generatePlan(card: TaskCardItem) {
 
 async function generatePlanFromReview(card: TaskCardItem) {
   if (card.kind !== 'review') return
-  if (isGeneratingPlan.value || isCardActionCompleted(card) || !card.content.trim()) return
+  if (isGeneratingPlan.value || isCardActionCompleted(card) || isCardActionExpired(card) || !card.content.trim()) return
+  if (isWaitingForCurrentTask()) return
 
   isGeneratingPlan.value = true
   try {
@@ -405,7 +441,9 @@ async function generatePlanFromReview(card: TaskCardItem) {
     })
 
     if (!confirmResult?.success) {
-      await showNotification(String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed')), 'warning')
+      const message = String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed'))
+      await showNotification(message, 'warning')
+      if (confirmResult?.success === false) markCardActionExpired(card, message)
       return
     }
 
@@ -457,7 +495,7 @@ async function generatePlanFromReview(card: TaskCardItem) {
       return
     }
   } catch (error) {
-    console.error(t('components.message.tool.reviewCard.generatePlanFailed'), error)
+    notifyTaskActionFailure(error, t('components.message.tool.reviewCard.generatePlanFailed'))
   } finally {
     isGeneratingPlan.value = false
   }
@@ -497,7 +535,7 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
 onMounted(() => {
   loadChannels()
   void loadPromptModes()
-  void refreshPlanSourceStatuses(taskCards.value)
+  void refreshPlanSourceStatuses(taskCards.value, chatStore.currentConversationId)
   void autoOpenPendingCardTabs(taskCards.value)
 
   // 设置面板中渠道/模型变更后刷新（新增模型无需重启扩展即可在下拉框看到）
@@ -521,7 +559,7 @@ const taskCards = computed<TaskCardItem[]>(() =>
 watch(
   () => taskCards.value,
   (cards) => {
-    void refreshPlanSourceStatuses(cards)
+    void refreshPlanSourceStatuses(cards, chatStore.currentConversationId)
     void autoOpenPendingCardTabs(cards)
   }
 )
@@ -535,7 +573,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
       <ReviewTaskCard
         v-if="c.kind === 'review' && c.reviewCardData"
         :card="c.reviewCardData"
-        :plan-generation-enabled="!c.isActionCompleted && !!c.path && !!c.content && c.reviewCardData?.status === 'completed'"
+        :plan-generation-enabled="!c.isActionCompleted && !isCardActionExpired(c) && !!c.path && !!c.content && c.reviewCardData?.status === 'completed'"
         :plan-generation-completed="c.isActionCompleted"
         :is-generating-plan="isGeneratingPlan"
         :content="c.content"
@@ -659,10 +697,10 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-panel {
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  background: var(--gc-surface-raised);
 }
 
 .task-header {
@@ -670,8 +708,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .task-info {
@@ -688,17 +726,17 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-icon.plan {
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .task-icon.design {
-  color: var(--vscode-charts-yellow, #d7ba7d);
+  color: var(--gc-chart-yellow);
 }
 
 .task-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -710,9 +748,9 @@ const hasAny = computed(() => taskCards.value.length > 0)
   margin-left: var(--spacing-xs, 4px);
 }
 
-.task-status.success { color: var(--vscode-testing-iconPassed); }
-.task-status.running { color: var(--vscode-charts-blue); }
-.task-status.error { color: var(--vscode-testing-iconFailed); }
+.task-status.success { color: var(--gc-success); }
+.task-status.running { color: var(--gc-chart-blue); }
+.task-status.error { color: var(--gc-danger); }
 
 .task-actions {
   display: flex;
@@ -729,14 +767,14 @@ const hasAny = computed(() => taskCards.value.length > 0)
   background: transparent;
   border: none;
   border-radius: var(--radius-sm, 2px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition: all var(--transition-fast, 0.1s);
 }
 
 .action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .action-btn:disabled {
@@ -746,16 +784,16 @@ const hasAny = computed(() => taskCards.value.length > 0)
 
 .action-btn:disabled:hover {
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .task-path {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-raised);
+  border-bottom: 1px solid var(--gc-border-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -764,34 +802,34 @@ const hasAny = computed(() => taskCards.value.length > 0)
 .task-source {
   padding: 4px var(--spacing-sm, 8px);
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .task-source.status-up_to_date {
-  color: var(--vscode-testing-iconPassed, #73c991);
+  color: var(--gc-success);
 }
 
 .task-source.status-untracked {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .task-source.status-mismatched,
 .task-source.status-missing_source {
-  color: var(--vscode-testing-iconFailed, #f48771);
+  color: var(--gc-danger);
 }
 
 .task-source.status-mismatched {
-  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-inputValidation-errorBackground, #5a1d1d) 18%);
+  background: color-mix(in srgb, var(--gc-surface-base) 82%, var(--gc-danger-bg) 18%);
 }
 
 .task-source.status-missing_source {
-  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-inputValidation-warningBackground, #4d2d00) 18%);
+  background: color-mix(in srgb, var(--gc-surface-base) 82%, var(--gc-warning-bg) 18%);
 }
 
 .task-content {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .task-preview {
@@ -804,8 +842,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
   justify-content: space-between;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .task-selector {
@@ -818,7 +856,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
 
 .task-label {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
 }
 
@@ -844,8 +882,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
   align-items: center;
   gap: var(--spacing-xs, 4px);
   padding: 4px 10px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   border-radius: var(--radius-sm, 2px);
   font-size: 11px;
@@ -855,17 +893,17 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .task-btn.done {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   opacity: 0.85;
 }
 
 .task-btn.done:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryBackground);
+  background: var(--gc-button-secondary);
 }
 
 .task-btn:disabled {
@@ -874,8 +912,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-btn.done:disabled {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   opacity: 0.7;
 }
 
@@ -884,22 +922,22 @@ const hasAny = computed(() => taskCards.value.length > 0)
 }
 
 .task-footer :deep(.model-trigger) {
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   padding: 4px 8px;
 }
 
 .task-footer :deep(.model-trigger:hover:not(:disabled)) {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
 }
 
 .task-footer :deep(.model-selector.open .model-trigger) {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
 }
 </style>

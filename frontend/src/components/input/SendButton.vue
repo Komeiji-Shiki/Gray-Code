@@ -93,7 +93,7 @@ function handleCancel() {
   width: var(--gc-control-height-lg);
   height: var(--gc-control-height-lg);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   border: none;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -110,11 +110,11 @@ function handleCancel() {
 }
 
 .preserve-send-button {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .preserve-send-button:hover:not(:disabled) {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .send-button:hover:not(:disabled) {

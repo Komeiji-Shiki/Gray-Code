@@ -251,14 +251,14 @@ function saveJson() {
 
 .body-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .body-mode-selector {
   display: flex;
   gap: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .body-mode-selector.disabled {
@@ -287,19 +287,19 @@ function saveJson() {
 .radio-mark {
   width: 14px;
   height: 14px;
-  border: 1px solid var(--vscode-input-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: 50%;
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input);
   position: relative;
   transition: all 0.15s;
 }
 
 .radio-option:hover:not(.disabled) .radio-mark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .radio-option input:checked + .radio-mark {
-  border-color: var(--vscode-button-background);
+  border-color: var(--gc-button-primary);
 }
 
 .radio-option input:checked + .radio-mark::after {
@@ -311,11 +311,11 @@ function saveJson() {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--vscode-button-background);
+  background: var(--gc-button-primary);
 }
 
 .radio-text {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* Body 项列表包装器 */
@@ -342,8 +342,8 @@ function saveJson() {
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -368,19 +368,19 @@ function saveJson() {
 .body-checkmark {
   width: 14px;
   height: 14px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
 .body-checkbox:hover .body-checkmark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .body-checkbox input:checked ~ .body-checkmark {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .body-checkbox input:checked ~ .body-checkmark::after {
@@ -390,7 +390,7 @@ function saveJson() {
   top: 9px;
   width: 3px;
   height: 6px;
-  border: solid var(--vscode-button-foreground);
+  border: solid var(--gc-text-on-primary);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
 }
@@ -407,35 +407,35 @@ function saveJson() {
   width: 100%;
   box-sizing: border-box;
   padding: 5px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
 }
 
 .body-key:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .body-value {
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   resize: vertical;
   min-height: 60px;
 }
 
 .body-value:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .body-remove {
@@ -448,15 +448,15 @@ function saveJson() {
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-xs);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0.7;
 }
 
 .body-remove:hover:not(:disabled) {
   opacity: 1;
-  color: var(--vscode-errorForeground);
-  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--gc-danger);
+  background: var(--gc-surface-hover);
 }
 
 .body-remove:disabled {
@@ -468,7 +468,7 @@ function saveJson() {
   padding: 16px;
   text-align: center;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
 }
 
@@ -479,8 +479,8 @@ function saveJson() {
   gap: 6px;
   width: 100%;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
@@ -489,7 +489,7 @@ function saveJson() {
 }
 
 .add-body-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .add-body-btn:disabled {
@@ -517,33 +517,33 @@ function saveJson() {
   width: 100%;
   box-sizing: border-box;
   padding: 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   resize: vertical;
   min-height: 120px;
 }
 
 .json-textarea:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .json-textarea.has-error {
-  border-color: var(--vscode-errorForeground);
+  border-color: var(--gc-danger);
 }
 
 .json-error {
   font-size: 10px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .body-json-hint {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
 }
 </style>

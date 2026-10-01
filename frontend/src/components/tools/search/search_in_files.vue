@@ -548,8 +548,8 @@ function isDiffExpanded(path: string): boolean {
 </template>
 
 <style scoped>
-.search-waiting{color:var(--vscode-descriptionForeground)}.file-link{cursor:pointer;text-align:left;color:var(--vscode-textLink-foreground)}.replace-status{font-size:11px;white-space:nowrap;color:var(--vscode-descriptionForeground)}.replace-status.accepted{color:var(--vscode-testing-iconPassed)}.replace-status.rejected,.rejected-count{color:var(--vscode-editorWarning-foreground)}.replacement-save-error{color:var(--vscode-errorForeground);white-space:pre-wrap;overflow-wrap:anywhere}.skipped-files{border-top:1px solid var(--vscode-panel-border);padding-top:8px}.skipped-files>summary{cursor:pointer;color:var(--vscode-descriptionForeground);font-size:12px;margin-bottom:8px}
-.diff-load-error { display: flex; align-items: center; gap: 8px; padding: 10px; color: var(--vscode-errorForeground); border-left: 2px solid currentColor; }
+.search-waiting{color:var(--gc-text-muted)}.file-link{cursor:pointer;text-align:left;color:var(--gc-link)}.replace-status{font-size:11px;white-space:nowrap;color:var(--gc-text-muted)}.replace-status.accepted{color:var(--gc-success)}.replace-status.rejected,.rejected-count{color:var(--gc-warning)}.replacement-save-error{color:var(--gc-danger);white-space:pre-wrap;overflow-wrap:anywhere}.skipped-files{border-top:1px solid var(--gc-border-subtle);padding-top:8px}.skipped-files>summary{cursor:pointer;color:var(--gc-text-muted);font-size:12px;margin-bottom:8px}
+.diff-load-error { display: flex; align-items: center; gap: 8px; padding: 10px; color: var(--gc-danger); border-left: 2px solid currentColor; }
 .diff-load-error span { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .search-in-files-panel {
   display: flex;
@@ -574,21 +574,21 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .search-icon {
-  color: var(--vscode-charts-orange);
+  color: var(--gc-chart-orange);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .regex-badge {
   font-size: 9px;
   padding: 1px 4px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -605,15 +605,15 @@ function isDiffExpanded(path: string): boolean {
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .stat.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .stat.truncated {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 /* 搜索信息 */
@@ -622,7 +622,7 @@ function isDiffExpanded(path: string): boolean {
   flex-direction: column;
   gap: 2px;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--radius-sm, 2px);
 }
 
@@ -637,14 +637,14 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
 .query-text {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   background: rgba(230, 149, 0, 0.18);
   border: 1px solid rgba(230, 149, 0, 0.35);
   padding: 0 6px;
@@ -653,23 +653,23 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .replace-text {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   background: rgba(0, 200, 83, 0.16);
   border: 1px solid rgba(0, 200, 83, 0.35);
   padding: 0 6px;
   border-radius: var(--gc-radius-xs);
   opacity: 1;
-  background: var(--vscode-textCodeBlock-background);
+  background: var(--gc-code-bg);
   padding: 0 4px;
   border-radius: var(--gc-radius-xs);
 }
 
 .path-text,
 .pattern-text {
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
 }
 
 .diagnostic-box {
@@ -677,9 +677,9 @@ function isDiffExpanded(path: string): boolean {
   flex-direction: column;
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
 }
 
 .diagnostic-row {
@@ -688,19 +688,19 @@ function isDiffExpanded(path: string): boolean {
   gap: var(--spacing-xs, 4px);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .diagnostic-row.warning {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 .diagnostic-row.info {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .diagnostic-row code {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 错误显示 */
@@ -709,20 +709,20 @@ function isDiffExpanded(path: string): boolean {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -733,7 +733,7 @@ function isDiffExpanded(path: string): boolean {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-md, 16px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -745,7 +745,7 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .replace-file-panel {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
@@ -755,8 +755,8 @@ function isDiffExpanded(path: string): boolean {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .file-info {
@@ -769,21 +769,21 @@ function isDiffExpanded(path: string): boolean {
 
 .file-icon {
   font-size: 12px;
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
   flex-shrink: 0;
 }
 
 .file-name {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   flex-shrink: 0;
 }
 
 .file-path {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -791,7 +791,7 @@ function isDiffExpanded(path: string): boolean {
 
 .replace-count {
   font-size: 10px;
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
   margin-left: auto;
   flex-shrink: 0;
 }
@@ -801,8 +801,8 @@ function isDiffExpanded(path: string): boolean {
   display: flex;
   gap: 2px;
   padding: 2px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .toggle-btn {
@@ -813,20 +813,20 @@ function isDiffExpanded(path: string): boolean {
   background: transparent;
   border: none;
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   border-radius: var(--radius-sm, 2px);
   transition: all var(--transition-fast, 0.1s);
 }
 
 .toggle-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .toggle-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 /* 加载中 */
@@ -836,7 +836,7 @@ function isDiffExpanded(path: string): boolean {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 11px;
 }
 
@@ -844,7 +844,7 @@ function isDiffExpanded(path: string): boolean {
 .diff-view {
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .diff-stats-bar {
@@ -852,8 +852,8 @@ function isDiffExpanded(path: string): boolean {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: 2px var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .diff-stats-bar .stat {
@@ -864,17 +864,17 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .diff-stats-bar .stat.deleted {
-  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  color: var(--gc-git-deleted);
 }
 
 .diff-stats-bar .stat.added {
-  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  color: var(--gc-git-added);
 }
 
 .diff-lines {
   display: flex;
   flex-direction: column;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -899,8 +899,8 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .diff-line.line-omitted {
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  color: var(--vscode-descriptionForeground);
+  background: var(--gc-surface-muted);
+  color: var(--gc-text-muted);
   font-style: italic;
 }
 
@@ -910,23 +910,23 @@ function isDiffExpanded(path: string): boolean {
   flex-shrink: 0;
   padding: 0 var(--spacing-xs, 4px);
   background: rgba(128, 128, 128, 0.1);
-  border-right: 1px solid var(--vscode-panel-border);
+  border-right: 1px solid var(--gc-border-subtle);
 }
 
 .old-num,
 .new-num {
   min-width: 24px;
   text-align: right;
-  color: var(--vscode-editorLineNumber-foreground);
+  color: var(--gc-text-disabled);
   padding: 0 2px;
 }
 
 .line-deleted .old-num {
-  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  color: var(--gc-git-deleted);
 }
 
 .line-added .new-num {
-  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  color: var(--gc-git-added);
 }
 
 /* 差异标记 */
@@ -943,11 +943,11 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .marker.deleted {
-  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  color: var(--gc-git-deleted);
 }
 
 .marker.added {
-  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  color: var(--gc-git-added);
 }
 
 .marker.unchanged {
@@ -955,7 +955,7 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .marker.omitted {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 行内容 */
@@ -966,7 +966,7 @@ function isDiffExpanded(path: string): boolean {
 
 /* 匹配列表视图 */
 .matches-view {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .match-items {
@@ -979,7 +979,7 @@ function isDiffExpanded(path: string): boolean {
   align-items: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   font-size: 11px;
 }
 
@@ -988,22 +988,22 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .match-item-compact .line-info {
-  color: var(--vscode-charts-orange);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-chart-orange);
+  font-family: var(--gc-font-code);
   flex-shrink: 0;
 }
 
 .match-item-compact .match-text {
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
-  background: var(--vscode-editor-findMatchHighlightBackground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
+  background: var(--gc-highlight-bg);
   padding: 0 4px;
   border-radius: var(--gc-radius-xs);
 }
 
 /* 结果列表 */
 .results-list {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
   /* 确保容器有最小高度，避免内容为空时高度坍塌 */
@@ -1022,7 +1022,7 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .match-item {
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .match-item:last-child {
@@ -1034,26 +1034,26 @@ function isDiffExpanded(path: string): boolean {
   align-items: center;
   gap: var(--spacing-xs, 4px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   font-size: 11px;
 }
 
 .line-info {
-  color: var(--vscode-charts-orange);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-chart-orange);
+  font-family: var(--gc-font-code);
   margin-left: auto;
   flex-shrink: 0;
 }
 
 .match-context {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .match-context pre {
   margin: 0;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-all;
@@ -1064,7 +1064,7 @@ function isDiffExpanded(path: string): boolean {
 }
 
 .match-context :deep(mark) {
-  background: var(--vscode-editor-findMatchHighlightBackground);
+  background: var(--gc-highlight-bg);
   color: inherit;
   padding: 0 2px;
   border-radius: var(--gc-radius-xs);
@@ -1075,8 +1075,8 @@ function isDiffExpanded(path: string): boolean {
   display: flex;
   justify-content: center;
   padding: 2px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .expand-btn {
@@ -1087,7 +1087,7 @@ function isDiffExpanded(path: string): boolean {
   background: transparent;
   border: none;
   font-size: 10px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   cursor: pointer;
   transition: opacity var(--transition-fast, 0.1s);
 }

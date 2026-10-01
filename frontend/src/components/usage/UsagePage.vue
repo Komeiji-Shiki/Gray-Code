@@ -472,12 +472,12 @@ const tabs = computed(() => ([
 <style scoped>.usage-error-detail{max-width:600px;padding:0 20px;font-size:12px;line-height:1.6;overflow-wrap:anywhere;white-space:pre-wrap}</style>
 
 <style scoped>
-.usage-read-error{display:block;white-space:normal;line-height:1.6;margin-top:4px;color:var(--vscode-errorForeground)}
+.usage-read-error{display:block;white-space:normal;line-height:1.6;margin-top:4px;color:var(--gc-danger)}
 .usage-page {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
 }
 
 .page-header {
@@ -485,7 +485,7 @@ const tabs = computed(() => ([
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .page-header h3 {
@@ -509,12 +509,12 @@ const tabs = computed(() => ([
   border: none;
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
 }
 
 .header-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .header-btn:disabled {
@@ -527,28 +527,28 @@ const tabs = computed(() => ([
   display: flex;
   gap: 4px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
 .range-btn {
   padding: 3px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   font-size: 11px;
 }
 
 .range-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .range-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .range-btn:disabled {
@@ -568,7 +568,7 @@ const tabs = computed(() => ([
   align-items: center;
   gap: 8px;
   padding: 40px 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -577,30 +577,30 @@ const tabs = computed(() => ([
 }
 
 .state-hint.is-error {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .retry-btn {
   margin-top: 4px;
   padding: 4px 12px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .retry-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 /* 总览卡片 */
 .totals-card {
   padding: 16px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editorWidget-background, transparent);
+  background: var(--gc-surface-raised);
   margin-bottom: 12px;
 }
 
@@ -614,12 +614,12 @@ const tabs = computed(() => ([
 .total-value {
   font-size: 24px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .total-label {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .total-breakdown {
@@ -641,7 +641,7 @@ const tabs = computed(() => ([
 
 .breakdown-label {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 跳过提示 */
@@ -652,9 +652,9 @@ const tabs = computed(() => ([
   padding: 6px 10px;
   margin-bottom: 12px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-inputValidation-warningBackground, transparent);
-  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
-  color: var(--vscode-foreground);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
+  color: var(--gc-text-primary);
   font-size: 11px;
 }
 
@@ -665,10 +665,10 @@ const tabs = computed(() => ([
   gap: 4px;
   padding: 8px 10px;
   margin: -8px 0 12px;
-  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border: 1px solid var(--gc-warning-border);
   border-top: none;
   border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
-  background: var(--vscode-inputValidation-warningBackground, transparent);
+  background: var(--gc-warning-bg);
   list-style: none;
 }
 
@@ -677,14 +677,14 @@ const tabs = computed(() => ([
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
 }
 
 .skipped-item .codicon {
   font-size: 12px;
   flex-shrink: 0;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .skipped-title {
@@ -702,22 +702,22 @@ const tabs = computed(() => ([
 
 .tab-btn {
   padding: 4px 12px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .tab-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .tab-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
 }
 
 /* 维度列表 */
@@ -729,7 +729,7 @@ const tabs = computed(() => ([
 
 .usage-row {
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -738,8 +738,8 @@ const tabs = computed(() => ([
 }
 
 .usage-row.clickable:hover {
-  background: var(--vscode-list-hoverBackground, var(--vscode-toolbar-hoverBackground));
-  border-color: var(--vscode-focusBorder, var(--vscode-panel-border));
+  background: var(--gc-surface-hover);
+  border-color: var(--gc-focus-border);
 }
 
 .row-header {
@@ -766,7 +766,7 @@ const tabs = computed(() => ([
 
 .row-cost {
   font-size: 11px;
-  color: var(--vscode-charts-green, var(--vscode-descriptionForeground));
+  color: var(--gc-chart-green);
 }
 
 .row-edit-btn {
@@ -779,13 +779,13 @@ const tabs = computed(() => ([
   border: none;
   border-radius: var(--gc-radius-xs);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
 }
 
 .row-edit-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .row-edit-btn .codicon {
@@ -801,7 +801,7 @@ const tabs = computed(() => ([
 .row-bar-track {
   height: 4px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
   position: relative;
   margin-bottom: 6px;
 }
@@ -812,7 +812,7 @@ const tabs = computed(() => ([
   top: 0;
   height: 100%;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-progressBar-background, var(--vscode-button-background));
+  background: var(--gc-accent);
 }
 
 .row-detail {
@@ -820,22 +820,22 @@ const tabs = computed(() => ([
   flex-wrap: wrap;
   gap: 10px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 单价编辑区 */
 .pricing-editor {
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editorWidget-background, transparent);
+  background: var(--gc-surface-raised);
   cursor: default;
 }
 
 .pricing-title {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-bottom: 6px;
 }
 
@@ -856,15 +856,15 @@ const tabs = computed(() => ([
 
 .pricing-field span {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .pricing-field input {
   padding: 3px 6px;
-  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
   font-size: 12px;
   outline: none;
   width: 100%;
@@ -872,7 +872,7 @@ const tabs = computed(() => ([
 }
 
 .pricing-field input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .pricing-actions {
@@ -887,32 +887,32 @@ const tabs = computed(() => ([
   border-radius: var(--gc-radius-xs);
   cursor: pointer;
   font-size: 11px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
 }
 
 .pricing-save {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .pricing-save:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .pricing-cancel {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .pricing-cancel:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .generated-at {
   margin-top: 12px;
   padding-bottom: 8px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-align: right;
 }
 </style>

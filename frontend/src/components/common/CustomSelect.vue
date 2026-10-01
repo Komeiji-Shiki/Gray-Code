@@ -308,7 +308,7 @@ onUnmounted(() => {
         <span class="selected-label">{{ selectedOption.label }}</span>
       </span>
       <span v-else class="placeholder">{{ resolvedPlaceholder }}</span>
-      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
+      <i :class="['codicon codicon-chevron-down select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true"></i>
     </button>
 
     <!--
@@ -395,8 +395,8 @@ onUnmounted(() => {
   width: 100%;
   min-height: var(--gc-control-height-lg);
   padding: 6px 10px;
-  background: var(--vscode-input-background, var(--gc-surface-base));
-  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
   border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-control);
@@ -430,12 +430,12 @@ onUnmounted(() => {
 }
 
 .placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .select-arrow {
   flex-shrink: 0;
-  font-size: var(--gc-font-size-micro);
+  font-size: var(--gc-font-size-control);
   margin-left: var(--gc-space-2);
   transition: transform var(--gc-duration-fast) var(--gc-ease-standard);
 }
@@ -449,8 +449,8 @@ onUnmounted(() => {
   position: fixed;
   /* 对话框内部拉出的浮层要压在 Modal 之上，又仍低于通知层 */
   z-index: calc(var(--gc-layer-modal) + 10);
-  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
-  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   box-shadow: var(--gc-shadow-md);
   overflow: hidden;
@@ -473,7 +473,7 @@ onUnmounted(() => {
 }
 
 .custom-select.compact .select-arrow {
-  font-size: 8px;
+  font-size: var(--gc-font-size-body);
   margin-left: 6px;
 }
 
@@ -481,7 +481,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--vscode-dropdown-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   min-width: 0;
   overflow: hidden;
 }
@@ -491,17 +491,17 @@ onUnmounted(() => {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   padding: 4px 8px;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: var(--gc-font-size-body);
   outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .options-list {
@@ -519,12 +519,12 @@ onUnmounted(() => {
 
 .option-item:hover,
 .option-item.highlighted {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .option-item.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .option-content {
@@ -551,7 +551,7 @@ onUnmounted(() => {
 }
 
 .option-item.selected .option-description {
-  color: var(--vscode-list-activeSelectionForeground);
+  color: var(--gc-text-selected);
   opacity: 0.8;
 }
 

@@ -259,14 +259,14 @@ const matches = computed(() => {
 
 .match-item {
   padding: 8px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 2px;
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-sm);
 }
 
 .match-file {
   font-weight: 600;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .match-context {
@@ -377,14 +377,13 @@ app.mount('#app')
 
 ### 自定义样式
 
-可以在自定义组件中使用 VSCode 主题变量：
+自定义组件只使用 `--gc-*` 语义 token（不要直接引用 `--vscode-*`，静态测试会拦截）：
 
-- `--vscode-foreground`
-- `--vscode-editor-background`
-- `--vscode-panel-border`
-- 等等...
+- `--gc-text-primary`、`--gc-text-muted`
+- `--gc-surface-raised`（卡片）、`--gc-surface-sunken`（代码与命令块）
+- `--gc-border-subtle`、`--gc-link`、`--gc-success / --gc-warning / --gc-danger`
 
-完整变量列表请参考 VSCode 主题文档。
+完整列表见 `frontend/src/styles/tokens.css`。
 
 ## 工具元数据单一来源（toolMeta）
 

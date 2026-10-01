@@ -100,7 +100,7 @@ function updateLimit(field: 'maxIterations' | 'maxRuntime', event: Event) {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .form-group {
@@ -111,16 +111,16 @@ function updateLimit(field: 'maxIterations' | 'maxRuntime', event: Event) {
 
 .form-group label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .form-group input,
 .form-group textarea {
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 0;
-  color: var(--vscode-input-foreground);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  color: var(--gc-text-primary);
   font-size: 13px;
   font-family: inherit;
   resize: vertical;
@@ -129,13 +129,13 @@ function updateLimit(field: 'maxIterations' | 'maxRuntime', event: Event) {
 .form-group input:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .field-hint {
   font-size: 11px;
   line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-top: 2px;
 }
 
@@ -156,5 +156,5 @@ function updateLimit(field: 'maxIterations' | 'maxRuntime', event: Event) {
   box-sizing: border-box;
 }
 
-.limit-error { color: var(--vscode-errorForeground); font-size: 12px; }
+.limit-error { color: var(--gc-danger); font-size: 12px; }
 </style>

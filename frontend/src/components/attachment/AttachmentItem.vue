@@ -142,8 +142,8 @@ function handleDownload() {
 }
 
 .attachment-item.clickable:hover {
-  background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder);
+  background: var(--gc-surface-hover);
+  border-color: var(--gc-focus-border);
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
@@ -155,7 +155,7 @@ function handleDownload() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
@@ -173,7 +173,7 @@ function handleDownload() {
 
 .thumbnail-icon {
   font-size: 24px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .compact .thumbnail-icon {
@@ -191,7 +191,7 @@ function handleDownload() {
 .attachment-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -206,7 +206,7 @@ function handleDownload() {
   align-items: center;
   gap: 8px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .attachment-size,

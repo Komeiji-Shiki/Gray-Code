@@ -777,6 +777,7 @@ const zhCN = {
                 streamingArgs: '正在生成参数...',
                 confirmExecution: '点击确认执行',
                 confirm: '确认执行',
+                waitForCurrentTask: '当前任务仍在运行或等待确认，请结束后再确认文档。',
                 saveAll: '全部保存',
                 rejectAll: sharedZhCN.components.message.tool.rejectAll,
                 reject: sharedZhCN.components.message.tool.reject,
@@ -885,6 +886,7 @@ const zhCN = {
                     title: '计划',
                     executeLabel: '执行：',
                     executed: '已执行',
+                    expired: '确认已失效',
                     executing: '执行中...',
                     executePlan: sharedZhCN.components.message.tool.planCard.executePlan,
                     openFile: '打开文件',
@@ -904,6 +906,7 @@ const zhCN = {
                     title: '设计',
                     generateLabel: '生成计划：',
                     generated: '已生成计划',
+                    expired: '确认已失效',
                     generating: '生成计划中...',
                     generatePlan: sharedZhCN.components.message.tool.designCard.generatePlan,
                     openFile: '打开文件',
@@ -1032,6 +1035,7 @@ const zhCN = {
         },
 
         settings: {
+            darkPalette: { title: '深色配色', description: '深色主题下使用的配色方案，浅色主题固定为象牙纸。', shell: '藏青外壳', graphite: '石墨纸', indigo: '藏青' },
             clawdSettings: sharedZhCN.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedZhCN.components.settings.backgroundGalleryPolicy,
             title: '设置',

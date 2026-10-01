@@ -79,7 +79,7 @@ function formatCoords(x1: number, y1: number, x2: number, y2: number): string {
 const taskTitle = (task: CropTask) => truncateText(task.image_path, 25)
 
 const metaItems = (task: CropTask): MediaMetaItem[] => [
-  { icon: 'codicon-symbol-ruler', text: formatCoords(task.x1, task.y1, task.x2, task.y2), accentColor: 'var(--vscode-charts-blue)' },
+  { icon: 'codicon-symbol-ruler', text: formatCoords(task.x1, task.y1, task.x2, task.y2), accentColor: 'var(--gc-chart-blue)' },
   { icon: 'codicon-arrow-right', text: truncateText(task.output_path, 20) }
 ]
 
@@ -110,7 +110,7 @@ const imageLabel = (img: MultimodalData, index: number) =>
     :is-batch="isBatchMode"
     :ns="NS"
     icon="codicon-selection"
-    running-badge-color="var(--vscode-charts-green)"
+    running-badge-color="var(--gc-chart-green)"
     :dependencies="['sharp']"
     batch-title-key="batchCrop"
     single-title-key="cropTask"

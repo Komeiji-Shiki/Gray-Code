@@ -51,7 +51,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .radio-option input {
@@ -64,8 +64,8 @@ const emit = defineEmits<{
   gap: 8px;
   padding: 10px 12px;
   margin: 10px 0;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -80,13 +80,13 @@ const emit = defineEmits<{
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .dynamic-strategy-warning {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+  color: var(--gc-warning);
 }
 </style>

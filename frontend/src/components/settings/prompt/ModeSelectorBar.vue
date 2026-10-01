@@ -117,9 +117,9 @@ const emit = defineEmits<{
   justify-content: flex-start;
   align-items: center;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   flex-wrap: wrap;
   gap: 8px 12px;
 }
@@ -138,7 +138,7 @@ const emit = defineEmits<{
   gap: 6px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -184,13 +184,13 @@ const emit = defineEmits<{
   background: transparent;
   border: none;
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   transition: background 0.1s ease;
 }
 
 .mode-action-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .mode-action-btn:disabled {
@@ -199,7 +199,7 @@ const emit = defineEmits<{
 }
 
 .mode-action-btn.danger:hover:not(:disabled) {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .mode-action-btn .codicon {
@@ -218,8 +218,8 @@ const emit = defineEmits<{
   height: 28px;
   padding: 0 12px;
   gap: 6px;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
+  color: var(--gc-text-on-primary);
+  background: var(--gc-button-primary);
   font-size: 13px;
   font-weight: 500;
 }
@@ -233,7 +233,7 @@ const emit = defineEmits<{
 }
 
 .save-action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .save-action-btn:disabled {
@@ -245,7 +245,7 @@ const emit = defineEmits<{
   width: 1px;
   align-self: stretch;
   margin: 3px 4px;
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
 }
 
 @media (max-width: 520px) {

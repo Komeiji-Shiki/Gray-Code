@@ -364,31 +364,31 @@ onUnmounted(() => {
   margin: 0 0 8px 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-desc {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.5;
 }
 
 .install-path {
   margin-bottom: 16px;
   padding: 8px 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
 .install-path .label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .install-path code {
-  color: var(--vscode-textLink-foreground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-link);
+  font-family: var(--gc-font-code);
 }
 
 .dependencies-list {
@@ -402,19 +402,19 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   transition: border-color 0.2s;
 }
 
 .dependency-item:hover {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .dependency-item.installed {
-  border-color: var(--vscode-charts-green);
-  background: color-mix(in srgb, var(--vscode-charts-green) 5%, var(--vscode-editor-background));
+  border-color: var(--gc-chart-green);
+  background: color-mix(in srgb, var(--gc-chart-green) 5%, var(--gc-surface-base));
 }
 
 .dep-info {
@@ -431,13 +431,13 @@ onUnmounted(() => {
 
 .dep-name {
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .dep-version {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
 }
 
 .dep-installed-badge {
@@ -445,8 +445,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--vscode-charts-green);
-  background: color-mix(in srgb, var(--vscode-charts-green) 15%, transparent);
+  color: var(--gc-chart-green);
+  background: color-mix(in srgb, var(--gc-chart-green) 15%, transparent);
   padding: 2px 8px;
   border-radius: var(--gc-radius-md);
 }
@@ -454,7 +454,7 @@ onUnmounted(() => {
 .dep-description {
   margin: 6px 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 
@@ -462,7 +462,7 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .dep-size {
@@ -494,22 +494,22 @@ onUnmounted(() => {
 }
 
 .install-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .install-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .uninstall-btn {
   background: transparent;
-  color: var(--vscode-errorForeground);
-  border: 1px solid var(--vscode-errorForeground);
+  color: var(--gc-danger);
+  border: 1px solid var(--gc-danger);
 }
 
 .uninstall-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vscode-errorForeground) 10%, transparent);
+  background: color-mix(in srgb, var(--gc-danger) 10%, transparent);
 }
 
 .empty-state {
@@ -518,7 +518,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .empty-state i {
@@ -537,18 +537,18 @@ onUnmounted(() => {
 }
 
 .progress-message.info {
-  background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
-  color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--gc-link) 10%, transparent);
+  color: var(--gc-link);
 }
 
 .progress-message.success {
-  background: color-mix(in srgb, var(--vscode-charts-green) 10%, transparent);
-  color: var(--vscode-charts-green);
+  background: color-mix(in srgb, var(--gc-chart-green) 10%, transparent);
+  color: var(--gc-chart-green);
 }
 
 .progress-message.error {
-  background: color-mix(in srgb, var(--vscode-errorForeground) 10%, transparent);
-  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--gc-danger) 10%, transparent);
+  color: var(--gc-danger);
 }
 
 /* 工具面板样式 */
@@ -559,9 +559,10 @@ onUnmounted(() => {
 }
 
 .tool-panel {
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   overflow: hidden;
+  background: var(--gc-surface-raised);
 }
 
 .panel-header {
@@ -569,18 +570,18 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   cursor: pointer;
   transition: background-color 0.15s;
 }
 
 .panel-header:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .panel-header .expand-icon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   transition: transform 0.15s;
 }
 
@@ -592,27 +593,26 @@ onUnmounted(() => {
   flex: 1;
   font-weight: 500;
   font-size: 13px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .deps-count {
   padding: 2px 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   border-radius: var(--gc-radius-md);
   font-size: 11px;
   font-weight: 500;
 }
 
 .deps-count.all-installed {
-  background: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  color: var(--vscode-charts-green);
+  background: color-mix(in srgb, var(--gc-chart-green) 20%, transparent);
+  color: var(--gc-chart-green);
 }
 
 .panel-content {
   padding: 8px;
-  background: var(--vscode-sideBar-background);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
 }
 
 .panel-content .dependency-item {

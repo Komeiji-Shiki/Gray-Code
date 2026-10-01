@@ -131,13 +131,13 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.chatgpt-auth { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border-color, #343841); background: var(--input-background, #15171d); }
+.chatgpt-auth { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--gc-border-subtle); background: var(--gc-surface-input); }
 .chatgpt-auth p { margin: 0; }
-.chatgpt-auth select, .chatgpt-auth input { width: 100%; min-width: 0; border-radius: 0; }
+.chatgpt-auth select, .chatgpt-auth input { width: 100%; min-width: 0; border-radius: var(--gc-radius-sm); }
 .auth-actions, .callback-input { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .callback-input input { flex: 1; min-width: 180px; }
-.login-progress { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-color, #343841); }
-.auth-error { color: var(--error-color, #ef8b8b); white-space: pre-wrap; }
-.plan-status { color: var(--text-color, #e6e6e6); }
-.chatgpt-auth a { color: var(--accent-color, #95b6ff); }
+.login-progress { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--gc-border-subtle); }
+.auth-error { color: var(--gc-danger); white-space: pre-wrap; }
+.plan-status { color: var(--gc-text-primary); }
+.chatgpt-auth a { color: var(--gc-link); }
 </style>

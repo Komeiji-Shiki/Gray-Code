@@ -10,7 +10,7 @@
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 保存浮窗提示 */
@@ -25,18 +25,18 @@
   padding: 8px 14px;
   font-size: 12px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
-  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
+  background: var(--gc-surface-overlay);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
 .save-toast.success .codicon {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .save-toast:not(.success) .codicon {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .toast-fade-enter-active,
@@ -55,9 +55,9 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .section-header {
@@ -82,14 +82,14 @@
 }
 
 .section-badge.entries-badge {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* Loading 动画 */
@@ -102,6 +102,9 @@
   to { transform: rotate(360deg); }
 }
 
-.entries-section {
-  border-color: var(--vscode-focusBorder);
+/* 条目分组只负责排列，条目本身已是卡片。 */
+.template-section.entries-section {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
 }

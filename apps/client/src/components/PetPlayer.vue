@@ -81,4 +81,4 @@ onBeforeUnmount(() => {
 defineExpose({ apply, ready });
 </script>
 <template><div ref="container" class="pet-player" :data-ready="ready" :data-resource="resource.id"><iframe ref="frame" :src="source" sandbox="allow-scripts" :title="resource.name + '桌宠画面'" /><p v-if="error" role="alert">{{ error }}</p><p v-else-if="!ready" role="status">正在加载{{ resource.name }}…</p></div></template>
-<style scoped>.pet-player{position:relative;width:100%;height:100%;min-height:80px}.pet-player iframe{color-scheme:normal;width:100%;height:100%;border:0;background:transparent;display:block;pointer-events:none}.pet-player p{position:absolute;inset:auto 8px 8px;padding:8px;background:#111e;color:#e8c8c8;font:12px/1.7 sans-serif;margin:0}</style>
+<style scoped>.pet-player{position:relative;width:100%;height:100%;min-height:80px}.pet-player iframe{color-scheme:normal;width:100%;height:100%;border:0;background:transparent;display:block;pointer-events:none}.pet-player p{position:absolute;inset:auto 8px 8px;padding:8px;background:#111e;color:var(--gc-danger);font:12px/1.7 sans-serif;margin:0}</style>

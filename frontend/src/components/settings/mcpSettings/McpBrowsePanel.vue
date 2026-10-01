@@ -488,9 +488,9 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .mcp-browse-panel {
   margin-top: var(--gc-space-4);
   padding: var(--gc-space-4);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 0;
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .browse-header {
@@ -501,13 +501,13 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
   margin: 0 0 var(--gc-space-1) 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .browse-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .browse-toolbar {
@@ -519,7 +519,7 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 
 .server-select-label {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -529,9 +529,9 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 }
 
 .gc-input {
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   padding: 6px 8px;
   font-size: 12px;
@@ -542,8 +542,8 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
@@ -552,8 +552,8 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 }
 
 .toolbar-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .toolbar-btn:disabled {
@@ -570,16 +570,16 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .browse-tab {
   padding: 6px 12px;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
 }
 
 .browse-tab.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border-color: transparent;
 }
 
@@ -590,10 +590,10 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 }
 
 .browse-card {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   padding: var(--gc-space-3);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .browse-card-header {
@@ -612,12 +612,12 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .browse-card-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .browse-card-uri {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -626,7 +626,7 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .browse-card-desc {
   margin-top: var(--gc-space-1);
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .browse-card-actions {
@@ -638,26 +638,26 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .browse-detail {
   margin-top: var(--gc-space-2);
   padding-top: var(--gc-space-2);
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 .browse-detail-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-bottom: var(--gc-space-2);
 }
 
 .browse-text {
   margin: 0;
   padding: var(--gc-space-3);
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   max-height: 320px;
   overflow: auto;
 }
@@ -665,9 +665,9 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .browse-image-box {
   margin: 0;
   padding: var(--gc-space-2);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
 }
 
 .browse-image-box img {
@@ -679,7 +679,7 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .browse-image-box figcaption {
   margin-top: var(--gc-space-1);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   word-break: break-all;
 }
 
@@ -698,11 +698,11 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 
 .prompt-arg-name {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .prompt-required {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   font-size: 11px;
   margin-left: 4px;
 }
@@ -715,24 +715,24 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 }
 
 .prompt-message {
-  border-left: 2px solid var(--vscode-panel-border);
+  border-left: 2px solid var(--gc-border-subtle);
   padding: 0 var(--gc-space-3);
 }
 
 .prompt-message.role-assistant {
-  border-left-color: var(--vscode-charts-blue, var(--vscode-focusBorder));
+  border-left-color: var(--gc-chart-blue);
 }
 
 .prompt-role {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-transform: uppercase;
 }
 
 .browse-empty {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding: var(--gc-space-3);
   text-align: center;
 }
@@ -743,7 +743,7 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
   justify-content: center;
   gap: 8px;
   padding: var(--gc-space-4);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -753,11 +753,11 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
   gap: 6px;
   padding: 8px 12px;
   margin-bottom: var(--gc-space-2);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .codicon-modifier-spin {

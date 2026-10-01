@@ -139,9 +139,9 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .token-count-header {
@@ -162,7 +162,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--vscode-sideBar-background);
+  background: var(--gc-surface-panel);
   border-radius: var(--gc-radius-sm);
   min-width: 150px;
 }
@@ -172,16 +172,16 @@ const emit = defineEmits<{
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: help;
 }
 
 .token-item-label.static-label .codicon {
-  color: var(--vscode-charts-green);
+  color: var(--gc-chart-green);
 }
 
 .token-item-label.dynamic-label .codicon {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .token-label {
@@ -189,22 +189,22 @@ const emit = defineEmits<{
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .channel-select {
   padding: 4px 8px;
   font-size: 11px;
-  background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   cursor: pointer;
 }
 
 .channel-select:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .refresh-btn {
@@ -215,15 +215,15 @@ const emit = defineEmits<{
   height: 24px;
   padding: 0;
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s;
 }
 
 .refresh-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .refresh-btn:disabled {
@@ -247,16 +247,16 @@ const emit = defineEmits<{
 }
 
 .token-number.static {
-  color: var(--vscode-charts-green);
+  color: var(--gc-chart-green);
 }
 
 .token-number.dynamic {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .token-unit {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .token-error {
@@ -264,18 +264,18 @@ const emit = defineEmits<{
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   cursor: help;
 }
 
 .token-na {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .token-hint {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* Loading 动画 */

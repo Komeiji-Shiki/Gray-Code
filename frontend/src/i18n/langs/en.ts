@@ -775,6 +775,7 @@ const en: LanguageMessages = {
                 streamingArgs: 'Generating arguments...',
                 confirmExecution: 'Click to confirm execution',
                 confirm: 'Confirm Execution',
+                waitForCurrentTask: 'The current task is still running or awaiting approval. Confirm the document after it finishes.',
                 saveAll: 'Save All',
                 rejectAll: sharedEn.components.message.tool.rejectAll,
                 reject: sharedEn.components.message.tool.reject,
@@ -883,6 +884,7 @@ const en: LanguageMessages = {
                     title: 'Plan',
                     executeLabel: 'Execute:',
                     executed: 'Executed',
+                    expired: 'Confirmation expired',
                     executing: 'Executing...',
                     executePlan: sharedEn.components.message.tool.planCard.executePlan,
                     openFile: 'Open File',
@@ -902,6 +904,7 @@ const en: LanguageMessages = {
                     title: 'Design',
                     generateLabel: 'Plan:',
                     generated: 'Plan Generated',
+                    expired: 'Confirmation expired',
                     generating: 'Generating Plan...',
                     generatePlan: sharedEn.components.message.tool.designCard.generatePlan,
                     openFile: 'Open File',
@@ -1030,6 +1033,7 @@ const en: LanguageMessages = {
         },
 
         settings: {
+            darkPalette: { title: 'Dark palette', description: 'Palette used by the dark theme. The light theme always uses Ivory.', shell: 'Indigo shell', graphite: 'Graphite paper', indigo: 'Indigo' },
             clawdSettings: sharedEn.components.settings.clawdSettings,
             backgroundGalleryPolicy: sharedEn.components.settings.backgroundGalleryPolicy,
             title: 'Settings',

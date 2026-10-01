@@ -673,8 +673,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
 }
 
 /* 聊天视图容器 */
@@ -705,7 +705,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   position: relative;
 }
-.conversation-heading { min-height: 44px; display: flex; align-items: center; border-bottom: 1px solid var(--gc-border-subtle); padding: 10px 20px; font-size: 13px; font-weight: 500; flex-shrink: 0; }
+.conversation-heading { min-height: 44px; display: flex; align-items: center; padding: 10px 20px; font-size: 13px; font-weight: 500; flex-shrink: 0; }
 .conversation-heading span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 自动总结提示（显示在聊天区域底部） */
@@ -728,7 +728,7 @@ onBeforeUnmount(() => {
 }
 
 .auto-summary-icon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .auto-summary-panel > span {
@@ -745,7 +745,7 @@ onBeforeUnmount(() => {
   padding: 0;
   background: transparent;
   border: none;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.75;
   cursor: pointer;
   border-radius: var(--gc-radius-sm);
@@ -782,18 +782,18 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 8px 12px;
   background: rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .warning-icon {
   font-size: 16px;
-  color: var(--vscode-charts-yellow, #f0c674);
+  color: var(--gc-chart-yellow);
 }
 
 .retry-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .retry-progress-inline {
@@ -801,14 +801,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin-left: auto;
   margin-right: 8px;
 }
 
 .retry-progress-inline .codicon {
   font-size: 12px;
-  color: var(--vscode-charts-yellow, #f0c674);
+  color: var(--gc-chart-yellow);
 }
 
 .retry-cancel-btn {
@@ -843,11 +843,11 @@ onBeforeUnmount(() => {
 
 .retry-error-json {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.4;
   word-break: break-word;
   white-space: pre-wrap;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   background: rgba(0, 0, 0, 0.15);
   padding: 8px;
   border-radius: var(--gc-radius-sm);
@@ -864,7 +864,7 @@ onBeforeUnmount(() => {
 }
 
 .retry-countdown {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* prefers-reduced-motion：系统级减少动态效果时禁用旋转/淡入动画 */

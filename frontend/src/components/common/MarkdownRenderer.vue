@@ -379,7 +379,7 @@ onUnmounted(()=> {
    */
   font-size: var(--lim-md-font-size, 13px);
   line-height: var(--lim-md-line-height, 1.6);
-  color: var(--lim-md-color, var(--vscode-foreground));
+  color: var(--lim-md-color, var(--gc-text-primary));
   font-style: var(--lim-md-font-style, normal);
 
   word-break: break-word;
@@ -450,15 +450,16 @@ onUnmounted(()=> {
 .markdown-content :deep(blockquote) {
   margin: 0.5em 0;
   padding: 0.5em 1em;
-  border-left: 3px solid var(--vscode-textBlockQuote-border);
-  background: var(--vscode-textBlockQuote-background);
-  color: var(--vscode-foreground);
+  border-left: 3px solid var(--gc-quote-border);
+  border-radius: 0 var(--gc-radius-md) var(--gc-radius-md) 0;
+  background: var(--gc-quote-bg);
+  color: var(--gc-text-primary);
   opacity: 0.9;
 }
 
 /* 嵌套引用 */
 .markdown-content :deep(blockquote blockquote) {
-  border-left-color: var(--vscode-textLink-foreground);
+  border-left-color: var(--gc-link);
 }
 
 /* 定义列表 */
@@ -494,9 +495,7 @@ onUnmounted(()=> {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-bottom: none;
-  border-radius: var(--gc-radius-sm) var(--gc-radius-sm) 0 0;
+  border-radius: var(--gc-radius-lg) var(--gc-radius-lg) 0 0;
   background: var(--gc-surface-muted);
 }
 
@@ -504,7 +503,7 @@ onUnmounted(()=> {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.9;
   text-transform: none;
 }
@@ -536,11 +535,11 @@ onUnmounted(()=> {
   border-radius: var(--gc-radius-xs);
   cursor: pointer;
   padding: 0;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .markdown-content :deep(.code-tool-btn:hover) {
-  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  background: var(--gc-surface-hover);
 }
 
 /* 换行按钮图标：默认（自动换行）显示“切到不换行”；不换行时显示“切到自动换行” */
@@ -565,13 +564,13 @@ onUnmounted(()=> {
 
 .markdown-content :deep(.code-copy-btn .copy-icon) {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   display: block;
 }
 
 .markdown-content :deep(.code-copy-btn .check-icon) {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   display: none;
 }
 
@@ -598,22 +597,20 @@ onUnmounted(()=> {
 
 .markdown-content :deep(.code-copy-btn.copy-failed .check-icon) {
   display: block;
-  color: var(--vscode-errorForeground, #f14c4c);
+  color: var(--gc-danger);
 }
 
 /* 代码块内的 pre（滚动容器） */
 .markdown-content :deep(.code-block-container pre.code-block-wrapper) {
   margin: 0;
   padding: 12px;
-  background: var(--vscode-textCodeBlock-background);
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-top: none;
-  border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
+  background: var(--gc-code-bg);
+  border-radius: 0 0 var(--gc-radius-lg) var(--gc-radius-lg);
   max-height: 400px;
   overflow-y: auto;
   overflow-x: hidden; /* 默认：自动换行，避免横向滚动条 */
   scrollbar-width: thin;
-  scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4)) transparent;
+  scrollbar-color: var(--gc-scrollbar) transparent;
 }
 
 /* 流式期间长代码块不限制高度（自然展开，用户跟随输出阅读）：
@@ -642,47 +639,41 @@ onUnmounted(()=> {
 
 /* 代码块内的 code */
 .markdown-content :deep(.code-block-container pre.code-block-wrapper code) {
-  font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
+  font-family: var(--gc-font-code);
   font-size: 12px;
   line-height: 1.5;
   display: block;
 }
 
+/* 语法色来自品牌代码配色，与编辑器、终端一致。 */
 .markdown-content :deep(.hljs-comment),
-.markdown-content :deep(.hljs-quote) {
-  color: var(--gc-text-muted);
-}
-
-/* 语法颜色跟随主题已有语义色，稍混入正文颜色以免长代码过于刺眼。 */
+.markdown-content :deep(.hljs-quote) { color: var(--gc-syntax-comment); font-style: italic; }
 .markdown-content :deep(.hljs-keyword),
 .markdown-content :deep(.hljs-selector-tag),
-.markdown-content :deep(.hljs-meta) {
-  color: color-mix(in srgb, var(--gc-info) 85%, var(--gc-text-primary));
-}
-
+.markdown-content :deep(.hljs-meta) { color: var(--gc-syntax-keyword); }
 .markdown-content :deep(.hljs-string),
-.markdown-content :deep(.hljs-regexp),
-.markdown-content :deep(.hljs-addition) {
-  color: color-mix(in srgb, var(--gc-success) 85%, var(--gc-text-primary));
-}
-
+.markdown-content :deep(.hljs-addition) { color: var(--gc-syntax-string); }
+.markdown-content :deep(.hljs-regexp) { color: var(--gc-syntax-regexp); }
 .markdown-content :deep(.hljs-number),
 .markdown-content :deep(.hljs-literal),
-.markdown-content :deep(.hljs-attr),
-.markdown-content :deep(.hljs-symbol),
-.markdown-content :deep(.hljs-type) {
-  color: color-mix(in srgb, var(--gc-warning) 85%, var(--gc-text-primary));
-}
-
+.markdown-content :deep(.hljs-symbol) { color: var(--gc-syntax-number); }
+.markdown-content :deep(.hljs-type),
+.markdown-content :deep(.hljs-title.class_) { color: var(--gc-syntax-type); }
 .markdown-content :deep(.hljs-title),
-.markdown-content :deep(.hljs-built_in),
-.markdown-content :deep(.hljs-section) {
-  color: var(--gc-link);
-}
-
-.markdown-content :deep(.hljs-deletion) {
-  color: var(--gc-danger);
-}
+.markdown-content :deep(.hljs-title.function_),
+.markdown-content :deep(.hljs-built_in) { color: var(--gc-syntax-function); }
+.markdown-content :deep(.hljs-attr),
+.markdown-content :deep(.hljs-attribute) { color: var(--gc-syntax-attribute); }
+.markdown-content :deep(.hljs-name),
+.markdown-content :deep(.hljs-selector-class),
+.markdown-content :deep(.hljs-section) { color: var(--gc-syntax-tag); }
+.markdown-content :deep(.hljs-variable),
+.markdown-content :deep(.hljs-template-variable),
+.markdown-content :deep(.hljs-params) { color: var(--gc-syntax-variable); }
+.markdown-content :deep(.hljs-property) { color: var(--gc-syntax-property); }
+.markdown-content :deep(.hljs-operator),
+.markdown-content :deep(.hljs-punctuation) { color: var(--gc-syntax-operator); }
+.markdown-content :deep(.hljs-deletion) { color: var(--gc-danger); }
 
 .markdown-content :deep(.hljs-strong) { font-weight: var(--gc-font-weight-semibold); }
 .markdown-content :deep(.hljs-emphasis) { font-style: italic; }
@@ -704,7 +695,7 @@ onUnmounted(()=> {
   text-align: right;
   font-variant-numeric: tabular-nums;
   user-select: none;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.65;
   flex: 0 0 auto;
 }
@@ -724,9 +715,9 @@ onUnmounted(()=> {
 /* 行内代码 */
 .markdown-content :deep(code:not(.hljs)) {
   padding: 2px 6px;
-  background: var(--vscode-textCodeBlock-background);
+  background: var(--gc-code-bg);
   border-radius: var(--gc-radius-xs);
-  font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
+  font-family: var(--gc-font-code);
   font-size: 0.9em;
   font-style: normal; /* 避免外层（如思考块）设置斜体后影响代码 */
 }
@@ -741,7 +732,7 @@ onUnmounted(()=> {
 
 /* 链接 */
 .markdown-content :deep(a) {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   text-decoration: none;
 }
 
@@ -760,32 +751,40 @@ onUnmounted(()=> {
 .markdown-content :deep(hr) {
   margin: 1em 0;
   border: none;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
 /* 表格 */
 .markdown-content :deep(table) {
   margin: 0.8em 0;
-  border-collapse: collapse;
-  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  max-width: 100%;
   display: block;
   overflow-x: auto;
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-surface-raised);
 }
 
 .markdown-content :deep(th),
 .markdown-content :deep(td) {
   padding: 8px 12px;
-  border: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   text-align: left;
 }
 
+.markdown-content :deep(tbody tr:last-child td) {
+  border-bottom: 0;
+}
+
 .markdown-content :deep(th) {
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   font-weight: 600;
 }
 
 .markdown-content :deep(tbody tr:hover) {
-  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
+  background: var(--gc-surface-hover);
 }
 
 /* 粗体和斜体 */
@@ -808,7 +807,7 @@ onUnmounted(()=> {
 .markdown-content :deep(.footnotes) {
   margin-top: 2em;
   padding-top: 1em;
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
   font-size: 0.9em;
 }
 
@@ -835,12 +834,12 @@ onUnmounted(()=> {
 .markdown-content :deep(kbd) {
   display: inline-block;
   padding: 2px 6px;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   font-size: 0.85em;
-  background: var(--vscode-textCodeBlock-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-code-bg);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-xs);
-  box-shadow: 0 1px 0 var(--vscode-panel-border);
+  box-shadow: 0 1px 0 var(--gc-border-subtle);
 }
 
 /* 上下标 */
@@ -856,7 +855,7 @@ onUnmounted(()=> {
 
 /* 高亮 */
 .markdown-content :deep(mark) {
-  background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 235, 59, 0.3));
+  background: var(--gc-highlight-bg);
   padding: 0 2px;
   border-radius: var(--gc-radius-xs);
 }
@@ -865,9 +864,9 @@ onUnmounted(()=> {
 .markdown-content :deep(details) {
   margin: 0.8em 0;
   padding: 0.5em;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .markdown-content :deep(summary) {
@@ -878,7 +877,7 @@ onUnmounted(()=> {
 
 .markdown-content :deep(details[open] > summary) {
   margin-bottom: 0.5em;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   padding-bottom: 0.5em;
 }
 
@@ -886,7 +885,7 @@ onUnmounted(()=> {
 .markdown-content :deep(.katex-block) {
   margin: 1em 0;
   padding: 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   overflow-x: auto;
   text-align: center;
@@ -897,7 +896,7 @@ onUnmounted(()=> {
   position: relative;
   margin: 0;
   padding: 16px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
   display: flex;
@@ -923,9 +922,9 @@ onUnmounted(()=> {
 }
 
 .markdown-content :deep(.katex-error) {
-  color: var(--vscode-errorForeground);
-  font-family: var(--vscode-editor-font-family, monospace);
-  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--gc-danger);
+  font-family: var(--gc-font-code);
+  background: var(--gc-danger-bg);
   padding: 2px 4px;
   border-radius: var(--gc-radius-xs);
 }
@@ -934,14 +933,14 @@ onUnmounted(()=> {
  * （.zoomed-mermaid-content 部分随 MermaidZoomModal 组件迁移） */
 .markdown-content :deep(.mermaid text),
 .markdown-content :deep(.mermaid span) {
-  fill: #ffffff !important;
-  color: #ffffff !important;
+  fill: rgb(255 255 255) !important;
+  color: rgb(255 255 255) !important;
   font-weight: 600 !important;
   text-shadow: 
-    -1px -1px 0 #000,  
-     1px -1px 0 #000,
-    -1px  1px 0 #000,
-     1px  1px 0 #000,
+    -1px -1px 0 rgb(0 0 0),  
+     1px -1px 0 rgb(0 0 0),
+    -1px  1px 0 rgb(0 0 0),
+     1px  1px 0 rgb(0 0 0),
      0px  0px 4px rgba(0,0,0,0.8) !important;
 }
 
@@ -969,14 +968,14 @@ onUnmounted(()=> {
 .markdown-content :deep(img.workspace-image) {
   min-width: 100px;
   min-height: 60px;
-  background: var(--vscode-textBlockQuote-background);
-  border: 1px dashed var(--vscode-panel-border);
+  background: var(--gc-quote-bg);
+  border: 1px dashed var(--gc-border-subtle);
 }
 
 .markdown-content :deep(img.loaded-image) {
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .markdown-content :deep(img.loaded-image:hover) {
@@ -987,8 +986,8 @@ onUnmounted(()=> {
 .markdown-content :deep(img.image-error) {
   min-width: 100px;
   min-height: 40px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px dashed var(--vscode-errorForeground);
+  background: var(--gc-danger-bg);
+  border: 1px dashed var(--gc-danger);
   opacity: 0.7;
 }
 </style>

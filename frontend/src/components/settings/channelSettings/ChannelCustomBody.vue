@@ -66,8 +66,8 @@ const emit = defineEmits<{
   gap: 6px;
   width: 100%;
   padding: 8px 10px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
@@ -76,7 +76,7 @@ const emit = defineEmits<{
 }
 
 .advanced-toggle:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .advanced-toggle .codicon {
@@ -90,7 +90,7 @@ const emit = defineEmits<{
 .custom-panel-wrapper {
   margin-top: 12px;
   padding: 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -114,8 +114,8 @@ const emit = defineEmits<{
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background-color: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
@@ -127,24 +127,24 @@ const emit = defineEmits<{
   width: 10px;
   left: 2px;
   bottom: 2px;
-  background-color: var(--vscode-foreground);
+  background-color: var(--gc-text-primary);
   opacity: 0.6;
   border-radius: var(--gc-radius-xs);
   transition: all 0.2s;
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background-color: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
   transform: translateX(16px);
-  background-color: var(--vscode-button-foreground);
+  background-color: var(--gc-text-on-primary);
   opacity: 1;
 }
 
 .toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 </style>

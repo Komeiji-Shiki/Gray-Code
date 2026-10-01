@@ -589,15 +589,15 @@ Authorization: Bearer {apiKey}
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--gc-text-muted);
     padding: 20px;
 }
 
 .settings-intro {
     padding: 12px;
-    background: var(--vscode-editor-background);
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: var(--gc-radius-sm);
+    background: var(--gc-surface-raised);
+    border: 1px solid transparent;
+    border-radius: var(--gc-radius-lg);
 }
 
 .settings-intro p {
@@ -609,19 +609,17 @@ Authorization: Bearer {apiKey}
 .settings-intro .hint {
     margin-top: 8px;
     font-size: 12px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--gc-text-muted);
 }
 
 /* 渠道面板 */
 .channel-panel {
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: var(--gc-radius-sm);
+    border: 1px solid transparent;
+    border-radius: var(--gc-radius-lg);
     overflow: hidden;
+    background: var(--gc-surface-raised);
 }
 
-.channel-panel.expanded {
-    border-color: var(--vscode-focusBorder);
-}
 
 .panel-header {
     width: 100%;
@@ -650,7 +648,7 @@ Authorization: Bearer {apiKey}
 
 .panel-title .codicon {
     font-size: 14px;
-    color: var(--vscode-foreground);
+    color: var(--gc-text-primary);
 }
 
 .channel-name {
@@ -667,17 +665,16 @@ Authorization: Bearer {apiKey}
 
 .status-badge.enabled {
     background: rgba(0, 200, 0, 0.15);
-    color: var(--vscode-terminal-ansiGreen);
+    color: var(--gc-success);
 }
 
 .status-badge.coming-soon {
     background: rgba(255, 200, 0, 0.15);
-    color: var(--vscode-editorWarning-foreground);
+    color: var(--gc-warning);
 }
 
 .panel-content {
     padding: 12px;
-    border-top: 1px solid var(--vscode-panel-border);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -691,7 +688,7 @@ Authorization: Bearer {apiKey}
     padding: 10px 12px;
     background: rgba(255, 200, 0, 0.1);
     border-radius: var(--gc-radius-sm);
-    color: var(--vscode-editorWarning-foreground);
+    color: var(--gc-warning);
 }
 
 .coming-soon-notice .codicon {
@@ -719,22 +716,22 @@ Authorization: Bearer {apiKey}
 .form-group label {
     font-size: 12px;
     font-weight: 500;
-    color: var(--vscode-foreground);
+    color: var(--gc-text-primary);
 }
 
 .form-group input {
     padding: 8px 12px;
     font-size: 13px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border);
+    background: var(--gc-surface-input);
+    color: var(--gc-text-primary);
+    border: 1px solid var(--gc-border-control);
     border-radius: var(--gc-radius-sm);
     outline: none;
     transition: border-color 0.15s;
 }
 
 .form-group input:focus {
-    border-color: var(--vscode-focusBorder);
+    border-color: var(--gc-focus-border);
 }
 
 .form-group input:disabled {
@@ -745,7 +742,7 @@ Authorization: Bearer {apiKey}
 .field-hint {
     margin: 0;
     font-size: 11px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--gc-text-muted);
 }
 
 /* 带按钮的输入框 */
@@ -763,8 +760,8 @@ Authorization: Bearer {apiKey}
     align-items: center;
     justify-content: center;
     width: 32px;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
+    background: var(--gc-button-secondary);
+    color: var(--gc-text-on-secondary);
     border: none;
     border-radius: var(--gc-radius-sm);
     cursor: pointer;
@@ -772,7 +769,7 @@ Authorization: Bearer {apiKey}
 }
 
 .toggle-visibility-btn:hover:not(:disabled) {
-    background: var(--vscode-button-secondaryHoverBackground);
+    background: var(--gc-button-secondary-hover);
 }
 
 .toggle-visibility-btn:disabled {
@@ -795,8 +792,8 @@ Authorization: Bearer {apiKey}
     min-width: 80px;
     padding: 8px 16px;
     font-size: 13px;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
+    background: var(--gc-button-primary);
+    color: var(--gc-text-on-primary);
     border: none;
     border-radius: var(--gc-radius-sm);
     cursor: pointer;
@@ -804,7 +801,7 @@ Authorization: Bearer {apiKey}
 }
 
 .save-btn:hover:not(:disabled) {
-    background: var(--vscode-button-hoverBackground);
+    background: var(--gc-button-primary-hover);
 }
 
 .save-btn:disabled {
@@ -817,17 +814,17 @@ Authorization: Bearer {apiKey}
 }
 
 .save-message.success {
-    color: var(--vscode-terminal-ansiGreen);
+    color: var(--gc-success);
 }
 
 .save-message.error {
-    color: var(--vscode-errorForeground);
+    color: var(--gc-danger);
 }
 
 /* Custom API badge */
 .status-badge.custom-api {
     background: rgba(100, 150, 255, 0.15);
-    color: var(--vscode-textLink-foreground);
+    color: var(--gc-link);
 }
 
 /* API 文档通知 */
@@ -844,7 +841,7 @@ Authorization: Bearer {apiKey}
 .api-doc-notice .codicon {
     flex-shrink: 0;
     font-size: 16px;
-    color: var(--vscode-textLink-foreground);
+    color: var(--gc-link);
     margin-top: 2px;
 }
 
@@ -858,20 +855,20 @@ Authorization: Bearer {apiKey}
     margin: 0;
     font-size: 13px;
     font-weight: 500;
-    color: var(--vscode-foreground);
+    color: var(--gc-text-primary);
 }
 
 .api-doc-notice .doc-desc {
     margin: 0;
     font-size: 12px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--gc-text-muted);
     line-height: 1.5;
 }
 
 /* API 文档区域 */
 .api-doc-section {
     margin-top: 8px;
-    border: 1px solid var(--vscode-panel-border);
+    border: 1px solid var(--gc-border-subtle);
     border-radius: var(--gc-radius-sm);
     overflow: hidden;
 }
@@ -881,11 +878,11 @@ Authorization: Bearer {apiKey}
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: var(--vscode-editor-background);
+    background: var(--gc-surface-base);
     font-size: 12px;
     font-weight: 500;
-    color: var(--vscode-foreground);
-    border-bottom: 1px solid var(--vscode-panel-border);
+    color: var(--gc-text-primary);
+    border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .api-doc-section .doc-header .codicon {
@@ -893,26 +890,26 @@ Authorization: Bearer {apiKey}
 }
 
 .code-block {
-    background: var(--vscode-textCodeBlock-background);
+    background: var(--gc-code-bg);
 }
 
 .code-block .code-header {
     padding: 8px 12px;
     font-size: 11px;
     font-weight: 500;
-    color: var(--vscode-descriptionForeground);
+    color: var(--gc-text-muted);
     background: rgba(0, 0, 0, 0.1);
-    border-bottom: 1px solid var(--vscode-panel-border);
+    border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .code-block .code-content {
     margin: 0;
     padding: 12px;
     font-size: 12px;
-    font-family: var(--vscode-editor-font-family);
+    font-family: var(--gc-font-code);
     line-height: 1.6;
     overflow-x: auto;
-    color: var(--vscode-editor-foreground);
+    color: var(--gc-text-primary);
 }
 
 .code-block .code-content code {
@@ -924,9 +921,9 @@ Authorization: Bearer {apiKey}
     margin: 0;
     padding: 10px 12px;
     font-size: 11px;
-    color: var(--vscode-descriptionForeground);
-    background: var(--vscode-editor-background);
-    border-top: 1px solid var(--vscode-panel-border);
+    color: var(--gc-text-muted);
+    background: var(--gc-surface-base);
+    border-top: 1px solid var(--gc-border-subtle);
     line-height: 1.5;
 }
 

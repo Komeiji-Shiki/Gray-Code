@@ -523,21 +523,21 @@ function cancelRename(): void {
   align-items: center;
   justify-content: center;
   border: none;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   background: transparent;
   cursor: pointer;
 }
 .branch-tree-trigger {
   width: 24px;
   height: 24px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--radius-sm, 2px);
 }
 .branch-tree-trigger:hover,
 .branch-tree-close:hover,
 .branch-tree-action:hover:not(:disabled) {
-  color: var(--vscode-foreground);
-  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-hover);
 }
 .branch-tree-overlay { position: fixed; inset: 0; z-index: 100; }
 .branch-tree-backdrop { position: absolute; inset: 0; background: transparent; }
@@ -550,9 +550,9 @@ function cancelRename(): void {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
   user-select: none;
 }
@@ -562,26 +562,26 @@ function cancelRename(): void {
   align-items: center;
   gap: 8px;
   padding: 0 8px 0 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 .branch-tree-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
-.branch-tree-node-count { color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 400; }
-.branch-tree-busy { color: var(--vscode-descriptionForeground); }
+.branch-tree-node-count { color: var(--gc-text-muted); font-size: 10px; font-weight: 400; }
+.branch-tree-busy { color: var(--gc-text-muted); }
 .branch-tree-close { width: 24px; height: 24px; border-radius: var(--gc-radius-xs); }
 .branch-tree-view-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 7px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: color-mix(in srgb, var(--vscode-sideBar-background) 45%, transparent);
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: color-mix(in srgb, var(--gc-surface-panel) 45%, transparent);
 }
 .branch-tree-view-tab { gap: 5px; height: 25px; padding: 0 9px; border-radius: var(--gc-radius-sm); font-size: 11px; }
-.branch-tree-view-tab:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
-.branch-tree-view-tab.selected { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-.branch-tree-view-hint { min-width: 0; margin-left: 6px; overflow: hidden; color: var(--vscode-descriptionForeground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.branch-tree-view-tab:hover { color: var(--gc-text-primary); background: var(--gc-surface-hover); }
+.branch-tree-view-tab.selected { color: var(--gc-text-on-primary); background: var(--gc-button-primary); }
+.branch-tree-view-hint { min-width: 0; margin-left: 6px; overflow: hidden; color: var(--gc-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .branch-tree-body { overflow: auto; padding: 6px 8px 10px; }
-.branch-tree-empty { padding: 22px 12px; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: center; }
+.branch-tree-empty { padding: 22px 12px; color: var(--gc-text-muted); font-size: 12px; text-align: center; }
 .branch-tree-row,
 .branch-tree-collapsed-row {
   --lane-size: 22px;
@@ -596,7 +596,7 @@ function cancelRename(): void {
   bottom: 0;
   left: 10px;
   width: 1px;
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
 }
 .branch-tree-node-marker {
   position: absolute;
@@ -608,10 +608,10 @@ function cancelRename(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: 50%;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
   font-size: 11px;
 }
 .branch-tree-row.candidateRoot::before {
@@ -620,35 +620,35 @@ function cancelRename(): void {
   top: 17px;
   right: calc(100% - 2px);
   width: calc(var(--lane-size) - 7px);
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
 }
-.branch-tree-row.branchPoint .branch-tree-node-marker { border-radius: var(--gc-radius-sm); color: var(--vscode-charts-orange, #e69500); }
-.branch-tree-row.current .branch-tree-node-marker { color: #fff; border-color: var(--vscode-charts-blue, #3794ff); background: var(--vscode-charts-blue, #3794ff); }
-.branch-tree-row-content { min-width: 0; flex: 1; display: flex; align-items: center; border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 62%, transparent); }
+.branch-tree-row.branchPoint .branch-tree-node-marker { border-radius: var(--gc-radius-sm); color: var(--gc-chart-orange); }
+.branch-tree-row.current .branch-tree-node-marker { color: var(--gc-surface-base); border-color: var(--gc-chart-blue); background: var(--gc-chart-blue); }
+.branch-tree-row-content { min-width: 0; flex: 1; display: flex; align-items: center; border-bottom: 1px solid color-mix(in srgb, var(--gc-border-subtle) 62%, transparent); }
 .branch-tree-row-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 7px; padding: 7px 6px; border-radius: var(--gc-radius-sm); }
 .branch-tree-row:not(.active):not(.deleted) .branch-tree-row-main { cursor: pointer; }
-.branch-tree-row:not(.active):not(.deleted) .branch-tree-row-main:hover { background: var(--vscode-list-hoverBackground); }
-.branch-tree-row.current .branch-tree-row-content { background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 9%, transparent); }
+.branch-tree-row:not(.active):not(.deleted) .branch-tree-row-main:hover { background: var(--gc-surface-hover); }
+.branch-tree-row.current .branch-tree-row-content { background: color-mix(in srgb, var(--gc-chart-blue) 9%, transparent); }
 .branch-tree-row.deleted { opacity: 0.55; }
-.branch-tree-role { flex-shrink: 0; min-width: 30px; color: var(--vscode-descriptionForeground); font-size: 10px; }
-.branch-tree-preview { min-width: 0; flex: 1; overflow: hidden; color: var(--vscode-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.branch-tree-time { flex-shrink: 0; color: var(--vscode-descriptionForeground); font-size: 10px; }
-.branch-tree-badge { flex-shrink: 0; padding: 0 4px; border: 1px solid var(--vscode-panel-border); border-radius: var(--gc-radius-xs); font-size: 10px; }
-.branch-tree-badge-active { color: var(--vscode-charts-blue, #3794ff); border-color: var(--vscode-charts-blue, #3794ff); }
-.branch-tree-badge-candidates { color: var(--vscode-charts-orange, #e69500); border-color: color-mix(in srgb, var(--vscode-charts-orange, #e69500) 70%, transparent); }
-.branch-tree-badge-deleted { color: var(--vscode-descriptionForeground); }
+.branch-tree-role { flex-shrink: 0; min-width: 30px; color: var(--gc-text-muted); font-size: 10px; }
+.branch-tree-preview { min-width: 0; flex: 1; overflow: hidden; color: var(--gc-text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.branch-tree-time { flex-shrink: 0; color: var(--gc-text-muted); font-size: 10px; }
+.branch-tree-badge { flex-shrink: 0; padding: 0 4px; border: 1px solid var(--gc-border-subtle); border-radius: var(--gc-radius-xs); font-size: 10px; }
+.branch-tree-badge-active { color: var(--gc-chart-blue); border-color: var(--gc-chart-blue); }
+.branch-tree-badge-candidates { color: var(--gc-chart-orange); border-color: color-mix(in srgb, var(--gc-chart-orange) 70%, transparent); }
+.branch-tree-badge-deleted { color: var(--gc-text-muted); }
 .branch-tree-actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .branch-tree-row:hover .branch-tree-actions,
 .branch-tree-row.renaming .branch-tree-actions,
 .branch-tree-action.confirming { opacity: 1; }
 .branch-tree-action { width: 23px; height: 23px; border-radius: var(--gc-radius-xs); }
-.branch-tree-action.confirming { color: var(--vscode-testing-iconFailed, #f14c4c); background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, 0.12)); }
+.branch-tree-action.confirming { color: var(--gc-danger); background: var(--gc-danger-bg); }
 .branch-tree-action:disabled { opacity: 0.45; cursor: default; }
-.branch-tree-rename-input { width: 140px; padding: 3px 6px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: var(--gc-radius-xs); outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font-size: 11px; }
-.branch-tree-rename-input:focus { border-color: var(--vscode-focusBorder, #3794ff); }
-.branch-tree-collapsed-row { height: 27px; display: flex; align-items: center; gap: 7px; color: var(--vscode-descriptionForeground); font-size: 10px; }
-.branch-tree-collapsed-dot { position: relative; z-index: 1; margin-left: -3px; padding: 0 3px; letter-spacing: 1px; background: var(--vscode-editor-background); }
-.branch-tree-collapsed-row.active .branch-tree-rail { background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 45%, var(--vscode-panel-border)); }
+.branch-tree-rename-input { width: 140px; padding: 3px 6px; border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-xs); outline: none; color: var(--gc-text-primary); background: var(--gc-surface-input); font-size: 11px; }
+.branch-tree-rename-input:focus { border-color: var(--gc-focus-border); }
+.branch-tree-collapsed-row { height: 27px; display: flex; align-items: center; gap: 7px; color: var(--gc-text-muted); font-size: 10px; }
+.branch-tree-collapsed-dot { position: relative; z-index: 1; margin-left: -3px; padding: 0 3px; letter-spacing: 1px; background: var(--gc-surface-base); }
+.branch-tree-collapsed-row.active .branch-tree-rail { background: color-mix(in srgb, var(--gc-chart-blue) 45%, var(--gc-border-subtle)); }
 .mode-navigation .branch-tree-row { min-height: 40px; }
 .branch-tree-expand-toggle {
   display: inline-flex;
@@ -659,12 +659,12 @@ function cancelRename(): void {
   margin-left: auto;
   border: none;
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   background: transparent;
   cursor: pointer;
   font-size: 11px;
 }
-.branch-tree-expand-toggle:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+.branch-tree-expand-toggle:hover { color: var(--gc-text-primary); background: var(--gc-surface-hover); }
 /* ===== 轨道式完整消息图（高级模式） ===== */
 .branch-track-row { min-height: 36px; display: flex; align-items: stretch; }
 .branch-track-row-collapsed { min-height: 27px; align-items: center; }
@@ -678,14 +678,14 @@ function cancelRename(): void {
 .branch-track-cell { position: relative; grid-column: calc(var(--lane) + 1); }
 .branch-track-line { position: absolute; inset: 0; pointer-events: none; }
 .branch-track-line-v,
-.branch-track-line-h { position: absolute; border-color: var(--vscode-panel-border); }
+.branch-track-line-h { position: absolute; border-color: var(--gc-border-subtle); }
 .branch-track-line-v { left: 50%; top: 0; bottom: 0; border-left: 1px solid; }
 .branch-track-line-h { top: 50%; height: 0; border-top: 1px solid; }
 .branch-track-line-h.left { left: 0; right: 50%; }
 .branch-track-line-h.right { left: 50%; right: 0; }
 .branch-track-line.active .branch-track-line-v,
 .branch-track-line.active .branch-track-line-h {
-  border-color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 55%, var(--vscode-panel-border));
+  border-color: color-mix(in srgb, var(--gc-chart-blue) 55%, var(--gc-border-subtle));
 }
 .branch-track-collapsed-dot {
   position: absolute;
@@ -695,8 +695,8 @@ function cancelRename(): void {
   transform: translate(-50%, -50%);
   padding: 0 2px;
   letter-spacing: 1px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
   font-size: 10px;
 }
 .branch-track-info {
@@ -706,19 +706,19 @@ function cancelRename(): void {
   align-items: center;
   gap: 7px;
   padding: 0 6px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 62%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--gc-border-subtle) 62%, transparent);
 }
-.branch-track-row.current .branch-tree-row-content { background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 9%, transparent); }
+.branch-track-row.current .branch-tree-row-content { background: color-mix(in srgb, var(--gc-chart-blue) 9%, transparent); }
 .branch-track-row.deleted { opacity: 0.55; }
 .branch-track-row:not(.active):not(.deleted) .branch-tree-row-main { cursor: pointer; }
-.branch-track-row:not(.active):not(.deleted) .branch-tree-row-main:hover { background: var(--vscode-list-hoverBackground); }
+.branch-track-row:not(.active):not(.deleted) .branch-tree-row-main:hover { background: var(--gc-surface-hover); }
 .branch-track-row:hover .branch-tree-actions,
 .branch-track-row.renaming .branch-tree-actions,
 .branch-tree-action.confirming { opacity: 1; }
-.workspace-confirm-secondary { width: 100%; margin-top: 10px; padding: 6px 14px; border: 1px solid var(--vscode-button-border, transparent); border-radius: var(--gc-radius-sm); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.15)); cursor: pointer; }
-.workspace-confirm-secondary:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.25)); }
+.workspace-confirm-secondary { width: 100%; margin-top: 10px; padding: 6px 14px; border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); color: var(--gc-text-on-secondary); background: var(--gc-button-secondary); cursor: pointer; }
+.workspace-confirm-secondary:hover { background: var(--gc-button-secondary-hover); }
 @media (max-width: 520px) {
   .branch-tree-panel-box { left: 6px; width: calc(100vw - 12px); }
   .branch-tree-view-hint { display: none; }

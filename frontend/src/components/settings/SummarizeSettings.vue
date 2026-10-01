@@ -556,20 +556,19 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
-  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
+  background: var(--gc-info-bg);
+  border-radius: var(--gc-radius-lg);
 }
 
 .feature-description .codicon {
   flex-shrink: 0;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .feature-description p {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.5;
 }
 
@@ -579,9 +578,9 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .section-title {
@@ -591,7 +590,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-title .codicon {
@@ -601,7 +600,7 @@ onUnmounted(() => {
 .section-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.5;
 }
 
@@ -615,8 +614,8 @@ onUnmounted(() => {
 }
 
 .badge.coming-soon {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
 }
 
 /* 表单组 */
@@ -633,7 +632,7 @@ onUnmounted(() => {
 
 .form-group label {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .prompt-label-row {
@@ -646,9 +645,9 @@ onUnmounted(() => {
 .restore-default-btn {
   padding: 2px 8px;
   font-size: 11px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   background: transparent;
-  border: 1px solid var(--vscode-textLink-foreground);
+  border: 1px solid var(--gc-link);
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
   line-height: 1.4;
@@ -656,14 +655,14 @@ onUnmounted(() => {
 }
 
 .restore-default-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .restore-default-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-  border-color: var(--vscode-disabledForeground);
-  color: var(--vscode-disabledForeground);
+  border-color: var(--gc-text-disabled);
+  color: var(--gc-text-disabled);
 }
 
 .form-group input[type="number"],
@@ -671,9 +670,9 @@ onUnmounted(() => {
 .form-group textarea {
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
   transition: border-color 0.15s;
@@ -695,7 +694,7 @@ onUnmounted(() => {
 .form-group input[type="number"]:focus,
 .form-group input[type="text"]:focus,
 .form-group textarea:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .form-group textarea {
@@ -707,7 +706,7 @@ onUnmounted(() => {
 .field-hint {
   margin: 0;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 阈值输入 */
@@ -727,7 +726,7 @@ onUnmounted(() => {
 
 .unit {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 默认模型提示 */
@@ -736,15 +735,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .default-model-hint .codicon {
   font-size: 14px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 /* 警告提示 */
@@ -753,17 +752,17 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-top: 8px;
 }
 
 .warning-hint .codicon {
   font-size: 14px;
-  color: var(--vscode-list-warningForeground);
+  color: var(--gc-warning);
 }
 
 </style>

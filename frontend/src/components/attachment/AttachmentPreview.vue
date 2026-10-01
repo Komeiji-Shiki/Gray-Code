@@ -127,7 +127,7 @@ function handleDownload() {
 .preview-name {
   font-size: 14px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -135,7 +135,7 @@ function handleDownload() {
 
 .preview-meta {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .preview-actions {
@@ -150,7 +150,7 @@ function handleDownload() {
   justify-content: center;
   min-height: 400px;
   max-height: 70vh;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
@@ -181,18 +181,18 @@ function handleDownload() {
 .unsupported-icon {
   font-size: 64px;
   opacity: 0.5;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .unsupported-text {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .download-button {
   padding: 8px 16px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 13px;
@@ -201,6 +201,6 @@ function handleDownload() {
 }
 
 .download-button:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 </style>

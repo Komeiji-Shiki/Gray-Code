@@ -211,7 +211,7 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
 
 .field-description {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   margin: 0;
 }
 
@@ -220,10 +220,10 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
   min-height: 200px;
   padding: 8px 10px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   resize: vertical;
   line-height: 1.5;
@@ -231,7 +231,7 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
 
 .form-textarea:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .form-textarea:disabled,
@@ -253,8 +253,8 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
   margin: 0;
   padding: 8px 10px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-textBlockQuote-background);
-  color: var(--vscode-descriptionForeground);
+  background: var(--gc-quote-bg);
+  color: var(--gc-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -266,9 +266,9 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
 
 /* 分区 */
 .section {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   padding: 14px 16px;
 }
 
@@ -279,7 +279,7 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-title i {
@@ -296,8 +296,8 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
   font-size: 10px;
   font-weight: 600;
   border-radius: var(--gc-radius-md);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   margin-left: 4px;
 }
 
@@ -323,10 +323,10 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
   flex: 1;
   padding: 5px 8px;
   font-size: 13px;
-  font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  font-family: var(--gc-font-code);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   appearance: textfield;
 }
@@ -338,12 +338,12 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
 
 .form-input-number:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .unit {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
 }
 
@@ -376,35 +376,35 @@ const boundMax = (key: string): number => props.configBounds?.[key]?.max ?? FALL
 }
 
 .btn-primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .btn-secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .status-message {
   font-size: 12px;
   padding: 6px 10px;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-inputValidation-infoBackground);
-  color: var(--vscode-inputValidation-infoForeground);
-  border: 1px solid var(--vscode-inputValidation-infoBorder);
+  background: var(--gc-info-bg);
+  color: var(--gc-info);
+  border: 1px solid var(--gc-info-border);
 }
 
 .status-error {
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-inputValidation-errorForeground);
-  border-color: var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  color: var(--gc-danger);
+  border-color: var(--gc-danger-border);
 }
 </style>

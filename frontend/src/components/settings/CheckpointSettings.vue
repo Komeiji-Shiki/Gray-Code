@@ -465,7 +465,7 @@ onUnmounted(() => {
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .loading-state .codicon {
@@ -501,13 +501,13 @@ onUnmounted(() => {
 
 .group-title .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .setting-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 表单行 */
@@ -526,15 +526,15 @@ onUnmounted(() => {
   width: 100px;
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   outline: none;
 }
 
 .number-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .number-input:disabled {
@@ -543,14 +543,14 @@ onUnmounted(() => {
 
 .hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 
 /* 分割线 */
 .divider {
   height: 1px;
-  background: var(--vscode-panel-border);
+  background: none;
 }
 
 /* Loading 动画 */
@@ -570,9 +570,9 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 12px;
   padding: 16px;
-  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-inputValidation-errorBackground, rgba(190, 17, 0, 0.12));
+  background: var(--gc-danger-bg);
 }
 
 .load-error-text {
@@ -580,7 +580,7 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 8px;
   font-size: 13px;
-  color: var(--vscode-errorForeground, #f48771);
+  color: var(--gc-danger);
 }
 
 .load-error-text .codicon {
@@ -601,13 +601,13 @@ onUnmounted(() => {
   padding: 4px 12px;
   border: none;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .load-retry-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 </style>

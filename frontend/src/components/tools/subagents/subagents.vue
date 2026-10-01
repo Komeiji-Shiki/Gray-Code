@@ -150,25 +150,25 @@ const preview = computed(() => extractPreviewText(responseText.value, { maxLines
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .pre {
   margin: 0;
   padding: 8px 10px;
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
 }
 
 .response-block {
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
@@ -179,10 +179,10 @@ const preview = computed(() => extractPreviewText(responseText.value, { maxLines
 
 .error {
   padding: 8px 10px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-md);
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   font-size: 12px;
   word-break: break-word;
 }

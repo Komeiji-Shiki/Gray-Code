@@ -140,7 +140,7 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 600;
   margin: 0 0 6px 0;
-  color: var(--vscode-settings-headerForeground, var(--vscode-foreground));
+  color: var(--gc-text-primary);
 }
 
 .group-title .codicon {
@@ -151,7 +151,7 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   margin: 0 0 10px 0;
-  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  color: var(--gc-text-muted);
 }
 
 .deleted-count-row {
@@ -167,7 +167,7 @@ onMounted(() => {
 }
 
 .deleted-count-value {
-  color: var(--vscode-settings-numberInputForeground, var(--vscode-foreground));
+  color: var(--gc-text-primary);
 }
 
 .cleanup-actions {
@@ -184,15 +184,15 @@ onMounted(() => {
   gap: 6px;
   padding: 4px 10px;
   font-size: 12px;
-  border: 1px solid var(--vscode-button-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
-  color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   cursor: pointer;
 }
 
 .prune-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+  background: var(--gc-button-secondary-hover);
 }
 
 .prune-btn:disabled {
@@ -217,14 +217,14 @@ onMounted(() => {
   width: 80px;
   padding: 3px 6px;
   font-size: 12px;
-  border: 1px solid var(--vscode-input-border, transparent);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
 }
 
 .number-input:focus {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--gc-focus-border);
 }
 
 .number-input:disabled {
@@ -236,13 +236,13 @@ onMounted(() => {
   font-size: 12px;
   border: none;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   cursor: pointer;
 }
 
 .retention-save-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .retention-save-btn:disabled {
@@ -252,22 +252,22 @@ onMounted(() => {
 
 .hint {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  color: var(--gc-text-muted);
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-errorForeground, #f14c4c);
+  color: var(--gc-danger);
 }
 
 .success-text {
   font-size: 12px;
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .divider {
   height: 1px;
-  background: var(--vscode-settings-rowHoverBackground, var(--vscode-widget-border, #3c3c3c));
+  background: none;
   margin: 4px 0 12px 0;
 }
 </style>

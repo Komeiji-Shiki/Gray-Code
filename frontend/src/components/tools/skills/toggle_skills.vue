@@ -92,19 +92,19 @@ const requestedSkills = computed(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section.success .section-title {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .section.warning .section-title {
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
 }
 
 .section.error .section-title {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 .skills-list {
@@ -118,17 +118,17 @@ const requestedSkills = computed(() => {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
 .skill-item.enabled {
-  border-left: 3px solid var(--vscode-terminal-ansiGreen);
+  border-left: 3px solid var(--gc-success);
 }
 
 .skill-item.disabled {
-  border-left: 3px solid var(--vscode-descriptionForeground);
+  border-left: 3px solid var(--gc-text-muted);
 }
 
 .skill-item .codicon {
@@ -136,20 +136,20 @@ const requestedSkills = computed(() => {
 }
 
 .skill-item.enabled .codicon {
-  color: var(--vscode-terminal-ansiGreen);
+  color: var(--gc-success);
 }
 
 .skill-item.disabled .codicon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .skill-name {
   flex: 1;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
 }
 
 .skill-action {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

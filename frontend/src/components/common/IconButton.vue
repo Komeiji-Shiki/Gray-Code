@@ -124,8 +124,8 @@ function handleClick(event: MouseEvent) {
 }
 
 .icon-button.primary {
-  background: var(--gc-accent);
-  color: var(--gc-text-on-accent);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .icon-button.primary:hover:not(:disabled) {

@@ -158,14 +158,14 @@ function getFileName(filePath: string): string {
 }
 
 .delete-icon {
-  color: var(--vscode-charts-red);
+  color: var(--gc-chart-red);
   font-size: 14px;
 }
 
 .title {
   font-weight: 600;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .header-stats {
@@ -179,15 +179,15 @@ function getFileName(filePath: string): string {
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .stat.success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .stat.error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 /* 错误显示 */
@@ -196,20 +196,20 @@ function getFileName(filePath: string): string {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-icon {
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   font-size: 14px;
   flex-shrink: 0;
 }
 
 .error-text {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   line-height: 1.4;
 }
 
@@ -217,7 +217,7 @@ function getFileName(filePath: string): string {
 .file-list {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
   max-height: 300px;
@@ -229,16 +229,16 @@ function getFileName(filePath: string): string {
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   transition: background-color var(--transition-fast, 0.1s);
 }
 
 .file-item:not(:last-child) {
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .file-item.is-error {
-  background: var(--vscode-inputValidation-errorBackground);
+  background: var(--gc-danger-bg);
 }
 
 .status-icon {
@@ -248,11 +248,11 @@ function getFileName(filePath: string): string {
 }
 
 .file-item:not(.is-error) .status-icon {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .file-item.is-error .status-icon {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 .file-info {
@@ -270,26 +270,26 @@ function getFileName(filePath: string): string {
 
 .file-name.clickable:hover,
 .file-path.clickable:hover {
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   text-decoration: underline;
 }
 
 .file-name {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .file-path {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
   word-break: break-all;
 }
 
 .file-error {
   font-size: 10px;
-  color: var(--vscode-inputValidation-errorForeground);
+  color: var(--gc-danger);
   margin-top: 2px;
 }
 
@@ -300,7 +300,7 @@ function getFileName(filePath: string): string {
   justify-content: center;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-md, 16px);
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 </style>

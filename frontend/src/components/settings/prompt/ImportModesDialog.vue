@@ -149,7 +149,7 @@ function triggerFilePicker() {
   min-height: 260px;
   padding: var(--gc-space-3);
   resize: vertical;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   line-height: var(--gc-line-height-normal);
 }
 

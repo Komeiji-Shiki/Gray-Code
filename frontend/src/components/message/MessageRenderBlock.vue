@@ -451,13 +451,13 @@ onUnmounted(releaseThoughtDisplay)
 .thought-block {
   --lim-md-font-size: 12px;
   --lim-md-line-height: 1.5;
-  --lim-md-color: var(--vscode-descriptionForeground);
+  --lim-md-color: var(--gc-text-muted);
   --lim-md-font-style: italic;
 
   margin: 8px 0;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   overflow: hidden;
 }
 
@@ -493,15 +493,15 @@ onUnmounted(releaseThoughtDisplay)
 .thought-header .codicon,
 .thought-toggle .codicon {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .thought-icon {
-  color: var(--vscode-descriptionForeground) !important;
+  color: var(--gc-text-muted) !important;
 }
 
 .thought-icon.thinking-pulse {
-  color: var(--vscode-charts-yellow, #ddb92f) !important;
+  color: var(--gc-chart-yellow) !important;
   animation: lightbulb-pulse 1.2s ease-in-out infinite;
 }
 
@@ -512,7 +512,7 @@ onUnmounted(releaseThoughtDisplay)
   }
   50% {
     opacity: 1;
-    text-shadow: 0 0 8px var(--vscode-charts-yellow, #ddb92f);
+    text-shadow: 0 0 8px var(--gc-chart-yellow);
   }
 }
 
@@ -520,14 +520,14 @@ onUnmounted(releaseThoughtDisplay)
   font-size: 12px;
   font-weight: 500;
   font-style: italic;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .thought-time {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-badge-background);
+  color: var(--gc-text-muted);
+  background: var(--gc-badge-bg);
   padding: 1px 6px;
   border-radius: var(--gc-radius-md);
   margin-left: 4px;
@@ -535,7 +535,7 @@ onUnmounted(releaseThoughtDisplay)
 }
 
 .thought-time.thinking-active {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
   animation: time-pulse 1.5s ease-in-out infinite;
 }
 
@@ -561,19 +561,19 @@ onUnmounted(releaseThoughtDisplay)
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   border-radius: var(--gc-radius-xs);
 }
 
 .thought-view-btn:hover {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .thought-view-btn.active {
-  background: var(--vscode-toolbar-activeBackground, var(--vscode-list-hoverBackground));
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-active);
+  color: var(--gc-text-primary);
 }
 
 .thought-view-btn .codicon {
@@ -590,9 +590,9 @@ onUnmounted(releaseThoughtDisplay)
   font-size: 11px;
   font-style: normal;
   line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
-  background: color-mix(in srgb, var(--vscode-warningForeground, #cca700) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-warningForeground, #cca700) 28%, transparent);
+  color: var(--gc-text-muted);
+  background: color-mix(in srgb, var(--gc-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gc-warning) 28%, transparent);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -611,7 +611,7 @@ onUnmounted(releaseThoughtDisplay)
   display: block;
   font-size: var(--lim-md-font-size, 12px);
   line-height: var(--lim-md-line-height, 1.5);
-  color: var(--lim-md-color, var(--vscode-descriptionForeground));
+  color: var(--lim-md-color, var(--gc-text-muted));
   font-style: var(--lim-md-font-style, italic);
   white-space: nowrap;
   overflow: hidden;
@@ -629,7 +629,7 @@ onUnmounted(releaseThoughtDisplay)
 .thought-medium-text {
   font-size: var(--lim-md-font-size, 12px);
   line-height: var(--lim-md-line-height, 1.5);
-  color: var(--lim-md-color, var(--vscode-descriptionForeground));
+  color: var(--lim-md-color, var(--gc-text-muted));
   font-style: var(--lim-md-font-style, italic);
   white-space: pre-wrap;
   word-break: break-word;
@@ -651,7 +651,7 @@ onUnmounted(releaseThoughtDisplay)
    * 已提升的 md 段落与正在流式的尾巴不再有字号/颜色/字重跳变 */
   font-size: var(--lim-md-font-size, 12px);
   line-height: var(--lim-md-line-height, 1.5);
-  color: var(--lim-md-color, var(--vscode-descriptionForeground));
+  color: var(--lim-md-color, var(--gc-text-muted));
   font-style: var(--lim-md-font-style, italic);
   word-break: break-word;
 }

@@ -113,12 +113,12 @@ async function openAgent() {
 
 <style scoped>
 .background-task-card {
-  border: 1px solid var(--vscode-panel-border);
-  border-left: 3px solid var(--vscode-focusBorder);
-  border-radius: 0;
+  border: 1px solid var(--gc-border-subtle);
+  border-left: 3px solid var(--gc-focus-border);
+  border-radius: var(--gc-radius-md);
   padding: 8px 12px;
   margin: 4px 0;
-  background: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-focusBorder) 5%);
+  background: color-mix(in srgb, var(--gc-surface-base) 95%, var(--gc-focus-border) 5%);
   font-size: 12px;
 }
 
@@ -132,12 +132,12 @@ async function openAgent() {
 
 .bg-task-icon {
   font-size: 14px;
-  color: var(--vscode-focusBorder);
+  color: var(--gc-focus-border);
 }
 
 .bg-task-label {
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.5px;
@@ -146,10 +146,10 @@ async function openAgent() {
 }
 
 .bg-task-content {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: pre-wrap;
   line-height: 1.4;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -172,19 +172,19 @@ async function openAgent() {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
 }
 
 .bg-task-view-btn:hover {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .bg-task-view-btn.active {
-  background: var(--vscode-toolbar-activeBackground, var(--vscode-list-hoverBackground));
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-active);
+  color: var(--gc-text-primary);
 }
 
 .bg-task-content.view-collapsed {
@@ -206,5 +206,5 @@ async function openAgent() {
 </style>
 
 <style scoped>
-.agent-link{border:0;background:transparent;color:var(--vscode-textLink-foreground);text-align:left;cursor:pointer;padding:5px 0}
+.agent-link{border:0;background:transparent;color:var(--gc-link);text-align:left;cursor:pointer;padding:5px 0}
 </style>

@@ -1,8 +1,46 @@
-:root {
+/* 外壳启动默认值：与聊天 theme.css 一致，设置加载前使用默认色板（藏青外壳）。 */
+:root:root {
   color-scheme: dark;
-  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-  background: #111215;
-  color: #e5e7eb;
+  --gc-surface-chrome: #1a2033;
+  --gc-surface-chrome-hover: #232a42;
+  --gc-border-chrome: #262d45;
+  --gc-text-on-chrome: #e9e6de;
+  --gc-text-on-chrome-muted: #9aa0b5;
+  --gc-surface-base: #17191f;
+  --gc-surface-panel: #17191f;
+  --gc-surface-raised: #1f222a;
+  --gc-surface-overlay: #1f222a;
+  --gc-surface-sunken: #121419;
+  --gc-surface-input: #1f222a;
+  --gc-text-primary: #ece9e1;
+  --gc-text-muted: #9da2b0;
+  --gc-text-disabled: #6d7280;
+  --gc-accent: #9fb0e8;
+  --gc-link: #9fb0e8;
+  --gc-focus-border: #9fb0e8;
+  --gc-link-active: #c3cdf2;
+  --gc-border-control: #2b2f39;
+  --gc-border-subtle: #9da2b017;
+  --gc-surface-hover: #252933;
+  --gc-surface-selected: #2a3350;
+  --gc-surface-active: #2a3350;
+  --gc-text-selected: #f7f5ee;
+  --gc-button-primary: #f2eee5;
+  --gc-button-primary-hover: #faf8f2;
+  --gc-text-on-primary: #232a42;
+  --gc-button-secondary: #282c37;
+  --gc-button-secondary-hover: #30343f;
+  --gc-text-on-secondary: #e3e0d8;
+  --gc-danger: #e8877f;
+  --gc-success: #8dc4a0;
+  --gc-warning: #e3b566;
+  --gc-scrollbar: #6d728040;
+  --gc-scrollbar-hover: #8b90a070;
+  --gc-font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --gc-font-code: "Cascadia Code", Consolas, monospace;
+  font-family: var(--gc-font-ui);
+  background: var(--gc-surface-chrome);
+  color: var(--gc-text-primary);
   font-synthesis: none;
   font-weight: 400;
 }
@@ -21,17 +59,18 @@ textarea {
 }
 button {
   cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--panel);
+  /* 次要按钮靠底色区分；透明边框占位，避免与描边按钮混排时尺寸不一。 */
+  border: 1px solid transparent;
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   padding: 7px 12px;
-  border-radius: 0;
+  border-radius: var(--gc-radius-sm);
   transition:
     background 0.12s,
     border-color 0.12s;
 }
 button:hover {
-  background: var(--hover);
-  border-color: var(--muted);
+  background: var(--gc-button-secondary-hover);
 }
 button:disabled {
   opacity: 0.4;
@@ -41,21 +80,28 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: 1px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 0;
+  border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 1px var(--gc-focus-border);
 }
 input,
 textarea,
 select {
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: 0;
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
   padding: 8px 10px;
   min-width: 0;
 }
 input::placeholder,
 textarea::placeholder {
-  color: var(--muted);
+  color: var(--gc-text-muted);
   opacity: 0.72;
 }
 textarea {
@@ -68,11 +114,11 @@ select {
 /* 展开后的选项也使用工作台主题，避免系统弹层混入白底和浅色文字。 */
 select option,
 select optgroup {
-  background: var(--panel);
-  color: var(--text);
+  background: var(--gc-surface-raised);
+  color: var(--gc-text-primary);
 }
 select option:disabled {
-  color: var(--muted);
+  color: var(--gc-text-muted);
 }
 
 /* 原生选择器负责键盘、焦点和表单校验；可定制的弹层与页面共用视觉样式。 */
@@ -87,18 +133,18 @@ select option:disabled {
     transition: border-color 0.12s, background 0.12s;
   }
   select:not([multiple]):not([size]):hover:not(:disabled) {
-    border-color: var(--muted);
+    border-color: var(--gc-text-muted);
   }
   select:not([multiple]):not([size]):open {
-    border-color: var(--accent);
+    border-color: var(--gc-accent);
   }
   select:not([multiple]):not([size])::picker-icon {
     content: "";
     width: 7px;
     height: 7px;
     margin: -3px 3px 0 auto;
-    border-right: 1.5px solid var(--muted);
-    border-bottom: 1.5px solid var(--muted);
+    border-right: 1.5px solid var(--gc-text-muted);
+    border-bottom: 1.5px solid var(--gc-text-muted);
     rotate: 45deg;
   }
   select:not([multiple]):not([size]):open::picker-icon {
@@ -114,40 +160,40 @@ select option:disabled {
     overflow: auto;
     margin-block: 5px;
     padding: 4px;
-    border: 1px solid var(--border);
-    border-radius: 0;
-    background: var(--panel);
-    color: var(--text);
+    border: 1px solid var(--gc-border-control);
+    border-radius: var(--gc-radius-lg);
+    background: var(--gc-surface-raised);
+    color: var(--gc-text-primary);
     font: inherit;
     box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
     scrollbar-width: thin;
-    scrollbar-color: var(--border) var(--panel);
+    scrollbar-color: var(--gc-border-subtle) var(--gc-surface-raised);
   }
   select:not([multiple]):not([size]) option {
     min-height: 40px;
     padding: 10px 12px;
     gap: 16px;
     border: 0;
-    border-radius: 0;
+    border-radius: var(--gc-radius-sm);
     line-height: 1.5;
     white-space: normal;
     overflow-wrap: anywhere;
     cursor: pointer;
   }
   select:not([multiple]):not([size]) option:checked {
-    background: var(--selection);
-    color: var(--text);
+    background: var(--gc-surface-selected);
+    color: var(--gc-text-primary);
   }
   select:not([multiple]):not([size]) option:hover:not(:disabled),
   select:not([multiple]):not([size]) option:focus-visible {
-    background: var(--hover);
-    outline: 1px solid var(--accent);
+    background: var(--gc-surface-hover);
+    outline: 1px solid var(--gc-accent);
     outline-offset: -1px;
   }
   select:not([multiple]):not([size]) option::checkmark {
     order: 1;
     margin-inline-start: auto;
-    color: var(--accent);
+    color: var(--gc-accent);
   }
   select:not([multiple]):not([size]) option:disabled {
     cursor: default;
@@ -155,7 +201,7 @@ select option:disabled {
   }
 }
 a {
-  color: var(--accent);
+  color: var(--gc-accent);
 }
 p {
   line-height: 1.7;
@@ -186,7 +232,7 @@ h3 {
 pre,
 code,
 kbd {
-  font-family: var(--code-font);
+  font-family: var(--gc-font-code);
 }
 pre {
   white-space: pre-wrap;
@@ -199,14 +245,14 @@ details > summary {
   user-select: none;
 }
 .primary {
-  background: var(--button);
-  color: var(--button-text);
-  border-color: var(--button);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+  border-color: var(--gc-button-primary);
   font-weight: 600;
 }
 .primary:hover {
-  background: var(--button-hover);
-  border-color: var(--button-hover);
+  background: var(--gc-button-primary-hover);
+  border-color: var(--gc-button-primary-hover);
 }
 .quiet-button,
 .icon-button {
@@ -219,14 +265,14 @@ details > summary {
   line-height: 1.2;
 }
 .subtle {
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 .eyebrow {
-  font-family: var(--code-font);
+  font-family: var(--gc-font-code);
   font-size: 10px;
   letter-spacing: 1.9px;
-  color: var(--accent);
+  color: var(--gc-accent);
 }
 .button-row,
 .button-row > button {
@@ -238,27 +284,13 @@ details > summary {
   flex-wrap: wrap;
 }
 .application {
-  color-scheme: dark;
-  --background: #111215;
-  --panel: #181a1f;
-  --text: #e5e7eb;
-  --muted: #9197a2;
-  --accent: #6ba6ff;
-  --border: #30333b;
-  --input: #111318;
-  --hover: #242730;
-  --ui-font: "Segoe UI", "Microsoft YaHei", sans-serif;
-  --text-font: inherit;
-  --code-font: "Cascadia Code", Consolas, monospace;
-  --font-size: 14px;
-  --line-height: 1.6;
-  font-family: var(--ui-font);
-  font-size: var(--font-size);
-  color: var(--text);
+  font-family: var(--gc-font-ui);
+  font-size: var(--gc-font-size-ui);
+  color: var(--gc-text-primary);
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--background);
+  background: var(--gc-surface-chrome);
   position: relative;
   isolation: isolate;
 }
@@ -273,11 +305,11 @@ details > summary {
   z-index: -1;
   pointer-events: none;
 }
-.application[data-theme="light"] {
+:root[data-theme="light"] .application {
   color-scheme: light;
 }
 .application[data-density="compact"] {
-  --font-size: 12px;
+  --gc-font-size-ui: 12px;
 }
 .application[data-density="compact"] button {
   padding-top: 4px;
@@ -290,9 +322,9 @@ details > summary {
   align-items: center;
   justify-content: space-between;
   padding: 0 17px;
-  border-bottom: 1px solid var(--border);
   gap: 24px;
-  background: var(--background);
+  background: var(--gc-surface-chrome);
+  color: var(--gc-text-on-chrome);
 }
 .wordmark {
   display: flex;
@@ -306,15 +338,15 @@ details > summary {
   font-weight: 750;
 }
 .wordmark strong span {
-  color: var(--accent);
+  color: var(--gc-accent);
   font-weight: 400;
 }
 .version-tag {
-  font-family: var(--code-font);
-  color: var(--muted);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-muted);
   font-size: 8px;
   letter-spacing: 1.4px;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--gc-border-subtle);
   padding-left: 12px;
 }
 .titlebar-center {
@@ -333,10 +365,9 @@ details > summary {
   display: flex;
   gap: 22px;
   align-items: center;
-  border-top: 1px solid var(--border);
   height: 26px;
   padding: 0 14px;
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 10px;
   flex-shrink: 0;
   overflow: hidden;
@@ -357,15 +388,15 @@ details > summary {
   min-height: 0;
 }
 .activity-sidebar {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--gc-border-subtle);
   display: flex;
   flex-direction: column;
   overflow: auto;
   padding: 14px 8px 10px;
-  background: var(--background);
+  background: var(--gc-surface-base);
 }
 .new-chat {
-  border: 1px solid var(--border);
+  border: 1px solid var(--gc-border-subtle);
   background: transparent;
   text-align: left;
   padding: 10px;
@@ -373,7 +404,7 @@ details > summary {
   font-size: 12px;
 }
 .sidebar-label {
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 10px;
   letter-spacing: 1.5px;
   padding: 0 10px;
@@ -396,18 +427,18 @@ details > summary {
   white-space: nowrap;
 }
 .conversation-row small {
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 9px;
   margin-left: auto;
 }
 .conversation-row.active {
-  background: var(--hover);
-  box-shadow: inset 2px 0 var(--accent);
+  background: var(--gc-surface-hover);
+  box-shadow: inset 2px 0 var(--gc-accent);
 }
 .sidebar-footer {
   margin-top: auto;
   padding: 20px 7px 0;
-  color: var(--muted);
+  color: var(--gc-text-muted);
   font-size: 10px;
 }
 .status-dot,
@@ -420,7 +451,7 @@ details > summary {
   vertical-align: middle;
 }
 .live-dot {
-  background: var(--accent);
+  background: var(--gc-accent);
   animation: pulse 1.2s infinite;
 }
 @keyframes pulse {
@@ -435,7 +466,6 @@ details > summary {
   gap: 12px;
   flex-shrink: 0;
   padding: 0 13px;
-  border-bottom: 1px solid var(--border);
   font-size: 11px;
   letter-spacing: 0.3px;
 }

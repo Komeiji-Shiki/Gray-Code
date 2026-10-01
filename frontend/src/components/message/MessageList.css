@@ -5,7 +5,7 @@
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .message-scroll-area {
@@ -20,7 +20,7 @@
   top: 0;
   z-index: 6;
   padding: 8px var(--spacing-md, 16px) 0;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 
@@ -29,19 +29,19 @@
   top: 0;
   z-index: 5;
   padding: 8px var(--spacing-md, 16px) 0;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
 }
 
 .todo-snapshot-icon {
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .build-bar {
   margin: 0;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   flex-shrink: 0;
 }
 
@@ -74,26 +74,26 @@
 
 .build-icon {
   font-size: 12px;
-  color: var(--vscode-charts-orange, #e69500);
+  color: var(--gc-chart-orange);
   flex-shrink: 0;
 }
 
 .build-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   flex-shrink: 0;
 }
 
 .build-sep {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
   flex-shrink: 0;
 }
 
 .build-name {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -108,7 +108,7 @@
 
 .build-progress {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
   min-width: 42px;
   text-align: right;
@@ -123,7 +123,7 @@
   border: none;
   border-radius: var(--gc-radius-sm);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition:
     background-color var(--gc-duration-fast) var(--gc-ease-standard),
@@ -138,9 +138,9 @@
 .build-current {
   padding: 4px 10px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
-  border-top: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-base);
+  border-top: 1px solid var(--gc-border-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -149,8 +149,8 @@
 .build-body {
   max-height: min(40vh, 320px);
   padding: 8px 10px 10px;
-  background: var(--vscode-editor-background);
-  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border-top: 1px solid var(--gc-border-subtle);
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -160,7 +160,7 @@
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.85;
   padding: 6px 2px;
 }
@@ -177,7 +177,7 @@
   align-items: flex-start;
   gap: 8px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .todo-dot {
@@ -185,35 +185,35 @@
   height: 8px;
   margin-top: 4px;
   border-radius: 999px;
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
 .todo-dot.pending {
-  background: color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+  background: color-mix(in srgb, var(--gc-text-primary) 25%, transparent);
 }
 
 .todo-dot.in_progress {
-  background: var(--vscode-charts-blue, #3794ff);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent);
+  background: var(--gc-chart-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gc-chart-blue) 18%, transparent);
 }
 
 .todo-dot.completed {
-  background: var(--vscode-testing-iconPassed);
+  background: var(--gc-success);
 }
 
 .todo-dot.cancelled {
-  background: var(--vscode-testing-iconFailed);
+  background: var(--gc-danger);
 }
 
 .build-todo.status-completed .todo-text {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-decoration: line-through;
   opacity: 0.85;
 }
 
 .build-todo.status-cancelled .todo-text {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-decoration: line-through;
   opacity: 0.6;
 }
@@ -238,22 +238,22 @@
   padding: 12px;
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  border-radius: 0;
+  border-bottom: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   /* 点击可手动触发加载更多 */
   cursor: pointer;
   font: inherit;
 }
 
 .load-more-container:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .load-more-container:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: -2px;
 }
 
@@ -278,8 +278,8 @@
   display: flex;
   flex-direction: column;
   margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: var(--gc-quote-bg);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
   overflow: hidden;
@@ -291,7 +291,7 @@
   gap: 8px;
   padding: 8px 12px;
   background: rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .restore-notice-icon {
@@ -300,26 +300,26 @@
 }
 
 .restore-notice-error .restore-notice-icon {
-  color: var(--vscode-errorForeground, #f48771);
+  color: var(--gc-danger);
 }
 
 .restore-notice-partial .restore-notice-icon {
-  color: var(--vscode-editorWarning-foreground, #cca700);
+  color: var(--gc-warning);
 }
 
 .restore-notice-warning .restore-notice-icon {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .restore-notice-success .restore-notice-icon {
-  color: var(--vscode-testing-iconPassed, #89d185);
+  color: var(--gc-success);
 }
 
 .restore-notice-title {
   flex: 1;
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .restore-notice-body {
@@ -328,11 +328,11 @@
 
 .restore-notice-text {
   font-size: 11px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.4;
   word-break: break-word;
   white-space: pre-wrap;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   background: rgba(0, 0, 0, 0.15);
   padding: 8px;
   border-radius: var(--gc-radius-sm);
@@ -355,7 +355,7 @@
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.6;
   cursor: pointer;
   font-size: 14px;
@@ -365,7 +365,7 @@
 
 .restore-notice-dismiss:hover {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 /* U1 忙时投递（M3-1）轻量回显：细条提示，随消息区滚动，不占错误条 */
@@ -383,9 +383,9 @@
   gap: 6px;
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  color: var(--gc-text-muted);
+  background: var(--gc-quote-bg);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -395,11 +395,11 @@
 }
 
 .interrupt-notice-delivered .codicon {
-  color: var(--vscode-testing-iconPassed, #89d185);
+  color: var(--gc-success);
 }
 
 .interrupt-notice-error .codicon {
-  color: var(--vscode-errorForeground, #f48771);
+  color: var(--gc-danger);
 }
 
 .interrupt-notice-text {
@@ -415,8 +415,8 @@
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-md, 16px);
   margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: var(--gc-quote-bg);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }
@@ -429,7 +429,7 @@
   align-items: center;
   justify-content: center;
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .continue-icon .codicon {
@@ -447,13 +447,13 @@
 .continue-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .continue-text {
   font-size: 11px;
   line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .continue-actions {
@@ -468,9 +468,9 @@
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, 0.2));
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: var(--gc-surface-active);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
@@ -478,7 +478,7 @@
 }
 
 .continue-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.3));
+  background: var(--gc-surface-hover);
 }
 
 .continue-btn .codicon {
@@ -496,10 +496,10 @@
   gap: 8px;
   padding: 8px 16px;
   margin: 0;
-  background: var(--vscode-editor-background);
-  border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
+  background: var(--gc-surface-base);
+  border-left: 2px solid var(--gc-chart-yellow);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） */
@@ -512,19 +512,19 @@
 .summarize-divider-line {
   flex: 1;
   height: 1px;
-  background: var(--vscode-editor-lineHighlightBorder, rgba(128, 128, 128, 0.35));
+  background: var(--gc-border-subtle);
 }
 
 .checkpoint-bar.checkpoint-before {
-  border-left-color: var(--vscode-charts-yellow, #ddb92f);
+  border-left-color: var(--gc-chart-yellow);
 }
 
 .checkpoint-bar.checkpoint-after {
-  border-left-color: var(--vscode-charts-green, #89d185);
+  border-left-color: var(--gc-chart-green);
 }
 
 .checkpoint-bar.checkpoint-merged {
-  border-left-color: var(--vscode-charts-blue, #75beff);
+  border-left-color: var(--gc-chart-blue);
 }
 
 .checkpoint-icon {
@@ -537,15 +537,15 @@
 }
 
 .checkpoint-before .checkpoint-icon {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .checkpoint-after .checkpoint-icon {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .checkpoint-merged .checkpoint-icon {
-  color: var(--vscode-charts-blue, #75beff);
+  color: var(--gc-chart-blue);
 }
 
 .checkpoint-icon .codicon {
@@ -565,31 +565,31 @@
 }
 
 .checkpoint-before .checkpoint-label {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .checkpoint-after .checkpoint-label {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .checkpoint-merged .checkpoint-label {
-  color: var(--vscode-charts-blue, #75beff);
+  color: var(--gc-chart-blue);
 }
 
 .checkpoint-meta {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
 }
 
 .checkpoint-floor {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.6;
   font-size: 11px;
   flex-shrink: 0;
 }
 
 .checkpoint-time {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.7;
   font-size: 11px;
   flex-shrink: 0;
@@ -605,7 +605,7 @@
   padding: 0;
   background: transparent;
   border: none;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   border-radius: var(--gc-radius-sm);
   opacity: 0.6;
@@ -614,7 +614,7 @@
 
 .checkpoint-action:hover {
   opacity: 1;
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .checkpoint-action:disabled {
@@ -632,7 +632,7 @@
   margin-top: 10px;
   max-height: 220px;
   overflow-y: auto;
-  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-sm);
 }
 
@@ -640,9 +640,9 @@
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-errorForeground);
-  background: var(--vscode-inputValidation-warningBackground, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  color: var(--gc-danger);
+  background: var(--gc-warning-bg);
+  border-bottom: 1px solid var(--gc-warning-border);
   position: sticky;
   top: 0;
 }
@@ -650,8 +650,8 @@
 .restore-delete-untracked-note {
   padding: 5px 10px;
   font-size: 12px;
-  color: var(--vscode-editorWarning-foreground);
-  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  color: var(--gc-warning);
+  border-bottom: 1px solid var(--gc-warning-border);
 }
 
 .restore-delete-items {
@@ -664,12 +664,12 @@
   gap: 6px;
   padding: 3px 10px;
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .restore-delete-item .codicon {
   font-size: 12px;
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   flex-shrink: 0;
 }
 
@@ -684,20 +684,20 @@
 .restore-delete-more {
   padding: 4px 10px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .restore-delete-empty {
   margin-top: 10px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .restore-unbacked-tip {
   margin-top: 10px;
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  border: 1px dashed var(--vscode-panel-border);
+  color: var(--gc-text-muted);
+  border: 1px dashed var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
 }

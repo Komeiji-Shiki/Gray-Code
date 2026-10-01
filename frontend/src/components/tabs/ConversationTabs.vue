@@ -294,8 +294,8 @@ watch(() => props.tabs.length, () => {
   align-items: stretch;
   height: 26px;
   min-height: 26px;
-  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  background: var(--gc-surface-chrome);
+  border-bottom: 1px solid var(--gc-border-chrome);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -341,11 +341,10 @@ watch(() => props.tabs.length, () => {
   height: 100%;
   cursor: pointer;
   white-space: nowrap;
-  border-right: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.15));
+  border-right: 1px solid var(--gc-border-chrome);
   background: transparent;
-  color: var(--vscode-tab-inactiveForeground, var(--vscode-foreground));
-  opacity: 0.7;
-  transition: opacity var(--transition-fast, 0.1s ease),
+  color: var(--gc-text-on-chrome-muted);
+  transition: color var(--transition-fast, 0.1s ease),
               background var(--transition-fast, 0.1s ease);
   position: relative;
   z-index: 20;
@@ -353,14 +352,14 @@ watch(() => props.tabs.length, () => {
 }
 
 .tab-item:hover {
-  opacity: 1;
-  background: var(--vscode-tab-hoverBackground, rgba(127, 127, 127, 0.1));
+  color: var(--gc-text-on-chrome);
+  background: var(--gc-surface-chrome-hover);
 }
 
 .tab-item.active {
   opacity: 1;
-  color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
-  background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-base);
 }
 
 .tab-item.active::after {
@@ -370,7 +369,7 @@ watch(() => props.tabs.length, () => {
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--vscode-tab-activeBorderTop, var(--vscode-focusBorder, #007fd4));
+  background: var(--gc-accent);
 }
 
 /* 拖拽中的标签页半透明 */
@@ -386,7 +385,7 @@ watch(() => props.tabs.length, () => {
   top: 4px;
   bottom: 4px;
   width: 2px;
-  background: var(--vscode-focusBorder, #007fd4);
+  background: var(--gc-focus-border);
   border-radius: var(--gc-radius-xs);
   z-index: 10;
 }
@@ -399,7 +398,7 @@ watch(() => props.tabs.length, () => {
   top: 4px;
   bottom: 4px;
   width: 2px;
-  background: var(--vscode-focusBorder, #007fd4);
+  background: var(--gc-focus-border);
   border-radius: var(--gc-radius-xs);
   z-index: 10;
 }
@@ -408,13 +407,13 @@ watch(() => props.tabs.length, () => {
 .tab-item.active.drag-over-right::after {
   bottom: 4px;
   height: auto;
-  background: var(--vscode-focusBorder, #007fd4);
+  background: var(--gc-focus-border);
 }
 
 .tab-spinner {
   font-size: 11px;
   flex-shrink: 0;
-  color: var(--vscode-progressBar-background, #0e70c0);
+  color: var(--gc-accent);
 }
 
 .tab-title {
@@ -436,7 +435,7 @@ watch(() => props.tabs.length, () => {
   border: none;
   border-radius: var(--radius-sm, 2px);
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0;
   flex-shrink: 0;
@@ -455,7 +454,7 @@ watch(() => props.tabs.length, () => {
 
 .tab-close-btn:hover {
   opacity: 1 !important;
-  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+  background: var(--gc-surface-hover);
 }
 
 /* 流式中的标签页 - 始终显示关闭按钮 */
@@ -473,7 +472,7 @@ watch(() => props.tabs.length, () => {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0.6;
   transition: opacity var(--transition-fast, 0.1s ease),
@@ -482,7 +481,7 @@ watch(() => props.tabs.length, () => {
 
 .tab-new-btn:hover {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.1));
+  background: var(--gc-surface-hover);
 }
 
 .tab-new-btn .codicon {

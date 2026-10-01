@@ -140,22 +140,22 @@ defineProps<{
 
 .group-title .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .setting-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 工具表格 */
 .tools-table {
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
   overflow: hidden;
   margin-top: 8px;
 }
@@ -164,8 +164,8 @@ defineProps<{
   display: flex;
   align-items: center;
   padding: 10px 12px;
-  background: var(--vscode-sideBarSectionHeader-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
   font-size: 12px;
   font-weight: 500;
 }
@@ -174,7 +174,7 @@ defineProps<{
   display: flex;
   align-items: center;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .table-row:last-child {
@@ -182,7 +182,7 @@ defineProps<{
 }
 
 .table-row:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .col-tool {
@@ -204,12 +204,12 @@ defineProps<{
 .tool-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .tool-desc {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -219,14 +219,14 @@ defineProps<{
 .advanced-option {
   margin-top: 12px;
   padding: 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
 }
 
 .option-hint {
   margin: 8px 0 0 24px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 </style>

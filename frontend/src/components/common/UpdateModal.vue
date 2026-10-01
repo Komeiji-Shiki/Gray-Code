@@ -248,9 +248,9 @@ const formattedBody = computed(() => {
 
 .changelog-content :deep(code) {
   padding: 1px var(--gc-space-1);
-  background: var(--vscode-textCodeBlock-background, var(--gc-surface-muted));
+  background: var(--gc-code-bg);
   border-radius: var(--gc-radius-xs);
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   font-size: var(--gc-font-size-body);
 }
 

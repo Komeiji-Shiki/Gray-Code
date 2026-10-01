@@ -106,5 +106,5 @@ const knownCollection = computed(() => ['records', 'hits', 'topics'].some(key =>
 
 <style scoped src="./platform.css"></style>
 <style scoped>
-.memory-topic :deep(.memory-card){padding-left:10px;border-left:2px solid var(--vscode-panel-border)}.memory-submitted{border-top:1px solid var(--vscode-panel-border);margin-top:10px}.removal-preview>p{margin:6px 0}.memory-scopes .platform-badge{font-size:11px}
+.memory-topic :deep(.memory-card){padding-left:10px;border-left:2px solid var(--gc-border-subtle)}.memory-submitted{border-top:1px solid var(--gc-border-subtle);margin-top:10px}.removal-preview>p{margin:6px 0}.memory-scopes .platform-badge{font-size:11px}
 </style>

@@ -24,7 +24,7 @@
   width: 38px;
   height: 2px;
   border-radius: var(--gc-radius-xs);
-  background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
+  background: var(--gc-scrollbar);
   opacity: 0;
   transform: translateX(-50%);
   transition: opacity var(--transition-fast, 0.1s), background var(--transition-fast, 0.1s);
@@ -33,7 +33,7 @@
 .input-resize-handle:hover::after,
 .input-resize-handle:focus-visible::after {
   opacity: 1;
-  background: var(--vscode-focusBorder);
+  background: var(--gc-focus-border);
 }
 
 /* contenteditable 编辑器 */
@@ -44,11 +44,11 @@
   min-height: 0;
   max-height: 160px;
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--radius-sm, 2px);
-  font-family: var(--vscode-font-family);
+  font-family: var(--gc-font-ui);
   font-size: 13px;
   line-height: 1.5;
   transition: border-color var(--transition-fast, 0.1s);
@@ -68,7 +68,7 @@
 }
 
 .input-editor:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .input-editor.disabled {
@@ -86,15 +86,15 @@
   box-sizing: border-box;
   padding: inherit;
   content: attr(data-placeholder);
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
   pointer-events: none;
   overflow: hidden;
 }
 
 /* 拖拽悬停状态 */
 .input-box.drag-over .input-editor {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-hoverBackground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-hover);
 }
 
 /* 内联徽章样式：浅蓝色背景（使用 :deep 以应用到动态创建的元素） */
@@ -111,7 +111,7 @@
 
   background: rgba(0, 122, 204, 0.16);
   border: 1px solid rgba(0, 122, 204, 0.28);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 
   user-select: none;
   cursor: pointer;
@@ -126,7 +126,7 @@
 .input-editor :deep(.context-chip .codicon),
 .input-editor :deep(.context-chip .icon) {
   font-size: 12px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
   flex-shrink: 0;
 }
 
@@ -148,7 +148,7 @@
 
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
 
   opacity: 0;
@@ -163,7 +163,7 @@
 }
 
 .input-editor :deep(.context-chip__remove:hover) {
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
 /* 自定义滚动条 - 悬浮设计，不占用布局 */
@@ -184,20 +184,20 @@
   position: absolute;
   left: 0;
   width: 100%;
-  border-radius: 0;
+  border-radius: var(--gc-radius-pill);
   cursor: grab;
   transition: background 0.18s ease, top 0.06s linear;
   will-change: top;
-  background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
+  background: var(--gc-scrollbar);
 }
 
 .scroll-thumb:hover {
-  background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.55));
+  background: var(--gc-scrollbar-hover);
 }
 
 .scroll-thumb:active {
   cursor: grabbing;
-  background: var(--vscode-scrollbarSlider-activeBackground, rgba(100, 100, 100, 0.7));
+  background: var(--gc-scrollbar-hover);
 }
 
 .char-count {
@@ -205,7 +205,7 @@
   right: var(--spacing-sm, 8px);
   bottom: var(--spacing-xs, 4px);
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   pointer-events: none;
 }
 
@@ -227,8 +227,8 @@
   left: 0;
   right: 0;
   margin-bottom: 8px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: 100;
@@ -241,13 +241,13 @@
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-base);
 }
 
 .preview-header .codicon {
   font-size: 14px;
-  color: var(--vscode-textLink-foreground);
+  color: var(--gc-link);
 }
 
 .preview-title {
@@ -263,14 +263,14 @@
   margin: 0;
   padding: 10px 12px;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--gc-font-code);
   line-height: 1.5;
   overflow-y: auto;
   max-height: 180px;
   white-space: pre-wrap;
   word-break: break-all;
-  color: var(--vscode-foreground);
-  background: var(--vscode-textBlockQuote-background);
+  color: var(--gc-text-primary);
+  background: var(--gc-quote-bg);
 }
 
 /* 淡入淡出动画 */

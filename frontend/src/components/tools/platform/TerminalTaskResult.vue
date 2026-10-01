@@ -51,6 +51,6 @@ function taskStatus(task: Record<string, unknown>) {
 
 <style scoped src="./platform.css"></style>
 <style scoped>
-.task-command{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 var(--vscode-editor-font-family,monospace)}.task-exit-code{font-family:var(--vscode-editor-font-family,monospace);color:var(--vscode-descriptionForeground)}.task-error{color:var(--vscode-errorForeground);white-space:pre-wrap;overflow-wrap:anywhere}.task-status.interrupted,.task-status.cancelled{color:var(--vscode-editorWarning-foreground)}
-.terminal-tasks.is-list{max-height:420px;overflow:auto;overscroll-behavior:contain}.terminal-tasks:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}
+.task-command{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 var(--gc-font-code)}.task-exit-code{font-family:var(--gc-font-code);color:var(--gc-text-muted)}.task-error{color:var(--gc-danger);white-space:pre-wrap;overflow-wrap:anywhere}.task-status.interrupted,.task-status.cancelled{color:var(--gc-warning)}
+.terminal-tasks.is-list{max-height:420px;overflow:auto;overscroll-behavior:contain}.terminal-tasks:focus-visible{outline:1px solid var(--gc-focus-border);outline-offset:2px}
 </style>

@@ -626,8 +626,8 @@ function handleRemoveAttachment(id: string) {
   gap: 6px;
   padding: 6px 12px;
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px dashed var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px dashed var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
   cursor: pointer;
@@ -635,8 +635,8 @@ function handleRemoveAttachment(id: string) {
 }
 
 .attachment-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  border-color: var(--vscode-focusBorder);
+  background: var(--gc-surface-hover);
+  border-color: var(--gc-focus-border);
 }
 
 .attachment-btn .codicon {
@@ -665,13 +665,13 @@ function handleRemoveAttachment(id: string) {
 }
 
 .checkpoint-hint {
-  background: var(--vscode-editorInfo-background, rgba(0, 120, 212, 0.1));
-  color: var(--vscode-editorInfo-foreground, #3794ff);
+  background: var(--gc-info-bg);
+  color: var(--gc-info);
 }
 
 .root-message-hint {
-  background: var(--vscode-editorWarning-background, rgba(204, 122, 0, 0.12));
-  color: var(--vscode-editorWarning-foreground, #cc7a00);
+  background: var(--gc-warning-bg);
+  color: var(--gc-warning);
 }
 
 .dialog-btn {
@@ -703,18 +703,18 @@ function handleRemoveAttachment(id: string) {
 
 .dialog-btn.cancel {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .dialog-btn.cancel:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .dialog-btn.restore {
   max-width: 220px;
-  background: var(--vscode-editorInfo-foreground);
-  color: #fff;
+  background: var(--gc-info);
+  color: var(--gc-surface-base);
 }
 
 .dialog-btn.restore:hover:not(:disabled) {
@@ -727,12 +727,12 @@ function handleRemoveAttachment(id: string) {
 
 .dialog-btn.keep-branch {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .dialog-btn.keep-branch:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .dialog-btn.keep-branch .codicon {
@@ -740,12 +740,12 @@ function handleRemoveAttachment(id: string) {
 }
 
 .dialog-btn.confirm {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .dialog-btn.confirm:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 @media (max-width: 420px) {

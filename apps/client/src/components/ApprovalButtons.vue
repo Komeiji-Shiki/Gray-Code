@@ -12,5 +12,5 @@ const emit = defineEmits<{ resolve: [decision: ApprovalDecision] }>();
   </div>
 </template>
 <style scoped>
-.approval-buttons{display:flex;gap:7px;flex-wrap:wrap}.approval-buttons button{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:0;padding:6px 9px;text-align:left;cursor:pointer}.approval-buttons button:disabled{opacity:.5;cursor:default}
+.approval-buttons{display:flex;gap:7px;flex-wrap:wrap}.approval-buttons button{font:inherit;color:var(--gc-text-primary);background:var(--gc-surface-sunken);border:1px solid var(--gc-border-control);border-radius:var(--gc-radius-sm);padding:6px 9px;text-align:left;cursor:pointer}.approval-buttons button:disabled{opacity:.5;cursor:default}
 </style>

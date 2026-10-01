@@ -1,4 +1,5 @@
 import * as monaco from './monaco';
+import { workbenchThemeData } from './editorTheme';
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
 import JsonWorker from 'monaco-editor/language/json/json.worker.js?worker';
 import CssWorker from 'monaco-editor/language/css/css.worker.js?worker';
@@ -11,21 +12,12 @@ editorGlobal.MonacoEnvironment = { getWorker: (_id, label) => label === 'json' ?
   : ['css', 'scss', 'less'].includes(label) ? new CssWorker()
     : ['html', 'handlebars', 'razor'].includes(label) ? new HtmlWorker()
       : ['typescript', 'javascript'].includes(label) ? new TsWorker() : new EditorWorker() };
-let workbenchThemeRegistered = false;
-/** 必须在第一个编辑器注入宿主服务之后注册，避免主题 API 提前固定默认编辑服务。 */
-export function installWorkbenchTheme() {
-if (workbenchThemeRegistered) return;
-workbenchThemeRegistered = true;
-monaco.editor.defineTheme('graycode-workbench-dark', {
-  base: 'vs-dark', inherit: true, rules: [], colors: {
-    'editor.background': '#0d1117', 'editor.foreground': '#d1d9e0', 'editorGutter.background': '#0d1117',
-    'editorLineNumber.foreground': '#667386', 'editorLineNumber.activeForeground': '#d1d9e0',
-    'editor.lineHighlightBackground': '#ffffff04', 'editor.selectionBackground': '#388bfd32',
-    'diffEditor.insertedTextBackground': '#3fb9502a', 'diffEditor.insertedLineBackground': '#2ea04318',
-    'diffEditor.removedTextBackground': '#f851492d', 'diffEditor.removedLineBackground': '#da36331b',
-    'diffEditorGutter.insertedLineBackground': '#3fb95048', 'diffEditorGutter.removedLineBackground': '#f8514948',
-    'diffEditor.diagonalFill': '#202630',
-  },
-});
+export const WORKBENCH_THEME = 'graycode-workbench';
+/**
+ * 按当前色板（重新）定义并应用编辑器主题。必须在第一个编辑器注入宿主服务之后调用，
+ * 避免主题 API 提前固定默认编辑服务；同名主题重定义后由 setTheme 即时生效。
+ */
+export function applyWorkbenchTheme(palette: Record<string, string>, light: boolean): void {
+  monaco.editor.defineTheme(WORKBENCH_THEME, workbenchThemeData(palette, light));
+  monaco.editor.setTheme(WORKBENCH_THEME);
 }
-export function workbenchEditorTheme(theme?: string): string { return theme === 'light' ? 'vs' : 'graycode-workbench-dark'; }

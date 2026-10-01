@@ -23,12 +23,12 @@
   --gc-font-weight-medium: 500;
   --gc-font-weight-semibold: 600;
 
-  /* 控件、卡片和标签统一采用直角，保持平面布局。 */
-  --gc-radius-xs: 0;
-  --gc-radius-sm: 0;
-  --gc-radius-md: 0;
-  --gc-radius-lg: 0;
-  --gc-radius-pill: 0;
+  /* 结构（标题栏、侧栏、分栏、标签栏）保持直角；部件使用小圆角。 */
+  --gc-radius-xs: 4px;
+  --gc-radius-sm: 6px;
+  --gc-radius-md: 8px;
+  --gc-radius-lg: 10px;
+  --gc-radius-pill: 999px;
   --gc-control-height-sm: 24px;
   --gc-control-height-md: 28px;
   --gc-control-height-lg: 32px;
@@ -44,32 +44,99 @@
   --gc-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --gc-ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
 
-  /* Theme-derived semantic colors. VS Code remains the source of truth. */
+  /*
+   * 语义颜色：组件只引用这些 token。桌面与 Web 平台由 shared/appearanceTokens.ts 在根元素直接写入；
+   * 下面的默认值从 --vscode-* 推导，仅供保留的 VS Code 宿主入口使用。
+   */
+  --gc-surface-chrome: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --gc-surface-chrome-hover: var(--vscode-list-hoverBackground, var(--gc-surface-hover));
+  --gc-border-chrome: var(--vscode-panel-border, var(--gc-border-subtle));
+  --gc-text-on-chrome: var(--vscode-foreground);
+  --gc-text-on-chrome-muted: var(--vscode-descriptionForeground, var(--gc-text-muted));
   --gc-surface-base: var(--vscode-editor-background);
   --gc-surface-panel: var(--vscode-sideBar-background, var(--gc-surface-base));
   --gc-surface-raised: var(--vscode-editorWidget-background, var(--gc-surface-panel));
-  --gc-surface-muted: var(--vscode-editor-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 6%, transparent));
-  --gc-surface-hover: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
-  --gc-surface-active: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 14%, transparent));
+  --gc-surface-overlay: var(--vscode-editorWidget-background, var(--gc-surface-raised));
+  --gc-surface-sunken: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--gc-surface-base) 80%, #000));
+  --gc-surface-input: var(--vscode-input-background, var(--gc-surface-raised));
+  --gc-surface-muted: color-mix(in srgb, var(--gc-text-primary) 5%, var(--gc-surface-raised));
+  --gc-surface-hover: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--gc-text-primary) 8%, transparent));
+  --gc-surface-active: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--gc-text-primary) 14%, transparent));
   --gc-surface-selected: var(--vscode-list-activeSelectionBackground, var(--gc-surface-active));
 
   --gc-text-primary: var(--vscode-foreground);
-  --gc-text-muted: var(--vscode-descriptionForeground, color-mix(in srgb, var(--vscode-foreground) 68%, transparent));
-  --gc-text-disabled: var(--vscode-disabledForeground, color-mix(in srgb, var(--vscode-foreground) 45%, transparent));
-  --gc-text-on-accent: var(--vscode-button-foreground);
+  --gc-text-muted: var(--vscode-descriptionForeground, color-mix(in srgb, var(--gc-text-primary) 68%, transparent));
+  --gc-text-disabled: var(--vscode-disabledForeground, color-mix(in srgb, var(--gc-text-primary) 45%, transparent));
+  --gc-text-placeholder: color-mix(in srgb, var(--gc-text-muted) 80%, transparent);
+  --gc-text-selected: var(--vscode-list-activeSelectionForeground, var(--gc-text-primary));
+  --gc-text-on-primary: var(--vscode-button-foreground);
+  --gc-text-on-secondary: var(--vscode-button-secondaryForeground, var(--gc-text-primary));
+  --gc-text-on-accent: var(--gc-text-on-primary);
 
-  --gc-border-subtle: var(--vscode-panel-border, color-mix(in srgb, var(--vscode-foreground) 18%, transparent));
+  --gc-border-subtle: var(--vscode-panel-border, color-mix(in srgb, var(--gc-text-primary) 18%, transparent));
   --gc-border-control: var(--vscode-input-border, var(--gc-border-subtle));
-  --gc-border-strong: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 32%, transparent));
-  --gc-focus-border: var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+  --gc-border-strong: color-mix(in srgb, var(--gc-text-primary) 26%, transparent);
+  --gc-focus-border: var(--vscode-focusBorder, var(--gc-link));
 
-  --gc-accent: var(--vscode-button-background, var(--vscode-textLink-foreground));
-  --gc-accent-hover: var(--vscode-button-hoverBackground, var(--gc-accent));
+  --gc-accent: var(--vscode-focusBorder, var(--vscode-textLink-foreground));
   --gc-link: var(--vscode-textLink-foreground);
+  --gc-link-active: var(--vscode-textLink-activeForeground, var(--gc-link));
+  --gc-accent-hover: var(--gc-link-active);
+  --gc-button-primary: var(--vscode-button-background);
+  --gc-button-primary-hover: var(--vscode-button-hoverBackground, var(--gc-button-primary));
+  --gc-button-secondary: var(--vscode-button-secondaryBackground, var(--gc-surface-muted));
+  --gc-button-secondary-hover: var(--vscode-button-secondaryHoverBackground, var(--gc-surface-hover));
+
   --gc-success: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
   --gc-warning: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
   --gc-danger: var(--vscode-errorForeground, var(--vscode-testing-iconFailed));
-  --gc-info: var(--vscode-charts-blue, var(--gc-link));
+  --gc-info: var(--gc-accent);
+  --gc-success-bg: color-mix(in srgb, var(--gc-success) 14%, var(--gc-surface-raised));
+  --gc-warning-bg: color-mix(in srgb, var(--gc-warning) 14%, var(--gc-surface-raised));
+  --gc-danger-bg: color-mix(in srgb, var(--gc-danger) 14%, var(--gc-surface-raised));
+  --gc-info-bg: color-mix(in srgb, var(--gc-info) 14%, var(--gc-surface-raised));
+  --gc-success-border: color-mix(in srgb, var(--gc-success) 45%, var(--gc-border-control));
+  --gc-warning-border: color-mix(in srgb, var(--gc-warning) 45%, var(--gc-border-control));
+  --gc-danger-border: color-mix(in srgb, var(--gc-danger) 45%, var(--gc-border-control));
+  --gc-info-border: color-mix(in srgb, var(--gc-info) 45%, var(--gc-border-control));
+
+  --gc-badge-bg: var(--gc-surface-hover);
+  --gc-badge-fg: var(--gc-text-primary);
+  --gc-code-bg: var(--gc-surface-sunken);
+  --gc-quote-bg: color-mix(in srgb, var(--gc-text-primary) 4%, var(--gc-surface-base));
+  --gc-quote-border: var(--gc-border-strong);
+  --gc-highlight-bg: color-mix(in srgb, var(--gc-warning) 30%, transparent);
+  --gc-git-added: var(--gc-success);
+  --gc-git-deleted: var(--gc-danger);
+  --gc-chart-blue: var(--gc-accent);
+  --gc-chart-green: var(--gc-success);
+  --gc-chart-yellow: var(--gc-warning);
+  --gc-chart-red: var(--gc-danger);
+  --gc-chart-orange: color-mix(in srgb, var(--gc-warning) 55%, var(--gc-danger));
+  --gc-chart-purple: color-mix(in srgb, var(--gc-accent) 55%, var(--gc-danger));
+  --gc-scrollbar: var(--vscode-scrollbarSlider-background, color-mix(in srgb, var(--gc-text-muted) 30%, transparent));
+  --gc-scrollbar-hover: var(--vscode-scrollbarSlider-hoverBackground, color-mix(in srgb, var(--gc-text-muted) 50%, transparent));
+
+  /* 代码配色：平台写入品牌代码色板；以下仅为旧宿主默认值。 */
+  --gc-syntax-keyword: var(--gc-accent);
+  --gc-syntax-string: var(--gc-success);
+  --gc-syntax-number: var(--gc-warning);
+  --gc-syntax-constant: var(--gc-warning);
+  --gc-syntax-function: var(--gc-link);
+  --gc-syntax-type: var(--gc-warning);
+  --gc-syntax-comment: var(--gc-text-muted);
+  --gc-syntax-variable: var(--gc-text-primary);
+  --gc-syntax-property: var(--gc-text-primary);
+  --gc-syntax-tag: var(--gc-danger);
+  --gc-syntax-attribute: var(--gc-warning);
+  --gc-syntax-regexp: var(--gc-danger);
+  --gc-syntax-operator: var(--gc-text-muted);
+
+  --gc-font-ui: var(--vscode-font-family, system-ui, sans-serif);
+  --gc-font-text: var(--gc-font-ui);
+  --gc-font-code: var(--vscode-editor-font-family, monospace);
+  --gc-font-size-ui: var(--vscode-font-size, 13px);
+  --gc-font-size-code: var(--vscode-editor-font-size, 13px);
 
   --gc-shadow-sm: 0 2px 8px color-mix(in srgb, #000 22%, transparent);
   --gc-shadow-md: 0 6px 20px color-mix(in srgb, #000 32%, transparent);
@@ -104,5 +171,7 @@
     --gc-focus-border: Highlight;
     --gc-accent: Highlight;
     --gc-text-on-accent: HighlightText;
+    --gc-button-primary: ButtonText;
+    --gc-text-on-primary: ButtonFace;
   }
 }

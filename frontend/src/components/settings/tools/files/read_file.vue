@@ -119,7 +119,7 @@ onMounted(() => {
 <style scoped>
 .file-access-config {
   padding: 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--gc-surface-muted);
   border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
@@ -136,12 +136,12 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .section-header .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-chart-yellow);
 }
 
 .section-content {
@@ -162,20 +162,20 @@ onMounted(() => {
   gap: 4px;
   padding: 10px;
   text-align: left;
-  border: 1px solid var(--vscode-input-border);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-input-background);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
   cursor: pointer;
 }
 
 .option-card:hover:not(:disabled) {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .option-card.active {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-activeSelectionBackground);
+  border-color: var(--gc-focus-border);
+  background: var(--gc-surface-selected);
 }
 
 .option-card:disabled {
@@ -191,7 +191,7 @@ onMounted(() => {
 .option-desc {
   font-size: 11px;
   line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .config-tip,
@@ -201,6 +201,6 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 </style>

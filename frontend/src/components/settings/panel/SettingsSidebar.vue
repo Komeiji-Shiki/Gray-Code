@@ -74,7 +74,6 @@ defineEmits<{
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  border-right: 1px solid var(--gc-border-subtle);
   padding: var(--gc-space-2) var(--gc-space-1);
   display: flex;
   flex-direction: column;
@@ -115,8 +114,8 @@ defineEmits<{
   padding: 0 var(--gc-space-3);
   background: transparent;
   border: none;
-  border-radius: 0;
-  color: var(--gc-text-primary);
+  border-radius: var(--gc-radius-sm);
+  color: var(--gc-text-muted);
   cursor: pointer;
   transition:
     background-color var(--gc-duration-fast) var(--gc-ease-standard),
@@ -125,6 +124,7 @@ defineEmits<{
 
 .settings-tab:hover {
   background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .settings-tab:focus-visible {
@@ -150,9 +150,9 @@ defineEmits<{
   transform: translateY(-50%);
   margin-left: 8px;
   padding: 4px 8px;
-  background: var(--vscode-editorWidget-background);
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--gc-surface-raised);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
   white-space: nowrap;
@@ -179,9 +179,11 @@ defineEmits<{
   visibility: visible;
 }
 
+/* 与导航侧栏一致：浅底加左侧强调条，不再用大块饱和色。 */
 .settings-tab.active {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
+  box-shadow: inset 2px 0 0 var(--gc-accent);
 }
 
 .settings-tab .codicon {
@@ -190,11 +192,11 @@ defineEmits<{
 
 /* 搜索生效时侧边栏：命中页签高亮，未命中置灰 */
 .settings-tab.has-match {
-  color: var(--vscode-textLink-foreground, #3794ff);
+  color: var(--gc-link);
 }
 
 .settings-tab.has-match.active {
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+  color: var(--gc-text-primary);
 }
 
 .settings-tab.dimmed {

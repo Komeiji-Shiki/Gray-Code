@@ -3,7 +3,7 @@
   flex-direction: column;
   gap: 16px;
 }
-.channel-load-error { padding: 12px; border: 1px solid var(--vscode-inputValidation-errorBorder); color: var(--vscode-errorForeground); }
+.channel-load-error { padding: 12px; border: 1px solid var(--gc-danger-border); color: var(--gc-danger); }
 .channel-load-error p { margin: 0 0 10px; overflow-wrap: anywhere; }
 
 /* 无渠道空态 */
@@ -14,32 +14,31 @@
   gap: 8px;
   padding: 48px 24px;
   text-align: center;
-  border: 1px dashed var(--vscode-panel-border);
-  border-radius: 0;
+  border: 1px dashed var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
 }
 
 .channel-empty-icon {
   font-size: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .config-empty-text {
   margin: 0;
   font-size: 14px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .config-empty-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 表单 */
 .config-form {
   padding-top: 8px;
-  border-top: 1px solid var(--vscode-panel-border);
 }
 
 .btn {
@@ -51,10 +50,10 @@
 }
 
 .btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .btn.primary:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }

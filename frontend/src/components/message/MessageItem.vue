@@ -320,14 +320,9 @@ function handleRestoreAndRetry(checkpointId: string) {
   flex-direction: column;
   gap: var(--gc-space-1);
   padding: var(--gc-space-2) var(--gc-space-4);
-  border-bottom: 1px solid color-mix(in srgb, var(--gc-border-subtle) 65%, transparent);
   transition: background-color var(--transition-fast, 0.1s);
   /* 性能优化：布局隔离 */
   contain: layout;
-}
-
-.message-item:last-child:not(.user-message) {
-  border-bottom: none;
 }
 
 /* 所有消息统一靠左 */
@@ -339,11 +334,12 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* 用户消息使用轻量卡片，助手正文保留完整阅读宽度。 */
 .user-message {
-  margin: var(--gc-space-2) var(--gc-space-3);
-  margin-bottom: var(--gc-space-1);
+  width: fit-content;
+  min-width: min(280px, 100%);
+  max-width: min(85%, 760px);
+  margin: var(--gc-space-3) var(--gc-space-4) var(--gc-space-2) auto;
   padding: var(--gc-space-2) var(--gc-space-3);
-  background-color: color-mix(in srgb, var(--gc-link) 6%, var(--gc-surface-base));
-  border: 1px solid color-mix(in srgb, var(--gc-link) 18%, var(--gc-border-subtle));
+  background: var(--gc-surface-raised);
   border-radius: var(--gc-radius-md);
 }
 
@@ -362,13 +358,9 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .role-label {
-  font-size: var(--gc-font-size-body);
-  font-weight: var(--gc-font-weight-semibold);
-  color: var(--gc-text-primary);
-}
-
-.user-message .role-label {
-  color: var(--vscode-foreground);
+  font-size: var(--gc-font-size-caption);
+  font-weight: var(--gc-font-weight-medium);
+  color: var(--gc-text-muted);
 }
 
 /* 用户正文和时间之间只保留短间距，与标签到正文的距离一致。 */
@@ -377,7 +369,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .assistant-message .role-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .assistant-message {
@@ -393,9 +385,29 @@ function handleRestoreAndRetry(checkpointId: string) {
   user-select: none;
 }
 
+/*
+ * 楼层号只在需要定位时出现：悬停、键盘聚焦或最后一条消息。最后一条之后可能还跟着
+ * 检查点等元素，按“后面没有其他消息”判断，而不是 :last-child。
+ */
+.message-floor {
+  opacity: 0;
+  transition: opacity var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+.message-item:hover .message-floor,
+.message-item:focus-within .message-floor,
+.message-item:not(:has(~ .message-item)) .message-floor {
+  opacity: 1;
+}
+
+/* 统计信息保留占位，避免悬停时正文跳动。 */
+.message-item:not(:hover):not(:focus-within):has(~ .message-item) :deep(.message-footer) {
+  opacity: 0;
+}
+
 /* 工具消息标签 */
 .message-item[class*="tool"] .role-label {
-  color: var(--vscode-charts-blue);
+  color: var(--gc-chart-blue);
 }
 
 .message-body {
@@ -404,8 +416,8 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* 总结消息样式 */
 .summary-message {
-  background: var(--vscode-textBlockQuote-background);
-  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--gc-quote-bg);
+  border-left: 3px solid var(--gc-link);
 }
 
 /* 后台任务回流卡片 */

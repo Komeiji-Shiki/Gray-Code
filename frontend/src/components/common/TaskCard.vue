@@ -119,16 +119,16 @@ const statusClass = computed(() => {
   flex-direction: column;
   gap: 8px;
   padding: 10px 10px 8px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
-.task-card.is-success { border-left: 3px solid var(--vscode-testing-iconPassed); }
-.task-card.is-error { border-left: 3px solid var(--vscode-testing-iconFailed); }
-.task-card.is-running { border-left: 3px solid var(--vscode-charts-blue); }
-.task-card.is-pending { border-left: 3px solid var(--vscode-charts-orange); }
+.task-card.is-success { border-left: 3px solid var(--gc-success); }
+.task-card.is-error { border-left: 3px solid var(--gc-danger); }
+.task-card.is-running { border-left: 3px solid var(--gc-chart-blue); }
+.task-card.is-pending { border-left: 3px solid var(--gc-chart-orange); }
 
 .card-header {
   display: flex;
@@ -159,7 +159,7 @@ const statusClass = computed(() => {
 
 .header-icon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.9;
   flex-shrink: 0;
 }
@@ -172,7 +172,7 @@ const statusClass = computed(() => {
 .header-title {
   font-size: 12px;
   font-weight: 700;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -180,7 +180,7 @@ const statusClass = computed(() => {
 
 .header-subtitle {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -196,17 +196,17 @@ const statusClass = computed(() => {
 
 .status-icon {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
-.task-card.is-success .status-icon { color: var(--vscode-testing-iconPassed); }
-.task-card.is-error .status-icon { color: var(--vscode-testing-iconFailed); }
-.task-card.is-running .status-icon { color: var(--vscode-charts-blue); }
-.task-card.is-pending .status-icon { color: var(--vscode-charts-orange); }
+.task-card.is-success .status-icon { color: var(--gc-success); }
+.task-card.is-error .status-icon { color: var(--gc-danger); }
+.task-card.is-running .status-icon { color: var(--gc-chart-blue); }
+.task-card.is-pending .status-icon { color: var(--gc-chart-orange); }
 
 .chevron {
   font-size: 14px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.9;
 }
 
@@ -220,14 +220,14 @@ const statusClass = computed(() => {
   font-size: 10px;
   padding: 2px 8px;
   border-radius: var(--gc-radius-pill);
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--gc-badge-bg);
+  color: var(--gc-badge-fg);
   white-space: nowrap;
 }
 
 .preview {
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
@@ -238,10 +238,10 @@ const statusClass = computed(() => {
 
 .preview-text {
   margin: 0;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -255,14 +255,14 @@ const statusClass = computed(() => {
   align-items: center;
   gap: 8px;
   padding-top: 2px;
-  border-top: 1px dashed var(--vscode-panel-border);
+  border-top: 1px dashed var(--gc-border-subtle);
   margin-top: 2px;
 }
 
 .footer-spacer { flex: 1; }
 .footer-right {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   white-space: nowrap;
 }
 

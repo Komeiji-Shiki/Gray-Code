@@ -373,16 +373,16 @@ const emit = defineEmits<{
 .form-group label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .form-group input[type="text"],
 .form-group input[type="password"],
 .form-group input[type="number"] {
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 13px;
 }
@@ -402,7 +402,7 @@ const emit = defineEmits<{
 
 .form-group input:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 /* 带操作按钮的输入框 */
@@ -421,15 +421,15 @@ const emit = defineEmits<{
   justify-content: center;
   width: 28px;
   padding: 0;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   cursor: pointer;
 }
 
 .input-action-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 /* 自定义勾选框 */
@@ -464,19 +464,19 @@ const emit = defineEmits<{
   transform: translateY(-50%);
   height: 16px;
   width: 16px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   transition: all 0.15s;
 }
 
 .custom-checkbox:hover .checkmark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .custom-checkbox input:checked ~ .checkmark {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .custom-checkbox .checkmark::after {
@@ -487,7 +487,7 @@ const emit = defineEmits<{
   top: 2px;
   width: 4px;
   height: 8px;
-  border: solid var(--vscode-button-foreground);
+  border: solid var(--gc-text-on-primary);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -503,7 +503,7 @@ const emit = defineEmits<{
 /* 字段提示文字 */
 .field-hint {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.5;
   opacity: 0.8;
 }
@@ -528,14 +528,14 @@ const emit = defineEmits<{
   margin-left: 26px;
   margin-top: 8px;
   padding: 10px 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
 }
 
 .multimodal-support-info .support-header {
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   margin-bottom: 6px;
 }
 
@@ -551,12 +551,12 @@ const emit = defineEmits<{
 }
 
 .multimodal-support-info .type-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   min-width: 40px;
 }
 
 .multimodal-support-info .type-formats {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 渠道支持表格 */
@@ -568,7 +568,7 @@ const emit = defineEmits<{
 }
 
 .channel-support-table.detailed {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
@@ -582,13 +582,13 @@ const emit = defineEmits<{
 }
 
 .channel-support-table.detailed .channel-row {
-  border-radius: 0;
+  border-radius: var(--gc-radius-md);
 }
 
 .channel-row.header-row {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.8;
 }
 
@@ -605,15 +605,15 @@ const emit = defineEmits<{
 }
 
 .channel-feature.support-yes {
-  color: var(--vscode-charts-green, #89d185);
+  color: var(--gc-chart-green);
 }
 
 .channel-feature.support-no {
-  color: var(--vscode-errorForeground, #f48771);
+  color: var(--gc-danger);
 }
 
 .channel-feature.support-partial {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 /* 图例 */
@@ -635,7 +635,7 @@ const emit = defineEmits<{
 }
 
 .legend-text {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 支持说明 */
@@ -653,26 +653,26 @@ const emit = defineEmits<{
 }
 
 .note-item.warning {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .note-icon {
   font-size: 14px;
   flex-shrink: 0;
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--gc-chart-blue);
 }
 
 .note-item.warning .note-icon {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 .note-text {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   line-height: 1.4;
 }
 
 .note-item.warning .note-text {
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
 }
 
 /* 工具模式警告 */
@@ -683,10 +683,10 @@ const emit = defineEmits<{
   margin-top: 8px;
   padding: 8px 10px;
   background: rgba(221, 185, 47, 0.1);
-  border: 1px solid var(--vscode-charts-yellow, #ddb92f);
+  border: 1px solid var(--gc-chart-yellow);
   border-radius: var(--gc-radius-sm);
   font-size: 11px;
-  color: var(--vscode-charts-yellow, #ddb92f);
+  color: var(--gc-chart-yellow);
   line-height: 1.5;
 }
 
@@ -705,10 +705,10 @@ const emit = defineEmits<{
 }
 
 .note-item.highlight .note-icon {
-  color: var(--vscode-button-background, #007acc);
+  color: var(--gc-button-primary);
 }
 
 .note-item.highlight .note-text {
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 </style>

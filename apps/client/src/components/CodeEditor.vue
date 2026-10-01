@@ -4,8 +4,8 @@ import type { LanguageDocumentStatus } from '@graycode/contracts';
 import * as monaco from '../monaco';
 import { appearance, report } from "../state";
 import { ensureEditorLanguage } from '../editorLanguages';
-import { resolvedTheme } from '../appearance';
-import { installWorkbenchTheme, workbenchEditorTheme } from "../editorAppearance";
+import { appearancePalette, resolvedTheme } from '../appearance';
+import { applyWorkbenchTheme, WORKBENCH_THEME } from "../editorAppearance";
 import { bindLanguageDocument, editorUri } from "../languages";
 import { bindEditorUndo, workspaceEditorServices } from '../editorWorkspaceEdits';
 import { bindEditorDebugging } from '../editorDebugging';
@@ -44,7 +44,7 @@ function options() {
       (appearance.value?.codeFontSize ?? 14) *
         (appearance.value?.lineHeight ?? 1.6),
     ),
-    theme: workbenchEditorTheme(resolvedTheme.value),
+    theme: WORKBENCH_THEME,
   };
 }
 onMounted(() => {
@@ -61,8 +61,7 @@ onMounted(() => {
     ...options(),
     theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
   }, workspaceEditorServices);
-  installWorkbenchTheme();
-  monaco.editor.setTheme(workbenchEditorTheme(resolvedTheme.value));
+  applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light');
   const initial = editor.getModel();
   const uri = editorUri(props.workspaceId, props.path);
   const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(props.value, editorLanguageId(documentLanguageId(props.path)), uri);
@@ -104,7 +103,7 @@ watch(
 watch(() => props.version, () => language?.updateMarkers());
 watch(() => props.selection, selection => { if (selection && editor) { editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus(); } });
 watch(appearance, () => editor?.updateOptions(options()), { deep: true });
-watch(resolvedTheme, value => { if (editor) monaco.editor.setTheme(workbenchEditorTheme(value)); });
+watch([appearancePalette, resolvedTheme], () => { if (editor) applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light'); });
 onUnmounted(() => {
   debugBinding?.dispose();
   undoBinding?.dispose();
@@ -133,7 +132,7 @@ onUnmounted(() => {
 <style scoped>
 .code-editor-shell{height:100%;min-height:0;display:flex;flex-direction:column}.code-editor-canvas{flex:1;min-height:0}
 :deep(.debug-breakpoint),:deep(.debug-breakpoint-disabled),:deep(.debug-breakpoint-pending),:deep(.debug-logpoint){width:10px!important;height:10px!important;margin:6px 0 0 6px;background:#e56b6b;clip-path:circle(50%)}:deep(.debug-breakpoint-disabled){background:#777}:deep(.debug-breakpoint-pending){background:transparent;border:2px solid #e56b6b}:deep(.debug-logpoint){clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:#e7b864}:deep(.debug-execution-line){background:#dbc34f20}:deep(.debug-execution-arrow){background:#e1c250;clip-path:polygon(15% 15%,85% 50%,15% 85%);width:12px!important}
-.editor-status{display:flex;align-items:center;gap:10px;min-height:28px;padding:2px 9px;border-top:1px solid var(--border);background:var(--panel);color:var(--muted);font-size:11px;flex-shrink:0}
-.editor-status button{border:0;border-radius:0;background:transparent;color:inherit;padding:3px 0;font:inherit;cursor:pointer;white-space:nowrap}.editor-status button:hover{color:var(--text)}.editor-language{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.editor-cursor{white-space:nowrap}.editor-status .errors{color:var(--danger,#f08080)}
+.editor-status{display:flex;align-items:center;gap:10px;min-height:28px;padding:2px 9px;background:var(--gc-surface-raised);color:var(--gc-text-muted);font-size:11px;flex-shrink:0}
+.editor-status button{border:0;border-radius:var(--gc-radius-sm);background:transparent;color:inherit;padding:3px 0;font:inherit;cursor:pointer;white-space:nowrap}.editor-status button:hover{color:var(--gc-text-primary)}.editor-language{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.editor-cursor{white-space:nowrap}.editor-status .errors{color:var(--gc-danger)}
 @media(max-width:850px){.editor-status{flex-wrap:wrap;gap:3px 10px}.editor-language{min-width:100px}.editor-cursor{margin-left:auto}}
 </style>

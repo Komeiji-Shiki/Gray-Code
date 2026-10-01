@@ -79,11 +79,11 @@ function hide() {
   z-index: var(--gc-layer-popover);
   max-width: 360px;
   padding: 6px 10px;
-  background: var(--vscode-editorHoverWidget-background, var(--gc-surface-raised));
-  border: 1px solid var(--vscode-editorHoverWidget-border, var(--gc-border-strong));
+  background: var(--gc-surface-overlay);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
-  color: var(--vscode-editorHoverWidget-foreground, var(--gc-text-primary));
+  color: var(--gc-text-primary);
   white-space: nowrap;
   box-shadow: var(--gc-shadow-sm);
   pointer-events: none;
@@ -107,8 +107,8 @@ function hide() {
   position: absolute;
   width: 8px;
   height: 8px;
-  background: var(--vscode-editorHoverWidget-background);
-  border: 1px solid var(--vscode-editorHoverWidget-border);
+  background: var(--gc-surface-overlay);
+  border: 1px solid var(--gc-border-subtle);
   transform: rotate(45deg);
 }
 

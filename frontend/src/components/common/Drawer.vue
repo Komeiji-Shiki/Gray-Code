@@ -143,8 +143,8 @@ onUnmounted(() => {
   position: fixed;
   top: 0;
   bottom: 0;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
   display: flex;
   flex-direction: column;
 }
@@ -164,7 +164,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-md, 16px) var(--spacing-lg, 20px);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
@@ -172,7 +172,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -185,7 +185,7 @@ onUnmounted(() => {
   height: 24px;
   border: none;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-size: 16px;
   cursor: pointer;
   opacity: 0.7;
@@ -204,7 +204,7 @@ onUnmounted(() => {
 
 .drawer-footer {
   padding: var(--spacing-md, 16px) var(--spacing-lg, 20px);
-  border-top: 1px solid var(--vscode-panel-border);
+  border-top: 1px solid var(--gc-border-subtle);
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm, 8px);

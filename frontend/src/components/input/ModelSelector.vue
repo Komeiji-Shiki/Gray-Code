@@ -102,7 +102,7 @@ function handleKeydown(event: KeyboardEvent) {
       :title="getModelDisplayTitle(selectedModel)"
     >
       <span class="model-id" :title="getModelDisplayTitle(selectedModel)">{{ modelValue || t('components.input.modelSelector.placeholder') }}</span>
-            <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
+            <i :class="['codicon codicon-chevron-down select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true"></i>
     </button>
 
     <Transition name="dropdown">
@@ -172,8 +172,8 @@ function handleKeydown(event: KeyboardEvent) {
   justify-content: space-between;
   width: 100%;
   padding: 4px 8px;
-  background: var(--vscode-input-background, var(--gc-surface-base));
-  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
   border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
@@ -200,7 +200,7 @@ function handleKeydown(event: KeyboardEvent) {
 
 .select-arrow {
   flex-shrink: 0;
-  font-size: 8px;
+  font-size: var(--gc-font-size-body);
   margin-left: 6px;
   transition: transform 0.15s;
 }
@@ -216,8 +216,8 @@ function handleKeydown(event: KeyboardEvent) {
   width: 180px;
   min-width: 180px;
   margin-bottom: 4px;
-  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
-  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   box-shadow: var(--gc-shadow-md);
   z-index: var(--gc-layer-popover);
@@ -228,7 +228,7 @@ function handleKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--vscode-dropdown-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   min-width: 0;
   overflow: hidden;
 }
@@ -238,17 +238,17 @@ function handleKeydown(event: KeyboardEvent) {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   padding: 4px 8px;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 12px;
   outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .models-list {
@@ -266,12 +266,12 @@ function handleKeydown(event: KeyboardEvent) {
 
 .model-item:hover,
 .model-item.highlighted {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .model-item.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--gc-surface-selected);
+  color: var(--gc-text-selected);
 }
 
 .model-content {
@@ -291,14 +291,14 @@ function handleKeydown(event: KeyboardEvent) {
 
 .model-id-hint {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .model-item.selected .model-id-hint {
-  color: var(--vscode-list-activeSelectionForeground);
+  color: var(--gc-text-selected);
   opacity: 0.7;
 }
 
@@ -313,7 +313,7 @@ function handleKeydown(event: KeyboardEvent) {
   padding: 12px 8px;
   text-align: center;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .dropdown-enter-active,

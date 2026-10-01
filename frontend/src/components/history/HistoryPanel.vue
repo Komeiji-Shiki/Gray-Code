@@ -77,7 +77,7 @@ function handleNewChat() {
 
 .panel-header {
   padding: var(--spacing-md, 16px);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
@@ -88,8 +88,8 @@ function handleNewChat() {
   gap: var(--spacing-sm, 8px);
   width: 100%;
   padding: var(--spacing-sm, 8px) var(--spacing-md, 16px);
-  background: var(--vscode-foreground);
-  color: var(--vscode-editor-background);
+  background: var(--gc-text-primary);
+  color: var(--gc-surface-base);
   border: none;
   border-radius: var(--radius-sm, 2px);
   font-size: 12px;

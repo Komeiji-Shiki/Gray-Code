@@ -139,9 +139,9 @@ async function handleCopy() {
   margin: 0;
   padding: 12px;
   border-radius: var(--gc-radius-sm);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   background: rgba(0, 0, 0, 0.15);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -161,20 +161,20 @@ async function handleCopy() {
 
 .dialog-btn.cancel {
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-subtle);
 }
 
 .dialog-btn.cancel:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .dialog-btn.confirm {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
 }
 
 .dialog-btn.confirm:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 </style>

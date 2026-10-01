@@ -95,8 +95,8 @@ const emit = defineEmits<{
   gap: 6px;
   width: 100%;
   padding: 8px 10px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
@@ -105,7 +105,7 @@ const emit = defineEmits<{
 }
 
 .advanced-toggle:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .advanced-toggle .codicon {
@@ -119,7 +119,7 @@ const emit = defineEmits<{
 .custom-panel-wrapper {
   margin-top: 12px;
   padding: 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-xs);
 }
 
@@ -132,15 +132,15 @@ const emit = defineEmits<{
 .option-item label {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.9;
 }
 
 .option-item input[type="number"] {
   padding: 5px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  color: var(--gc-text-primary);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-xs);
   font-size: 12px;
   appearance: textfield;
@@ -157,12 +157,12 @@ const emit = defineEmits<{
 
 .option-item input[type="number"]:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .option-hint {
   font-size: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.8;
 }
 
@@ -180,7 +180,7 @@ const emit = defineEmits<{
 .option-header label:first-child {
   font-size: 11px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   opacity: 0.9;
 }
 
@@ -204,8 +204,8 @@ const emit = defineEmits<{
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background-color: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-md);
   transition: all 0.2s;
 }
@@ -217,25 +217,25 @@ const emit = defineEmits<{
   width: 10px;
   left: 2px;
   bottom: 2px;
-  background-color: var(--vscode-foreground);
+  background-color: var(--gc-text-primary);
   opacity: 0.6;
   border-radius: var(--gc-radius-xs);
   transition: all 0.2s;
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background-color: var(--gc-button-primary);
+  border-color: var(--gc-button-primary);
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
   transform: translateX(16px);
-  background-color: var(--vscode-button-foreground);
+  background-color: var(--gc-text-on-primary);
   opacity: 1;
 }
 
 .toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 /* 禁用状态的输入框 */

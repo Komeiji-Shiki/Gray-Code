@@ -1,6 +1,22 @@
 import { createApp, defineComponent, h, ref } from "vue";
+import type { AppearanceSettings } from "../../../packages/contracts/src/settings";
+import { applyAppearanceVariables } from "../../../shared/appearanceTokens";
 import { call, subscribe } from "./api";
+// 启动默认值来自外壳 base.css；读取到设置后与外壳、聊天使用同一色板。
+import "../../../frontend/src/styles/tokens.css";
+import "./styles/base.css";
 import "./browser.css";
+
+const applyAppearance = (appearance?: AppearanceSettings) => {
+  if (appearance) applyAppearanceVariables(document.documentElement, appearance, matchMedia("(prefers-color-scheme: light)").matches);
+};
+const loadAppearance = () => call("settings.get").then((snapshot: { settings?: { appearance?: AppearanceSettings } }) => applyAppearance(snapshot?.settings?.appearance), () => undefined);
+void loadAppearance();
+subscribe((event) => {
+  if (event.type === "settings.changed") void loadAppearance();
+  if (event.type === "ui.message" && (event as { message?: { command?: string; data?: AppearanceSettings } }).message?.command === "platform.appearance")
+    applyAppearance((event as { message?: { data?: AppearanceSettings } }).message?.data);
+});
 createApp(
   defineComponent({
     setup() {

@@ -13,5 +13,5 @@ const open = ref(false)
   </details>
 </template>
 <style scoped>
-.tool-receipt-details{border-top:1px solid var(--vscode-panel-border);padding:8px 0;color:var(--vscode-descriptionForeground);font-size:11px}.tool-receipt-details>summary{cursor:pointer}.tool-receipt-details[open]>summary{margin-bottom:8px}summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:3px}
+.tool-receipt-details{border-top:1px solid var(--gc-border-subtle);padding:8px 0;color:var(--gc-text-muted);font-size:11px}.tool-receipt-details>summary{cursor:pointer}.tool-receipt-details[open]>summary{margin-bottom:8px}summary:focus-visible{outline:1px solid var(--gc-focus-border);outline-offset:3px}
 </style>

@@ -368,13 +368,13 @@ defineEmits<{
 
 .group-title .codicon {
   font-size: 14px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .setting-description {
   margin: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* Loading 动画 */
@@ -393,14 +393,14 @@ defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
   margin-top: 8px;
 }
 
 .search-box .codicon-search {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -408,13 +408,13 @@ defineEmits<{
   flex: 1;
   border: none;
   background: transparent;
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 13px;
   outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .clear-search {
@@ -426,23 +426,23 @@ defineEmits<{
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   border-radius: var(--gc-radius-sm);
 }
 
 .clear-search:hover {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 /* 对话列表容器 */
 .conversations-list-wrapper {
   margin-top: 12px;
   height: 300px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editor-background);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-surface-raised);
   overflow: hidden;
 }
 
@@ -460,7 +460,7 @@ defineEmits<{
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 13px;
 }
 
@@ -475,7 +475,7 @@ defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .conversation-item:last-child {
@@ -483,15 +483,15 @@ defineEmits<{
 }
 
 .conversation-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .conversation-item.expanded {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .conversation-item.expanded:last-child {
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 /* 列表表头（全选） */
@@ -500,13 +500,13 @@ defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-sideBarSectionHeader-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
   font-size: 12px;
 }
 
 .header-label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* 批量操作栏 */
@@ -517,13 +517,13 @@ defineEmits<{
   gap: 8px;
   margin-top: 12px;
   padding: 8px 12px;
-  background: var(--vscode-textBlockQuote-background);
+  background: var(--gc-quote-bg);
   border-radius: var(--gc-radius-sm);
 }
 
 .batch-info {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -536,9 +536,9 @@ defineEmits<{
   align-items: center;
   gap: 4px;
   padding: 5px 12px;
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-inputValidation-errorForeground);
+  border: 1px solid var(--gc-danger-border);
+  background: var(--gc-danger-bg);
+  color: var(--gc-danger);
   font-size: 12px;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
@@ -566,24 +566,24 @@ defineEmits<{
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
 }
 
 .expand-btn:hover {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 /* 展开的存档点列表 */
 .checkpoint-sub-list {
   flex-basis: 100%;
   margin: 4px 0 4px 26px;
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   overflow: hidden;
 }
 
@@ -594,7 +594,7 @@ defineEmits<{
   justify-content: center;
   gap: 8px;
   padding: 16px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   font-size: 12px;
 }
 
@@ -603,15 +603,15 @@ defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-sideBarSectionHeader-background);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-muted);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .sub-header-info {
   flex: 1;
   min-width: 0;
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -622,7 +622,7 @@ defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .checkpoint-item:last-child {
@@ -630,7 +630,7 @@ defineEmits<{
 }
 
 .checkpoint-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .checkpoint-info {
@@ -656,19 +656,19 @@ defineEmits<{
 }
 
 .cp-phase.before {
-  background: var(--vscode-editorWarning-background);
-  color: var(--vscode-editorWarning-foreground);
+  background: var(--gc-warning-bg);
+  color: var(--gc-warning);
 }
 
 .cp-phase.after {
-  background: var(--vscode-editorInfo-background);
-  color: var(--vscode-editorInfo-foreground);
+  background: var(--gc-info-bg);
+  color: var(--gc-info);
 }
 
 .cp-tool {
   font-size: 12px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -678,8 +678,8 @@ defineEmits<{
   font-size: 10px;
   padding: 1px 5px;
   border-radius: var(--gc-radius-xs);
-  border: 1px solid var(--vscode-panel-border);
-  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--gc-border-subtle);
+  color: var(--gc-text-muted);
   flex-shrink: 0;
 }
 
@@ -688,16 +688,16 @@ defineEmits<{
   align-items: center;
   gap: 10px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .cp-size {
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 .cp-unbacked {
-  color: var(--vscode-editorWarning-foreground);
+  color: var(--gc-warning);
   cursor: help;
 }
 
@@ -712,7 +712,7 @@ defineEmits<{
 .conversation-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,7 +723,7 @@ defineEmits<{
   align-items: center;
   gap: 12px;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .conversation-meta .codicon {
@@ -754,15 +754,15 @@ defineEmits<{
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   border-radius: var(--gc-radius-sm);
   flex-shrink: 0;
 }
 
 .delete-btn:hover:not(:disabled) {
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-inputValidation-errorForeground);
+  background: var(--gc-danger-bg);
+  color: var(--gc-danger);
 }
 
 .delete-btn:disabled {
@@ -776,9 +776,9 @@ defineEmits<{
   gap: 8px;
   padding: 8px 12px;
   margin-bottom: 10px;
-  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-inputValidation-errorBorder));
-  background: var(--vscode-inputValidation-warningBackground, var(--vscode-inputValidation-errorBackground));
-  color: var(--vscode-inputValidation-warningForeground, var(--vscode-inputValidation-errorForeground));
+  border: 1px solid var(--gc-warning-border);
+  background: var(--gc-warning-bg);
+  color: var(--gc-warning);
   font-size: 12px;
   border-radius: var(--gc-radius-sm);
 }
@@ -806,14 +806,14 @@ defineEmits<{
   gap: 8px;
   padding: 8px 12px;
   margin-bottom: 10px;
-  border: 1px solid var(--vscode-inputValidation-infoBorder, var(--vscode-focusBorder));
-  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  border: 1px solid var(--gc-info-border);
+  background: var(--gc-surface-raised);
   border-radius: var(--gc-radius-sm);
   font-size: 12px;
 }
 
 .operation-progress .codicon-loading {
-  color: var(--vscode-progressBar-background);
+  color: var(--gc-accent);
 }
 
 .op-label {
@@ -829,8 +829,8 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   border: none;
   border-radius: var(--gc-radius-xs);
   padding: 3px 8px;
@@ -839,7 +839,7 @@ defineEmits<{
 }
 
 .op-cancel-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .op-cancel-btn:disabled {
@@ -861,16 +861,16 @@ defineEmits<{
   gap: 6px;
   padding: 8px 16px;
   margin-top: 12px;
-  border: 1px solid var(--vscode-button-secondaryBackground);
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--gc-button-secondary);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   font-size: 12px;
   border-radius: var(--gc-radius-sm);
   cursor: pointer;
 }
 
 .refresh-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .refresh-btn:disabled {
@@ -881,7 +881,7 @@ defineEmits<{
 /* M4: 操作进度陈旧提示 */
 .op-stale {
   font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 /* L-10: 操作取消失败提示 */
@@ -890,7 +890,7 @@ defineEmits<{
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--vscode-errorForeground, #f14c4c);
+  color: var(--gc-danger);
 }
 
 /* EX-11: 存档排除清单入口按钮 */
@@ -905,13 +905,13 @@ defineEmits<{
   border: none;
   border-radius: var(--gc-radius-xs);
   background: transparent;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   cursor: pointer;
   font-size: 13px;
 }
 
 .manifest-btn:hover {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 </style>

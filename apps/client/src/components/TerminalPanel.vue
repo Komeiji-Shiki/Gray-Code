@@ -6,7 +6,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { call, subscribe } from '../api';
 import { appearance, guard, state } from '../state';
-import { appearancePalette } from '../appearance';
+import { appearancePalette, resolvedTheme } from '../appearance';
+import { terminalThemeData } from '../editorTheme';
 import { useWorkspaceRoots } from '../workspaceRoots';
 const { roots, directory } = useWorkspaceRoots();
 const props = withDefaults(defineProps<{ compact?: boolean; visible?: boolean; sessionId?: string }>(), { compact: false, visible: true });
@@ -117,8 +118,7 @@ const unsubscribe = subscribe(event => {
 });
 onMounted(() => {
   terminal = new Terminal({ fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize ?? 14,
-    cursorBlink: true, theme: { background: appearancePalette.value.background, foreground: appearancePalette.value.text,
-      cursor: appearancePalette.value.accent, selectionBackground: appearancePalette.value.selection } });
+    cursorBlink: true, theme: terminalThemeData(appearancePalette.value, resolvedTheme.value === 'light') });
   fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(root.value!);
   terminal.onData(data => { if (!replaying) void guard(() => send(data)); });
   observer = new ResizeObserver(() => {
@@ -130,7 +130,7 @@ onMounted(() => {
 watch(() => props.sessionId, target => { if (target && terminal && target !== id.value) void guard(() => attach(target)); });
 watch(() => props.visible, async value => { if (value) { await nextTick(); fitTerminal(); } });
 watch(appearance, value => { if (terminal && value) { terminal.options.fontFamily = value.codeFont; terminal.options.fontSize = value.codeFontSize; fitTerminal(); } }, { deep: true });
-watch(appearancePalette, value => { if (terminal) terminal.options.theme = { background: value.background, foreground: value.text, cursor: value.accent, selectionBackground: value.selection }; });
+watch([appearancePalette, resolvedTheme], () => { if (terminal) terminal.options.theme = terminalThemeData(appearancePalette.value, resolvedTheme.value === 'light'); });
 onUnmounted(() => { disposed = true; attachedId.value = ''; pending = []; ++attachEpoch; ++listEpoch; unsubscribe(); observer?.disconnect(); if (fitFrame !== undefined) cancelAnimationFrame(fitFrame); terminal?.dispose(); terminal = undefined; });
 </script>
 <template>
@@ -156,5 +156,5 @@ onUnmounted(() => { disposed = true; attachedId.value = ''; pending = []; ++atta
   </div>
 </template>
 <style scoped>
-.terminal-controls{gap:6px;min-height:44px;height:auto;flex-shrink:0}.terminal-controls select{flex:1;min-width:0;padding:7px 4px;font-size:12px}.terminal-controls button{flex-shrink:0;padding:7px}.terminal-notice{padding:8px 12px;color:var(--muted);font-size:12px;line-height:1.6}.terminal-mobile-input{border-top:1px solid var(--border);padding:7px;flex-shrink:0}.terminal-keys{display:flex;gap:6px;margin-bottom:7px}.terminal-keys button{flex:1;min-height:36px;padding:5px}.terminal-mobile-input form{display:flex;gap:6px}.terminal-mobile-input input{flex:1;width:0;font:16px var(--code-font)}.terminal-mobile-input form button{flex-shrink:0}.compact-terminal .terminal-root{padding:8px 3px}.compact-terminal .terminal-controls{padding-inline:6px}
+.terminal-controls{gap:6px;min-height:44px;height:auto;flex-shrink:0}.terminal-controls select{flex:1;min-width:0;padding:7px 4px;font-size:12px}.terminal-controls button{flex-shrink:0;padding:7px}.terminal-notice{padding:8px 12px;color:var(--gc-text-muted);font-size:12px;line-height:1.6}.terminal-mobile-input{border-top:1px solid var(--gc-border-subtle);padding:7px;flex-shrink:0}.terminal-keys{display:flex;gap:6px;margin-bottom:7px}.terminal-keys button{flex:1;min-height:36px;padding:5px}.terminal-mobile-input form{display:flex;gap:6px}.terminal-mobile-input input{flex:1;width:0;font:16px var(--gc-font-code)}.terminal-mobile-input form button{flex-shrink:0}.compact-terminal .terminal-root{padding:8px 3px}.compact-terminal .terminal-controls{padding-inline:6px}
 </style>

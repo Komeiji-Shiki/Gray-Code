@@ -803,7 +803,7 @@ onMounted(async () => {
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .settings-content {
@@ -818,10 +818,10 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
   font-size: 12px;
   word-break: break-word;
 }
@@ -861,10 +861,10 @@ onMounted(async () => {
 .no-agents {
   flex: 1;
   padding: 8px 12px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: var(--gc-radius-sm);
-  color: var(--vscode-descriptionForeground);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
+  color: var(--gc-text-muted);
 }
 
 .agent-actions {
@@ -880,19 +880,19 @@ onMounted(async () => {
   height: 28px;
   border: none;
   border-radius: var(--gc-radius-sm);
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: var(--gc-button-secondary);
+  color: var(--gc-text-on-secondary);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .action-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  background: var(--gc-button-secondary-hover);
 }
 
 .action-btn.danger:hover {
-  background: var(--vscode-errorForeground);
-  color: var(--vscode-editor-background);
+  background: var(--gc-danger);
+  color: var(--gc-surface-base);
 }
 
 /* 配置区块 */
@@ -912,7 +912,7 @@ onMounted(async () => {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
 }
 
 /* 系统提示词编辑框 */
@@ -920,25 +920,25 @@ onMounted(async () => {
   width: 100%;
   min-height: 120px;
   padding: 12px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+  background: var(--gc-surface-input);
+  border: 1px solid var(--gc-border-control);
   border-radius: var(--gc-radius-sm);
-  color: var(--vscode-input-foreground);
+  color: var(--gc-text-primary);
   font-size: 13px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--gc-font-code), monospace;
   line-height: 1.5;
   resize: vertical;
   box-sizing: border-box;
 }
 
 .system-prompt-textarea::placeholder {
-  color: var(--vscode-input-placeholderForeground);
+  color: var(--gc-text-placeholder);
 }
 
 .system-prompt-textarea:focus {
   outline: none;
-  border-color: var(--vscode-focusBorder);
-  box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 1px var(--gc-focus-border);
 }
 
 /* 空状态 */
@@ -954,13 +954,13 @@ onMounted(async () => {
 
 .empty-state i {
   font-size: 48px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   opacity: 0.5;
 }
 
 .empty-state p {
   margin: 0;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
 }
 
 .primary-btn {
@@ -968,8 +968,8 @@ onMounted(async () => {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border: none;
   border-radius: var(--gc-radius-sm);
   font-size: 13px;
@@ -978,7 +978,7 @@ onMounted(async () => {
 }
 
 .primary-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 /* Loading 动画 */

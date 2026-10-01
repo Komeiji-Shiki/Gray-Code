@@ -612,7 +612,6 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
   justify-content: space-between;
   align-items: center;
   padding: var(--gc-space-3) var(--gc-space-4);
-  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .settings-header h3 {
@@ -682,7 +681,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
 
 @keyframes settings-search-flash {
   0%, 60% {
-    background-color: var(--vscode-editor-findMatchHighlightBackground, color-mix(in srgb, var(--gc-warning) 28%, transparent));
+    background-color: var(--gc-highlight-bg);
   }
   100% {
     background-color: transparent;

@@ -197,7 +197,7 @@ onUnmounted(() => {
   width: 100vw;
   height: 100vh;
   z-index: 9999;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   display: flex;
   flex-direction: column;
 }
@@ -211,7 +211,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: rgba(128, 128, 128, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -222,7 +222,7 @@ onUnmounted(() => {
 }
 
 .zoom-floating-close:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
   transform: rotate(90deg);
 }
 
@@ -267,8 +267,8 @@ onUnmounted(() => {
   gap: 16px;
   padding: 6px 6px 6px 16px;
   border-radius: var(--gc-radius-lg);
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
+  background: var(--gc-surface-panel);
+  border: 1px solid var(--gc-border-subtle);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   pointer-events: auto;
   backdrop-filter: blur(12px);
@@ -277,21 +277,21 @@ onUnmounted(() => {
 .zoom-btn-group {
   display: flex;
   align-items: center;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-base);
   border-radius: var(--gc-radius-lg);
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--gc-border-subtle);
   overflow: hidden;
 }
 
 .zoom-divider {
   width: 1px;
   height: 20px;
-  background: var(--vscode-panel-border);
+  background: var(--gc-border-subtle);
 }
 
 .zoom-status-tip {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   padding-right: 12px;
 }
 
@@ -299,7 +299,7 @@ onUnmounted(() => {
   height: 32px;
   border: none;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -314,20 +314,20 @@ onUnmounted(() => {
 .zoom-action-btn.text-btn {
   padding: 0 10px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--gc-font-code);
   min-width: 50px;
-  border-left: 1px solid var(--vscode-panel-border);
-  border-right: 1px solid var(--vscode-panel-border);
+  border-left: 1px solid var(--gc-border-subtle);
+  border-right: 1px solid var(--gc-border-subtle);
 }
 
 .zoom-action-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .zoom-action-btn.close-btn {
   padding: 0 16px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
   border-radius: var(--gc-radius-lg);
   font-weight: 500;
   margin-left: 4px;
@@ -340,7 +340,7 @@ onUnmounted(() => {
 }
 
 .zoom-action-btn.close-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--gc-button-primary-hover);
 }
 
 .zoom-action-btn.close-btn i {
@@ -382,8 +382,8 @@ onUnmounted(() => {
 }
 
 .mermaid-zoom-overlay {
-  background: var(--vscode-editor-background);
-  background-image: radial-gradient(var(--vscode-panel-border) 1px, transparent 1px);
+  background: var(--gc-surface-base);
+  background-image: radial-gradient(var(--gc-border-subtle) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 </style>

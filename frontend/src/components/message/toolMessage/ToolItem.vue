@@ -252,6 +252,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
           <span :class="['tool-icon', 'codicon', getToolIcon(tool)]" aria-hidden="true"></span>
           <span class="tool-name">{{ getToolLabel(tool) }}</span>
+          <span v-if="tool.status === 'awaiting_approval'" class="gc-badge gc-badge--warning tool-approval-badge">{{ getToolStatusLabel(tool) }}</span>
 
           <div
             v-if="tool.status || tool.awaitingConfirmation"
@@ -361,35 +362,36 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 </template>
 
 <style scoped>
-.permission-request{padding:0 12px 10px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.permission-options{display:flex;gap:8px;flex-wrap:wrap}.permission-options button{white-space:normal;border-radius:0;text-align:left}
+.permission-request{padding:0 12px 10px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.permission-options{display:flex;gap:8px;flex-wrap:wrap}.permission-options button{white-space:normal;border-radius:var(--gc-radius-sm);text-align:left}
 .tool-item {
   display: flex;
   flex-direction: column;
-  background: var(--gc-surface-base);
+  background: var(--gc-surface-raised);
   border: 1px solid var(--gc-border-subtle);
-  border-inline-start-width: 2px;
   border-radius: var(--gc-radius-md);
   overflow: hidden;
 }
 
-.tool-item.status-running {
-  border-inline-start-color: var(--gc-info);
-}
-
+/* 状态靠图标颜色表达；只有需要用户处理或失败时才给卡片描边着色。 */
 .tool-item.status-pending,
 .tool-item.status-warning {
-  border-inline-start-color: var(--gc-warning);
+  border-color: var(--gc-warning-border);
 }
 
 .tool-item.status-error {
-  border-inline-start-color: var(--gc-danger);
+  border-color: var(--gc-danger-border);
+}
+
+.tool-approval-badge {
+  flex-shrink: 0;
+  margin-left: var(--gc-space-1);
 }
 
 .tool-header {
   display: flex;
   align-items: center;
   gap: var(--gc-space-2);
-  padding: var(--gc-space-1) var(--gc-space-2);
+  padding: 6px var(--gc-space-3);
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
@@ -444,9 +446,9 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   min-width: 0;
   overflow-wrap: anywhere;
   font-size: var(--gc-font-size-body);
-  font-weight: var(--gc-font-weight-semibold);
+  font-weight: var(--gc-font-weight-medium);
   color: var(--gc-text-primary);
-  font-family: var(--vscode-font-family);
+  font-family: var(--gc-font-ui);
 }
 
 .status-icon {
@@ -456,7 +458,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .status-icon.status-background {
-  color: var(--vscode-charts-purple, var(--vscode-descriptionForeground));
+  color: var(--gc-chart-purple);
 }
 
 .status-icon.status-success {
@@ -509,7 +511,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .tool-description {
   margin-left: calc(var(--gc-font-size-body) + var(--gc-icon-size-sm) + var(--gc-space-1) + var(--gc-space-1));
   color: var(--gc-text-muted);
-  font-family: var(--vscode-font-family);
+  font-family: var(--gc-font-code);
   font-size: var(--gc-font-size-caption);
   line-height: var(--gc-line-height-normal);
   white-space: pre-wrap;
@@ -518,6 +520,21 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .tool-summary-static .tool-description {
   margin-left: calc(var(--gc-icon-size-sm) + var(--gc-space-1));
+}
+
+/* 已完成的工具收成一行，详情展开后查看；待确认的工具保留完整描述。 */
+.tool-item:is(.status-success, .status-error, .status-warning):not(:has(.permission-request)) .tool-summary {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--gc-space-2);
+}
+
+.tool-item:is(.status-success, .status-error, .status-warning):not(:has(.permission-request)) .tool-description {
+  margin-left: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Tool actions share the global button primitive; local rules only preserve compact density. */
@@ -550,16 +567,17 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .streaming-preview {
   max-height: 150px;
   overflow-y: auto;
-  border-top: 1px solid var(--gc-border-subtle);
-  background: var(--gc-surface-muted);
+  margin: 0 var(--gc-space-3) var(--gc-space-2);
+  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-sunken);
   padding: var(--gc-space-2) var(--gc-space-3);
 }
 
 .streaming-preview-content {
   margin: 0;
   font-size: var(--gc-font-size-caption);
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.4;
@@ -589,7 +607,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .section-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+  color: var(--gc-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -600,8 +618,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-xs);
   font-size: var(--gc-font-size-caption);
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
+  font-family: var(--gc-font-code);
+  color: var(--gc-text-primary);
   white-space: pre;
   overflow-x: auto;
   margin: 0;
@@ -609,20 +627,20 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .error-section {
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger-border);
   border-radius: var(--radius-sm, 2px);
 }
 
 .error-message {
   font-size: 12px;
-  color: var(--vscode-inputValidation-errorForeground);
-  font-family: var(--vscode-editor-font-family);
+  color: var(--gc-danger);
+  font-family: var(--gc-font-code);
 }
 
 .tool-content-text {
   font-size: 12px;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -634,8 +652,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   align-items: flex-start;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--vscode-inputValidation-warningBackground, color-mix(in srgb, var(--gc-warning) 10%, transparent));
-  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--gc-warning));
+  background: var(--gc-warning-bg);
+  border: 1px solid var(--gc-warning-border);
   border-radius: var(--gc-radius-sm);
   margin-bottom: 4px;
 }
@@ -650,7 +668,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .diff-guard-text {
   font-size: var(--gc-font-size-caption);
   line-height: 1.4;
-  color: var(--vscode-foreground);
+  color: var(--gc-text-primary);
   word-break: break-word;
 }
 
