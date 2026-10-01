@@ -100,7 +100,7 @@ npm --prefix frontend test -- src/__tests__/components/StaticGuards.test.ts
 ```
 
 - **真实流程**：类型与组件测试不能代替真实流程。桌面改动先 `npm run build:desktop`，再运行 `npx electron scripts/smoke-desktop.cjs`：它用隔离数据目录和合成模型端点覆盖启动、发送与工具循环、审批、重生成与分支切换、编辑器、设置、截图和退出，报告与截图写到 `.tmp/desktop-smoke-*`（`GRAYCODE_SMOKE_OUTPUT` 只能指向 `.tmp/` 下以 `desktop-smoke-` 开头的目录）。改动涉及脚本没覆盖的场景（如取消运行、工作树）时再手动跑一遍。浏览器交互用 `node scripts/smoke-browser.cjs`。MCP/ACP 测试使用真实本机 stdio/HTTP 夹具，只关闭自己启动的子进程。
-- **CI**：`ci.yml` 在 PR 与 `main` 推送时，在 Ubuntu 上跑 `npm run ci`，在 Windows 上构建桌面并跑进程生命周期、真实 MCP 夹具与 `smoke-desktop.cjs`；`desktop.yml` 手动触发，打包便携版与安装包；`nightly-build.yml` 与 `release.yml` 只构建 1.x VSIX，2.x 会跳过。
+- **CI**：`ci.yml` 在 PR 与 `main` 推送时，在 Ubuntu 上跑 `npm run ci`，在 Windows 上构建桌面并跑进程生命周期、真实 MCP 夹具与 `smoke-desktop.cjs`；`desktop.yml` 手动触发，打包便携版与安装包；`nightly-build.yml` 每两天打包最新 Windows 桌面版，成功发布后只保留最新 nightly；`release.yml` 只构建 1.x VSIX。
 
 ## 提交与协作
 

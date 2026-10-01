@@ -71,7 +71,7 @@ ACP 官方 SDK 使用 ESM，平台 Jest 仅转换该依赖的 JavaScript；生�
 
 PR 和 main 推送除 Ubuntu 全量检查外，还运行 Windows 定向验收：构建桌面，检查受管进程、真实语言服务与 MCP 夹具，再使用隔离配置完成桌面流程。截图和成功/失败报告作为短期 Actions 附件保留；该检查不创建发行包。
 
-Windows CI、桌面打包和扩展 nightly 验证统一使用 `windows-2022`，原生依赖需要从源码编译时使用其 VS 2022 工具链。升级运行镜像前先确认 Node 自带的 node-gyp 能识别其中的 Visual Studio，并验证原生依赖从源码安装；PowerShell 中多个 npm/dotnet 命令使用独立步骤，避免后一个命令成功掩盖前一个命令失败。
+Windows CI、桌面打包和桌面 nightly 验证统一使用 `windows-2022`，原生依赖需要从源码编译时使用其 VS 2022 工具链。升级运行镜像前先确认 Node 自带的 node-gyp 能识别其中的 Visual Studio，并验证原生依赖从源码安装；PowerShell 中多个 npm/dotnet 命令使用独立步骤，避免后一个命令成功掩盖前一个命令失败。
 
 类型和组件测试不能代替真实流程。受影响的桌面场景使用隔离应用数据与合成模型端点验证：启动、发送、编辑、重生成、确认、取消、设置、截图、工作树和退出。
 
@@ -99,5 +99,11 @@ build:desktop:trial 与各 package-only 参数用于快速编译，不是完整�
 ## 文档与发行
 
 README 介绍当前产品入口，wiki/ 保存可随源码审阅的详细手册，PROJECT_STRUCTURE 描述真实依赖边界。可复现截图使用合成内容并放在 wiki/assets。新协议依赖同步保存原始许可，见[来源记录](resources/licenses/README.md)。
+
+`Nightly Build` 工作流从 2026-10-01 起，每隔两天在北京时间 10:17 打包默认分支的最新 Windows x64 桌面版，跨月仍按连续两天计算。Actions 每天进行一次日期判断，仅在构建日安装依赖和打包；维护者也可通过 `Run workflow` 随时手动构建。
+
+Nightly 沿用 `package:desktop` 与 `package:installer`，保持已提交的干净源码和现有应用版本。附件名记录构建日期、实际提交与运行编号，提供便携 ZIP、安装器、完整离线更新 ZIP 和包含原始归档及校验清单的源码 ZIP。固定下载入口为 [nightly Release](https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/nightly)，标记为预发布。
+
+新附件全部上传成功后才更新 nightly 标签与发布信息，并删除上一批附件、旧 `nightly-YYYYMMDD` Release 及标签、旧 nightly Actions 附件，只保留最新成功构建。构建或上传失败时保留原下载；本次 Actions 附件最多保留 14 天，便于处理发布失败。
 
 修改完成后记录问题、最终行为、相关验证、数据格式兼容性和剩余的实际环境限制。版本、tag、公开发布和默认分支推送按当次交付范围执行。功能分支提交保持可独立审阅。

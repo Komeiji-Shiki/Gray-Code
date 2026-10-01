@@ -1,304 +1,182 @@
 name: Nightly Build
 
-# 每 24 小时检查一次代码是否有变化：
-#   - 最近 24 小时内有新提交 → 重新打包 vsix
-#   - 没有新提交 → 跳过打包，任务直接成功结束（不浪费资源）
-#
-# 打包产物（三种途径都能拿到）：
-#   - Actions Artifact：本次运行 Summary 页面可下载
-#   - GitHub Release（固定）：发布/覆盖到 tag=nightly 的 Release，下载链接稳定（扩展自动更新用）：
-#     https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/nightly
-#   - GitHub Release（归档）：每天新建 tag=nightly-YYYYMMDD 的 Release（如 nightly-20260819），
-#     在 Releases 列表中置顶展示，便于人类浏览与回滚；仅保留最近 14 天自动清理
-#
-# 手动触发：Actions → Nightly Build → Run workflow（可勾选 force 强制打包）
-# 注意：schedule 触发器只在默认分支（main/master）上生效。
-
+# 每两天打包默认分支的最新 Windows 桌面版，成功发布后只保留本次 nightly。
+# 固定下载入口：https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/nightly
 on:
   schedule:
-    - cron: '0 2 * * *' # 每天 UTC 02:00（北京时间 10:00 / 悉尼时间 12:00）
+    - cron: '17 2 * * *' # 北京时间 10:17；下方按连续日期隔天执行，跨月也保持两天间隔。
   workflow_dispatch:
-    inputs:
-      force:
-        description: '强制打包（跳过 24 小时变化检测）'
-        type: boolean
-        default: false
-        required: false
 
 permissions:
-  contents: write # 发布 nightly Release 需要
+  contents: read
 
-# 同一时间只跑一个 nightly 构建：上次构建未结束时新触发的构建直接取消
-# （自动更新场景下只需保留最新产物，避免多个构建同时覆盖 nightly Release 互相打架）
+# 发布与清理必须串行完成，避免新任务取消正在上传的版本。
 concurrency:
   group: nightly-build
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build:
+  schedule:
     runs-on: ubuntu-latest
     outputs:
-      # 供 test-windows job 判断是否跳过（24 小时无变化时两个 job 都跳过）
-      build: ${{ steps.should.outputs.build }}
+      build: ${{ steps.schedule.outputs.build }}
     steps:
-      - name: Checkout
+      - name: Resolve two-day schedule
+        id: schedule
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // 日历 cron 的 */2 会在月初重置；以 2026-10-01 为起点计算连续天数。
+            const day = Math.floor(Date.now() / 86_400_000);
+            const firstDay = Math.floor(Date.UTC(2026, 9, 1) / 86_400_000);
+            const build = context.eventName === 'workflow_dispatch' || (day - firstDay) % 2 === 0;
+            core.setOutput('build', String(build));
+            if (!build) core.info('今天不在两天一次的构建周期内，跳过打包。');
+
+  package:
+    needs: schedule
+    if: needs.schedule.outputs.build == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout latest default branch
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # 需要提交历史来判断「最近 24 小时是否有新提交」
-
-      - name: Check for changes in last 24h
-        id: check
-        run: |
-          if git log --since="24 hours ago" --oneline | grep -q .; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # 手动触发且勾选 force 时，无视变化检测直接打包
-      - name: Resolve whether to build
-        id: should
-        run: |
-          # 旧扩展 nightly 不处理独立桌面版本，避免发布错误类型的资产。
-          if node -e "process.exit(Number(require('./package.json').version.split('.')[0]) >= 2 ? 0 : 1)"; then
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "2.x uses standalone desktop releases; skipping VSIX nightly."
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force }}" = "true" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "build=${{ steps.check.outputs.changed }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build timestamp
-        id: time
-        if: steps.should.outputs.build == 'true'
-        run: echo "now=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Node.js
-        if: steps.should.outputs.build == 'true'
-        uses: actions/setup-node@v7
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
-
-      # fast-tavern py 的 venv 缓存（E-11）：key 含 runner.os 与 python 版本，避免跨版本复用损坏的 venv。
-      # venv 由 scripts/run-fast-tavern-py.mjs 在首次运行时创建，缓存命中时跳过 python -m venv。
-      - name: Resolve system python version (cache key)
-        if: steps.should.outputs.build == 'true'
-        id: pyver
-        run: echo "ver=$(python3 -V 2>&1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache fast-tavern venv
-        if: steps.should.outputs.build == 'true'
-        uses: actions/cache@v6
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - uses: actions/setup-dotnet@v6
         with:
-          path: fast-tavern-main/py-fast-tavern/.venv
-          key: fast-tavern-venv-${{ runner.os }}-py${{ steps.pyver.outputs.ver }}
-
-      - name: Install dependencies
-        if: steps.should.outputs.build == 'true'
-        run: |
-          npm ci
-          # 前端有独立 package.json（非 workspaces），需单独安装其依赖
-          npm --prefix frontend ci --no-audit --no-fund
-
-      - name: Typecheck & test
-        if: steps.should.outputs.build == 'true'
+          dotnet-version: 9.0.x
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
+      - name: Restore installer tools
+        run: dotnet tool restore
+      - name: Validate application before packaging
         run: npm run ci
+      - name: Package Windows application
+        run: npm run package:desktop
+      - name: Package Windows installer
+        run: npm run package:installer
 
-      - name: i18n parity check
-        if: steps.should.outputs.build == 'true'
-        run: npm run i18n:check
+      - name: Record packaged build identity
+        id: identity
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { version } = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const { stdout } = await exec.getExecOutput('git', ['rev-parse', 'HEAD']);
+            const commit = stdout.trim();
+            const timestamp = new Date().toISOString();
+            const date = timestamp.slice(0, 10).replaceAll('-', '');
+            core.setOutput('version', version);
+            core.setOutput('commit', commit);
+            core.setOutput('timestamp', timestamp);
+            core.setOutput('prefix', `GrayCode-nightly-${date}-${commit.slice(0, 12)}-${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`);
 
-      # benchmark 的三个套件带 smoke 上限断言（防灾难性回归），此前无任何 CI 执行（E-08）；
-      # 放测试之后、打包之前，回归即拦截 nightly。
-      - name: Benchmark (smoke limits)
-        if: steps.should.outputs.build == 'true'
-        run: npm run benchmark
-
-      # 注意：本步骤必须带 id: version——下方 Release name/body 通过 steps.version.outputs.nightly_version
-      # 引用本步骤输出；缺 id 时引用恒为空，Release 名会退化为 "v"，
-      # 扩展 nightly 渠道将无法从名称提取版本号，导致更新检查失败。
-      - name: Compute nightly version
-        id: version
-        # nightly 版本号基线 = 当前 pkg.version 的「下一个 minor 版本」（E-03 修复）：
-        #   解析 major.minor 后 minor+1、patch 归 0，再追加 -nightly.<YYYYMMDD>。
-        #   例如 1.5.3 → 1.6.0-nightly.20260809，恒高于当前稳定线，避免 1.5.4 发布后
-        #   nightly 仍产出 1.5.3-nightly.* 而被 compareVersions 判为落后于稳定版。
-        # - 合法 semver：三段数字 + 预发布标识 nightly.<YYYYMMDD>（vsce 打包校验要求）；
-        # - compareVersions 将 -nightly.<date> 视为「高于同主版本正式版」的最新构建，
-        #   两个 nightly 之间按日期比较；新基线领先一个 minor，稳定版 bump 后也不会被反超；
-        # - 扩展 nightly 渠道从 Release name 中提取该版本号用于更新判断。
-        # 放在 npm ci 之后才改 package.json 的 version，避免影响依赖解析。
-        if: steps.should.outputs.build == 'true'
+      - name: Prepare downloadable packages
+        env:
+          NIGHTLY_PREFIX: ${{ steps.identity.outputs.prefix }}
         run: |
-          set -euo pipefail
-          pkg_version="$(node -p "require('./package.json').version" 2>/dev/null || true)"
-          pkg_version="${pkg_version:-0.0.0}"
-          today="$(date -u +%Y%m%d)"
-          # 用 bash 参数展开解析 major.minor（避免复杂转义的 node 一行脚本）
-          major="${pkg_version%%.*}"
-          rest="${pkg_version#*.}"
-          minor="${rest%%.*}"
-          # 非数字段置空，作为解析失败的判据
-          case "$major" in ''|*[!0-9]*) major='';; esac
-          case "$minor" in ''|*[!0-9]*) minor='';; esac
-          if [ -n "$major" ] && [ -n "$minor" ]; then
-            next_minor=$((minor + 1))
-            nightly="${major}.${next_minor}.0-nightly.${today}"
-          else
-            # 解析失败兜底：退回旧的「当前版本 + -nightly.<date>」形式，保证仍可打包
-            nightly="${pkg_version}-nightly.${today}"
-          fi
-          NIGHTLY_VERSION="$nightly" node -e '
-            const fs = require("fs");
-            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            pkg.version = process.env.NIGHTLY_VERSION;
-            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-          '
-          printf '%s\n' "$nightly" > .nightly-version.txt
-          echo "nightly_version=$(cat .nightly-version.txt)" >> "$GITHUB_OUTPUT"
-          echo "nightly_date=${today}" >> "$GITHUB_OUTPUT"
+          New-Item -ItemType Directory -Path 'release/nightly' -Force | Out-Null
+          Compress-Archive -LiteralPath 'release/desktop/GrayCode-win32-x64' -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-win32-x64.zip"
+          Copy-Item -LiteralPath 'release/desktop-installer/GrayCode-win-x64-Setup.exe' -Destination "release/nightly/$env:NIGHTLY_PREFIX-win-x64-Setup.exe"
+          # 更新清单引用原始文件名，把整组更新产物放在同一 ZIP 内，保留内部名称。
+          Compress-Archive -Path 'release/desktop-installer/*' -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-win-x64-update.zip"
+          Compress-Archive -Path 'release/source/*' -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-source.zip"
 
-      - name: Package vsix
-        # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤；
-        # 使用固定资产名 graycode-nightly.vsix，便于 nightly Release 覆盖更新（不堆积旧资产）
-        if: steps.should.outputs.build == 'true'
-        run: npx vsce package --out graycode-nightly.vsix
-
-      - name: Upload artifact
-        if: steps.should.outputs.build == 'true'
+      - name: Preserve packaged artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: graycode-nightly
-          path: graycode-nightly.vsix
+          name: GrayCode-Nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release/nightly/*
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Publish / overwrite nightly release (fixed tag for auto-update)
-        if: steps.should.outputs.build == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: nightly
-          # Release name 直接使用带 v 前缀的真实版本号，扩展 nightly 渠道据此解析更新版本
-          name: v${{ steps.version.outputs.nightly_version }}
-          body: |
-            自动构建：${{ steps.time.outputs.now }}
-            Commit: `${{ github.sha }}`
-            版本：v${{ steps.version.outputs.nightly_version }}
-
-            > 注意：nightly 为每日自动构建（预览版），仅供测试，不建议作为正式版本安装。
-            > 固定标签，供扩展「nightly 渠道」自动更新使用（直链稳定）。
-            > 历史归档见 nightly-YYYYMMDD 标签的 Release。
-          files: graycode-nightly.vsix
-          overwrite_files: true
-          prerelease: true
-          make_latest: false
-
-      - name: Publish dated nightly release (archived, for timeline)
-        if: steps.should.outputs.build == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: nightly-${{ steps.version.outputs.nightly_date }}
-          # 归档 Release 同样使用真实版本号，便于 compareVersions 与人类识别
-          name: v${{ steps.version.outputs.nightly_version }}
-          body: |
-            自动构建归档：${{ steps.time.outputs.now }}
-            Commit: `${{ github.sha }}`
-            版本：v${{ steps.version.outputs.nightly_version }}
-            Tag: `nightly-${{ steps.version.outputs.nightly_date }}`
-
-            > 每日归档，仅保留最近 14 天；最新版请用固定标签 nightly（自动更新直链）。
-          files: graycode-nightly.vsix
-          prerelease: true
-          make_latest: false
-
-      - name: Cleanup old dated nightly releases (keep 14 most recent)
-        if: steps.should.outputs.build == 'true'
+      - name: Publish latest nightly and remove older builds
+        uses: actions/github-script@v9
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          repo="${{ github.repository }}"
-          keep=14
-          echo "Listing dated nightly releases (nightly-YYYYMMDD) ..."
-          # gh + jq 在 ubuntu-latest 默认可用；清理失败不阻塞主流程
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "⚠️ jq not found, skip cleanup"
-            exit 0
-          fi
-          set +e
-          gh api "repos/${repo}/releases?per_page=100" --paginate --jq '[.[] | select(.tag_name | test("^nightly-[0-9]{8}$"))] | sort_by(.created_at) | reverse | .[] | "\(.id) \(.tag_name) \(.created_at)"' > /tmp/dated_list.txt 2>&1
-          api_exit=$?
-          set -e
-          if [ $api_exit -ne 0 ]; then
-            echo "⚠️ 无法列出 releases（API 失败），跳过清理："
-            cat /tmp/dated_list.txt || true
-            exit 0
-          fi
-          if [ ! -s /tmp/dated_list.txt ]; then
-            echo "No dated nightly releases found, nothing to clean"
-            exit 0
-          fi
-          total=$(wc -l < /tmp/dated_list.txt | tr -d " ")
-          echo "Found $total dated nightly releases, keeping $keep most recent"
-          cat /tmp/dated_list.txt
-          if [ "$total" -le "$keep" ]; then
-            echo "Within keep limit, no deletion needed"
-            exit 0
-          fi
-          tail -n +$((keep+1)) /tmp/dated_list.txt | while read -r id tag created; do
-            if [ -z "$id" ]; then continue; fi
-            echo "🗑️ Deleting old dated nightly: $tag (id=$id, created=$created)"
-            if gh api --method DELETE "repos/${repo}/releases/$id" >/dev/null 2>&1; then
-              echo "  -> release deleted"
-            else
-              echo "  ⚠️ failed to delete release $id"
-              continue
-            fi
-            if gh api --method DELETE "repos/${repo}/git/refs/tags/$tag" >/dev/null 2>&1; then
-              echo "  -> tag $tag deleted"
-            else
-              echo "  (tag $tag may already gone)"
-            fi
-          done
-          echo "Cleanup done."
-
-
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ job.status }}" != "success" ]; then
-            echo "❌ nightly 构建或发布失败；请查看上方失败步骤。"
-          elif [ "${{ steps.should.outputs.build }}" != "true" ]; then
-            echo "⏭️ 最近 24 小时没有新提交（且未勾选 force），跳过打包。"
-          else
-            echo "✅ 检测到代码变化，已完成打包并发布 nightly release。"
-          fi
-
-  # Windows 平台覆盖（E-09）：Windows 专属链路（toast-linger、WinRtLingerToastAdapter、
-  # path.win32 归一化、通知聚焦）此前无任何 CI 覆盖。这里只跑 typecheck + jest 后端测试
-  # （跳过 fast-tavern-py 的 venv 重建，成本可控；ubuntu 主 job 已跑全量）。
-  test-windows:
-    # 与日常桌面验收使用相同的 VS 2022 原生编译工具链。
-    runs-on: windows-2022
-    needs: build
-    if: needs.build.outputs.build == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIGHTLY_VERSION: ${{ steps.identity.outputs.version }}
+          NIGHTLY_COMMIT: ${{ steps.identity.outputs.commit }}
+          NIGHTLY_TIMESTAMP: ${{ steps.identity.outputs.timestamp }}
         with:
-          node-version-file: .nvmrc
-          cache: npm
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const repo = context.repo;
+            const directory = path.resolve('release/nightly');
+            const files = fs.readdirSync(directory);
+            const commit = process.env.NIGHTLY_COMMIT;
+            let release;
+            try {
+              ({ data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: 'nightly' }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              ({ data: release } = await github.rest.repos.createRelease({ ...repo, tag_name: 'nightly',
+                target_commitish: commit, name: 'GrayCode Nightly', draft: true, prerelease: true, make_latest: 'false' }));
+            }
 
-      - name: Install dependencies
-        run: npm ci
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci --no-audit --no-fund
+            // 每次使用新的附件名，上传失败时旧版本仍可下载；全部上传完成后才更新发布信息与清理。
+            await exec.exec('gh', ['release', 'upload', 'nightly', ...files.map(file => path.join(directory, file)),
+              '--repo', `${repo.owner}/${repo.repo}`]);
+            try {
+              await github.rest.git.updateRef({ ...repo, ref: 'tags/nightly', sha: commit, force: true });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.git.createRef({ ...repo, ref: 'refs/tags/nightly', sha: commit });
+            }
+            const body = [
+              'Windows x64 桌面版，每两天自动构建。',
+              `构建时间：${process.env.NIGHTLY_TIMESTAMP}`,
+              `应用版本：v${process.env.NIGHTLY_VERSION}`,
+              `源码提交：\`${commit}\``,
+              '',
+              '附件包括便携包、安装器、完整离线更新包与对应源码包。',
+              '离线更新包解压后，保持更新清单与包文件位于同一目录。',
+              '此页面只保留最近一次成功构建；下一次构建失败时继续提供本次下载。',
+            ].join('\n');
+            await github.rest.repos.updateRelease({ ...repo, release_id: release.id,
+              name: `v${process.env.NIGHTLY_VERSION} Nightly (${process.env.NIGHTLY_TIMESTAMP.slice(0, 10)} / ${commit.slice(0, 12)})`,
+              body, draft: false, prerelease: true, make_latest: 'false' });
 
-      - name: Typecheck (Windows)
-        run: npm run typecheck:all
-      - name: Backend tests (Windows)
-        run: npm test
+            const currentFiles = new Set(files);
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id: release.id, per_page: 100 });
+            for (const asset of assets) {
+              if (!currentFiles.has(asset.name)) await github.rest.repos.deleteReleaseAsset({ ...repo, asset_id: asset.id });
+            }
+
+            // 清理旧扩展 workflow 留下的日期归档；正式版本与其他标签不属于 nightly 清理范围。
+            const releases = await github.paginate(github.rest.repos.listReleases, { ...repo, per_page: 100 });
+            for (const oldRelease of releases) {
+              if (!/^nightly-\d{8}$/.test(oldRelease.tag_name)) continue;
+              await github.rest.repos.deleteRelease({ ...repo, release_id: oldRelease.id });
+              try {
+                await github.rest.git.deleteRef({ ...repo, ref: `tags/${oldRelease.tag_name}` });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, { ...repo, per_page: 100 });
+            for (const artifact of artifacts) {
+              if (artifact.workflow_run?.id === context.runId) continue;
+              if (artifact.name === 'graycode-nightly' || /^GrayCode-Nightly-\d+-\d+$/.test(artifact.name)) {
+                await github.rest.actions.deleteArtifact({ ...repo, artifact_id: artifact.id });
+              }
+            }
+            await core.summary.addHeading('Windows 桌面 Nightly')
+              .addLink('下载最近一次成功构建', `https://github.com/${repo.owner}/${repo.repo}/releases/tag/nightly`)
+              .addRaw(`\n\n版本：v${process.env.NIGHTLY_VERSION}\n\n源码提交：${commit}\n\n已清理旧 nightly 附件、日期归档与 Actions 构建附件。\n`)
+              .write();
