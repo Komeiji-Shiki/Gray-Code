@@ -4,7 +4,7 @@
 
 ## 运行
 
-在仓库根目录使用 Node.js 22.15 或更高版本安装依赖并构建。当前实测环境为 Windows x64、Node 22.18.0、better-sqlite3 13.0.3（SQLite 3.53.4）。该版本包内自带 Windows、Linux 和 macOS 的主要架构预编译模块；其他系统与 Electron 安装包中的实际加载仍待验证。
+在仓库根目录使用 Node.js 24.11 或更高版本安装依赖并构建。当前实测环境为 Windows x64、Node 24.21.0、better-sqlite3 13.0.3（SQLite 3.53.4）。该版本包内自带 Windows、Linux 和 macOS 的主要架构预编译模块；其他系统与 Electron 安装包中的实际加载仍待验证。
 
 ```powershell
 npm ci

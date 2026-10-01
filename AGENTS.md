@@ -5,7 +5,7 @@
 ## 项目速览
 
 - **GrayCode** 是本地优先的 AI 工作台。`main` 是 2.x 独立平台（Electron 桌面 + Web 服务）；1.x VS Code 扩展在 `v1-extension` 分支，`main` 只保留扩展的构建入口（`webview/`、`extension.ts`、根 `npm run build`）。
-- **技术栈**：TypeScript；Node.js ≥ 22.15；npm；Electron、Vue 3（Pinia）、esbuild、Jest、Vitest、MCP SDK。
+- **技术栈**：TypeScript；Node.js ≥ 24.11（与 Electron 内置的 Node 24 一致，主版本记录在 `.nvmrc`）；npm；Electron、Vue 3（Pinia）、esbuild、Jest、Vitest、MCP SDK。
 - **原生**：`native/windows/ComputerHost` 是 .NET Framework 4 的 C# 电脑操作宿主，由 `scripts/build-computer-host.mjs` 调用系统自带的 csc.exe 构建；桌面发行面向 Windows x64。
 - **语言**：文档与提交信息用中文（英文入口是 `README_EN.md`）。
 

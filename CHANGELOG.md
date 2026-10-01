@@ -9,6 +9,7 @@
 
 ### Changed
   - ChatGPT 订阅认证自动回传历史思考签名与摘要，隐藏思考回传、DeepSeek Vision 图像预处理和 OpenCode Go 会话标识设置；API Key 认证保留原有配置。
+  - 运行环境统一到 Node 24 LTS：开发与独立服务要求 Node.js 24.11 或更新版本，与 Electron 内置的 Node 24 一致；CI 与本机版本管理器统一读取 `.nvmrc`。Electron 升级到 44.5.1，包含 Chromium 安全更新。
 
 ### Fixed
   - 修复 ChatGPT 官方订阅登录回传历史明文思考时触发 HTTP 400 的问题；继续保留加密思考签名与摘要，其他渠道沿用原有回传配置。

@@ -10,7 +10,7 @@
 
 ## 环境与首次启动
 
-需要 Node.js 22.15 或更新版本及 npm。Windows 原生电脑宿主使用系统 .NET Framework 4 的 csc.exe，构建脚本定位到 Windows/Microsoft.NET/Framework64/v4.0.30319。构建原生 npm 依赖时，若没有匹配的预编译产物，需按依赖要求准备编译工具。
+需要 Node.js 24.11 或更新版本及 npm（Node 24 LTS，与 Electron 内置版本一致；主版本记录在 `.nvmrc`，nvm、fnm 与 CI 共用）。Windows 原生电脑宿主使用系统 .NET Framework 4 的 csc.exe，构建脚本定位到 Windows/Microsoft.NET/Framework64/v4.0.30319。构建原生 npm 依赖时，若没有匹配的预编译产物，需按依赖要求准备编译工具。
 
 ~~~powershell
 npm ci
@@ -71,7 +71,7 @@ ACP 官方 SDK 使用 ESM，平台 Jest 仅转换该依赖的 JavaScript；生�
 
 PR 和 main 推送除 Ubuntu 全量检查外，还运行 Windows 定向验收：构建桌面，检查受管进程、真实语言服务与 MCP 夹具，再使用隔离配置完成桌面流程。截图和成功/失败报告作为短期 Actions 附件保留；该检查不创建发行包。
 
-Windows CI、桌面打包和扩展 nightly 验证统一使用 `windows-2022`，其 VS 2022 工具链兼容当前 Node 22 安装时使用的 node-gyp。升级运行镜像前先验证原生依赖从源码安装；PowerShell 中多个 npm/dotnet 命令使用独立步骤，避免后一个命令成功掩盖前一个命令失败。
+Windows CI、桌面打包和扩展 nightly 验证统一使用 `windows-2022`，原生依赖需要从源码编译时使用其 VS 2022 工具链。升级运行镜像前先确认 Node 自带的 node-gyp 能识别其中的 Visual Studio，并验证原生依赖从源码安装；PowerShell 中多个 npm/dotnet 命令使用独立步骤，避免后一个命令成功掩盖前一个命令失败。
 
 类型和组件测试不能代替真实流程。受影响的桌面场景使用隔离应用数据与合成模型端点验证：启动、发送、编辑、重生成、确认、取消、设置、截图、工作树和退出。
 

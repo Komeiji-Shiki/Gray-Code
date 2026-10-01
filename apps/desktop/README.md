@@ -25,7 +25,7 @@ npm run build:desktop
 npm run desktop -- --data .tmp/desktop-local
 ~~~
 
-要求 Node.js 22.15 或更新版本。Windows 电脑宿主使用系统 .NET Framework 4 编译器；脚本同时生成平台和桌面各自需要的原生产物。
+要求 Node.js 24.11 或更新版本。Windows 电脑宿主使用系统 .NET Framework 4 编译器；脚本同时生成平台和桌面各自需要的原生产物。
 
 ~~~powershell
 npm run ci
