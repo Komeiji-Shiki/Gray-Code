@@ -7,9 +7,9 @@ export default defineConfig({
   resolve: {
     alias: {
       // 干净检出时尚未生成平台包，测试直接使用同一份契约源码。
-      '@graycode/contracts': resolve(__dirname, '../packages/contracts/src/index.ts'),
-      '@': resolve(__dirname, 'src'),
-      '@shared': resolve(__dirname, '../shared')
+      '@graycode/contracts': resolve(import.meta.dirname, '../packages/contracts/src/index.ts'),
+      '@': resolve(import.meta.dirname, 'src'),
+      '@shared': resolve(import.meta.dirname, '../shared')
     }
   },
   test: {

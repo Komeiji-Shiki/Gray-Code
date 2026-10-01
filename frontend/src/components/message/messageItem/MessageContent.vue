@@ -6,7 +6,7 @@
  * 流式指示器、底部统计、任务卡片。所有状态与副作用从 MessageItem 原样迁入，
  * 对外仅接收 message 一个 prop。
  */
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, type ComponentPublicInstance } from 'vue'
 import MessageAttachments from '../MessageAttachments.vue'
 import MessageTaskCards from '../MessageTaskCards.vue'
 import InlineContextMessage from '../InlineContextMessage.vue'
@@ -70,6 +70,8 @@ const {
   tailRenderGeneration,
   handleTailMarkdownRendered
 } = useMessageTextTail(() => props.message, isStreaming, smoothText)
+// 用稳定的函数 ref 写入组合式函数提供的宿主 ref；vue-tsc 3 不再把同名字符串 ref 计为对解构变量的使用。
+const bindTailHost = (el: Element | ComponentPublicInstance | null) => { tailHostRef.value = el as HTMLElement | null }
 
 // 思考内容三段式视图模式（对齐后台任务）：折叠 / 中展开 / 完全展开，默认中展开。
 // 模块级 Map 按 messageId 持久化（与 backgroundTaskViewModeByMessageId 同模式）：
@@ -497,7 +499,7 @@ function setThoughtViewMode(mode: ThoughtViewMode) {
         class="content-text"
         @rendered="handleTailMarkdownRendered"
       />
-      <div ref="tailHostRef" class="char-flow-host"></div>
+      <div :ref="bindTailHost" class="char-flow-host"></div>
     </div>
 
     <!-- 仅在没有 parts 渲染块和活动尾块时使用 content 兜底。显式互斥，避免新增兄弟节点拆断 v-else-if 链。 -->

@@ -20,8 +20,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.9",
-    "vite": "6.4.3",
-    "vue-tsc": "2.2.12",
+    "vite": "8.3.1",
+    "vue-tsc": "3.3.11",
     "@types/markdown-it": "14.2.0"
   },
   "license": "SEE LICENSE IN LICENSE"

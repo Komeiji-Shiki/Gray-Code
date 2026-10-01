@@ -19,7 +19,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         entryFileNames: 'index.js',
         assetFileNames: resolveWebviewAssetFileName
@@ -28,8 +28,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
-      '@shared': path.resolve(__dirname, '../shared')
+      '@': path.resolve(import.meta.dirname, 'src'),
+      '@shared': path.resolve(import.meta.dirname, '../shared')
     }
   }
 });

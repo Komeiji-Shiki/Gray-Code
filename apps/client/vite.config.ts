@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
-import { petRendererBuild } from './src/pets/buildPlugin';
+import { petRendererBuild } from './src/pets/buildPlugin.ts';
 export default defineConfig({
   plugins: [vue(), petRendererBuild()],
   base: "./",
@@ -8,7 +8,7 @@ export default defineConfig({
     manifest: true,
     target: "es2022",
     sourcemap: true,
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         pet: new URL('./pet.html', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
         main: new URL("./index.html", import.meta.url).pathname.replace(

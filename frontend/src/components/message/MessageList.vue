@@ -21,7 +21,7 @@ export {
  * 本文件仅保留编排与轻量直通逻辑（共享辅助 + 消息操作 + 忙时投递回显）。
  */
 
-import { computed, provide, watch } from 'vue'
+import { computed, provide, watch, type ComponentPublicInstance } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
 import MessageItem from './MessageItem.vue'
 import ChatError from './ChatError.vue'
@@ -175,6 +175,8 @@ const {
   messageRenderRows,
   checkpointFloorByCheckpointId
 } = virtualWindow
+// 用稳定的函数 ref 写入窗口组合式函数提供的滚动条 ref；vue-tsc 3 不再把同名字符串 ref 计为对解构变量的使用。
+const bindScrollbar = (el: Element | ComponentPublicInstance | null) => { scrollbarRef.value = el as typeof scrollbarRef.value }
 
 defineExpose({ jumpToMessage })
 
@@ -257,7 +259,7 @@ function handleContinue() {
   <div class="message-list">
     <div class="message-scroll-area">
       <CustomScrollbar
-        ref="scrollbarRef"
+        :ref="bindScrollbar"
         sticky-bottom
         show-jump-buttons
         marker-selector=".user-message, .summary-message"
