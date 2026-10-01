@@ -25,6 +25,9 @@ function makeHost(files: Record<string, FakeFile>) {
     const host = {
         findFiles: async (_root: unknown, _pattern: string, _exclude: string, limit: number) =>
             Object.keys(files).slice(0, limit).map(fsPath => ({ fsPath, scheme: 'file' })),
+        iterateFiles: async function* (_root: unknown, _pattern: string, _exclude: string, limit: number) {
+            for (const fsPath of Object.keys(files).slice(0, limit)) yield { fsPath, scheme: 'file' };
+        },
         toRelativePath: (file: { fsPath: string }) => file.fsPath,
         stat: async (file: { fsPath: string }) => {
             const entry = files[file.fsPath] ?? {};
@@ -194,6 +197,45 @@ describe('基础输出与顺序', () => {
         expect(completed).toBe(8);
         expect(active).toBe(0);
         expect(fake.reads.size).toBe(8);
+    });
+
+    test('流式发现保持顺序，提前结束时关闭迭代器且不遍历后续文件', async () => {
+        const fake = makeHost(Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`${index}.txt`, { content: 'needle' }])));
+        let discovered = 0, closed = false;
+        fake.host.findFiles = jest.fn(async () => { throw new Error('不得退回完整数组'); });
+        fake.host.iterateFiles = async function* () {
+            try {
+                for (let index = 0; index < 20; index++) {
+                    discovered++;
+                    yield { fsPath: `${index}.txt`, scheme: 'file' };
+                }
+            } finally { closed = true; }
+        };
+        const result = await runSearch(fake, /needle/gm, undefined, 1);
+        expect(result.matches.map(match => match.file)).toEqual(['0.txt']);
+        expect(discovered).toBe(8);
+        expect(closed).toBe(true);
+        expect(fake.host.findFiles).not.toHaveBeenCalled();
+    });
+
+    test('流式发现失败也关闭游标并等待已启动读取，不把未完成搜索当零结果', async () => {
+        const fake = makeHost({ 'a.txt': { content: 'other' } });
+        const readFile = fake.host.readFile.bind(fake.host);
+        let active = 0, closed = false;
+        fake.host.readFile = async file => {
+            active++;
+            try { await new Promise<void>(resolve => { setImmediate(resolve); }); return await readFile(file); }
+            finally { active--; }
+        };
+        fake.host.iterateFiles = async function* () {
+            try {
+                yield { fsPath: 'a.txt', scheme: 'file' };
+                throw new Error('发现失败');
+            } finally { closed = true; }
+        };
+        await expect(runSearch(fake, /needle/gm)).rejects.toThrow('发现失败');
+        expect(closed).toBe(true);
+        expect(active).toBe(0);
     });
 
     test('预算不足按行跳过，后续可容纳的匹配仍加入', async () => {

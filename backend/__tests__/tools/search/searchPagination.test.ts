@@ -136,12 +136,33 @@ describe('search_in_files 续查', () => {
         expect(result.data.results[0].file).toBe('b.ts');
     });
 
-    test('文件发现达到上限时明确指出 offset 无法读到未发现文件', async () => {
+    test('搜索超过旧文件发现上限，分页仍能完整读到后续文件', async () => {
         const tool = fixture({ '/one/a.ts': 'hit', '/one/b.ts': 'hit' }, { maxFindFiles: 1 });
-        const result = await tool.handler({ query: 'hit', maxResults: 1 });
-        expect(result.data.truncationReasons).toEqual(['maxFindFiles']);
-        expect(result.data.nextOffset).toBeUndefined();
-        expect(result.data.continuationHint).toContain('undiscovered');
+        const first = await tool.handler({ query: 'hit', maxResults: 1 });
+        expect(first.data.truncationReasons).toEqual(['maxResults']);
+        expect(first.data.nextOffset).toBe(1);
+        const second = await tool.handler({ query: 'hit', maxResults: 1, offset: first.data.nextOffset });
+        expect(second.data.results[0].file).toBe('b.ts');
+        expect(second.data.truncated).toBe(false);
+    });
+
+    test('唯一匹配在第1000个文件之后也能找到，真正零匹配不再误报扫描截断', async () => {
+        const contents = Object.fromEntries(Array.from({ length: 1005 }, (_, index) => [`/one/${index}.ts`, 'other']));
+        contents['/one/target.ts'] = 'late needle';
+        const tool = fixture(contents);
+        const found = await tool.handler({ query: 'late needle' });
+        expect(found.data).toMatchObject({ count: 1, truncated: false });
+        expect(found.data.results[0].file).toBe('target.ts');
+        const absent = await tool.handler({ query: 'missing' });
+        expect(absent.data).toMatchObject({ count: 0, truncated: false });
+        expect(absent.data.truncationReasons).toBeUndefined();
+    });
+
+    test('旧文件上限之外的精确短语不会被误判为零匹配并扩大为关键词', async () => {
+        const tool = fixture({ '/one/a.ts': 'alpha', '/one/b.ts': 'alpha beta' }, { maxFindFiles: 1 });
+        const result = await tool.handler({ query: 'alpha beta', keywordFallback: true });
+        expect(result.data.results.map((item: any) => item.file)).toEqual(['b.ts']);
+        expect(result.data.queryFallback).toBeUndefined();
     });
 
     test.each([-1, 1.5, Infinity, '1'])('拒绝无效 offset %s', async offset => {

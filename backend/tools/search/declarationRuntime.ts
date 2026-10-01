@@ -95,8 +95,8 @@ function createSearchInFilesTool(): Tool {
                 : isZh
                     ? '在工作区文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。返回匹配的文件和上下文。'
                     : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.') + (isZh
-                        ? '\n搜索结果含 nextOffset 时，保持查询条件不变，将它作为 offset 续查。truncationReasons 区分匹配数、输出预算与文件扫描上限；不能续查时按 continuationHint 缩小范围。'
-                        : '\nWhen search results include nextOffset, pass it as offset with unchanged query parameters. truncationReasons distinguishes match, output-budget and file-discovery limits; follow continuationHint when pagination cannot recover omitted results.'),
+                        ? '\n搜索流式遍历全部候选文件，不按文件数量截断。结果含 nextOffset 时，保持查询条件不变，将它作为 offset 续查。truncationReasons 区分匹配数与输出预算；预算不足时按 continuationHint 缩小范围。'
+                        : '\nSearch streams all candidate files without a file-count cutoff. When results include nextOffset, pass it as offset with unchanged query parameters. truncationReasons distinguishes match and output-budget limits; follow continuationHint when the output budget omits matches.'),
             category: 'search',
             parameters: {
                 type: 'object',
@@ -453,7 +453,6 @@ function createSearchInFilesTool(): Tool {
                         const page: SearchPageState = { remaining: offset, matchesSeen: 0 };
                         const results: SearchMatch[] = [];
                         const skippedFiles: SkippedFileInfo[] = [];
-                        let filesTruncated = false;
                         let statPathWarning: SearchPathWarningInfo | undefined;
                         // maxResults+1 探测语义（参照 find_files）：多取 1 条用于精确判定截断，
                         // 恰好等于 maxResults 条时不误报 truncated；超出部分在返回前裁剪。
@@ -484,7 +483,6 @@ function createSearchInFilesTool(): Tool {
                                 { computation, signal: context?.abortSignal, includeIgnored }
                             );
                             results.push(...pass.matches);
-                            filesTruncated = pass.filesTruncated;
                             skippedFiles.push(...pass.skippedFiles);
                         } else if (searchPath === '.' && workspaces.length > 1) {
                             // 搜索所有工作区
@@ -506,7 +504,6 @@ function createSearchInFilesTool(): Tool {
                                     { computation, signal: context?.abortSignal, includeIgnored }
                                 );
                                 results.push(...wsPass.matches);
-                                filesTruncated = filesTruncated || wsPass.filesTruncated;
                                 skippedFiles.push(...wsPass.skippedFiles);
                             }
                         } else {
@@ -535,7 +532,6 @@ function createSearchInFilesTool(): Tool {
                                 { computation, signal: context?.abortSignal, includeIgnored }
                             );
                             results.push(...pass.matches);
-                            filesTruncated = filesTruncated || pass.filesTruncated;
                             skippedFiles.push(...pass.skippedFiles);
                         }
 
@@ -550,7 +546,6 @@ function createSearchInFilesTool(): Tool {
                             matchesSeen: page.matchesSeen,
                             matchesTruncated,
                             budgetTruncated: !!budget?.truncated,
-                            filesTruncated,
                             skippedFiles,
                             pathWarning: statPathWarning
                         };
@@ -589,16 +584,14 @@ function createSearchInFilesTool(): Tool {
 
                     const truncationReasons = [
                         ...(searchPass.matchesTruncated ? ['maxResults'] : []),
-                        ...(searchPass.budgetTruncated ? ['outputBudget'] : []),
-                        ...(searchPass.filesTruncated ? ['maxFindFiles'] : [])
+                        ...(searchPass.budgetTruncated ? ['outputBudget'] : [])
                     ];
                     // 预算可能跳过中间的长匹配；不能用简单 offset 冒充无遗漏续查。
                     const nextOffset = searchPass.matchesTruncated && !searchPass.budgetTruncated
                         ? offset + allResults.length : undefined;
                     const continuationHint = [
                         ...(nextOffset !== undefined ? [`Continue with offset=${nextOffset} and unchanged search parameters; restart at offset=0 if files changed.`] : []),
-                        ...(searchPass.budgetTruncated ? ['Output budget omitted matches: narrow query/path/pattern or reduce context in search settings, then restart at offset=0.'] : []),
-                        ...(searchPass.filesTruncated ? ['File discovery reached maxFindFiles: narrow path/pattern or increase that setting; offset cannot reach undiscovered files.'] : [])
+                        ...(searchPass.budgetTruncated ? ['Output budget omitted matches: narrow query/path/pattern or reduce context in search settings, then restart at offset=0.'] : [])
                     ].join(' ');
                     return {
                         success: true,
@@ -612,11 +605,11 @@ function createSearchInFilesTool(): Tool {
                             // 修改原因：allResults.length >= maxResults 在「恰好 maxResults 条」时误报 truncated；
                             // 修改方式：改用 runSearchPass 的 maxResults+1 探测结果（matchesTruncated），
                             //          与 find_files 的探测语义一致。
-                            truncated: searchPass.matchesTruncated || searchPass.budgetTruncated || searchPass.filesTruncated,
+                            truncated: searchPass.matchesTruncated || searchPass.budgetTruncated,
                             multiRoot: workspaces.length > 1,
                             queryFallback: fallbackInfo,
                             searchHint: !isRegex && !keywordFallback && searchPass.matchesSeen === 0 && !searchPass.budgetTruncated
-                                && !searchPass.filesTruncated && splitWhitespaceFallbackKeywords(query).length > 0
+                                && splitWhitespaceFallbackKeywords(query).length > 0
                                 ? 'No exact phrase matches. To explicitly broaden this query, retry with keywordFallback=true.' : undefined,
                             effectiveExclude: excludePattern,
                             respectsGitIgnore: !!host.gitIgnoreSupported && !includeIgnored,

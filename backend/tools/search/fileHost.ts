@@ -19,6 +19,8 @@ export interface SearchFileHost {
   readFile(file: FileLocation): Promise<Uint8Array>;
   readHeader?(file: FileLocation, bytes: number): Promise<Uint8Array>;
   findFiles(root: FileLocation, pattern: string, exclude: string, limit: number, options?: FileDiscoveryOptions): Promise<FileLocation[]>;
+  /** 搜索按发现顺序流式消费；仅结果与输出预算封顶，不截断待扫描文件。 */
+  iterateFiles?(root: FileLocation, pattern: string, exclude: string, limit: number, options?: FileDiscoveryOptions): AsyncIterable<FileLocation>;
   countLines(file: FileLocation, relative: string): Promise<number | undefined>;
   findExcludePatterns(): string[] | undefined;
   searchConfig(): Readonly<SearchInFilesToolConfig>;

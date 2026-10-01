@@ -32,8 +32,6 @@ export interface SearchPassResult {
     /** 结果条数达到 maxResults 上限（maxResults+1 探测判定，恰好等于 maxResults 时不置位） */
     matchesTruncated: boolean;
     budgetTruncated: boolean;
-    /** findFiles 达到文件数上限（结果可能不完整） */
-    filesTruncated: boolean;
     /** 处理失败/被大小护栏跳过的文件及原因（与 replacePass 的 SkippedFileInfo 同构） */
     skippedFiles: SkippedFileInfo[];
     /** getSearchRootAndPattern 的 stat 失败降级说明（路径不存在/不可访问时按目录处理） */
@@ -132,18 +130,21 @@ async function searchInDirectory(
     budget?: SearchBudget,
     page?: SearchPageState,
     execution?: { computation?: TextSearchWorker; signal?: AbortSignal; includeIgnored?: boolean }
-): Promise<{ matches: SearchMatch[]; filesTruncated: boolean; skippedFiles: SkippedFileInfo[] }> {
+): Promise<{ matches: SearchMatch[]; skippedFiles: SkippedFileInfo[] }> {
     // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
     // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
     const searchRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
     const results: SearchMatch[] = [];
     const skippedFiles: SkippedFileInfo[] = [];
-    
-    
-    const findLimit = Math.max(1, Math.floor(clampNonNegativeNumber(config.maxFindFiles, 1000)));
-    const foundFiles = await host.findFiles(searchRoot, filePattern, excludePattern, findLimit + 1, { includeIgnored: execution?.includeIgnored });
-    const filesTruncated = foundFiles.length > findLimit;
-    const files = filesTruncated ? foundFiles.slice(0, findLimit) : foundFiles;
+    // 文件发现不再按 maxFindFiles 截断；该配置仍限制替换模式，不能让只读搜索漏掉后面的文件。
+    // Node 宿主直接流式遍历，扩展宿主通过完整 findFiles 结果沿用自己的发现顺序。
+    const discovery = { includeIgnored: execution?.includeIgnored };
+    const files = host.iterateFiles
+        ? host.iterateFiles(searchRoot, filePattern, excludePattern, Number.MAX_SAFE_INTEGER, discovery)
+        : (async function* () {
+            yield* await host.findFiles(searchRoot, filePattern, excludePattern, Number.MAX_SAFE_INTEGER, discovery);
+        })();
+    const iterator = files[Symbol.asyncIterator]();
 
     const enableHeaderTextCheck = config.enableHeaderTextCheck !== false;
     const headerSampleBytes = Math.max(64, clampNonNegativeNumber(config.headerSampleBytes, 4096));
@@ -155,7 +156,7 @@ async function searchInDirectory(
     
     // 并发预取 + 顺序消费（语义与逐文件串行完全一致）：
     // 修改原因：旧实现对每个文件串行执行 stat → 读文件头 → 读全文，单线程大量
-    //          时间在等待磁盘；findLimit 上千文件时实测 900 个小文件约 258ms。
+    //          时间在等待磁盘；大工作区实测 900 个小文件约 258ms。
     // 修改方式：最多提前 SEARCH_FILE_CONCURRENCY 个文件并发准备（大小护栏、二进制
     //          探测、读全文、解码、归一化、全文无命中快速拒绝）；消费端仍按原顺序
     //          逐行、逐匹配应用预算，结果、截断标志与 skippedFiles 顺序保持不变；
@@ -237,21 +238,22 @@ async function searchInDirectory(
         }
     };
 
-    const prepared: Array<Promise<PreparedFile> | undefined> = new Array(files.length);
-    let nextToPrepare = 0;
-    const startPrepareAhead = (currentIndex: number) => {
-        while (nextToPrepare < files.length && nextToPrepare - currentIndex < SEARCH_FILE_CONCURRENCY) {
-            const index = nextToPrepare++;
-            const task = prepareFile(files[index]);
-            // 兜底：极端情况下（例如路径解析在 catch 中再次抛错）任务可能拒绝，
-            // 提前挂一个空处理，避免在被消费前触发 unhandled rejection；消费端仍会看到拒绝。
+    const prepared: Array<Promise<PreparedFile>> = [];
+    let exhausted = false;
+    const startPrepareAhead = async () => {
+        while (!exhausted && prepared.length < SEARCH_FILE_CONCURRENCY) {
+            execution?.signal?.throwIfAborted();
+            const next = await iterator.next();
+            if (next.done) { exhausted = true; break; }
+            const task = prepareFile(next.value);
+            // 在顺序消费前挂拒绝处理；退出时仍等待已启动的读取，避免遗留文件句柄。
             task.catch(() => { /* 消费端负责处理拒绝 */ });
-            prepared[index] = task;
+            prepared.push(task);
         }
     };
 
     try {
-        for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        for (;;) {
             if (results.length >= maxResults) {
                 break;
             }
@@ -261,11 +263,10 @@ async function searchInDirectory(
             }
 
             execution?.signal?.throwIfAborted();
-            startPrepareAhead(fileIndex);
-            const outcome = await prepared[fileIndex]!;
+            await startPrepareAhead();
+            if (!prepared.length) break;
+            const outcome = await prepared.shift()!;
             execution?.signal?.throwIfAborted();
-            // 已完成的 Promise 仍会持有全文和分行数组；消费后解除引用，内存才受预取窗口约束。
-            prepared[fileIndex] = undefined;
             if (outcome.kind === 'skipped' || outcome.kind === 'failed') {
                 skippedFiles.push(outcome.skipped);
                 continue;
@@ -298,11 +299,12 @@ async function searchInDirectory(
         }
 
     } finally {
-        // 取消和异常也必须等待预取释放句柄，工具返回后才不会遗留正在读取的文件。
-        await Promise.allSettled(prepared.filter((item): item is Promise<PreparedFile> => item !== undefined));
+        // 取消和异常也关闭发现游标，并等待预取释放句柄。
+        try { await iterator.return?.(); }
+        finally { await Promise.allSettled(prepared); }
     }
     
-    return { matches: results, filesTruncated, skippedFiles };
+    return { matches: results, skippedFiles };
 }
 
 async function getSearchRootAndPattern(
