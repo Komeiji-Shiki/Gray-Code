@@ -93,7 +93,8 @@ jobs:
           Compress-Archive -LiteralPath 'release/desktop/GrayCode-win32-x64' -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-win32-x64.zip"
           Copy-Item -LiteralPath 'release/desktop-installer/GrayCode-win-x64-Setup.exe' -Destination "release/nightly/$env:NIGHTLY_PREFIX-win-x64-Setup.exe"
           # 更新清单引用原始文件名，把整组更新产物放在同一 ZIP 内，保留内部名称。
-          Compress-Archive -Path 'release/desktop-installer/*' -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-win-x64-update.zip"
+          $updateFiles = @(Get-ChildItem -LiteralPath 'release/desktop-installer' -File | Where-Object { $_.Extension -ne '.exe' } | Select-Object -ExpandProperty FullName)
+          Compress-Archive -LiteralPath $updateFiles -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-win-x64-update.zip"
           Compress-Archive -Path 'release/source/*' -DestinationPath "release/nightly/$env:NIGHTLY_PREFIX-source.zip"
 
       - name: Preserve packaged artifacts
@@ -170,8 +171,9 @@ jobs:
             }
 
             const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, { ...repo, per_page: 100 });
+            const currentArtifact = `GrayCode-Nightly-${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`;
             for (const artifact of artifacts) {
-              if (artifact.workflow_run?.id === context.runId) continue;
+              if (artifact.name === currentArtifact) continue;
               if (artifact.name === 'graycode-nightly' || /^GrayCode-Nightly-\d+-\d+$/.test(artifact.name)) {
                 await github.rest.actions.deleteArtifact({ ...repo, artifact_id: artifact.id });
               }
