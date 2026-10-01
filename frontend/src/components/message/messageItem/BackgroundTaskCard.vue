@@ -71,7 +71,12 @@ async function openAgent() {
 </script>
 
 <template>
-  <div class="background-task-card">
+  <div
+    class="background-task-card"
+    role="group"
+    :aria-label="agentParticipants || task?.name || (isAgent ? t('components.message.roles.agent') : taskLabel)"
+    :data-background-message-id="messageId"
+  >
     <div class="bg-task-header">
       <i class="codicon codicon-hubot bg-task-icon"></i>
       <button v-if="agentRunId" class="bg-task-label agent-link" title="查看子代理运行记录" @click="openAgent">{{ agentParticipants || task?.name || taskLabel }} ↗</button>
@@ -103,6 +108,7 @@ async function openAgent() {
           <i class="codicon codicon-chevron-down"></i>
         </button>
       </div>
+      <div v-if="$slots.actions" class="bg-task-message-actions"><slot name="actions" /></div>
     </div>
     <div
       class="bg-task-content"
@@ -116,8 +122,8 @@ async function openAgent() {
   border: 1px solid var(--gc-border-subtle);
   border-left: 3px solid var(--gc-focus-border);
   border-radius: var(--gc-radius-md);
-  padding: 8px 12px;
-  margin: 4px 0;
+  padding: var(--gc-space-2) var(--gc-space-3);
+  margin: var(--gc-space-1) 0;
   background: color-mix(in srgb, var(--gc-surface-base) 95%, var(--gc-focus-border) 5%);
   font-size: 12px;
 }
@@ -125,12 +131,21 @@ async function openAgent() {
 .bg-task-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  flex-wrap: wrap;
+  gap: var(--gc-space-1);
+  margin-bottom: var(--gc-space-1);
   min-width: 0;
 }
 
+.bg-task-message-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-1);
+  margin-left: auto;
+}
+
 .bg-task-icon {
+  flex-shrink: 0;
   font-size: 14px;
   color: var(--gc-focus-border);
 }
@@ -159,7 +174,7 @@ async function openAgent() {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--gc-space-1) / 2);
   flex-shrink: 0;
 }
 

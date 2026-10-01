@@ -112,6 +112,27 @@ describe('普通消息操作与只读限制', () => {
       wrapper.unmount()
     }
   })
+  test('连接式用户输入仍保留独立编辑、原文和附件', async () => {
+    const message: Message = {
+      id: 'group-user', role: 'user', content: '用户原文', parts: [{ text: '用户原文' }], timestamp: 1,
+      attachments: [{ id: 'attachment', name: 'note.txt', type: 'document', size: 1, mimeType: 'text/plain', data: 'YQ==' }]
+    }
+    const wrapper = mount(MessageItem, {
+      props: { message, messageIndex: 0, inputGroup: 'start', floor: 7 },
+      global: { stubs: { ...GLOBAL_STUBS, MessageActions: false } }
+    })
+    expect(wrapper.attributes('data-message-id')).toBe('group-user')
+    expect(wrapper.classes()).toContain('message-input-group-start')
+    expect(wrapper.get('.message-floor').text()).toBe('#7')
+    expect(wrapper.findComponent({ name: 'MessageAttachments' }).props('attachments')).toEqual(message.attachments)
+    await wrapper.get('.codicon-edit').trigger('click')
+    expect(wrapper.findComponent({ name: 'EditDialog' }).props('originalContent')).toBe('用户原文')
+    expect(wrapper.findComponent({ name: 'EditDialog' }).props('originalAttachments')).toEqual(message.attachments)
+    expect(wrapper.findComponent({ name: 'EditDialog' }).props('modelValue')).toBe(true)
+    await wrapper.setProps({ inputGroup: 'end' })
+    expect(wrapper.findComponent({ name: 'EditDialog' }).props('modelValue')).toBe(true)
+    wrapper.unmount()
+  })
 })
 
 describe('后台任务三段式折叠态持久化', () => {
@@ -138,6 +159,33 @@ describe('后台任务三段式折叠态持久化', () => {
     const wrapper2 = mountItem(message)
     expect(wrapper2.find('.bg-task-content').classes()).toContain('view-medium')
     wrapper2.unmount()
+  })
+
+  test('同一区后台消息去掉重复外层标题，楼层、原动作与独立折叠态保留', async () => {
+    const first = mount(MessageItem, {
+      props: { message: createBackgroundTaskMessage('group-bg-1'), messageIndex: 0, floor: 8, inputGroup: 'start', allowEdit: false },
+      global: { stubs: { ...GLOBAL_STUBS, MessageActions: false } }
+    })
+    const second = mount(MessageItem, {
+      props: { message: createBackgroundTaskMessage('group-bg-2'), messageIndex: 1, floor: 9, inputGroup: 'end', allowEdit: false },
+      global: { stubs: { ...GLOBAL_STUBS, MessageActions: false } }
+    })
+    expect(first.find('.message-header').exists()).toBe(false)
+    expect(first.get('.background-task-card').attributes('aria-label')).toBe('后台任务结果')
+    expect(first.get('.background-task-card').attributes('data-background-message-id')).toBe('group-bg-1')
+    expect(first.get('.message-floor').text()).toBe('#8')
+    expect(second.get('.message-floor').text()).toBe('#9')
+    expect(first.find('.codicon-edit').exists()).toBe(false)
+    expect(first.find('.codicon-copy').exists()).toBe(true)
+    await first.get('.codicon-copy').trigger('click')
+    expect(first.emitted('copy')?.[0]).toEqual(['后台任务已完成'])
+    await first.findAll('.bg-task-view-btn')[2].trigger('click')
+    expect(first.get('.bg-task-content').classes()).toContain('view-expanded')
+    expect(second.get('.bg-task-content').classes()).toContain('view-collapsed')
+    await first.setProps({ inputGroup: 'single' })
+    expect(first.get('.bg-task-content').classes()).toContain('view-expanded')
+    first.unmount()
+    second.unmount()
   })
 
   test('不同消息 id 的折叠态互不影响', async () => {

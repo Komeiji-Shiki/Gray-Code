@@ -815,13 +815,8 @@ function handleThinkingNumberChange(field: string, event: any) {
   content: '';
   position: absolute;
   display: none;
-  left: 5px;
-  top: 2px;
-  width: 4px;
-  height: 8px;
   border: solid var(--gc-text-on-primary);
   border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
 }
 
 .custom-checkbox input:checked ~ .checkmark::after {

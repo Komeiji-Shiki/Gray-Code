@@ -132,7 +132,8 @@ describe('frontend visual and async architecture contracts', () => {
   test('外壳结构使用外壳色，选中项为浅底加左侧强调条', () => {
     const sidebar = readFileSync(path.join(repoRoot, 'apps/client/src/components/navigation/conversationSidebar.css'), 'utf8')
     expect(sidebar).toMatch(/\.conversation-sidebar\{[^}]*background:var\(--gc-surface-chrome\)/)
-    expect(sidebar).toMatch(/\.navigation-draft\.active\{[^}]*box-shadow:inset 2px 0 0 var\(--gc-accent\)/)
+    expect(sidebar).toMatch(/\.navigation-draft\.active\{[^}]*background:var\(--gc-surface-chrome-hover\)/)
+    expect(sidebar).toMatch(/\.navigation-draft\.active::before[^}]*width:2px;[^}]*border-radius:0;[^}]*background:var\(--gc-accent\)/)
     const tabs = readFileSync(path.resolve(process.cwd(), 'src/components/tabs/ConversationTabs.vue'), 'utf8')
     expect(tabs).toMatch(/\.tab-item\.active\s*\{[^}]*background:\s*var\(--gc-surface-base\)/)
     const base = readFileSync(path.join(repoRoot, 'apps/client/src/styles/base.css'), 'utf8')

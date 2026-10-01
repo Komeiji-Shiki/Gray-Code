@@ -29,8 +29,8 @@ const CustomScrollbarStub = defineComponent({
 })
 
 const MessageItemStub = defineComponent({
-  props: { message: { type: Object, required: true } },
-  template: '<div class="message-item" :data-message-id="message.id">{{ message.content }}</div>'
+  props: { message: { type: Object, required: true }, inputGroup: String },
+  template: '<div class="message-item" :data-message-id="message.id" :data-input-group="inputGroup">{{ message.content }}</div>'
 })
 
 const SummaryMessageStub = defineComponent({
@@ -92,6 +92,38 @@ describe('MessageList virtual window DOM', () => {
     const contentChildren = Array.from(wrapper.get('.messages-container').element.children)
     expect(contentChildren.some(element => element.classList.contains('virtual-message-spacer'))).toBe(false)
 
+    wrapper.unmount()
+  })
+
+  test('后台长区跨虚拟窗口时首尾封口，每条仍为独立可寻址行', async () => {
+    const messages = makeMessages(240).map(message => ({ ...message, role: 'user' as const, source: 'background_task' as const }))
+    const original = JSON.stringify(messages)
+    const wrapper = mount(MessageList, {
+      attachTo: document.body,
+      props: { messages, tabId: 'group-window' },
+      global: { stubs: {
+        CustomScrollbar: CustomScrollbarStub, MessageItem: MessageItemStub, SummaryMessage: SummaryMessageStub,
+        Tooltip: SlotStub, DeleteDialog: SlotStub, ConfirmDialog: SlotStub, DirtyFilesConfirm: SlotStub, ChatError: SlotStub
+      } }
+    })
+    await nextTick()
+    await nextTick()
+    let rows = wrapper.findAll('.message-item')
+    expect(rows).toHaveLength(40)
+    expect(rows[0].attributes('data-message-id')).toBe('m-200')
+    expect(rows[0].attributes('data-input-group')).toBe('start')
+    expect(rows.at(-1)?.attributes('data-input-group')).toBe('end')
+    expect(rows.every(row => row.element.parentElement === wrapper.get('.messages-container').element)).toBe(true)
+    await wrapper.get('.load-more-container').trigger('click')
+    await nextTick()
+    rows = wrapper.findAll('.message-item')
+    expect(rows).toHaveLength(80)
+    expect(rows[0].attributes('data-message-id')).toBe('m-160')
+    expect(rows[0].attributes('data-input-group')).toBe('start')
+    expect(wrapper.get('[data-message-id="m-200"]').attributes('data-input-group')).toBe('middle')
+    expect(rows.at(-1)?.attributes('data-input-group')).toBe('end')
+    expect(JSON.stringify(messages)).toBe(original)
+    expect(wrapper.find('.virtual-message-spacer').exists()).toBe(false)
     wrapper.unmount()
   })
 })

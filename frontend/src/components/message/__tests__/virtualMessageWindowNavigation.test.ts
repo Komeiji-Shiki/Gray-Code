@@ -40,7 +40,7 @@ function mountWindow(fullWindow = false, start = 800, count = 200) {
         restoreTodoExpandedState: vi.fn()
       })
       return () => h('div', navigation.messageRenderRows.value.flatMap(row => row.kind === 'message'
-        ? [h('div', { class: 'message-item', 'data-message-id': row.item.message.id })] : []))
+        ? [h('div', { class: 'message-item', 'data-message-id': row.item.message.id, 'data-input-group': row.inputGroup })] : []))
     }
   }))
   const container = wrapper.element as HTMLElement
@@ -78,6 +78,31 @@ describe('消息窗口分页与连续定位', () => {
     expect(chatStore.loadOlderMessagesPage).not.toHaveBeenCalled()
     expect(wrapper.findAll('.message-item')).toHaveLength(80)
     expect(wrapper.find('.message-item').attributes('data-message-id')).toBe('m-920')
+    wrapper.unmount()
+  })
+
+  test('连接区内用户与后台跳转仍按各自稳定 ID 定位，不改虚拟消息行上限', async () => {
+    const { wrapper, state, chatStore, navigation } = mountWindow(false, 0, 240)
+    state.messages = state.messages.map(message => ({ ...message, source: 'background_task' as const }))
+    state.messages[205] = { ...state.messages[205], source: 'user', content: '可编辑用户原文' }
+    chatStore.allMessages = state.messages
+    await flushPromises()
+    expect(wrapper.findAll('.message-item')).toHaveLength(40)
+    expect(wrapper.get('[data-message-id="m-200"]').attributes('data-input-group')).toBe('start')
+    const container = wrapper.element as HTMLElement
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const index = Array.from(container.children).indexOf(this)
+      return new DOMRect(0, this === container ? 0 : index * 20 - container.scrollTop, 100, this === container ? 500 : 20)
+    })
+    expect(await navigation.jumpToMessage({ id: 'm-205' })).toBe(true)
+    expect(container.scrollTop).toBe(3125)
+    expect(wrapper.get('[data-message-id="m-205"]').attributes('data-input-group')).toBe('middle')
+    expect(await navigation.jumpToMessage({ id: 'm-206' })).toBe(true)
+    expect(container.scrollTop).toBe(3145)
+    expect(wrapper.get('[data-message-id="m-206"]').attributes('data-input-group')).toBe('middle')
+    expect(wrapper.findAll('.message-item')).toHaveLength(200)
+    expect(chatStore.loadMessagesAroundIndex).not.toHaveBeenCalled()
+    expect(state.messages[205].content).toBe('可编辑用户原文')
     wrapper.unmount()
   })
 

@@ -25,7 +25,9 @@ import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeS
 import {
   advanceMessageWindowStart,
   computePaginatedMessageFloorMap,
-  computeCheckpointFloorMap
+  computeCheckpointFloorMap,
+  getMessageInputGroupPositions,
+  type MessageInputGroupPosition
 } from './messageListUtils'
 import { clearLineDiffCache } from '../../utils/lineDiff'
 import type { Message, CheckpointRecord } from '../../types'
@@ -255,7 +257,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
   type RenderRow =
     | { kind: 'build'; key: 'build-bar' }
-    | { kind: 'message'; key: string; item: EnhancedMessage }
+    | { kind: 'message'; key: string; item: EnhancedMessage; inputGroup?: MessageInputGroupPosition }
     | { kind: 'todo'; key: 'todo-bar' }
     | { kind: 'summarize-divider'; key: string }
 
@@ -309,6 +311,11 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
       rows.push({ kind: 'todo', key: 'todo-bar' })
     }
 
+    const inputGroups = getMessageInputGroupPositions(rows)
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index]
+      if (row.kind === 'message') row.inputGroup = inputGroups[index]
+    }
     return rows
   })
 

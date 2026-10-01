@@ -113,13 +113,8 @@ function toggle(event: Event) {
   content: '';
   position: absolute;
   display: none;
-  left: 50%;
-  top: 50%;
-  width: 4px;
-  height: 8px;
   border: solid var(--gc-text-on-accent);
   border-width: 0 2px 2px 0;
-  transform: translate(-50%, -60%) rotate(45deg);
 }
 
 .custom-checkbox input:checked ~ .checkmark::after {

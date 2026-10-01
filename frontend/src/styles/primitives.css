@@ -270,6 +270,16 @@
   border-color: color-mix(in srgb, var(--gc-danger) 55%, var(--gc-border-subtle));
 }
 
+/* 14px 与 16px 复选框共用居中的勾，避免缩小外框后固定偏移使勾越界。 */
+:where(.custom-checkbox .checkmark)::after {
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 8px;
+  box-sizing: content-box;
+  transform: translate(-50%, -60%) rotate(45deg);
+}
+
 :where(.gc-visually-hidden) {
   position: absolute !important;
   width: 1px !important;

@@ -381,12 +381,13 @@ function handleContinue() {
               :floor="row.item.floor"
             />
             
-            <!-- 普通消息使用 MessageItem -->
+            <!-- 普通消息保持逐条身份，相邻输入只连接外观 -->
             <MessageItem
               v-else
               :message="row.item.message"
               :message-index="row.item.backendIndex"
               :floor="row.item.floor"
+              :input-group="row.inputGroup"
               @edit="handleEdit"
               @delete="handleDelete"
               @retry="handleRetry"

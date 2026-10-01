@@ -253,6 +253,9 @@ async function main() {
   assert.equal(await fs.readFile(path.join(output, 'project', 'generated.txt'), 'utf8'), 'Desktop model/tool integration verified.');
   await until(() => chat('Array.from(document.querySelectorAll(".tool-item.status-warning")).some(node => node.innerText.includes("读取文件") && !!node.querySelector(".status-icon.codicon-warning"))'), 'partial read warning icon and border');
   await until(() => chat('document.body.innerText.includes("上下文状态")'), 'on-demand context status tool card');
+  const chatLayout = await require('./smoke-ui-layout.cjs').verifyChatLayout(chat);
+  await until(() => evaluate('!!document.querySelector(".navigation-row.active")'), 'active conversation navigation');
+  await require('./smoke-ui-layout.cjs').verifySelectionMarker(evaluate, '.navigation-row.active');
   const conversationId = (await rpc('runs.list'))[0].conversationId;
   const beforeReroll = await rpc('conversations.history', { id: conversationId });
   const oldReplyId = beforeReroll.messages.at(-1).id;
@@ -276,6 +279,12 @@ async function main() {
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".settings-panel")'), 'settings panel');
   assert((await chat('document.querySelectorAll(".settings-sidebar .settings-tab").length')) >= 20);
+  await require('./smoke-ui-layout.cjs').verifySelectionMarker(chat, '.settings-tab.active');
+  await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.trim()==="渠道").click()');
+  await until(() => chat('!!document.querySelector("[data-search-anchor=advanced-options] .advanced-toggle")'), 'channel advanced options toggle');
+  await chat('const section=document.querySelector("[data-search-anchor=advanced-options]"); if (!section.querySelector(".advanced-options")) section.querySelector(".advanced-toggle").click()');
+  await until(() => chat('!!document.querySelector(".thinking-backfill-section .checkmark")'), 'channel thinking checkboxes');
+  await require('./smoke-ui-layout.cjs').verifyCheckboxLayout(chat);
   await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.includes("总结")).click()');
   await until(() => chat('!!document.querySelector("[data-search-anchor=context-user-retention] .select-trigger")'), 'user retention setting');
   assert(await chat('document.querySelector("[data-search-anchor=context-user-retention]").innerText.includes("首条用户消息＋最近一次输入")'));
@@ -343,8 +352,8 @@ async function main() {
   closingSettings.appearance.codeFontSize += 1;
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
-  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true, rendererPerformance,
-    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
+  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true, chatLayout, rendererPerformance,
+    verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
   server.closeAllConnections(); server.close();

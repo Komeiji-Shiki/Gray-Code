@@ -366,6 +366,9 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .tool-item {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  container-name: gc-tool-item;
+  container-type: inline-size;
   background: var(--gc-surface-raised);
   border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-md);
@@ -391,7 +394,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   display: flex;
   align-items: center;
   gap: var(--gc-space-2);
-  padding: 6px var(--gc-space-3);
+  padding: calc(var(--gc-space-3) / 2) var(--gc-space-3);
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
@@ -404,7 +407,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--gc-space-1) / 2);
   padding: 0;
   border: 0;
   color: inherit;
@@ -422,18 +425,22 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   outline-offset: 2px;
 }
 
+/* 名称、状态与耗时不向长摘要让出宽度；极窄卡片只在完整字段之间换行。 */
 .tool-info {
+  flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--gc-space-1);
   min-width: 0;
+  max-width: 100%;
 }
 
 .expand-icon {
   flex-shrink: 0;
   font-size: var(--gc-font-size-body);
   color: var(--gc-text-muted);
-  transition: transform var(--transition-fast, 0.1s);
+  transition: transform var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .tool-icon {
@@ -443,8 +450,11 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .tool-name {
-  min-width: 0;
-  overflow-wrap: anywhere;
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--gc-font-size-body);
   font-weight: var(--gc-font-weight-medium);
   color: var(--gc-text-primary);
@@ -454,7 +464,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .status-icon {
   font-size: var(--gc-font-size-body);
   color: var(--gc-text-muted);
-  margin-left: var(--spacing-xs, 4px);
+  margin-left: var(--gc-space-1);
 }
 
 .status-icon.status-background {
@@ -484,8 +494,9 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .status-icon-wrapper {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  margin-left: var(--spacing-xs, 4px);
+  margin-left: var(--gc-space-1);
 }
 
 .tool-duration {
@@ -499,9 +510,11 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .tool-action-buttons {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--gc-space-1);
   flex-shrink: 0;
+  max-width: 100%;
 }
 
 .tool-action-buttons:empty {
@@ -509,6 +522,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .tool-description {
+  min-width: 0;
   margin-left: calc(var(--gc-font-size-body) + var(--gc-icon-size-sm) + var(--gc-space-1) + var(--gc-space-1));
   color: var(--gc-text-muted);
   font-family: var(--gc-font-code);
@@ -530,6 +544,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .tool-item:is(.status-success, .status-error, .status-warning):not(:has(.permission-request)) .tool-description {
+  /* 零基准只占剩余空间，避免长路径/命令的固有宽度反过来压缩工具名称。 */
+  flex: 1 1 0;
   margin-left: 0;
   min-width: 0;
   overflow: hidden;
@@ -672,14 +688,23 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   word-break: break-word;
 }
 
-@media (max-width: 520px) {
+/* 按卡片而非窗口宽度换行，分栏与界面缩放时同样保留名称、状态和操作。 */
+@container gc-tool-item (max-width: 32rem) {
   .tool-header {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .tool-item:is(.status-success, .status-error, .status-warning):not(:has(.permission-request)) .tool-summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tool-item:is(.status-success, .status-error, .status-warning):not(:has(.permission-request)) .tool-description {
+    flex: none;
+  }
+
   .tool-action-buttons {
-    flex-wrap: wrap;
     justify-content: flex-end;
   }
 }

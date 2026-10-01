@@ -179,11 +179,20 @@ defineEmits<{
   visibility: visible;
 }
 
-/* 与导航侧栏一致：浅底加左侧强调条，不再用大块饱和色。 */
+/* 选中条独立绘制，不随按钮圆角弯曲。 */
 .settings-tab.active {
   background: var(--gc-surface-hover);
   color: var(--gc-text-primary);
-  box-shadow: inset 2px 0 0 var(--gc-accent);
+}
+
+.settings-tab.active::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  border-radius: 0;
+  background: var(--gc-accent);
+  pointer-events: none;
 }
 
 .settings-tab .codicon {

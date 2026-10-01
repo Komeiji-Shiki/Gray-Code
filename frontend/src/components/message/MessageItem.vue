@@ -22,6 +22,7 @@ import type { Message, CheckpointRecord, Attachment } from '../../types'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
 import { formatTime } from '../../utils/format'
+import type { MessageInputGroupPosition } from './messageListUtils'
 
 const { t } = useI18n()
 
@@ -30,6 +31,8 @@ const props = withDefaults(defineProps<{
   messageIndex: number  // 后端消息索引
   /** 楼层号（用户消息/模型回复各占一楼；不传则不显示） */
   floor?: number
+  /** 仅由可见渲染行决定的连接位置，不合并消息记录或操作状态。 */
+  inputGroup?: MessageInputGroupPosition
   allowEdit?: boolean
   allowRetry?: boolean
   allowBranch?: boolean
@@ -167,7 +170,9 @@ const messageClass = computed(() => ({
   'assistant-message': !isUser.value,
   'streaming': isStreaming.value,
   'summary-message': isSummary.value,
-  'background-task-message': isBackgroundTask.value
+  'background-task-message': isBackgroundTask.value,
+  'message-input-group': !!props.inputGroup,
+  [`message-input-group-${props.inputGroup}`]: !!props.inputGroup
 }))
 
 // 开始编辑（显示编辑对话框）
@@ -228,10 +233,11 @@ function handleRestoreAndRetry(checkpointId: string) {
     :class="messageClass"
     :data-message-id="message.id"
     :data-preview="isUser ? previewText : undefined"
+    :data-input-group="inputGroup"
     @mouseenter="showActions = true"
     @mouseleave="showActions = false"
   >
-    <div class="message-header">
+    <div v-if="!isBackgroundTask" class="message-header">
       <div class="message-role-indicator">
         <span class="role-label">
           {{ roleDisplayName }}
@@ -304,7 +310,26 @@ function handleRestoreAndRetry(checkpointId: string) {
         :is-agent="isAgentMessage"
         :agent-message="message.agentMessage"
         :task="message.backgroundTask"
-      />
+      >
+        <template #actions>
+          <span v-if="floor" class="message-floor">#{{ floor }}</span>
+          <MessageActions
+            :class="{ 'actions-visible': showActions }"
+            :message="message"
+            :can-edit="allowEdit !== false && isUser && !props.message.agentMessage"
+            :can-retry="allowRetry !== false && !isUser"
+            :can-delete="allowDelete !== false"
+            :can-branch="allowBranch !== false && typeof message.backendIndex === 'number' && !isStreaming"
+            :can-view-response="!isUser"
+            @edit="startEdit"
+            @copy="handleCopy"
+            @delete="handleDelete"
+            @retry="handleRetryClick"
+            @branch="emit('branch', message.id)"
+            @view-response="handleViewResponse"
+          />
+        </template>
+      </BackgroundTaskCard>
 
       <!-- 普通消息显示 -->
       <MessageContent v-else :message="characterDisplayMessage" :time-in-header="isUser" />
@@ -332,15 +357,39 @@ function handleRestoreAndRetry(checkpointId: string) {
   max-width: 100%;
 }
 
-/* 用户消息使用轻量卡片，助手正文保留完整阅读宽度。 */
+/* 用户消息保留浅底，与助手消息一样铺满可用宽度并沿用两侧内边距。 */
 .user-message {
-  width: fit-content;
-  min-width: min(280px, 100%);
-  max-width: min(85%, 760px);
-  margin: var(--gc-space-3) var(--gc-space-4) var(--gc-space-2) auto;
-  padding: var(--gc-space-2) var(--gc-space-3);
+  margin: var(--gc-space-3) 0 var(--gc-space-2);
   background: var(--gc-surface-raised);
   border-radius: var(--gc-radius-md);
+}
+
+/* 相邻输入维持扁平消息节点，以连续浅底组成一区；内部只保留短间距。 */
+.message-item.message-input-group {
+  background: var(--gc-surface-raised);
+  margin: 0;
+  padding: var(--gc-space-1) var(--gc-space-4);
+  border-radius: 0;
+}
+
+.message-item.message-input-group-single,
+.message-item.message-input-group-start {
+  margin-top: var(--gc-space-3);
+  padding-top: var(--gc-space-2);
+  border-top-left-radius: var(--gc-radius-md);
+  border-top-right-radius: var(--gc-radius-md);
+}
+
+.message-item.message-input-group-single,
+.message-item.message-input-group-end {
+  margin-bottom: var(--gc-space-2);
+  padding-bottom: var(--gc-space-2);
+  border-bottom-left-radius: var(--gc-radius-md);
+  border-bottom-right-radius: var(--gc-radius-md);
+}
+
+.message-input-group :deep(.background-task-card) {
+  margin: 0;
 }
 
 /* 消息头部 */
@@ -415,29 +464,24 @@ function handleRestoreAndRetry(checkpointId: string) {
   border-left: 3px solid var(--gc-link);
 }
 
-/* 后台任务回流卡片 */
-.background-task-message .message-header {
-  opacity: 0.6;
-}
-
-/* 操作按钮淡入淡出效果 */
-.message-header :deep(.message-actions) {
+/* 操作按钮淡入淡出效果；后台消息的同一套动作位于任务卡标题行。 */
+.message-item :deep(.message-actions) {
   opacity: 0;
-  transition: opacity var(--transition-fast, 0.15s);
+  transition: opacity var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
-.message-header :deep(.message-actions.actions-visible) {
+.message-item :deep(.message-actions.actions-visible) {
   opacity: 1;
 }
 
 /* 键盘聚焦（Tab 导航到消息内任意可聚焦元素）时同样显示操作按钮，保证纯键盘可用 */
-.message-item:focus-within .message-header :deep(.message-actions) {
+.message-item:focus-within :deep(.message-actions) {
   opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .message-item,
-  .message-header :deep(.message-actions) {
+  .message-item :deep(.message-actions) {
     transition: none;
   }
 }

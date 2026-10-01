@@ -1,3 +1,54 @@
+import type { Message } from '../../types'
+import { hasContextBlocks } from '../../types/contextParser'
+
+export type MessageInputGroupPosition = 'single' | 'start' | 'middle' | 'end'
+
+interface MessageInputGroupRow {
+  kind: string
+  item?: {
+    message: Message
+    beforeCheckpoints: readonly unknown[]
+    afterCheckpoints: readonly unknown[]
+  }
+}
+
+function inputRowKind(row?: MessageInputGroupRow): 'user' | 'background' | null {
+  const message = row?.kind === 'message' ? row.item?.message : undefined
+  if (!message || message.isSummary || message.contextMethod || message.contextWindowId || message.isFunctionResponse) return null
+  const parts = message.parts ?? []
+  const displayParts = message.characterDisplayParts ?? []
+  if (hasContextBlocks(message.content) || parts.some(part => hasContextBlocks(part.text ?? '')) || displayParts.some(part => hasContextBlocks(part.text ?? ''))) return null
+  if (message.source === 'background_task' || message.source === 'agent_message') return 'background'
+  return message.role === 'user' && (!message.source || message.source === 'user')
+    && !message.tools?.length && !message.toolCalls?.length && !message.toolResults?.length
+    && !parts.some(part => part.functionCall || part.functionResponse)
+    ? 'user' : null
+}
+
+function canJoinInputRows(left: MessageInputGroupRow | undefined, right: MessageInputGroupRow | undefined, leftKind: ReturnType<typeof inputRowKind> | undefined, rightKind: ReturnType<typeof inputRowKind> | undefined): boolean {
+  return !!leftKind && !!rightKind && (leftKind === 'background' || rightKind === 'background')
+    && !left?.item?.afterCheckpoints.length && !right?.item?.beforeCheckpoints.length
+}
+
+/**
+ * 只连接可见行的外观，不合并消息或新增滚动锚点。窗口首尾封口，检查点与特殊行隔断。
+ * 普通 user-user 不连接；后台/代理回传仍保留各自的消息 ID、权限与任务卡状态。
+ */
+export function getMessageInputGroupPositions(rows: readonly MessageInputGroupRow[]): Array<MessageInputGroupPosition | undefined> {
+  // 分类只在当前渲染批次计算一次，避免相邻判定反复扫描长消息的 parts；不缓存历史消息。
+  const kinds = rows.map(inputRowKind)
+  return rows.map((row, index) => {
+    const kind = kinds[index]
+    if (!kind) return undefined
+    const previous = canJoinInputRows(rows[index - 1], row, kinds[index - 1], kind)
+    const next = canJoinInputRows(row, rows[index + 1], kind, kinds[index + 1])
+    if (previous && next) return 'middle'
+    if (previous) return 'end'
+    if (next) return 'start'
+    return kind === 'background' ? 'single' : undefined
+  })
+}
+
 export interface ComputeVirtualRowsOptions {
   threshold: number
   estimatedRowHeight: number
