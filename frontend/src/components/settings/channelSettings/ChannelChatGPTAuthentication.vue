@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onUnmounted, watch } from 'vue'
+import { computed, ref, onUnmounted, watch } from 'vue'
 import type { ChatGPTAuthStatus } from '@graycode/contracts'
-import { ConfirmDialog } from '../../common'
+import { ConfirmDialog, CustomSelect } from '../../common'
 import { sendToExtension } from '@/utils/vscode'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { t } from '@/i18n'
@@ -11,6 +11,12 @@ const status = ref<ChatGPTAuthStatus>({ accounts: [], storageAvailable: false, u
 const busy = ref(false), error = ref(''), authorizationUrl = ref(''), callbackUrl = ref(''), notice = ref(false)
 let epoch = 0, timer: ReturnType<typeof setTimeout> | undefined
 const text = (key: string) => t(`desktop.chatgpt.${key}`)
+const activeAccount = computed(() => status.value.accounts.find(account => account.clientId === status.value.activeClientId))
+const accountOptions = computed(() => status.value.accounts.map(account => ({
+  value: account.clientId,
+  label: account.email || account.name || text('account'),
+  description: account.clientId.slice(-8),
+})))
 
 function stopPolling() { if (timer) clearTimeout(timer); timer = undefined }
 function schedulePoll() {
@@ -54,8 +60,7 @@ function login(newAccount = false) {
     window.open(value.url, '_blank', 'noopener,noreferrer')
   })
 }
-function select(event: Event) {
-  const accountId = (event.target as HTMLSelectElement).value
+function select(accountId: string) {
   return operate(async configId => { await sendToExtension(MESSAGE_NAMES['chatgpt.select'], { configId, accountId }) })
 }
 function cancel() {
@@ -94,50 +99,149 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chatgpt-auth" data-search-anchor="chatgpt-authentication">
-    <template v-if="status.accounts.length">
-      <label>{{ text('account') }}</label>
-      <select :value="status.activeClientId || ''" :disabled="busy" @change="select">
-        <option v-for="account in status.accounts" :key="account.clientId" :value="account.clientId">
-          {{ account.email || account.name || text('account') }} · {{ account.clientId.slice(-8) }}
-        </option>
-      </select>
-      <p v-if="status.accounts.find(account => account.clientId === status.activeClientId)?.planEnabled" class="plan-status">
-        {{ text('usingPlan') }}
-      </p>
-      <p v-else class="field-hint">{{ text('needsPermission') }}</p>
-    </template>
-    <p v-else class="field-hint">{{ status.storageAvailable ? text('notConnected') : text('storageUnavailable') }}</p>
+  <div class="chatgpt-auth" data-search-anchor="chatgpt-authentication" :aria-busy="busy">
+    <div class="auth-header">
+      <span class="auth-mark" aria-hidden="true"><i class="codicon codicon-account"></i></span>
+      <div class="auth-heading">
+        <h3 class="auth-title">
+          {{ text('account') }}
+          <span v-if="activeAccount" class="auth-account-id" :title="activeAccount.clientId">{{ activeAccount.clientId.slice(-8) }}</span>
+        </h3>
+        <p class="auth-status" :class="{ 'is-connected': activeAccount?.planEnabled }" role="status">
+          <i v-if="activeAccount?.planEnabled" class="codicon codicon-verified" aria-hidden="true"></i>
+          <span v-if="status.accounts.length">{{ activeAccount?.planEnabled ? text('usingPlan') : text('needsPermission') }}</span>
+          <span v-else>{{ status.storageAvailable ? text('notConnected') : text('storageUnavailable') }}</span>
+        </p>
+      </div>
+      <a class="gc-button gc-button--ghost usage-link" :href="status.usageUrl" target="_blank" rel="noopener noreferrer">
+        {{ text('usage') }}<i class="codicon codicon-link-external" aria-hidden="true"></i>
+      </a>
+    </div>
+    <CustomSelect v-if="status.accounts.length" :model-value="status.activeClientId || ''"
+      :options="accountOptions" :aria-label="text('account')" :disabled="busy" @update:model-value="select" />
     <div class="auth-actions">
-      <button type="button" class="btn" :disabled="busy || !status.storageAvailable" @click="login()">{{ status.accounts.length ? text('reconnect') : text('connect') }}</button>
-      <button v-if="status.accounts.length" type="button" class="btn" :disabled="busy || !status.storageAvailable" @click="login(true)">{{ text('addAccount') }}</button>
-      <button v-if="status.accounts.find(account => account.clientId === status.activeClientId)?.connected" type="button" class="btn" :disabled="busy" @click="disconnect">{{ text('disconnect') }}</button>
-      <a :href="status.usageUrl" target="_blank" rel="noopener noreferrer">{{ text('usage') }}</a>
+      <button type="button" class="gc-button" :class="{ 'gc-button--primary': !activeAccount?.planEnabled }"
+        :disabled="busy || !status.storageAvailable" @click="login()">
+        <i class="codicon" :class="status.accounts.length ? 'codicon-refresh' : 'codicon-sign-in'" aria-hidden="true"></i>
+        {{ status.accounts.length ? text('reconnect') : text('connect') }}
+      </button>
+      <button v-if="status.accounts.length" type="button" class="gc-button gc-button--ghost"
+        :disabled="busy || !status.storageAvailable" @click="login(true)">
+        <i class="codicon codicon-add" aria-hidden="true"></i>{{ text('addAccount') }}
+      </button>
+      <button v-if="activeAccount?.connected" type="button" class="gc-button gc-button--ghost auth-disconnect" :disabled="busy" @click="disconnect">
+        <i class="codicon codicon-sign-out" aria-hidden="true"></i>{{ text('disconnect') }}
+      </button>
     </div>
     <div v-if="['pending', 'exchanging'].includes(status.login?.state || '')" class="login-progress">
-      <p role="status">{{ status.login?.state === 'exchanging' ? text('exchanging') : text('waiting') }}</p>
-      <a v-if="authorizationUrl" :href="authorizationUrl" target="_blank" rel="noopener noreferrer">{{ text('openBrowser') }}</a>
-      <label>{{ text('pasteLabel') }}</label>
+      <div class="login-heading">
+        <p class="login-status" role="status">
+          <i class="codicon codicon-browser" aria-hidden="true"></i>
+          {{ status.login?.state === 'exchanging' ? text('exchanging') : text('waiting') }}
+        </p>
+        <a v-if="authorizationUrl" class="gc-link-button" :href="authorizationUrl" target="_blank" rel="noopener noreferrer">
+          {{ text('openBrowser') }}<i class="codicon codicon-link-external" aria-hidden="true"></i>
+        </a>
+      </div>
+      <label class="callback-label" :for="`chatgpt-callback-${configId}`">{{ text('pasteLabel') }}</label>
       <div class="callback-input">
-        <input v-model="callbackUrl" type="text" autocomplete="off" spellcheck="false" :placeholder="text('pastePlaceholder')" />
-        <button type="button" class="btn" :disabled="busy || !callbackUrl.trim()" @click="complete">{{ text('complete') }}</button>
-        <button type="button" class="btn" @click="cancel">{{ text('cancel') }}</button>
+        <input :id="`chatgpt-callback-${configId}`" v-model="callbackUrl" class="gc-field" type="text" autocomplete="off" spellcheck="false" :placeholder="text('pastePlaceholder')" />
+        <button type="button" class="gc-button gc-button--primary" :disabled="busy || !callbackUrl.trim()" @click="complete">{{ text('complete') }}</button>
+        <button type="button" class="gc-button gc-button--ghost" @click="cancel">{{ text('cancel') }}</button>
       </div>
     </div>
-    <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+    <div v-if="error" class="auth-error" role="alert">
+      <i class="codicon codicon-error" aria-hidden="true"></i><p>{{ error }}</p>
+    </div>
     <ConfirmDialog v-model="notice" :title="text('firstUseTitle')" :message="text('firstUseMessage')"
       :confirm-text="text('understood')" :cancel-text="text('close')" @confirm="acknowledge" @cancel="acknowledge" />
   </div>
 </template>
 
 <style scoped>
-.chatgpt-auth { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--gc-border-subtle); background: var(--gc-surface-input); }
+.chatgpt-auth {
+  display: grid;
+  gap: var(--gc-space-4);
+  min-width: 0;
+  padding: var(--gc-space-4);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
+  line-height: var(--gc-line-height-normal);
+}
+
 .chatgpt-auth p { margin: 0; }
-.chatgpt-auth select, .chatgpt-auth input { width: 100%; min-width: 0; border-radius: var(--gc-radius-sm); }
-.auth-actions, .callback-input { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.callback-input input { flex: 1; min-width: 180px; }
-.login-progress { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--gc-border-subtle); }
-.auth-error { color: var(--gc-danger); white-space: pre-wrap; }
-.plan-status { color: var(--gc-text-primary); }
-.chatgpt-auth a { color: var(--gc-link); }
+.auth-header { display: flex; align-items: flex-start; gap: var(--gc-space-3); flex-wrap: wrap; }
+.auth-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 36px;
+  color: var(--gc-accent);
+  background: var(--gc-info-bg);
+}
+.auth-mark .codicon { font-size: var(--gc-icon-size-lg); }
+.auth-heading { flex: 1; min-width: 160px; }
+.auth-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gc-space-2);
+  margin: 0 0 var(--gc-space-1);
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-semibold);
+  line-height: var(--gc-line-height-tight);
+}
+.auth-account-id {
+  color: var(--gc-text-muted);
+  font-family: var(--gc-font-code);
+  font-size: var(--gc-font-size-caption);
+  font-weight: var(--gc-font-weight-regular);
+}
+.auth-status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gc-space-1);
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-body);
+  overflow-wrap: anywhere;
+}
+.auth-status .codicon { margin-top: 2px; font-size: var(--gc-icon-size-sm); }
+.auth-status.is-connected .codicon { color: var(--gc-success); }
+.usage-link { flex-shrink: 0; margin-left: auto; text-decoration: none; }
+.auth-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--gc-space-2); }
+.auth-actions .gc-button, .callback-input .gc-button { min-height: var(--gc-control-height-lg); white-space: nowrap; cursor: pointer; }
+.chatgpt-auth .gc-button:disabled { cursor: default; }
+.auth-disconnect { margin-left: auto; }
+.auth-disconnect:hover:not(:disabled) { color: var(--gc-danger); background: var(--gc-danger-bg); }
+.login-progress {
+  display: grid;
+  gap: var(--gc-space-3);
+  padding: var(--gc-space-3);
+  background: var(--gc-surface-muted);
+}
+.login-heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--gc-space-2) var(--gc-space-3); }
+.login-status { display: flex; align-items: flex-start; gap: var(--gc-space-2); font-size: var(--gc-font-size-body); }
+.login-status .codicon { color: var(--gc-accent); margin-top: 2px; }
+.login-heading .gc-link-button { margin-left: auto; gap: var(--gc-space-1); font-size: var(--gc-font-size-body); }
+.callback-label { color: var(--gc-text-muted); font-size: var(--gc-font-size-body); }
+.callback-input { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--gc-space-2); }
+.callback-input input { min-width: 0; }
+.auth-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-3);
+  color: var(--gc-danger);
+  background: var(--gc-danger-bg);
+  font-size: var(--gc-font-size-body);
+}
+.auth-error .codicon { flex-shrink: 0; margin-top: 2px; }
+.auth-error p { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 480px) {
+  .usage-link { margin-left: calc(36px + var(--gc-space-3)); }
+  .auth-disconnect { margin-left: 0; }
+  .callback-input input { grid-column: 1 / -1; }
+}
 </style>
