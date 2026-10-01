@@ -53,7 +53,7 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
 
     memory_recall: {
         description:
-            'Search all permanent memories (verbatim matching). Supports regular expressions.\n' +
+            'Search the engineering log memory (project conventions and lessons written by memory_note) with a verbatim regular expression. The user\'s personal long-term memory is not here; use memory_search for it.\n' +
             'Searches both global memory and current workspace memory (isolated per workspace); hits are labeled with --- Global memory --- / --- Workspace memory ---.\n' +
             'The search also covers raw memories that were compressed into summaries — compression does not lose information.\n' +
             'Results are limited to a single output capacity; if truncated, it will suggest narrowing the regex.',

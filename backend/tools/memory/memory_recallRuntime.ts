@@ -10,7 +10,7 @@ function createMemoryRecallDeclaration(): ToolDeclaration {
     return {
         name: 'memory_recall',
         description:
-            '搜索全部永久记忆（逐字匹配）。支持正则表达式。\n' +
+            '用正则逐字搜索工程日志记忆（memory_note 写入的项目约定与经验）。用户个人长期记忆不在这里，请用 memory_search。\n' +
             '搜索范围包括全局记忆与当前工作区记忆（按工作区隔离），命中结果以 --- Global memory --- / --- Workspace memory --- 标注来源。\n' +
             '搜索范围包括已被压缩摘要的原始记忆——压缩不会丢失信息。\n' +
             '结果限制在单次输出容量内，如果被截断会提示缩小正则范围。',
