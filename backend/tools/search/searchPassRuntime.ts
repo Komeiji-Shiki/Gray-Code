@@ -6,7 +6,7 @@ import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../modules/settings/types';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 import { buildExcludePattern, DEFAULT_EXCLUDE_PATTERN } from '../shared/globUtils';
 import { normalizeLineEndingsToLF, escapeRegExp } from '../shared/textUtils';
-import { createTextReader, detectTextFromHeader, decodeTextBytes, type TextDetectionResult } from './textEncodingRuntime';
+import { createTextReader, detectTextFromHeader, detectTextEncoding, decodeTextBytes, type TextDetectionResult } from './textEncodingRuntime';
 import type { SearchFileHost, FileLocation } from './fileHost';
 
 export interface SearchMatch {
@@ -210,6 +210,11 @@ async function searchInDirectory(
             }
 
             const content = await host.readFile(fileUri);
+            // 文件头只用于快速排除二进制；未带 BOM 的文本按完整内容识别 UTF-8 或 GBK/Shift-JIS/Big5
+            if (!detection.bomLength && detection.encoding === 'utf-8') {
+                detection = detectTextEncoding(content);
+                if (!detection.isText) return { kind: 'binary' };
+            }
             const text = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
 
             // 全文快速拒绝：只会跳过确定零命中的文件，不会漏掉真实匹配

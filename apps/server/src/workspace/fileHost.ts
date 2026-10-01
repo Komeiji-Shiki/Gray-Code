@@ -11,7 +11,7 @@ import { isBinaryFile } from '../../../../backend/tools/shared/multimodal';
 import { MAX_LINE_COUNT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
 import { walkGlobTree } from '../../../../backend/tools/search/globWalker';
 import { createGitIgnoreFilter } from '../../../../backend/tools/search/gitIgnoreFilter';
-import { detectTextFromHeader, decodeTextBytes } from '../../../../backend/tools/search/textEncodingRuntime';
+import { detectTextEncoding, decodeTextBytes, findUnencodableCharacter, roundTripsExactly, isLegacyEncoding } from '../../../../backend/tools/search/textEncodingRuntime';
 import { TextLineCounter } from '../../../../shared/textLines';
 
 /** 每次调用独享的文件宿主，工作区与账号来自运行器而不是模型自报参数。 */
@@ -172,8 +172,13 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     const file = input.absolutePath;
     const before = await this.app.files.transaction(this.workspace(), transaction => transaction.capture(file), { writeGrants: this.context.fileWriteGrants });
     if (!before.bytes) throw new Error('FILE_CONFLICT: 文件在生成替换提案后被删除。');
-    const encoding = detectTextFromHeader(before.bytes.subarray(0, 4096));
+    const encoding = detectTextEncoding(before.bytes);
     if (!encoding.isText) throw new Error('不能对二进制文件执行文本替换。');
+    // 旧编码文件按原编码写回：解码再编码必须逐字节一致，替换后的字符也必须能用该编码表示。
+    if (isLegacyEncoding(encoding.encoding) && !roundTripsExactly(before.bytes, encoding))
+      throw new Error(`ENCODING_UNSAFE: 按 ${encoding.encoding} 解码后无法原样写回，为避免损坏文件未做替换。`);
+    const unsupported = findUnencodableCharacter(input.newContent, encoding.encoding);
+    if (unsupported) throw new Error(`ENCODING_UNREPRESENTABLE: 第 ${unsupported.line} 行的字符 "${unsupported.character}" 无法用 ${encoding.encoding} 编码写回，未做替换。`);
     const text = decodeTextBytes(before.bytes, encoding);
     if (text.replace(/\r\n/g, '\n').replace(/\r/g, '\n') !== input.originalContent) throw new Error('FILE_CONFLICT: 文件在生成替换提案后发生变化。');
     const result = await this.app.diffs.propose(this.context, file, text, input.newContent, before.hash, encoding);

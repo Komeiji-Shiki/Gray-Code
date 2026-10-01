@@ -2,8 +2,10 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { normalizeToolArgs } from '../../tools/coerceToolArgs';
+import * as iconv from 'iconv-lite';
 
 const encoder = new TextEncoder();
+const GBK_SCRIPT = '@echo off\r\nrem 启动游戏并等待退出\r\necho 正在运行\r\n';
 
 function workspaceFilePath(relativePath: string): string {
     return path.join(path.resolve('/workspace/project'), relativePath);
@@ -24,6 +26,12 @@ describe('read_file batch requests', () => {
             }
             if (uri.fsPath === workspaceFilePath('b.txt')) {
                 return encoder.encode('b1\nb2\nb3\nb4');
+            }
+            if (uri.fsPath === workspaceFilePath('run.cmd')) {
+                return iconv.encode(GBK_SCRIPT, 'gbk');
+            }
+            if (uri.fsPath === workspaceFilePath('wide.txt')) {
+                return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('宽字符\n第二行', 'utf16le')]);
             }
             throw new Error('ENOENT');
         });
@@ -98,6 +106,23 @@ describe('read_file batch requests', () => {
         expect(result.data).toMatchObject({ successCount: 1, failCount: 1, totalCount: 2, partial: true });
         expect(result.data.results[0].success).toBe(true);
         expect(result.data.results[1]).toMatchObject({ path: 'missing.txt', success: false, error: 'ENOENT' });
+    });
+
+    test('自动识别 GBK 与 UTF-16 并标注编码，UTF-8 结果不增加字段，可显式指定编码', async () => {
+        const tool = createReadFileTool();
+        expect((tool.declaration.parameters as any).properties.encoding.type).toBe('string');
+        expect((tool.declaration.parameters as any).properties.files.items.properties.encoding.type).toBe('string');
+        const result = await tool.handler({ files: [{ path: 'run.cmd', startLine: 2, endLine: 3 }, { path: 'wide.txt' }, { path: 'a.txt' }] }) as any;
+        expect(result.data.results[0]).toMatchObject({ content: '   2 | rem 启动游戏并等待退出\n   3 | echo 正在运行', encoding: 'gbk', encodingGuessed: true });
+        expect(result.data.results[1]).toMatchObject({ content: '   1 | 宽字符\n   2 | 第二行', encoding: 'utf-16le (BOM)' });
+        expect(result.data.results[2]).not.toHaveProperty('encoding');
+        // 指定编码时不再推测；不支持的编码名只让该文件失败
+        const explicit = await tool.handler({ path: 'run.cmd', encoding: 'gb18030', startLine: 2, endLine: 2 }) as any;
+        expect(explicit.data.results[0]).toMatchObject({ content: '   2 | rem 启动游戏并等待退出', encoding: 'gb18030' });
+        expect(explicit.data.results[0]).not.toHaveProperty('encodingGuessed');
+        const invalid = await tool.handler({ files: [{ path: 'run.cmd', encoding: 'klingon' }, { path: 'a.txt' }] }) as any;
+        expect(invalid.data.results[0]).toMatchObject({ success: false, error: expect.stringContaining('不支持的编码') });
+        expect(invalid.data.results[1].success).toBe(true);
     });
 
     test('rejects empty batches and ambiguous mixed forms', async () => {

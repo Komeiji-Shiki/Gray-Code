@@ -30,6 +30,7 @@ import { parseImageDimensions as parseImageDimensionsFromImageUtils } from '../s
 
 // 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）已统一收敛到 shared/fileSizeGuards
 import { MAX_READ_FILE_BYTES } from '../shared/fileSizeGuards';
+import { decodeTextBytes, detectTextEncoding } from '../search/textEncodingRuntime';
 
 /** 批量读取并发上限（与 list_files 的行数统计一致，避免一次读大量文件时并发无界） */
 const BATCH_READ_CONCURRENCY = 8;
@@ -73,6 +74,7 @@ interface FileReadRequest {
     path: string;
     startLine?: number;
     endLine?: number;
+    encoding?: string;
 }
 
 interface ResolvedLineRangeArgs {
@@ -87,6 +89,7 @@ interface ReadFileBatchItem {
     path: string;
     startLine?: number;
     endLine?: number;
+    encoding?: string;
 }
 
 /**
@@ -97,6 +100,7 @@ interface ReadFileArgs {
     files?: ReadFileBatchItem[];
     startLine?: number;
     endLine?: number;
+    encoding?: string;
     // 兼容透传参数（不向模型宣传，由 handler 解释语义）
     line?: number;
     maxLine?: number;
@@ -149,6 +153,9 @@ interface ReadResult {
     mimeType?: string;
     size?: number;
     dimensions?: ImageDimensions;  // 图片尺寸信息
+    /** 非无 BOM UTF-8 时给出实际解码编码，推测结果另标 encodingGuessed */
+    encoding?: string;
+    encodingGuessed?: boolean;
     error?: string;
     debug?: ReadFileDebugInfo;
 }
@@ -209,7 +216,8 @@ async function readSingleFile(
     isMultiRoot: boolean,
     lineRange?: LineRange,
     debug?: ReadFileDebugInfo,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    encoding?: string
 ): Promise<{
     result: ReadResult;
     multimodal?: MultimodalData[];
@@ -331,8 +339,12 @@ async function readSingleFile(
             };
         }
         
-        // 文本文件：返回带行号的内容
-        const text = new TextDecoder().decode(content);
+        // 文本文件：按 BOM、UTF-8 校验或内容推测解码（GBK、Shift-JIS、Big5 等），也可由调用方指定编码
+        const detection = detectTextEncoding(content, encoding);
+        const text = detection.isText || encoding ? decodeTextBytes(content, detection) : new TextDecoder().decode(content);
+        const encodingInfo = detection.encoding !== 'utf-8' || detection.bomLength
+            ? { encoding: detection.bomLength ? `${detection.encoding} (BOM)` : detection.encoding, ...(detection.source === 'guess' ? { encodingGuessed: true } : {}) }
+            : {};
         
         // 处理行范围
         let selectedLines: string[];
@@ -353,6 +365,7 @@ async function readSingleFile(
                         workspace: isMultiRoot ? workspace?.name : undefined,
                         success: false,
                         totalLines,
+                        ...encodingInfo,
                         error: `startLine (${startLine}) exceeds total lines (${totalLines})`
                     }
                 };
@@ -385,7 +398,8 @@ async function readSingleFile(
             success: true,
             type: 'text',
             content: numberedLines.join('\n'),
-            lineCount: selectedLines.length
+            lineCount: selectedLines.length,
+            ...encodingInfo
         };
         
         // 如果指定了行范围，添加额外信息
@@ -482,6 +496,10 @@ export function createReadFileTool(
                                     type: 'integer',
                                     minimum: 1,
                                     description: readFileDescriptions.batchEndLine
+                                },
+                                encoding: {
+                                    type: 'string',
+                                    description: readFileDescriptions.batchEncoding
                                 }
                             },
                             required: ['path']
@@ -496,6 +514,10 @@ export function createReadFileTool(
                         type: 'integer',
                         minimum: 1,
                         description: readFileDescriptions.endLine
+                    },
+                    encoding: {
+                        type: 'string',
+                        description: readFileDescriptions.encoding
                     }
                 }
             }
@@ -556,14 +578,16 @@ export function createReadFileTool(
             if (hasBatchFiles && batchFiles) {
                 fileRequests = batchFiles.map(file => ({
                     path: typeof file.path === 'string' ? file.path : '',
-                    ...resolveLineRangeArgs(file)
+                    ...resolveLineRangeArgs(file),
+                    encoding: typeof file.encoding === 'string' && file.encoding.trim() ? file.encoding : typed.encoding
                 }));
             } else {
                 const resolvedLineRange = resolveLineRangeArgs(typed);
                 fileRequests = [{
                     path: typed.path as string,
                     startLine: resolvedLineRange.startLine,
-                    endLine: resolvedLineRange.endLine
+                    endLine: resolvedLineRange.endLine,
+                    encoding: typed.encoding
                 }];
             }
 
@@ -607,7 +631,8 @@ export function createReadFileTool(
                     isMultiRoot,
                     lineRange,
                     debug,
-                    context?.abortSignal
+                    context?.abortSignal,
+                    typeof fileReq.encoding === 'string' && fileReq.encoding.trim() ? fileReq.encoding : undefined
                 );
             });
 

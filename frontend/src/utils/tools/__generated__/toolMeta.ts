@@ -338,6 +338,7 @@ export const toolMeta: Record<string, ToolMeta> = {
       "files": {"type":"array","items":{"type":"object"}},
       "startLine": {"type":"integer"},
       "endLine": {"type":"integer"},
+      "encoding": {"type":"string"},
     },
     parametersDynamic: true,
     source: "backend/tools/file/readFileRuntime.ts",
