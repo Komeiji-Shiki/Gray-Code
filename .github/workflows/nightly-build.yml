@@ -42,7 +42,7 @@ jobs:
       build: ${{ steps.should.outputs.build }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 需要提交历史来判断「最近 24 小时是否有新提交」
 
@@ -76,7 +76,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.should.outputs.build == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -90,7 +90,7 @@ jobs:
 
       - name: Cache fast-tavern venv
         if: steps.should.outputs.build == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fast-tavern-main/py-fast-tavern/.venv
           key: fast-tavern-venv-${{ runner.os }}-py${{ steps.pyver.outputs.ver }}
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload artifact
         if: steps.should.outputs.build == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: graycode-nightly
           path: graycode-nightly.vsix
@@ -176,7 +176,7 @@ jobs:
 
       - name: Publish / overwrite nightly release (fixed tag for auto-update)
         if: steps.should.outputs.build == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
           # Release name 直接使用带 v 前缀的真实版本号，扩展 nightly 渠道据此解析更新版本
@@ -196,7 +196,7 @@ jobs:
 
       - name: Publish dated nightly release (archived, for timeline)
         if: steps.should.outputs.build == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly-${{ steps.version.outputs.nightly_date }}
           # 归档 Release 同样使用真实版本号，便于 compareVersions 与人类识别
@@ -285,10 +285,10 @@ jobs:
     if: needs.build.outputs.build == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
