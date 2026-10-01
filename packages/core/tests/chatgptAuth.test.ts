@@ -175,7 +175,7 @@ describe('ChatGPT 官方订阅登录', () => {
     expect(preview.body).not.toHaveProperty('max_tokens');
     expect(preview.body).not.toHaveProperty('max_output_tokens');
     expect(preview.body).not.toHaveProperty('temperature');
-    expect(preview.body.prompt_cache_options).toEqual({ mode: cacheOptions?.mode ?? 'implicit', ttl: '30m' });
+    expect(preview.body).not.toHaveProperty('prompt_cache_options');
     expect(preview.body.tools[0]).toEqual(expect.objectContaining({ type: 'namespace', name: 'graycode' }));
     expect(preview.body.input[0]).toEqual({ type: 'reasoning', id: 'rs_subscription',
       encrypted_content: 'subscription-reasoning', summary: [{ type: 'summary_text', text: 'Inspect first' }] });
