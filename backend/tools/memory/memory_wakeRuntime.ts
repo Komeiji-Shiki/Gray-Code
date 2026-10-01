@@ -2,6 +2,7 @@ import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import type { MemoryEngine as MemoryManager } from '../../modules/memory/MemoryEngine';
 import type { WakeResult } from '../../modules/memory/types';
 import type { MemoryToolHost } from './host';
+import { compactNapPrompt } from './napPrompt';
 
 export function createMemoryWakeRuntime(host: MemoryToolHost) {
 const { getGlobalMemoryManager, getMemoryManagerForWorkspace, getWorkspaceFolderName } = host;
@@ -202,21 +203,20 @@ async function memoryWakeHandler(args: Record<string, unknown>, context?: ToolCo
         return {
             success: true,
             data: {
+                // 记忆条目与压缩提示只在 text 中出现一次；结构化字段只留不重复正文的元数据。
                 text: lines.join('\n'),
                 // 顶层元数据合并两个作用域口径（原先只取全局，与文本矛盾）
-                blocks: [...(globalResult?.blocks ?? []), ...(wsResult?.blocks ?? [])],
                 part: Math.max(globalResult?.part ?? 0, wsResult?.part ?? 0),
                 // 两个作用域在同一次调用中并行读取相同 part；完成全部读取所需的调用次数
                 // 是两者页数的最大值，而不是页数之和。求和会让两个空作用域显示 Part 1/2。
                 totalParts: Math.max(globalResult?.totalParts ?? 0, wsResult?.totalParts ?? 0),
                 totalMemories: (globalResult?.totalMemories ?? 0) + (wsResult?.totalMemories ?? 0),
                 awake,
-                // 压缩提示：返回两段中非空的那个（合并提示文本，带作用域标注）
-                pendingCompression: (() => {
-                    if (napLines.length === 0) return undefined;
-                    const base = globalPc ?? wsPc;
-                    return base ? { ...base, prompt: napLines.join('\n\n') } : undefined;
-                })(),
+                // 压缩提示正文已在 text 末尾；这里按作用域给出待压缩块，供界面与调用方判断。
+                pendingCompression: awake && (globalPc || wsPc) ? {
+                    ...(globalPc ? { global: compactNapPrompt(globalPc) } : {}),
+                    ...(wsPc ? { workspace: compactNapPrompt(wsPc) } : {}),
+                } : undefined,
                 workspace: wsResult ? { uri: context?.activeWorkspaceUri, totalMemories: wsResult.totalMemories } : undefined,
             },
         };

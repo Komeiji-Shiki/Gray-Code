@@ -1,6 +1,7 @@
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { MAX_ENTRY_CHARS } from '../../modules/memory/logFormat';
 import type { MemoryToolHost } from './host';
+import { compactNapPrompt } from './napPrompt';
 
 export function createMemoryNoteRuntime(host: MemoryToolHost) {
 const { getMemoryManagerForTool } = host;
@@ -55,7 +56,7 @@ async function memoryNoteHandler(args: Record<string, unknown>, context?: ToolCo
             data: {
                 id: result.id,
                 text: output.join('\n'),
-                pendingCompression: result.pendingCompression,
+                pendingCompression: result.pendingCompression ? compactNapPrompt(result.pendingCompression) : undefined,
             },
         };
     } catch (e: any) {

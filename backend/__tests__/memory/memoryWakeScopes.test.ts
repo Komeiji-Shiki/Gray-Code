@@ -260,9 +260,14 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.text).toContain('You are awake.');
         expect(result.data.text).toContain('[Global] Compress:');
         expect(result.data.text).toContain('[Workspace] Compress:');
-        // data.pendingCompression 合并两段提示文本（带作用域标注）
-        expect(result.data.pendingCompression?.prompt).toContain('[Global] Compress:');
-        expect(result.data.pendingCompression?.prompt).toContain('[Workspace] Compress:');
+        // 提示正文只在 text 中出现一次；结构化字段按作用域给出待压缩块。
+        expect(result.data.text.match(/Compress memories #0-1/g)).toHaveLength(2);
+        expect(result.data.pendingCompression).toEqual({
+            global: expect.objectContaining({ blockId: '0-1', required: false }),
+            workspace: expect.objectContaining({ blockId: '0-1', required: false }),
+        });
+        expect(JSON.stringify(result.data.pendingCompression)).not.toContain('Compress memories');
+        expect(result.data.blocks).toBeUndefined();
     });
 
     test('只读 wake 不创建工作区记忆目录（createIfMissing=false）', async () => {

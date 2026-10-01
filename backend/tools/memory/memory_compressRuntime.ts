@@ -1,6 +1,7 @@
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { MAX_TREE_SUMMARY_BYTES } from '../../modules/memory/logFormat';
 import type { MemoryToolHost } from './host';
+import { compactNapPrompt } from './napPrompt';
 
 export function createMemoryCompressRuntime(host: MemoryToolHost) {
 const { getMemoryManagerForTool } = host;
@@ -73,7 +74,7 @@ async function memoryCompressHandler(args: Record<string, unknown>, context?: To
             data: {
                 text: lines.join('\n'),
                 done: result.done,
-                pendingCompression: result.pendingCompression,
+                pendingCompression: result.pendingCompression ? compactNapPrompt(result.pendingCompression) : undefined,
             },
         };
     } catch (e: any) {

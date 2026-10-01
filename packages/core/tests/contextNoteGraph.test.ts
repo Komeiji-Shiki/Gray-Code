@@ -94,7 +94,7 @@ test('工具结果来源按模型可见文本记录偏移；旧回执的偏移�
     { key: 'escaped', kind: 'observation', text: '文件含引号。', sources: [{ messageId: 'tool-source', quote: '"quoted"' }] }];
   history.push({ id: 'call-legacy', role: 'model', parts: [{ functionCall: { id: 'legacy', name: 'context_notes', args: { action: 'record', entries } } }] });
   const receipt = createNoteReceipt(history, 'legacy', parseNoteEntries(entries), 100);
-  expect(receipt.textFormat).toBe(2);
+  expect(receipt.textFormat).toBe(3);
   expect(receipt.records[0].sources[0].offset).toBe(current.indexOf('here'));
 
   // 模拟旧版本写入的回执：没有 textFormat，偏移按整段 JSON 文本计算。
@@ -110,6 +110,15 @@ test('工具结果来源按模型可见文本记录偏移；旧回执的偏移�
   expect(graph.notes.get(ids.plain)?.sources[0]).toMatchObject({ messageId: 'tool-source', offset: current.indexOf('here'), length: 4 });
   expect(graph.notes.get(ids.escaped)?.sources[0].offset).toBeUndefined();
   expect(graph.states.get(ids.escaped)).toBe('current');
+
+  // 中间版本的回执：工具结果偏移无法换算，去掉偏移但来源仍然有效。
+  const previous = structuredClone(receipt);
+  previous.textFormat = 2;
+  const middle = [...history.slice(0, 3), { id: 'result-middle', role: 'user', isFunctionResponse: true,
+    parts: [{ functionResponse: { id: 'legacy', name: 'context_notes', response: { success: true, noteEvent: previous } } }] }] as PlatformMessage[];
+  const middleGraph = buildNoteGraph(middle, 200, 200);
+  expect(middleGraph.states.get(ids.plain)).toBe('current');
+  expect(middleGraph.notes.get(ids.plain)?.sources[0].offset).toBeUndefined();
 });
 
 describe('真实 HTTP 请求中的笔记事件与召回快照', () => {

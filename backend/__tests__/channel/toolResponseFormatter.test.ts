@@ -290,6 +290,62 @@ describe('工具结果信息完整性与紧凑输出', () => {
         expect(different).toContain('"files":["a.ts","c.ts"]');
     });
 
+    test('批量工具全部成功时省略默认计数、false 标志和 type=text；失败或截断时保留', () => {
+        const single = serializeToolResultForLLM('read_file', { success: true, parameterWarnings: ['参数提示'], data: {
+            results: [{ success: true, path: 'a.ts', type: 'text', content: '   1 | x', lineCount: 1 }],
+            successCount: 1, failCount: 0, partial: false, totalCount: 1, truncated: false, multimodalTruncated: false } });
+        expect(single).toBe('[{"parameterWarnings":["参数提示"]}]\n\n[a.ts, 1 lines]\n   1 | x');
+        const truncated = serializeToolResultForLLM('read_file', { success: true, data: {
+            results: [{ success: true, path: 'a.png', type: 'multimodal', mimeType: 'image/png' }],
+            successCount: 1, failCount: 0, partial: false, totalCount: 2, truncated: true, multimodalTruncated: true } });
+        expect(truncated).toContain('"totalCount":2');
+        expect(truncated).toContain('"multimodalTruncated":true');
+        expect(truncated).toContain('"type":"multimodal"');
+    });
+
+    test('字符串 data 与记忆/笔记正文原样输出，只附带不重复正文的元数据', () => {
+        expect(serializeToolResultForLLM('history_search', { success: true, data: '第 1 行\n第 "2" 行' })).toBe('第 1 行\n第 "2" 行');
+        expect(serializeToolResultForLLM('history_search', { success: false, error: '失败', data: '详情' })).toBe('Error: 失败\n\n详情');
+        const wake = serializeToolResultForLLM('memory_wake', { success: true, data: { text: '#0 约定\nYou are awake.',
+            blocks: [{ lo: 0, hi: 0, text: '约定', isRaw: true }], part: 1, totalParts: 1, totalMemories: 1, awake: true,
+            pendingCompression: { global: { blockId: '0-1' } }, workspace: { uri: 'file:///w', totalMemories: 0 } } });
+        expect(wake).toBe('#0 约定\nYou are awake.');
+        expect(serializeToolResultForLLM('memory_compress', { success: true, data: { text: 'Nothing left to compress.', done: 0 } }))
+            .toBe('[{"done":0}]\nNothing left to compress.');
+        expect(serializeToolResultForLLM('context_notes', { success: true, name: 'plan', text: '一\n二', offset: 0, totalChars: 3, truncated: false }))
+            .toBe('[{"name":"plan","offset":0,"totalChars":3,"truncated":false}]\n一\n二');
+        // 没有顶层 text 的笔记结果（如 record 回执）仍是结构化 JSON。
+        expect(JSON.parse(serializeToolResultForLLM('context_notes', { success: true, noteEvent: { version: 1 } }))).toEqual({ success: true, noteEvent: { version: 1 } });
+    });
+
+    test('search_files 按文件分组，标出裁剪端，省略零值游标与计数', () => {
+        const result = serializeToolResultForLLM('search_files', { success: true, data: {
+            matches: [
+                { path: 'a.ts', line: 2, column: 5, matchLength: 3, text: 'let hit', previewStartColumn: 1, contentTruncated: false },
+                { path: 'a.ts', line: 9, column: 400, matchLength: 3, text: 'mid hit mid', previewStartColumn: 380, contentTruncated: true, previewEndTruncated: true },
+                { path: 'b.ts', line: 1, column: 1, matchLength: 3, text: 'hit tail', previewStartColumn: 1, contentTruncated: true },
+            ],
+            scanned: 3, scanOffset: 0, offset: 0, skippedCount: 0, skippedBinaryCount: 0, skippedFilesTruncated: false,
+            scanComplete: true, truncated: false, includeIgnored: false, respectsGitIgnore: true, effectiveExclude: '**/x/**' } });
+        expect(result).toBe('[{"scanned":3,"scanComplete":true,"truncated":false,"includeIgnored":false,"respectsGitIgnore":true}]\n\n'
+            + 'a.ts\n2:5: let hit\n9:400: …mid hit mid…\n\nb.ts\n1:1: hit tail…');
+        expect(serializeToolResultForLLM('search_files', { success: true, data: { matches: [], scanned: 2, skippedCount: 1, scanComplete: true } }))
+            .toBe('[{"scanned":2,"skippedCount":1,"scanComplete":true}]\n\nNo matches.');
+    });
+
+    test('search_in_files 零命中只输出提示与必要元数据', () => {
+        const result = serializeToolResultForLLM('search_in_files', { success: true, data: { results: [], count: 0, offset: 0, truncated: false,
+            respectsGitIgnore: true, searchHint: 'No exact phrase matches. Retry with keywordFallback=true.' } });
+        expect(result).toBe('[{"offset":0,"truncated":false,"respectsGitIgnore":true}]\n\nNo exact phrase matches. Retry with keywordFallback=true.\n\nNo matches.');
+        expect(result).not.toContain('"results"');
+    });
+
+    test('失败结果的元数据出现在输出正文之前', () => {
+        const result = serializeToolResultForLLM('execute_command', { success: false, error: 'Command exited with code 1',
+            data: { output: 'boom', exitCode: 1, taskId: 't1' } });
+        expect(result).toBe('Error: Command exited with code 1\n[{"exitCode":1,"taskId":"t1"}]\n\nOutput:\nboom');
+    });
+
     test('纯结构化失败结果和可读消息只输出一次', () => {
         const result = serializeToolResultForLLM('delete_file', {
             success: false, error: '部分失败', data: { results: [{ id: 'one', success: true }], message: '已删除一条', affected: ['one'] },

@@ -150,6 +150,16 @@ function remapLegacySource(source: NoteSource, message: PlatformMessage | undefi
   return { ...rest, offset, length: source.length };
 }
 
+/**
+ * 中间版本的文本视图不再保留生成方式，无法可靠取回旧摘录。工具结果来源去掉偏移，
+ * 纯文字消息各版本一致，偏移照旧可用；来源是否可追溯仍由消息指纹判断。
+ */
+function withoutStaleToolOffset(source: NoteSource, message: PlatformMessage | undefined): NoteSource {
+  if (source.offset === undefined || !message?.parts.some(part => part.functionResponse)) return source;
+  const { offset: _offset, length: _length, ...rest } = source;
+  return rest;
+}
+
 /** 仅重放当前分支里成功的工具结果；取消、失败和其他分支的调用不会产生图节点。 */
 export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), knownAt = asOf): ContextNoteGraph {
   const notes = new Map<string, ContextNote>(), states = new Map<string, NoteState>();
@@ -187,7 +197,9 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
         if (record.key !== entry.key) return;
         const sourceMessages = record.sources.map(source => byId.get(source.messageId));
         const sources = receipt.textFormat === CONTEXT_TEXT_FORMAT ? record.sources
-          : record.sources.map((source, index) => remapLegacySource(source, sourceMessages[index], sourceText, legacyTexts));
+          : receipt.textFormat === undefined
+            ? record.sources.map((source, index) => remapLegacySource(source, sourceMessages[index], sourceText, legacyTexts))
+            : record.sources.map((source, index) => withoutStaleToolOffset(source, sourceMessages[index]));
         const available = record.sources.every((source, index) => {
           const sourceMessage = sourceMessages[index];
           if (!sourceMessage || sourceMessage.memoryRedacted) return false;

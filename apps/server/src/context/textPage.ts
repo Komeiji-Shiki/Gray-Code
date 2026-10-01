@@ -29,8 +29,11 @@ export function legacyContextMessageText(message: PlatformMessage): string {
   return message.parts.map(part => partText(part, response => JSON.stringify({ functionResponse: response }))).join('\n');
 }
 
-/** 当前文本视图版本；笔记回执没有此标记时，其来源偏移按旧版文本计算。 */
-export const CONTEXT_TEXT_FORMAT = 2;
+/**
+ * 当前文本视图版本；笔记回执没有此标记时，其来源偏移按旧版文本计算。
+ * 3：工具结果省略默认元数据，记忆/历史/笔记正文原样输出，search_files 按文件分组。
+ */
+export const CONTEXT_TEXT_FORMAT = 3;
 
 /** 所有位置按 UTF-16 字符偏移计数，与字符串分段读取一致。 */
 export function textPage(text: string, offset: unknown, limit: unknown, fallback = 12000) {
