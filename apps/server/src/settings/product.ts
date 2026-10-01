@@ -70,7 +70,10 @@ export class ProductConfiguration {
     const config = this.saved.channels.find(channel => channel.id === id);
     if (!config) return null;
     const profile = this.application.settings.find('providers', id);
-    return { ...structuredClone(config), apiKey: profile?.credentialRef ? await this.application.settings.credential(profile.credentialRef) ?? '' : '' } as ChannelConfig;
+    // 平台没有“多模态工具”开关，工具图片与文档总是随结果发送。旧渠道或设置页新建的渠道仍保存着
+    // multimodalToolsEnabled: false，历史整理会据此删掉工具结果里的图片，模型只能看到元数据。
+    return { ...structuredClone(config), multimodalToolsEnabled: true,
+      apiKey: profile?.credentialRef ? await this.application.settings.credential(profile.credentialRef) ?? '' : '' } as ChannelConfig;
   }
   async draft(input?: ProductSettingsDraft): Promise<ProductSettingsDraft> {
     const snapshot = input ? { settings: structuredClone(input.app), revision: input.revision } : this.application.settings.snapshot();
