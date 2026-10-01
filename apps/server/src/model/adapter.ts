@@ -153,7 +153,7 @@ export class ProviderModelAdapter implements ModelProvider {
     // 能力覆盖和内部输出预算晚于格式器；订阅参数在最终请求边界统一收敛。
     if (subscription) {
       options.body = normalizeChatGPTBody(options.body);
-      options.headers = chatgptHeaders(options.headers ?? {}, secret ?? '');
+      options.headers = chatgptHeaders(options.headers ?? {}, secret ?? '', options.body?.prompt_cache_key, input.conversationId);
       options.url = `${CHATGPT_API_BASE_URL}/responses`;
       options.stream = true;
     }

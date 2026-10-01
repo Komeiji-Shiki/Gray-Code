@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /** ChatGPT 订阅授权只用于官方 Responses 路由，参数清理必须晚于自定义请求体合并。 */
 export const CHATGPT_API_BASE_URL = 'https://api.openai.com/v1';
 export const CHATGPT_USAGE_URL = 'https://chatgpt.com/#settings/Usage';
@@ -33,7 +35,12 @@ export function normalizeChatGPTBody(source: Record<string, any>): Record<string
   return body;
 }
 
-export function chatgptHeaders(source: Record<string, string>, token: string): Record<string, string> {
-  const headers = Object.fromEntries(Object.entries(source).filter(([key]) => !/^(authorization|x-api-key|api-key)$/i.test(key)));
-  return { ...headers, Authorization: `Bearer ${token}` };
+export function chatgptHeaders(source: Record<string, string>, token: string, promptCacheKey?: unknown, conversationId?: string): Record<string, string> {
+  const cacheKey = typeof promptCacheKey === 'string' ? promptCacheKey.trim() : '';
+  const conversation = conversationId?.trim();
+  // 订阅缓存还依赖会话请求头；正文 key 关闭时仍按同一对话生成稳定且不含原始 ID 的会话标识。
+  const sessionId = cacheKey || (conversation ? `graycode_${createHash('sha256').update(conversation).digest('hex')}` : undefined);
+  const headers = Object.fromEntries(Object.entries(source).filter(([key]) => !/^(authorization|x-api-key|api-key)$/i.test(key)
+    && (!sessionId || key.toLowerCase() !== 'session_id')));
+  return { ...headers, Authorization: `Bearer ${token}`, ...(sessionId ? { session_id: sessionId } : {}) };
 }

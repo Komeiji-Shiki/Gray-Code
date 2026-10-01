@@ -157,7 +157,8 @@ describe('ChatGPT 官方订阅登录', () => {
     const profile: ProviderDefinition = { id: 'channel', name: 'ChatGPT', protocol: 'openai-responses', authMode: 'chatgpt',
       endpoint: 'https://example.test/v1', model: 'gpt-6.1-sol', models: [], stream: false, timeoutMs: 1000,
       generation: { temperature: 0.7, maxOutputTokens: 100 },
-      customBody: cacheOptions ? { prompt_cache_options: cacheOptions } : {},
+      customBody: cacheOptions ? { prompt_cache_options: cacheOptions, prompt_cache_key: 'custom-cache-session' } : {},
+      customHeaders: { Session_Id: 'old-custom-session' },
       capabilities: { outputTokenParameter: 'max_tokens', strictTools: 'protocol_default', reasoningParameter: 'protocol_default',
         reasoningLevels: [], reasoningSignature: 'none', compatibility: { openCodeSession: true, deepSeekUserId: false,
           deepSeekVision: true, nativePdf: false } } };
@@ -186,6 +187,21 @@ describe('ChatGPT 官方订阅登录', () => {
         options: { stream: false, temperature: 0.7 }, optionsEnabled: { temperature: true } } as any);
     expect(normal.body.temperature).toBe(0.7);
     expect(normal.stream).toBe(false);
+    expect(normal.headers).not.toHaveProperty('session_id');
+    const terminal = { type: 'response.completed', response: { usage: { input_tokens: 1839, output_tokens: 5, total_tokens: 1844,
+      input_tokens_details: { cached_tokens: 1664 } } } };
+    const output = { type: 'response.output_item.done', output_index: 0,
+      item: { type: 'message', id: 'msg_cache_test', role: 'assistant', content: [{ type: 'output_text', text: 'OK' }] } };
+    const network = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(`data: ${JSON.stringify(output)}\n\ndata: ${JSON.stringify(terminal)}\n\n`));
+    const generated = await adapter.generate(input);
+    const headers = new Headers(network.mock.calls[0][1]?.headers);
+    expect(headers.get('authorization')).toBe('Bearer subscription-token');
+    if (cacheOptions) expect(headers.get('session_id')).toBe('custom-cache-session');
+    else {
+      expect(headers.get('session_id')).toMatch(/^graycode_[a-f0-9]{64}$/);
+      expect(headers.get('session_id')).not.toContain('test');
+    }
+    expect(generated.usageMetadata).toMatchObject({ cachedContentTokenCount: 1664 });
   });
 
   test('订阅模型列表读取账户目录，默认 Token 计数不调用不支持的远程接口', async () => {

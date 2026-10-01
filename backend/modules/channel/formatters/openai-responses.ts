@@ -250,7 +250,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         return {
             url: config.authMode === 'chatgpt' ? `${CHATGPT_API_BASE_URL}/responses` : url,
             method: 'POST',
-            headers: config.authMode === 'chatgpt' ? chatgptHeaders(headers, config.apiKey) : headers,
+            headers: config.authMode === 'chatgpt' ? chatgptHeaders(headers, config.apiKey, finalBody.prompt_cache_key, request.conversationId) : headers,
             body: config.authMode === 'chatgpt' ? normalizeChatGPTBody(finalBody) : finalBody,
             timeout: config.timeout,
             stream: config.authMode === 'chatgpt' || useStream
