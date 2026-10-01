@@ -221,6 +221,7 @@ const zhCN = {
             signInRequired: "请在渠道设置中登录 ChatGPT，并允许 GrayCode 使用订阅额度。",
             accountChanged: "ChatGPT 账户已切换或已退出，请重新发送请求。",
             refreshPermissionMissing: "ChatGPT 续期后的授权未包含订阅权限，请重新登录。",
+            refreshNotReady: "ChatGPT 会话尚未到达允许续期的时间，请稍后重试。",
             signInExpired: "ChatGPT 登录已失效，请在渠道设置中重新登录。",
             unsupportedHost: "当前宿主未提供 ChatGPT 订阅登录。",
             channelRequired: "请选择 OpenAI Responses 渠道。",

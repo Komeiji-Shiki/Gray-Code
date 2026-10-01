@@ -9,7 +9,7 @@ import { DIRECT_SCOPE, ChatGPTAuthError, OpenAIChatGPTClient, readChatGPTCredent
 
 const credentialId = (channelId: string) => `${CHATGPT_CREDENTIAL_PREFIX}${createHash('sha256').update(channelId).digest('hex').slice(0, 32)}`;
 const signedOut = (account: ChatGPTAccount): ChatGPTAccount => {
-  const { accessToken, refreshToken, idToken, ...registration } = account;
+  const { accessToken, refreshToken, idToken, earliestRefreshAt, pendingRefresh, ...registration } = account;
   return { ...registration, expiresAt: 0 };
 };
 const canUsePlan = (account?: ChatGPTAccount) => !!account?.accessToken && account.scopes.includes(DIRECT_SCOPE);
@@ -103,7 +103,7 @@ export class ChatGPTService {
       const current = value.accounts.find(item => item.clientId === accountId);
       // 注销期间的新登录不能被旧请求删除。
       if (current && current.refreshToken === account.refreshToken) Object.assign(current, signedOut(account),
-        { accessToken: undefined, refreshToken: undefined, idToken: undefined });
+        { accessToken: undefined, refreshToken: undefined, idToken: undefined, earliestRefreshAt: undefined, pendingRefresh: undefined });
     });
     const revoked = await this.client.revoke(account, this.lifetime.signal).catch(() => false);
     return { ...await this.status(channelId, clientId), revoked };
@@ -113,10 +113,19 @@ export class ChatGPTService {
   }
   async credentials(channelId: string, signal: AbortSignal): Promise<{ token: string; identity: string }> {
     signal.throwIfAborted();
+    this.lifetime.signal.throwIfAborted();
     const connection = await this.connection(channelId);
+    this.lifetime.signal.throwIfAborted();
     const account = connection.accounts.find(item => item.clientId === connection.activeClientId);
     if (!canUsePlan(account)) throw new Error(t('modules.chatgpt.signInRequired'));
-    if (account!.expiresAt > Date.now() + 3 * 60_000) return { token: account!.accessToken!, identity: account!.clientId };
+    if (!account!.pendingRefresh) {
+      const now = Date.now();
+      if (account!.earliestRefreshAt !== undefined && now < account!.earliestRefreshAt) {
+        if (account!.expiresAt <= now) throw new ChatGPTAuthError(t('modules.chatgpt.refreshNotReady'), 'refresh_not_ready');
+        return { token: account!.accessToken!, identity: account!.clientId };
+      }
+      if (account!.expiresAt > now + 3 * 60_000) return { token: account!.accessToken!, identity: account!.clientId };
+    }
     const key = `${channelId}:${account!.clientId}`;
     let refresh = this.refreshes.get(key);
     if (!refresh) {
@@ -135,31 +144,43 @@ export class ChatGPTService {
     const latest = await this.connection(channelId);
     const active = latest.accounts.find(item => item.clientId === latest.activeClientId);
     if (latest.activeClientId !== account!.clientId || !canUsePlan(active)) throw new Error(t('modules.chatgpt.accountChanged'));
+    if (active!.expiresAt <= Date.now()) throw new ChatGPTAuthError(t('modules.chatgpt.refreshNotReady'), 'refresh_not_ready');
     return { token: active!.accessToken!, identity: active!.clientId };
   }
   private async refresh(channelId: string, account: ChatGPTAccount) {
     try {
-      const renewed = await this.client.refresh(account, this.lifetime.signal);
-      if (!canUsePlan(renewed)) throw new Error(t('modules.chatgpt.refreshPermissionMissing'));
+      // 正常退出会等待这次有界续期完成，不能因调用取消丢失唯一可用的轮换令牌。
+      const renewed = await this.client.refresh(account, AbortSignal.timeout(60_000), async pendingRefresh => {
+        await this.update(channelId, value => {
+          const current = value.accounts.find(item => item.clientId === account.clientId);
+          if (current && current.refreshToken === account.refreshToken) current.pendingRefresh = pendingRefresh;
+        });
+      });
       await this.update(channelId, value => {
         const index = value.accounts.findIndex(item => item.clientId === account.clientId);
         if (index >= 0 && value.accounts[index].refreshToken === account.refreshToken) value.accounts[index] = renewed;
       });
+      if (!canUsePlan(renewed)) throw new Error(t('modules.chatgpt.refreshPermissionMissing'));
     } catch (error) {
       if (error instanceof ChatGPTAuthError && error.unusableRefreshToken) {
+        let invalidated = false;
         await this.update(channelId, value => {
           const index = value.accounts.findIndex(item => item.clientId === account.clientId);
-          if (index >= 0 && value.accounts[index].refreshToken === account.refreshToken) value.accounts[index] = signedOut(account);
+          if (index >= 0 && value.accounts[index].refreshToken === account.refreshToken) {
+            value.accounts[index] = signedOut(account); invalidated = true;
+          }
         });
+        if (!invalidated) return;
         // 保留稳定错误码，便于区分令牌到期、撤销与重复轮换，不暴露令牌响应。
         throw new ChatGPTAuthError(`${t('modules.chatgpt.signInExpired')} (${error.code})`, error.code);
       }
       throw error;
     }
   }
-  close() {
+  async close() {
     this.lifetime.abort();
     for (const login of this.pending.values()) login.cancel();
     this.pending.clear();
+    await Promise.allSettled([...this.refreshes.values()]);
   }
 }

@@ -219,6 +219,7 @@ const ja: BackendLanguageMessages = {
             signInRequired: "チャネル設定で ChatGPT にログインして、GrayCode にプランの使用を許可してください。",
             accountChanged: "ChatGPT アカウントが切り替えられたかログアウトしました。再度リクエストを送信してください。",
             refreshPermissionMissing: "更新した ChatGPT 認証にプランの利用権限がありません。再ログインしてください。",
+            refreshNotReady: "ChatGPT セッションはまだ更新可能な時刻に達していません。少し待ってから再試行してください。",
             signInExpired: "ChatGPT ログインの有効期限が切れました。チャネル設定で再ログインしてください。",
             unsupportedHost: "このホストは ChatGPT プランのログインに対応していません。",
             channelRequired: "OpenAI Responses チャネルを選択してください。",

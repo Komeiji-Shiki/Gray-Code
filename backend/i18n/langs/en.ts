@@ -219,6 +219,7 @@ const en: BackendLanguageMessages = {
             signInRequired: "Sign in to ChatGPT in channel settings and allow GrayCode to use your plan.",
             accountChanged: "The ChatGPT account was switched or signed out. Please send the request again.",
             refreshPermissionMissing: "The refreshed ChatGPT grant does not include plan permission. Sign in again.",
+            refreshNotReady: "This ChatGPT session is not ready to refresh. Try again shortly.",
             signInExpired: "ChatGPT sign-in expired. Sign in again in channel settings.",
             unsupportedHost: "This host does not provide ChatGPT plan sign-in.",
             channelRequired: "Select an OpenAI Responses channel.",

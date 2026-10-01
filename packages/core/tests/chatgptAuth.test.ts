@@ -18,6 +18,7 @@ describe('ChatGPT 官方订阅登录', () => {
   let fetcher: jest.Mock, publicKey: any, privateKey: any;
   let identity: { clientId: string; subject: string; nonce: string; scope: string; expires: number };
   let refreshRequests: number;
+  let earliestRefresh: number | string | undefined;
   const signal = () => new AbortController().signal;
   const json = (value: any, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
   async function token() {
@@ -25,7 +26,8 @@ describe('ChatGPT 官方订阅登录', () => {
       .setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).setIssuer(OPENAI_ISSUER)
       .setAudience(identity.clientId).setSubject(identity.subject).setIssuedAt().setExpirationTime('1h').sign(privateKey);
     return { access_token: 'test-access-' + identity.subject, refresh_token: 'test-refresh-' + identity.subject,
-      id_token: idToken, token_type: 'Bearer', scope: identity.scope, expires_in: identity.expires };
+      id_token: idToken, token_type: 'Bearer', scope: identity.scope, expires_in: identity.expires,
+      ...(earliestRefresh !== undefined ? { earliest_refresh_at: earliestRefresh } : {}) };
   }
   async function login(clientId = 'oaiapp_first', subject = 'first', scope = DIRECT_SCOPE, newAccount = false) {
     const { url } = await service.start('channel', 'window', undefined, newAccount);
@@ -42,7 +44,7 @@ describe('ChatGPT 官方订阅登录', () => {
   });
   beforeEach(async () => {
     ({ publicKey, privateKey } = await generateKeyPair('RS256', { extractable: true }));
-    records = new Map(); refreshRequests = 0;
+    records = new Map(); refreshRequests = 0; earliestRefresh = undefined;
     const key = randomBytes(32);
     const codec = {
       encrypt: async (text: string) => {
@@ -93,7 +95,7 @@ describe('ChatGPT 官方订阅登录', () => {
     service = new ChatGPTService(app, fetcher);
     (service as any).testApp = app;
   });
-  afterEach(() => { service?.close(); jest.restoreAllMocks(); });
+  afterEach(async () => { await service?.close(); jest.restoreAllMocks(); });
 
   test('自动回调校验身份，独立加密保存账户，并复用注册进行重新登录', async () => {
     const app = (service as any).testApp;
@@ -135,6 +137,74 @@ describe('ChatGPT 官方订阅登录', () => {
       expect.objectContaining({ clientId: 'oaiapp_second', connected: true })]);
     expect(await settings.credential('channel_key')).toBe('test-existing-api-key');
     await expect(service.accessToken('channel', signal())).rejects.toThrow('登录');
+  });
+
+  test.each(['seconds', 'iso'])('保存最早续期时间并在允许前保留有效登录（%s）', async kind => {
+    const now = Date.now(), earliest = Math.ceil((now + 30_000) / 1000) * 1000;
+    earliestRefresh = kind === 'seconds' ? earliest / 1000 : new Date(earliest).toISOString();
+    await login();
+    const reference = settings.snapshot().credentialIds.find(id => id.startsWith('chatgpt_'))!;
+    const account = JSON.parse((await settings.credential(reference))!).accounts[0];
+    expect(account.earliestRefreshAt).toBe(earliest);
+    expect(await service.accessToken('channel', signal())).toBe('test-access-first');
+    await expect((service as any).refresh('channel', account)).rejects.toMatchObject({ code: 'refresh_not_ready' });
+    expect(refreshRequests).toBe(0);
+    expect((await service.status('channel', 'window')).accounts[0].connected).toBe(true);
+    jest.spyOn(Date, 'now').mockReturnValue(earliest + 1);
+    expect(await service.accessToken('channel', signal())).toBe('test-renewed');
+    expect(refreshRequests).toBe(1);
+  });
+
+  test('轮换后身份验证暂时失败，重启从加密记录恢复且不再使用旧续期令牌', async () => {
+    await login();
+    const app = (service as any).testApp;
+    await service.close();
+    let unavailableKeys = true;
+    const original = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/jwks.json') && unavailableKeys) return json({}, 503);
+      if (new URLSearchParams(String(init?.body)).get('grant_type') === 'refresh_token') {
+        refreshRequests++;
+        return json({ ...await token(), access_token: 'test-recovered-access', refresh_token: 'test-recovered-refresh', expires_in: 3600 });
+      }
+      return original(url, init);
+    });
+    service = new ChatGPTService(app, fetcher);
+    await expect(service.accessToken('channel', signal())).rejects.toThrow();
+    const reference = settings.snapshot().credentialIds.find(id => id.startsWith('chatgpt_'))!;
+    expect(JSON.parse((await settings.credential(reference))!).accounts[0].pendingRefresh.data.refresh_token).toBe('test-recovered-refresh');
+    expect(JSON.stringify([...records.values()])).not.toContain('test-recovered-refresh');
+    await service.close(); unavailableKeys = false;
+    const restartedSettings = new SettingsService(app.storage, new RuntimeToolRegistry(), (settings as any).secrets);
+    await restartedSettings.initialize();
+    service = new ChatGPTService({ ...app, settings: restartedSettings }, fetcher);
+    expect(await service.accessToken('channel', signal())).toBe('test-recovered-access');
+    expect(refreshRequests).toBe(1);
+    const recovered = JSON.parse((await restartedSettings.credential(reference))!).accounts[0];
+    expect(recovered.refreshToken).toBe('test-recovered-refresh');
+    expect(recovered.pendingRefresh).toBeUndefined();
+  });
+
+  test('正常退出等待进行中的续期保存完成', async () => {
+    await login();
+    let begin!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const original = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (new URLSearchParams(String(init?.body)).get('grant_type') === 'refresh_token') { begin(); await blocked; }
+      return original(url, init);
+    });
+    const access = service.accessToken('channel', signal());
+    await started;
+    let closed = false;
+    const close = service.close().then(() => { closed = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release(); await close;
+    expect(await access).toBe('test-renewed');
+    const reference = settings.snapshot().credentialIds.find(id => id.startsWith('chatgpt_'))!;
+    expect(JSON.parse((await settings.credential(reference))!).accounts[0].refreshToken).toBe('test-rotated');
   });
 
   test('拒绝错误 state 和身份 nonce，未授权订阅时不发送模型请求', async () => {

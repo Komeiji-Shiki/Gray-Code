@@ -18,4 +18,6 @@
 
 API Key 和订阅令牌分别存放在平台的加密凭据存储中。订阅会话只保存在本机，设置导出与便携配置不复制订阅令牌；导入旧配置时也会忽略其中的订阅会话，保留本机已经轮换的新令牌。API Key 仍随配置携带，订阅凭据随平台数据备份保留。切换认证方式不会覆盖已有 API Key。同一电脑继续使用相同应用数据目录时，换用新便携程序会复用原登录；访问令牌到期由程序自动续期。若上游确认续期令牌失效，需要重新登录，错误会保留具体的上游错误码。遇到订阅用量限制时，通过“管理订阅用量”查看账户或应用的限制。
 
+自动续期会遵守官方返回的 `earliest_refresh_at`，未到允许时间时继续使用尚未过期的访问令牌。收到轮换令牌后，会先保存到本机加密记录，再验证新的身份令牌；验证暂时失败或重启时恢复这份记录，不重复使用已被消耗的旧续期令牌。正常退出会等待已经开始的续期完成。
+
 接口要求以 [官方注册与登录文档](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[模型与推理文档](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) 和 [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations) 为准。
