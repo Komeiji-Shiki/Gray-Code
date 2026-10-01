@@ -46,7 +46,7 @@ describe('frontend visual and async architecture contracts', () => {
     const shellRoot = path.join(repoRoot, 'apps/client/src')
     // 桌宠窗口是独立页面，在 floating.css 中自带一套变量；PetSurface.vue 同时挂在该页面。
     const petWindow = new Set(collectSources(path.join(shellRoot, 'pets')).concat(path.join(shellRoot, 'components/PetSurface.vue')))
-    const legacy = /var\(\s*--(background|panel|surface|input|text|muted|disabled|accent|border|hover|selection|selection-text|button|button-hover|button-text|danger|success|warning|scrollbar|scrollbar-hover|code-font|ui-font|text-font|font-size|line-height)\s*[,)]/g
+    const legacy = /var\(\s*--(background|panel|surface|input|text|muted|disabled|accent|border|hover|selection|selection-text|button|button-hover|button-text|danger|error|success|warning|scrollbar|scrollbar-hover|code-font|ui-font|text-font|font-size|line-height)\s*[,)]/g
     expect(offenders([shellRoot], /--vscode-[A-Za-z][\w-]*/g, petWindow)).toEqual([])
     expect(offenders([shellRoot], legacy, petWindow)).toEqual([])
   })

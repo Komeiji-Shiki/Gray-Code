@@ -21,7 +21,7 @@ vi.mock('../../../../apps/client/src/monaco', () => ({ Uri: { from: (value: unkn
     const editor = { setModel: vi.fn(), dispose: vi.fn() }; mocks.editors.push(editor); return editor;
   },
 } }));
-vi.mock('../../../../apps/client/src/editorAppearance', () => ({ installWorkbenchTheme() {}, workbenchEditorTheme: () => 'test' }));
+vi.mock('../../../../apps/client/src/editorAppearance', () => ({ applyWorkbenchTheme() {}, WORKBENCH_THEME: 'test' }));
 vi.mock('../../../../apps/client/src/editorWorkspaceEdits', () => ({ workspaceEditorServices: {} }));
 vi.mock('../../../../apps/client/src/editorLanguages', () => ({ ensureEditorLanguage: async () => {} }));
 vi.mock('../../../../apps/client/src/computer', () => ({ computerState: { openRequest: 0 } }));
