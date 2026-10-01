@@ -89,6 +89,22 @@ describe('independent task execution and identity boundaries', () => {
     expect((await f.store.readFullHistory('approval')).messages[2].parts[0]).toMatchObject({ functionResponse: { id: 'delete-call', response: { code: 'PERMISSION_DENIED' } } });
   });
 
+  test('cancelling an active run authorizes from memory without waiting for storage', async () => {
+    let approvalReady!: () => void;
+    const ready = new Promise<void>(resolve => { approvalReady = resolve; });
+    runtime.subscribe(notification => { if (notification.type === 'event' && notification.event.type === 'approval.requested') approvalReady(); });
+    const run = await start('owner', 'fast-cancel', 'delete');
+    await ready;
+    const getRun = jest.spyOn(f.store, 'getRun');
+    await expect(runtime.cancel(run.id, 'guest')).rejects.toThrow('cannot cancel');
+    await runtime.cancel(run.id, 'owner');
+    expect(getRun).not.toHaveBeenCalled();
+    getRun.mockRestore();
+    expect((await runtime.wait(run.id))?.status).toBe('cancelled');
+    expect(executions).toEqual([]);
+    await expect(runtime.cancel('missing-run', 'owner')).rejects.toThrow('cannot cancel');
+  });
+
   test('repeated delivery returns the existing run without appending input or executing again', async () => {
     const first = await start('owner', 'duplicate');
     await runtime.wait(first.id);

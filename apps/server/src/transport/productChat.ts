@@ -195,6 +195,9 @@ export class ProductChat {
     // 先捕获受理时的对象和存储读请求；异步授权、结算期间进入的新回合不属于这次停止。
     const acceptedStarts = [...(this.starts.get(conversationId) ?? [])];
     const acceptedRunIds = this.app.runtime.activeRunIds(conversationId);
+    // 本进程的运行按各自归属授权后立即中止，不等待下方经过存储线程的会话与任务查询。
+    const immediate = Promise.all(acceptedRunIds.map(runId => this.app.runtime.cancel(runId, client.actorId)));
+    void immediate.catch(() => {}); // 会话授权先失败时不再等待它，仍需处理它的失败。
     const snapshot = this.app.storage.listRuns({ conversationId, activeOnly: true });
     void snapshot.catch(() => {}); // 授权拒绝时不会再等待这个只读请求，仍需处理它的失败。
     await this.app.conversation(client.actorId, conversationId);
@@ -202,9 +205,11 @@ export class ProductChat {
     if (!actor || actor.revoked) throw new Error('This account cannot cancel the run.');
     const starts = acceptedStarts.filter(pending => actor.role === 'owner' || pending.actorId === actor.id);
     for (const pending of starts) pending.controller.abort(Object.assign(new Error('Cancelled by user.'), { code: 'CANCELLED_ERROR' }));
+    await immediate;
     const runs = await snapshot;
     const runIds = [...new Set([...runs.map(run => run.id), ...acceptedRunIds])];
-    for (const runId of runIds) await this.app.runtime.cancel(runId, client.actorId);
+    const accepted = new Set(acceptedRunIds);
+    for (const runId of runIds) if (!accepted.has(runId)) await this.app.runtime.cancel(runId, client.actorId);
     const released = await this.waitForRelease(runIds, starts, client.actorId, Math.max(0, deadline - Date.now()));
     return released ? { success: true } : { success: false, code: 'RUN_CANCEL_TIMEOUT' };
   }
