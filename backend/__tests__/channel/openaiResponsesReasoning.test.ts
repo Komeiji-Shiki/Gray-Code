@@ -236,9 +236,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             authMode,
             reasoningSignatureMode: 'codex',
             preferStream: true,
-            sendHistoryThoughts: true,
+            sendHistoryThoughts: authMode === 'api-key',
             replayReasoningContent: true,
-            sendHistoryThoughtSignatures: true,
+            sendHistoryThoughtSignatures: authMode === 'api-key',
             options: {
                 stream: true,
                 reasoning: {

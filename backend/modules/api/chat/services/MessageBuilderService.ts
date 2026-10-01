@@ -10,6 +10,7 @@
 import type { ContentPart } from '../../../conversation/types';
 import type { GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
+import type { OpenAIResponsesConfig } from '../../../config/configs/openai-responses';
 import { getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/shared/multimodal';
 import type { AttachmentData } from '../types';
 
@@ -95,12 +96,14 @@ export class MessageBuilderService {
         // 按 false 处理会在 historyFormatting 整段丢弃，切换后的首轮便没有 reasoning_text
         // 可回传，只认明文的上游（DeepSeek 等）直接报 400。未显式关闭时默认回传。
         const isResponsesChannel = config.type === 'openai-responses';
-        const sendHistoryThoughts = config.sendHistoryThoughts ?? isResponsesChannel;
-        const sendCurrentThoughts = isOpenAIChannel
+        const isChatGPTSubscription = isResponsesChannel && (config as OpenAIResponsesConfig).authMode === 'chatgpt';
+        // 订阅会话由程序保留完整思考衔接，旧开关与回合数不能截断签名或摘要。
+        const sendHistoryThoughts = isChatGPTSubscription || (config.sendHistoryThoughts ?? isResponsesChannel);
+        const sendCurrentThoughts = isChatGPTSubscription || (isOpenAIChannel
             ? sendHistoryThoughts
-            : (config.sendCurrentThoughts ?? true);
-        const sendHistoryThoughtSignatures = config.sendHistoryThoughtSignatures ?? false;
-        const historyThinkingRounds = (sendHistoryThoughts || sendHistoryThoughtSignatures)
+            : (config.sendCurrentThoughts ?? true));
+        const sendHistoryThoughtSignatures = isChatGPTSubscription || (config.sendHistoryThoughtSignatures ?? false);
+        const historyThinkingRounds = isChatGPTSubscription ? -1 : (sendHistoryThoughts || sendHistoryThoughtSignatures)
             ? (config.historyThinkingRounds ?? -1)
             : -1;
 

@@ -151,7 +151,8 @@ export class ChatGPTService {
           const index = value.accounts.findIndex(item => item.clientId === account.clientId);
           if (index >= 0 && value.accounts[index].refreshToken === account.refreshToken) value.accounts[index] = signedOut(account);
         });
-        throw new Error(t('modules.chatgpt.signInExpired'));
+        // 保留稳定错误码，便于区分令牌到期、撤销与重复轮换，不暴露令牌响应。
+        throw new ChatGPTAuthError(`${t('modules.chatgpt.signInExpired')} (${error.code})`, error.code);
       }
       throw error;
     }

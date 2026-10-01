@@ -976,6 +976,7 @@ onUnmounted(() => {
       />
 
       <ChannelOpenCodeSession
+        v-if="!(currentConfig.type === 'openai-responses' && currentConfig.authMode === 'chatgpt')"
         :enabled="currentConfig.openCodeSessionEnabled ?? false"
         @update:enabled="(v: boolean) => updateConfigField('openCodeSessionEnabled', v)"
       />

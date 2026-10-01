@@ -5,6 +5,7 @@ import { SettingsService } from '../../../apps/server/src/settings/service';
 import { ChatGPTService } from '../../../apps/server/src/chatgpt/service';
 import { DIRECT_SCOPE, OPENAI_ISSUER } from '../../../apps/server/src/chatgpt/oauth';
 import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
+import { resolveCapabilities } from '../../../apps/server/src/model/capabilities';
 import { OpenAIResponsesFormatter } from '../../../backend/modules/channel/formatters/openai-responses';
 import { getModels } from '../../../backend/modules/channel/modelList';
 import * as productIdentity from '../../../backend/core/productIdentity';
@@ -120,7 +121,9 @@ describe('ChatGPT 官方订阅登录', () => {
     expect(await Promise.all(Array.from({ length: 6 }, () => service.accessToken('channel', signal()))))
       .toEqual(Array(6).fill('test-renewed'));
     expect(refreshRequests).toBe(1);
-    const restarted = new ChatGPTService((service as any).testApp, fetcher);
+    const restartedSettings = new SettingsService((service as any).testApp.storage, new RuntimeToolRegistry(), (settings as any).secrets);
+    await restartedSettings.initialize();
+    const restarted = new ChatGPTService({ ...(service as any).testApp, settings: restartedSettings }, fetcher);
     expect(await restarted.accessToken('channel', signal())).toBe('test-renewed');
     restarted.close();
     await login('oaiapp_second', 'second', DIRECT_SCOPE, true);
@@ -155,12 +158,16 @@ describe('ChatGPT 官方订阅登录', () => {
       endpoint: 'https://example.test/v1', model: 'test-model', models: [], stream: false, timeoutMs: 1000,
       generation: { temperature: 0.7, maxOutputTokens: 100 },
       capabilities: { outputTokenParameter: 'max_tokens', strictTools: 'protocol_default', reasoningParameter: 'protocol_default',
-        reasoningLevels: [], reasoningSignature: 'native', compatibility: { openCodeSession: false, deepSeekUserId: false,
-          deepSeekVision: false, nativePdf: false } } };
+        reasoningLevels: [], reasoningSignature: 'none', compatibility: { openCodeSession: true, deepSeekUserId: false,
+          deepSeekVision: true, nativePdf: false } } };
     const adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => 'api-key',
       chatgpt: async () => ({ token: 'subscription-token', identity: 'oaiapp_test' }) });
     const input = { providerId: 'channel', conversationId: 'test', systemPrompt: 'Stable system',
-      messages: [{ role: 'user' as const, parts: [{ text: 'hello' }] }], tools: [{ name: 'inspect', description: 'Inspect',
+      messages: [{ role: 'model' as const, parts: [{ thought: true, text: 'Inspect first',
+        thoughtSignatures: { 'openai-responses': 'subscription-reasoning' },
+        openaiResponsesReasoning: { id: 'rs_subscription', summary: [{ type: 'summary_text' as const, text: 'Inspect first' }],
+          content: [{ type: 'reasoning_text' as const, text: 'Inspect first' }] } }] },
+        { role: 'user' as const, parts: [{ text: 'hello' }] }], tools: [{ name: 'inspect', description: 'Inspect',
         parameters: { type: 'object', properties: {} } }], maxOutputTokens: 200, signal: signal() };
     const preview = await adapter.preview(input);
     expect(preview.body).toEqual(expect.objectContaining({ stream: true, store: false, instructions: 'Stable system' }));
@@ -168,6 +175,10 @@ describe('ChatGPT 官方订阅登录', () => {
     expect(preview.body).not.toHaveProperty('max_output_tokens');
     expect(preview.body).not.toHaveProperty('temperature');
     expect(preview.body.tools[0]).toEqual(expect.objectContaining({ type: 'namespace', name: 'graycode' }));
+    expect(preview.body.input[0]).toEqual({ type: 'reasoning', id: 'rs_subscription',
+      encrypted_content: 'subscription-reasoning', summary: [{ type: 'summary_text', text: 'Inspect first' }] });
+    expect(resolveCapabilities(profile, profile.model)).toMatchObject({ reasoningSignature: 'codex',
+      compatibility: { openCodeSession: false, deepSeekVision: false } });
     const normal = new OpenAIResponsesFormatter().buildRequest({ configId: 'normal', history: [] },
       { id: 'normal', name: 'normal', type: 'openai-responses', url: 'https://example.test/v1', apiKey: 'api-key', model: 'test',
         options: { stream: false, temperature: 0.7 }, optionsEnabled: { temperature: true } } as any);

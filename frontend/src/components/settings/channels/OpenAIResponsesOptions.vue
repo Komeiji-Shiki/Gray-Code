@@ -200,7 +200,7 @@ function onReasoningSignatureModeChange(value: string) {
     </div>
 
     <!-- DeepSeek Vision 图片/PDF 预处理 -->
-    <div class="option-section">
+    <div v-if="config.authMode !== 'chatgpt'" class="option-section">
       <div class="option-section-header">
         <span class="option-section-title">
           <i class="codicon codicon-eye"></i>
@@ -342,7 +342,7 @@ function onReasoningSignatureModeChange(value: string) {
     </div>
     
     <!-- 思考回传配置 -->
-    <div class="option-section thinking-backfill-section">
+    <div v-if="config.authMode !== 'chatgpt'" class="option-section thinking-backfill-section">
       <div class="option-section-header">
         <span class="option-section-title">
           <i class="codicon codicon-sync"></i>

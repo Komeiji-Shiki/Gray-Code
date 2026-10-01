@@ -139,6 +139,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
         const { history } = request;
+        const isChatGPTSubscription = config.authMode === 'chatgpt';
         
         // 准备系统指令 (instructions)
         let instructions = config.systemInstruction;
@@ -155,7 +156,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             processedHistory,
             this.getPromptContextForRequest(request),
             request.dynamicContextStrategy,
-            { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
+            { stripPreservedThoughtParts: !isChatGPTSubscription && config.sendHistoryThoughts !== true }
         );
 
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
@@ -170,22 +171,22 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // - 非 DeepSeek 的 content-only reasoning：不构造 reasoning item，也不降级成普通文本，
         //   避免把不被当前 Responses endpoint 接受的 reasoning_text 发出去。
         // reasoningSignatureMode 只有 official/codex/deepseek 三种字符串取值，用 `??` 取默认值即可。
-        const reasoningSignatureMode = config.authMode === 'chatgpt' ? 'codex' : config.reasoningSignatureMode ?? 'official';
+        const reasoningSignatureMode = isChatGPTSubscription ? 'codex' : config.reasoningSignatureMode ?? 'official';
         // DeepSeek Responses 端点只支持明文 content 形式的 reasoning：官方文档列出
         // summary、encrypted_content 与 include 均不受支持。该模式强制走明文路径，
         // 同时打开 useDeepSeekReasoningTextFallback（模型名不认识时也能补空占位）。
         const deepSeekSignatureCompat = reasoningSignatureMode === 'deepseek';
         // providerReasoningContentEnabled 会被渠道配置显式写成布尔 false，只能用 === true 判断：
         // 若按「缺省即取默认值」处理，渠道显式关闭的意图会被模型名推断覆盖。
-        const isDeepSeek = config.authMode !== 'chatgpt' && (deepSeekSignatureCompat
+        const isDeepSeek = !isChatGPTSubscription && (deepSeekSignatureCompat
             || config.providerReasoningContentEnabled === true
             || isDeepSeekModel(config.model));
         const input = this.convertToResponsesInput(processedHistory, {
             // 官方订阅端点不接受明文 reasoning.content，保留签名与摘要供下一轮恢复思考。
             // API Key 兼容渠道继续沿用 replayReasoningContent，避免影响明文回传。
-            allowReasoningContent: config.authMode !== 'chatgpt' && config.replayReasoningContent !== false,
-            // DeepSeek 不接受 encrypted_content/summary，该模式下不启用签名回传。
-            allowReasoningSignatures: config.sendHistoryThoughtSignatures === true && !deepSeekSignatureCompat,
+            allowReasoningContent: !isChatGPTSubscription && config.replayReasoningContent !== false,
+            // 订阅登录自动保留签名与摘要；DeepSeek 继续只使用明文回传。
+            allowReasoningSignatures: isChatGPTSubscription || config.sendHistoryThoughtSignatures === true && !deepSeekSignatureCompat,
             reasoningSignatureMode,
             useDeepSeekReasoningTextFallback: isDeepSeek
         });

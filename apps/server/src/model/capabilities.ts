@@ -19,7 +19,7 @@ export function resolveCapabilities(
   const override = profile.models.find(
     (value) => value.id === model,
   )?.capabilities;
-  return {
+  const capabilities: ProviderCapabilities = {
     ...profile.capabilities,
     ...override,
     compatibility: {
@@ -27,6 +27,12 @@ export function resolveCapabilities(
       ...override?.compatibility,
     },
   };
+  // 订阅认证的协议能力固定，兼容渠道遗留选项不能改变官方请求。
+  return profile.authMode === 'chatgpt' ? {
+    ...capabilities,
+    reasoningSignature: 'codex',
+    compatibility: { ...capabilities.compatibility, openCodeSession: false, deepSeekVision: false },
+  } : capabilities;
 }
 
 /** Reuse the tested formatters, translating the new capability profile in one place. */
