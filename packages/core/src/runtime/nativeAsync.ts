@@ -177,6 +177,9 @@ export class NativeAsyncTools {
     for (const value of values) if (!value.executing) { value.cancelled = true; value.resolve(); }
     await Promise.allSettled(values.filter(value => value.executing).map(value => value.started));
     for (const value of values) if (!value.record.detached) {
+      // 已发布到历史、工具也已给出结果时交付真实结果（含中断原因与子进程清理情况），
+      // 不用通用的中断占位结果覆盖；交付失败时仍由调用方补占位结果。
+      if (value.published && value.record.outcome && !value.delivered) await this.deliverOne(value, false).catch(() => {});
       this.calls.delete(this.key(runId, value.record.call.id)); value.resolve();
       await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(runId, value.record.call.id));
     }

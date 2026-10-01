@@ -7,6 +7,7 @@ import { createTerminalRuntime } from '../../../../backend/tools/terminal/proces
 import { createShellRuntime } from '../../../../backend/tools/terminal/shellConfigRuntime';
 import { createOutputRuntime } from '../../../../backend/tools/terminal/outputDecoderRuntime';
 import { createTerminalPrompts } from '../../../../backend/tools/terminal/promptDescriptionsRuntime';
+import { windowsProcessTreePort } from '../../../../backend/tools/terminal/processTree';
 import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
@@ -29,7 +30,7 @@ export class PlatformTerminals {
   private readonly active = new Map<string, { record: TerminalRecord; runner: Runner; outputSave?: ReturnType<typeof setTimeout> }>();
   private events: Promise<void> = Promise.resolve();
   private closing = false;
-  constructor(private readonly app: PlatformApplication) {}
+  constructor(private readonly app: PlatformApplication, private readonly processTree = windowsProcessTreePort()) {}
 
   private runtime(config: ExecuteCommandToolConfig, tasks: TerminalTaskPort, directory?: string): Runner {
     const getConfig = () => config;
@@ -47,6 +48,8 @@ export class PlatformTerminals {
     const prompts = createTerminalPrompts({ shells, getMaxOutputLines: output.getMaxOutputLines, roots: () => [], workspaceBinding: 'task' });
     const workspace = directory ? { name: 'workspace', fsPath: directory } : undefined;
     return createTerminalRuntime({ getConfig, tasks, shells, output, prompts,
+      // Windows 上追踪后代链，中断时连父进程已退出的后代一并终止并核实。
+      ...(process.platform === 'win32' ? { processTree: this.processTree } : {}),
       getAllWorkspaces: () => workspace ? [workspace] : [],
       parseWorkspacePath: value => ({ workspace, relativePath: value }) });
   }
@@ -240,12 +243,14 @@ export class PlatformTerminals {
   async kill(actorId: string, id: string) {
     await this.accessible(actorId, id);
     const runner = this.active.get(id)?.runner;
+    let interruption: Record<string, unknown> | undefined;
     if (runner) {
-      const result = await runner.killTerminalProcess(id);
+      const result = await runner.killTerminalProcess(id, 'stopped');
       if (!result.success && this.active.has(id)) return result;
+      interruption = result.interruption;
     }
     await this.events;
-    return this.output(actorId, id);
+    return { ...await this.output(actorId, id), ...(interruption ? { interruption } : {}) };
   }
   private taskSummary(record: TerminalRecord) {
     return { taskId: record.id, status: record.status, running: this.active.has(record.id) && ['queued', 'running'].includes(record.status),
@@ -302,6 +307,8 @@ export class PlatformTerminals {
       context.signal.throwIfAborted();
       const stopped = await this.kill(context.actorId, record.id);
       if (!stopped.success) return { success: false, code: 'STOP_FAILED', error: String(stopped.error ?? '终端进程停止失败。'), data: this.withNextActions(this.taskSummary(record)) };
+      // 停止结果说明子进程是否已清理，模型不必再用命令查进程。
+      if ('interruption' in stopped && stopped.interruption) return { success: true, data: this.withNextActions({ ...this.taskSummary(record), interruption: stopped.interruption }) };
     }
     const summary = this.taskSummary(record);
     const data = args.action === 'read' ? { ...summary, ...readProcessOutput(record.outputBuffer ?? {
@@ -320,13 +327,13 @@ export class PlatformTerminals {
   }
   async removeConversation(conversationId: string) {
     for (const { record, runner } of this.active.values()) if (record.conversationId === conversationId)
-      await runner.killTerminalProcess(record.id);
+      await runner.killTerminalProcess(record.id, 'conversation_removed');
     await this.events;
   }
   async close() {
     this.closing = true;
     const entries = [...this.active.values()];
-    const results = await Promise.allSettled(entries.map(({ record, runner }) => runner.killTerminalProcess(record.id)));
+    const results = await Promise.allSettled(entries.map(({ record, runner }) => runner.killTerminalProcess(record.id, 'host_closing')));
     await this.events;
     const failures = results.flatMap((result, index) => result.status === 'rejected' ? [result.reason]
       // runner 用结构化结果报告停止失败；终态事件可能已移除自然结束的任务，不能把它误报为失败。

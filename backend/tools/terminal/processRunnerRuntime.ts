@@ -12,6 +12,11 @@ import type { createShellRuntime, ShellType } from './shellConfigRuntime';
 import type { createOutputRuntime, StreamDecodeState } from './outputDecoderRuntime';
 import type { createTerminalPrompts } from './promptDescriptionsRuntime';
 import type { ExecuteCommandToolConfig } from '../../modules/settings/types/toolsTypes';
+import { ProcessTreeTracker, describeProcessTree, type ProcessTreePort, type ProcessTreeReport } from './processTree';
+
+
+/** 前台命令被终止的原因，随结果返回给模型。 */
+export type TerminalInterruptReason = 'timeout' | 'user_cancelled' | 'task_cancelled' | 'host_closing' | 'stopped' | 'conversation_removed';
 
 
 /**
@@ -33,6 +38,10 @@ export interface TerminalProcess {
     error?: string;
     /** 因输出行数上限被丢弃的旧行数（长运行进程的内存护栏，配合截断提示展示总量） */
     omittedOutputLines?: number;
+    interruptReason?: TerminalInterruptReason;
+    /** Windows 上记录后代链，终止时补杀 taskkill /T 够不到的脱链后代。 */
+    tracker?: ProcessTreeTracker;
+    cleanup?: Promise<ProcessTreeReport | undefined>;
 }
 
 
@@ -58,6 +67,8 @@ shells: ReturnType<typeof createShellRuntime>;
 output: ReturnType<typeof createOutputRuntime>;
 prompts: ReturnType<typeof createTerminalPrompts>;
 tasks: Pick<typeof TaskManager, 'onTaskEventByType' | 'generateTaskId' | 'unregisterTask' | 'registerTask' | 'getTask' | 'emitEvent' | 'cancelTask'>;
+/** 可选：Windows 进程快照与终止端口。未提供时只用 tree-kill 终止根进程树。 */
+processTree?: ProcessTreePort;
 }
 /** 注入宿主服务；进程、解码状态和事件均归属于当前实例。 */
 export function createTerminalRuntime(host: createTerminalRuntimeHost) {
@@ -392,6 +403,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                     }
 
                     // 启动进程
+                    const spawnedAt = Date.now();
                     const proc = cp.spawn(shellConfig.shell, spawnArgs, {
                         cwd: workingDir,
                         shell: false,
@@ -422,6 +434,17 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         output: [],
                         startTime: Date.now()
                     };
+                    if (host.processTree && isWindows && proc.pid) {
+                        // 采样用 spawn 前的时间做身份下限；终止时只处理能追溯到本 Shell 的后代。
+                        terminalProcess.tracker = new ProcessTreeTracker(host.processTree, proc.pid, spawnedAt);
+                        terminalProcess.tracker.start();
+                        proc.once('exit', () => {
+                            // Shell 先退出而管道仍被后代占用时，趁它们的 ParentProcessId 还能关联到 Shell 采样一次。
+                            const timer = setTimeout(() => { if (terminalProcess.endTime === undefined) terminalProcess.tracker?.rootExited(); }, 300);
+                            timer.unref?.();
+                        });
+                        proc.once('close', () => { if (!terminalProcess.cleanup) terminalProcess.tracker?.stop(); });
+                    }
 
                     // 相同 toolId 并发执行时，第二次 set 会覆盖第一次的条目，
                     // 旧进程成为孤儿、无法取消。覆盖前先终止仍在运行的旧进程。
@@ -462,7 +485,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         const taskAbortHandler = () => {
                             // 通过 TaskManager 取消时，终止进程树
                             // killTerminalProcess 现在等待进程 close 后才返回，此处不阻塞 abort 流程
-                            void killTerminalProcess(terminalId);
+                            void killTerminalProcess(terminalId, 'stopped');
                         };
                         
                         taskAbortController.signal.addEventListener('abort', taskAbortHandler, { once: true });
@@ -496,7 +519,8 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                     let removeExternalAbortListener: (() => void) | undefined;
                     if (externalAbortSignal && !background) {
                         const abortHandler = () => {
-                            // 调用 killTerminalProcess 终止进程
+                            // 外部取消覆盖先前的超时原因：结果仍按用户/任务取消处理（见 isExternalAbort）
+                            terminalProcess.interruptReason = abortReason(externalAbortSignal.reason);
                             void killTerminalProcess(terminalId);
                         };
 
@@ -616,6 +640,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         timeoutHandle = setTimeout(() => {
                             terminalProcess.killed = true;
                             terminalProcess.timedOut = true;
+                            terminalProcess.interruptReason ??= 'timeout';
                             terminalProcess.error = `Command timed out after ${timeout}ms`;
                             // 与 killTerminalProcess 相同的「SIGTERM → 等待 → SIGKILL 升级」流程：
                             // 进程树捕获/忽略 SIGTERM 时 'close' 永不触发，execute_command 的
@@ -677,8 +702,12 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         // 确定错误信息
                         let error: string | undefined;
                         if (isExternalAbort) {
-                            // 外部取消（用户点击中断按钮）
-                            error = 'User cancelled the command execution. Please wait for user\'s next instruction.';
+                            // 外部取消：用户点击停止、任务被上层取消或宿主关闭
+                            error = terminalProcess.interruptReason === 'task_cancelled'
+                                ? `The task running this command was cancelled (${String((externalAbortSignal?.reason as Error | undefined)?.message ?? 'no reason given')}).`
+                                : terminalProcess.interruptReason === 'host_closing'
+                                    ? 'The command was stopped because GrayCode is shutting down.'
+                                    : 'User cancelled the command execution. Please wait for user\'s next instruction.';
                         } else if (terminalProcess.error) {
                             // 超时等系统错误
                             error = terminalProcess.error;
@@ -707,26 +736,36 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                             ? `(Output truncated: showing last ${lastOutput.length} of ${totalOutputLines} lines)`
                             : undefined;
                         
-                        resolve({
-                            success: isExternalAbort ? false : success,
-                            data: {
-                                // 前端需要这些用于 UI 显示，但 AI 不需要（会在 ConversationManager 中过滤）
-                                terminalId,
-                                command,
-                                cwd: workingDir,
-                                shell,
-                                exitCode: code,
-                                killed: terminalProcess.killed || false,
-                                duration,
-                                // AI 只需要 output 和 exitCode
-                                output: lastOutput.join('\n'),
-                                truncatedNote
-                            },
-                            error,
-                            // 超时不是取消：killed 与 timedOut 非互斥（超时强杀两标记都置位），
-                            // 必须排除 timedOut，否则超时被下游误判为「用户取消」→ 对话被自动暂停
-                            cancelled: isExternalAbort || (terminalProcess.killed === true && !terminalProcess.timedOut)
-                        });
+                        const finish = (processTree: ProcessTreeReport | undefined) => {
+                            // 被终止时说明原因与子进程清理结果；未终止的命令结果结构不变。
+                            const interruption = terminalProcess.killed ? interruptionOf(terminalProcess, processTree) : undefined;
+                            resolve({
+                                success: isExternalAbort ? false : success,
+                                data: {
+                                    // 前端需要这些用于 UI 显示，但 AI 不需要（会在 ConversationManager 中过滤）
+                                    terminalId,
+                                    command,
+                                    cwd: workingDir,
+                                    shell,
+                                    exitCode: code,
+                                    killed: terminalProcess.killed || false,
+                                    duration,
+                                    // AI 只需要 output 和 exitCode
+                                    output: lastOutput.join('\n'),
+                                    truncatedNote,
+                                    ...(interruption ? { interruption } : {})
+                                },
+                                error: error && interruption ? `${error} ${interruption.summary}` : error,
+                                // 超时不是取消：killed 与 timedOut 非互斥（超时强杀两标记都置位），
+                                // 必须排除 timedOut，否则超时被下游误判为「用户取消」→ 对话被自动暂停
+                                cancelled: isExternalAbort || (terminalProcess.killed === true && !terminalProcess.timedOut)
+                            });
+                        };
+                        // 终止时的后代清理可能晚于 close（需要再取快照核实），等它结束再返回，最多 30 秒。
+                        if (terminalProcess.killed && terminalProcess.cleanup) {
+                            const limit = new Promise<undefined>(done => { const timer = setTimeout(() => done(undefined), 30_000); timer.unref?.(); });
+                            void Promise.race([terminalProcess.cleanup, limit]).then(finish, () => finish(undefined));
+                        } else finish(undefined);
                     });
 
                     proc.on('error', (err) => {
@@ -909,69 +948,107 @@ function setTerminalProcessPriority(pid: number | undefined, background: boolean
  * 修改目的：SIGTERM 免疫进程最终被 SIGKILL 强杀，等待方必然收到 close。
  */
 function terminateProcessTreeWithEscalation(terminalProcess: TerminalProcess): Promise<void> {
+    // 超时与取消可能先后触发，同一进程只执行一轮终止与清理。
+    return terminating.get(terminalProcess) ?? terminating.set(terminalProcess, terminateProcessTree(terminalProcess)).get(terminalProcess)!;
+}
+const terminating = new WeakMap<TerminalProcess, Promise<void>>();
+function terminateProcessTree(terminalProcess: TerminalProcess): Promise<void> {
     const proc = terminalProcess.process;
     return new Promise<void>((resolve) => {
-        // 进程已结束（close/error 处理器已落定 exitCode）：close 不会再触发，直接返回
-        if (proc.exitCode !== null) {
+        // close 已处理（endTime 已落定）：不会再触发，直接返回
+        if (terminalProcess.endTime !== undefined) {
             resolve();
             return;
         }
+        // Shell 已退出但 close 未到：管道被后代占用。此时 PID 可能已被复用，不再按 PID 发信号。
+        const exited = proc.exitCode !== null || proc.signalCode != null;
 
         let settled = false;
-        let forceKillTimer: NodeJS.Timeout | undefined;
+        const timers: NodeJS.Timeout[] = [];
+        const later = (callback: () => void, delay: number) => { const timer = setTimeout(callback, delay); timer.unref?.(); timers.push(timer); };
 
         const onClose = (): void => {
             if (settled) return;
             settled = true;
-            if (forceKillTimer) clearTimeout(forceKillTimer);
+            for (const timer of timers) clearTimeout(timer);
             resolve();
         };
 
         // 先注册 close 监听再发信号，避免进程在两者之间退出导致漏监听
         proc.once('close', onClose);
+        // 无法归属的进程仍占用管道时，关闭本端管道让 close 到达，前台命令不再挂起。
+        const releasePipes = () => { if (!settled) { proc.stdout?.destroy(); proc.stderr?.destroy(); } };
 
-        // 注册监听后再检查：进程可能在注册前已退出，close 不会再触发
-        if (proc.exitCode !== null) {
-            onClose();
-            return;
-        }
+        let rootKilled: Promise<void> = Promise.resolve();
+        if (!exited) {
+            later(() => {
+                try {
+                    proc.kill('SIGKILL');
+                } catch {
+                    // 可能已退出，忽略
+                }
+                // 修改原因：发 SIGKILL 后立即 onClose() 会让等待方在 close 处理器（落定
+                //          endTime/exitCode/output）执行前就返回，拿到 stale 结果。
+                // 修改方式：SIGKILL 不可捕获——发完信号不 resolve，继续等真实 close；
+                //          若管道仍被其他进程占用而 close 迟迟未达，关闭本端管道后再兜底 resolve。
+                later(() => { releasePipes(); later(onClose, 1000); }, KILL_WAIT_CLOSE_TIMEOUT_MS);
+            }, KILL_WAIT_CLOSE_TIMEOUT_MS);
 
-        forceKillTimer = setTimeout(() => {
-            try {
-                proc.kill('SIGKILL');
-            } catch {
-                // 可能已退出，忽略
-            }
-            // 修改原因：发 SIGKILL 后立即 onClose() 会让等待方在 close 处理器（落定
-            //          endTime/exitCode/output）执行前就返回，拿到 stale 结果。
-            // 修改方式：SIGKILL 不可捕获、close 必达——发完信号不 resolve，继续等真实
-            //          close 让 close 处理器落定终态；本定时器仅负责强杀，若 close
-            //          异常迟迟未达（极端情况），由最终兜底定时器 resolve。
-            forceKillTimer = setTimeout(() => onClose(), KILL_WAIT_CLOSE_TIMEOUT_MS);
-        }, KILL_WAIT_CLOSE_TIMEOUT_MS);
-
-        const pid = proc.pid;
-        if (pid) {
-            // 使用 tree-kill 终止进程树（Windows: taskkill /F /T；Unix: 递归发信号）
-            treeKill(pid, 'SIGTERM', (err) => {
-                if (err) {
-                    // tree-kill 失败：回退到直接 SIGKILL
+            const pid = proc.pid;
+            rootKilled = new Promise<void>(done => {
+                if (pid) {
+                    // 使用 tree-kill 终止进程树（Windows: taskkill /F /T；Unix: 递归发信号）
+                    treeKill(pid, 'SIGTERM', (err) => {
+                        if (err) {
+                            // tree-kill 失败：回退到直接 SIGKILL
+                            try {
+                                proc.kill('SIGKILL');
+                            } catch {
+                                // 忽略错误，进程可能已经退出
+                            }
+                        }
+                        done();
+                    });
+                } else {
+                    // 没有 PID，使用默认方式
                     try {
-                        proc.kill('SIGKILL');
+                        proc.kill('SIGTERM');
                     } catch {
                         // 忽略错误，进程可能已经退出
                     }
+                    done();
                 }
             });
-        } else {
-            // 没有 PID，使用默认方式
-            try {
-                proc.kill('SIGTERM');
-            } catch {
-                // 忽略错误，进程可能已经退出
-            }
+        }
+
+        const tracker = terminalProcess.tracker;
+        if (tracker) {
+            // 根进程树终止后补杀脱链后代并核实；此时 close 仍未到说明管道被占用，顺带报告无法归属的孤儿。
+            terminalProcess.cleanup = rootKilled.then(() => tracker.cleanup({ pipeHeld: () => terminalProcess.endTime === undefined }));
+            // 根进程已退出而 close 仍未到时关闭管道；根进程仍在运行则交给上面的 SIGKILL 升级。
+            void terminalProcess.cleanup.then(() => later(() => {
+                if (proc.exitCode === null && proc.signalCode == null) return;
+                releasePipes(); later(onClose, 1000);
+            }, 1000));
+        } else if (exited) {
+            later(() => { releasePipes(); later(onClose, 1000); }, 2000);
         }
     });
+}
+
+
+/** 外部取消的原因：任务层取消（如生成失败）与用户点击停止、宿主关闭分开报告。 */
+function abortReason(reason: unknown): TerminalInterruptReason {
+    const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : '';
+    if ((reason instanceof Error && reason.name === 'AbortError') || !message) return 'user_cancelled';
+    if (/shutting down|正在关闭|正在退出/i.test(message)) return 'host_closing';
+    if (/cancelled by user|user cancel|用户/i.test(message)) return 'user_cancelled';
+    return 'task_cancelled';
+}
+
+
+function interruptionOf(terminalProcess: TerminalProcess, processTree: ProcessTreeReport | undefined) {
+    return { reason: terminalProcess.interruptReason ?? 'stopped', processTree: processTree ?? { verified: false }, summary: describeProcessTree(processTree) };
 }
 
 
@@ -988,11 +1065,12 @@ function terminateProcessTreeWithEscalation(terminalProcess: TerminalProcess): P
  *          再返回；SIGTERM 可能被进程忽略，超时后 SIGKILL 强杀，保证等待不永久挂起。
  * 修改目的：调用方（前端 kill 按钮、TaskManager 取消）拿到的输出/exitCode 反映最终状态。
  */
-async function killTerminalProcess(terminalId: string): Promise<{
+async function killTerminalProcess(terminalId: string, reason?: TerminalInterruptReason): Promise<{
     success: boolean;
     output?: string;
     exitCode?: number;
     error?: string;
+    interruption?: ReturnType<typeof interruptionOf>;
 }> {
     const terminalProcess = activeProcesses.get(terminalId);
 
@@ -1009,22 +1087,24 @@ async function killTerminalProcess(terminalId: string): Promise<{
     }
 
     try {
-        // 进程已结束（close/error 处理器已落定 endTime 与 exitCode）：
-        // close 事件不会再触发，直接返回最终输出与退出码
-        if (terminalProcess.endTime !== undefined || terminalProcess.process.exitCode !== null) {
+        // close 已处理（endTime 已落定）：直接返回最终输出与退出码。
+        // Shell 已退出但 close 未到时仍要终止：后代还占着管道，不处理前台命令会一直挂起。
+        if (terminalProcess.endTime !== undefined) {
             return buildKillTerminalResult(terminalProcess);
         }
 
         // 标记为被终止：close 处理器据此把任务终态判定为 cancelled（而非超时失败）
         terminalProcess.killed = true;
+        if (reason) terminalProcess.interruptReason ??= reason;
 
         // 等待进程树真正退出：SIGTERM → 等待 KILL_WAIT_CLOSE_TIMEOUT_MS → SIGKILL 升级
         // （见 terminateProcessTreeWithEscalation：先注册 close 监听再发信号，避免进程在
         // 两者之间退出导致漏监听；SIGKILL 不可捕获、close 必达，等待不会永久挂起）
         await terminateProcessTreeWithEscalation(terminalProcess);
+        const processTree = terminalProcess.cleanup ? await terminalProcess.cleanup.catch(() => undefined) : undefined;
 
         // close 处理器已把 endTime/exitCode/output 落定并注销任务
-        return buildKillTerminalResult(terminalProcess);
+        return { ...buildKillTerminalResult(terminalProcess), interruption: interruptionOf(terminalProcess, processTree) };
     } catch (error) {
         return {
             success: false,
