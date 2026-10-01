@@ -1,4 +1,5 @@
 import { migrateLimCodeExport } from '../../../../backend/modules/settings/legacyExport';
+import { CHATGPT_CREDENTIAL_PREFIX } from '../../../../backend/modules/channel/chatgpt';
 import { branchRetentionDays } from '../conversations/retention';
 import type { BackgroundImageSummary, PendingBackgroundImages } from './images';
 import type { PlatformApplication } from '../application';
@@ -17,6 +18,7 @@ export class SettingsTransfer {
     const credentials: Record<string, string> = {};
     const references = new Set([...this.app.settings.snapshot().credentialIds, ...Object.keys(draft.credentials)]);
     for (const reference of references) {
+      if (reference.startsWith(CHATGPT_CREDENTIAL_PREFIX)) continue;
       const value = Object.hasOwn(draft.credentials, reference) ? draft.credentials[reference] : await this.app.settings.credential(reference);
       if (typeof value === 'string') credentials[reference] = value;
     }
@@ -45,7 +47,10 @@ export class SettingsTransfer {
     if (data.format === 'graycode-platform' && data.settings) {
       const { accounts, bindings, workspaces, botGuestAccountId, ...preferences } = data.settings;
       draft.app = { ...draft.app, ...preferences, accounts: draft.app.accounts, bindings: draft.app.bindings, workspaces: draft.app.workspaces };
-      Object.assign(draft.credentials, data.credentials ?? {});
+      // 旧配置可能带有已经轮换的订阅令牌，导入时保留本机最新会话；API Key 仍随配置导入。
+      const credentials = Object.fromEntries(Object.entries(data.credentials ?? {})
+        .filter(([reference]) => !reference.startsWith(CHATGPT_CREDENTIAL_PREFIX)));
+      Object.assign(draft.credentials, credentials);
     }
     const exportedFeatures = data.features ?? data.globalSettings;
     if (exportedFeatures) {

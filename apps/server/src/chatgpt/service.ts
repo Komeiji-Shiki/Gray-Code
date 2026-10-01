@@ -2,12 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { t } from "../../../../backend/i18n";
 import type { PlatformApplication } from '../application';
 import { createProxyFetch } from '../../../../backend/modules/channel/proxyFetch';
-import { CHATGPT_USAGE_URL } from '../../../../backend/modules/channel/chatgpt';
+import { CHATGPT_CREDENTIAL_PREFIX, CHATGPT_USAGE_URL } from '../../../../backend/modules/channel/chatgpt';
 import { createChatGPTLogin } from './login';
 import { DIRECT_SCOPE, ChatGPTAuthError, OpenAIChatGPTClient, readChatGPTCredentials,
   type AuthFetch, type ChatGPTAccount, type ChatGPTCredentials } from './oauth';
 
-const credentialId = (channelId: string) => `chatgpt_${createHash('sha256').update(channelId).digest('hex').slice(0, 32)}`;
+const credentialId = (channelId: string) => `${CHATGPT_CREDENTIAL_PREFIX}${createHash('sha256').update(channelId).digest('hex').slice(0, 32)}`;
 const signedOut = (account: ChatGPTAccount): ChatGPTAccount => {
   const { accessToken, refreshToken, idToken, ...registration } = account;
   return { ...registration, expiresAt: 0 };

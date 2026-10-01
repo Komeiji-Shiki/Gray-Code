@@ -24,6 +24,8 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
       url: 'https://example.invalid/v1', name: '便携渠道', model: 'fixture', apiKey: 'portable-test-secret' });
     await draft.settings.updateToolConfig('generate_image', { apiKey: 'portable-image-secret' } as any);
     await app.product.save(draft);
+    const subscriptionCredential = 'chatgpt_portable_test';
+    await app.settings.updateCredential(subscriptionCredential, () => 'old-subscription-session');
     const background = await app.images.add({ name: '便携背景', dataUrl: 'data:image/png;base64,aGVsbG8=', thumbnail: '', width: 1, height: 1 });
     await app.storage.initializeConversation({ ...metadata('chat_a'), workspaceId: 'project' }, [message(1, '只留在机器 A 的聊天')]);
     await app.close(); app = undefined;
@@ -34,8 +36,18 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
     const exported = JSON.parse(await portableCodec.decrypt(encrypted));
     expect(exported.settings).not.toHaveProperty('workspaces');
     expect(exported.settings).not.toHaveProperty('accounts');
+    expect(exported.credentials).not.toHaveProperty(subscriptionCredential);
     expect(JSON.stringify(exported)).not.toContain('只留在机器 A 的聊天');
     expect(await app.storage.getConversation('chat_a')).not.toBeNull();
+    await app.settings.updateCredential(subscriptionCredential, () => 'renewed-subscription-session');
+    await app.close(); app = undefined;
+
+    // 模拟旧便携文件仍带着轮换前的令牌，重新导入时不能回退本机登录。
+    exported.credentials[subscriptionCredential] = 'old-subscription-session';
+    await writeFile(path.join(directory, 'settings.enc'), await portableCodec.encrypt(JSON.stringify(exported)));
+    app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: machineA,
+      configurationPersistence: new DesktopPortableProfile(directory) });
+    expect(await app.settings.credential(subscriptionCredential)).toBe('renewed-subscription-session');
     await app.close(); app = undefined;
 
     const moved = path.join(f.root, '移动后的便携程序');
@@ -46,6 +58,7 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
       configurationPersistence: new DesktopPortableProfile(directory) });
     expect(app.settings.snapshot().settings.appearance.fontSize).toBe(18);
     expect(app.settings.snapshot().settings.workspaces).toEqual([]);
+    expect(await app.settings.credential(subscriptionCredential)).toBeNull();
     expect((await app.storage.listConversations()).items).toEqual([]);
     expect(await app.product.channel(channel)).toMatchObject({ apiKey: 'portable-test-secret' });
     expect(app.product.runtimeSettings().getToolsConfig().generate_image).toMatchObject({ apiKey: 'portable-image-secret' });

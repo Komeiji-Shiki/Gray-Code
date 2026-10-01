@@ -1,6 +1,8 @@
 /** ChatGPT 订阅授权只用于官方 Responses 路由，参数清理必须晚于自定义请求体合并。 */
 export const CHATGPT_API_BASE_URL = 'https://api.openai.com/v1';
 export const CHATGPT_USAGE_URL = 'https://chatgpt.com/#settings/Usage';
+// 订阅会话会轮换令牌，只保存在本机凭据中，配置导入不能覆盖它。
+export const CHATGPT_CREDENTIAL_PREFIX = 'chatgpt_';
 
 // 普通 API 模型支持的缓存策略选项仍可能被订阅模型拒绝，订阅请求沿用服务端缓存策略。
 const unsupportedFields = [
