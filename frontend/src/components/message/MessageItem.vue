@@ -400,11 +400,6 @@ function handleRestoreAndRetry(checkpointId: string) {
   opacity: 1;
 }
 
-/* 统计信息保留占位，避免悬停时正文跳动。 */
-.message-item:not(:hover):not(:focus-within):has(~ .message-item) :deep(.message-footer) {
-  opacity: 0;
-}
-
 /* 工具消息标签 */
 .message-item[class*="tool"] .role-label {
   color: var(--gc-chart-blue);
