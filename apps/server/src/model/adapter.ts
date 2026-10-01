@@ -165,7 +165,8 @@ export class ProviderModelAdapter implements ModelProvider {
     return { protocol: profile.protocol, model: config.model, body: options.body };
   }
   async generate(input: ModelInput): Promise<PlatformMessage> {
-    const { profile, config, formatter, options, credentialIdentity } = await this.prepare(input, true);
+    const prepared = await this.prepare(input, true);
+    const { profile, config, formatter, options, credentialIdentity } = prepared;
     input.signal.throwIfAborted();
     // 密文与原生调用会跨多次请求回放。两种传输都固定本任务的认证身份，订阅只比较账号，允许同账号令牌刷新。
     const identity = credentialIdentity ? JSON.stringify([options.url, options.body?.model, credentialIdentity,
@@ -180,6 +181,7 @@ export class ProviderModelAdapter implements ModelProvider {
     let socket: ResponsesWebSocket | undefined;
     let source: AsyncIterable<any> | undefined;
     const capture = async (body: any) => { await input.onRequest?.({ protocol: profile.protocol, model: config.model, body, metrics: modelRequestMetrics(body) }); };
+    let captured: Promise<void> | undefined;
     if (native) {
       socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal);
       const formatInput = (messages: PlatformMessage[]) => formatter.buildRequest({ configId: config.id, conversationId: input.conversationId,
@@ -188,8 +190,21 @@ export class ProviderModelAdapter implements ModelProvider {
       const context = socket.context(input.messages, input.promptContext);
       source = socket.response((messages, full) => ({ ...options.body, input: full ? options.body.input : formatInput(messages) }), input.messages, context.full, capture);
     } else {
-      await capture(options.body);
+      // 长会话的请求快照很大，写入与上游请求并行；返回前仍等待它完成，写入失败照常让本次生成失败。
+      captured = capture(options.body);
+      void captured.catch(() => undefined);
     }
+    try {
+      const content = await this.receive(input, prepared, !!native, socket, source);
+      await captured;
+      return content;
+    } catch (error) {
+      await captured?.catch(() => undefined);
+      throw error;
+    }
+  }
+  private async receive(input: ModelInput, { profile, config, formatter, options }: Awaited<ReturnType<ProviderModelAdapter['prepare']>>,
+    native: boolean, socket: ResponsesWebSocket | undefined, source: AsyncIterable<any> | undefined): Promise<PlatformMessage> {
     input.signal.throwIfAborted();
     if (!profile.stream && !native) {
       const requestStartedAt = Date.now();

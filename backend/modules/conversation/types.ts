@@ -85,6 +85,8 @@ export interface Content {
     nativeResponse?: { connectionId: string; responseId?: string };
     /** 宿主内部的记忆来源追踪，不发送给界面或供应方。 */
     longMemoryInputIds?: string[];
+    /** 存在时 longMemoryInputIds 只列出相对这条回复新增的输入，其余依赖继承自它。 */
+    longMemoryInputBase?: string;
     longMemoryReferences?: Array<{ scopeId: string; id: string; version: number }>;
     memoryRedacted?: boolean;
     memoryContext?: boolean;

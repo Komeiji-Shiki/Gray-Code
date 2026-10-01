@@ -46,7 +46,11 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     const found=await app.longMemory.search(await app.longMemory.access('owner',{conversationId:'memory-chat'}),{text:'测试代号'});
     expect(found.hits).toHaveLength(1);const saved=found.hits[0].record;
     const history=await app.storage.readFullHistory('memory-chat'),source=history.messages.find(message=>message.isUserInput)!;
-    expect(history.messages.filter(message=>message.role==='model').every(message=>Array.isArray(message.longMemoryInputIds))).toBe(true);
+    const replies=history.messages.filter(message=>message.role==='model');
+    expect(replies.every(message=>Array.isArray(message.longMemoryInputIds))).toBe(true);
+    // 工具循环的第二条回复只记录新增输入，其余依赖继承自上一条；下方遗忘后它仍须被屏蔽。
+    expect(replies[1].longMemoryInputBase).toBe(replies[0].id);
+    expect(replies[1].longMemoryInputIds).not.toContain(source.id);
     await app.storage.appendHistory('memory-chat',[{id:'derived-summary',role:'user',isSummary:true,summarizedMessageIds:[source.id!],parts:[{text:'此前确定测试代号为青桐-173。'}]}]);
     await app.createConversation('owner','第二次对话',undefined,{},[],{id:'memory-other'});
     generate=async()=>({role:'model',parts:[{text:'已读取。'}]});await run('memory-other','我的测试代号是什么？');
