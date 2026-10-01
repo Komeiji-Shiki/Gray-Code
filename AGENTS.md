@@ -77,7 +77,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 - Never 打乱模型请求的消息与图片顺序，或丢弃历史图片。
 - Never 使用 yarn / pnpm 安装依赖或提交其他锁文件（项目用 npm，`pnpm-lock.yaml` 已被忽略）。
 - Never 放宽或绕过既有检查（tsconfig、测试、`i18n:check`、`license:check`）；检查不过先修原因，不要改检查。
-- Never 执行会丢弃他人未提交改动的 git 操作（`reset --hard`、`checkout -- .`、`clean -fdx`、强制推送）；只提交自己改动的文件。
+- Never 执行会丢弃他人未提交改动的 git 操作（`reset --hard`、`checkout -- .`、`clean -fdx`、强制推送）。
 - Never 提交密钥、令牌或含密钥的配置；密钥放本机设置或环境变量。
 - Never 把本机绝对路径、个人笔记写进将提交的文件；临时脚本放 `.tmp/` 或用完即删。
 - Never 顺手整文件重排或格式化无关代码；缩进与引号跟随所在文件既有风格。
@@ -104,7 +104,7 @@ npm --prefix frontend test -- src/__tests__/components/StaticGuards.test.ts
 ## 提交与协作
 
 - 提交信息用中文描述改动本身，按「一个可独立说明的阶段」组织；目录移动与行为修改尽量分开提交。
-- 多会话并行时保持改动范围清晰：只提交自己改动的文件，不做顺手的全仓重命名或格式化。
+- 多会话并行时保持改动范围清晰，不做顺手的全仓重命名或格式化。
 - 向仓库提交贡献时按 DCO 1.1 使用 `git commit -s`；新贡献默认 AGPL-3.0-only 并含限定的 Cubism 例外（见 [LICENSING.md](LICENSING.md)）。
 - 用户可感知的变化按批次补记 `CHANGELOG.md`。
 - 新增第三方依赖：保留原始许可，并按 `resources/licenses/README.md` 记录来源。
