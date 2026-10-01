@@ -82,29 +82,43 @@ function formatMessage(message: Content): string[] {
     return lines;
 }
 
+const isRoundStart = (message: Content) => message.role === 'user' && !message.isFunctionResponse;
+
 /**
  * 将被总结的消息格式化为完整的虚拟文档
  *
- * 两遍扫描：
- * 1. 先生成所有行，记录每个 Round 标题的行索引
- * 2. 回填每个 Round 标题的行号范围 (L start - L end)
+ * 三遍扫描：
+ * 1. 统计每轮的模型消息数；一轮里有多次模型回复（工具循环）时才加 Step 标题，
+ *    长任务不会只剩一个覆盖整份文档的 Round 范围
+ * 2. 生成所有行，记录 Round 与 Step 标题的行索引
+ * 3. 回填标题的行号范围 (L start - L end)
  */
 export function formatToDocument(messages: Content[]): string[] {
+    // 第 0 组是第一条用户输入之前的消息（仅搜索已总结历史时可能出现），没有 Round 标题。
+    const modelCounts = [0];
+    for (const message of messages) {
+        if (isRoundStart(message)) modelCounts.push(0);
+        if (message.role === 'model') modelCounts[modelCounts.length - 1]++;
+    }
+
     const docLines: string[] = [];
-    let roundNumber = 0;
     // 记录每个 Round 标题在 docLines 中的索引
     const roundHeaderIndices: number[] = [];
+    const stepHeaderIndices: number[][] = [[]];
 
-    for (let i = 0; i < messages.length; i++) {
-        const message = messages[i];
-
+    for (const message of messages) {
         // 遇到非 functionResponse 的 user 消息，标记新回合
-        if (message.role === 'user' && !message.isFunctionResponse) {
-            roundNumber++;
+        if (isRoundStart(message)) {
             if (docLines.length > 0) {
                 docLines.push(''); // 回合间空行
             }
             roundHeaderIndices.push(docLines.length);
+            docLines.push(''); // 占位，后面回填
+            stepHeaderIndices.push([]);
+        }
+        const group = stepHeaderIndices.length - 1;
+        if (message.role === 'model' && modelCounts[group] > 1) {
+            stepHeaderIndices[group].push(docLines.length);
             docLines.push(''); // 占位，后面回填
         }
 
@@ -114,16 +128,20 @@ export function formatToDocument(messages: Content[]): string[] {
         docLines.push(''); // 消息间空行
     }
 
-    // 第二遍：回填 Round 标题，写入行号范围
+    // 本组最后一行（1-based）：下一个 Round 的空行分隔符之前，或文档末尾。
+    const groupEnd = (group: number) => group < roundHeaderIndices.length ? roundHeaderIndices[group] - 1 : docLines.length;
+
+    // 回填 Round 标题，写入行号范围
     for (let r = 0; r < roundHeaderIndices.length; r++) {
         const headerIdx = roundHeaderIndices[r];
-        const startLine = headerIdx + 1; // 1-based
-        const endLine = r + 1 < roundHeaderIndices.length
-            ? roundHeaderIndices[r + 1] - 1   // 下一个 Round 的空行分隔符之前
-            : docLines.length;                 // 最后一个 Round 到文档末尾
-
-        docLines[headerIdx] = `══ Round ${r + 1} (L${startLine}-L${endLine}) ══════════`;
+        docLines[headerIdx] = `══ Round ${r + 1} (L${headerIdx + 1}-L${groupEnd(r + 1)}) ══════════`;
     }
+
+    // 回填 Step 标题：每步从一条模型消息开始，包含其后的工具结果，直到下一步或本轮结束。
+    stepHeaderIndices.forEach((steps, group) => steps.forEach((headerIdx, index) => {
+        const endLine = index + 1 < steps.length ? steps[index + 1] : groupEnd(group);
+        docLines[headerIdx] = `── Step ${index + 1} (L${headerIdx + 1}-L${endLine}) ──`;
+    }));
 
     return docLines;
 }

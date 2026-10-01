@@ -74,11 +74,11 @@ function buildHistorySearchDescription(scope: string, isZh: boolean): string {
             `用于查找更早的对话轮次、之前的工具调用、工具结果和用户决策；仓库文件请使用 search_in_files 或 find_files。` +
             `历史以带行号的虚拟文档形式呈现，工具结果按模型当时收到的文本展开为多行。` +
             `行号标记仅用于导航，不属于原文正文。` +
-            `每个轮次标题显示其行范围，例如 "══ Round 3 (L45-L88) ══"。` +
+            `每个轮次标题显示其行范围，例如 "══ Round 3 (L45-L88) ══"；一轮内有多次模型回复时，每次回复及其工具结果另有 "── Step 2 (L60-L75) ──" 标题。` +
             `两种模式：\n` +
             `"search" — 在历史中查找关键词/正则并返回带上下文的匹配行号。搜索输出是定位器，不是完整内容。如果查询使用了正则语法，请设置 is_regex=true；否则这些字符按字面量处理。` +
             `"read" — 使用 start_line/end_line（snake_case，每次最多 ${MAX_READ_LINES} 行）从格式化历史中读取指定行范围。这里不要使用 read_file 风格的 startLine/endLine。` +
-            `典型流程：先用 search 定位相关行，再用 read 获取这些行或从轮次标题读取整个轮次范围的完整内容。\n` +
+            `典型流程：先用 search 定位相关行，再用 read 获取这些行，或按轮次/步骤标题的范围读取完整内容。\n` +
             `提示：要获取单个长行（例如工具调用参数或结构化结果）的完整内容，使用 start_line=N end_line=N 读取——单行读取永不截断。`;
     }
     const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
@@ -86,11 +86,11 @@ function buildHistorySearchDescription(scope: string, isZh: boolean): string {
         `Use this tool for earlier chat turns, previous tool calls, tool results, and user decisions; use search_in_files or find_files for repository files. ` +
         `The history is formatted as a virtual document with line numbers; tool results are expanded into lines exactly as the model received them. ` +
         `The line number markers are for navigation and are not part of the original message body. ` +
-        `Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══". ` +
+        `Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══"; when a round has several model replies, each reply and its tool results get a "── Step 2 (L60-L75) ──" header. ` +
         `Two modes:\n` +
         `"search" — find keywords/regex in history and return matching line numbers with context. Search output is a locator, not the full content. If the query uses regex syntax, set is_regex=true; otherwise those characters are treated literally. ` +
         `"read" — read a specific line range from the formatted history using start_line/end_line (snake_case, max ${MAX_READ_LINES} lines per read). Do not use read_file-style startLine/endLine here. ` +
-        `Typical workflow: use search to locate relevant lines, then use read to get the complete content around those lines or an entire round range from the round header.\n` +
+        `Typical workflow: use search to locate relevant lines, then use read to get the complete content around those lines or the range from a round or step header.\n` +
         `Tip: to get the full content of a single long line (e.g. tool call arguments or a structured result), use read with start_line=N end_line=N — single-line reads are never truncated.`;
 }
 

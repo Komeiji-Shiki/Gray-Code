@@ -61,6 +61,31 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(doc[8]).toContain('L9-L12');
     });
 
+    test('一轮内多次模型回复时加 Step 标题，范围覆盖回复及其工具结果', () => {
+        const doc = formatToDocument([
+            userMsg('开始'),
+            modelMsg([{ functionCall: { name: 'read_file', args: { path: 'a.ts' } } }]),
+            userMsg('', { isFunctionResponse: true, parts: [{ functionResponse: { name: 'read_file', response: { ok: true } } }] }),
+            modelMsg([{ text: '完成' }]),
+            userMsg('下一轮'),
+            modelMsg([{ text: '好' }])
+        ]);
+        const steps = doc.map((line, index) => ({ line, index })).filter(item => item.line.startsWith('── Step'));
+        expect(steps.map(item => item.line.replace(/ \(.*/, ''))).toEqual(['── Step 1', '── Step 2']);
+        const range = (line: string) => line.match(/L(\d+)-L(\d+)/)!.slice(1).map(Number);
+        const [firstStart, firstEnd] = range(steps[0].line);
+        const [secondStart, secondEnd] = range(steps[1].line);
+        expect(firstStart).toBe(steps[0].index + 1);
+        expect(firstEnd).toBe(steps[1].index);
+        expect(doc.slice(firstStart - 1, firstEnd)).toContain('read_file → {"ok":true}');
+        expect(doc.slice(secondStart - 1, secondEnd)).toContain('完成');
+        const round2 = doc.findIndex(line => line.includes('Round 2'));
+        expect(secondEnd).toBe(round2 - 1);
+        expect(range(doc[0])).toEqual([1, round2 - 1]);
+        // 只有一次模型回复的轮次不加 Step 标题
+        expect(doc.slice(round2).some(line => line.startsWith('── Step'))).toBe(false);
+    });
+
     test('functionCall part 输出 [tool_call] 标签与 name(args) 行', () => {
         const doc = formatToDocument([
             modelMsg([{ functionCall: { name: 'read_file', args: { path: 'a.ts' } } }])
