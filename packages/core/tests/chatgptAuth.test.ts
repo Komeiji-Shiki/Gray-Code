@@ -153,10 +153,11 @@ describe('ChatGPT 官方订阅登录', () => {
     await expect(service.accessToken('channel', signal())).rejects.toThrow('订阅');
   });
 
-  test('最终订阅请求强制流式、清理覆盖参数并保留命名空间工具与思考历史', async () => {
+  test.each([undefined, { mode: 'explicit' }])('最终订阅请求强制流式、清理覆盖参数并保留命名空间工具与思考历史（%j）', async (cacheOptions) => {
     const profile: ProviderDefinition = { id: 'channel', name: 'ChatGPT', protocol: 'openai-responses', authMode: 'chatgpt',
-      endpoint: 'https://example.test/v1', model: 'test-model', models: [], stream: false, timeoutMs: 1000,
+      endpoint: 'https://example.test/v1', model: 'gpt-6.1-sol', models: [], stream: false, timeoutMs: 1000,
       generation: { temperature: 0.7, maxOutputTokens: 100 },
+      customBody: cacheOptions ? { prompt_cache_options: cacheOptions } : {},
       capabilities: { outputTokenParameter: 'max_tokens', strictTools: 'protocol_default', reasoningParameter: 'protocol_default',
         reasoningLevels: [], reasoningSignature: 'none', compatibility: { openCodeSession: true, deepSeekUserId: false,
           deepSeekVision: true, nativePdf: false } } };
@@ -174,6 +175,7 @@ describe('ChatGPT 官方订阅登录', () => {
     expect(preview.body).not.toHaveProperty('max_tokens');
     expect(preview.body).not.toHaveProperty('max_output_tokens');
     expect(preview.body).not.toHaveProperty('temperature');
+    expect(preview.body.prompt_cache_options).toEqual({ mode: cacheOptions?.mode ?? 'implicit', ttl: '30m' });
     expect(preview.body.tools[0]).toEqual(expect.objectContaining({ type: 'namespace', name: 'graycode' }));
     expect(preview.body.input[0]).toEqual({ type: 'reasoning', id: 'rs_subscription',
       encrypted_content: 'subscription-reasoning', summary: [{ type: 'summary_text', text: 'Inspect first' }] });

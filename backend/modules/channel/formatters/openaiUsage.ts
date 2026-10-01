@@ -1,5 +1,24 @@
 import type { StreamUsageMetadata } from '../types';
 
+/** Responses 的读取、写入缓存分别记录；明确的零值不能与未返回混为一谈。 */
+export function parseOpenAIResponsesUsage(usage: any): StreamUsageMetadata {
+    const outputTokens = usage.output_tokens || 0;
+    const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0;
+    const cachedTokens = usage.input_tokens_details?.cached_tokens;
+    const cacheWriteTokens = usage.input_tokens_details?.cache_write_tokens;
+    return {
+        promptTokenCount: usage.input_tokens,
+        // output_tokens 已包含 reasoning_tokens，思考数量仅作为输出明细。
+        candidatesTokenCount: outputTokens > 0 ? outputTokens : undefined,
+        totalTokenCount: usage.total_tokens,
+        thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
+        ...(typeof cachedTokens === 'number' && Number.isFinite(cachedTokens) && cachedTokens >= 0
+            ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {}),
+        ...(typeof cacheWriteTokens === 'number' && Number.isFinite(cacheWriteTokens) && cacheWriteTokens >= 0
+            ? { cacheCreationTokenCount: cacheWriteTokens } : {}),
+    };
+}
+
 /** OpenAI 兼容渠道共用解析，保留供应方明确返回的零值。 */
 export function parseOpenAIUsage(usage: any): StreamUsageMetadata {
     const completionTokens = usage.completion_tokens || 0;

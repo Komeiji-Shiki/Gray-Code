@@ -82,7 +82,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             }],
             usage: {
                 input_tokens: 75,
-                input_tokens_details: { cached_tokens: 10 },
+                input_tokens_details: { cached_tokens: 10, cache_write_tokens: 20 },
                 output_tokens: 1186,
                 output_tokens_details: { reasoning_tokens: 1024 },
                 total_tokens: 1261
@@ -91,6 +91,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
 
         expect(response.content.usageMetadata).toMatchObject({
             promptTokenCount: 75,
+            cacheReadTokenCount: 10,
+            cachedContentTokenCount: 10,
+            cacheCreationTokenCount: 20,
             candidatesTokenCount: 1186,
             thoughtsTokenCount: 1024,
             totalTokenCount: 1261
@@ -106,7 +109,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
                 status: 'completed',
                 usage: {
                     input_tokens: 75,
-                    input_tokens_details: { cached_tokens: 0 },
+                    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 75 },
                     output_tokens: 1186,
                     output_tokens_details: { reasoning_tokens: 1024 },
                     total_tokens: 1261
@@ -116,6 +119,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
 
         expect(chunk.usage).toMatchObject({
             promptTokenCount: 75,
+            cacheReadTokenCount: 0,
+            cachedContentTokenCount: 0,
+            cacheCreationTokenCount: 75,
             candidatesTokenCount: 1186,
             thoughtsTokenCount: 1024,
             totalTokenCount: 1261

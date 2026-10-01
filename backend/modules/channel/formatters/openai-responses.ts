@@ -1,6 +1,7 @@
 import { responsesMessageFields, responsesMessageParts, responsesMessageStart, responsesTextPart, sameResponsesMessage } from './responsesMessage';
 import { parseToolArguments } from './toolArguments';
 import { resolveConfiguredStream } from '../../config/configs/base';
+import { parseOpenAIResponsesUsage } from './openaiUsage';
 import { CHATGPT_API_BASE_URL, chatgptHeaders, normalizeChatGPTBody } from '../chatgpt';
 /**
  * GrayCode - OpenAI Responses 格式转换器
@@ -730,18 +731,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
 
         // 处理 Usage 统计
         if (response.usage) {
-            const usage = response.usage;
-            const outputTokens = usage.output_tokens || 0;
-            const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0;
-            const cachedTokens = usage.input_tokens_details?.cached_tokens || 0;
-            content.usageMetadata = {
-                promptTokenCount: usage.input_tokens,
-                // Responses API 的 output_tokens 已包含 reasoning_tokens；主界面按总输出显示。
-                candidatesTokenCount: outputTokens > 0 ? outputTokens : undefined,
-                totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
-                ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
-            };
+            content.usageMetadata = parseOpenAIResponsesUsage(response.usage);
         }
 
         return {
@@ -948,18 +938,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     if (snapshot.parts.length > 0) contentSnapshot = snapshot;
                 }
                 if (chunk.response?.usage) {
-                    const u = chunk.response.usage;
-                    const outputTokens = u.output_tokens || 0;
-                    const reasoningTokens = u.output_tokens_details?.reasoning_tokens || 0;
-                    const cachedTokens = u.input_tokens_details?.cached_tokens || 0;
-                    usage = {
-                        promptTokenCount: u.input_tokens,
-                        // Responses API 的 output_tokens 已包含 reasoning_tokens；主界面按总输出显示。
-                        candidatesTokenCount: outputTokens > 0 ? outputTokens : undefined,
-                        totalTokenCount: u.total_tokens,
-                        thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
-                        ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
-                    };
+                    usage = parseOpenAIResponsesUsage(chunk.response.usage);
                 }
                 
                 finishReason = chunk.type === 'response.incomplete'

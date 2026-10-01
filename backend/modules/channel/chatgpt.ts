@@ -4,13 +4,17 @@ export const CHATGPT_USAGE_URL = 'https://chatgpt.com/#settings/Usage';
 
 const unsupportedFields = [
   'background', 'conversation', 'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'max_tool_calls', 'metadata', 'moderation',
-  'multi_agent', 'prompt', 'prompt_cache_retention', 'prompt_cache_options', 'safety_identifier',
+  'multi_agent', 'prompt', 'prompt_cache_retention', 'safety_identifier',
   'temperature', 'top_logprobs', 'top_p', 'truncation', 'user', 'previous_response_id',
 ];
 
 export function normalizeChatGPTBody(source: Record<string, any>): Record<string, any> {
   const body: Record<string, any> = { ...source, stream: true, store: false };
   for (const field of unsupportedFields) delete body[field];
+  // 新模型使用明确的官方缓存策略；旧模型继续沿用各自的默认行为。
+  if (/^gpt-(?:6(?:[.-]|$)|5\.6(?:[.-]|$))/.test(String(body.model))) {
+    body.prompt_cache_options = { mode: 'implicit', ttl: '30m', ...body.prompt_cache_options };
+  }
   if (typeof body.input === 'string') body.input = [{ role: 'user', content: body.input }];
   if (Array.isArray(body.input)) body.input = body.input.map((item: any) => {
     if (item.role === 'system') return { ...item, role: 'developer' };
