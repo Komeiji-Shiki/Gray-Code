@@ -260,7 +260,7 @@ function handleKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--gc-border-control);
+  border-bottom: 1px solid var(--gc-border-subtle);
   min-width: 0;
   overflow: hidden;
 }

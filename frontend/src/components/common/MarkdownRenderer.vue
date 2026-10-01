@@ -451,6 +451,7 @@ onUnmounted(()=> {
   margin: 0.5em 0;
   padding: 0.5em 1em;
   border-left: 3px solid var(--gc-quote-border);
+  border-radius: 0 var(--gc-radius-md) var(--gc-radius-md) 0;
   background: var(--gc-quote-bg);
   color: var(--gc-text-primary);
   opacity: 0.9;
@@ -494,9 +495,7 @@ onUnmounted(()=> {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--gc-border-subtle);
-  border-bottom: none;
-  border-radius: var(--gc-radius-sm) var(--gc-radius-sm) 0 0;
+  border-radius: var(--gc-radius-lg) var(--gc-radius-lg) 0 0;
   background: var(--gc-surface-muted);
 }
 
@@ -606,9 +605,7 @@ onUnmounted(()=> {
   margin: 0;
   padding: 12px;
   background: var(--gc-code-bg);
-  border: 1px solid var(--gc-border-subtle);
-  border-top: none;
-  border-radius: 0 0 var(--gc-radius-sm) var(--gc-radius-sm);
+  border-radius: 0 0 var(--gc-radius-lg) var(--gc-radius-lg);
   max-height: 400px;
   overflow-y: auto;
   overflow-x: hidden; /* 默认：自动换行，避免横向滚动条 */
@@ -760,17 +757,25 @@ onUnmounted(()=> {
 /* 表格 */
 .markdown-content :deep(table) {
   margin: 0.8em 0;
-  border-collapse: collapse;
-  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  max-width: 100%;
   display: block;
   overflow-x: auto;
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-surface-raised);
 }
 
 .markdown-content :deep(th),
 .markdown-content :deep(td) {
   padding: 8px 12px;
-  border: 1px solid var(--gc-border-subtle);
+  border-bottom: 1px solid var(--gc-border-subtle);
   text-align: left;
+}
+
+.markdown-content :deep(tbody tr:last-child td) {
+  border-bottom: 0;
 }
 
 .markdown-content :deep(th) {

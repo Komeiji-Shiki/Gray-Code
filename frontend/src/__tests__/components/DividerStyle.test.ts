@@ -92,3 +92,12 @@ describe('控件描边', () => {
     expect(offenders).toEqual([])
   })
 })
+
+describe('下拉面板', () => {
+  test.each([
+    'frontend/src/components/common/CustomSelect.vue', 'frontend/src/components/input/ChannelSelector.vue',
+    'frontend/src/components/input/ModelSelector.vue', 'frontend/src/components/input/ModeSelector.vue',
+  ])('%s 搜索框与选项之间用淡分割线', file => {
+    expect(sideBorders(read(file), '.search-wrapper')).toEqual(['border-bottom: 1px solid var(--gc-border-subtle)'])
+  })
+})
