@@ -6,7 +6,7 @@
 
 ## 使用
 
-从[发行页](https://github.com/Komeiji-Shiki/Gray-Code/releases)选择对应 Windows 包。便携版完整解压运行 GrayCode.exe，安装版使用 Setup。当前源码是 2.0.0-pre.4，发行附件对应其发布提交。
+从[发行页](https://github.com/Komeiji-Shiki/Gray-Code/releases)选择对应 Windows 包。便携版完整解压运行 GrayCode.exe，安装版使用 Setup。当前源码是 2.0.0-pre.5，发行附件对应其发布提交。
 
 在“设置 → 渠道”配置模型，选择工作区后开始任务。工作台可展开文件、编辑器、终端、Git、差异和浏览器。设置分类共享草稿；模式切换保持会话。
 
