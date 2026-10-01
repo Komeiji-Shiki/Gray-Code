@@ -958,6 +958,7 @@ Output content directly without any prefix.`
             states: { current: 'Current', superseded: 'Superseded', outside_time: 'Outside the query time range', source_unavailable: 'Source unavailable' },
             relations: { requires: 'Requires', supports: 'Supports', contradicts: 'Contradicts', applies_to: 'Applies to', supersedes: 'Supersedes' },
             providedReasons: { recorded: 'Provided in the record call', recalled: 'Provided in a recall result', verbatim: 'Present verbatim in the current context' },
+            historyActions: { windows: 'List context windows', list: 'List recent messages', search: 'Search history', read: 'Read message' },
         },
         presentation: {
             gotoDefinition: {

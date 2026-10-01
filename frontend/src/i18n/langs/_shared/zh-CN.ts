@@ -481,6 +481,12 @@ const sharedZhCN = {
                 alreadyProvided: backendZhCN.tools.contextNotes.alreadyProvided,
                 budget: backendZhCN.tools.contextNotes.budget,
                 empty: backendZhCN.tools.contextNotes.empty,
+                historyActions: {
+                    list: backendZhCN.tools.contextNotes.historyActions.list,
+                    read: backendZhCN.tools.contextNotes.historyActions.read,
+                    search: backendZhCN.tools.contextNotes.historyActions.search,
+                    windows: backendZhCN.tools.contextNotes.historyActions.windows,
+                },
                 historyReference: backendZhCN.tools.contextNotes.historyReference,
                 kinds: {
                     constraint: backendZhCN.tools.contextNotes.kinds.constraint,

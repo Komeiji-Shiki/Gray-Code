@@ -481,6 +481,12 @@ const sharedEn = {
                 alreadyProvided: backendEn.tools.contextNotes.alreadyProvided,
                 budget: backendEn.tools.contextNotes.budget,
                 empty: backendEn.tools.contextNotes.empty,
+                historyActions: {
+                    list: backendEn.tools.contextNotes.historyActions.list,
+                    read: backendEn.tools.contextNotes.historyActions.read,
+                    search: backendEn.tools.contextNotes.historyActions.search,
+                    windows: backendEn.tools.contextNotes.historyActions.windows,
+                },
                 historyReference: backendEn.tools.contextNotes.historyReference,
                 kinds: {
                     constraint: backendEn.tools.contextNotes.kinds.constraint,

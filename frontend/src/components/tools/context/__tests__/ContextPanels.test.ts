@@ -80,6 +80,15 @@ test('笔记目录和历史查询分别显示名称与消息片段，支持data�
   } finally { notes.unmount(); history.unmount() }
 })
 
+test('历史工具按动作显示摘要，没有查询参数的 list/windows 也有说明', () => {
+  const format = getToolConfig('context_history')!.descriptionFormatter
+  expect(format({ action: 'list', limit: 5 })).toBe('列出最近消息')
+  expect(format({ action: 'windows' })).toBe('列出上下文窗口')
+  expect(format({ action: 'search', query: 'fileDetails' })).toBe('搜索历史 · fileDetails')
+  expect(format({ action: 'read', messageId: 'message-1', offset: 600 })).toBe('读取消息 · message-1 · offset=600')
+  expect(format({})).toBe('')
+})
+
 test('三类工具使用专用懒加载面板而非默认模板', () => {
   for (const name of ['agent_send_message', 'context_notes', 'context_history']) {
     expect(getToolConfig(name)?.contentComponent).not.toBe(DefaultToolResult)

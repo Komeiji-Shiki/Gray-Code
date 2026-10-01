@@ -481,6 +481,12 @@ const sharedJa = {
                 alreadyProvided: backendJa.tools.contextNotes.alreadyProvided,
                 budget: backendJa.tools.contextNotes.budget,
                 empty: backendJa.tools.contextNotes.empty,
+                historyActions: {
+                    list: backendJa.tools.contextNotes.historyActions.list,
+                    read: backendJa.tools.contextNotes.historyActions.read,
+                    search: backendJa.tools.contextNotes.historyActions.search,
+                    windows: backendJa.tools.contextNotes.historyActions.windows,
+                },
                 historyReference: backendJa.tools.contextNotes.historyReference,
                 kinds: {
                     constraint: backendJa.tools.contextNotes.kinds.constraint,

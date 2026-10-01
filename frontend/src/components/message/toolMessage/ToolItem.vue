@@ -94,7 +94,7 @@ function getToolDescription(tool: ToolUsage): string {
     const hasArgs = tool.args && Object.keys(tool.args).length > 0
     if (hasArgs && config?.descriptionFormatter) {
       try {
-        return config.descriptionFormatter(tool.args)
+        return config.descriptionFormatter(tool.args, tool)
       } catch {
         // formatter 崩溃时降级显示，避免整个工具块渲染失败
       }
@@ -104,7 +104,7 @@ function getToolDescription(tool: ToolUsage): string {
 
   if (config?.descriptionFormatter) {
     try {
-      return config.descriptionFormatter(tool.args)
+      return config.descriptionFormatter(tool.args || {}, tool)
     } catch {
       // formatter 崩溃时降级到默认描述
     }

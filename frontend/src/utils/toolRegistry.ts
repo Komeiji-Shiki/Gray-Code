@@ -45,8 +45,11 @@ export interface ToolConfig {
   /** 图标 (codicon) */
   icon?: string
   
-  /** 描述生成器 - 根据参数生成描述文本 */
-  descriptionFormatter: (args: Record<string, unknown>) => string
+  /**
+   * 描述生成器 - 根据参数生成描述文本。
+   * tool 是完整卡片数据：参数写法对不上或为空时，可以从结果中取实际处理的对象。
+   */
+  descriptionFormatter: (args: Record<string, unknown>, tool?: ToolUsage) => string
   
   /** 内容面板组件 - 用于展开后显示详细信息 */
   contentComponent?: Component

@@ -960,6 +960,7 @@ const zhCN = {
             states: { current: '当前有效', superseded: '已被替代', outside_time: '不在查询时间范围内', source_unavailable: '来源已失效' },
             relations: { requires: '依赖', supports: '支持', contradicts: '与此冲突', applies_to: '适用于', supersedes: '替代' },
             providedReasons: { recorded: '已在记录调用中提供', recalled: '已在召回结果中提供', verbatim: '原文已在当前上下文中提供' },
+            historyActions: { windows: '列出上下文窗口', list: '列出最近消息', search: '搜索历史', read: '读取消息' },
         },
         presentation: {
             gotoDefinition: {

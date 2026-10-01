@@ -958,6 +958,7 @@ const ja: BackendLanguageMessages = {
             states: { current: '現在有効', superseded: '置換済み', outside_time: '指定した時間の範囲外', source_unavailable: '情報源が無効' },
             relations: { requires: '依存先', supports: '支持する対象', contradicts: '矛盾する対象', applies_to: '適用先', supersedes: '置換する対象' },
             providedReasons: { recorded: '記録時の呼び出しで提供済み', recalled: '取得結果で提供済み', verbatim: '原文が現在のコンテキストに存在' },
+            historyActions: { windows: 'コンテキストウィンドウ一覧', list: '最近のメッセージ一覧', search: '履歴を検索', read: 'メッセージを読み取り' },
         },
         presentation: {
             gotoDefinition: {
