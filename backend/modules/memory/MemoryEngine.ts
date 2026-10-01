@@ -366,7 +366,7 @@ export class MemoryEngine {
         // ReDoS 防护：长度上限 + 危险模式检测 + 构造异常捕获（共享 regexGuard）
         const guarded = validateRegexPattern(regex, 'i');
         if (!guarded.ok) {
-            die(`bad regex: ${guarded.error}`);
+            die(guarded.error);
         }
         const pat = guarded.regex;
 

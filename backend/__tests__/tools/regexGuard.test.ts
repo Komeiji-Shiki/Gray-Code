@@ -106,6 +106,17 @@ describe('regexGuard 构造与 flags', () => {
         }
     });
 
+    test('语法错误只保留一次前缀，不暴露调用方内部修饰符', () => {
+        const result = validateRegexPattern('foo(', 'gim');
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.error).toBe('Invalid regular expression "foo(": Unterminated group');
+            expect(result.reason).toBe('Unterminated group');
+            expect(result.error.match(/Invalid regular expression/g)).toHaveLength(1);
+            expect(result.error).not.toContain('/gim');
+        }
+    });
+
     test('合法正则正常构造并保留 flags', () => {
         const result = validateRegexPattern('foo\\d+', 'gi');
         expect(result.ok).toBe(true);

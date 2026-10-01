@@ -65,9 +65,10 @@ export function handleSearch(docLines: string[], query: string, isRegex: boolean
             // ReDoS 防护：长度上限 + 危险模式检测 + 构造异常捕获（共享 regexGuard）
             const guarded = validateRegexPattern(query, 'gi');
             if (!guarded.ok) {
+                // 语法错误只传具体原因，避免与本地化前缀叠成两层；过长或危险模式的说明本身已完整。
                 return {
                     success: false,
-                    error: t('tools.history.invalidRegex', { error: guarded.error })
+                    error: guarded.reason !== undefined ? t('tools.history.invalidRegex', { error: guarded.reason }) : guarded.error
                 };
             }
             const pattern = guarded.regex;

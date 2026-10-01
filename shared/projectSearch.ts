@@ -8,7 +8,7 @@ export function projectSearchExpression(options: ProjectSearchQuery): RegExp {
   if (typeof options.query !== 'string' || !options.query) throw new Error('请输入搜索内容。');
   if (options.regex) {
     const validation = validateRegexPattern(options.query);
-    if (!validation.ok) throw new Error(`正则表达式无效：${validation.error}`);
+    if (!validation.ok) throw new Error(`正则表达式无效：${validation.reason ?? validation.error}`);
   }
   let source = options.regex ? options.query : options.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (options.wholeWord) source = `(?<![\\p{L}\\p{N}_])(?:${source})(?![\\p{L}\\p{N}_])`;

@@ -212,7 +212,7 @@ export function hasNestedQuantifiedGroups(pattern: string): boolean {
 export function validateRegexPattern(
     pattern: string,
     flags?: string
-): { ok: true; regex: RegExp } | { ok: false; error: string } {
+): { ok: true; regex: RegExp } | { ok: false; error: string; reason?: string } {
     if (pattern.length > MAX_REGEX_SOURCE_LENGTH) {
         return {
             ok: false,
@@ -234,9 +234,21 @@ export function validateRegexPattern(
         const regex = new RegExp(pattern, flags);
         return { ok: true, regex };
     } catch (e) {
+        const reason = syntaxErrorReason(e instanceof Error ? e.message : String(e), pattern, flags);
         return {
             ok: false,
-            error: `Invalid regular expression: ${e instanceof Error ? e.message : String(e)}`
+            error: `Invalid regular expression ${JSON.stringify(pattern)}: ${reason}`,
+            reason
         };
     }
+}
+
+/**
+ * V8 的语法错误自带 "Invalid regular expression: /源串/修饰符: " 前缀。修饰符由调用方内部决定
+ * （如搜索固定加 g、m），原样透出会让调用者误以为参数被改写，这里只保留具体原因。
+ */
+function syntaxErrorReason(message: string, pattern: string, flags = ''): string {
+    const exact = `Invalid regular expression: /${pattern}/${flags}: `;
+    if (message.startsWith(exact)) return message.slice(exact.length);
+    return message.replace(/^Invalid regular expression: (?:\/[\s\S]*\/[a-z]*: )?/, '');
 }
