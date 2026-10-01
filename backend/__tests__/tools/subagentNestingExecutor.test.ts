@@ -101,10 +101,10 @@ describe('SubAgents 嵌套 - 可用工具集（executor 层）', () => {
         expect(result.success).toBe(true);
         const request = generateMock.mock.calls[0][0];
         expect(request.dynamicSystemPrompt).toContain(
-            '你可以使用 subagents 工具派生子 agent 协助工作，但一般不需要'
+            'You can use the subagents tool to delegate work to further sub-agents, but most tasks do not need it.'
         );
         expect(request.dynamicSystemPrompt).toContain(
-            '子 agent 的最终结果会汇总到你的输出，并最终返回给主模型'
+            'Their final results are included in your output and returned to the main model.'
         );
         // 原始 systemPrompt 保留在前
         expect(request.dynamicSystemPrompt).toContain('you are a test agent');

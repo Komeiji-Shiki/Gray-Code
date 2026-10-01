@@ -9,6 +9,7 @@
  */
 
 import { MESSAGE_NAMES } from '../../shared/protocol';
+import { buildPlanGenerationPrompt, buildPlanExecutionPrompt } from '../../shared/planContinuationPrompts';
 import * as vscode from 'vscode';
 import type { HandlerContext, MessageHandler } from '../types';
 import { resolveUriWithInfo } from '../../backend/tools';
@@ -21,40 +22,6 @@ import {
 } from '../../backend/modules/conversation';
 
 // ========== Design 生成计划确认 ==========
-
-function buildPlanGenerationPrompt(artifactType: 'design' | 'review', modified: boolean): string {
-  const artifactLabel = artifactType === 'design' ? 'design' : 'review';
-  const sourceInstruction = modified
-    ? `The user modified the ${artifactLabel} and confirmed the latest version. Use the latest version above as the source of truth.`
-    : `Use the confirmed ${artifactLabel} content above as the source of truth.`;
-
-  return [
-    `User confirmed the ${artifactLabel} and asked you to generate the implementation plan now.`,
-    '',
-    sourceInstruction,
-    'You are no longer reviewing whether this document is ready.',
-    'Do not ask for another confirmation.',
-    `Do not restate that the ${artifactLabel} is ready for review.`,
-    `When you call create_plan, include sourceArtifact that points to the confirmed ${artifactLabel} document.`,
-    'Create the implementation plan immediately by using create_plan.'
-  ].join('\n');
-}
-
-function buildPlanExecutionPrompt(modified: boolean): string {
-  return [
-    'User confirmed the plan and asked you to begin implementation now.',
-    '',
-    modified ? 'The user modified the plan and confirmed the latest version. Use the latest version above as the source of truth.' : 'Use the confirmed plan content above as the source of truth.',
-    'You are no longer drafting or reviewing the plan.',
-    'Do not say that the plan is ready for review.',
-    'Do not create another plan unless the user explicitly asks to revise it.',
-    'Start implementation immediately.',
-    'Use todo_update to track progress as you work.',
-    'Use update_progress and record_progress_milestone to keep .graycode/progress.md current at the project level when progress changes in a meaningful way.',
-    "When TODO status changes in a meaningful way, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the plan document.",
-    "When calling update_plan with updateMode: 'progress_sync', never pass sourceArtifact. Only send path, todos, updateMode, and optional changeSummary."
-  ].join('\n');
-}
 
 async function readWorkspaceTextContent(filePath: string): Promise<string | null> {
   const { uri } = resolveUriWithInfo(filePath);

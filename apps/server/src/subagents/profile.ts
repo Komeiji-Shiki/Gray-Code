@@ -3,7 +3,7 @@ import { DEFAULT_SUBAGENTS_CONFIG } from '../../../../backend/modules/settings/t
 import { MAX_SUBAGENT_NESTING_DEPTH } from '../../../../backend/tools/subagents/types';
 import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
-import { SUBAGENT_COMPLETION_NOTICE } from '../../../../backend/tools/subagents/executor/prompts';
+import { GENERAL_WORKER_SYSTEM_PROMPT, SUBAGENT_COMPLETION_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from '../../../../backend/tools/subagents/executor/prompts';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
 
@@ -34,10 +34,9 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
     return true;
   });
   const id = randomUUID(); const now = Date.now();
-  const systemPrompt = (general
-    ? 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.'
-    : config!.systemPrompt) + SUBAGENT_COMPLETION_NOTICE;
-  const environment = context.workspace ? `工作区：${context.workspace.directory}` : '当前任务没有绑定工作区。';
+  // 与旧宿主执行器追加同样的工具纪律与结束说明。
+  const systemPrompt = (general ? GENERAL_WORKER_SYSTEM_PROMPT : config!.systemPrompt) + SUBAGENT_TOOL_DISCIPLINE_NOTICE + SUBAGENT_COMPLETION_NOTICE;
+  const environment = context.workspace ? `Workspace: ${context.workspace.directory}` : 'This task is not bound to a workspace.';
   return { id, parentConversationId: context.conversationId, parentRunId: context.runId, sourceToolCallId: context.toolCallId, conversationId: randomUUID(), actorId: context.actorId,
     agentName: general ? 'General Worker' : config!.name, workspace: structuredClone(context.workspace ?? null), depth, background: args.background === true,
     parentConfiguration: context.parentConfiguration, createdAt: now, updatedAt: now, status: 'queued',
