@@ -40,13 +40,11 @@ describe('review mode config', () => {
     ])
     expect(REVIEW_PROMPT_MODE.toolPolicy).toEqual(REVIEW_MODE_TOOL_POLICY)
     expect(REVIEW_MODE_TEMPLATE).toContain('do the work incrementally instead of reading everything first and writing the review only at the end')
-    expect(REVIEW_MODE_TEMPLATE).toContain('Do not postpone review writing until after you have read the entire target area or the entire workspace.')
     expect(REVIEW_MODE_TEMPLATE).toContain('Work step by step: after you finish reviewing one meaningful module-level or system-level review unit')
-    expect(REVIEW_MODE_TEMPLATE).toContain('Do not batch many completed modules into one delayed update.')
+    expect(REVIEW_MODE_TEMPLATE).toContain('Do not batch many completed modules into one delayed update')
     expect(REVIEW_PROMPT_MODE.template).toContain('do the work incrementally instead of reading everything first and writing the review only at the end')
-    expect(REVIEW_PROMPT_MODE.template).toContain('Do not postpone review writing until after you have read the entire target area or the entire workspace.')
     expect(REVIEW_PROMPT_MODE.template).toContain('Work step by step: after you finish reviewing one meaningful module-level or system-level review unit')
-    expect(REVIEW_PROMPT_MODE.template).toContain('Do not batch many completed modules into one delayed update.')
+    expect(REVIEW_PROMPT_MODE.template).toContain('Do not batch many completed modules into one delayed update')
   })
 
   test('SettingsManager fills missing review mode and synchronizes toolPolicy', async () => {

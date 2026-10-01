@@ -106,7 +106,7 @@ export class PlatformPromptService {
         `User Language: ${locale}`, "Please respond using the user's language by default."].join('\n'),
       generateContextBadgeFormatSection,
       generateMemorySection: () => settings.isMemoryEnabled() && input.agent.toolNames.some(name=>(LONG_MEMORY_TOOL_NAMES as readonly string[]).includes(name))
-        ? wrapPromptSection('长期记忆',LONG_MEMORY_GUIDANCE) : generateMemorySection(settings),
+        ? wrapPromptSection('LONG-TERM MEMORY',LONG_MEMORY_GUIDANCE) : generateMemorySection(settings),
       generateFileTreeSection: (depth, ignores) => workspace ? workspaceRoots(workspace).map(root => (workspaceRoots(workspace).length > 1 ? '@' + root.name + '/\n' : '') + getSingleWorkspaceFileTree(root.directory, depth === -1 ? 100 : depth, ignores)).join('\n\n') : '',
       generateOpenTabsSection: (limit, ignores) => formatOpenTabsSection(editor?.openFiles ?? [], limit, ignores),
       generateActiveEditorSection: ignores => formatActiveEditorSection(editor?.activeFile, ignores),
