@@ -11,7 +11,7 @@ function createMemoryWakeDeclaration(): ToolDeclaration {
     return {
         name: 'memory_wake',
         description:
-            '唤醒永久记忆。在新的工作会话开始、且历史约定可能影响任务时调用；简单且与历史无关的无工具回复无需调用。\n' +
+            '唤醒工程日志记忆（memory_note 写入的项目约定与经验）。在新的工作会话开始、且历史约定可能影响任务时调用；简单且与历史无关的无工具回复无需调用。用户个人长期记忆用 memory_search / memory_read 查阅。\n' +
             '输出包含两部分：全局记忆与当前工作区记忆（按工作区隔离），以 --- Global memory --- / --- Workspace memory --- 标注。\n' +
             '它会输出你的记忆摘要：近期的记忆保持原文，远期的记忆被压缩为摘要。\n' +
             '如果输出被分成多个部分，按顺序读取直到看到 "You are awake." 为止。成功结果中的 pendingCompression 可延后，不要中断当前用户任务。\n' +

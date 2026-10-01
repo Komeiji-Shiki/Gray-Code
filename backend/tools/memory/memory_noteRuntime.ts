@@ -10,7 +10,7 @@ function createMemoryNoteDeclaration(): ToolDeclaration {
     return {
         name: 'memory_note',
         description:
-            '记录一条对未来会话仍有价值的永久记忆。\n' +
+            '记录一条对未来会话仍有价值的工程日志（项目约定、踩坑经验、长期技术决定）。用户本人的事实、偏好和经历使用 memory_remember，不要用本工具代替。\n' +
             '记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n' +
             `一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 ${MAX_ENTRY_CHARS}）。\n` +
             '不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n' +

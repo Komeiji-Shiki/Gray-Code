@@ -29,7 +29,7 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
     // zoom 的二叉树节点（#a-b blockId）、forget 的三种 blockId（范围 16-31 / 单个 5 / 闭区间 1,3）。
     memory_wake: {
         description:
-            'Wake up permanent memory at the start of a new work session when prior agreements may affect the task. A simple, history-independent reply that needs no tools does not require it.\n' +
+            'Wake up the engineering log memory (project conventions and lessons written by memory_note) at the start of a new work session when prior agreements may affect the task. A simple, history-independent reply that needs no tools does not require it. Use memory_search / memory_read for the user\'s personal long-term memory.\n' +
             'The output has two parts: global memory and current workspace memory (isolated per workspace), marked with --- Global memory --- / --- Workspace memory ---.\n' +
             'It outputs your memory digest: recent memories are kept verbatim, older memories are compressed into summaries.\n' +
             'If the output is split into multiple parts, read them in order until you see "You are awake.". pendingCompression in a successful result may be deferred; do not interrupt the current user task.',
@@ -41,7 +41,7 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
 
     memory_note: {
         description:
-            'Record a permanent memory that is likely to remain useful in future sessions.\n' +
+            'Record an engineering log entry that is likely to remain useful in future sessions (project conventions, lessons learned, lasting technical decisions). Use memory_remember for the user\'s own facts, preferences and experiences; do not use this tool instead.\n' +
             'The memory is saved to the current workspace\'s memory store (separate from global memory; memory_wake reads both).\n' +
             `Single line of text, limited by the entryChars cap in memory_config (default max 280 characters, counted in bytes, accented characters take 2 bytes; can be raised up to ${MAX_ENTRY_CHARS} via memory_config).\n` +
             'Do not record transient progress, work logs, repository-reconstructable content, secrets, or duplicates.\n' +
