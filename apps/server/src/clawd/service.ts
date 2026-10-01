@@ -31,6 +31,10 @@ export class ClawdService {
     this.unsubscribe = app.subscribe(notification => {
       if (!this.ready || this.closed) return;
       if (notification.type === 'settings.changed') this.enqueue(() => this.configure());
+      if (this.configuration?.enabled && notification.type === 'conversation.changed' && typeof notification.conversationId === 'string') {
+        const conversationId = notification.conversationId;
+        this.enqueue(() => this.refreshTitle(conversationId));
+      }
       if (this.configuration?.enabled && notification.type === 'event' && observedEvents.has((notification.event as RunEvent).type)) {
         const event = notification.event as RunEvent;
         this.enqueue(() => this.receive(event));
@@ -61,7 +65,8 @@ export class ClawdService {
     const activeRuns = await this.app.storage.listRuns({ activeOnly: true, limit: 1000 });
     if (this.closed) return;
     for (const run of activeRuns) {
-      const event = this.base(run, run.status === 'awaiting_approval' || run.status === 'awaiting_input' ? 'notification' : 'thinking', 'SessionStart');
+      const title = await this.readTitle(run.conversationId);
+      const event = this.base(run, run.status === 'awaiting_approval' || run.status === 'awaiting_input' ? 'notification' : 'thinking', 'SessionStart', title);
       this.runs.set(run.id, { run, event }); this.updateSession(run.conversationId, event);
     }
     this.timer = setInterval(() => {
@@ -73,9 +78,27 @@ export class ClawdService {
     }, 5000); this.timer.unref(); this.flush();
   }
 
-  private base(run: RunRecord, state: ClawdEvent['state'], event: string): ClawdEvent {
+  private async readTitle(conversationId: string): Promise<string | undefined> {
+    return (await this.app.storage.getConversation(conversationId))?.title?.trim().slice(0, 300) || undefined;
+  }
+
+  private async refreshTitle(conversationId: string) {
+    const session = this.sessions.get(this.prefix + conversationId);
+    if (!session || session.event.event === 'SessionEnd') return;
+    const title = await this.readTitle(conversationId);
+    if (!title || title === session.event.session_title) return;
+    for (const tracked of this.runs.values()) if (tracked.run.conversationId === conversationId) {
+      tracked.event = { ...tracked.event, session_title: title };
+    }
+    // 标题变化沿用当前状态和心跳事件，避免重放完成、审批或工具通知。
+    session.event = { ...session.event, session_title: title, event: 'Heartbeat' };
+    session.dirty = true; this.flush();
+  }
+
+  private base(run: RunRecord, state: ClawdEvent['state'], event: string, title?: string): ClawdEvent {
     const workspace = this.app.settings.find('workspaces', run.workspaceId);
     return { session_id: this.prefix + run.conversationId, state, event,
+      ...(title ? { session_title: title } : {}),
       ...(workspace ? { cwd: workspace.directory.slice(0, 2048) } : {}) };
   }
 
@@ -84,7 +107,7 @@ export class ClawdService {
     let tracked = this.runs.get(event.runId);
     if (!tracked) {
       const run = await this.app.storage.getRun(event.runId); if (!run) return;
-      tracked = { run, event: this.base(run, 'idle', 'SessionStart') };
+      tracked = { run, event: this.base(run, 'idle', 'SessionStart', await this.readTitle(run.conversationId)) };
       this.runs.set(event.runId, tracked);
     }
     let state: ClawdEvent['state'] = 'thinking', name = 'ModelStart';
@@ -100,7 +123,7 @@ export class ClawdService {
     }
     if (this.runs.has(event.runId) && (this.app.runtime.pendingApprovals().some(item => item.runId === event.runId)
       || this.app.runtime.pendingQuestions().some(item => item.runId === event.runId))) { state = 'notification'; name = 'Notification'; }
-    tracked.event = { ...this.base(tracked.run, state, name),
+    tracked.event = { ...this.base(tracked.run, state, name, tracked.event.session_title),
       ...(typeof event.payload.toolName === 'string' ? { tool_name: event.payload.toolName.slice(0, 256) } : {}),
       ...(typeof event.payload.toolCallId === 'string' ? { tool_use_id: event.payload.toolCallId.slice(0, 256) } : {}) };
     this.updateSession(tracked.run.conversationId, tracked.event);

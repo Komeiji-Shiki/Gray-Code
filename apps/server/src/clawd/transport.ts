@@ -7,6 +7,7 @@ import { t } from '../../../../backend/i18n';
 
 export interface ClawdEvent {
   session_id: string;
+  session_title?: string;
   state: 'idle' | 'thinking' | 'working' | 'notification' | 'attention' | 'error';
   event: string;
   cwd?: string;

@@ -90,6 +90,10 @@ describe('Clawd 自定义 HTTP Agent 联动', () => {
     await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
     await enable(); const run = await start();
     await waitUntil(() => requests.some(item => item.body.state === 'thinking'));
+    expect(requests.every(item => item.body.session_title === 'Clawd fixture')).toBe(true);
+    await app.productUi.call(owner, 'conversation.rename', { conversationId: run.conversationId, title: '修复对话名称显示' });
+    await waitUntil(() => requests.some(item => item.body.session_title === '修复对话名称显示'));
+    expect(requests.at(-1)!.body).toMatchObject({ state: 'thinking', event: 'Heartbeat', session_title: '修复对话名称显示' });
     modelGate.resolve(); await waitUntil(() => requests.some(item => item.body.state === 'notification'));
     const approval = app.runtime.pendingApprovals().find(item => item.runId === run.id)!;
     expect(approval).toBeDefined(); expect(requests.every(item => item.path === '/state')).toBe(true);
@@ -98,6 +102,11 @@ describe('Clawd 自定义 HTTP Agent 联动', () => {
     toolGate.resolve(); await waitUntil(() => calls === 2); finishGate.resolve();
     expect((await app.runtime.wait(run.id))?.status).toBe('completed');
     await waitUntil(() => requests.some(item => item.body.event === 'Stop'));
+    expect(requests.find(item => item.body.event === 'Stop')!.body.session_title).toBe('修复对话名称显示');
+    await app.productUi.call(owner, 'conversation.rename', { conversationId: run.conversationId, title: '已完成的对话' });
+    await waitUntil(() => requests.some(item => item.body.session_title === '已完成的对话'));
+    expect(requests.at(-1)!.body).toMatchObject({ state: 'attention', event: 'Heartbeat', session_title: '已完成的对话' });
+    expect(requests.filter(item => item.body.event === 'Stop')).toHaveLength(1);
     expect(new Set(requests.map(item => item.body.session_id)).size).toBe(1);
     expect(requests.every(item => item.headers.origin === undefined && item.headers.host === `127.0.0.1:${port}`
       && item.headers['content-type'] === 'application/json' && item.body.agent_id === agentId)).toBe(true);
@@ -127,6 +136,8 @@ describe('Clawd 自定义 HTTP Agent 联动', () => {
     await waitUntil(() => requests.some(item => item.body.event === 'Stop'));
     await waitUntil(() => requests.some(item => item.body.session_id.endsWith(second.conversationId) && item.body.state === 'thinking'));
     expect(new Set(requests.map(item => item.body.session_id)).size).toBe(2);
+    expect(requests.filter(item => item.body.session_id.endsWith(first.conversationId)).every(item => item.body.session_title === 'one')).toBe(true);
+    expect(requests.filter(item => item.body.session_id.endsWith(second.conversationId)).every(item => item.body.session_title === 'two')).toBe(true);
     const snapshot = app.settings.snapshot(); snapshot.settings.clawd!.enabled = false;
     await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
     await waitUntil(() => app.clawd.status().state === 'disabled');
