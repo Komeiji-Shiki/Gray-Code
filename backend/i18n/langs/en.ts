@@ -621,34 +621,9 @@ const en: BackendLanguageMessages = {
                     summarizeContextOverflow: 'Content to summarize plus the summary prompt exceeds the summarization model context limit. Please increase the summarization model context window or adjust the keep budget'
                 },
                 prompts: {
-                    defaultSummarizePrompt: `Please summarize the above conversation content concisely, output the summary directly without any format markers.
-
-Requirements:
-1. Keep key information and context points
-2. Remove redundant content and tool call details
-3. Summarize the topic, discussed problems, and conclusions
-4. Keep important technical details and decisions
-5. Output summary content directly without any prefix, title, or format markers`,
+                    defaultSummarizePrompt: 'Summarize the conversation above so the work can continue from the summary alone.',
                     summaryPrefix: '[Conversation Summary]',
-                    autoSummarizePrompt: `Please summarize the above conversation history and output the following sections, so that the AI can continue completing the unfinished tasks.
-
-## User Requirements
-What the user wants to accomplish (overall goal).
-
-## Completed Work
-List what has been done in chronological order, including which files were changed and what decisions were made.
-File paths, variable names, and configuration values must be preserved exactly, do not generalize.
-
-## Current Progress
-What step has been reached, what is currently being done.
-
-## TODO Items
-What still needs to be done, listed by priority.
-
-## Important Conventions
-Constraints, preferences, and technical requirements raised by the user (e.g., "do not use third-party libraries", "use TypeScript", etc.).
-
-Output content directly without any prefix.`
+                    autoSummarizePrompt: 'The conversation is approaching the context limit. Summarize it so the unfinished task can continue from the summary alone.'
                 }
             }
         }
