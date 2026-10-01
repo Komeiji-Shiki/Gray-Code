@@ -9,9 +9,10 @@
  * （Map 迭代序 = 插入序）。
  */
 import { describe, expect } from 'vitest'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   TOOL_RESPONSE_CACHE_MAX_SIZE,
+  getToolResponseCacheRevision,
   rebuildMessageIndexById,
   setToolResponseCacheEntry,
   setToolResponseCacheEntries
@@ -148,6 +149,34 @@ describe('toolResponseCache 容量上限', () => {
     // 已淘汰的最旧条目仍可经权威索引（toolResponseIndex）重新定位，查询结果不受缓存淘汰影响
     expect(getToolResponseById(state, 'tool-0')).toEqual({ seq: 0 })
     expect(state.toolResponseCache.value.size).toBe(TOOL_RESPONSE_CACHE_MAX_SIZE)
+  })
+
+  test('读取回填不通知其他读取方，也不改变缓存版本；真实写入仍会通知', () => {
+    const messages = [
+      makeFunctionResponseMessage('fr-a', [{ id: 'tool-a', name: 'read_file', response: { v: 'a' } }]),
+      makeFunctionResponseMessage('fr-b', [{ id: 'tool-b', name: 'read_file', response: { v: 'b' } }])
+    ]
+    const state = mockState(messages)
+    rebuildMessageIndexById(state)
+    let evaluations = 0
+    // 模拟窗口里的一张工具卡片：只读取 tool-a
+    const cardA = computed(() => { evaluations++; return getToolResponseById(state, 'tool-a') })
+    expect(cardA.value).toEqual({ v: 'a' })
+    expect(evaluations).toBe(1)
+    const revision = getToolResponseCacheRevision(state)
+
+    // 另一张卡片在渲染中未命中并回填 tool-b，不应让 cardA 重算
+    expect(getToolResponseById(state, 'tool-b')).toEqual({ v: 'b' })
+    expect(state.toolResponseCache.value.has('tool-b')).toBe(true)
+    expect(cardA.value).toEqual({ v: 'a' })
+    expect(evaluations).toBe(1)
+    expect(getToolResponseCacheRevision(state)).toBe(revision)
+
+    // 响应值真正改变时仍然通知读取方并递增版本
+    setToolResponseCacheEntry(state, 'tool-a', { v: 'a2' })
+    expect(cardA.value).toEqual({ v: 'a2' })
+    expect(evaluations).toBe(2)
+    expect(getToolResponseCacheRevision(state)).toBe(revision + 1)
   })
 
   test('写入已有 key 不增加容量（覆盖更新）', () => {

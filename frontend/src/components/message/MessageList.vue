@@ -65,20 +65,20 @@ function getMergedToolResult(tool: any): Record<string, unknown> {
 }
 
 /** 共享辅助：全量消息 backendIndex 边界（todo/build 锚点计算共用） */
+// 从两端向内查找，通常只读首尾两条；流式批次不再遍历整个窗口。
 const allMessageIndexBounds = computed(() => {
+  const messages = chatStore.allMessages
+  const indexed = (message: Message | undefined) =>
+    typeof message?.backendIndex === 'number' && Number.isFinite(message.backendIndex) ? message.backendIndex : null
   let firstIndexed: number | null = null
   let lastIndexed: number | null = null
-
-  for (const message of chatStore.allMessages) {
-    if (typeof message.backendIndex !== 'number' || !Number.isFinite(message.backendIndex)) continue
-    if (firstIndexed === null) firstIndexed = message.backendIndex
-    lastIndexed = message.backendIndex
-  }
+  for (let index = 0; index < messages.length && firstIndexed === null; index++) firstIndexed = indexed(messages[index])
+  for (let index = messages.length - 1; index >= 0 && lastIndexed === null; index--) lastIndexed = indexed(messages[index])
 
   return {
     firstIndexed,
     lastIndexed,
-    nextFallbackIndex: chatStore.windowStartIndex + chatStore.allMessages.length
+    nextFallbackIndex: chatStore.windowStartIndex + messages.length
   }
 })
 

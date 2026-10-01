@@ -73,6 +73,13 @@ vi.mock('../state', () => ({
     state.allMessages.value.splice(index, 1)
   }),
   getMessageIndexById: vi.fn().mockReturnValue(-1),
+  // 停止路径按下标替换消息：必须真实写回数组，断言才能看到改写后的工具状态。
+  replaceMessageAt: vi.fn((state: any, index: number, message: any) => {
+    if (index < 0 || index >= state.allMessages.value.length) return
+    state.allMessages.value[index] = message
+  }),
+  buildToolResponseIndex: vi.fn(() => new Map()),
+  rememberToolResponse: vi.fn(),
   setToolResponseCacheEntry: vi.fn(),
   setToolResponseCacheEntries: vi.fn()
 }))

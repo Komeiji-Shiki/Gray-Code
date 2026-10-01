@@ -10,7 +10,6 @@ import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useChatStore } from '@/stores'
 import {
   normalizeTodoList,
-  replayTodoStateFromMessages,
   type TodoStatus,
   type TodoItem
 } from '../../../utils/todoList'
@@ -53,15 +52,13 @@ const toolWarnings = computed<string[]>(() => {
   return Array.isArray(w) ? w.filter((s: unknown) => typeof s === 'string' && s.trim()) : []
 })
 
+// 只重放到本卡片的位置；store 按停止位置缓存，其他消息流式输出时历史卡片不再逐批重新遍历。
 const snapshotTodoState = computed(() =>
-  replayTodoStateFromMessages(chatStore.allMessages, {
-    resolveToolResponseById: (toolCallId) => chatStore.getToolResponseById(toolCallId),
-    stopAtBackendIndex:
+  chatStore.replayTodoStateUntil({
+    backendIndex:
       typeof props.messageBackendIndex === 'number' && Number.isFinite(props.messageBackendIndex)
         ? props.messageBackendIndex : undefined,
-    stopAtToolId: typeof props.toolId === 'string'
-      ? props.toolId
-      : undefined
+    toolId: typeof props.toolId === 'string' ? props.toolId : undefined
   })
 )
 

@@ -28,16 +28,16 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
-import { computed as vueComputed, watch } from 'vue'
+import { computed as vueComputed, toRaw, watch } from 'vue'
 import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { t } from '../composables/useI18n'
 import { messageListUiStateByTab } from '../components/message/messageListUiState'
-import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
+import { replayTodoStateFromMessages, type ReplayTodoState, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
-import { createChatState, getMessagesStructuralVersion, rebuildMessageIndexById, insertMessageAt, bumpMessagesStructuralVersion } from './chat/state'
+import { createChatState, getMessagesStructuralVersion, getToolResponseCacheRevision, rebuildMessageIndexById, insertMessageAt, bumpMessagesStructuralVersion } from './chat/state'
 import { clearVisibleChatMessagesCache } from './chat/windowUtils'
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
@@ -207,104 +207,96 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   /**
-   * todoSnapshot 增量重放缓存：缓存 [0, scannedCount) 的重放中间态 + 前缀消息引用快照。
-   * 前缀引用逐元素相等、窗口只增不减且响应解析表与缓存时逐项一致时，
-   * 仅从上次位置增量重放尾部（含旧尾消息——流式期间其 tools 会被原地追加/改写）；
-   * 其余结构变更自动回退全量重放。尾消息始终不纳入缓存，保证流式工具状态更新可见。
+   * TODO 重放的输入指纹。消息窗口只在尾部变化且工具响应未变时可以沿用之前的重放：
+   * - 数组身份：整体替换（加载、截断、过滤）产生新数组；
+   * - 结构版本：同一数组上的中间插入、删除和替换由 state.ts 递增；
+   * - 响应缓存身份与版本、响应索引条数：已有工具的结果变化或新结果到达。
+   * 读取路径的静默回填不改变任何响应值，也不改变指纹。
+   */
+  interface TodoReplayFingerprint {
+    messages: Message[]
+    structure: number
+    responses: Map<string, Record<string, unknown>>
+    responseRevision: number
+    responseCount: number
+  }
+  const todoReplayFingerprint = (): TodoReplayFingerprint => ({
+    messages: toRaw(state.allMessages.value),
+    structure: getMessagesStructuralVersion(state),
+    responses: toRaw(state.toolResponseCache.value),
+    responseRevision: getToolResponseCacheRevision(state),
+    responseCount: state.toolResponseIndex.value.size
+  })
+  const sameTodoReplayInput = (left: TodoReplayFingerprint, right: TodoReplayFingerprint) =>
+    left.messages === right.messages && left.structure === right.structure && left.responses === right.responses
+    && left.responseRevision === right.responseRevision && left.responseCount === right.responseCount
+  const resolveTodoToolResponse = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId) ?? undefined
+
+  /**
+   * todoSnapshot 增量重放缓存：缓存 [0, scannedCount) 的重放中间态。输入指纹不变时只从上次位置
+   * 重放尾部（含旧尾消息——流式期间其 tools 会被原地追加/改写），其余变化回退全量重放。
+   * 流式增量每批只处理尾消息，不再复制整份响应缓存或扫描全部 functionResponse。
    */
   let todoReplayCache: {
     scannedCount: number
-    messagesRef: Message[]
-    responseMap: Map<string, unknown>
+    input: TodoReplayFingerprint
     list: TodoItem[] | null
     anchorBackendIndex: number | null
-    /** 缓存时的消息数组结构版本（state.ts 维护）：非纯尾部 splice/删除/整体替换会递增 */
-    version: number
   } | null = null
 
   const todoSnapshot = vueComputed(() => {
     const allMessages = state.allMessages.value
     const len = allMessages.length
-
-    const responseMap = new Map<string, unknown>()
-
-    // 残余成本说明：toolResponseCache 每次回填/淘汰都会 triggerRef（见 state.ts 的
-    // setToolResponseCacheEntry*），导致本 computed 每次全量重建 responseMap，并把
-    // “与工具响应无关的消息”也一并重扫一遍。容量上限（TOOL_RESPONSE_CACHE_MAX_SIZE）
-    // 只把缓存体积约束在常数内，不消除该次级联重放；窗口扫描此前已收敛过
-    // （见 KNOWN_ISSUES），按最小改动原则这里只做容量约束，不重构本 computed 的增量语义。
-    for (const [toolId, response] of state.toolResponseCache.value.entries()) {
-      responseMap.set(toolId, response)
-    }
-
-    for (const message of allMessages) {
-      if (!message.isFunctionResponse || !Array.isArray(message.parts)) continue
-      for (const part of message.parts) {
-        const toolId = part.functionResponse?.id
-        const response = part.functionResponse?.response
-        if (typeof toolId !== 'string' || response === undefined || responseMap.has(toolId)) continue
-        responseMap.set(toolId, response)
-      }
-    }
-
-    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量。
-    // 注意：messagesRef 与 allMessages 是同一个响应式数组代理，原地 splice（中间插入/删除）
-    // 无法被逐元素引用比较感知；结构版本号（state.ts 在非纯尾部变更时递增）作为补充指纹，
-    // 版本不一致一律回退全量重放。
+    const input = todoReplayFingerprint()
     const cache = todoReplayCache
-    let prefixOk = false
-    if (
-      cache !== null &&
-      cache.messagesRef.length <= len &&
-      cache.version === getMessagesStructuralVersion(state)
-    ) {
-      prefixOk = true
-      for (let i = 0; i < cache.scannedCount; i++) {
-        if (allMessages[i] !== cache.messagesRef[i]) {
-          prefixOk = false
-          break
-        }
-      }
-    }
-    if (prefixOk && cache !== null) {
-      // 响应解析表与缓存时逐项一致（引用比较）才可增量：toolResponseCache 可能被外部
-      // getToolResponseById 回填/改写而消息引用不变，任何差异一律回退全量重放
-      const cachedMap = cache.responseMap
-      if (responseMap.size !== cachedMap.size) {
-        prefixOk = false
-      } else {
-        for (const [toolId, response] of responseMap.entries()) {
-          if (cachedMap.get(toolId) !== response) {
-            prefixOk = false
-            break
-          }
-        }
-      }
-    }
+    const incremental = cache !== null && cache.scannedCount <= len && sameTodoReplayInput(cache.input, input)
 
-    const result = prefixOk && cache !== null
+    const result = incremental
       ? replayTodoStateFromMessages(allMessages, {
-          resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId),
+          resolveToolResponseById: resolveTodoToolResponse,
           fromIndex: cache.scannedCount,
           initialTodos: cache.list,
           initialAnchorBackendIndex: cache.anchorBackendIndex,
           initialTouched: cache.list !== null
         })
-      : replayTodoStateFromMessages(allMessages, {
-          resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId)
-        })
+      : replayTodoStateFromMessages(allMessages, { resolveToolResponseById: resolveTodoToolResponse })
 
     // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
     todoReplayCache = {
       scannedCount: Math.max(0, len - 1),
-      messagesRef: allMessages,
-      responseMap,
+      input,
       list: result.todos,
-      anchorBackendIndex: result.anchorBackendIndex,
-      version: getMessagesStructuralVersion(state)
+      anchorBackendIndex: result.anchorBackendIndex
     }
     return result
   })
+
+  /**
+   * 单张 TODO 工具卡片的重放：只重放到卡片自身位置，之后的流式增量不影响其结果。
+   * 按停止位置缓存，输入指纹不变、重放读到的消息尚未被尾部更新覆盖时直接复用，
+   * 全局流式期间每张历史卡片不再逐批重新遍历历史。
+   */
+  const todoStateAtTool = new Map<string, { input: TodoReplayFingerprint; length: number; result: ReplayTodoState }>()
+  const replayTodoStateUntil = (stop: { toolId?: string; backendIndex?: number }): ReplayTodoState => {
+    const messages = state.allMessages.value
+    const input = todoReplayFingerprint()
+    const key = `${stop.toolId ?? ''}\n${stop.backendIndex ?? ''}`
+    const cached = todoStateAtTool.get(key)
+    // 消息对象写入窗口后只有尾消息会被原地替换；重放在旧尾之前停止时，尾部更新与追加都不影响结果。
+    if (cached && sameTodoReplayInput(cached.input, input) && cached.result.lastReadIndex < cached.length - 1 && messages.length >= cached.length) {
+      // 仍读取重放范围内的消息位置，让调用方的 computed 在这些位置被替换时重新求值。
+      for (let index = 0; index <= cached.result.lastReadIndex; index++) void messages[index]
+      return cached.result
+    }
+    const result = replayTodoStateFromMessages(messages, {
+      resolveToolResponseById: resolveTodoToolResponse,
+      stopAtToolId: stop.toolId,
+      stopAtBackendIndex: stop.backendIndex
+    })
+    if (todoStateAtTool.size >= 256) todoStateAtTool.clear()
+    todoStateAtTool.set(key, { input, length: messages.length, result })
+    return result
+  }
 
   const getToolResponseById = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId)
   const getToolDisplayResult = (toolCallId: string, response?: Record<string, unknown> | null) => {
@@ -1012,6 +1004,7 @@ export const useChatStore = defineStore('chat', () => {
     // 工具
     formatTime,
     getToolResponseById,
+    replayTodoStateUntil,
     getToolDisplayResult,
     hasToolResponse,
     getActualIndex,
