@@ -158,6 +158,31 @@ describe('电脑控制的核心运行与授权', () => {
     expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(full).length * 0.7); expect(value).toEqual(before);
   });
 
+  test('窗口列表按进程和标题筛选，默认只返回选窗所需字段', async () => {
+    const extra: ComputerWindow[] = [
+      { ...native.window, id: '200', title: 'Game Maker', className: 'TApplication', processId: 777, executable: 'C:\\Games\\gm8emulator.exe', ownerId: '0', foreground: false, commandLine: 'gm8emulator.exe game.exe' },
+      { ...native.window, id: '201', title: 'Game Window', className: 'TRunnerForm', processId: 777, executable: 'C:\\Games\\gm8emulator.exe', ownerId: '200', foreground: false, minimized: true },
+    ];
+    const request = native.request.bind(native);
+    jest.spyOn(native, 'request').mockImplementation(async (method, args) => method === 'windows'
+      ? { capturedAt: 1, windows: [native.window, ...extra], displays: [{ id: 'd1', bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1040 }, scaleFactor: 1.5, primary: true }], coordinateSystem: 'physical-screen-pixels' } as any
+      : request(method, args));
+    const context = { actorId: 'owner', runId: 'window-filter', signal: new AbortController().signal } as any;
+    const all = (await app.computer.tool('computer_windows', {}, context)).data as any;
+    expect(all.windows).toHaveLength(3); expect(all).not.toHaveProperty('matchedCount');
+    expect(all.windows[1]).toEqual({ id: '200', title: 'Game Maker', processName: 'gm8emulator.exe', processId: 777, className: 'TApplication', bounds: native.window.bounds });
+    expect(all.windows[2]).toMatchObject({ id: '201', ownerId: '200', minimized: true }); expect(all.windows[0]).toMatchObject({ foreground: true });
+    expect(all.displays).toEqual([{ id: 'd1', bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1.5, primary: true }]);
+    const byName = (await app.computer.tool('computer_windows', { processName: 'GM8Emulator' }, context)).data as any;
+    expect(byName.windows.map((value: any) => value.id)).toEqual(['200', '201']); expect(byName).toMatchObject({ matchedCount: 2, totalCount: 3 });
+    const byTitle = (await app.computer.tool('computer_windows', { processId: 777, title: 'window' }, context)).data as any;
+    expect(byTitle.windows.map((value: any) => value.id)).toEqual(['201']);
+    const full = (await app.computer.tool('computer_windows', { processName: 'gm8emulator.exe', compact: false }, context)).data as any;
+    expect(full.windows[0]).toMatchObject({ commandLine: 'gm8emulator.exe game.exe', dpi: 144, captureBounds: native.window.captureBounds }); expect(full.displays[0]).toHaveProperty('workArea');
+    const none = (await app.computer.tool('computer_windows', { processId: 1 }, context)).data as any;
+    expect(none).toMatchObject({ windows: [], matchedCount: 0, totalCount: 3 });
+  });
+
   test('模型观察使用截图预算，返回的元素仍可操作并按实际图片映射坐标', async () => {
     const request = jest.spyOn(native, 'request');
     const context = { actorId: 'owner', runId: 'compact-observation', signal: new AbortController().signal } as any;

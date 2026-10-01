@@ -4,7 +4,7 @@ import type { ComputerAction, ComputerCapture, ComputerDisplayCapture, ComputerO
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { WindowsComputerNative } from './native';
-import { observationForModel } from './observation';
+import { observationForModel, windowsForModel } from './observation';
 import { ComputerError, type ComputerNativePort, type ComputerScreenPort, type NativeComputerStatus } from './port';
 
 type Identity = { actorId: string; runId?: string; clientId?: string; signal?: AbortSignal };
@@ -231,7 +231,9 @@ export class ComputerService {
   async tool(name: string, args: Record<string, any>, context: ToolContext): Promise<ToolOutcome> {
     const identity = { actorId: context.actorId, runId: context.runId, signal: context.signal };
     try {
-      if (name === 'computer_windows') return { success: true, data: await this.windows(identity) };
+      if (name === 'computer_windows') return { success: true, data: windowsForModel(await this.windows(identity), {
+        processId: Number.isInteger(args.processId) ? args.processId : undefined, processName: typeof args.processName === 'string' ? args.processName : undefined,
+        title: typeof args.title === 'string' ? args.title : undefined, compact: args.compact !== false }) };
       if (name === 'computer_observe') {
         const dimension = args.maxImageDimension ?? 1280;
         const screenshot = args.screenshot !== false;

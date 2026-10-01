@@ -50,7 +50,7 @@ const focused = (element: Record<string, unknown>) => element.focused === true |
             <li v-for="window in windows.slice(0, visible)" :key="text(window.id)" :class="{ 'is-active': window.foreground === true }">
               <div class="automation-item-head"><strong>{{ text(window.title) || t('components.tools.automation.untitled') }}</strong><span v-if="window.foreground === true" class="automation-badge">{{ t('components.tools.automation.foreground') }}</span><span v-if="window.minimized === true" class="automation-badge is-warning">{{ t('components.tools.automation.minimized') }}</span></div>
               <div class="automation-meta"><span>{{ toolFieldLabel('windowId') }} <code>{{ text(window.id) }}</code></span><span v-if="numeric(window.processId) !== undefined">PID <code>{{ window.processId }}</code></span><span v-if="dimensions(window.bounds)">{{ dimensions(window.bounds) }} px</span><span v-if="numeric(window.dpi) !== undefined">{{ window.dpi }} DPI</span></div>
-              <div v-if="window.executable" class="automation-meta automation-code">{{ text(window.executable) }}</div>
+              <div v-if="window.executable || window.processName" class="automation-meta automation-code">{{ text(window.executable || window.processName) }}</div>
             </li>
           </ul>
           <button v-if="windows.length > visible" type="button" class="automation-more" @click="visible += 30">{{ t('components.tools.structured.showMore', { count: windows.length - visible }) }}</button>
