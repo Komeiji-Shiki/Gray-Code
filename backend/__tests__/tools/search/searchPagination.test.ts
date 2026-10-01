@@ -29,12 +29,13 @@ function fixture(contents: Record<string, string>, options: Partial<SearchInFile
 }
 
 describe('search_in_files 续查', () => {
-    test('分页与一次读取顺序相同，最后一页恰好达到上限不误报', async () => {
+    test('分页按命中行计数，与一次读取顺序相同，最后一页不误报', async () => {
         const tool = fixture({ '/one/a.ts': 'hit hit\nhit', '/one/b.ts': 'hit' });
         const first = await tool.handler({ query: 'hit', maxResults: 2 });
         expect(first.data).toMatchObject({ count: 2, nextOffset: 2, truncated: true, truncationReasons: ['maxResults'] });
+        expect(first.data.results[0]).toMatchObject({ file: 'a.ts', line: 1, column: 1, columns: [1, 5] });
         const second = await tool.handler({ query: 'hit', maxResults: 2, offset: first.data.nextOffset });
-        expect(second.data).toMatchObject({ count: 2, offset: 2, truncated: false });
+        expect(second.data).toMatchObject({ count: 1, offset: 2, truncated: false });
         expect(second.data.nextOffset).toBeUndefined();
         const all = await tool.handler({ query: 'hit', maxResults: 10 });
         expect([...first.data.results, ...second.data.results]).toEqual(all.data.results);
@@ -186,5 +187,14 @@ describe('search_in_files 续查', () => {
         expect(text).toContain('"nextOffset":1');
         expect(text).toContain('"truncationReasons":["maxResults"]');
         expect(text).toContain('offset=1');
+    });
+
+    test('模型看到按文件分组的紧凑结果：路径只出现一次，相邻上下文合并', async () => {
+        const tool = fixture({ '/one/a.ts': 'one\nhit x hit\nthree\nhit\nfive\nsix\nseven\nhit' });
+        const result = await tool.handler({ query: 'hit' });
+        const text = serializeToolResultForLLM('search_in_files', result);
+        expect(text.match(/a\.ts/g)).toHaveLength(1);
+        expect(text).toContain('a.ts\n1- one\n2:1,7: hit x hit\n3- three\n4:1: hit\n5- five\n--\n7- seven\n8:1: hit');
+        expect(text).not.toContain('"context"');
     });
 });

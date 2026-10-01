@@ -16,6 +16,10 @@ export interface SearchMatch {
     column: number;
     match: string;
     context: string;
+    /** 同一行有多处命中时的全部列号（1-based，含 column）；单处命中时省略。 */
+    columns?: number[];
+    /** 同行命中超过记录上限，columns 只列出前面的部分。 */
+    columnsTruncated?: boolean;
 }
 export interface SearchBudget {
     remainingChars: number;
@@ -286,7 +290,9 @@ async function searchInDirectory(
                 if (page) { page.remaining -= computed.skipped; page.matchesSeen += computed.seen!; }
                 if (budget) { budget.remainingChars = computed.remainingChars!; budget.truncated ||= computed.budgetTruncated === true; }
                 for (const match of computed.matches) results.push({ file: relativePath, workspace: workspaceName || undefined,
-                    line: match.fragment + 1, column: match.index + 1, match: match.text, context: match.context! });
+                    line: match.fragment + 1, column: match.index + 1, match: match.text, context: match.context!,
+                    ...(match.indexes ? { columns: match.indexes.map(index => index + 1) } : {}),
+                    ...(match.indexesTruncated ? { columnsTruncated: true } : {}) });
             } catch (e) {
                 execution?.signal?.throwIfAborted();
                 // 处理失败不再静默吞掉：与 replacePass 一致记录原因，

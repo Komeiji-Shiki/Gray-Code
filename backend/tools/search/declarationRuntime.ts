@@ -95,8 +95,8 @@ function createSearchInFilesTool(): Tool {
                 : isZh
                     ? '在工作区文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。返回匹配的文件和上下文。'
                     : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.') + (isZh
-                        ? '\n搜索流式遍历全部候选文件，不按文件数量截断。结果含 nextOffset 时，保持查询条件不变，将它作为 offset 续查。truncationReasons 区分匹配数与输出预算；预算不足时按 continuationHint 缩小范围。'
-                        : '\nSearch streams all candidate files without a file-count cutoff. When results include nextOffset, pass it as offset with unchanged query parameters. truncationReasons distinguishes match and output-budget limits; follow continuationHint when the output budget omits matches.'),
+                        ? '\n搜索流式遍历全部候选文件，不按文件数量截断。结果、maxResults 和 offset 都按命中行计算，同一行的多处命中合并为一条。结果按文件分组："行号:列号: 内容" 是命中行（多处命中的列号用逗号分隔），"行号- 内容" 是上下文，"--" 分隔不相邻的片段。结果含 nextOffset 时，保持查询条件不变，将它作为 offset 续查。truncationReasons 区分匹配数与输出预算；预算不足时按 continuationHint 缩小范围。'
+                        : '\nSearch streams all candidate files without a file-count cutoff. Results, maxResults and offset count matching lines; several matches on one line are merged into one result. Results are grouped by file: "line:col: text" is a matching line (comma-separated columns for several matches), "line- text" is context, and "--" separates non-adjacent snippets. When results include nextOffset, pass it as offset with unchanged query parameters. truncationReasons distinguishes match and output-budget limits; follow continuationHint when the output budget omits matches.'),
             category: 'search',
             parameters: {
                 type: 'object',
@@ -154,14 +154,14 @@ function createSearchInFilesTool(): Tool {
                     },
                     maxResults: {
                         type: 'number',
-                        description: isZh ? '[搜索模式] 最大匹配结果数' : '[Search mode] Maximum number of match results',
+                        description: isZh ? '[搜索模式] 最多返回的命中行数' : '[Search mode] Maximum number of matching lines to return',
                         default: 100
                     },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
                         description: isZh
-                            ? '[搜索模式] 跳过的匹配数。续查时传上次返回的 nextOffset，并保持 query/path/pattern/isRegex/keywordFallback/caseSensitive 不变。每页重新搜索，文件变化后应从 0 重查。'
-                            : '[Search mode] Matches to skip. Continue with the returned nextOffset and unchanged query/path/pattern/isRegex/keywordFallback/caseSensitive. Each page rescans live files; restart at 0 after files change.'
+                            ? '[搜索模式] 跳过的命中行数。续查时传上次返回的 nextOffset，并保持 query/path/pattern/isRegex/keywordFallback/caseSensitive 不变。每页重新搜索，文件变化后应从 0 重查。'
+                            : '[Search mode] Matching lines to skip. Continue with the returned nextOffset and unchanged query/path/pattern/isRegex/keywordFallback/caseSensitive. Each page rescans live files; restart at 0 after files change.'
                     },
                     replace: {
                         type: 'string',

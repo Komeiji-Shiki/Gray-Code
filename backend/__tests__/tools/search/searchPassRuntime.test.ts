@@ -6,7 +6,8 @@
  * - 输出预算按行跳过、后续可容纳匹配仍会加入的语义；
  * - maxResults 探测上限、二进制与大小护栏在读取前跳过、读取失败记录顺序；
  * - 全文快速拒绝（无命中文件只读一次；否定断言模式禁用快速拒绝不漏匹配）；
- * - 与重构前串行逻辑的参考实现对照（模式 × 预算矩阵，含 budget=0 与恰好用尽）。
+ * - 与重构前串行逻辑的参考实现对照（模式 × 预算矩阵，含 budget=0 与恰好用尽）；
+ *   参考实现同样按命中行合并，同一行的其余命中只记入 columns。
  */
 import { createSearchPass, type SearchBudget, type SearchMatch, type SkippedFileInfo } from '../../../tools/search/searchPassRuntime';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../modules/settings/types';
@@ -119,30 +120,36 @@ async function referenceSearch(files: Record<string, FakeFile>, source: RegExp, 
                 if (budget && budget.remainingChars <= 0) { budget.truncated = true; break; }
                 const line = lines[i];
                 let match: RegExpExecArray | null;
+                let first: RegExpExecArray | undefined;
+                const columns: number[] = [];
+                let columnsTruncated = false;
                 searchRegex.lastIndex = 0;
                 while ((match = searchRegex.exec(line)) !== null) {
-                    if (results.length >= maxResults) break;
-                    if (budget && budget.remainingChars <= 0) { budget.truncated = true; break; }
-                    const rawMatchText = match[0] ?? '';
-                    const matchText = rawMatchText.length > maxMatchPreviewChars ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars) : rawMatchText;
-                    const contextLines: string[] = [];
-                    const beforeStart = Math.max(0, i - contextBefore);
-                    for (let j = beforeStart; j < i; j++) {
-                        contextLines.push(`${j + 1}: ${truncateWithEllipsis(lines[j], maxLinePreviewChars)}`);
-                    }
-                    const matchLinePreview = createMatchLineSnippet(line, match.index ?? 0, rawMatchText.length, maxMatchPreviewChars);
-                    contextLines.push(`${i + 1}: ${matchLinePreview}`);
-                    const afterEnd = Math.min(lines.length - 1, i + contextAfter);
-                    for (let j = i + 1; j <= afterEnd; j++) {
-                        contextLines.push(`${j + 1}: ${truncateWithEllipsis(lines[j], maxLinePreviewChars)}`);
-                    }
-                    const context = contextLines.join('\n');
-                    const cost = filePath.length + matchText.length + context.length + 80;
-                    if (budget && budget.remainingChars - cost < 0) { budget.truncated = true; break; }
-                    results.push({ file: filePath, workspace: undefined, line: i + 1, column: match.index + 1, match: matchText, context });
-                    if (budget) budget.remainingChars -= cost;
+                    if (!first) first = match;
+                    if (columns.length < 50) columns.push(match.index + 1);
+                    else { columnsTruncated = true; break; }
                     if ((match[0] ?? '').length === 0) searchRegex.lastIndex++;
                 }
+                if (!first) continue;
+                const rawMatchText = first[0] ?? '';
+                const matchText = rawMatchText.length > maxMatchPreviewChars ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars) : rawMatchText;
+                const contextLines: string[] = [];
+                const beforeStart = Math.max(0, i - contextBefore);
+                for (let j = beforeStart; j < i; j++) {
+                    contextLines.push(`${j + 1}: ${truncateWithEllipsis(lines[j], maxLinePreviewChars)}`);
+                }
+                const matchLinePreview = createMatchLineSnippet(line, first.index ?? 0, rawMatchText.length, maxMatchPreviewChars);
+                contextLines.push(`${i + 1}: ${matchLinePreview}`);
+                const afterEnd = Math.min(lines.length - 1, i + contextAfter);
+                for (let j = i + 1; j <= afterEnd; j++) {
+                    contextLines.push(`${j + 1}: ${truncateWithEllipsis(lines[j], maxLinePreviewChars)}`);
+                }
+                const context = contextLines.join('\n');
+                const cost = filePath.length + matchText.length + context.length + 80;
+                if (budget && budget.remainingChars - cost < 0) { budget.truncated = true; continue; }
+                results.push({ file: filePath, workspace: undefined, line: i + 1, column: first.index + 1, match: matchText, context,
+                    ...(columns.length > 1 ? { columns } : {}), ...(columnsTruncated ? { columnsTruncated } : {}) });
+                if (budget) budget.remainingChars -= cost;
             }
         } catch (e) {
             skippedFiles.push({ file: filePath, reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}` });
@@ -323,6 +330,23 @@ describe('跳过与失败路径', () => {
         expect(result.skippedFiles).toEqual([]);
         expect(fake.reads.get('no.txt')).toBe(1);
         expect(fake.reads.get('has.txt')).toBe(1);
+    });
+
+    test('同一行多处命中合并为一条结果，只输出一次上下文并列出全部列号', async () => {
+        const fake = makeHost({ 'a.txt': { content: 'hit x hit x hit\nhit' } });
+        const result = await runSearch(fake, /hit/gm);
+        expect(result.matches).toEqual([
+            { file: 'a.txt', workspace: undefined, line: 1, column: 1, match: 'hit', context: '1: hit x hit x hit\n2: hit', columns: [1, 7, 13] },
+            { file: 'a.txt', workspace: undefined, line: 2, column: 1, match: 'hit', context: '1: hit x hit x hit\n2: hit' }
+        ]);
+    });
+
+    test('同一行命中过多时列号有上限并标记截断，零宽模式也只占一条结果', async () => {
+        const fake = makeHost({ 'a.txt': { content: 'x'.repeat(80) } });
+        const result = await runSearch(fake, /x*?/gm, undefined, 5);
+        expect(result.matches).toHaveLength(1);
+        expect(result.matches[0].columns).toHaveLength(50);
+        expect(result.matches[0].columnsTruncated).toBe(true);
     });
 
     test('否定断言模式禁用全文快速拒绝，逐行命中不丢失', async () => {

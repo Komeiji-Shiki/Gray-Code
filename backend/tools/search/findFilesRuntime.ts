@@ -189,11 +189,11 @@ function createFindFilesTool(): Tool {
             // 修改目的：减少中文会话中模型误用 pattern 单字符串或忽略行数元数据的概率。
             description: (isMultiRoot
                 ? isZh
-                    ? `根据一个或多个 glob 模式查找文件。结果会保留 files 字符串数组，并额外返回 fileDetails；其中可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。当前是多根工作区，结果会带工作区前缀。可用工作区：${workspaces.map(w => w.name).join(', ')}。${arrayFormatNote}`
-                    : `Find files by one or more glob patterns. The result keeps the files string array and additionally returns fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range. This is a multi-root workspace, so results are prefixed with the workspace name. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.${arrayFormatNote}`
+                    ? `根据一个或多个 glob 模式查找文件。每个模式的结果在 fileDetails 中列出文件 path，可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。当前是多根工作区，结果会带工作区前缀。可用工作区：${workspaces.map(w => w.name).join(', ')}。${arrayFormatNote}`
+                    : `Find files by one or more glob patterns. Each pattern lists file paths in fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range. This is a multi-root workspace, so results are prefixed with the workspace name. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.${arrayFormatNote}`
                 : isZh
-                    ? `根据一个或多个 glob 模式查找文件。结果会保留 files 字符串数组，并额外返回 fileDetails；其中可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。${arrayFormatNote}`
-                    : `Find files by one or more glob patterns. The result keeps the files string array and additionally returns fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range.${arrayFormatNote}`) + paginationNote,
+                    ? `根据一个或多个 glob 模式查找文件。每个模式的结果在 fileDetails 中列出文件 path，可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。${arrayFormatNote}`
+                    : `Find files by one or more glob patterns. Each pattern lists file paths in fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range.${arrayFormatNote}`) + paginationNote,
             category: 'search',
             parameters: {
                 type: 'object',

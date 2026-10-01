@@ -128,12 +128,26 @@ function metadataLine(value: Record<string, unknown>): string {
 
 const BATCH_COUNTS = ['successCount', 'failCount', 'totalCount'];
 
+/**
+ * find_files 的 files 数组只为旧界面保留，路径已全部在 fileDetails 里；
+ * 两者路径集合完全一致时模型只看 fileDetails，不一致时保留原样，避免丢路径。
+ */
+function withoutDuplicateFileList(result: unknown): unknown {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+    const item = result as Record<string, unknown>;
+    if (!Array.isArray(item.files) || !Array.isArray(item.fileDetails) || item.files.length !== item.fileDetails.length) return result;
+    const detailPaths = new Set(item.fileDetails.map(detail => (detail as { path?: unknown } | null)?.path));
+    if (detailPaths.size !== item.files.length || !item.files.every(file => detailPaths.has(file))) return result;
+    const { files: _files, ...rest } = item;
+    return rest;
+}
+
 /** 搜索策略和界面操作保留在原回执中，模型只接收实际需要的覆盖规则与续查游标。 */
 function compactSearchResponse(toolName: string, response: Record<string, unknown>): Record<string, unknown> {
     if (!['search_in_files', 'search_files', 'find_files'].includes(toolName)) return response;
     const data = response.data;
     if (!data || typeof data !== 'object' || Array.isArray(data)) return response;
-    const compact = { ...data } as Record<string, unknown>;
+    let compact = { ...data } as Record<string, unknown>;
     if (compact.excludeSource !== 'argument') delete compact.effectiveExclude;
 
     if (toolName === 'search_files' && (compact.nextOffset !== undefined || compact.nextScanOffset !== undefined)) {
@@ -141,7 +155,69 @@ function compactSearchResponse(toolName: string, response: Record<string, unknow
         delete compact.nextActions;
         delete compact.continuationHint;
     }
+    if (toolName === 'find_files') {
+        compact = withoutDuplicateFileList(compact) as Record<string, unknown>;
+        if (Array.isArray(compact.results)) compact.results = compact.results.map(withoutDuplicateFileList);
+    }
     return { ...response, data: compact };
+}
+
+interface SearchLineResult {
+    file: string;
+    line: number;
+    column: number;
+    columns?: number[];
+    columnsTruncated?: boolean;
+    context: string;
+}
+
+function isSearchLineResult(value: unknown): value is SearchLineResult {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const item = value as Record<string, unknown>;
+    return typeof item.file === 'string' && Number.isSafeInteger(item.line) && Number.isSafeInteger(item.column)
+        && typeof item.context === 'string';
+}
+
+/**
+ * search_in_files 搜索模式按文件分组输出（类似 `rg -n --column -C`）：
+ * 路径只写一次；命中行 `行:列: 内容`，上下文 `行- 内容`，不相邻片段用 `--` 分隔，
+ * 相邻命中的上下文窗口合并。任一条上下文无法解析时返回 undefined，由调用方沿用通用格式。
+ */
+function formatSearchLineResults(results: unknown[]): string | undefined {
+    if (!results.length || !results.every(isSearchLineResult)) return undefined;
+    const files = new Map<string, Map<number, { text: string; columns?: string }>>();
+    for (const result of results) {
+        let lines = files.get(result.file);
+        if (!lines) files.set(result.file, lines = new Map());
+        const contextLines = result.context.split('\n');
+        let sawHitLine = false;
+        for (const raw of contextLines) {
+            const parsed = /^(\d+): ([\s\S]*)$/.exec(raw);
+            if (!parsed) return undefined;
+            const lineNumber = Number(parsed[1]);
+            if (lineNumber === result.line) {
+                sawHitLine = true;
+                const columns = (result.columns?.length ? result.columns : [result.column]).join(',') + (result.columnsTruncated ? ',…' : '');
+                lines.set(lineNumber, { text: parsed[2], columns });
+            } else if (!lines.has(lineNumber)) {
+                lines.set(lineNumber, { text: parsed[2] });
+            }
+        }
+        if (!sawHitLine) return undefined;
+    }
+    const blocks: string[] = [];
+    for (const [file, lines] of files) {
+        const body: string[] = [file];
+        let previous: number | undefined;
+        for (const lineNumber of [...lines.keys()].sort((a, b) => a - b)) {
+            if (previous !== undefined && lineNumber > previous + 1) body.push('--');
+            const line = lines.get(lineNumber)!;
+            body.push(line.columns ? `${lineNumber}:${line.columns}: ${line.text}` : `${lineNumber}- ${line.text}`);
+            previous = lineNumber;
+        }
+        blocks.push(body.join('\n'));
+    }
+    return blocks.join('\n\n');
 }
 
 /**
@@ -236,6 +312,13 @@ export function serializeToolResultForLLM(
     // data.results 数组：read_file / search_in_files / write_file 等批量结果
     if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
         const results = data.results as Array<Record<string, unknown>>;
+
+        if (toolName === 'search_in_files' && data.isReplaceMode !== true) {
+            const grouped = formatSearchLineResults(results);
+            if (grouped !== undefined) {
+                return [metadataLine(metadata), metadataLine(remainingFields(data, ['results'])), grouped].filter(Boolean).join('\n\n');
+            }
+        }
 
         // 只要存在文本字段就逐项格式化（混合数组也逐项，避免 JSON 二次转义）
         if (results.some(r => typeof r === 'object' && r !== null && hasTextContentFields(r as Record<string, unknown>))) {

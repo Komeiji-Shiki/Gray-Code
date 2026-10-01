@@ -266,6 +266,30 @@ describe('工具结果信息完整性与紧凑输出', () => {
         expect(result).toContain('正文\n\nnull\n\n0\n\n"其他结果"');
     });
 
+    test('search_in_files 结果按文件分组；上下文无法解析时退回通用格式', () => {
+        const grouped = serializeToolResultForLLM('search_in_files', { success: true, data: {
+            results: [
+                { file: 'a.ts', line: 2, column: 3, match: 'x', context: '1: before\n2: a x\n3: after' },
+                { file: 'b.ts', line: 1, column: 1, match: 'x', context: '1: x', columns: [1, 4], columnsTruncated: true },
+            ], count: 2, truncated: false } });
+        expect(grouped).toContain('[{"count":2,"truncated":false}]');
+        expect(grouped).toContain('a.ts\n1- before\n2:3: a x\n3- after\n\nb.ts\n1:1,4,…: x');
+        const fallback = serializeToolResultForLLM('search_in_files', { success: true, data: {
+            results: [{ file: 'a.ts', line: 2, column: 1, match: 'x', context: 'unexpected format' }] } });
+        expect(fallback).toContain('unexpected format');
+        expect(fallback).toContain('"file":"a.ts"');
+    });
+
+    test('find_files 只在路径集合一致时省略重复的 files 数组', () => {
+        const same = serializeToolResultForLLM('find_files', { success: true, data: { results: [{
+            pattern: '**/*', files: ['b.ts', 'a.ts'], fileDetails: [{ path: 'a.ts', lineCount: 1 }, { path: 'b.ts' }], count: 2 }] } });
+        expect(same).not.toContain('"files"');
+        expect(same).toContain('"fileDetails":[{"path":"a.ts","lineCount":1},{"path":"b.ts"}]');
+        const different = serializeToolResultForLLM('find_files', { success: true, data: { results: [{
+            pattern: '**/*', files: ['a.ts', 'c.ts'], fileDetails: [{ path: 'a.ts' }, { path: 'b.ts' }] }] } });
+        expect(different).toContain('"files":["a.ts","c.ts"]');
+    });
+
     test('纯结构化失败结果和可读消息只输出一次', () => {
         const result = serializeToolResultForLLM('delete_file', {
             success: false, error: '部分失败', data: { results: [{ id: 'one', success: true }], message: '已删除一条', affected: ['one'] },
