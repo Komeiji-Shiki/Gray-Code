@@ -15,7 +15,11 @@ export function normalizeChatGPTBody(source: Record<string, any>): Record<string
   if (Array.isArray(body.input)) body.input = body.input.map((item: any) => {
     if (item.role === 'system') return { ...item, role: 'developer' };
     if (item.type === 'function_call' && !item.namespace) return { ...item, namespace: 'graycode' };
-    if (item.type === 'reasoning') { const { status, ...reasoning } = item; return reasoning; }
+    if (item.type === 'reasoning') {
+      const { status, ...reasoning } = item;
+      // 官方输入要求每个推理项带 summary，明文历史或自定义请求缺少摘要时保留为空数组。
+      return { ...reasoning, summary: reasoning.summary ?? [] };
+    }
     return item;
   });
   if (Array.isArray(body.tools)) {
