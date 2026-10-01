@@ -124,7 +124,8 @@ export class ChatGPTService {
         if (account!.expiresAt <= now) throw new ChatGPTAuthError(t('modules.chatgpt.refreshNotReady'), 'refresh_not_ready');
         return { token: account!.accessToken!, identity: account!.clientId };
       }
-      if (account!.expiresAt > now + 3 * 60_000) return { token: account!.accessToken!, identity: account!.clientId };
+      // 沿用官方 SDK 的到期前一分钟续期窗口；最早续期时间仍优先约束请求。
+      if (account!.expiresAt > now + 60_000) return { token: account!.accessToken!, identity: account!.clientId };
     }
     const key = `${channelId}:${account!.clientId}`;
     let refresh = this.refreshes.get(key);
@@ -148,6 +149,11 @@ export class ChatGPTService {
     return { token: active!.accessToken!, identity: active!.clientId };
   }
   private async refresh(channelId: string, account: ChatGPTAccount) {
+    // 调用方的异步读取可能晚于另一轮续期返回；合并请求后重新读取，避免再次消耗旧令牌。
+    const connection = await this.connection(channelId);
+    const current = connection.accounts.find(item => item.clientId === account.clientId);
+    if (!current || connection.activeClientId !== account.clientId || current.refreshToken !== account.refreshToken) return;
+    account = current;
     try {
       // 正常退出会等待这次有界续期完成，不能因调用取消丢失唯一可用的轮换令牌。
       const renewed = await this.client.refresh(account, AbortSignal.timeout(60_000), async pendingRefresh => {
@@ -171,8 +177,9 @@ export class ChatGPTService {
           }
         });
         if (!invalidated) return;
-        // 保留稳定错误码，便于区分令牌到期、撤销与重复轮换，不暴露令牌响应。
-        throw new ChatGPTAuthError(`${t('modules.chatgpt.signInExpired')} (${error.code})`, error.code);
+        const { status, requestId, description } = error.diagnostics;
+        const context = [status ? `HTTP ${status}` : '', requestId ? `request_id=${requestId}` : ''].filter(Boolean).join('; ');
+        throw new ChatGPTAuthError(`${t('modules.chatgpt.signInExpired')} (${error.code})${description ? ` ${description}` : ''}${context ? ` [${context}]` : ''}`, error.code, error.diagnostics);
       }
       throw error;
     }

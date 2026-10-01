@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { t } from "../../../../backend/i18n";
+import { redactDiagnostic } from '../../../../shared/diagnosticText';
 
 export const OPENAI_ISSUER = 'https://auth.openai.com';
 export const DIRECT_SCOPE = 'chatgpt.tokens.use.direct';
@@ -22,11 +23,12 @@ export interface ChatGPTAccount {
   scopes: string[];
 }
 export interface ChatGPTCredentials { version: 1; activeClientId?: string; accounts: ChatGPTAccount[]; usageNoticeSeen?: boolean }
+export interface ChatGPTAuthDiagnostics { status?: number; requestId?: string; description?: string }
 
 const terminalRefreshCodes = new Set(['invalid_grant', 'invalid_refresh_token', 'token_expired',
   'refresh_token_expired', 'refresh_token_invalidated', 'refresh_token_reused']);
 export class ChatGPTAuthError extends Error {
-  constructor(message: string, readonly code?: string) { super(message); }
+  constructor(message: string, readonly code?: string, readonly diagnostics: ChatGPTAuthDiagnostics = {}) { super(message); }
   get unusableRefreshToken(): boolean { return terminalRefreshCodes.has(this.code ?? ''); }
 }
 
@@ -45,9 +47,22 @@ export class OpenAIChatGPTClient {
     });
     const data = await response.json().catch(() => ({})) as Record<string, any>;
     if (!response.ok) {
-      const code = typeof data.error === 'string' && /^[a-z_]{1,80}$/.test(data.error) ? data.error : undefined;
-      // 令牌接口的原始响应可能包含凭据；错误只保留稳定代码和 HTTP 状态。
-      throw new ChatGPTAuthError(`ChatGPT 授权请求失败（HTTP ${response.status}${code ? `，${code}` : ''}）。`, code);
+      let detail = data;
+      for (let depth = 0; depth < 4 && detail?.error && typeof detail.error === 'object' && !Array.isArray(detail.error); depth++) detail = detail.error;
+      const value = typeof detail?.error === 'string' ? detail.error : detail?.code;
+      const code = typeof value === 'string' && /^[a-zA-Z0-9_][a-zA-Z0-9_.:-]{0,99}$/.test(value) ? value : undefined;
+      const header = response.headers.get('x-request-id') ?? response.headers.get('openai-request-id');
+      const requestId = header && /^[a-zA-Z0-9_][a-zA-Z0-9_.:-]{0,159}$/.test(header) ? header : undefined;
+      const reason = detail?.error_description ?? detail?.message;
+      let description = typeof reason === 'string' ? reason : undefined;
+      // 只保留诊断文字，移除本次提交的凭据和常见授权字段，不能把完整令牌响应带入运行历史。
+      for (const field of ['refresh_token', 'code', 'code_verifier']) {
+        const secret = body.get(field);
+        if (secret && description) description = description.split(secret).join('[REDACTED]');
+      }
+      if (description) description = redactDiagnostic(description).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
+      const diagnostics = { status: response.status, requestId, description };
+      throw new ChatGPTAuthError(`ChatGPT 授权请求失败（HTTP ${response.status}${code ? `，${code}` : ''}）。${description ? ` ${description}` : ''}${requestId ? ` [request_id=${requestId}]` : ''}`, code, diagnostics);
     }
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new ChatGPTAuthError(t('modules.chatgpt.invalidResponse'));
     return data;

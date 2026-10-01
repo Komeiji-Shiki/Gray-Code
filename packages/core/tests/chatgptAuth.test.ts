@@ -139,6 +139,48 @@ describe('ChatGPT 官方订阅登录', () => {
     await expect(service.accessToken('channel', signal())).rejects.toThrow('登录');
   });
 
+  test('延迟返回的旧凭据不能在轮换完成后再次触发续期', async () => {
+    await login();
+    const original = settings.credential.bind(settings);
+    const reference = settings.snapshot().credentialIds.find(id => id.startsWith('chatgpt_'))!;
+    const stale = await original(reference);
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    jest.spyOn(settings, 'credential').mockImplementationOnce(async () => { await blocked; return stale; });
+    const delayed = service.accessToken('channel', signal());
+    try {
+      expect(await service.accessToken('channel', signal())).toBe('test-renewed');
+    } finally { release(); }
+    expect(await delayed).toBe('test-renewed');
+    expect(refreshRequests).toBe(1);
+  });
+
+  test('官方续期错误保留脱敏原因和请求标识，暂时故障保留登录，终止错误清除凭据', async () => {
+    await login();
+    const original = fetcher.getMockImplementation()!;
+    let temporary = true;
+    fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      const form = new URLSearchParams(String(init?.body));
+      if (form.get('grant_type') !== 'refresh_token') return original(url, init);
+      expect(form.get('client_id')).toBe('oaiapp_first');
+      expect(form.get('resource')).toBe('https://api.openai.com/v1');
+      expect(form.has('scope')).toBe(false);
+      return new Response(JSON.stringify(temporary ? { error: 'server_error', error_description: 'Try again later' }
+        : { error: { code: 'invalid_grant', message: `Refresh token expired: ${form.get('refresh_token')}` } }),
+        { status: temporary ? 503 : 400, headers: { 'Content-Type': 'application/json', 'x-request-id': 'req-refresh-test' } });
+    });
+    await expect(service.accessToken('channel', signal())).rejects.toMatchObject({ code: 'server_error',
+      diagnostics: { status: 503, requestId: 'req-refresh-test' } });
+    expect((await service.status('channel', 'window')).accounts[0].connected).toBe(true);
+    temporary = false;
+    const error = await service.accessToken('channel', signal()).catch(error => error);
+    expect(error).toMatchObject({ code: 'invalid_grant', diagnostics: { status: 400, requestId: 'req-refresh-test',
+      description: 'Refresh token expired: [REDACTED]' } });
+    expect(error.message).toContain('request_id=req-refresh-test');
+    expect(JSON.stringify(error)).not.toContain('test-refresh-first');
+    expect((await service.status('channel', 'window')).accounts[0].connected).toBe(false);
+  });
+
   test.each(['seconds', 'iso'])('保存最早续期时间并在允许前保留有效登录（%s）', async kind => {
     const now = Date.now(), earliest = Math.ceil((now + 30_000) / 1000) * 1000;
     earliestRefresh = kind === 'seconds' ? earliest / 1000 : new Date(earliest).toISOString();
