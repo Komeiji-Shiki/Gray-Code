@@ -1,0 +1,8 @@
+{
+    // 仅供 ts-jest 转译使用：类型检查由 typecheck:test（tsc -p tsconfig.test.json）负责，
+    // 测试 worker 不再各自建立完整的类型程序，避免每个 worker 重复占用上 GB 内存。
+    "extends": "./tsconfig.test.json",
+    "compilerOptions": {
+        "isolatedModules": true
+    }
+}

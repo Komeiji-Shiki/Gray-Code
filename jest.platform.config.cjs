@@ -8,6 +8,9 @@ module.exports = {
   roots: ['<rootDir>/packages/core/tests'],
   testMatch: ['**/*.test.ts'],
   testTimeout: 20000,
+  // 与 backend 配置一致：限制 worker 数量并回收空闲内存过高的 worker。
+  maxWorkers: '50%',
+  workerIdleMemoryLimit: '768MB',
   moduleNameMapper: {
     '^@graycode/contracts$': '<rootDir>/packages/contracts/src/index.ts',
   },
@@ -18,6 +21,8 @@ module.exports = {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         // Match existing backend strictness for the manager integration. build:platform checks the core with strict: true.
+        // isolatedModules：只转译不建类型程序，类型由 typecheck:platform 与 build:platform 检查。
+        isolatedModules: true,
         target: 'ES2022', lib: ['ES2023'], module: 'commonjs', strict: false, strictNullChecks: true,
         noImplicitThis: true, strictFunctionTypes: true, strictBindCallApply: true,
         esModuleInterop: true, skipLibCheck: true, types: ['node', 'jest'],

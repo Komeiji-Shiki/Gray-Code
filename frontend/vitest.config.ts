@@ -15,6 +15,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: ['./src/vitest.setup.ts']
+    setupFiles: ['./src/vitest.setup.ts'],
+    // 默认 forks 为每个测试文件重新创建 jsdom，占总耗时一半以上。vmThreads 复用 worker，
+    // 每个文件仍在独立 vm 上下文中执行；worker 超过内存上限时自动重建。
+    pool: 'vmThreads',
+    vmMemoryLimit: '512MB',
+    maxWorkers: '50%'
   }
 })

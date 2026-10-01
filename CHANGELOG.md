@@ -15,6 +15,7 @@
   - 运行环境统一到 Node 24 LTS：开发与独立服务要求 Node.js 24.11 或更新版本，与 Electron 内置的 Node 24 一致；CI 与本机版本管理器统一读取 `.nvmrc`。Electron 升级到 44.5.1，包含 Chromium 安全更新。
   - `search_in_files` 只读搜索按命中行返回结果：同一行的多处命中合并为一条并列出全部列号，`maxResults` 与 `offset` 改按命中行计算。发给模型的结果按文件分组，路径只写一次，相邻命中的上下文合并显示；`find_files` 不再把与 `fileDetails` 相同的路径列表重复发给模型。工具说明变化会使升级后的请求前缀改变一次，界面与存储格式不变。
   - `history_search` 与 `context_history` 的工具结果改为模型当时收到的文本，正文不再 JSON 转义，也不含只给界面使用的字段。已有笔记引用工具结果的来源位置会自动换算到新文本，无法对应时只保留来源消息。
+  - 测试提速并降低内存占用：ts-jest 改为只转译（类型由 `typecheck:test` / `typecheck:platform` 检查），jest worker 限制为半数核心并回收空闲内存过高的 worker；`test:platform` 不再串行执行；前端 Vitest 改用 `vmThreads` 复用 jsdom。本机 20 核实测：后端冷缓存 92 秒 → 23 秒、峰值约 6 GB；平台测试从串行 3 分钟以上降到 47 秒；前端 40 秒 → 13 秒。
   - `memory_note` / `memory_wake` 的说明明确为工程日志，并指向记录和查阅用户个人长期记忆的 `memory_remember` / `memory_search`，减少两套记忆工具混用。
 
 ### Fixed

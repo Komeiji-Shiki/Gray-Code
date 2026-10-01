@@ -21,7 +21,7 @@ function raf(): Promise<void> {
   return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
 }
 
-/** fake timers 版 rAF 等待：推进 20ms 触发 jsdom rAF（16ms 定时器实现） */
+/** fake timers 版 rAF 等待：推进 20ms，触发被伪造的 rAF（16ms 一帧） */
 async function advanceRaf(): Promise<void> {
   await vi.advanceTimersByTimeAsync(20)
 }
@@ -148,9 +148,11 @@ describe('CustomScrollbar sticky-bottom', () => {
 
   test('冷静期过后恢复贴底', async () => {
     // 冷静期判断用 performance.now()：必须把 performance 也纳入 fake 范围
-    // （默认 toFake 不含 performance，advanceTimersByTimeAsync 推不动真实时钟）
+    // （默认 toFake 不含 performance，advanceTimersByTimeAsync 推不动真实时钟）。
+    // rAF 也显式伪造：jsdom 的 rAF 在不同 vitest pool 下可能走自己的计时器，不能依赖它。
     vi.useFakeTimers({
-      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'Date', 'performance']
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'Date', 'performance',
+        'requestAnimationFrame', 'cancelAnimationFrame']
     })
     try {
       const wrapper = mountSticky()

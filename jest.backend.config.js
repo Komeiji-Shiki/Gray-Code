@@ -16,9 +16,13 @@ module.exports = {
     },
     // 全局超时：大量测试套件做真实磁盘 IO，默认 5s 在慢 CI 上会随机失败
     testTimeout: 20000,
+    // 默认按「核数 - 1」开 worker，多核机器上会同时拉起二十多个进程。测试以磁盘 IO 为主，
+    // 半数核心已经跑满；单个 worker 空闲内存超过上限时重启，避免长时间运行后内存累积。
+    maxWorkers: '50%',
+    workerIdleMemoryLimit: '768MB',
     transform: {
         '^.+\\.ts$': ['ts-jest', {
-            tsconfig: 'tsconfig.test.json',
+            tsconfig: 'tsconfig.jest-transpile.json',
         }],
     },
 };

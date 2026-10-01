@@ -298,7 +298,7 @@
     "build:platform": "node scripts/build-platform.mjs",
     "typecheck:platform": "tsc -p packages/core/tsconfig.json && tsc -p apps/server/tsconfig.json",
     "typecheck:desktop": "tsc -p apps/desktop/tsconfig.json --noEmit && npm --workspace @graycode/client run typecheck",
-    "test:platform": "npm run build:platform && jest --config jest.platform.config.cjs --runInBand",
+    "test:platform": "npm run build:platform && jest --config jest.platform.config.cjs",
     "benchmark:platform": "npm run build:platform && node scripts/benchmark-platform.mjs",
     "platform": "node apps/server/dist/main.cjs",
     "vscode:prepublish": "npm run build",
