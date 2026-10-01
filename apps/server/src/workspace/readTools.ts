@@ -9,6 +9,7 @@ import { getMultimodalCapability, type MultimodalCapability } from '../../../../
 import { FileReadAccess } from './readAccess';
 import { NodeFileHost } from './fileHost';
 import { createLiteralSearchTool } from './literalSearchTool';
+import { normalizeToolArgs } from '../../../../backend/tools/coerceToolArgs';
 
 /**
  * 桌面与 Web 版默认启用多模态工具：渠道设置不再提供该开关，
@@ -37,6 +38,9 @@ export function readTools(app: PlatformApplication): RuntimeTool[] {
   return factories.map(factory => {
     const declaration = factory(catalog).declaration;
     return { declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters },
+      normalizeArgs: args => normalizeToolArgs(declaration.name, args, declaration.parameters, {
+        paramAliases: declaration.paramAliases, compatParams: declaration.compatParams,
+      }),
       parallelRead: true,
       nativeAsync: declaration.name === 'search_in_files' ? false : true,
       effects: args => declaration.name === 'search_in_files' && args.mode === 'replace' ? ['workspace_write'] : ['workspace_read'],

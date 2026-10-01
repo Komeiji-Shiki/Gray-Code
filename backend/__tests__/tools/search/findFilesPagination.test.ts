@@ -103,12 +103,15 @@ describe('find_files 续查和实际排除策略', () => {
         expect(result.data).toMatchObject({ effectiveExclude: '**/node_modules/**', excludeSource: 'fallback' });
     });
 
-    test('模型格式化保留页游标、实际排除策略和发现顺序说明', async () => {
+    test('模型格式化保留页游标与策略来源，默认排除模式只留在原回执', async () => {
         const { tool } = fixture({ one: ['b.ts', 'a.ts'] });
         const result = await tool.handler({ patterns: ['**/*'], maxResults: 1 });
         const text = serializeToolResultForLLM('find_files', result);
         expect(text).toContain('"nextOffset":1');
-        expect(text).toContain('"effectiveExclude":"**/node_modules/**"');
+        expect(text).not.toContain('effectiveExclude');
+        expect(result.data.effectiveExclude).toBe('**/node_modules/**');
+        const explicit = await tool.handler({ patterns: ['**/*'], exclude: '**/vendor/**' });
+        expect(serializeToolResultForLLM('find_files', explicit)).toContain('"effectiveExclude":"**/vendor/**"');
         expect(text).toContain('"excludeSource":"fallback"');
         expect(text).toContain('discovery order');
     });

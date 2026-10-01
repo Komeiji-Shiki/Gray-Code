@@ -569,25 +569,35 @@ export class PlatformRuntime {
     if (!entry || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
     try {
       const args = normalizeToolArguments(call.args, entry.tool.declaration.parameters);
-      const readOnly = typeof entry.tool.parallelRead === 'function' ? entry.tool.parallelRead(args) : entry.tool.parallelRead;
+      const preparedArgs = entry.tool.normalizeArgs?.(args).args ?? args;
+      const readOnly = typeof entry.tool.parallelRead === 'function' ? entry.tool.parallelRead(preparedArgs) : entry.tool.parallelRead;
       if (!readOnly) return false;
-      const effects = entry.tool.effects(args);
+      const effects = entry.tool.effects(preparedArgs);
       return effects.every(effect => effect === 'public_read' || effect === 'workspace_read') && !needsApproval(agent, call.name, effects);
     } catch { return false; }
   }
 
   private async executeTool(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, call: FunctionCall, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>, nativeAsync = false): Promise<ToolOutcome> {
     const nativeTaskHandle = nativeAsync && typeof call.args.task_handle === 'string' ? call.args.task_handle : undefined;
+    let parameterWarnings: string[] = [];
+    const finish = (result: ToolOutcome): ToolOutcome => parameterWarnings.length
+      ? { ...result, parameterWarnings: [...parameterWarnings, ...(Array.isArray(result.parameterWarnings) ? result.parameterWarnings : [])] }
+      : result;
     try {
       const entry = catalog.entries.get(call.name);
       if (!entry) return { success: false, code: 'UNKNOWN_TOOL', error: 'Tool is absent from the configured catalog.' };
       const { task_handle: _handle, ...nativeArgs } = call.args;
       call = { ...call, args: normalizeToolArguments(nativeAsync ? nativeArgs : call.args, entry.tool.declaration.parameters) };
-      if (!entry.validate(call.args)) return { success: false, code: 'INVALID_ARGUMENTS', error: 'Tool arguments do not match its schema.' };
+      if (entry.tool.normalizeArgs) {
+        const prepared = entry.tool.normalizeArgs(call.args);
+        call = { ...call, args: prepared.args };
+        parameterWarnings = prepared.warnings;
+      }
+      if (!entry.validate(call.args)) return finish({ success: false, code: 'INVALID_ARGUMENTS', error: `Tool arguments do not match its schema: ${JSON.stringify(entry.validate.errors)}` });
       const effects = entry.tool.effects(call.args);
       const actor = await this.services.actor(run.actorId, run);
       const denied = actor ? authorizeEffects(actor, effects, workspace, call.name) : 'Run account no longer exists.';
-      if (denied || agent.toolApproval?.[call.name] === 'deny') return { success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' };
+      if (denied || agent.toolApproval?.[call.name] === 'deny') return finish({ success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' });
       let approval = needsApproval(agent, call.name, effects);
       let reviewReason: string | undefined;
       const reviewed = !approval && !!agent.reviewerProviderId && (agent.reviewerToolNames
@@ -597,13 +607,13 @@ export class PlatformRuntime {
         const review = await this.services.review({ agent, toolName: call.name, args: call.args, effects, signal });
         approval ||= review.requireApproval; reviewReason = review.reason;
       }
-      if (approval && !(await this.approve(run, call, effects, signal, reviewReason)).accepted) return { success: false, code: 'PERMISSION_DENIED', error: 'Operation was declined.' };
+      if (approval && !(await this.approve(run, call, effects, signal, reviewReason)).accepted) return finish({ success: false, code: 'PERMISSION_DENIED', error: 'Operation was declined.' });
       // Grants may change while a task waits for approval or a reviewer.
       let current = actor;
       if (reviewed || approval) {
         current = await this.services.actor(run.actorId, run);
         const revoked = current ? authorizeEffects(current, effects, workspace, call.name) : 'Run account no longer exists.';
-        if (revoked) return { success: false, code: 'PERMISSION_DENIED', error: revoked };
+        if (revoked) return finish({ success: false, code: 'PERMISSION_DENIED', error: revoked });
       }
       signal.throwIfAborted();
       await this.event(run.id, 'tool.started', { toolCallId: call.id, toolName: call.name });
@@ -646,11 +656,11 @@ export class PlatformRuntime {
       const latest = await this.services.actor(run.actorId, run);
       signal.throwIfAborted();
       const revoked = latest ? authorizeEffects(latest, effects, workspace, call.name) : 'Run account no longer exists.';
-      if (revoked) return { success: false, code: 'PERMISSION_DENIED', error: revoked };
+      if (revoked) return finish({ success: false, code: 'PERMISSION_DENIED', error: revoked });
       context.actor = latest ?? undefined;
-      return await entry.tool.execute(call.args, context);
+      return finish(await entry.tool.execute(call.args, context));
     } catch (error) {
-      return { success: false, code: signal.aborted ? 'CANCELLED' : 'TOOL_FAILED', error: error instanceof Error ? error.message : String(error) };
+      return finish({ success: false, code: signal.aborted ? 'CANCELLED' : 'TOOL_FAILED', error: error instanceof Error ? error.message : String(error) });
     }
   }
 

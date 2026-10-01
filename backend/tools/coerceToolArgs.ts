@@ -372,7 +372,8 @@ function stripUnknownParams(
         }
         delete result[key];
         warnings.push(
-            `Ignored unexpected parameter \`${key}\` (not defined in the \`${toolName}\` tool schema).`
+            `Ignored unexpected parameter \`${key}\` (not defined in the \`${toolName}\` tool schema). ` +
+            `Expected parameters: ${Object.keys(schema.properties).join(', ')}.`
         );
     }
 

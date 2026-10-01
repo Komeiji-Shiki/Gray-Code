@@ -12,6 +12,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: false,
             error: '1 file failed to read',
+            parameterWarnings: ['Ignored unexpected parameter `filename`. Expected parameters: path, files.'],
             data: {
                 results: [
                     { success: true, path: 'a.txt', content: 'first line\nsecond line', lineCount: 2 },
@@ -24,6 +25,8 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         });
 
         expect(result).toContain('Error: 1 file failed to read');
+        expect(result).toContain('Ignored unexpected parameter `filename`');
+        expect(result).toContain('Expected parameters: path, files.');
         expect(result).toContain('Partial results:');
         expect(result).toContain('[successCount=1, failCount=1, totalCount=2]');
         expect(result).toContain('[a.txt, 2 lines]');
@@ -240,12 +243,15 @@ describe('工具结果信息完整性与紧凑输出', () => {
     test('文本批量结果保留分页与统计，不把截断误报成完整结果', () => {
         const result = serializeToolResultForLLM('search_in_files', {
             success: true, pending: true,
-            data: { results: [{ path: 'a.ts', content: '第一个匹配' }], totalCount: 50, truncated: true, nextCursor: 'page-2' },
+            data: { results: [{ path: 'a.ts', content: '第一个匹配' }], totalCount: 50, truncated: true, nextCursor: 'page-2',
+                effectiveExclude: '**/node_modules/**', respectsGitIgnore: true },
         });
         expect(result).toContain('"pending":true');
         expect(result).toContain('"totalCount":50');
         expect(result).toContain('"truncated":true');
         expect(result).toContain('"nextCursor":"page-2"');
+        expect(result).not.toContain('effectiveExclude');
+        expect(result).toContain('"respectsGitIgnore":true');
     });
 
     test('修改前后的文本保留字段身份，单一文件正文仍原样输出', () => {

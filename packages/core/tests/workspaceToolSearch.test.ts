@@ -2,6 +2,7 @@ import { workspaceTools } from '../../../apps/server/src/workspace/tools';
 import { createLiteralSearchTool, literalMatchPreview } from '../../../apps/server/src/workspace/literalSearchTool';
 import type { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../backend/modules/settings/types';
+import { serializeToolResultForLLM } from '../../../backend/modules/channel/formatters/toolResponseFormatter';
 
 function toolsFixture(contents: Record<string, string> = { 'a.txt': 'hit hit\r\nhit\r\n', 'nested/b.txt': 'hit\nother' }) {
   const host = {
@@ -21,6 +22,10 @@ describe('独立平台轻量搜索与工具选择说明', () => {
     const { search } = toolsFixture();
     const first = (await search.handler({ query: 'hit', limit: 2 })).data;
     expect(first).toMatchObject({ offset: 0, nextOffset: 2, truncated: true });
+    const serialized = serializeToolResultForLLM('search_files', { success: true, data: first });
+    expect(serialized).toContain('"nextOffset":2');
+    for (const key of ['effectiveExclude', 'nextPage', 'nextActions', 'continuationHint']) expect(serialized).not.toContain(key);
+    expect(first.nextActions).toHaveLength(1);
     expect(first.matches.map((item: any) => item.text)).toEqual(['hit hit', 'hit']);
     const second = (await search.handler({ query: 'hit', limit: 1, offset: first.nextOffset })).data;
     expect(second).toMatchObject({ offset: 2, truncated: false, matches: [{ path: 'nested/b.txt', line: 1, text: 'hit' }] });
@@ -47,6 +52,10 @@ describe('独立平台轻量搜索与工具选择说明', () => {
     expect(result).toMatchObject({ scanned: 20_000, truncated: true, truncationReasons: ['scanLimit'], scanComplete: false, nextScanOffset: 20_000 });
     expect(result.nextOffset).toBeUndefined();
     expect(result.continuationHint).toContain('not complete');
+    const serialized = serializeToolResultForLLM('search_files', { success: true, data: result });
+    expect(serialized).toContain('"nextScanOffset":20000');
+    expect(serialized).toContain('"scanComplete":false');
+    expect(serialized).not.toContain('nextPage');
     expect(host.readFile).toHaveBeenCalledTimes(20_000);
     const next = (await search.handler(result.nextActions[0].args)).data;
     expect(next).toMatchObject({ scanned: 1, scanComplete: true, truncated: false, matches: [{ path: '20000.txt', text: 'missing' }] });
@@ -85,7 +94,8 @@ describe('独立平台轻量搜索与工具选择说明', () => {
     host.stat.mockImplementation(async file => ({ size: file.fsPath === 'large.txt' ? 3 * 1024 * 1024 : 1, type: 1 }));
     host.readFile.mockImplementation(async file => { if (file.fsPath === 'bad.txt') throw new Error('EACCES'); return Buffer.from(file.fsPath === 'binary.bin' ? '\0hit' : 'x'.repeat(2 * 1024 * 1024 + 1)); });
     const result = (await search.handler({ query: 'hit' })).data;
-    expect(result).toMatchObject({ matches: [], skippedCount: 4, skippedFilesTruncated: false });
+    expect(result).toMatchObject({ matches: [], skippedCount: 4, skippedBinaryCount: 1, skippedFilesTruncated: false });
+    expect(result.skippedFiles.map((file: any) => file.file)).not.toContain('binary.bin');
     expect(host.readFile).toHaveBeenCalledTimes(3);
     expect(result.skippedFiles[1].reason).toContain('EACCES');
   });

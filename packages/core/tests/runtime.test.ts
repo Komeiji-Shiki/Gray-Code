@@ -1,6 +1,7 @@
 import { PlatformRuntime, RuntimeToolRegistry, PlatformStorage } from '@graycode/core';
 import type { ActorIdentity, AgentDefinition, ModelInput, RunRecord } from '@graycode/contracts';
 import { fixture, metadata } from './fixtures';
+import { normalizeToolArgs } from '../../../backend/tools/coerceToolArgs';
 
 describe('independent task execution and identity boundaries', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
@@ -17,8 +18,14 @@ describe('independent task execution and identity boundaries', () => {
   beforeEach(async () => {
     f = await fixture(); registry = new RuntimeToolRegistry(); calls = []; executions = [];
     for (const [name, effects] of [['public_search', ['public_read']], ['local_command', ['process_execute']], ['delete_file', ['data_delete']]] as const) {
-      registry.register({ declaration: { name, description: name, parameters: { type: 'object', properties: {} } },
-        effects: () => [...effects], execute: async () => { executions.push(name); return { success: true }; } });
+      registry.register({ declaration: { name, description: name, parameters: { type: 'object',
+        properties: name === 'local_command' ? { path: { type: 'string' } } : {},
+        ...(name === 'local_command' ? { required: ['path'] } : {}) } },
+        normalizeArgs: name === 'local_command' ? args => normalizeToolArgs(name, args, {
+          type: 'object', properties: { path: { type: 'string' } }, required: ['path'],
+        }, { paramAliases: { file_path: 'path' } }) : undefined,
+        effects: args => { if (name === 'local_command') expect(args).toEqual({ path: 'src/main.ts' }); return [...effects]; },
+        execute: async args => { executions.push(name); return { success: true, data: args }; } });
     }
     runtime = new PlatformRuntime({ storage: f.store, tools: registry,
       actor: async id => actors[id] ?? null, agent: async () => agent, workspace: async () => null,
@@ -28,7 +35,7 @@ describe('independent task execution and identity boundaries', () => {
           ? { role: 'model', parts: [{ text: 'Done' }] }
           : { role: 'model', parts: input.messages[0].parts[0].text === 'delete'
             ? [{ functionCall: { id: 'delete-call', name: 'delete_file', args: {} } }]
-            : [{ functionCall: { id: 'public-call', name: 'public_search', args: {} } }, { functionCall: { id: 'local-call', name: 'local_command', args: {} } }] };
+            : [{ functionCall: { id: 'public-call', name: 'public_search', args: {} } }, { functionCall: { id: 'local-call', name: 'local_command', args: { file_path: 'src/main.ts', bogus: true } } }] };
       } },
     });
     await runtime.initialize();
@@ -46,11 +53,19 @@ describe('independent task execution and identity boundaries', () => {
     expect(executions).toEqual(['public_search']);
     const history = (await f.store.readFullHistory('guest-task')).messages;
     expect(history[3].parts[0]).toMatchObject({ functionResponse: { id: 'local-call', response: { success: false, code: 'PERMISSION_DENIED' } } });
+    const failedWarnings = (history[3].parts[0].functionResponse as { response: { parameterWarnings: string[] } }).response.parameterWarnings.join(' ');
+    expect(failedWarnings).toContain('`file_path`');
+    expect(failedWarnings).toContain('`bogus`');
     expect((history[1].parts[1].functionCall as Record<string, unknown>).rejected).toBeUndefined();
     const guestTools = JSON.stringify(calls[0].tools);
     const owner = await start('owner', 'owner-task');
     expect((await runtime.wait(owner.id))?.status).toBe('completed');
     expect(executions).toEqual(['public_search', 'public_search', 'local_command']);
+    const ownerResponse = ((await f.store.readFullHistory('owner-task')).messages[3].parts[0].functionResponse as {
+      response: { data: Record<string, unknown>; parameterWarnings: string[] };
+    }).response;
+    expect(ownerResponse.data).toEqual({ path: 'src/main.ts' });
+    expect(ownerResponse.parameterWarnings.join(' ')).toContain('`file_path`');
     expect(JSON.stringify(calls[2].tools)).toBe(guestTools);
     const events = await f.store.readRunEvents(guest.id);
     expect(events.map(event => event.sequence)).toEqual(events.map((_, i) => i + 1));

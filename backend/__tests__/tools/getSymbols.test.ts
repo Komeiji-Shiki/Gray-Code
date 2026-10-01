@@ -95,21 +95,26 @@ describe('get_symbols LSP lifecycle', () => {
         ]);
         const late = documentSymbol('aLater', vscode.SymbolKind.Method, 15, 18);
         executeCommandMock.mockResolvedValue([
-            documentSymbol('aLast', vscode.SymbolKind.Function, 40, 45),
+            documentSymbol('aLast', vscode.SymbolKind.Function, 40, 45, [
+                documentSymbol('key', vscode.SymbolKind.Variable, 41, 41, [documentSymbol('localMember', vscode.SymbolKind.Property, 41, 41)]),
+                documentSymbol('value', vscode.SymbolKind.Constant, 42, 42),
+                documentSymbol('i', vscode.SymbolKind.Variable, 43, 43)
+            ]),
             documentSymbol('zFirst', vscode.SymbolKind.Class, 1, 30, [late, early])
         ]);
         const tool = createGetSymbolsTool();
         const expanded = await tool.handler({ paths: ['src/main.ts'], maxDepth: 2 }, {} as any);
         expect(expanded.data.results[0].symbols.map((symbol: any) => symbol.name)).toEqual(['zFirst', 'aLast']);
         expect(expanded.data.results[0].symbols[0].children.map((symbol: any) => symbol.name)).toEqual(['zEarlier', 'aLater']);
-        expect(expanded.data.results[0]).toMatchObject({ symbolCount: 4, availableSymbolCount: 5, collapsedSymbolCount: 1, truncated: false });
+        expect(expanded.data.results[0]).toMatchObject({ symbolCount: 4, availableSymbolCount: 9, collapsedSymbolCount: 2, filteredSymbolCount: 3, truncated: false });
+        expect(expanded.data.results[0].symbols[1]).not.toHaveProperty('childCount');
         const filtered = await tool.handler({ paths: ['src/main.ts'], maxDepth: 2, kinds: ['method'] }, {} as any);
-        expect(filtered.data.results[0]).toMatchObject({ symbolCount: 2, collapsedSymbolCount: 1, filteredSymbolCount: 2, truncated: false });
+        expect(filtered.data.results[0]).toMatchObject({ symbolCount: 2, collapsedSymbolCount: 2, filteredSymbolCount: 5, truncated: false });
         expect(filtered.data.results[0].symbols.map((symbol: any) => [symbol.name, symbol.depth])).toEqual([['zEarlier', 2], ['aLater', 2]]);
         const folded = await tool.handler({ paths: ['src/main.ts'], kinds: ['method'] }, {} as any);
-        expect(folded.data.results[0]).toMatchObject({ symbols: [], collapsedSymbolCount: 3, filteredSymbolCount: 2, truncated: false });
+        expect(folded.data.results[0]).toMatchObject({ symbols: [], collapsedSymbolCount: 7, filteredSymbolCount: 2, truncated: false });
         const allKinds = await tool.handler({ paths: ['src/main.ts'], maxDepth: 3, kinds: [] }, {} as any);
-        expect(allKinds.data.results[0]).toMatchObject({ symbolCount: 5, collapsedSymbolCount: 0, filteredSymbolCount: 0 });
+        expect(allKinds.data.results[0]).toMatchObject({ symbolCount: 4, collapsedSymbolCount: 0, filteredSymbolCount: 5 });
     });
 
     test('平面 SymbolInformation 按源顺序保留；范围包含和容器名不能作为折叠依据', async () => {

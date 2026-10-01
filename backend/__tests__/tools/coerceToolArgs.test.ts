@@ -510,12 +510,13 @@ describe('normalizeToolArgs', () => {
 
         const { args, warnings } = normalizeToolArgs(
             'read_file',
-            { path: 'a.txt', maxLine: 30 },
+            { file_path: 'a.txt', maxLine: 30 },
             s,
-            { paramAliases: { maxLine: 'endLine' } }
+            { paramAliases: { file_path: 'path', maxLine: 'endLine' } }
         );
 
         expect(args).toEqual({ path: 'a.txt', endLine: 30 });
+        expect(warnings.some(w => w.includes('`file_path`') && w.includes('`path`'))).toBe(true);
         expect(warnings.some(w => w.includes('`maxLine`') && w.includes('`endLine`'))).toBe(true);
     });
 

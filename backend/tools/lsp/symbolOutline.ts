@@ -45,7 +45,7 @@ export interface SymbolOutline {
     availableSymbolCount: number;
     /** False for flat SymbolInformation, whose ranges do not establish a syntax hierarchy. */
     hierarchyAvailable: boolean;
-    /** Depth is applied before kinds, so these omission counts do not overlap. */
+    /** 深度折叠优先计数；类型筛选与局部变量省略都计入 filteredSymbolCount。 */
     collapsedSymbolCount: number;
     filteredSymbolCount: number;
     truncated: boolean;
@@ -77,8 +77,8 @@ export function createSymbolOutline(
     };
     const kinds = options.kinds?.length ? new Set(options.kinds) : undefined;
     const returned: SymbolInfo[] = [];
-    const pending: Array<{ symbols: readonly ProviderSymbol[]; index: number; depth: number; output: SymbolInfo[] }> = [
-        { symbols: [...symbols].sort(compareSymbol), index: 0, depth: 1, output: result.symbols }
+    const pending: Array<{ symbols: readonly ProviderSymbol[]; index: number; depth: number; output: SymbolInfo[]; callableScope: boolean; hidden: boolean }> = [
+        { symbols: [...symbols].sort(compareSymbol), index: 0, depth: 1, output: result.symbols, callableScope: false, hidden: false }
     ];
     // 直接遍历 provider 的树，不再复制所有隐藏节点；帧只保存当前层的位置，深层结构不会溢出调用栈。
     // 折叠或已超过输出预算的子树只需计数，排序仅用于仍有机会展示的层级。
@@ -93,18 +93,24 @@ export function createSymbolOutline(
         result.availableSymbolCount++;
         let childOutput = output;
         const kind = SYMBOL_KIND_NAMES[symbol.kind - kindBase] ?? 'unknown';
+        // 只依据提供器的真实层级识别局部数据，平面列表和顶层变量保持原有语义。
+        const hidden = frame.hidden || frame.callableScope && (kind === 'variable' || kind === 'constant');
+        const callableScope = ['function', 'method', 'constructor'].includes(kind)
+            || frame.callableScope && !['class', 'interface', 'struct', 'enum', 'module', 'namespace', 'package'].includes(kind);
         if (depth > options.maxDepth) result.collapsedSymbolCount++;
-        else if (kinds && !kinds.has(kind)) result.filteredSymbolCount++;
+        else if (hidden || kinds && !kinds.has(kind)) result.filteredSymbolCount++;
         else if (result.symbolCount >= MAX_SYMBOLS_PER_FILE) result.truncated = true;
         else {
             const range = symbolRange(symbol);
+            const childCount = children?.reduce((count, child) => count + Number(!callableScope
+                || !['variable', 'constant'].includes(SYMBOL_KIND_NAMES[child.kind - kindBase] ?? 'unknown')), 0) ?? 0;
             const info: SymbolInfo = {
                 name: symbol.name, kind, line: range.start.line + 1,
                 column: range.start.character + 1, endLine: range.end.line + 1, depth,
                 ...(document && symbol.detail ? { detail: symbol.detail } : {})
             };
-            if (children?.length) {
-                info.childCount = children.length;
+            if (childCount) {
+                info.childCount = childCount;
                 if (depth >= options.maxDepth) info.childrenCollapsed = true;
                 else info.children = childOutput = [];
             }
@@ -114,7 +120,7 @@ export function createSymbolOutline(
         }
         if (children?.length) {
             pending.push({ symbols: depth < options.maxDepth && result.symbolCount < MAX_SYMBOLS_PER_FILE
-                ? [...children].sort(compareSymbol) : children, index: 0, depth: depth + 1, output: childOutput });
+                ? [...children].sort(compareSymbol) : children, index: 0, depth: depth + 1, output: childOutput, callableScope, hidden });
         }
     }
     for (const info of returned) if (info.children?.length === 0) delete info.children;

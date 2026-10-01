@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { createReadFileTool } from '../../tools/file/read_file';
+import { normalizeToolArgs } from '../../tools/coerceToolArgs';
 
 const encoder = new TextEncoder();
 
@@ -38,11 +39,14 @@ describe('read_file batch requests', () => {
     });
 
     test('keeps the existing single-path call compatible', async () => {
-        const result = await createReadFileTool().handler({
-            path: 'a.txt',
+        const tool = createReadFileTool();
+        const { args, warnings } = normalizeToolArgs('read_file', {
+            file_path: 'a.txt',
             startLine: 2,
             endLine: 3
-        }) as any;
+        }, tool.declaration.parameters, { paramAliases: tool.declaration.paramAliases });
+        expect(warnings.join(' ')).toContain('`file_path`');
+        const result = await tool.handler(args) as any;
 
         expect(result.success).toBe(true);
         expect(result.data).toMatchObject({ successCount: 1, failCount: 0, totalCount: 1 });

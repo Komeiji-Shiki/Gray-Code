@@ -53,7 +53,7 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
       const expression = new RegExp(escapeRegExp(args.query), args.caseSensitive ? '' : 'i');
       const matches: Array<{ path: string; line: number } & ReturnType<typeof literalMatchPreview>> = [];
       const skippedFiles: Array<{ file: string; reason: string }> = [];
-      let remaining = Number(offset), scanned = 0, discovered = 0, filesTruncated = false, skippedCount = 0;
+      let remaining = Number(offset), scanned = 0, discovered = 0, filesTruncated = false, skippedCount = 0, skippedBinaryCount = 0;
       const skip = (file: string, reason: string) => { skippedCount++; if (skippedFiles.length < 50) skippedFiles.push({ file, reason }); };
       search: for (const root of targets) {
         // 扫描游标跳过的是发现顺序中的文件，不能在游标以前先截断发现结果，否则下一页仍到不了后续文件。
@@ -68,7 +68,8 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
             if ((await host.stat(file)).size > 2 * 1024 * 1024) { skip(relative, 'File exceeds the 2 MiB literal search limit.'); continue; }
             const bytes = await host.readFile(file);
             if (bytes.length > 2 * 1024 * 1024) { skip(relative, 'File grew beyond the 2 MiB literal search limit.'); continue; }
-            if (bytes.includes(0)) { skip(relative, 'Binary file.'); continue; }
+            // 二进制属于正常排除，只返回数量，列表预算留给需要处理的读取失败。
+            if (bytes.includes(0)) { skippedCount++; skippedBinaryCount++; continue; }
             text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
           } catch (error) {
             context?.abortSignal?.throwIfAborted();
@@ -93,8 +94,8 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
         : nextScanOffset !== undefined ? { scanOffset: nextScanOffset, offset: 0 } : undefined;
       return { success: true, data: { matches, scanned, scanOffset, offset, nextOffset, nextScanOffset, nextPage,
         scanComplete: !matchesTruncated && !filesTruncated, includeIgnored, effectiveExclude: exclude,
-        respectsGitIgnore: !includeIgnored, skippedCount, skippedFiles: skippedFiles.length ? skippedFiles : undefined,
-        skippedFilesTruncated: skippedCount > skippedFiles.length,
+        respectsGitIgnore: !includeIgnored, skippedCount, skippedBinaryCount, skippedFiles: skippedFiles.length ? skippedFiles : undefined,
+        skippedFilesTruncated: skippedCount - skippedBinaryCount > skippedFiles.length,
         truncated: matchesTruncated || filesTruncated,
         truncationReasons: matchesTruncated ? ['limit'] : filesTruncated ? ['scanLimit'] : undefined,
         continuationHint: nextOffset !== undefined

@@ -13,17 +13,17 @@ let description = isZh
 - 查找你想查看的函数/类的行号
 - 在不读取全部内容的情况下概览多个文件
 
-默认 maxDepth=1，仅返回顶层符号；设为 2 可展开直接成员，更大值继续展开。按源位置排序，行列为 1-based。kinds 在深度限制内筛选，不会自动展开；未匹配父节点省略，匹配后代保留原始 depth 并挂到最近的已返回祖先。
+默认 maxDepth=1，仅返回顶层符号；设为 2 可展开直接成员，更大值继续展开。函数、方法和构造器内的局部变量、常量及其子树省略，顶层变量、类成员和嵌套声明保留。按源位置排序，行列为 1-based。kinds 在深度限制内筛选，不会自动展开；未匹配父节点省略，匹配后代保留原始 depth 并挂到最近的已返回祖先。
 SymbolInformation 平列表无可靠层级，返回 hierarchyAvailable=false，全部按第 1 层处理；可用 kinds 精简，不根据范围或 containerName 猜测父子关系。
-每次最多 20 个文件、每文件最多返回 500 个符号（含子级）。symbolCount/totalSymbolCount 为实际返回数；availableSymbolCount 为提供器总数，collapsedSymbolCount 为深度折叠数，filteredSymbolCount 为深度内被类型筛掉的数量。节点 childCount 表示直接子符号总数，childrenCollapsed 表示可增加 maxDepth 展开。truncated 仅表示预算截断，不表示主动折叠或筛选。`
+每次最多 20 个文件、每文件最多返回 500 个符号（含子级）。symbolCount/totalSymbolCount 为实际返回数；availableSymbolCount 为提供器总数，collapsedSymbolCount 为深度折叠数，filteredSymbolCount 为深度内因类型或局部数据被省略的数量。节点 childCount 表示非局部数据的直接子符号总数，childrenCollapsed 表示可增加 maxDepth 展开。truncated 仅表示预算截断，不表示主动折叠或筛选。`
         : `Get a concise symbol outline (classes, functions, variables, etc.) in one or more files. This is useful for:
 - Understanding file structure before reading specific sections
 - Finding the line numbers of functions/classes you want to examine
 - Getting an overview of multiple files without reading all content
 
-Default maxDepth=1 returns only top-level symbols; 2 expands direct members, and larger values expand further. Results follow source order with 1-based lines/columns. kinds filters within that depth, never auto-expands; unmatched ancestors are omitted and matching descendants attach to the nearest returned ancestor while keeping their original depth.
+Default maxDepth=1 returns only top-level symbols; 2 expands direct members, and larger values expand further. Local variables, constants and their subtrees inside functions, methods and constructors are omitted; top-level variables, class members and nested declarations remain. Results follow source order with 1-based lines/columns. kinds filters within that depth, never auto-expands; unmatched ancestors are omitted and matching descendants attach to the nearest returned ancestor while keeping their original depth.
 Flat SymbolInformation has no reliable hierarchy: hierarchyAvailable=false and every symbol is treated as depth 1. Use kinds to narrow it; neither ranges nor containerName are used to guess parentage.
-At most 20 files and 500 returned symbols per file (including children). symbolCount/totalSymbolCount count returned symbols; availableSymbolCount counts all provider symbols, collapsedSymbolCount counts depth-hidden symbols, and filteredSymbolCount counts kind exclusions within the depth limit. A node's childCount counts direct children; childrenCollapsed indicates that maxDepth can reveal more. truncated means budget exhaustion only, not deliberate folding or filtering.`;
+At most 20 files and 500 returned symbols per file (including children). symbolCount/totalSymbolCount count returned symbols; availableSymbolCount counts all provider symbols, collapsedSymbolCount counts depth-hidden symbols, and filteredSymbolCount counts kind or local-data exclusions within the depth limit. A node's childCount counts direct children other than local data; childrenCollapsed indicates that maxDepth can reveal more. truncated means budget exhaustion only, not deliberate folding or filtering.`;
 const arrayFormatNote = isZh
         ? '\n\n**重要**：`paths` 参数必须是数组，即使只传一个文件。示例：`{"paths": ["file.ts"]}`，不要写成 `{"path": "file.ts"}`。'
         : '\n\n**IMPORTANT**: The `paths` parameter MUST be an array, even for a single file. Example: `{"paths": ["file.ts"]}`, NOT `{"path": "file.ts"}`.';

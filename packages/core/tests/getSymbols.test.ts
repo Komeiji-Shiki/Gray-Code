@@ -57,10 +57,12 @@ test('平台显式展开按源行列排序，并且保留真正的层级与折�
   const root = result.data.results[0].symbols[0];
   expect(root.childrenCollapsed).toBeUndefined();
   expect(root.children.map((symbol: any) => symbol.name)).toEqual(['zEarlierColumn', 'aLaterColumn', 'zMethod', 'aLast']);
-  expect(root.children[2]).toMatchObject({ childCount: 1, childrenCollapsed: true, depth: 2 });
+  expect(root.children[2]).toMatchObject({ depth: 2 });
+  expect(root.children[2]).not.toHaveProperty('childCount');
+  expect(root.children[2]).not.toHaveProperty('childrenCollapsed');
   const expanded = await call({ maxDepth: 3 });
-  expect(expanded.data.results[0]).toMatchObject({ symbolCount: 6, availableSymbolCount: 6, collapsedSymbolCount: 0, truncated: false });
-  expect(expanded.data.results[0].symbols[0].children[2].children[0]).toMatchObject({ name: 'local', kind: 'variable', depth: 3 });
+  expect(expanded.data.results[0]).toMatchObject({ symbolCount: 5, availableSymbolCount: 6, collapsedSymbolCount: 0, filteredSymbolCount: 1, truncated: false });
+  expect(expanded.data.results[0].symbols[0].children[2]).not.toHaveProperty('children');
 });
 
 test('平台 kinds 只筛选已展开的层级，省略父节点但不丢失匹配的后代', async () => {
@@ -70,7 +72,8 @@ test('平台 kinds 只筛选已展开的层级，省略父节点但不丢失匹�
   const filtered = await call({ maxDepth: 2, kinds: ['method', 'method'] });
   expect(filtered.data.kinds).toEqual(['method']);
   expect(filtered.data.results[0]).toMatchObject({ symbolCount: 1, availableSymbolCount: 3, collapsedSymbolCount: 1, filteredSymbolCount: 1, truncated: false });
-  expect(filtered.data.results[0].symbols).toMatchObject([{ name: 'method', depth: 2, childCount: 1, childrenCollapsed: true }]);
+  expect(filtered.data.results[0].symbols).toMatchObject([{ name: 'method', depth: 2 }]);
+  expect(filtered.data.results[0].symbols[0]).not.toHaveProperty('childrenCollapsed');
 });
 
 test('平台接受 SymbolInformation 平列表，但不根据范围包含和容器名猜测不存在的层级', async () => {

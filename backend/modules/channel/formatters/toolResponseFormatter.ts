@@ -128,6 +128,22 @@ function metadataLine(value: Record<string, unknown>): string {
 
 const BATCH_COUNTS = ['successCount', 'failCount', 'totalCount'];
 
+/** 搜索策略和界面操作保留在原回执中，模型只接收实际需要的覆盖规则与续查游标。 */
+function compactSearchResponse(toolName: string, response: Record<string, unknown>): Record<string, unknown> {
+    if (!['search_in_files', 'search_files', 'find_files'].includes(toolName)) return response;
+    const data = response.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return response;
+    const compact = { ...data } as Record<string, unknown>;
+    if (compact.excludeSource !== 'argument') delete compact.effectiveExclude;
+
+    if (toolName === 'search_files' && (compact.nextOffset !== undefined || compact.nextScanOffset !== undefined)) {
+        delete compact.nextPage;
+        delete compact.nextActions;
+        delete compact.continuationHint;
+    }
+    return { ...response, data: compact };
+}
+
 /**
  * 将 ToolResult.response 序列化为适合发给 LLM 的纯文本字符串。
  *
@@ -152,6 +168,7 @@ export function serializeToolResultForLLM(
         return String(response);
     }
 
+    response = compactSearchResponse(toolName, response);
     const data = response.data as Record<string, unknown> | undefined;
     // success=true 已由正常返回表达，其余顶层状态不能在展开 data 时丢失。
     const metadata = remainingFields(response, ['data', 'error', ...(response.success === true ? ['success'] : [])]);

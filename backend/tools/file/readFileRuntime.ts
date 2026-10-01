@@ -451,8 +451,8 @@ export function createReadFileTool(
             strict: true,  // API 端强制 schema 校验
             description,
             category: 'file',
-            // maxLine 与 endLine 完全等价 → 纯改名别名
-            paramAliases: { maxLine: 'endLine' },
+            // 常见路径写法与旧行号参数都只改名，不改变读取范围。
+            paramAliases: { file_path: 'path', maxLine: 'endLine' },
             // line / maxLines / limit 需要组合计算语义（见 resolveLineRangeArgs），
             // 不剥离、由 handler 解释
             compatParams: ['line', 'maxLines', 'limit'],
@@ -549,7 +549,7 @@ export function createReadFileTool(
                 return { success: false, error: 'files must contain at least one file request.' };
             }
             if (!hasSinglePath && !hasBatchFiles) {
-                return { success: false, error: 'Either path or files is required.' };
+                return { success: false, error: 'Either `path` (a file path string) or `files` (an array of { path, startLine?, endLine? }) is required. Example: { "path": "src/main.ts" }.' };
             }
 
             let fileRequests: FileReadRequest[];
