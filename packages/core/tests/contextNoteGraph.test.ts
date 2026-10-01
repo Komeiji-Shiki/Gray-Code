@@ -121,6 +121,21 @@ test('工具结果来源按模型可见文本记录偏移；旧回执的偏移�
   expect(middleGraph.notes.get(ids.plain)?.sources[0].offset).toBeUndefined();
 });
 
+test('来源可以引用最近的工具结果或指定工具调用，回执保存真实消息 ID', () => {
+  const toolResult = (id: string, callId: string, content: string): PlatformMessage => ({ id, role: 'user', isFunctionResponse: true,
+    parts: [{ functionResponse: { id: callId, name: 'read_file', response: { success: true, data: { content } } } }] });
+  const history: PlatformMessage[] = [structuredClone(source), toolResult('first-result', 'call-a', '第一个文件'), toolResult('second-result', 'call-b', '第二个文件')];
+  const ids = record(history, [
+    { key: 'latest', kind: 'observation', text: '第二个文件已读取。', sources: [{ messageId: 'last_tool_result', quote: '第二个文件' }] },
+    { key: 'named', kind: 'observation', text: '第一个文件已读取。', sources: [{ messageId: 'tool:call-a', quote: '第一个文件' }] },
+  ], 100);
+  const graph = buildNoteGraph(history, 200, 200);
+  expect(graph.notes.get(ids.latest)?.sources[0].messageId).toBe('second-result');
+  expect(graph.notes.get(ids.named)?.sources[0].messageId).toBe('first-result');
+  expect(graph.notes.get(ids.named)?.origin).toBe('tool');
+  expect(() => record(history, [{ key: 'missing', kind: 'observation', text: '不存在', sources: [{ messageId: 'tool:none' }] }], 300)).toThrow('tool:none');
+});
+
 describe('真实 HTTP 请求中的笔记事件与召回快照', () => {
   let f: Awaited<ReturnType<typeof fixture>>, app: PlatformApplication, server: Server;
   let requests: any[], serverError: Error | undefined;

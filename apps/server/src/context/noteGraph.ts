@@ -83,6 +83,26 @@ export function parseNoteEntries(value: unknown): NoteEntry[] {
 
 export function noteQueryTime(value: unknown, fallback: number): number { return time(value, '查询时间') ?? fallback; }
 
+const TOOL_SOURCE_PREFIX = 'tool:';
+const hasToolResult = (message: PlatformMessage, callId?: string) => message.parts.some(part => {
+  const response = part.functionResponse as { id?: string } | undefined;
+  return !!response && (callId === undefined || response.id === callId);
+});
+
+/**
+ * 来源别名只在记录时解析为真实消息 ID，回执里保存的始终是具体消息。
+ * 工具结果消息的 ID 不会出现在模型可见的内容里，所以提供 last_tool_result 与 tool:<调用 ID>。
+ */
+function resolveSourceMessage(reference: string, messages: PlatformMessage[], byId: Map<string | undefined, PlatformMessage>, anchor: PlatformMessage) {
+  if (reference === 'last_user') return messages.findLast(isHistoricalUserInput);
+  if (reference === 'last_assistant') return messages.findLast(message => message.role === 'model' && message !== anchor
+    && message.parts.some(part => !part.thought && typeof part.text === 'string'));
+  if (reference === 'last_tool_result') return messages.findLast(message => message !== anchor && hasToolResult(message));
+  if (reference.startsWith(TOOL_SOURCE_PREFIX) && reference.length > TOOL_SOURCE_PREFIX.length)
+    return messages.findLast(message => hasToolResult(message, reference.slice(TOOL_SOURCE_PREFIX.length)));
+  return byId.get(reference);
+}
+
 export function createNoteReceipt(messages: PlatformMessage[], toolCallId: string | undefined, entries: NoteEntry[], now = Date.now()): NoteReceipt {
   const anchor = messages.findLast(message => message.role === 'model' && message.parts.some(part => {
     const call = part.functionCall as { id?: string; name?: string } | undefined;
@@ -102,9 +122,7 @@ export function createNoteReceipt(messages: PlatformMessage[], toolCallId: strin
       if (target === localIds.get(entry.key)) throw new Error('笔记不能关联自身。');
     }
     const sources = entry.sources.map(source => {
-      const message = source.messageId === 'last_user' ? messages.findLast(isHistoricalUserInput)
-        : source.messageId === 'last_assistant' ? messages.findLast(message => message.role === 'model' && message !== anchor
-          && message.parts.some(part => !part.thought && typeof part.text === 'string')) : byId.get(source.messageId);
+      const message = resolveSourceMessage(source.messageId, messages, byId, anchor);
       if (!message?.id || message.memoryRedacted || message === anchor) throw new Error(`来源 ${source.messageId} 不在当前可读的历史中。`);
       // 同批笔记经常共用一个来源，完整工具结果的正文和指纹只计算一次。
       if (!sourceTexts.has(message.id)) sourceTexts.set(message.id, contextMessageText(message));

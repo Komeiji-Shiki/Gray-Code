@@ -11,7 +11,7 @@ export const NOTE_GRAPH_PROPERTIES = {
     items: object({ key: { type: 'string', minLength: 1, maxLength: 80 }, kind: { type: 'string', enum: NOTE_KINDS },
       text: { type: 'string', minLength: 1, maxLength: 4000, description: '保留条件、否定、决定理由和仍未解决的问题。' },
       about: { type: 'array', maxItems: 16, items: id, description: '相关任务、文件、符号或主题。' },
-      sources: { type: 'array', minItems: 1, maxItems: 8, items: object({ messageId: { ...id, description: '真实历史 ID，或 last_user / last_assistant。' },
+      sources: { type: 'array', minItems: 1, maxItems: 8, items: object({ messageId: { ...id, description: '真实历史 ID，或 last_user / last_assistant / last_tool_result（最近一条工具结果），或 tool:<工具调用 ID>。' },
         quote: { type: 'string', minLength: 1, maxLength: 4000, description: '可选的唯一原文摘录；返回的偏移可用于 context_history.read。' } }, ['messageId']) },
       relations: { type: 'array', maxItems: 32, items: object({ kind: { type: 'string', enum: NOTE_RELATIONS,
         description: '本条 requires 依赖目标，supports 支持目标，applies_to 适用于目标，contradicts 与目标冲突，supersedes 替代目标。' }, target: id }, ['kind', 'target']) },
