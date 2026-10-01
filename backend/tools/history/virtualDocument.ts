@@ -12,6 +12,7 @@
 
 import type { Content } from '../../modules/conversation/types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
+import { serializeToolResultForLLM } from '../../modules/channel/formatters/toolResponseFormatter';
 
 // ─── 默认常量（当 settingsManager 不可用时的 fallback） ───
 
@@ -67,8 +68,14 @@ function formatMessage(message: Content): string[] {
         }
 
         if (part.functionResponse) {
-            const responseStr = JSON.stringify(part.functionResponse.response);
-            lines.push(`${part.functionResponse.name} → ${responseStr}`);
+            // 与发给模型的工具结果使用同一序列化：去掉只给界面的字段，正文不再 JSON 转义，
+            // 多行结果拆成文档行，搜索命中和按行读取都能定位到具体内容。
+            const responseStr = serializeToolResultForLLM(
+                part.functionResponse.name,
+                part.functionResponse.response as Record<string, unknown> | undefined
+            );
+            const [firstLine, ...restLines] = responseStr.split('\n');
+            lines.push(`${part.functionResponse.name} → ${firstLine}`, ...restLines);
         }
     }
 

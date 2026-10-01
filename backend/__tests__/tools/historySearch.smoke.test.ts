@@ -85,6 +85,18 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(doc.some(line => line.includes('thinking'))).toBe(false);
     });
 
+    test('工具结果使用模型可见的序列化并拆成多行，正文不再 JSON 转义', () => {
+        const doc = formatToDocument([
+            modelMsg([{ functionResponse: { name: 'read_file', response: { success: true, data: {
+                results: [{ success: true, path: 'a.ts', content: '   1 | const p = "C:\\temp";\n   2 | done', lineCount: 2 }] } } } }])
+        ]);
+        const start = doc.findIndex(line => line.startsWith('read_file → '));
+        expect(start).toBeGreaterThan(-1);
+        expect(doc).toContain('   1 | const p = "C:\\temp";');
+        expect(doc).toContain('   2 | done');
+        expect(doc.some(line => line.includes('\\"'))).toBe(false);
+    });
+
     test('getSummarizedMessages 只返回 isSummarized 标记的消息', () => {
         const history = [
             userMsg('原始内容', { isSummarized: true }),

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { LongMemoryConfidence, PlatformMessage } from '@graycode/contracts';
 import { sourceMessageOrigin } from '../memory/longTerm/content';
 import { isHistoricalUserInput } from './retention';
-import { contextMessageText } from './textPage';
+import { CONTEXT_TEXT_FORMAT, contextMessageText, legacyContextMessageText } from './textPage';
 
 export const NOTE_KINDS = ['constraint', 'decision', 'observation', 'hypothesis', 'task', 'lesson'] as const;
 export const NOTE_RELATIONS = ['requires', 'supports', 'contradicts', 'applies_to', 'supersedes'] as const;
@@ -17,6 +17,8 @@ export interface NoteEntry {
 export interface NoteSource { messageId: string; digest: string; offset?: number; length?: number }
 export interface NoteReceipt {
   version: 1; anchorMessageId: string; inputHash: string; recordedAt: number;
+  /** 来源偏移所用的文本视图版本；旧回执没有此字段，偏移按旧版文本计算。 */
+  textFormat?: number;
   records: Array<{ id: string; key: string; sources: NoteSource[] }>;
 }
 export interface ContextNote {
@@ -127,7 +129,25 @@ export function createNoteReceipt(messages: PlatformMessage[], toolCallId: strin
     checked.add(id);
   };
   for (const id of supersedes.keys()) visit(id, new Set());
-  return { version: 1, anchorMessageId: anchor.id, inputHash: digest(entries), recordedAt: now, records };
+  return { version: 1, anchorMessageId: anchor.id, inputHash: digest(entries), recordedAt: now, textFormat: CONTEXT_TEXT_FORMAT, records };
+}
+
+/**
+ * 旧回执的偏移按旧版文本（工具结果为整段 JSON）计算。纯文字消息两版一致，直接沿用；
+ * 含工具结果的消息按旧文本取出摘录，在当前文本中唯一出现时换算位置，否则去掉偏移，
+ * 来源仍由消息指纹保证可追溯，只是不再给出可能错位的续读位置。
+ */
+function remapLegacySource(source: NoteSource, message: PlatformMessage | undefined, currentText: (message: PlatformMessage) => string,
+  legacyTexts: Map<string, string>): NoteSource {
+  if (source.offset === undefined || source.length === undefined || !message?.id) return source;
+  if (!message.parts.some(part => part.functionResponse)) return source;
+  if (!legacyTexts.has(message.id)) legacyTexts.set(message.id, legacyContextMessageText(message));
+  const quote = legacyTexts.get(message.id)!.slice(source.offset, source.offset + source.length);
+  const body = currentText(message);
+  const offset = quote.length === source.length ? body.indexOf(quote) : -1;
+  const { offset: _offset, length: _length, ...rest } = source;
+  if (offset === -1 || body.indexOf(quote, offset + 1) !== -1) return rest;
+  return { ...rest, offset, length: source.length };
 }
 
 /** 仅重放当前分支里成功的工具结果；取消、失败和其他分支的调用不会产生图节点。 */
@@ -141,6 +161,7 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
     if (!sourceTexts.has(message.id!)) sourceTexts.set(message.id!, contextMessageText(message));
     return sourceTexts.get(message.id!)!;
   };
+  const legacyTexts = new Map<string, string>();
   const originsById = new Map<string, ContextNote['origin']>();
   let previousInput: PlatformMessage | undefined;
   for (const message of messages) {
@@ -165,6 +186,8 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
         const record = receipt.records[index];
         if (record.key !== entry.key) return;
         const sourceMessages = record.sources.map(source => byId.get(source.messageId));
+        const sources = receipt.textFormat === CONTEXT_TEXT_FORMAT ? record.sources
+          : record.sources.map((source, index) => remapLegacySource(source, sourceMessages[index], sourceText, legacyTexts));
         const available = record.sources.every((source, index) => {
           const sourceMessage = sourceMessages[index];
           if (!sourceMessage || sourceMessage.memoryRedacted) return false;
@@ -179,7 +202,7 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
           ? 'confirmed' : 'inferred';
         const node: ContextNote = { id: record.id, kind: entry.kind, text: entry.text, about: entry.about,
           relations: entry.relations.map(relation => ({ ...relation, target: relation.target.startsWith('@') ? localIds.get(relation.target.slice(1))! : relation.target })),
-          sources: record.sources, origin, confidence, recordedAt: receipt.recordedAt, validFrom: entry.validFrom ?? receipt.recordedAt,
+          sources, origin, confidence, recordedAt: receipt.recordedAt, validFrom: entry.validFrom ?? receipt.recordedAt,
           validTo: entry.validTo, eventAt: entry.eventAt, anchorMessageId: receipt.anchorMessageId, resultMessageId: message.id! };
         notes.set(node.id, node);
         states.set(node.id, !available ? 'source_unavailable' : node.recordedAt > knownAt || node.validFrom > asOf

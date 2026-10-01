@@ -5,6 +5,7 @@ import { buildNoteGraph, createNoteReceipt, parseNoteEntries } from '../../../ap
 import { recallContextNotes } from '../../../apps/server/src/context/noteRecall';
 import { runNoteGraphTool } from '../../../apps/server/src/context/noteTool';
 import { memoryTokens } from '../src/storage/longMemory/text';
+import { contextMessageText, legacyContextMessageText } from '../../../apps/server/src/context/textPage';
 import { fixture } from './fixtures';
 
 const source: PlatformMessage = { id: 'requirement', role: 'user', isUserInput: true, parts: [{ text: '保留缓存前缀。观察：原型已经完成，接下来检查窗口恢复。' }] };
@@ -79,6 +80,36 @@ test('来源变化后停止召回，失败记录不生效，超预算时明确�
   const invalid = [...history, { id: 'bad', role: 'model', parts: [{ functionCall: { id: 'bad-call', name: 'context_notes' } }] }];
   expect(() => createNoteReceipt(invalid, 'bad-call', parseNoteEntries([entry('a', 'A', { relations: [{ kind: 'supersedes', target: '@b' }] }),
     entry('b', 'B', { relations: [{ kind: 'supersedes', target: '@a' }] })]), 300)).toThrow('循环');
+});
+
+test('工具结果来源按模型可见文本记录偏移；旧回执的偏移换算到新文本，无法对应时去掉', () => {
+  const tool: PlatformMessage = { id: 'tool-source', role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'read-1', name: 'read_file',
+    response: { success: true, data: { content: 'line "quoted" here' } } } }] };
+  const current = contextMessageText(tool), legacy = legacyContextMessageText(tool);
+  expect(current).toBe('[Tool result: read_file]\nline "quoted" here');
+  expect(legacy).toContain('\\"quoted\\"');
+
+  const history = [structuredClone(source), tool];
+  const entries = [{ key: 'plain', kind: 'observation', text: '文件末尾是 here。', sources: [{ messageId: 'tool-source', quote: 'here' }] },
+    { key: 'escaped', kind: 'observation', text: '文件含引号。', sources: [{ messageId: 'tool-source', quote: '"quoted"' }] }];
+  history.push({ id: 'call-legacy', role: 'model', parts: [{ functionCall: { id: 'legacy', name: 'context_notes', args: { action: 'record', entries } } }] });
+  const receipt = createNoteReceipt(history, 'legacy', parseNoteEntries(entries), 100);
+  expect(receipt.textFormat).toBe(2);
+  expect(receipt.records[0].sources[0].offset).toBe(current.indexOf('here'));
+
+  // 模拟旧版本写入的回执：没有 textFormat，偏移按整段 JSON 文本计算。
+  const legacyReceipt = structuredClone(receipt);
+  delete legacyReceipt.textFormat;
+  legacyReceipt.records[0].sources[0].offset = legacy.indexOf('here');
+  legacyReceipt.records[1].sources[0] = { ...legacyReceipt.records[1].sources[0], offset: legacy.indexOf('\\"quoted\\"'), length: '\\"quoted\\"'.length };
+  history.push({ id: 'result-legacy', role: 'user', isFunctionResponse: true,
+    parts: [{ functionResponse: { id: 'legacy', name: 'context_notes', response: { success: true, noteEvent: legacyReceipt } } }] });
+  const graph = buildNoteGraph(history, 200, 200);
+  const ids = Object.fromEntries(legacyReceipt.records.map(item => [item.key, item.id]));
+  expect(graph.states.get(ids.plain)).toBe('current');
+  expect(graph.notes.get(ids.plain)?.sources[0]).toMatchObject({ messageId: 'tool-source', offset: current.indexOf('here'), length: 4 });
+  expect(graph.notes.get(ids.escaped)?.sources[0].offset).toBeUndefined();
+  expect(graph.states.get(ids.escaped)).toBe('current');
 });
 
 describe('真实 HTTP 请求中的笔记事件与召回快照', () => {
