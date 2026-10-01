@@ -547,9 +547,8 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   padding: 8px 10px;
-  background: var(--gc-quote-bg);
-  border-left: 3px solid var(--gc-link);
-  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
+  background: var(--gc-info-bg);
+  border-radius: var(--gc-radius-lg);
 }
 
 .settings-tips .codicon {

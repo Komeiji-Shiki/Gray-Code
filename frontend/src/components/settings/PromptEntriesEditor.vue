@@ -585,7 +585,7 @@ function handleDragEnd() {
 </template>
 
 <style scoped>
-.character-entry-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px; background: var(--gc-surface-base); border: 1px solid var(--gc-border-subtle); }
+.character-entry-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px; background:var(--gc-surface-raised); border:1px solid transparent;border-radius:var(--gc-radius-lg) }
 .character-entry-tools label { display: flex; flex: 1 1 210px; flex-direction: column; gap: 6px; font-size: 12px; min-width: 0; }
 .character-entry-tools select { min-width: 0; width: 100%; padding: 6px 8px; font: inherit; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); }
 .character-entry-tools p { flex-basis: 100%; margin: 0; color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; }

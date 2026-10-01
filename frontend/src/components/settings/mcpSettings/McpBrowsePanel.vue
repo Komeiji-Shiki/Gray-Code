@@ -488,9 +488,9 @@ onUnmounted(() => { listRequest++; resourceRequest++; promptRequest++ })
 .mcp-browse-panel {
   margin-top: var(--gc-space-4);
   padding: var(--gc-space-4);
-  background: var(--gc-surface-base);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-md);
+  background: var(--gc-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-lg);
 }
 
 .browse-header {

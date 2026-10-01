@@ -50,7 +50,7 @@ p { margin: 0; line-height: 1.65; color: var(--gc-text-muted); overflow-wrap: an
 .update-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px; padding-bottom: 16px; }
 .update-product { display: flex; align-items: center; gap: 12px; }
 .update-product strong { font-size: 19px; letter-spacing: -.02em; }
-.product-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--gc-accent); font-size: 24px; color: var(--gc-accent); }
+.product-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--gc-accent); border-radius: var(--gc-radius-md); font-size: 24px; color: var(--gc-accent); }
 .version-summary { display: grid; gap: 4px; justify-items: end; }
 .version-label, time { color: var(--gc-text-muted); font-size: 12px; }
 .version-summary strong, .version-chip { font-family: var(--gc-font-code); }

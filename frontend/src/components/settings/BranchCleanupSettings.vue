@@ -267,7 +267,7 @@ onMounted(() => {
 
 .divider {
   height: 1px;
-  background: var(--gc-surface-hover);
+  background: none;
   margin: 4px 0 12px 0;
 }
 </style>

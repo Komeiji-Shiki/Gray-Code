@@ -55,7 +55,7 @@ function changeTiming(patch: Partial<BotAutoSummarySettings>) { set('autoSummary
 <style scoped>
 .bot-conversation-fields {  margin-top: 20px; padding-top: 16px; min-width: 0; }
 h4 { margin: 0 0 10px; font-size: 15px; } p,small { color: var(--gc-text-muted); line-height: 1.7; } p { margin: 8px 0 12px; font-size: 12px; }
-label { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 12px 0; border-bottom: 1px solid var(--gc-border-subtle); }
+label { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 12px 0; }
 label>span { flex: 1; min-width: 0; } small { display: block; font-size: 12px; margin-top: 4px; } code { color: var(--gc-text-primary); }
 input,select,textarea { box-sizing: border-box; width: 52%; min-width: 0; background: var(--gc-surface-input); color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); border-radius: var(--gc-radius-sm); padding: 8px 10px; font: inherit; }
 select,option { color-scheme: dark; background: var(--gc-surface-raised); } input[type=checkbox] { width: auto; accent-color: var(--gc-accent-primary); }

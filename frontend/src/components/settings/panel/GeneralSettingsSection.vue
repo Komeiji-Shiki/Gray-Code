@@ -665,7 +665,7 @@ function onCustomPathInput(event: Event) {
 
 .divider {
   height: 1px;
-  background: var(--gc-border-subtle);
+  background: none;
   margin: 8px 0;
 }
 

@@ -61,6 +61,10 @@ describe('结构分割线', () => {
     ['prompt/ModulesReference.vue', '.modules-reference'], ['prompt/ToolPolicySection.vue', '.tool-item'],
     ['subAgentsSettings/SubAgentGlobalConfigSection.vue', '.global-config'],
     ['subAgentsSettings/SubAgentToolsSection.vue', '.category-header'],
+    ['discord/discordSettings.css', ':deep(.discord-fields>label)'], ['discord/discordSettings.css', ':deep(.discord-resource-row)'],
+    ['discord/discordSettings.css', ':deep(.discord-inset)'], ['discord/discordSettings.css', '.discord-channel-config'],
+    ['discord/discordSettings.css', '.discord-binding'], ['discord/BotConversationFields.vue', 'label'],
+    ['PlatformIntegrationSettings.vue', 'label'],
   ])('设置 %s %s 不画分割线', (file, subject) => {
     expect(sideBorders(read(path.join('frontend/src/components/settings', file)), subject)).toEqual([])
   })

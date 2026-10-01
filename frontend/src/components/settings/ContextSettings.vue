@@ -744,7 +744,7 @@ useDesktopSettingsDraft(async () => {
 
 .divider {
   height: 1px;
-  background: var(--gc-border-subtle);
+  background: none;
   margin: 4px 0;
 }
 
@@ -849,9 +849,8 @@ useDesktopSettingsDraft(async () => {
 .pattern-help {
   margin-top: 4px;
   padding: 8px 12px;
-  background: var(--gc-quote-bg);
-  border-left: 3px solid var(--gc-quote-border);
-  border-radius: 0 var(--gc-radius-sm) var(--gc-radius-sm) 0;
+  background: var(--gc-info-bg);
+  border-radius: var(--gc-radius-lg);
 }
 
 .pattern-help p {

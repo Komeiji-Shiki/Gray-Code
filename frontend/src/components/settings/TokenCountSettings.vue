@@ -620,9 +620,6 @@ Authorization: Bearer {apiKey}
     background: var(--gc-surface-raised);
 }
 
-.channel-panel.expanded {
-    border-color: var(--gc-focus-border);
-}
 
 .panel-header {
     width: 100%;

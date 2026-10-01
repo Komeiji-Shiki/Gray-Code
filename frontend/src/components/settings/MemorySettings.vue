@@ -700,9 +700,8 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--gc-quote-bg);
-  border-left: 3px solid var(--gc-quote-border);
-  border-radius: var(--gc-radius-sm);
+  background: var(--gc-info-bg);
+  border-radius: var(--gc-radius-lg);
   font-size: 12px;
 }
 

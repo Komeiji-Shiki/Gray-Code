@@ -550,7 +550,7 @@ onUnmounted(() => {
 /* 分割线 */
 .divider {
   height: 1px;
-  background: var(--gc-border-subtle);
+  background: none;
 }
 
 /* Loading 动画 */
