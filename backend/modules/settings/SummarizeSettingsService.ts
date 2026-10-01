@@ -8,6 +8,7 @@
 import type { SummarizeConfig } from './types';
 import { DEFAULT_SUMMARIZE_CONFIG } from './types';
 import { SettingsCore } from './SettingsCore';
+import { upgradeRetiredPrompt } from './retiredPromptDefaults';
 
 /**
  * 总结配置服务
@@ -25,7 +26,13 @@ export class SummarizeSettingsService {
      * 获取总结配置
      */
     getSummarizeConfig(): Readonly<SummarizeConfig> {
-        return this.core.getToolsConfigEntry('summarize', DEFAULT_SUMMARIZE_CONFIG);
+        const config = this.core.getToolsConfigEntry('summarize', DEFAULT_SUMMARIZE_CONFIG);
+        // 仍是旧版默认文本的提示词换成当前默认值；用户改过的内容保持原样。
+        return {
+            ...config,
+            summarizePrompt: upgradeRetiredPrompt(config.summarizePrompt, ['summarize'], DEFAULT_SUMMARIZE_CONFIG.summarizePrompt) as string,
+            autoSummarizePrompt: upgradeRetiredPrompt(config.autoSummarizePrompt, ['autoSummarize'], DEFAULT_SUMMARIZE_CONFIG.autoSummarizePrompt) as string
+        };
     }
 
     /**
