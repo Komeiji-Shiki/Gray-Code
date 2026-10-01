@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       # 供 test-windows job 判断是否跳过（24 小时无变化时两个 job 都跳过）
       build: ${{ steps.should.outputs.build }}
