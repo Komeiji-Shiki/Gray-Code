@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_SUBAGENTS_CONFIG } from '../../../../backend/modules/settings/types/subAgentsTypes';
 import { MAX_SUBAGENT_NESTING_DEPTH } from '../../../../backend/tools/subagents/types';
 import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
+import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import { SUBAGENT_COMPLETION_NOTICE } from '../../../../backend/tools/subagents/executor/prompts';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
@@ -25,10 +26,11 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
   const tools = config?.tools ?? { mode: 'all' };
   const toolNames = context.agent.toolNames.filter(name => {
     if (/^(memory_|todo_)/.test(name) || !app.product.runtimeSettings().isToolEnabled(name) || depth >= MAX_SUBAGENT_NESTING_DEPTH && name === 'subagents') return false;
-    if (tools.mode === 'builtin') return !name.startsWith('mcp_');
-    if (tools.mode === 'mcp') return name.startsWith('mcp_');
-    if (tools.mode === 'whitelist') return (tools.list ?? []).includes(name);
-    if (tools.mode === 'blacklist') return !(tools.list ?? []).includes(name);
+    if (tools.mode === 'builtin') return !isMcpToolName(name);
+    if (tools.mode === 'mcp') return isMcpToolName(name);
+    // 设置页和预设写入具名列表；list 只兼容旧配置，显式 [] 不能回退到旧授权。
+    if (tools.mode === 'whitelist') return (tools.whitelist ?? tools.list ?? []).includes(name);
+    if (tools.mode === 'blacklist') return !(tools.blacklist ?? tools.list ?? []).includes(name);
     return true;
   });
   const id = randomUUID(); const now = Date.now();

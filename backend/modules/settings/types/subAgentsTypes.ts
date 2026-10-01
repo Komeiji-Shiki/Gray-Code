@@ -13,10 +13,17 @@ export interface SubAgentToolsConfig {
      */
     mode: 'all' | 'builtin' | 'mcp' | 'whitelist' | 'blacklist';
     
-    /**
-     * 工具列表（白名单/黑名单模式下使用）
-     */
+    /** 工具列表（兼容旧版白名单/黑名单配置；具名列表优先，含显式空数组）。 */
     list?: string[];
+
+    /** 工具白名单（mode 为 'whitelist' 时使用）。 */
+    whitelist?: string[];
+
+    /** 工具黑名单（mode 为 'blacklist' 时使用）。 */
+    blacklist?: string[];
+
+    /** 与旧宿主工具配置兼容的 MCP 包含标记。 */
+    includeMcp?: boolean;
 }
 
 /**
