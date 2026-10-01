@@ -2,6 +2,7 @@ import { StringDecoder } from 'string_decoder';
 import { TextDecoder } from 'util';
 import type { TerminalProcess } from './processRunnerRuntime';
 import type { ExecuteCommandToolConfig } from '../../modules/settings/types/toolsTypes';
+import { stripAnsi } from '../../../shared/ansi';
 
 
 export type StreamDecodeMode = 'utf8' | 'gbk';
@@ -35,7 +36,8 @@ const MAX_RETAINED_OUTPUT_LINES = 50000;
 
 function pushOutputLines(tp: TerminalProcess, lines: string[]): void {
     if (lines.length === 0) return;
-    tp.output.push(...lines);
+    // 保留的行会作为结果发给模型；界面实时流仍保留颜色。行已按换行切分，控制序列不会跨行。
+    tp.output.push(...lines.map(stripAnsi));
     if (tp.output.length > MAX_RETAINED_OUTPUT_LINES) {
         const dropped = tp.output.length - MAX_RETAINED_OUTPUT_LINES;
         tp.output.splice(0, dropped);

@@ -298,9 +298,26 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         );
         const finalArg = spawnMock.mock.calls[0][1]![4] as string;
         expect(finalArg).toContain('$OutputEncoding');
+        // PowerShell 7 关闭颜色渲染；尾部诊断在换行后追加，失败时仍以 1 退出
+        expect(finalArg).toContain("if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }");
+        expect(finalArg).toMatch(/echo hi\nif \(-not \$\?\) \{.*\$Error\[0\].*exit 1 \}$/);
 
         proc.emit('close', 0);
         await promise;
+    });
+
+    test('结果输出去掉 ANSI 颜色序列，界面实时流保留原文', async () => {
+        const proc = makeFakeProc();
+        const promise = runCommand({ command: 'Get-Process | Format-Table', cwd: tmpDir, shell: 'powershell', timeout: 0 });
+        await flush();
+
+        proc.stdout.write(Buffer.from('\u001b[32;1m   Id\u001b[0m\u001b[32;1m Name\u001b[0m\n'));
+        proc.stderr.write(Buffer.from('\u001b[31;1mGet-Process: \u001b[31;1mnot found\u001b[0m\n'));
+        proc.emit('close', 1);
+
+        const result = await promise;
+        expect(result.data.output).toBe('   Id Name\nGet-Process: not found');
+        expect(result.error).toContain('code 1');
     });
 
     test('完整执行流：stdout/stderr 数据收集 → close(0) → success + output + exitCode', async () => {

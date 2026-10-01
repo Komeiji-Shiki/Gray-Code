@@ -6,6 +6,7 @@ import crossSpawn from "cross-spawn";
 import type { ToolEffect, WorkspaceDefinition } from "@graycode/contracts";
 import type { PlatformStorage } from '@graycode/core';
 import { stopOwnedProcess } from './processLifecycle';
+import { AnsiStreamStripper } from '../../../../shared/ansi';
 
 /** 字符串始终代表 RPC 客户端；模型身份只能来自可信 ToolContext，不能来自模型参数。 */
 export type ProcessOwner = string | { actorId: string; conversationId?: string; runId: string; workspaceId?: string };
@@ -113,29 +114,33 @@ export class WorkspaceProcesses {
       }),
     };
     this.entries.set(entry.id, entry);
-    const output = (text: string) => {
+    // 会话缓冲会交给模型，去掉颜色序列；界面进度仍收到原文。
+    const output = (text: string, stripper: AnsiStreamStripper) => {
       if (!text) return;
-      appendProcessOutput(entry, text);
+      const plain = stripper.push(text);
+      if (plain) appendProcessOutput(entry, plain);
       onOutput?.(text);
     };
     // 两条管道可能交错且都拆开 UTF-8 多字节字符，必须独立解码，不能逐块 toString。
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
-    const stdout = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk));
-    const stderr = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stderrDecoder.write(chunk));
+    const stdoutAnsi = new AnsiStreamStripper(), stderrAnsi = new AnsiStreamStripper();
+    const stdout = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk), stdoutAnsi);
+    const stderr = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stderrDecoder.write(chunk), stderrAnsi);
     child.stdout!.on("data", stdout);
     child.stderr!.on("data", stderr);
     // 子进程可在继续运行时关闭 stdin；Writable 的 error 不会转发到 ChildProcess。
     const onInputError = (error: Error) => { entry.inputError = error; };
     child.stdin!.on('error', onInputError);
     const onError = (error: Error) => {
-      output(error.message);
+      output(error.message, stderrAnsi);
       entry.exitCode = -1;
     };
     child.once("error", onError);
     child.once("close", (code) => {
-      output(stdoutDecoder.end());
-      output(stderrDecoder.end());
+      output(stdoutDecoder.end(), stdoutAnsi);
+      output(stderrDecoder.end(), stderrAnsi);
+      for (const rest of [stdoutAnsi.flush(), stderrAnsi.flush()]) if (rest) appendProcessOutput(entry, rest);
       entry.exitCode = code ?? entry.exitCode;
       entry.running = false;
       child.stdout?.off('data', stdout);

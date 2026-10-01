@@ -12,6 +12,7 @@ import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
 import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../workspace/processes';
 import { getActualLanguage, t } from '../../../../backend/i18n';
+import { AnsiStreamStripper } from '../../../../shared/ansi';
 
 interface TerminalRecord {
   id: string; actorId: string; conversationId: string; runId: string; workspaceId: string;
@@ -78,11 +79,14 @@ export class PlatformTerminals {
     if (context.nativeAsync && args.background === true && context.toolCallId) record.nativeCallId = context.toolCallId;
     const tasks = new TerminalTaskPort(event => this.queue(record, event));
     const runner = this.runtime(config, tasks, context.workspace.directory);
+    // terminal_task read 把缓冲交给模型，去掉颜色序列；stdout/stderr 各自保留未完成的序列尾部。
+    const strippers = { output: new AnsiStreamStripper(), error: new AnsiStreamStripper() };
     const unsubscribe = runner.onTerminalOutput(event => {
       this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'terminalOutput',
         data: { ...event, toolId: context.toolCallId, conversationId: context.conversationId } } });
       if (event.data && (event.type === 'output' || event.type === 'error')) {
-        appendProcessOutput(record.outputBuffer!, event.data);
+        const text = strippers[event.type].push(event.data);
+        if (text) appendProcessOutput(record.outputBuffer!, text);
         record.updatedAt = Date.now();
         const active = this.active.get(id);
         if (active && !active.outputSave) {
@@ -92,6 +96,9 @@ export class PlatformTerminals {
           }, 1000);
           active.outputSave.unref();
         }
+      }
+      if (event.type === 'exit') for (const stripper of Object.values(strippers)) {
+        const rest = stripper.flush(); if (rest) appendProcessOutput(record.outputBuffer!, rest);
       }
       if (event.data) context.progress({ terminalId: id, text: event.data });
     });

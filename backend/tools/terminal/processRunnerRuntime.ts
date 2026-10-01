@@ -365,6 +365,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                     let finalCommand = shellConfig.prependCommand
                         ? `${shellConfig.prependCommand} ${command}`
                         : command;
+                    if (shellConfig.appendCommand) finalCommand += shellConfig.appendCommand;
 
                     // CMD /s /c：不再预先用双引号包裹整条命令。
                     // cmd /s 只在命令行恰好为两个引号时剥离最外层；命令内再含引号

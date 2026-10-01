@@ -19,6 +19,17 @@ export interface createShellRuntimeHost { getConfig(): ExecuteCommandToolConfig 
 /** 注入宿主服务；进程、解码状态和事件均归属于当前实例。 */
 export function createShellRuntime(host: createShellRuntimeHost) {
 
+/**
+ * PowerShell 前置：统一 UTF-8；PowerShell 7 的 $PSStyle 存在时关闭 ANSI 渲染（Windows PowerShell 5.1 没有该变量，条件为假直接跳过）。
+ * 清空 $Error 让尾部诊断只报告本次命令产生的错误。
+ */
+const POWERSHELL_PREPEND = '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; if ($PSStyle) { $PSStyle.OutputRendering = \'PlainText\' }; $Error.Clear();';
+/**
+ * PowerShell 尾部诊断：命令最后一条语句失败时（如 -ErrorAction SilentlyContinue 或 2>$null 吞掉了错误流），
+ * 退出码只剩 1 而输出为空。这里把最近一条错误记录写到 stderr，退出码保持 PowerShell 原有的 1。
+ * 以换行开头，避免用户命令末尾的注释吞掉这段代码；用户命令自行 exit 时不会执行到这里。
+ */
+const POWERSHELL_APPEND = '\nif (-not $?) { if ($Error.Count -gt 0) { [Console]::Error.WriteLine(\'[GrayCode] Last PowerShell error: \' + $Error[0].ToString()) } elseif ($LASTEXITCODE) { [Console]::Error.WriteLine(\'[GrayCode] Last native exit code: \' + $LASTEXITCODE) }; exit 1 }';
 
 
 /**
@@ -69,6 +80,7 @@ function getShellConfig(shellType: ShellType): {
     shell: string;
     shellArgs?: string[];
     prependCommand?: string;  // 在命令前添加的命令（用于设置编码等）
+    appendCommand?: string;   // 在命令后追加的诊断代码（自带分隔符）
 } {
     const platform = os.platform();
     const config = host.getConfig();
@@ -92,7 +104,8 @@ function getShellConfig(shellType: ShellType): {
                 return {
                     shell: resolveWindowsShellExecutable('powershell', customPath),
                     shellArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command'],
-                    prependCommand: '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8;'
+                    prependCommand: POWERSHELL_PREPEND,
+                    appendCommand: POWERSHELL_APPEND
                 };
             }
             return { shell: customPath || 'pwsh', shellArgs: ['-NoProfile', '-Command'] };
@@ -130,7 +143,8 @@ function getShellConfig(shellType: ShellType): {
                 return {
                     shell: resolveWindowsShellExecutable('powershell'),
                     shellArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command'],
-                    prependCommand: '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8;'
+                    prependCommand: POWERSHELL_PREPEND,
+                    appendCommand: POWERSHELL_APPEND
                 };
             }
             return { shell: customPath || '/bin/zsh', shellArgs: ['-c'] };
@@ -162,7 +176,8 @@ function getShellConfig(shellType: ShellType): {
                 return {
                     shell: resolveWindowsShellExecutable('powershell'),
                     shellArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command'],
-                    prependCommand: '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8;'
+                    prependCommand: POWERSHELL_PREPEND,
+                    appendCommand: POWERSHELL_APPEND
                 };
             }
             return { shell: '/bin/sh', shellArgs: ['-c'] };
