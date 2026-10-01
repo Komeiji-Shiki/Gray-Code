@@ -39,6 +39,7 @@ const focused = (element: Record<string, unknown>) => element.focused === true |
             <div v-if="controller.actorId"><dt>{{ t('components.tools.automation.controller') }}</dt><dd>{{ text(controller.actorId) }}<div class="automation-code">{{ text(controller.runId || controller.clientId) }}</div></dd></div>
             <div v-if="strings(controller.windowIds).length"><dt>{{ toolFieldLabel('windows') }}</dt><dd class="automation-code">{{ strings(controller.windowIds).join(' · ') }}</dd></div>
           </dl>
+          <p v-if="data.notice" class="automation-notice computer-notice">{{ text(data.notice) }}</p>
           <p v-if="data.pausedRunId" class="automation-notice">{{ t('components.tools.automation.userControlled') }} · <code>{{ text(data.pausedRunId) }}</code></p>
           <p v-if="data.error" class="automation-notice automation-error" role="alert">{{ text(data.error) }}</p>
         </section>
@@ -59,6 +60,7 @@ const focused = (element: Record<string, unknown>) => element.focused === true |
         <section v-if="displays.length" class="automation-section computer-displays"><div class="automation-section-title"><h4>{{ t('components.tools.automation.displays') }}</h4><span class="automation-count">{{ displays.length }}</span></div><ul class="automation-list"><li v-for="display in displays" :key="text(display.id)"><div class="automation-item-head"><code class="automation-code">{{ text(display.id) }}</code><span v-if="display.primary === true" class="automation-badge">{{ t('components.tools.automation.primaryDisplay') }}</span></div><div class="automation-meta"><span>{{ dimensions(display.bounds) }} px</span><span v-if="numeric(display.scaleFactor) !== undefined">× {{ display.scaleFactor }}</span></div></li></ul></section>
 
         <VisualObservation :value="observation" />
+        <p v-if="observation.notice" class="automation-notice computer-notice">{{ text(observation.notice) }}</p>
         <p v-if="observation.focusedElementId" class="automation-meta">{{ t('components.tools.automation.focusedElement') }} <code>{{ text(observation.focusedElementId) }}</code></p>
         <div v-if="observation.accessibilityError" class="automation-notice automation-error" role="alert"><strong>{{ t('components.tools.automation.accessibilityUnavailable') }}</strong><div>{{ text(observation.accessibilityError) }}</div></div>
         <section v-if="Array.isArray(observation.elements)" class="automation-section computer-elements">

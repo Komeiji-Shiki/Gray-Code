@@ -16,6 +16,8 @@ class NativeFixture implements ComputerNativePort {
   failure?: ComputerError;
   captureFailure?: ComputerError;
   acquisition?: () => Promise<void>;
+  owned: Record<string, string[]> = {};
+  targets: string[] = [];
   window: ComputerWindow = { id: '98', title: '验收编辑器', className: 'Fixture', processId: 4567, processStartedAt: '2026-09-13T00:00:00Z',
     executable: 'fixture-editor', monitorId: 'left-display', dpi: 144, minimized: false, foreground: true,
     bounds: { x: -1600, y: 100, width: 900, height: 600 }, captureBounds: { x: -1600, y: 100, width: 900, height: 600 } };
@@ -25,7 +27,18 @@ class NativeFixture implements ComputerNativePort {
     if (method === 'windows') return { capturedAt: Date.now(), windows: [this.window], displays: [], coordinateSystem: 'physical-screen-pixels' } as T;
     if (method === 'acquire') {
       await this.acquisition?.();
-      this.state = { active: true, owner: args.owner, leaseId: randomUUID(), reason: 'acquired', generation: this.state.generation + 1 }; this.emit(); return this.state as T;
+      // 与宿主一致：隐藏宿主窗口会带上名下的可见窗口，replace/add 只在同一租约仍有效时修改范围。
+      const expand = (ids: string[]) => ids.flatMap(id => [id, ...(this.owned[id] ?? [])]);
+      const target = (id: string) => ({ id, title: id === this.window.id ? this.window.title : `窗口 ${id}`, className: 'Fixture', processId: this.window.processId, ownerId: this.owned[id] ? '0' : Object.keys(this.owned).find(owner => this.owned[owner].includes(id)) ?? '0' });
+      const notice = (args.windowIds as string[]).some(id => this.owned[id]) ? '已一并纳入可见窗口' : null;
+      if (args.mode) {
+        if (!this.state.active || args.leaseId !== this.state.leaseId) throw new ComputerError('CONTROL_RELEASED', '控制权已停止或被用户接管');
+        this.targets = [...new Set([...(args.mode === 'add' ? this.targets : []), ...expand(args.windowIds)])];
+        return { ...this.state, targets: this.targets.map(target), notice } as T;
+      }
+      this.targets = [...new Set(expand(args.windowIds))];
+      this.state = { active: true, owner: args.owner, leaseId: randomUUID(), reason: 'acquired', generation: this.state.generation + 1 }; this.emit();
+      return { ...this.state, targets: this.targets.map(target), notice } as T;
     }
     if (method === 'observe') {
       const id = randomUUID();
@@ -196,6 +209,55 @@ describe('电脑控制的核心运行与授权', () => {
     expect(action).toMatchObject({ success: true, data: { performed: true, x: -1150, y: 400 } });
     const detailed = await app.computer.tool('computer_observe', { windowId: '98', compact: false }, context);
     expect((detailed.data as any).elements[0].runtimeId).toBe('fixture-field');
+  });
+
+  test('模型可直接替换或追加控制目标，隐藏宿主窗口带上可见窗口，人工接管后仍不能重新取得', async () => {
+    native.owned = { '50': ['51'] };
+    const context = { actorId: 'owner', runId: 'retarget', signal: new AbortController().signal } as any;
+    const first = await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'] }, context);
+    expect(first).toMatchObject({ success: true, data: { active: true, controller: { windowIds: ['98'] } } }); expect(first.data).not.toHaveProperty('notice');
+    const lease = native.state.leaseId;
+    const replaced = await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['50'] }, context);
+    expect(replaced).toMatchObject({ success: true, data: { active: true, controller: { windowIds: ['50', '51'] }, notice: '已一并纳入可见窗口' } });
+    expect((replaced.data as any).targets).toEqual([expect.objectContaining({ id: '50' }), expect.objectContaining({ id: '51', ownerId: '50' })]);
+    expect((replaced.data as any).targets[0]).not.toHaveProperty('ownerId'); expect(native.state.leaseId).toBe(lease);
+    const added = await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'], mode: 'add' }, context);
+    expect((added.data as any).controller.windowIds).toEqual(['50', '51', '98']);
+    // 未指定 mode 的调用（界面和执行节点）保持严格语义。
+    const identity = { actorId: 'owner', runId: 'retarget', signal: context.signal };
+    await expect(app.computer.acquire(identity, ['50', '98'])).resolves.toMatchObject({ active: true });
+    await expect(app.computer.acquire(identity, ['99'])).rejects.toMatchObject({ code: 'TARGET_CHANGED', message: expect.stringContaining('mode=replace') });
+    await native.stop('user_input');
+    expect(await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'] }, context)).toMatchObject({ success: false, code: 'USER_TAKEOVER' });
+    expect(native.state.active).toBe(false);
+  });
+
+  test('修改控制范围时租约已失效，不会变成重新取得控制权', async () => {
+    const context = { actorId: 'owner', runId: 'stale-lease', signal: new AbortController().signal } as any;
+    await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'] }, context);
+    native.state = { ...native.state, leaseId: 'replaced-by-another-session' };
+    expect(await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['99'] }, context)).toMatchObject({ success: false, code: 'CONTROL_RELEASED' });
+    expect(native.state.leaseId).toBe('replaced-by-another-session');
+  });
+
+  test('观察在持有控制权时把租约交给宿主采集，并说明重定向和前台切换', async () => {
+    native.window = { ...native.window, foreground: false };
+    const request = native.request.bind(native);
+    const spy = jest.spyOn(native, 'request').mockImplementation(async (method, args) => {
+      const value: any = await request(method, args);
+      if (method === 'observe') Object.assign(value, { redirectedFrom: '50', notice: '已改为观察可见窗口 98。', accessibilityError: null });
+      if (method === 'capture') Object.assign(value, args?.leaseId ? { method: 'visible-screen-region', notice: '已切到前台后截图。' } : { method: 'print-window', notice: null });
+      return value;
+    });
+    const context = { actorId: 'owner', runId: 'background-capture', signal: new AbortController().signal } as any;
+    const background = (await app.computer.tool('computer_observe', { windowId: '50' }, context)).data as any;
+    expect(spy).toHaveBeenCalledWith('capture', expect.not.objectContaining({ leaseId: expect.anything() }), context.signal);
+    expect(background).toMatchObject({ redirectedFrom: '50', notice: '已改为观察可见窗口 98。', window: { id: '98', foreground: false }, screenshot: { method: 'print-window' } });
+    expect(background).not.toHaveProperty('accessibilityError'); expect(background.screenshot).not.toHaveProperty('notice');
+    await app.computer.tool('computer_control', { action: 'acquire', windowIds: ['98'] }, context);
+    const focused = (await app.computer.tool('computer_observe', { windowId: '98' }, context)).data as any;
+    expect(spy).toHaveBeenCalledWith('capture', expect.objectContaining({ leaseId: native.state.leaseId }), context.signal);
+    expect(focused).toMatchObject({ notice: '已改为观察可见窗口 98。 已切到前台后截图。', window: { foreground: true }, screenshot: { method: 'visible-screen-region' } });
   });
 
   test('人工接管后模型不能自行恢复，取消和晚到的控制权响应不能继续操作', async () => {

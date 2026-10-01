@@ -37,6 +37,10 @@ namespace GrayCode.ComputerHost {
     [DllImport("user32.dll")] internal static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32.dll")] internal static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] internal static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
+    [DllImport("user32.dll")] internal static extern bool BringWindowToTop(IntPtr window);
+    [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint attach, uint attachTo, bool value);
+    [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")] internal static extern bool SetProcessDpiAwarenessContext(IntPtr context);

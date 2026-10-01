@@ -15,12 +15,17 @@ export interface ComputerElement {
 export interface ComputerCapture extends ScreenshotMetadata {
   capturedAt: number; windowId: string; monitorId: string; dpi: number; bounds: ComputerRect;
   data: string;
-  method?: 'window' | 'visible-screen-region';
+  /** print-window 由窗口自行绘制，可用于不在前台的窗口。 */
+  method?: 'window' | 'visible-screen-region' | 'print-window';
+  /** 采集过程中值得告诉调用方的情况，例如为截图切换了前台窗口。 */
+  notice?: string | null;
 }
 export interface ComputerDisplayCapture extends Omit<ComputerCapture, 'windowId' | 'method'> { method: 'display' }
 export interface ComputerObservation extends VisualObservation {
   window: ComputerWindow; elements: ComputerElement[];
   focusedElementId?: string; truncated: boolean; accessibilityError?: string; screenshot?: ComputerCapture;
+  /** 请求的窗口不可见时，实际观察的是它名下的可见窗口；这里记录原始窗口 ID。 */
+  redirectedFrom?: string | null; notice?: string | null;
 }
 export interface ComputerObserveInput {
   windowId: string; screenshot?: boolean; maxElements?: number; maxDepth?: number;
@@ -42,7 +47,11 @@ export interface ComputerStatus {
   available: boolean; screenshotAvailable: boolean; platform: string; active: boolean; reason: string; error?: string;
   stopShortcut: string; stopShortcutRegistered?: boolean; controller?: ComputerController;
   pausedRunId?: string; host?: { pid: number; executable: string; startedAt: number };
+  /** 取得控制权时实际纳入的窗口及说明，例如隐藏宿主窗口名下的可见窗口。 */
+  targets?: ComputerControlTarget[]; notice?: string;
 }
+export interface ComputerControlTarget { id: string; title: string; className: string; processId: number; ownerId?: string }
+export type ComputerAcquireMode = 'replace' | 'add';
 export interface ComputerOperation {
   id: string; actorId: string; runId?: string; clientId?: string; requestedAt: number; finishedAt?: number;
   action: ComputerActionName; window: ComputerWindow; observationId: string;

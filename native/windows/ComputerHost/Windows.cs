@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace GrayCode.ComputerHost {
   internal sealed class WindowIdentity {
@@ -28,6 +29,32 @@ namespace GrayCode.ComputerHost {
       } finally {Win32.CloseDesktop(desktop);}
     }
     internal static bool SameRoot(IntPtr actual,IntPtr target) { return actual==target||Win32.GetAncestor(actual,2)==target; }
+    // 隐藏、被系统遮蔽或没有尺寸的窗口没有可供观察的画面。
+    internal static bool Displayable(IntPtr window) {
+      if(!Win32.IsWindowVisible(window))return false;
+      int cloaked;if(Win32.DwmGetWindowAttribute(window,14,out cloaked,sizeof(int))==0&&cloaked!=0)return false;
+      Win32.Rect bounds;return Win32.GetWindowRect(window,out bounds)&&bounds.Right>bounds.Left&&bounds.Bottom>bounds.Top;
+    }
+    // 游戏和 Delphi 程序常用隐藏的宿主窗口拥有真正显示画面的窗口，按面积从大到小返回。
+    internal static List<IntPtr> VisibleOwned(IntPtr owner) {
+      var result=new List<IntPtr>();
+      Win32.EnumWindows(delegate(IntPtr window,IntPtr ignored) {if(Win32.GetWindow(window,4)==owner&&Displayable(window))result.Add(window);return true;},IntPtr.Zero);
+      result.Sort(delegate(IntPtr left,IntPtr right){return Area(right).CompareTo(Area(left));});
+      return result;
+    }
+    // 宿主是后台进程，系统的前台锁常会拒绝直接切换；临时共享当前前台线程的输入状态再试一次，不模拟任何按键。
+    internal static bool BringToFront(IntPtr window) {
+      if(Win32.SetForegroundWindow(window)&&WaitForeground(window,300))return true;
+      uint ignored;var foregroundThread=Win32.GetWindowThreadProcessId(Win32.GetForegroundWindow(),out ignored);var current=Win32.GetCurrentThreadId();
+      var attached=foregroundThread!=0&&foregroundThread!=current&&Win32.AttachThreadInput(current,foregroundThread,true);
+      try {Win32.BringWindowToTop(window);Win32.SetForegroundWindow(window);}
+      finally {if(attached)Win32.AttachThreadInput(current,foregroundThread,false);}
+      return WaitForeground(window,600);
+    }
+    private static bool WaitForeground(IntPtr window,int timeout) {
+      for(var waited=0;;waited+=50){if(SameRoot(Win32.GetForegroundWindow(),window))return true;if(waited>=timeout)return false;Thread.Sleep(50);}
+    }
+    private static long Area(IntPtr window) { Win32.Rect bounds;return Win32.GetWindowRect(window,out bounds)?(long)(bounds.Right-bounds.Left)*(bounds.Bottom-bounds.Top):0; }
     internal static WindowIdentity Describe(IntPtr window,bool detailed) {
       if(!Win32.IsWindow(window))throw new ComputerException("WINDOW_NOT_FOUND","窗口已经关闭。");
       Win32.Rect bounds;if(!Win32.GetWindowRect(window,out bounds))throw new ComputerException("WINDOW_NOT_FOUND","无法读取窗口边界。");
@@ -71,7 +98,7 @@ namespace GrayCode.ComputerHost {
       if(current.processId!=observed.processId||current.processStartedAt!=observed.processStartedAt||current.className!=observed.className||current.title!=observed.title||current.dpi!=observed.dpi||current.monitorId!=observed.monitorId||!Json.Same(current.NativeBounds,observed.NativeBounds)||!Json.Same(current.FrameBounds,observed.FrameBounds))
         throw new ComputerException("OBSERVATION_STALE","窗口身份、位置或尺寸已经变化，请重新观察。");
       if(current.minimized&&!allowMinimized)throw new ComputerException("WINDOW_MINIMIZED","窗口已最小化，请先恢复并重新观察。");
-      if(foreground&&!current.foreground)throw new ComputerException("FOCUS_CHANGED","目标窗口没有前台焦点，请先聚焦并重新观察。");
+      if(foreground&&!current.foreground)throw new ComputerException("FOCUS_CHANGED","目标窗口没有前台焦点，请先用 focusWindow 切换到该窗口并重新观察。");
     }
   }
 }

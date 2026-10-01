@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { authorizeEffects, type ToolContext } from '@graycode/core';
-import type { ComputerAction, ComputerCapture, ComputerDisplayCapture, ComputerObservation, ComputerObserveInput, ComputerOperation, ComputerStatus, ComputerController, ComputerWindows, ToolOutcome } from '@graycode/contracts';
+import type { ComputerAcquireMode, ComputerAction, ComputerCapture, ComputerControlTarget, ComputerDisplayCapture, ComputerObservation, ComputerObserveInput, ComputerOperation, ComputerStatus, ComputerController, ComputerWindows, ToolOutcome } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { WindowsComputerNative } from './native';
@@ -12,12 +12,19 @@ type SavedOperation = ComputerOperation & { fingerprint: string };
 const namespace = 'computer-actions';
 const keyOf = (identity: Identity) => JSON.stringify([identity.actorId, identity.runId ? 'run' : 'client', identity.runId ?? identity.clientId]);
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+const sameSet = (left: string[], right: string[]) => JSON.stringify([...new Set(left)].sort()) === JSON.stringify([...new Set(right)].sort());
+/** 宿主把空字段写成 null，这里按契约去掉，避免模型和界面看到无意义的空值。 */
+const withoutNulls = <T extends object>(value: T, keys: string[]) => { for (const key of keys) if ((value as any)[key] === null) delete (value as any)[key]; return value; };
+const targetsOf = (status: NativeComputerStatus): ComputerControlTarget[] | undefined => status.targets?.map(target => ({ id: target.id, title: target.title, className: target.className, processId: target.processId,
+  ...(target.ownerId && target.ownerId !== '0' ? { ownerId: target.ownerId } : {}) }));
 
 export class ComputerService {
   private readonly native: ComputerNativePort;
   private state: NativeComputerStatus = { active: false, reason: 'idle', generation: 0 };
   private controller?: ComputerController;
   private controllerKey?: string;
+  /** 调用方实际请求的窗口；controller.windowIds 还包含宿主自动纳入的可见窗口。 */
+  private requestedWindowIds: string[] = [];
   private pausedRunId?: string;
   private readonly paused = new Set<string>();
   private readonly observations = new Map<string, { key: string; value: ComputerObservation }>();
@@ -41,7 +48,7 @@ export class ComputerService {
   }
   private changed() { this.app.publish({ type: 'computer.changed' }); }
   private clearControl() {
-    this.controller = undefined; this.controllerKey = undefined; this.abortCleanup?.(); this.abortCleanup = undefined;
+    this.controller = undefined; this.controllerKey = undefined; this.requestedWindowIds = []; this.abortCleanup?.(); this.abortCleanup = undefined;
     this.observations.clear(); this.stopEpoch++;
   }
   private authorize(actorId: string) {
@@ -75,8 +82,9 @@ export class ComputerService {
   async observe(identity: Identity, params: ComputerObserveInput) {
     return this.serialized(identity, async () => {
       const epoch = this.stopEpoch;
-      const value = await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.frameOnly ? 1 : params.maxElements ?? 250,
-        maxDepth: params.frameOnly ? 1 : params.maxDepth ?? 14, includeCommandLine: !params.frameOnly, includeElements: !params.frameOnly }, identity.signal);
+      const value = withoutNulls(await this.native.request<ComputerObservation>('observe', { windowId: params.windowId, maxElements: params.frameOnly ? 1 : params.maxElements ?? 250,
+        maxDepth: params.frameOnly ? 1 : params.maxDepth ?? 14, includeCommandLine: !params.frameOnly, includeElements: !params.frameOnly }, identity.signal),
+        ['redirectedFrom', 'notice', 'accessibilityError', 'focusedElementId']);
       if (params.expectedProcess && (value.window.processId !== params.expectedProcess.processId || value.window.processStartedAt !== params.expectedProcess.processStartedAt || value.window.className !== params.expectedProcess.className)) throw new ComputerError('WINDOW_CHANGED', '所选窗口已不属于原进程，请重新选择。');
       if (params.screenshot) {
         const size = { width: Math.max(320, Math.min(2560, params.width ?? 1600)), height: Math.max(240, Math.min(2160, params.height ?? 1200)), format: params.format, quality: params.quality };
@@ -86,7 +94,12 @@ export class ComputerService {
           value.screenshot = await this.screen.capture(value, size);
         } catch (error) {
           if (params.windowOnly || (error as ComputerError).code !== 'CAPTURE_UNAVAILABLE') throw error;
-          value.screenshot = await this.native.request<ComputerCapture>('capture', { observationId: value.id, ...size }, identity.signal);
+          // 本任务持有控制权时，后台截图拿不到画面可以切到前台采集一次；宿主仍会核实租约和窗口范围。
+          const leaseId = this.state.active && this.controllerKey === keyOf(identity) ? this.state.leaseId : undefined;
+          const capture = withoutNulls(await this.native.request<ComputerCapture>('capture', { observationId: value.id, ...size, ...(leaseId ? { leaseId } : {}) }, identity.signal), ['notice']);
+          if (capture.method === 'visible-screen-region') value.window.foreground = true;
+          if (capture.notice) { value.notice = value.notice ? `${value.notice} ${capture.notice}` : capture.notice; delete capture.notice; }
+          value.screenshot = capture;
         }
         await this.native.request('validate', { observationId: value.id }, identity.signal);
       }
@@ -97,29 +110,42 @@ export class ComputerService {
       return value;
     });
   }
-  async acquire(identity: Identity, windowIds: string[]) {
+  /** mode 为 replace/add 时在仍然有效的控制权上替换或追加窗口；人工接管后仍由 serialized 拒绝，不会借此重新取得。 */
+  async acquire(identity: Identity, windowIds: string[], mode?: ComputerAcquireMode) {
     return this.serialized(identity, async () => {
       const key = keyOf(identity), epoch = this.stopEpoch;
       if (!windowIds.length || windowIds.length > 16 || windowIds.some(id => !/^\d+$/.test(id))) throw new ComputerError('TARGET_REQUIRED', '请选择 1 至 16 个实际窗口。');
       if (this.controllerKey && this.controllerKey !== key) throw new ComputerError('CONTROL_BUSY', '另一任务正在控制电脑，请先停止或接管。');
       if (this.controller) {
-        if (JSON.stringify([...windowIds].sort()) !== JSON.stringify([...this.controller.windowIds].sort())) throw new ComputerError('TARGET_CHANGED', '修改控制窗口范围前，请先释放当前控制权。');
-        return this.status(identity.actorId);
+        const same = sameSet(windowIds, this.requestedWindowIds);
+        if (!mode && !same) throw new ComputerError('TARGET_CHANGED', '修改控制窗口范围前，请先释放当前控制权，或指定 mode=replace 替换、mode=add 追加。');
+        if (!mode) return this.status(identity.actorId);
+        if (!this.state.active || !this.state.leaseId) throw new ComputerError('CONTROL_REQUIRED', '当前没有有效的控制权，请重新取得。');
+        const result = await this.native.request<NativeComputerStatus>('acquire', { owner: key, windowIds, mode, leaseId: this.state.leaseId }, identity.signal);
+        if (!result.active || result.leaseId !== this.state.leaseId || epoch !== this.stopEpoch || this.controllerKey !== key)
+          throw new ComputerError('CONTROL_CHANGED', '修改控制范围期间控制状态已经变化，请重新确认当前状态。');
+        this.requestedWindowIds = mode === 'add' ? [...new Set([...this.requestedWindowIds, ...windowIds])] : [...windowIds];
+        const targets = targetsOf(result);
+        this.controller!.windowIds = targets?.map(target => target.id) ?? [...this.requestedWindowIds];
+        this.state = result; this.changed();
+        return { ...this.status(identity.actorId), ...(targets ? { targets } : {}), ...(result.notice ? { notice: result.notice } : {}) };
       }
       this.controller = { actorId: identity.actorId, runId: identity.runId, clientId: identity.clientId, windowIds: [...windowIds], acquiredAt: Date.now() };
-      this.controllerKey = key;
+      this.controllerKey = key; this.requestedWindowIds = [...windowIds];
       try {
         const result = await this.native.request<NativeComputerStatus>('acquire', { owner: key, windowIds }, identity.signal);
         if (!result.active || epoch !== this.stopEpoch || identity.signal?.aborted) {
           await this.native.stop('control_changed'); throw new ComputerError('CONTROL_CHANGED', '取得控制权期间已经停止，请重新确认当前状态。');
         }
         this.state = result;
+        const targets = targetsOf(result);
+        if (targets?.length) this.controller.windowIds = targets.map(target => target.id);
         const abort = () => {
           // 已取得控制权的归属由本服务核实；账号撤销后仍必须能释放输入。
           if (this.controllerKey === key) void this.stopOwned('run_cancelled').catch(error => this.app.publish({ type: 'notification', message: String(error) }));
         };
         identity.signal?.addEventListener('abort', abort, { once: true }); this.abortCleanup = () => identity.signal?.removeEventListener('abort', abort);
-        this.changed(); return this.status(identity.actorId);
+        this.changed(); return { ...this.status(identity.actorId), ...(targets ? { targets } : {}), ...(result.notice ? { notice: result.notice } : {}) };
       } catch (error) { if (this.controllerKey === key) this.clearControl(); throw error; }
     });
   }
@@ -243,7 +269,8 @@ export class ComputerService {
         return { success: true, data: observationForModel(value, args.compact !== false),
           ...(capture ? { attachments: [{ mimeType: capture.mimeType, data: capture.data, name: '窗口截图.png' }] } : {}) };
       }
-      if (name === 'computer_control') return { success: true, data: args.action === 'acquire' ? await this.acquire(identity, args.windowIds ?? [])
+      // 模型再次 acquire 通常是想换目标，默认替换；界面和执行节点的 RPC 保持原来的严格语义。
+      if (name === 'computer_control') return { success: true, data: args.action === 'acquire' ? await this.acquire(identity, args.windowIds ?? [], args.mode === 'add' ? 'add' : 'replace')
         : args.action === 'status' ? this.status(identity.actorId) : await this.stop(identity.actorId, 'released', identity) };
       const result = await this.action(identity, args as ComputerAction, `${context.iteration}:${context.toolCallId}`);
       try {

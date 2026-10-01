@@ -38,7 +38,7 @@ namespace GrayCode.ComputerHost {
       DesktopWindows.Verify(observation.window,action!="focusWindow",action=="focusWindow");control.Check(generation);
       if(action=="focusWindow") {
         if(Win32.IsIconic(window))Win32.ShowWindow(window,9);
-        if(!Win32.SetForegroundWindow(window))throw new ComputerException("FOCUS_REJECTED","系统没有把焦点交给目标窗口，请由用户切换后重新观察。");
+        if(!DesktopWindows.BringToFront(window))throw new ComputerException("FOCUS_REJECTED","系统没有把焦点交给目标窗口，请由用户切换后重新观察。");
         return new {performed=true,method="win32",action=action};
       }
       ElementRecord element=null;var elementId=Json.Text(args,"elementId");
