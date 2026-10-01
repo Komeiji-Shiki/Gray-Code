@@ -181,9 +181,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             || config.providerReasoningContentEnabled === true
             || isDeepSeekModel(config.model));
         const input = this.convertToResponsesInput(processedHistory, {
-            // plain reasoning_text 回传不再按模型名门控：未设置即回传，只有渠道显式写下
-            // replayReasoningContent=false 时才停止回传（兼容不支持 reasoning 输入的端点）。
-            allowReasoningContent: config.replayReasoningContent !== false,
+            // 官方订阅端点不接受明文 reasoning.content，保留签名与摘要供下一轮恢复思考。
+            // API Key 兼容渠道继续沿用 replayReasoningContent，避免影响明文回传。
+            allowReasoningContent: config.authMode !== 'chatgpt' && config.replayReasoningContent !== false,
             // DeepSeek 不接受 encrypted_content/summary，该模式下不启用签名回传。
             allowReasoningSignatures: config.sendHistoryThoughtSignatures === true && !deepSeekSignatureCompat,
             reasoningSignatureMode,

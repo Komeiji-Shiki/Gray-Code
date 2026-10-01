@@ -207,7 +207,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(reasoningItem).not.toHaveProperty('content');
     });
 
-    test('Codex 反代兼容模式回传 encrypted_content 且所有 input 项省略 status', () => {
+    test.each(['api-key', 'chatgpt'] as const)('Codex 回传仅在官方订阅登录时省略明文思考（%s）', (authMode) => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -219,7 +219,8 @@ describe('OpenAI Responses reasoning 与 usage', () => {
                     openaiResponsesReasoning: {
                         id: 'rs_1',
                         status: 'completed',
-                        summary: [{ type: 'summary_text', text: 'Check the inputs' }]
+                        summary: [{ type: 'summary_text', text: 'Check the inputs' }],
+                        content: [{ type: 'reasoning_text', text: 'Check the inputs' }]
                     }
                 }, {
                     text: 'The answer is 42.',
@@ -232,8 +233,11 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         const request = formatter.buildRequest({ configId: 'responses-test', history }, createOpenAIResponsesConfig({
             id: 'responses-test',
             name: 'Responses Test',
+            authMode,
             reasoningSignatureMode: 'codex',
             preferStream: true,
+            sendHistoryThoughts: true,
+            replayReasoningContent: true,
             sendHistoryThoughtSignatures: true,
             options: {
                 stream: true,
@@ -250,16 +254,21 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             type: 'reasoning',
             id: 'rs_1',
             encrypted_content: 'encrypted-reasoning',
-            summary: [{ type: 'summary_text', text: 'Check the inputs' }]
+            summary: [{ type: 'summary_text', text: 'Check the inputs' }],
+            ...(authMode === 'api-key' ? {
+                content: [{ type: 'reasoning_text', text: 'Check the inputs' }]
+            } : {})
         });
         expect(reasoningItem).not.toHaveProperty('status');
-        expect(reasoningItem).not.toHaveProperty('content');
         expect(request.body.input.map((item: any) => item.type)).toEqual(['reasoning', 'message', 'message']);
         expect(request.body.input[1]).toEqual({
             type: 'message', role: 'assistant', id: 'msg_1', phase: 'commentary',
             content: [{ type: 'output_text', text: 'The answer is 42.' }]
         });
         expect(request.body.input.every((item: any) => !Object.prototype.hasOwnProperty.call(item, 'status'))).toBe(true);
+        expect(history[0].parts[0].openaiResponsesReasoning?.content).toEqual([
+            { type: 'reasoning_text', text: 'Check the inputs' }
+        ]);
         expect(history[0].parts[1].openaiResponsesMessage?.status).toBe('completed');
     });
 
