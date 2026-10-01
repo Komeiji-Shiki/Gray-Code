@@ -197,4 +197,20 @@ describe('search_in_files 续查', () => {
         expect(text).toContain('a.ts\n1- one\n2:1,7: hit x hit\n3- three\n4:1: hit\n5- five\n--\n7- seven\n8:1: hit');
         expect(text).not.toContain('"context"');
     });
+
+    test('显式 context 只覆盖本次搜索的上下文行数，越界值被拒绝', async () => {
+        const tool = fixture({ '/one/a.ts': 'one\ntwo\nthree\nhit\nfive\nsix\nseven' });
+        const none = serializeToolResultForLLM('search_in_files', await tool.handler({ query: 'hit', context: 0 }));
+        expect(none).toContain('a.ts\n4:1: hit');
+        expect(none).not.toContain('three');
+        const wide = serializeToolResultForLLM('search_in_files', await tool.handler({ query: 'hit', context: 3 }));
+        expect(wide).toContain('a.ts\n1- one\n2- two\n3- three\n4:1: hit\n5- five\n6- six\n7- seven');
+        const defaults = serializeToolResultForLLM('search_in_files', await tool.handler({ query: 'hit' }));
+        expect(defaults).toContain('3- three\n4:1: hit\n5- five');
+        expect(defaults).not.toContain('two');
+        for (const context of [-1, 11, 1.5, '2']) {
+            expect((await tool.handler({ query: 'hit', context })).error).toContain('context must be an integer');
+        }
+        expect(tool.declaration.parameters.properties?.context).toMatchObject({ minimum: 0, maximum: 10 });
+    });
 });

@@ -20,9 +20,13 @@ interface SearchInFilesArgs {
     caseSensitive?: boolean;
     maxResults?: number;
     offset?: number;
+    context?: number;
     replace?: string;
     maxFiles?: number;
 }
+
+/** 单次搜索可请求的上下文行数上限，与 find_references 的 context 参数一致。 */
+const MAX_CONTEXT_LINES = 10;
 export function createSearchDeclaration(host: SearchFileHost) {
 const {searchInDirectory,getSearchRootAndPattern,getSearchInFilesConfig,getExcludePattern,splitWhitespaceFallbackKeywords,createFallbackKeywordRegex}=createSearchPass(host);
 const {searchAndReplaceInDirectory,MAX_REPLACE_MATCHES}=createReplacePass(host);
@@ -157,6 +161,12 @@ function createSearchInFilesTool(): Tool {
                         description: isZh ? '[搜索模式] 最多返回的命中行数' : '[Search mode] Maximum number of matching lines to return',
                         default: 100
                     },
+                    context: {
+                        type: 'integer', minimum: 0, maximum: MAX_CONTEXT_LINES,
+                        description: isZh
+                            ? `[搜索模式] 每个命中前后显示的上下文行数（0-${MAX_CONTEXT_LINES}）。省略时使用搜索设置；0 只返回命中行。分页时保持不变。`
+                            : `[Search mode] Context lines before and after each match (0-${MAX_CONTEXT_LINES}). Omit to use search settings; 0 returns matching lines only. Keep unchanged while paging.`
+                    },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
                         description: isZh
@@ -203,6 +213,9 @@ function createSearchInFilesTool(): Tool {
             }
             if (isReplaceMode && offset !== 0) {
                 return { success: false, error: 'offset is only supported in search mode; replacement is not paginated' };
+            }
+            if (typed.context !== undefined && (!Number.isInteger(typed.context) || typed.context < 0 || typed.context > MAX_CONTEXT_LINES)) {
+                return { success: false, error: `context must be an integer between 0 and ${MAX_CONTEXT_LINES}` };
             }
 
             // replace 模式下 replace 参数必须显式提供：漏传时替换串为空会静默删除所有匹配内容
@@ -262,8 +275,11 @@ function createSearchInFilesTool(): Tool {
                 const searchRegex = guardedRegex.regex;
                 if (isRegex) computation = new TextSearchWorker({ signal: context?.abortSignal });
                 
-                // 获取配置与排除模式
-                const searchConfig = getSearchInFilesConfig();
+                // 获取配置与排除模式；显式 context 只覆盖本次搜索的上下文行数，替换模式不返回上下文。
+                const configured = getSearchInFilesConfig();
+                const searchConfig = !isReplaceMode && typed.context !== undefined
+                    ? { ...configured, contextLinesBefore: typed.context, contextLinesAfter: typed.context }
+                    : configured;
                 const excludePattern = includeIgnored ? '**/.git/**' : getExcludePattern(searchConfig);
                 
                 // 解析路径，确定搜索范围
@@ -591,7 +607,7 @@ function createSearchInFilesTool(): Tool {
                         ? offset + allResults.length : undefined;
                     const continuationHint = [
                         ...(nextOffset !== undefined ? [`Continue with offset=${nextOffset} and unchanged search parameters; restart at offset=0 if files changed.`] : []),
-                        ...(searchPass.budgetTruncated ? ['Output budget omitted matches: narrow query/path/pattern or reduce context in search settings, then restart at offset=0.'] : [])
+                        ...(searchPass.budgetTruncated ? ['Output budget omitted matches: narrow query/path/pattern or pass a smaller context, then restart at offset=0.'] : [])
                     ].join(' ');
                     return {
                         success: true,
