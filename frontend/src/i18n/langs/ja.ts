@@ -375,6 +375,8 @@ const ja: LanguageMessages = {
                 sendNow: '今すぐ送信',
                 remove: '削除',
                 queued: 'キューに追加',
+                waitingForModel: 'モデルの受信待ち',
+                withdraw: '取り消す',
                 drag: 'ドラッグして並べ替え',
                 edit: '編集'
             },

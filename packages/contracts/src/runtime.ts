@@ -189,3 +189,11 @@ export interface QuestionRequest {
   expiresAt: number;
 }
 export interface QuestionFeedback { request: QuestionRequest; answers?: string[]; answeredBy?: string; timedOut: boolean }
+
+/** 尚未交给模型的用户插话；版本用于防止多窗口互相覆盖修改。 */
+export interface PendingUserInput {
+  id: string;
+  conversationId: string;
+  revision: number;
+  message: PlatformMessage;
+}

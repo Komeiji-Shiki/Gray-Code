@@ -228,7 +228,7 @@ describe('独立平台代理消息与原审批的运行边界', () => {
     expect(resolved).toHaveLength(1); expect(resolved[0].payload).toMatchObject({ approvalId: approval.id, cancelled: true });
   });
 
-  test('独立忙时输入持久化正文和截图，与代理反馈同边界交付但不消费审批，重复回执跨重启去重', async () => {
+  test('独立忙时输入可编辑撤回，与代理反馈同边界交付但不消费审批，重复回执跨重启去重', async () => {
     const root = await app.createConversation('owner', 'busy input with image'); const inputs: ModelInput[] = [];
     generate = async input => { inputs.push(input); return inputs.length === 1 ? { role: 'model', parts: [{ functionCall: sensitiveCall }] } : answer('answered newest user'); };
     const run = await start(root.id); const approval = await pending(run.id);
@@ -244,6 +244,21 @@ describe('独立平台代理消息与原审批的运行边界', () => {
     await expect(call('chat.sendInterruptMessage', { ...request, text: '不能改写已保存的输入' })).rejects.toThrow('改写');
     await expect(router.call({ actorId: 'unknown', clientId: 'unauthorized' }, 'ui.request', { type: 'chat.sendInterruptMessage', data: request })).rejects.toThrow();
     expect(app.runtime.pendingApprovals()).toEqual([approval]);
+    const queuedInputs = await call('chat.pendingUserInputs', { conversationId: root.id }) as Record<string, any>[];
+    expect(queuedInputs).toHaveLength(1);
+    expect(queuedInputs[0]).toMatchObject({ id: receipt.messageId, message: { parts: [{ inlineData: expect.any(Object) }, { text: request.text }] } });
+    const editedRequest = { ...request, text: '改为按修改后的截图回复', attachments: [{ ...request.attachments[0], data: 'bmV3LWltYWdl' }] };
+    await call('chat.updatePendingUserInput', { conversationId: root.id, id: receipt.messageId, revision: queuedInputs[0].revision,
+      text: editedRequest.text, attachments: editedRequest.attachments });
+    await expect(call('chat.updatePendingUserInput', { conversationId: root.id, id: receipt.messageId, revision: queuedInputs[0].revision,
+      text: '旧窗口不能覆盖修改', attachments: [] })).rejects.toThrow('其他窗口');
+    // 单独撤回另一条输入，确认持久队列和重复发送凭据均不会让它重新出现。
+    await app.storage.putRecord({ namespace: 'user-interrupt-rate', id: root.id, ownerId: root.id, value: { timestamp: 0 } });
+    const withdrawnRequest = { conversationId: root.id, messageId: 'withdraw-before-model', text: '这条补充需要撤回' };
+    const withdrawnReceipt = await call('chat.sendInterruptMessage', withdrawnRequest) as Record<string, any>;
+    const withdrawal = (await call('chat.pendingUserInputs', { conversationId: root.id }) as Record<string, any>[]).find(value => value.id === withdrawnReceipt.messageId)!;
+    await call('chat.withdrawPendingUserInput', { conversationId: root.id, id: withdrawal.id, revision: withdrawal.revision });
+    expect(await call('chat.sendInterruptMessage', withdrawnRequest)).toMatchObject({ success: false, error: { code: 'INTERRUPT_WITHDRAWN' } });
     expect((await app.storage.getRun(run.id))?.status).toBe('awaiting_approval');
     expect((await app.storage.historyInfo(root.id)).revision).toBe(revision);
     expect(await app.subagents.feedback.pendingIds(root.id)).toHaveLength(2);
@@ -256,17 +271,21 @@ describe('独立平台代理消息与原审批的运行边界', () => {
     expect(user).toMatchObject({ role: 'user', source: 'user', actorId: 'owner', isUserInput: true, runId: run.id, deepSeekVisionTileSplit: false });
     expect(user.agentMessage).toBeUndefined();
     // 沿普通消息构建器的既有顺序：附件在正文前；历史保留附件标识，模型投影去掉展示元数据。
-    expect(user.parts).toEqual([{ inlineData: { id: 'screenshot', name: 'screenshot.png', mimeType: 'image/png', data: 'iVBORw0KGgo=' } }, { text: request.text }]);
+    expect(user.parts).toEqual([{ inlineData: { id: 'screenshot', name: 'screenshot.png', mimeType: 'image/png', data: editedRequest.attachments[0].data } }, { text: editedRequest.text }]);
     expect(inputs[1].messages.find(message => message.id === receipt.messageId)?.parts).toEqual([
-      { inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } }, { text: request.text },
+      { inlineData: { mimeType: 'image/png', data: editedRequest.attachments[0].data } }, { text: editedRequest.text },
     ]);
     const resultIndex = history.findIndex(message => message.isFunctionResponse);
     expect(history.findIndex(message => message.id === 'agent-before-user')).toBeGreaterThan(resultIndex);
     expect(history.findIndex(message => message.id === receipt.messageId)).toBeGreaterThan(history.findIndex(message => message.id === 'agent-before-user'));
     expect(chunks(run.id).filter(chunk => chunk.type === 'userFeedback' && chunk.feedbackContent?.id === receipt.messageId)).toHaveLength(1);
+    expect(history.some(message => message.id === withdrawnReceipt.messageId)).toBe(false);
+    expect(await call('chat.pendingUserInputs', { conversationId: root.id })).toEqual([]);
+    await expect(call('chat.withdrawPendingUserInput', { conversationId: root.id, id: receipt.messageId, revision: queuedInputs[0].revision })).rejects.toThrow('已经交付');
     await idle(); await app.close();
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: input => generate(input) } }); router = new ApplicationRouter(app);
-    expect(await call('chat.sendInterruptMessage', request)).toEqual(receipt);
+    expect(await call('chat.sendInterruptMessage', editedRequest)).toEqual(receipt);
+    expect(await call('chat.sendInterruptMessage', withdrawnRequest)).toMatchObject({ success: false, error: { code: 'INTERRUPT_WITHDRAWN' } });
     expect(inputs).toHaveLength(2);
     expect((await app.storage.readFullHistory(root.id)).messages.filter(message => message.id === receipt.messageId)).toHaveLength(1);
   });

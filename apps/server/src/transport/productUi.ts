@@ -96,6 +96,7 @@ export class ProductUi {
     if (['chatgpt.status', 'chatgpt.complete', 'chatgpt.cancel', 'chatgpt.disconnect'].includes(type)) return this.invoke(client, type, data);
     // 总结由会话级控制器和提交版本约束，模型等待期间不能占住整个界面的交互队列。
     if (type === 'summarizeContext') return this.invoke(client, type, data);
+    if (['chat.pendingUserInputs', 'chat.updatePendingUserInput', 'chat.withdrawPendingUserInput'].includes(type)) return this.invoke(client, type, data);
     // 全局统计不依赖当前工作区，也不能占住此客户端的设置与交互队列。
     if (type === 'usage.getStats') return this.app.usage.stats(client.actorId, { startTime: data.startTime, endTime: data.endTime });
     if (type === 'platform.clawd.status' || type === 'platform.clawd.check') {

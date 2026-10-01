@@ -4,9 +4,64 @@ import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { chatUserMessage } from '../transport/chatInput';
 import { USER_INTERRUPT_MIN_INTERVAL_MS, AGENT_INBOX_MAX_MESSAGES } from '../../../../backend/core/services/agentMailbox';
+import type { PendingUserInput } from '@graycode/contracts';
+import type { PendingFeedback } from '../subagents/feedback';
+import { PUSH_MESSAGE_NAMES } from '../../../../shared/protocol';
 
 interface InterruptReceipt { success: true; queued: true; messageId: string; runId: string }
+interface SavedInterruptReceipt { fingerprint: string; receipt: InterruptReceipt; withdrawn?: boolean }
 const interruptQueues = new WeakMap<PlatformApplication, Map<string, Promise<unknown>>>();
+
+function inputFingerprint(message: PendingFeedback['message']): string {
+  return createHash('sha256').update(JSON.stringify({ parts: message.parts, deepSeekVisionTileSplit: message.deepSeekVisionTileSplit })).digest('hex');
+}
+
+function notifyPendingUserInputs(app: PlatformApplication, conversationId: string): void {
+  app.publish({ type: 'ui.message', message: { type: PUSH_MESSAGE_NAMES.command,
+    command: PUSH_MESSAGE_NAMES['chat.pendingUserInputsChanged'], data: { conversationId } } });
+}
+
+async function pendingUserInputs(app: PlatformApplication, client: ClientSession, conversationId: string): Promise<PendingUserInput[]> {
+  app.requireOwner(client.actorId); await app.conversation(client.actorId, conversationId);
+  return app.subagents.feedback.serialize(conversationId, async () => {
+    const values: Array<{ input: PendingUserInput; sequence: number }> = [];
+    for (const id of await app.subagents.feedback.pendingIds(conversationId)) {
+      const record = await app.storage.getVersionedRecord('subagent-feedback', id);
+      const value = record.value as PendingFeedback | null;
+      if (!value || value.actorId !== client.actorId || value.message.source !== 'user' || value.modelReceived) continue;
+      values.push({ input: { id, conversationId, revision: record.revision!, message: value.message }, sequence: value.sequence ?? 0 });
+    }
+    return values.sort((a, b) => a.sequence - b.sequence).map(value => value.input);
+  });
+}
+
+async function changePendingUserInput(app: PlatformApplication, client: ClientSession, data: Record<string, any>, withdraw: boolean) {
+  app.requireOwner(client.actorId); await app.conversation(client.actorId, data.conversationId);
+  if (typeof data.id !== 'string' || !Number.isSafeInteger(data.revision)) throw new Error('待处理消息标识或版本无效。');
+  if (!withdraw && (typeof data.text !== 'string' || data.attachments !== undefined && !Array.isArray(data.attachments)
+    || !data.text.trim() && !data.attachments?.length)) throw new Error('请输入消息或添加附件。');
+  // 原生连接的接收决定先完成，再与本地模型边界争用同一交付队列。
+  await serializeInterrupt(app, data.conversationId, () => app.subagents.feedback.serialize(data.conversationId, async () => {
+    const record = await app.storage.getVersionedRecord('subagent-feedback', data.id);
+    const value = record.value as PendingFeedback | null;
+    if (!value || value.conversationId !== data.conversationId || value.actorId !== client.actorId
+      || value.message.source !== 'user' || value.modelReceived) throw new Error('消息已经交付，无法再修改或撤回。');
+    if (record.revision !== data.revision) throw new Error('消息已在其他窗口修改，请重新打开后再编辑。');
+    const saved = await app.storage.getVersionedRecord('user-interrupt-receipts', data.id);
+    const receipt = saved.value as SavedInterruptReceipt | null;
+    if (!receipt || receipt.withdrawn) throw new Error('待处理消息已撤回。');
+    const message = withdraw ? value.message : { ...value.message, ...chatUserMessage({ ...data, messageId: value.id }, data.text),
+      ...(data.deepSeekVisionTileSplit === undefined ? { deepSeekVisionTileSplit: value.message.deepSeekVisionTileSplit } : {}) };
+    await app.storage.commitRecords([
+      withdraw ? { namespace: 'subagent-feedback', id: value.id, expectedRevision: record.revision, delete: true }
+        : { namespace: 'subagent-feedback', id: value.id, ownerId: data.conversationId, expectedRevision: record.revision, value: { ...value, message } },
+      { namespace: 'user-interrupt-receipts', id: value.id, ownerId: data.conversationId, expectedRevision: saved.revision,
+        value: { ...receipt, ...(withdraw ? { withdrawn: true } : { fingerprint: inputFingerprint(message) }) } },
+    ]);
+  }));
+  notifyPendingUserInputs(app, data.conversationId);
+  return { success: true };
+}
 
 /** 同一会话的重试先查持久回执，再检查频率；两窗口不能把同一输入各保存一次。 */
 function serializeInterrupt<T>(app: PlatformApplication, conversationId: string, operation: () => Promise<T>): Promise<T> {
@@ -36,10 +91,11 @@ async function sendInterruptMessage(app: PlatformApplication, client: ClientSess
   if (data.messageId !== undefined && (typeof data.messageId !== 'string' || !data.messageId)) throw new Error('输入请求标识无效。');
   const input = chatUserMessage(data, text);
   const id = `interrupt-${createHash('sha256').update(JSON.stringify([data.conversationId, client.actorId, data.messageId ?? randomUUID()])).digest('hex')}`;
-  const fingerprint = createHash('sha256').update(JSON.stringify({ parts: input.parts, deepSeekVisionTileSplit: input.deepSeekVisionTileSplit })).digest('hex');
+  const fingerprint = inputFingerprint(input);
   const result = await serializeInterrupt(app, data.conversationId, async () => {
-    const saved = await app.storage.getRecord('user-interrupt-receipts', id) as { fingerprint: string; receipt: InterruptReceipt } | null;
+    const saved = await app.storage.getRecord('user-interrupt-receipts', id) as SavedInterruptReceipt | null;
     if (saved) {
+      if (saved.withdrawn) return { success: false, error: { code: 'INTERRUPT_WITHDRAWN', message: '这条追加消息已撤回。' } };
       if (saved.fingerprint !== fingerprint) throw new Error('同一输入请求不能改写已保存的消息。');
       return saved.receipt;
     }
@@ -57,9 +113,23 @@ async function sendInterruptMessage(app: PlatformApplication, client: ClientSess
       { namespace: 'user-interrupt-rate', id: data.conversationId, ownerId: data.conversationId, expectedRevision: rate.revision, value: { timestamp } },
       { namespace: 'user-interrupt-receipts', id, ownerId: data.conversationId, expectedRevision: null, value: { fingerprint, receipt } },
     ]);
+    notifyPendingUserInputs(app, data.conversationId);
     // 先持久接收，再尝试原生 steering。边界等待此决定，避免本地交付与上游接收重复。
-    try { await app.models.steer?.(run.id, { ...input, id, timestamp }); }
-    catch (error) { app.publish({ type: 'notification', severity: 'error', message: `用户输入已保存，原生连接未能确认接收：${String(error)}` }); }
+    let modelReceived = false;
+    try { modelReceived = await app.models.steer?.(run.id, { ...input, id, timestamp }) ?? false; }
+    catch (error) {
+      // 发送结果不确定时不能宣称撤回成功；已保存的正文继续保留到本地交付。
+      modelReceived = true;
+      app.publish({ type: 'notification', severity: 'error', message: `用户输入已保存，原生连接未能确认接收：${String(error)}` });
+    }
+    if (modelReceived) {
+      await app.subagents.feedback.serialize(data.conversationId, async () => {
+        const record = await app.storage.getVersionedRecord('subagent-feedback', id);
+        if (record.value) await app.storage.commitRecords([{ namespace: 'subagent-feedback', id, ownerId: data.conversationId,
+          expectedRevision: record.revision, value: { ...record.value as PendingFeedback, modelReceived: true } }]);
+      });
+      notifyPendingUserInputs(app, data.conversationId);
+    }
     return receipt;
   });
   // 入队事务先释放边界等待，再尝试空闲交付；不能让两者相互等待。
@@ -108,5 +178,8 @@ export function conversationUiHandlers(app: PlatformApplication, client: ClientS
       return { idle: !(await app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true })).length };
     },
     'chat.sendInterruptMessage': (data: Record<string, any>) => sendInterruptMessage(app, client, data),
+    'chat.pendingUserInputs': (data: Record<string, any>) => pendingUserInputs(app, client, data.conversationId),
+    'chat.updatePendingUserInput': (data: Record<string, any>) => changePendingUserInput(app, client, data, false),
+    'chat.withdrawPendingUserInput': (data: Record<string, any>) => changePendingUserInput(app, client, data, true),
   };
 }

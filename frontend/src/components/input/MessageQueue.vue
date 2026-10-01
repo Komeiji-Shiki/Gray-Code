@@ -5,14 +5,57 @@
  * 每条消息支持"立即发送"、"编辑"、"删除"和"拖拽排序"操作
  */
 
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
+import type { PendingUserInput } from '../../../../packages/contracts/src/runtime'
 import { useChatStore } from '../../stores'
 import { EditDialog } from '../common'
 import { useI18n } from '../../i18n'
-import type { Attachment } from '../../types'
+import type { Attachment, Content } from '../../types'
+import { contentToMessageEnhanced } from '../../stores/chat/parsers'
+import { onExtensionCommand, sendToExtension, showNotification } from '../../utils/vscode'
 
 const { t } = useI18n()
 const chatStore = useChatStore()
+
+const pendingInputs = shallowRef<PendingUserInput[]>([])
+const busyInputs = ref(new Set<string>())
+let refreshRevision = 0
+
+// 服务端待处理输入与本地显式队列共用候选区；前者的修改必须等服务端确认。
+const queueItems = computed(() => [
+  ...pendingInputs.value.map(input => {
+    const message = contentToMessageEnhanced(input.message as unknown as Content, input.id)
+    return { id: input.id, content: message.content, attachments: message.attachments ?? [],
+      pendingInput: input as PendingUserInput | undefined, queueIndex: undefined as number | undefined,
+      deepSeekVisionTileSplit: input.message.deepSeekVisionTileSplit as boolean | undefined }
+  }),
+  ...chatStore.messageQueue.map((item, index) => ({ ...item, pendingInput: undefined as PendingUserInput | undefined,
+    queueIndex: index as number | undefined, deepSeekVisionTileSplit: item.sendOptions?.deepSeekVisionTileSplit }))
+])
+
+async function refreshPendingInputs() {
+  const conversationId = chatStore.currentConversationId
+  const revision = ++refreshRevision
+  if (!window.__GRAYCODE_HOST || !conversationId) { pendingInputs.value = []; return }
+  try {
+    const result = await sendToExtension<PendingUserInput[]>(MESSAGE_NAMES['chat.pendingUserInputs'], { conversationId })
+    if (revision === refreshRevision && conversationId === chatStore.currentConversationId) pendingInputs.value = result
+  } catch (error) {
+    console.warn('[MessageQueue] Failed to load pending user inputs:', error)
+  }
+}
+
+watch(() => chatStore.currentConversationId, () => {
+  pendingInputs.value = []
+  showEditDialog.value = false
+  void refreshPendingInputs()
+})
+const unsubscribe = onExtensionCommand<{ conversationId: string }>(PUSH_MESSAGE_NAMES['chat.pendingUserInputsChanged'], value => {
+  if (value.conversationId === chatStore.currentConversationId) void refreshPendingInputs()
+})
+onBeforeUnmount(() => { refreshRevision++; unsubscribe() })
+void refreshPendingInputs()
 
 // ========== 拖拽排序 ==========
 
@@ -21,7 +64,8 @@ const dragFromIndex = ref<number | null>(null)
 /** 当前拖拽悬停的目标索引 */
 const dragOverIndex = ref<number | null>(null)
 
-function handleDragStart(index: number, e: DragEvent) {
+function handleDragStart(index: number | undefined, e: DragEvent) {
+  if (index === undefined) return
   dragFromIndex.value = index
   dragOverIndex.value = null
 
@@ -32,7 +76,8 @@ function handleDragStart(index: number, e: DragEvent) {
   }
 }
 
-function handleDragOver(index: number, e: DragEvent) {
+function handleDragOver(index: number | undefined, e: DragEvent) {
+  if (index === undefined) return
   e.preventDefault()
   if (e.dataTransfer) {
     e.dataTransfer.dropEffect = 'move'
@@ -42,11 +87,12 @@ function handleDragOver(index: number, e: DragEvent) {
   }
 }
 
-function handleDragLeave(_index: number, _e: DragEvent) {
+function handleDragLeave(_index: number | undefined, _e: DragEvent) {
   // 不立即清除 dragOverIndex，避免子元素进出时闪烁
 }
 
-function handleDrop(index: number, e: DragEvent) {
+function handleDrop(index: number | undefined, e: DragEvent) {
+  if (index === undefined) return
   e.preventDefault()
   if (dragFromIndex.value !== null && dragFromIndex.value !== index) {
     chatStore.moveQueuedMessage(dragFromIndex.value, index)
@@ -70,26 +116,55 @@ const editingId = ref<string | null>(null)
 const editingContent = ref('')
 /** 当前正在编辑的消息原始附件 */
 const editingAttachments = ref<Attachment[]>([])
+const editingPendingInput = shallowRef<PendingUserInput | null>(null)
+const editingDeepSeekVisionTileSplit = ref<boolean | undefined>()
 
 /** 打开编辑弹窗 */
 function handleStartEdit(id: string) {
-  const item = chatStore.messageQueue.find(m => m.id === id)
+  const item = queueItems.value.find(m => m.id === id)
   if (!item) return
 
   editingId.value = id
   editingContent.value = item.content
   editingAttachments.value = item.attachments
+  editingPendingInput.value = item.pendingInput ?? null
+  editingDeepSeekVisionTileSplit.value = item.deepSeekVisionTileSplit
   showEditDialog.value = true
 }
 
 /** 编辑完成（EditDialog 事件携带 mode 参数；排队消息无分支模式，忽略之） */
-function handleEditDone(newContent: string, attachments: Attachment[], _mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean) {
-  if (editingId.value) {
-    chatStore.updateQueuedMessage(editingId.value, newContent, attachments, deepSeekVisionTileSplit)
+async function handleEditDone(newContent: string, attachments: Attachment[], _mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean) {
+  const pending = editingPendingInput.value
+  if (pending) {
+    busyInputs.value.add(pending.id)
+    try {
+      await sendToExtension(MESSAGE_NAMES['chat.updatePendingUserInput'], { conversationId: pending.conversationId,
+        id: pending.id, revision: pending.revision, text: newContent, attachments,
+        deepSeekVisionTileSplit: deepSeekVisionTileSplit ?? editingDeepSeekVisionTileSplit.value })
+    } catch (error) {
+      await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+      // 保存失败保留编辑稿，重新打开后仍可复制或修改，不能把失败显示为已保存。
+      if (pending.conversationId === chatStore.currentConversationId && editingPendingInput.value === pending && !showEditDialog.value) {
+        editingContent.value = newContent
+        editingAttachments.value = attachments
+        showEditDialog.value = true
+      }
+      return
+    } finally {
+      busyInputs.value.delete(pending.id)
+      void refreshPendingInputs()
+    }
+    // 请求期间可能已经打开另一条消息，旧回执不能清空新弹窗的编辑内容。
+    if (editingPendingInput.value !== pending || showEditDialog.value) return
+  } else {
+    if (editingId.value) {
+      chatStore.updateQueuedMessage(editingId.value, newContent, attachments, deepSeekVisionTileSplit)
+    }
   }
   editingId.value = null
   editingContent.value = ''
   editingAttachments.value = []
+  editingPendingInput.value = null
 }
 
 // ========== 操作 ==========
@@ -104,7 +179,20 @@ async function handleSendNow(id: string) {
 }
 
 /** 移除指定消息 */
-function handleRemove(id: string) {
+async function handleRemove(id: string) {
+  const pending = queueItems.value.find(item => item.id === id)?.pendingInput
+  if (pending) {
+    busyInputs.value.add(id)
+    try {
+      await sendToExtension(MESSAGE_NAMES['chat.withdrawPendingUserInput'], { conversationId: pending.conversationId, id, revision: pending.revision })
+    } catch (error) {
+      await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+    } finally {
+      busyInputs.value.delete(id)
+      void refreshPendingInputs()
+    }
+    return
+  }
   chatStore.removeQueuedMessage(id)
 }
 
@@ -117,35 +205,39 @@ function truncate(text: string, maxLen = 80): string {
 </script>
 
 <template>
-  <div v-if="chatStore.messageQueue.length > 0" class="message-queue">
+  <div v-if="queueItems.length > 0 || showEditDialog" class="message-queue">
     <div class="queue-header">
       <i class="codicon codicon-list-ordered queue-icon"></i>
       <span class="queue-title">{{ t('components.input.queue.title') }}</span>
-      <span class="queue-count">({{ chatStore.messageQueue.length }})</span>
+      <span class="queue-count">({{ queueItems.length }})</span>
     </div>
     <div class="queue-list">
       <div
-        v-for="(item, index) in chatStore.messageQueue"
+        v-for="(item, index) in queueItems"
         :key="item.id"
         class="queue-item"
         :class="{
-          'queue-item--dragging': dragFromIndex === index,
-          'queue-item--drag-over': dragOverIndex === index && dragFromIndex !== index
+          'queue-item--dragging': dragFromIndex === item.queueIndex,
+          'queue-item--drag-over': dragOverIndex === item.queueIndex && dragFromIndex !== item.queueIndex
         }"
         :draggable="false"
-        @dragover="handleDragOver(index, $event)"
-        @dragleave="handleDragLeave(index, $event)"
-        @drop="handleDrop(index, $event)"
+        @dragover="handleDragOver(item.queueIndex, $event)"
+        @dragleave="handleDragLeave(item.queueIndex, $event)"
+        @drop="handleDrop(item.queueIndex, $event)"
       >
         <!-- 左侧拖拽手柄 -->
         <span
+          v-if="item.queueIndex !== undefined"
           class="queue-drag-handle"
           draggable="true"
           :title="t('components.input.queue.drag')"
-          @dragstart="handleDragStart(index, $event)"
+          @dragstart="handleDragStart(item.queueIndex, $event)"
           @dragend="handleDragEnd"
         >
           <i class="codicon codicon-gripper"></i>
+        </span>
+        <span v-else class="queue-drag-handle" :title="t('components.input.queue.waitingForModel')">
+          <i class="codicon codicon-clock"></i>
         </span>
 
         <span class="queue-item-index">{{ index + 1 }}</span>
@@ -159,11 +251,13 @@ function truncate(text: string, maxLen = 80): string {
           <button
             class="queue-action-btn edit-btn"
             :title="t('components.input.queue.edit')"
+            :disabled="busyInputs.has(item.id)"
             @click="handleStartEdit(item.id)"
           >
             <i class="codicon codicon-edit"></i>
           </button>
           <button
+            v-if="!item.pendingInput"
             class="queue-action-btn send-now-btn"
             :title="t('components.input.queue.sendNow')"
             @click="handleSendNow(item.id)"
@@ -172,7 +266,8 @@ function truncate(text: string, maxLen = 80): string {
           </button>
           <button
             class="queue-action-btn remove-btn"
-            :title="t('components.input.queue.remove')"
+            :title="t(item.pendingInput ? 'components.input.queue.withdraw' : 'components.input.queue.remove')"
+            :disabled="busyInputs.has(item.id)"
             @click="handleRemove(item.id)"
           >
             <i class="codicon codicon-close"></i>
@@ -186,6 +281,7 @@ function truncate(text: string, maxLen = 80): string {
       v-model="showEditDialog"
       :original-content="editingContent"
       :original-attachments="editingAttachments"
+      :original-deep-seek-vision-tile-split="editingDeepSeekVisionTileSplit"
       @edit="handleEditDone"
     />
   </div>
@@ -341,7 +437,8 @@ function truncate(text: string, maxLen = 80): string {
   transition: opacity 0.1s;
 }
 
-.queue-item:hover .queue-item-actions {
+.queue-item:hover .queue-item-actions,
+.queue-item:focus-within .queue-item-actions {
   opacity: 1;
 }
 
@@ -364,6 +461,11 @@ function truncate(text: string, maxLen = 80): string {
 .queue-action-btn:hover {
   opacity: 1;
   background: var(--gc-surface-hover);
+}
+
+.queue-action-btn:disabled {
+  opacity: 0.4;
+  cursor: wait;
 }
 
 .queue-action-btn .codicon {

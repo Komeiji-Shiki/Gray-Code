@@ -377,6 +377,8 @@ const zhCN = {
                 sendNow: '立即发送',
                 remove: '移除',
                 queued: '已加入队列',
+                waitingForModel: '等待模型接收',
+                withdraw: '撤回',
                 drag: '拖拽排序',
                 edit: '编辑'
             },

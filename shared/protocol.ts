@@ -63,6 +63,9 @@ export const MESSAGE_NAMES = {
   'chat.releaseAgentMessages': 'chat.releaseAgentMessages',
   'chat.rerollStream': 'chat.rerollStream',
   'chat.sendInterruptMessage': 'chat.sendInterruptMessage',
+  'chat.pendingUserInputs': 'chat.pendingUserInputs',
+  'chat.updatePendingUserInput': 'chat.updatePendingUserInput',
+  'chat.withdrawPendingUserInput': 'chat.withdrawPendingUserInput',
 
 // ---- 聊天输入 ----
   'chatInput.focusState': 'chatInput.focusState',
@@ -391,6 +394,7 @@ export const PUSH_MESSAGE_NAMES = {
   retryStatus: 'retryStatus',
   'diff.statusChanged': 'diff.statusChanged',
   'chat.restoreInputFocus': 'chat.restoreInputFocus',
+  'chat.pendingUserInputsChanged': 'chat.pendingUserInputsChanged',
   windowFocusChanged: 'windowFocusChanged',
   'input.addContext': 'input.addContext',
   'tools.applyDiffConfigChanged': 'tools.applyDiffConfigChanged',

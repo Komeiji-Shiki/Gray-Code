@@ -2,7 +2,8 @@ import { BackgroundContinuation, type BackgroundFollowup } from './continuation'
 import type { PlatformMessage, RunRecord, RecordMutation, VersionedRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentParentConfiguration } from './types';
-export interface PendingFeedback { id: string; conversationId: string; actorId: string; sequence?: number; sourceRunId?: string; message: PlatformMessage; displayOnly?: boolean; parentConfiguration?: SubagentParentConfiguration }
+import { PUSH_MESSAGE_NAMES } from '../../../../shared/protocol';
+export interface PendingFeedback { id: string; conversationId: string; actorId: string; sequence?: number; sourceRunId?: string; message: PlatformMessage; modelReceived?: boolean; displayOnly?: boolean; parentConfiguration?: SubagentParentConfiguration }
 
 /** 后台结果先保存到队列，只在主任务模型边界或空闲时追加历史。 */
 export class SubagentFeedback {
@@ -41,10 +42,15 @@ export class SubagentFeedback {
     await this.app.teams.enqueueFeedback(pending, records);
   }
   pendingIds(conversationId: string): Promise<string[]> { return this.app.storage.listRecords('subagent-feedback', conversationId); }
-  flush(conversationId: string, activeRun?: RunRecord): Promise<boolean> {
-    const queued = (this.queues.get(conversationId) ?? Promise.resolve()).catch(() => {}).then(() => this.deliverCurrent(conversationId, activeRun));
+  /** 修改待处理输入与模型交付共用会话队列，不能在交付读取后改写或撤回。 */
+  serialize<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+    const queued = (this.queues.get(conversationId) ?? Promise.resolve()).catch(() => {}).then(operation);
     this.queues.set(conversationId, queued);
     void queued.finally(() => { if (this.queues.get(conversationId) === queued) this.queues.delete(conversationId); }).catch(() => {});
+    return queued;
+  }
+  flush(conversationId: string, activeRun?: RunRecord): Promise<boolean> {
+    const queued = this.serialize(conversationId, () => this.deliverCurrent(conversationId, activeRun));
     void queued.then(() => { if (!activeRun) this.continuation.schedule(conversationId); }).catch(() => {});
     return queued;
   }
@@ -91,6 +97,8 @@ export class SubagentFeedback {
       ]) });
     this.app.productUi.conversations.clearMetadataCache();
     if (activeRun) for (const content of appended) this.app.publish({ type: 'message.persisted', runId: activeRun.id, content });
+    if (pending.some(item => item.value.message.source === 'user')) this.app.publish({ type: 'ui.message',
+      message: { type: PUSH_MESSAGE_NAMES.command, command: PUSH_MESSAGE_NAMES['chat.pendingUserInputsChanged'], data: { conversationId } } });
     this.app.publish({ type: 'conversation.changed', conversationId });
     return appended.some(message => pending.some(item => item.value.id === message.id && !item.value.displayOnly));
   }

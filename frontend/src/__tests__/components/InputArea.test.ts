@@ -15,6 +15,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick, reactive, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import InputArea from '../../components/input/InputArea.vue'
+import MessageQueue from '../../components/input/MessageQueue.vue'
 import type { Attachment } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
 import { markAgentMessageRoundPending, clearAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
@@ -389,6 +390,44 @@ describe('InputArea 发送失败恢复', () => {
     await wrapper.find('.send-button-stub').trigger('click')
     await flushPromises()
     expect(sendMessage.mock.calls[2][2].messageId).not.toBe(sendMessage.mock.calls[0][2].messageId)
+  })
+
+  test('独立端待接收插话显示于候选区，编辑与撤回使用服务端版本', async () => {
+    window.__GRAYCODE_HOST = { kind: 'desktop' } as NonNullable<typeof originalHost>
+    runtime.chatStore.currentConversationId = 'conv-platform'
+    let pending = [{ id: 'interrupt-input', conversationId: 'conv-platform', revision: 2,
+      message: { id: 'interrupt-input', role: 'user', timestamp: 1, deepSeekVisionTileSplit: false,
+        parts: [{ inlineData: { id: 'att-1', name: 'a.png', mimeType: 'image/png', data: 'base64data' } }, { text: '等待接收的插话' }] } }]
+    runtime.sendToExtension.mockImplementation(async (type: string, data: any) => {
+      if (type === 'chat.pendingUserInputs') return pending
+      if (type === 'chat.updatePendingUserInput') {
+        pending = [{ ...pending[0], revision: 3, message: { ...pending[0].message, parts: [{ text: data.text }] } }]
+      }
+      if (type === 'chat.withdrawPendingUserInput') pending = []
+      return { success: true }
+    })
+    const EditDialogStub = { name: 'EditDialog', props: ['modelValue', 'originalContent', 'originalAttachments', 'originalDeepSeekVisionTileSplit'],
+      emits: ['edit', 'update:modelValue'], template: '<div class="edit-dialog-stub" />' }
+    wrapper = mount(MessageQueue, { global: { stubs: { EditDialog: EditDialogStub } } })
+    await flushPromises()
+    expect(wrapper.find('.queue-item').text()).toContain('等待接收的插话')
+    expect(wrapper.find('.queue-item-attachments').text()).toContain('1')
+    expect(wrapper.find('.send-now-btn').exists()).toBe(false)
+    await wrapper.find('.edit-btn').trigger('click')
+    const editor = wrapper.findComponent(EditDialogStub)
+    expect(editor.props('originalDeepSeekVisionTileSplit')).toBe(false)
+    editor.vm.$emit('update:modelValue', false)
+    editor.vm.$emit('edit', '修改后的插话', [])
+    await flushPromises()
+    expect(runtime.sendToExtension).toHaveBeenCalledWith('chat.updatePendingUserInput', {
+      conversationId: 'conv-platform', id: 'interrupt-input', revision: 2, text: '修改后的插话', attachments: [], deepSeekVisionTileSplit: false
+    })
+    expect(wrapper.find('.queue-item').text()).toContain('修改后的插话')
+    await wrapper.find('.remove-btn').trigger('click')
+    await flushPromises()
+    expect(runtime.sendToExtension).toHaveBeenCalledWith('chat.withdrawPendingUserInput', { conversationId: 'conv-platform', id: 'interrupt-input', revision: 3 })
+    expect(wrapper.find('.message-queue').exists()).toBe(false)
+    runtime.sendToExtension.mockReset().mockResolvedValue({ success: true })
   })
 
   test.each(['queue', 'claim'])('独立端已有%s时仍保留显式排队次序，不抢先投递或取消审批', async reason => {

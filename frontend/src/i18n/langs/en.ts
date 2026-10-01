@@ -375,6 +375,8 @@ const en: LanguageMessages = {
                 sendNow: 'Send now',
                 remove: 'Remove',
                 queued: 'Queued',
+                waitingForModel: 'Waiting for the model',
+                withdraw: 'Withdraw',
                 drag: 'Drag to reorder',
                 edit: 'Edit'
             },

@@ -218,6 +218,10 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
       const receipts = await Promise.all([router.call({ actorId: 'owner', clientId: 'native-ui' }, 'ui.request', request),
         router.call({ actorId: 'owner', clientId: 'native-ui' }, 'ui.request', request)]);
       expect(receipts[0]).toEqual(receipts[1]); expect(receipts[0]).toMatchObject({ success: true, queued: true });
+      expect(await router.call({ actorId: 'owner', clientId: 'native-ui' }, 'ui.request',
+        { type: 'chat.pendingUserInputs', data: { conversationId: conversation.id } })).toEqual([]);
+      await expect(router.call({ actorId: 'owner', clientId: 'native-ui' }, 'ui.request', { type: 'chat.withdrawPendingUserInput',
+        data: { conversationId: conversation.id, id: (receipts[0] as { messageId: string }).messageId, revision: 1 } })).rejects.toThrow('已经交付');
       release.resolve();
       expect((await app.runtime.wait(run.id))?.status).toBe('completed');
       const history = (await app.storage.readFullHistory(conversation.id)).messages;
