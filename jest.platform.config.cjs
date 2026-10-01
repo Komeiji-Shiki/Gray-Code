@@ -1,5 +1,5 @@
 const path = require('node:path');
-// 平台使用 Node 22 的压缩等 API，类型来源与 core 构建一致；扩展继续使用根目录的 Node 20 类型。
+// 平台运行在 Node 24（与 Electron 内置版本一致），类型来源与 core 构建一致；扩展继续使用根目录的 Node 20 类型。
 const coreTypeRoot = path.dirname(path.dirname(require.resolve('@types/node/package.json', { paths: [path.join(__dirname, 'packages/core')] })));
 
 module.exports = {

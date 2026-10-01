@@ -8,6 +8,7 @@
     "velopack": "1.2.0"
   },
   "devDependencies": {
+    "@types/node": "24.19.0",
     "electron": "44.5.1"
   },
   "license": "SEE LICENSE IN LICENSE"

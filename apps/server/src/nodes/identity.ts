@@ -74,7 +74,8 @@ export class NodeIdentity {
     const now = Date.now();
     const certificate = await X509CertificateGenerator.createSelfSigned({ serialNumber: randomBytes(16).toString('hex'),
       name: `CN=${nodeServerName(this.id)}`, notBefore: new Date(now - 300_000), notAfter: new Date(now + 5 * 365 * 86_400_000),
-      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' }, keys,
+      // node:crypto 的 webcrypto 与库引用的全局 CryptoKeyPair 是同一运行时对象，@types/node 24 将两者声明为不同接口。
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' }, keys: keys as Parameters<typeof X509CertificateGenerator.createSelfSigned>[0]['keys'],
       extensions: [new SubjectAlternativeNameExtension([{ type: 'dns', value: nodeServerName(this.id) }])],
     }, webcrypto as unknown as NonNullable<Parameters<typeof X509CertificateGenerator.createSelfSigned>[1]>);
     const der = Buffer.from(await webcrypto.subtle.exportKey('pkcs8', keys.privateKey));
