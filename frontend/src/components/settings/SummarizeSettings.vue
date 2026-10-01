@@ -35,8 +35,8 @@ const configLoaded = ref(false)
 const summarizeConfig = reactive<SummarizeConfig>({
   method: 'summary',
   userMessageRetention: 'first',
-  // 手动总结提示词
-  summarizePrompt: '请将以上对话内容进行总结，保留关键信息和上下文要点，去除冗余内容。',
+  // 手动总结提示词（加载前的占位值，实际默认值由后端 DEFAULT_SUMMARIZE_CONFIG 下发）
+  summarizePrompt: '',
   // 自动总结提示词
   autoSummarizePrompt: '',
   // 最少保留最近 N 轮不总结（保留预算的下限保护）

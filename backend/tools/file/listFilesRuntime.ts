@@ -205,34 +205,23 @@ function createTool(): Tool {
     // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
     const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
-    // 数组格式强调说明
-    // 修改原因：用户要求两个文件发现类工具的新描述统一使用中文，同时保留数组参数约束，降低模型把 path 写成字符串的概率。
-    // 修改方式：将主描述和参数描述改为中文，并明确文件 entry 会携带 lineCount。
-    // 修改目的：让模型在中文对话中更容易理解 list_files 的批量目录语义和行数元数据。
-    const arrayFormatNote = isZh
-        ? '。即使只列出一个目录，也必须传数组，例如：["src"]。'
-        : '. Even if listing only one directory, you must pass an array, e.g., ["src"].';
-    
+    // 多根工作区的格式和可用名称只写在 paths 参数里，主说明不重复。
     let pathsDescription = isZh
-        ? '要列出的目录路径数组，相对于当前工作区根目录' + arrayFormatNote
-        : 'Array of directory paths to list, relative to the current workspace root' + arrayFormatNote;
+        ? '要列出的目录路径数组，相对于工作区根目录。即使只有一个目录也要传数组，例如 ["src"]。'
+        : 'Array of directory paths to list, relative to the workspace root. Pass an array even for a single directory, for example ["src"].';
     if (isMultiRoot) {
         pathsDescription = isZh
-            ? `要列出的目录路径数组；当前是多根工作区，必须使用 "workspace_name/path" 格式${arrayFormatNote}可用工作区：${workspaces.map(w => w.name).join(', ')}。`
-            : `Array of directory paths to list; this is a multi-root workspace, so you must use the "workspace_name/path" format${arrayFormatNote} Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
+            ? `要列出的目录路径数组。当前是多根工作区，请使用 "workspace_name/path" 格式。即使只有一个目录也要传数组，例如 ["src"]。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+            : `Array of directory paths to list. This is a multi-root workspace, so use the "workspace_name/path" format. Pass an array even for a single directory, for example ["src"]. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
     }
     
     return {
         declaration: {
             name: 'list_files',
             readOnly: true,
-            description: isMultiRoot
-                ? isZh
-                    ? `列出一个或多个目录中的文件和子目录。文件条目在可统计时会包含 lineCount（文本文件行数），便于决定是否用 read_file 范围读取。当前是多根工作区，path 必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
-                    : `List files and subdirectories in one or more directories. File entries include lineCount (number of text lines) when it can be counted, to help decide whether to use read_file with a line range. This is a multi-root workspace, so path must use the "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
-                : isZh
-                    ? '列出一个或多个目录中的文件和子目录，支持批量列出。文件条目在可统计时会包含 lineCount（文本文件行数），便于决定是否用 read_file 范围读取。'
-                    : 'List files and subdirectories in one or more directories, supporting batch listing. File entries include lineCount (number of text lines) when it can be counted, to help decide whether to use read_file with a line range.',
+            description: isZh
+                ? '列出一个或多个目录中的文件和子目录。文本文件的条目在能统计时会带 lineCount（行数），可据此决定是否用 read_file 按行范围读取。'
+                : 'List files and subdirectories in one or more directories. Text file entries include lineCount when it can be counted, which helps you decide whether to read the file with a line range in read_file.',
             category: 'file',
             parameters: {
                 type: 'object',
@@ -247,8 +236,8 @@ function createTool(): Tool {
                     recursive: {
                         type: 'boolean',
                         description: isZh
-                            ? '是否递归列出子目录。false 时只列出指定目录直属的一层；true 时递归列出所有子目录内容（最大深度 10、最多 5000 个条目，超出后截断并置 truncated）。'
-                            : 'Whether to recursively list subdirectories. false lists only the direct children of the specified directory; true recursively lists all subdirectories (max depth 10, max 5000 entries; beyond that the result is truncated with a truncated flag).',
+                            ? '是否递归列出子目录。false 只列出直属的一层；true 递归列出全部内容，最大深度 10、最多 5000 个条目，超出时结果会被截断并标记 truncated。'
+                            : 'Whether to list subdirectories recursively. false lists only the direct children; true lists everything below, up to depth 10 and 5000 entries, after which the result is cut off and marked truncated.',
                         default: false
                     }
                 },

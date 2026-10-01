@@ -17,32 +17,32 @@ export function createSubagentsDeclaration(options: { agentNames: string[]; isZh
                 prompt: {
                     type: 'string',
                     description: isZh
-                        ? '给子代理的任务提示词/指令。要具体、详细地说明你希望子代理完成什么。'
-                        : 'The task prompt/instruction for the sub-agent. Be specific and detailed about what you want the sub-agent to accomplish.'
+                        ? '交给子代理的任务指令，具体说明需要完成什么。'
+                        : 'The task instructions for the sub-agent. State specifically what it should accomplish.'
                 },
                 context: {
                     type: 'string',
                     description: isZh
-                        ? '给子代理的可选附加上下文或背景信息。包含相关文件路径、代码片段或需求。'
-                        : 'Optional additional context or background information for the sub-agent. Include relevant file paths, code snippets, or requirements.'
+                        ? '可选的背景信息，例如相关文件路径、代码片段或需求。'
+                        : 'Optional background, such as relevant file paths, code snippets or requirements.'
                 },
                 continueFromRunId: {
                     type: 'string',
                     description: isZh
-                        ? '可选的已完成子代理运行 ID，用于继续该运行。新运行继承该运行的完整记录。正在运行或未知的运行 ID 会被拒绝。'
-                        : 'Optional completed Sub-Agent run ID to continue from. The new run inherits that run\'s complete transcript. Running or unknown run IDs are rejected.'
+                        ? '可选，要继续的已完成子代理运行 ID。新运行会继承该运行的完整记录；仍在运行或不存在的 ID 会被拒绝。'
+                        : 'Optional ID of a completed sub-agent run to continue. The new run inherits its full transcript; running or unknown IDs are rejected.'
                 },
                 maxRuntime: {
                     type: 'integer', minimum: -1,
                     description: isZh
-                        ? `可选，仅覆盖本次 General Worker 的运行时间，单位秒；正整数或 -1（无限制），不能为 0。省略时使用用户默认值 ${options.generalWorkerMaxRuntimeSeconds ?? 2400} 秒。`
-                        : `Optional runtime override for this General Worker invocation, in seconds: positive integer or -1 (unlimited), not 0. Omit to use the user default (${options.generalWorkerMaxRuntimeSeconds ?? 2400}s).`
+                        ? `可选，仅本次 General Worker 的最长运行时间，单位秒。填正整数或 -1（不限时），不能为 0；省略时使用用户默认值 ${options.generalWorkerMaxRuntimeSeconds ?? 2400} 秒。`
+                        : `Optional maximum runtime for this General Worker call, in seconds: a positive integer or -1 for no limit, never 0. Defaults to the user setting (${options.generalWorkerMaxRuntimeSeconds ?? 2400}s).`
                 },
                 background: {
                     type: 'boolean',
                     description: isZh
-                        ? '设为 true 以在后台启动子代理（非阻塞）。仅用于长时间运行的任务（例如批量审查/研究）。工具立即返回 taskId；最终结果稍后以 "[Background task completed]" 用户消息到达——不要等待或轮询它。后台任务不会因当前流停止而取消；请通过后台任务栏显式取消。'
-                        : 'Set to true to start the sub-agent in the background (non-blocking). Use ONLY for long-running tasks (e.g. batch review/research). The tool returns immediately with a taskId; the final result will arrive later as a "[Background task completed]" user message — do NOT wait for it or poll. Background tasks are NOT cancelled when the current stream stops; cancel them explicitly via the background task bar.'
+                        ? '设为 true 时在后台启动子代理，工具立即返回 taskId。只用于长时间任务，例如批量审查或调研。'
+                        : 'Set to true to start the sub-agent in the background; the tool returns a taskId immediately. Use only for long-running work such as batch reviews or research.'
                 }
             },
             required: ['agentName', 'prompt']

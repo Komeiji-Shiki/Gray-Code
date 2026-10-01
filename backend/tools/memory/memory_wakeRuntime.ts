@@ -12,11 +12,10 @@ function createMemoryWakeDeclaration(): ToolDeclaration {
     return {
         name: 'memory_wake',
         description:
-            '唤醒工程日志记忆（memory_note 写入的项目约定与经验）。在新的工作会话开始、且历史约定可能影响任务时调用；简单且与历史无关的无工具回复无需调用。用户个人长期记忆用 memory_search / memory_read 查阅。\n' +
-            '输出包含两部分：全局记忆与当前工作区记忆（按工作区隔离），以 --- Global memory --- / --- Workspace memory --- 标注。\n' +
-            '它会输出你的记忆摘要：近期的记忆保持原文，远期的记忆被压缩为摘要。\n' +
-            '如果输出被分成多个部分，按顺序读取直到看到 "You are awake." 为止。成功结果中的 pendingCompression 可延后，不要中断当前用户任务。\n' +
-            '参数：part（可选，部分号，1-based）；snapshotT（可选，记忆快照总数）。',
+            '读取工程日志记忆，也就是 memory_note 写下的项目约定和经验。它和用户的个人长期记忆是两套系统，个人长期记忆请用 memory_search 或 memory_read 查阅。\n' +
+            '在新的工作会话开始、且以往的约定可能影响当前任务时调用；与历史无关、也不需要工具的简单回复不必调用。\n' +
+            '输出分为全局记忆和当前工作区记忆两部分，分别以 --- Global memory --- 和 --- Workspace memory --- 标注。近期的记忆保留原文，较早的记忆以压缩摘要呈现。\n' +
+            '输出较长时会分成多个部分，请按输出末尾的提示依次读取，直到看到 "You are awake." 为止。成功结果中的 pendingCompression 可延后处理，不要中断当前用户任务。',
         category: 'memory',
         parameters: {
             type: 'object',
@@ -24,12 +23,12 @@ function createMemoryWakeDeclaration(): ToolDeclaration {
                 part: {
                     type: 'integer',
                     minimum: 1,
-                    description: '要读取的部分号（1-based）。不传则从第 1 部分开始。',
+                    description: '要读取的部分号，从 1 开始，默认为 1。',
                 },
                 snapshotT: {
                     type: 'integer',
                     minimum: 0,
-                    description: '快照时的记忆总数。不传或首次调用传 0 时使用当前总数。用于跨多次 wake 调用保持一致性。',
+                    description: '第一次读取时的记忆总数，从输出末尾的提示中复制，用来让后续部分与第一部分保持一致。首次调用不传或传 0，表示使用当前总数。',
                 },
             },
         },

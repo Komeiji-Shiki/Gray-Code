@@ -39,7 +39,7 @@ export async function saveBotDocument(app: PlatformApplication, conversationId: 
 
 export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {
   return [{
-    declaration: { name: 'bot_read_attachment', description: 'Inspect or read a local TXT/MD document received in this Bot conversation. Start with list or stat to check its byte size, then read only needed ranges using character offset and limit. read defaults to 4000 characters and returns nextOffset when more remains. Documents are not automatically injected into context; a returned local path can also be inspected with shell/file tools when the account has permission.',
+    declaration: { name: 'bot_read_attachment', description: 'Inspect or read TXT/MD documents received in this Bot conversation. Documents are not added to context automatically. Use list or stat to check the byte size first, then read only the ranges you need with a character offset and limit. read returns 4000 characters by default; when nextOffset is returned, pass it as offset to read the next part. If the account has permission, the returned local path can also be opened with shell or file tools.',
       parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'stat', 'read'] }, id: { type: 'string', minLength: 1 },
         offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 12000 } }, required: ['action'], additionalProperties: false } },
     effects: () => [],

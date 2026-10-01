@@ -22,14 +22,14 @@ export function createValidateProgressDocumentToolDeclaration(): ToolDeclaration
     name: 'validate_progress_document',
     strict: true,
     description:
-      'Validate the fixed progress document at .graycode/progress.md without modifying it. Reports metadata health, section ordering, and basic invariants.',
+      'Check the progress document at .graycode/progress.md without modifying it. The result reports problems with its metadata, section order and basic consistency rules.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target progress document path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
+          description: 'Path of the progress document. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
         }
       },
       required: ['path']

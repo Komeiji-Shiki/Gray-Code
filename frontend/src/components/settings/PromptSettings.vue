@@ -67,6 +67,7 @@ const {
   DESIGN_MODE_TEMPLATE,
   PLAN_MODE_TEMPLATE,
   ASK_MODE_TEMPLATE,
+  REVIEW_MODE_TEMPLATE,
   DEFAULT_TEMPLATE,
   DEFAULT_DYNAMIC_TEMPLATE,
   DEFAULT_MODE_ID,
@@ -659,7 +660,8 @@ function resetStaticToDefault() {
     code: CODE_MODE_TEMPLATE,
     design: DESIGN_MODE_TEMPLATE,
     plan: PLAN_MODE_TEMPLATE,
-    ask: ASK_MODE_TEMPLATE
+    ask: ASK_MODE_TEMPLATE,
+    review: REVIEW_MODE_TEMPLATE
   }
 
   config.template = modeDefaults[selectedModeId.value] || DEFAULT_TEMPLATE

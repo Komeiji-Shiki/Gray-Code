@@ -7,39 +7,25 @@ export function createGetSymbolsToolDeclaration(options: { workspaces?: Array<{ 
 const workspaces = (options.workspaces ?? []);
 const isMultiRoot = workspaces.length > 1;
 const isZh = resolveLocalizationLanguage((options.language ?? getActualLanguage())) === 'zh-CN';
-let description = isZh
-        ? `获取一个或多个文件的简洁符号提纲（类、函数、变量等）。适用于：
-- 在读取特定代码段之前先了解文件结构
-- 查找你想查看的函数/类的行号
-- 在不读取全部内容的情况下概览多个文件
+// 多根工作区的格式和可用名称只写在路径参数里，主说明不重复。
+const description = isZh
+        ? `获取一个或多个文件的符号提纲（类、函数、变量等）。适合在读取具体代码前了解文件结构、查找函数或类所在的行号，或在不读全文的情况下概览多个文件。
 
-默认 maxDepth=1，仅返回顶层符号；设为 2 可展开直接成员，更大值继续展开。函数、方法和构造器内的局部变量、常量及其子树省略，顶层变量、类成员和嵌套声明保留。按源位置排序，行列为 1-based。kinds 在深度限制内筛选，不会自动展开；未匹配父节点省略，匹配后代保留原始 depth 并挂到最近的已返回祖先。
-SymbolInformation 平列表无可靠层级，返回 hierarchyAvailable=false，全部按第 1 层处理；可用 kinds 精简，不根据范围或 containerName 猜测父子关系。
-每次最多 20 个文件、每文件最多返回 500 个符号（含子级）。symbolCount/totalSymbolCount 为实际返回数；availableSymbolCount 为提供器总数，collapsedSymbolCount 为深度折叠数，filteredSymbolCount 为深度内因类型或局部数据被省略的数量。节点 childCount 表示非局部数据的直接子符号总数，childrenCollapsed 表示可增加 maxDepth 展开。truncated 仅表示预算截断，不表示主动折叠或筛选。`
-        : `Get a concise symbol outline (classes, functions, variables, etc.) in one or more files. This is useful for:
-- Understanding file structure before reading specific sections
-- Finding the line numbers of functions/classes you want to examine
-- Getting an overview of multiple files without reading all content
+默认 maxDepth=1，只返回顶层符号；设为 2 会展开直接成员，更大的值继续向下展开。函数、方法和构造器内部的局部变量、常量及其子节点会被省略，顶层变量、类成员和嵌套声明会保留。结果按源码位置排序，行号和列号都从 1 开始。kinds 只在 maxDepth 范围内筛选，不会自动加深；不匹配的父节点会被省略，匹配的后代保留原来的 depth，挂到最近一个已返回的祖先下。如果某个文件拿不到可靠的层级信息，会返回 hierarchyAvailable=false，所有符号都按第 1 层处理，不会猜测父子关系，这时可以用 kinds 缩小结果。
 
-Default maxDepth=1 returns only top-level symbols; 2 expands direct members, and larger values expand further. Local variables, constants and their subtrees inside functions, methods and constructors are omitted; top-level variables, class members and nested declarations remain. Results follow source order with 1-based lines/columns. kinds filters within that depth, never auto-expands; unmatched ancestors are omitted and matching descendants attach to the nearest returned ancestor while keeping their original depth.
-Flat SymbolInformation has no reliable hierarchy: hierarchyAvailable=false and every symbol is treated as depth 1. Use kinds to narrow it; neither ranges nor containerName are used to guess parentage.
-At most 20 files and 500 returned symbols per file (including children). symbolCount/totalSymbolCount count returned symbols; availableSymbolCount counts all provider symbols, collapsedSymbolCount counts depth-hidden symbols, and filteredSymbolCount counts kind or local-data exclusions within the depth limit. A node's childCount counts direct children other than local data; childrenCollapsed indicates that maxDepth can reveal more. truncated means budget exhaustion only, not deliberate folding or filtering.`;
-const arrayFormatNote = isZh
-        ? '\n\n**重要**：`paths` 参数必须是数组，即使只传一个文件。示例：`{"paths": ["file.ts"]}`，不要写成 `{"path": "file.ts"}`。'
-        : '\n\n**IMPORTANT**: The `paths` parameter MUST be an array, even for a single file. Example: `{"paths": ["file.ts"]}`, NOT `{"path": "file.ts"}`.';
-description += arrayFormatNote;
-if (isMultiRoot) {
-        description += isZh
-            ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
-            : '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
-    }
+每次最多 20 个文件，每个文件最多返回 500 个符号（含子级）。symbolCount 和 totalSymbolCount 是实际返回的数量，availableSymbolCount 是文件中可用的符号总数，collapsedSymbolCount 是因深度限制没有展开的数量，filteredSymbolCount 是深度范围内因 kinds 或局部数据被省略的数量。节点的 childCount 是直接子符号数（不含局部数据），childrenCollapsed 表示增大 maxDepth 还能看到更多。truncated 只表示输出上限用尽，不表示主动折叠或筛选。`
+        : `Get a symbol outline (classes, functions, variables and so on) for one or more files. Use it to learn a file's structure before reading specific code, to find the line numbers of functions or classes, or to survey several files without reading them in full.
+
+The default maxDepth=1 returns only top-level symbols; 2 also expands direct members, and larger values go deeper. Local variables, constants and their children inside functions, methods and constructors are left out, while top-level variables, class members and nested declarations are kept. Results follow source order, with 1-based lines and columns. kinds filters within maxDepth and never makes it deeper; parents that do not match are omitted, and matching descendants keep their original depth and attach to the nearest returned ancestor. If a file has no reliable hierarchy, the result has hierarchyAvailable=false and every symbol is treated as depth 1 without guessing parents; use kinds to narrow such results.
+
+Each call accepts up to 20 files and returns at most 500 symbols per file, including children. symbolCount and totalSymbolCount count the returned symbols, availableSymbolCount counts all symbols in the file, collapsedSymbolCount counts symbols hidden by the depth limit, and filteredSymbolCount counts symbols within that depth left out by kinds or as local data. A node's childCount is its number of direct children, excluding local data, and childrenCollapsed means a larger maxDepth would show more. truncated only means the output limit was reached, not deliberate folding or filtering.`;
 let pathsDescription = isZh
-        ? '文件路径数组（相对于工作区根目录）。即使只传一个文件也必须传数组，例如：["file.ts"]'
-        : 'Array of file paths (relative to workspace root). MUST be an array even for single file, e.g., ["file.ts"]';
+        ? '文件路径数组，相对于工作区根目录。即使只有一个文件也要传数组，例如 ["file.ts"]。'
+        : 'Array of file paths relative to the workspace root. Pass an array even for a single file, for example ["file.ts"].';
 if (isMultiRoot) {
         pathsDescription = isZh
-            ? `文件路径数组，使用 "workspace_name/path" 格式。即使只传一个文件也必须传数组。可用工作区：${workspaces.map(w => w.name).join(', ')}`
-            : `Array of file paths, use "workspace_name/path" format. MUST be an array even for single file. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            ? `文件路径数组。当前是多根工作区，请使用 "workspace_name/path" 格式。即使只有一个文件也要传数组。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+            : `Array of file paths. This is a multi-root workspace, so use the "workspace_name/path" format. Pass an array even for a single file. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
     }
 return {
             name: 'get_symbols',
@@ -61,15 +47,15 @@ return {
                         minimum: 1,
                         default: 1,
                         description: isZh
-                            ? '最大原始符号层级。默认 1 仅顶层，2 含直接子级，依此类推；仍受每文件 500 个返回符号的总预算约束。'
-                            : 'Maximum original symbol depth. Default 1 = top-level only, 2 includes direct children, etc.; the 500-symbol per-file output budget still applies.'
+                            ? '要展开到的最大符号层级，默认 1。'
+                            : 'Deepest symbol level to include; default 1.'
                     },
                     kinds: {
                         type: 'array',
                         items: { type: 'string', enum: [...SYMBOL_KIND_NAMES] },
                         description: isZh
-                            ? '可选类型白名单；省略或 [] 表示所有类型。在 maxDepth 内筛选，不自动展开；省略未匹配父节点，但保留符合条件的后代及原始 depth。'
-                            : 'Optional kind allowlist; omitted or [] means all kinds. Filters within maxDepth without expanding it; unmatched ancestors are omitted but matching descendants retain their original depth.'
+                            ? '可选，只保留这些类型的符号；省略或传 [] 表示所有类型。'
+                            : 'Optional list of symbol kinds to keep; omit it or pass [] for all kinds.'
                     }
                 },
                 required: ['paths']
@@ -81,29 +67,20 @@ export function createGotoDefinitionToolDeclaration(options: { workspaces?: Arra
 const workspaces = (options.workspaces ?? []);
 const isMultiRoot = workspaces.length > 1;
 const isZh = resolveLocalizationLanguage((options.language ?? getActualLanguage())) === 'zh-CN';
-let description = isZh
-        ? `跳转到符号的定义位置并返回带行号的定义代码。适用于：
-- 查找函数/类/变量的定义位置并查看完整实现
-- 在输出预算内直接了解符号的实现方式
+const description = isZh
+        ? `找到符号的定义，并返回带行号的定义代码，适合查看函数、类或变量定义在哪里以及如何实现。
 
-返回带行号的定义代码，保留语言服务的返回顺序。默认 maxResults=500、offset=0，每页正文最多 60000 字符；有 nextOffset 时保持查询条件不变续查，文件或索引变化后从 0 重查。单条超长定义标记 contentTruncated，可用 read_file 按 path/line/endLine 查看省略部分。definitionCount 是本页数量，totalCount 是全部定义数量。`
-        : `Go to the definition of a symbol and return definition code with line numbers. This is useful for:
-- Finding where a function/class/variable is defined and seeing its full implementation
-- Understanding the implementation directly within the output budget
+存在多处定义时按原始顺序返回。默认 maxResults=500、offset=0，每页代码合计最多 60000 字符。返回 nextOffset 时，把它作为 offset 传入即可读取下一页，其他参数保持不变；文件变化后从 offset=0 重新查询。单条定义过长时会标记 contentTruncated，可以用 read_file 按 path、line、endLine 读取被省略的部分。definitionCount 是本页数量，totalCount 是全部定义数。`
+        : `Find a symbol's definition and return its code with line numbers. Use it to see where a function, class or variable is defined and how it is implemented.
 
-Returns definition code with line numbers in provider order. Defaults: maxResults=500, offset=0, at most 60000 code-content characters per page. Continue with nextOffset and unchanged query parameters; restart at 0 if files or the index change. An oversized definition has contentTruncated=true; use read_file at path/line/endLine for omitted code. definitionCount counts this page; totalCount counts all definitions.`;
-if (isMultiRoot) {
-        description += isZh
-            ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
-            : '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
-    }
+When there are several definitions, they come back in their original order. Defaults are maxResults=500 and offset=0, with at most 60000 characters of code per page. When nextOffset is returned, pass it as offset to read the next page, keeping the other parameters unchanged; restart from offset 0 if files change. A definition that is too long is marked contentTruncated; use read_file with its path, line and endLine to read the omitted part. definitionCount is the number on this page, and totalCount is the number of all definitions.`;
 let pathDescription = isZh
-        ? '文件路径（相对于工作区根目录）'
-        : 'File path (relative to workspace root)';
+        ? '文件路径，相对于工作区根目录。'
+        : 'File path relative to the workspace root.';
 if (isMultiRoot) {
         pathDescription = isZh
-            ? `文件路径，使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`
-            : `File path, use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            ? `文件路径。当前是多根工作区，请使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+            : `File path. This is a multi-root workspace, so use the "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
     }
 return {
             name: 'goto_definition',
@@ -120,26 +97,26 @@ return {
                     line: {
                         type: 'integer',
                         minimum: 1,
-                        description: isZh ? '符号所在的行号（1-based）' : 'Line number (1-based) where the symbol is located'
+                        description: isZh ? '符号所在的行号，从 1 开始。' : '1-based line number of the symbol.'
                     },
                     column: {
                         type: 'integer',
                         minimum: 1,
                         description: isZh
-                            ? '符号起始的列号（1-based）。未指定时使用第 1 列。'
-                            : 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
+                            ? '符号起始的列号，从 1 开始，默认第 1 列。'
+                            : '1-based column where the symbol starts; defaults to column 1.'
                     },
                     symbol: {
                         type: 'string',
-                        description: isZh ? '要查找的符号名称（可选，仅用于说明）' : 'The symbol name to find (optional, for documentation purposes)'
+                        description: isZh ? '可选，符号名称，仅用于说明，不影响查找结果。' : 'Optional symbol name, for readability only; it does not affect the lookup.'
                     },
                     maxResults: {
                         type: 'integer', minimum: 1, maximum: 500, default: 500,
-                        description: isZh ? '每页最多返回的定义数；正文预算可能使实际返回数更少。' : 'Maximum definitions per page; the code-content budget may return fewer.'
+                        description: isZh ? '每页最多返回的定义数；代码长度达到上限时实际可能更少。' : 'Maximum definitions per page; fewer may be returned when the code-size limit is reached.'
                     },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
-                        description: isZh ? '跳过的定义数；续查使用 nextOffset，文件或语言索引变化后从 0 重查。' : 'Definitions to skip; continue with nextOffset and restart at 0 if files or the language index change.'
+                        description: isZh ? '要跳过的定义数，用于分页。' : 'Number of definitions to skip, used for paging.'
                     }
                 },
                 required: ['path', 'line']
@@ -151,33 +128,24 @@ export function createFindReferencesToolDeclaration(options: { workspaces?: Arra
 const workspaces = (options.workspaces ?? []);
 const isMultiRoot = workspaces.length > 1;
 const isZh = resolveLocalizationLanguage((options.language ?? getActualLanguage())) === 'zh-CN';
-let description = isZh
-        ? `查找文件中指定位置符号的全部引用。适用于：
-- 了解函数/类/变量在整个代码库中的使用情况
-- 重构时找出所有需要修改的位置
-- 了解改动的影响范围
+const description = isZh
+        ? `查找文件中某个位置上的符号在整个代码库中的全部引用，适合了解它的用法、重构时找出需要修改的位置，或评估改动的影响范围。
 
-返回按文件分组的引用，带行号和代码内容。默认 maxResults=500、offset=0；每页最多 500 条、代码片段合计最多 60000 字符。先按路径/行/列排序后分页，返回 nextOffset 时保持查询条件不变并作为 offset 续查；每页重新请求语言服务，文件或索引变化后从 0 重查。
-countOnly=true 只返回统计、不读取引用正文（仍需读取源文件并请求语言服务）。totalCount/totalFileCount 为提供器返回的全部引用/文件数；returnedCount/fileCount 为当前页返回数。truncated 仅表示数量或内容预算截断，统计模式主动省略正文不算截断。单条超长片段标记 contentTruncated，可用 read_file 按该路径/行号查看。`
-        : `Find all references to a symbol at a specific position in a file. This is useful for:
-- Understanding how a function/class/variable is used across the codebase
-- Finding all places that need to be updated when refactoring
-- Understanding the impact of changes
+结果按文件分组，带行号和代码片段，并按路径、行、列排序后分页。默认 maxResults=500、offset=0，每页最多 500 条、代码片段合计最多 60000 字符。返回 nextOffset 时，把它作为 offset 传入即可读取下一页，其他参数保持不变；文件变化后从 offset=0 重新查询。
 
-Returns references grouped by file, with line numbers and code content. Defaults: maxResults=500, offset=0; at most 500 references and 60000 code-content characters per page. Pagination follows path/line/column order. Continue with nextOffset as offset and unchanged query parameters; each page requests the language service again, so restart at 0 after files or the index change.
-countOnly=true returns statistics without reading reference content (the source file and language-service request are still required). totalCount/totalFileCount count all provider references/files; returnedCount/fileCount count this page. truncated means a count or content budget limit, not deliberate omission in count-only mode. An oversized snippet is marked contentTruncated; use read_file at its path/line to inspect the omitted code.`;
-if (isMultiRoot) {
-        description += isZh
-            ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
-            : '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
-    }
+countOnly=true 只返回统计数字，不返回引用内容。totalCount 和 totalFileCount 是全部引用数和文件数，returnedCount 和 fileCount 是本页的数量。truncated 只表示条数或代码长度达到了上限，countOnly 模式主动不返回内容不算截断。单条片段过长时会标记 contentTruncated，可以用 read_file 按对应路径和行号查看。`
+        : `Find every reference in the codebase to the symbol at a given position in a file. Use it to see how something is used, to find all the places a refactor must touch, or to judge the impact of a change.
+
+References are grouped by file with line numbers and code snippets, sorted by path, line and column before paging. Defaults are maxResults=500 and offset=0, with at most 500 references and 60000 characters of snippets per page. When nextOffset is returned, pass it as offset to read the next page, keeping the other parameters unchanged; restart from offset 0 if files change.
+
+countOnly=true returns only the counts, without reference content. totalCount and totalFileCount cover all references and files, while returnedCount and fileCount cover this page. truncated only means the count or snippet-size limit was reached; leaving out content in countOnly mode does not count as truncation. A snippet that is too long is marked contentTruncated; use read_file at its path and line to see the rest.`;
 let pathDescription = isZh
-        ? '文件路径（相对于工作区根目录）'
-        : 'File path (relative to workspace root)';
+        ? '文件路径，相对于工作区根目录。'
+        : 'File path relative to the workspace root.';
 if (isMultiRoot) {
         pathDescription = isZh
-            ? `文件路径，使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`
-            : `File path, use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            ? `文件路径。当前是多根工作区，请使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+            : `File path. This is a multi-root workspace, so use the "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
     }
 return {
             name: 'find_references',
@@ -194,36 +162,36 @@ return {
                     line: {
                         type: 'integer',
                         minimum: 1,
-                        description: isZh ? '符号所在的行号（1-based）' : 'Line number (1-based) where the symbol is located'
+                        description: isZh ? '符号所在的行号，从 1 开始。' : '1-based line number of the symbol.'
                     },
                     column: {
                         type: 'integer',
                         minimum: 1,
                         description: isZh
-                            ? '符号起始的列号（1-based）。未指定时使用第 1 列。'
-                            : 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
+                            ? '符号起始的列号，从 1 开始，默认第 1 列。'
+                            : '1-based column where the symbol starts; defaults to column 1.'
                     },
                     symbol: {
                         type: 'string',
-                        description: isZh ? '要查找引用的符号名称（可选，仅用于说明）' : 'The symbol name to find references for (optional, for documentation purposes)'
+                        description: isZh ? '可选，符号名称，仅用于说明，不影响查找结果。' : 'Optional symbol name, for readability only; it does not affect the lookup.'
                     },
                     context: {
                         type: 'number',
                         description: isZh
-                            ? '每个引用前后要包含的上下文行数。默认：2。0 表示仅单行。最大：10（超过会被截断）。'
-                            : 'Number of context lines to include before and after each reference. Default: 2. Use 0 for single line only. Max: 10 (values above are clamped).'
+                            ? '每条引用前后各带几行上下文，默认 2，0 表示只返回引用所在行，最大 10，更大的值按 10 处理。'
+                            : 'Context lines before and after each reference; default 2, 0 for the reference line only, maximum 10 (larger values are treated as 10).'
                     },
                     maxResults: {
                         type: 'integer', minimum: 1, maximum: 500, default: 500,
-                        description: isZh ? '每页最多返回的引用数；代码内容预算可能使实际返回数更少。' : 'Maximum references per page; the code-content budget may return fewer.'
+                        description: isZh ? '每页最多返回的引用数；代码长度达到上限时实际可能更少。' : 'Maximum references per page; fewer may be returned when the snippet-size limit is reached.'
                     },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
-                        description: isZh ? '按路径/行/列排序后跳过的引用数。续查使用 nextOffset；文件或索引变化后从 0 重查。' : 'References to skip in path/line/column order. Continue with nextOffset; restart at 0 after files or the index change.'
+                        description: isZh ? '要跳过的引用数，用于分页。' : 'Number of references to skip, used for paging.'
                     },
                     countOnly: {
                         type: 'boolean', default: false,
-                        description: isZh ? '只统计全部引用数和文件数，不读取引用正文；忽略分页范围，references 为空。' : 'Count all references and files without reading reference content; ignores the page range and returns an empty references array.'
+                        description: isZh ? '只统计全部引用数和文件数；此时忽略分页参数，references 为空。' : 'Only count all references and files; paging parameters are ignored and references is empty.'
                     }
                 },
                 required: ['path', 'line']

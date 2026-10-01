@@ -12,6 +12,7 @@ import { MAX_SUBAGENT_NESTING_DEPTH } from './types';
 import type { SubAgentConfig, SubAgentExecutor } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools, agentLacksWriteCapability } from './executor';
+import { GENERAL_WORKER_SYSTEM_PROMPT } from './executor/prompts';
 import { subAgentRunEventBus } from './runEventBus';
 import type { SubAgentRunStatus } from './runEventBus';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
@@ -293,12 +294,8 @@ function buildToolDescription(): string {
 
     if (configs.length === 0 && !hasGeneralWorker) {
         return isZh
-            ? `调用专门的子代理来处理特定任务。
-
-**注意：** 当前未配置任何子代理。请先在设置中配置子代理。`
-            : `Invoke a specialized sub-agent to handle a specific task.
-
-**Note:** No sub-agents are currently configured. Please configure sub-agents in settings first.`;
+            ? `把具体任务交给专门的子代理处理。当前没有可用的子代理，需要用户先在设置中配置。`
+            : `Delegate a specific task to a specialized sub-agent. No sub-agents are available yet; the user needs to configure them in settings first.`;
     }
 
     const limitsSection = maxConcurrent === -1
@@ -310,30 +307,18 @@ function buildToolDescription(): string {
             : `- Maximum ${maxConcurrentStr} sub-agent(s) can be invoked in a single response\n- Each sub-agent has its own max iterations limit (see agent descriptions)`);
 
     return isZh
-        ? `调用专门的子代理来处理特定任务。子代理有自己的工具，可以自主执行复杂操作。
+        ? `把需要集中处理的复杂多步任务交给专门的子代理。子代理有自己的工具权限，会自主多次调用工具，完成后返回结果。请根据任务选择合适的代理，并在 prompt 中写清楚具体要求。
 
-**限制：**
+限制：
 ${limitsSection}
 
-**使用说明：**
-- 根据任务选择合适的代理
-- 为子代理提供清晰详细的提示词
-- 子代理将执行任务并返回结果
-- 子代理有自己的工具访问权限，可以多次调用工具
-- 使用子代理处理需要集中注意力的复杂多步任务
-- 对于长时间运行的任务（批量审查/研究），传 \`background: true\` 以非阻塞方式启动子代理：工具立即返回 taskId，最终结果稍后以 [Background task completed] 消息到达。不要等待或轮询它。后台任务即使当前流停止也会继续运行——请通过后台任务栏显式取消它们。`
-        : `Invoke a specialized sub-agent to handle a specific task. The sub-agent has its own tools and can perform complex operations autonomously.
+耗时较长的任务（如批量审查、调研）可以传 \`background: true\`，工具会立即返回 taskId，最终结果稍后以 [Background task completed] 消息送达，不需要等待或轮询。后台任务在当前回复停止后仍会继续运行，需要单独取消。`
+        : `Delegate a complex, multi-step task that needs focused attention to a specialized sub-agent. The sub-agent has its own tool access, makes as many tool calls as it needs, and returns the result when it is done. Choose the agent that fits the task and give it a clear, detailed prompt.
 
-**Limits:**
+Limits:
 ${limitsSection}
 
-**Usage Notes:**
-- Choose the appropriate agent based on the task
-- Provide a clear and detailed prompt for the sub-agent
-- The sub-agent will execute the task and return the result
-- Sub-agents have their own tool access and can make multiple tool calls
-- Use sub-agents for complex, multi-step tasks that require focused attention
-- For long-running tasks (batch review/research), pass \`background: true\` to start the sub-agent non-blocking: the tool returns immediately with a taskId, and the final result arrives later as a [Background task completed] message. Do NOT wait for it or poll. Background tasks keep running even if the current stream is stopped — cancel them explicitly via the background task bar.`;
+For long-running work such as batch reviews or research, pass \`background: true\`. The tool returns a taskId immediately, and the final result arrives later as a [Background task completed] message, so do not wait for it or poll. Background tasks keep running after the current response stops and have to be cancelled separately.`;
 }
 
 /**
@@ -516,7 +501,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             // H-1（R4 复查）：嵌套派发时 General Worker 的工具受父 run 限制（executor 取交集），
             // 描述文案同步说明，避免误导模型以为嵌套 worker 拥有全量权限。
             description: 'Zero-config general-purpose worker that inherits the current session channel and all available non-memory tool permissions. When invoked from another sub-agent, its tools are limited to the dispatching agent\'s own tool set.',
-            systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
+            systemPrompt: GENERAL_WORKER_SYSTEM_PROMPT,
             // 模型继承：General Worker 零配置，必须与主会话当前模型一致，否则会落到
             // 渠道默认模型（默认模型配额/权限与主模型不同时报错）。channelModelId 由
             // ToolExecutionService 注入主请求的 modelOverride；为空时走渠道默认，与主会话一致。

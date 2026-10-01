@@ -17,7 +17,7 @@ test.each(['zh-CN', 'en'] as const)('%s 声明沿用用户的超时、工作区�
   expect(fields.timeout.default).toBe(123_000);
   expect(fields.timeout.description).toContain('123000');
   expect(fields.shell.enum).toEqual(['default', 'powershell']);
-  expect(fields.cwd.description).toMatch(/任务绑定|task’s bound/);
+  expect(fields.cwd.description).toMatch(/任务绑定|bound to this task/);
   expect(fields.cwd.description).not.toMatch(/当前没有打开|No workspace is currently open/);
   expect(declaration.description).toContain('## PowerShell');
   expect(declaration.description).not.toContain('## CMD');
@@ -42,7 +42,7 @@ test('扩展宿主仍明确区分无工作区和多根工作区，不用任务�
   const config = getDefaultExecuteCommandConfig();
   const prompts = createTerminalPrompts({ shells: createShellRuntime({ getConfig: () => config }),
     roots: () => [], getMaxOutputLines: () => 50 });
-  expect(prompts.getCwdParameterDescription([], false)).toContain('当前没有打开 workspace');
+  expect(prompts.getCwdParameterDescription([], false)).toContain('当前没有打开工作区');
   const roots = [{ name: 'frontend', path: '/fixture/frontend' }, { name: 'backend', path: '/fixture/backend' }];
   const cwd = prompts.getCwdParameterDescription(roots, true);
   expect(cwd).toContain('@workspace_name/path');

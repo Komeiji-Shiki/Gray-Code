@@ -10,17 +10,16 @@ function createMemoryRecallDeclaration(): ToolDeclaration {
     return {
         name: 'memory_recall',
         description:
-            '用正则逐字搜索工程日志记忆（memory_note 写入的项目约定与经验）。用户个人长期记忆不在这里，请用 memory_search。\n' +
-            '搜索范围包括全局记忆与当前工作区记忆（按工作区隔离），命中结果以 --- Global memory --- / --- Workspace memory --- 标注来源。\n' +
-            '搜索范围包括已被压缩摘要的原始记忆——压缩不会丢失信息。\n' +
-            '结果限制在单次输出容量内，如果被截断会提示缩小正则范围。',
+            '用正则表达式逐字搜索工程日志记忆，也就是 memory_note 写下的项目约定和经验。用户的个人长期记忆不在这里，请用 memory_search。\n' +
+            '搜索同时覆盖全局记忆和当前工作区记忆，命中结果以 --- Global memory --- 和 --- Workspace memory --- 标注来源。已被压缩成摘要的原始记忆也在搜索范围内，压缩不会丢失信息。\n' +
+            '结果受单次输出容量限制；被截断时会提示你缩小正则范围。',
         category: 'memory',
         parameters: {
             type: 'object',
             properties: {
                 regex: {
                     type: 'string',
-                    description: '搜索正则表达式（大小写不敏感）。搜索范围包括 ID 和日期。',
+                    description: '搜索用的正则表达式，不区分大小写，也会匹配记忆的 ID 和日期。',
                 },
             },
             required: ['regex'],

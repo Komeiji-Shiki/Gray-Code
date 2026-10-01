@@ -27,12 +27,12 @@ export function createReopenReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'reopen_review',
     description:
-      'Reopen a finalized review document under .graycode/review/**.md so the same review run can continue recording milestones.',
+      'Reopen a finalized review document under .graycode/review/**.md so the same review can continue recording milestones. The call fails if another review is already in progress in this conversation.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target finalized review document path under .graycode/review/**.md' }
+        path: { type: 'string', description: 'Path of the finalized review document, under .graycode/review/**.md.' }
       },
       required: ['path']
     }

@@ -87,14 +87,14 @@ export function createRecordProgressMilestoneToolDeclaration(): ToolDeclaration 
     name: 'record_progress_milestone',
     strict: true,
     description:
-      'Record a project milestone into .graycode/progress.md and refresh the latest progress snapshot. This is for project-level progress nodes, not for full review findings or plan documents.',
+      'Record a project-level milestone in .graycode/progress.md and return the refreshed progress snapshot. It is meant for project progress points, not for review findings or plan content. If milestoneId is omitted, the next ID (PG1, PG2, ...) is generated, and an existing ID makes the call fail. status defaults to completed, in which case completedAt defaults to now. latestConclusion, currentBlocker and nextAction also update the document summary.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional target path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
+          description: 'Optional target path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
         },
         milestoneId: { type: 'string' },
         title: { type: 'string' },

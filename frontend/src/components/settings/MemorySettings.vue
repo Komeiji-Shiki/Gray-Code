@@ -8,6 +8,7 @@ import WorkspaceFeatureLinks from './panel/WorkspaceFeatureLinks.vue'
  * 配置区块与原始记忆条目管理已拆分到 memorySettings/ 子组件（纯展示 + props/emits）。
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
+import { DEFAULT_MEMORY_PROMPT } from '@shared/defaultPromptTemplates'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -19,10 +20,9 @@ const { t } = useI18n()
 /** 条目列表展示上限（与后端 getMemoryEntries 默认 limit 一致） */
 const ENTRIES_LIMIT = 5000
 
-// 内置默认提示词（与 PromptManager.generateMemorySection 保持一致）。
-// 内容来自语言包（components.settings.settingsPanel.memory.defaultPrompt），随界面语言切换；
-// 用户保存后 systemPrompt 持有其编辑值，不再随语言变化（与旧行为一致：默认值仅作初始/恢复基准）。
-const DEFAULT_SYSTEM_PROMPT = computed(() => t('components.settings.settingsPanel.memory.defaultPrompt'))
+// 内置默认提示词与后端 generateMemorySection 共用同一份文本，界面显示的就是实际发送的内容。
+// 编辑框内容与默认值相同时保存为空，以后默认值更新也能自动生效。
+const DEFAULT_SYSTEM_PROMPT = computed(() => DEFAULT_MEMORY_PROMPT)
 
 const isLoading = ref(true)
 const isSaving = ref(false)

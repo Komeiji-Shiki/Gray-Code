@@ -26,100 +26,85 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
     // memory_* 工具的源声明为中文，这里提供与源声明及 zh-CN/auxiliary.ts 语义对等的英文覆盖。
     // 必须保留：全局/工作区作用域（scope: global|workspace）、分页快照（part 1-based、snapshotT）、
     // 单条长度上限（entryChars 默认 280 字节、上限 MAX_ENTRY_CHARS）、压缩顺序（pendingCompression → memory_compress）、
-    // zoom 的二叉树节点（#a-b blockId）、forget 的三种 blockId（范围 16-31 / 单个 5 / 闭区间 1,3）。
+    // zoom 的二叉树节点（#a-b blockId）、forget 的三种 blockId（范围 16-31 / 单个 5 / 闭区间 1,3），
+    // 以及「工程日志记忆」与「个人长期记忆（memory_search / memory_remember）」的区分。
     memory_wake: {
         description:
-            'Wake up the engineering log memory (project conventions and lessons written by memory_note) at the start of a new work session when prior agreements may affect the task. A simple, history-independent reply that needs no tools does not require it. Use memory_search / memory_read for the user\'s personal long-term memory.\n' +
-            'The output has two parts: global memory and current workspace memory (isolated per workspace), marked with --- Global memory --- / --- Workspace memory ---.\n' +
-            'It outputs your memory digest: recent memories are kept verbatim, older memories are compressed into summaries.\n' +
-            'If the output is split into multiple parts, read them in order until you see "You are awake.". pendingCompression in a successful result may be deferred; do not interrupt the current user task.',
+            'Read the engineering log memory: the project conventions and lessons written with memory_note. This is separate from the user\'s personal long-term memory, which you look up with memory_search or memory_read.\n' +
+            'Call it at the start of a new work session when earlier agreements may affect the task. A simple reply that does not depend on history and needs no tools does not require it.\n' +
+            'The output has a global memory part and a current workspace part, marked --- Global memory --- and --- Workspace memory ---. Recent memories appear verbatim; older ones appear as compressed summaries.\n' +
+            'Long output is split into parts. Follow the hint at the end of each part and keep reading until you see "You are awake.". A pendingCompression in a successful result can wait; do not interrupt the current user task for it.',
         parameters: {
-            part: 'Part number to read (1-based). If omitted, starts from part 1.',
-            snapshotT: 'Total number of memories at snapshot time. If omitted, or set to 0 on the first call, uses the current total. Used to keep consistency across multiple wake calls.'
+            part: 'Part number to read, starting at 1. Defaults to 1.',
+            snapshotT: 'Total number of memories at the first read, copied from the hint at the end of the output, so that later parts stay consistent with the first. Omit it, or pass 0, on the first call to use the current total.'
         }
     },
 
     memory_note: {
         description:
-            'Record an engineering log entry that is likely to remain useful in future sessions (project conventions, lessons learned, lasting technical decisions). Use memory_remember for the user\'s own facts, preferences and experiences; do not use this tool instead.\n' +
-            'The memory is saved to the current workspace\'s memory store (separate from global memory; memory_wake reads both).\n' +
-            `Single line of text, limited by the entryChars cap in memory_config (default max 280 characters, counted in bytes, accented characters take 2 bytes; can be raised up to ${MAX_ENTRY_CHARS} via memory_config).\n` +
-            'Do not record transient progress, work logs, repository-reconstructable content, secrets, or duplicates.\n' +
-            'If pendingCompression is returned, it is deferred maintenance. Do not interrupt the current user task; compress after the current deliverable. The same pending state is not reported again.',
+            'Record an engineering log entry that will still be useful in later sessions, such as a project convention, a lesson learned or a lasting technical decision. The user\'s own facts, preferences and experiences belong to personal long-term memory; record those with memory_remember, not with this tool.\n' +
+            'With a workspace open, the entry is saved to that workspace\'s memory, separate from global memory; memory_wake reads both.\n' +
+            'Do not record transient progress, work logs, anything that can be recovered from the repository, secrets or duplicates.\n' +
+            'A pendingCompression in the result is deferred maintenance: do not interrupt the current user task, and compress after the current deliverable. The same pending state is not reported again.',
         parameters: {
-            text: 'The memory text to record. Single line, limited by the entryChars cap in memory_config (default max 280 characters).'
+            text: `The text to record, on a single line. Length is measured in UTF-8 bytes and is capped by entryChars in memory_config (280 bytes by default; non-ASCII characters take 2 to 4 bytes each), which can be raised up to ${MAX_ENTRY_CHARS}.`
         }
     },
 
     memory_recall: {
         description:
-            'Search the engineering log memory (project conventions and lessons written by memory_note) with a verbatim regular expression. The user\'s personal long-term memory is not here; use memory_search for it.\n' +
-            'Searches both global memory and current workspace memory (isolated per workspace); hits are labeled with --- Global memory --- / --- Workspace memory ---.\n' +
-            'The search also covers raw memories that were compressed into summaries — compression does not lose information.\n' +
-            'Results are limited to a single output capacity; if truncated, it will suggest narrowing the regex.',
+            'Search the engineering log memory, the project conventions and lessons written with memory_note, using a regular expression that matches the stored text verbatim. The user\'s personal long-term memory is not here; use memory_search for it.\n' +
+            'The search covers both global memory and current workspace memory, and hits are labeled --- Global memory --- or --- Workspace memory ---. Raw memories that have been compressed into summaries are searched too, so compression does not lose information.\n' +
+            'Results are limited to one output\'s capacity; when they are truncated, the output suggests narrowing the regex.',
         parameters: {
-            regex: 'Search regular expression (case-insensitive). The search covers IDs and dates.'
+            regex: 'Case-insensitive regular expression to search for. It also matches memory IDs and dates.'
         }
     },
 
     memory_compress: {
         description:
-            'Run pending memory compression merges.\n' +
-            'The memory system uses a binary tree structure: adjacent memories are merged pairwise into one-line summaries, and summaries are merged further.\n' +
-            'pendingCompression from a successful memory_note or memory_wake is deferred maintenance and must not interrupt the current user task. It is immediately required only when memory_wake fails because a summary is missing.\n' +
-            'Once maintenance starts, follow prompts in order. Independent scopes may be handled with calls in the same response.\n' +
-            `Parameters: blockId (block ID, e.g. "0-1"); summary (compressed summary text, one line, limited to the smaller of the entryChars cap and the tree record capacity of ${MAX_TREE_SUMMARY_BYTES} bytes, ≤280 bytes under the default config).\n` +
-            'With no arguments, returns the next pending compression prompt.\n' +
-            'Scope: with a workspace open, defaults to the current workspace memory; pass scope="global" to operate on global memory.',
+            'Handle pending compression of the engineering log memory. Memories form a binary tree: two adjacent memories are merged into a one-line summary, and summaries are merged in pairs again.\n' +
+            'Called without blockId and summary, it returns the next compression prompt; write the summary as the prompt asks, then submit it with blockId and summary.\n' +
+            'A pendingCompression returned by a successful memory_note or memory_wake is deferred maintenance and should not interrupt the current user task. It must be handled right away only when memory_wake fails because a summary is missing.\n' +
+            'Once maintenance starts, follow the prompts in order. Independent compressions in different scopes can be called in the same response.',
         parameters: {
-            blockId: 'Block ID to compress (e.g. "0-1"). Copy it from the compression prompt.',
-            summary: `The compressed summary text. One line, no more than ${MAX_TREE_SUMMARY_BYTES} bytes and limited by the entryChars cap (max 280 bytes under the default config). Preserve durable decisions, preferences, constraints, facts, and necessary context; drop transient progress and repetition. Do not fabricate.`,
-            scope: 'Memory scope. With a workspace open, defaults to the current workspace memory; pass "global" to operate on global memory, or "workspace" to explicitly operate on workspace memory.'
+            blockId: 'Block ID to compress, such as "0-1", copied from the compression prompt.',
+            summary: `The compressed summary, on a single line. It may not exceed the smaller of entryChars and ${MAX_TREE_SUMMARY_BYTES} bytes, which is 280 bytes under the default config. Keep durable decisions, preferences, constraints, facts and necessary context, drop transient progress and repetition, and do not make anything up.`,
+            scope: 'Memory scope. With a workspace open, the current workspace memory is used by default; pass "global" for global memory, or "workspace" to select workspace memory explicitly.'
         }
     },
 
     memory_zoom: {
         description:
-            'Expand a memory tree node to see its two halves.\n' +
-            'Memories form a binary tree: every line "#a-b" in the memory_wake output is a node.\n' +
-            'Use memory_zoom to expand it and see the two halves at the next level, all the way down to the raw memories.\n' +
-            'Parameters: blockId (block ID, e.g. "16-31").\n' +
-            'Scope: with a workspace open, defaults to reading the current workspace memory; pass scope="global" to read global memory.',
+            'Expand one node of the engineering log memory tree to see its two halves at the next level.\n' +
+            'Every line "#a-b" in the memory_wake output is a node. Expanding level by level eventually shows the raw memories themselves.',
         parameters: {
-            blockId: 'Block ID to expand (e.g. "16-31"). Copy it from the wake output or the previous zoom result.',
-            scope: 'Memory scope. With a workspace open, defaults to reading the current workspace memory; pass "global" to read global memory, or "workspace" to explicitly read workspace memory.'
+            blockId: 'Block ID to expand, such as "16-31", copied from the memory_wake output or the previous memory_zoom result.',
+            scope: 'Memory scope. With a workspace open, the current workspace memory is read by default; pass "global" to read global memory, or "workspace" to select workspace memory explicitly.'
         }
     },
 
     memory_forget: {
         description:
-            'Discard wrong tree summaries, or delete raw memories.\n' +
-            'When blockId is a range (e.g. "16-31", dash-separated): only discards the tree summary and its ancestor summaries; raw memories (LOG) are not touched.\n' +
-            'When blockId is a single number (e.g. "5"): deletes that one raw memory (later record ids are shifted and renumbered).\n' +
-            'When blockId is a closed interval (e.g. "1,3", comma-separated): deletes all raw memories with IDs 1 through 3 (inclusive).\n' +
-            'Parameters: blockId (block ID like "16-31", single ID like "5", or closed interval like "1,3").\n' +
-            'Scope: with a workspace open, defaults to the current workspace memory; pass scope="global" to operate on global memory.',
+            'Discard a wrong summary in the engineering log memory tree, or delete raw memories. What happens depends on the form of blockId:\n' +
+            '- A block with a dash, such as "16-31": only that summary and the summaries above it are discarded; raw memories stay unchanged.\n' +
+            '- A single number, such as "5": that one raw memory is deleted, and later memory IDs shift down.\n' +
+            '- A closed interval with a comma, such as "1,3": all raw memories with IDs 1 through 3, inclusive, are deleted.',
         parameters: {
-            blockId: 'Block ID (e.g. "16-31") discards tree summaries; single ID (e.g. "5") deletes that one memory; closed interval (e.g. "1,3") deletes all memories 1 through 3.',
-            scope: 'Memory scope. With a workspace open, defaults to the current workspace memory; pass "global" to operate on global memory, or "workspace" to explicitly operate on workspace memory.'
+            blockId: 'The block ID (such as "16-31"), single memory ID (such as "5") or closed interval (such as "1,3") to act on.',
+            scope: 'Memory scope. With a workspace open, the current workspace memory is used by default; pass "global" for global memory, or "workspace" to select workspace memory explicitly.'
         }
     },
 
     memory_config: {
         description:
-            'View or modify configuration parameters of the permanent memory system.\n' +
-            'Configurable items:\n' +
-            '- wakeLines: line budget for wake output (default 96, ≈8k tokens)\n' +
-            `- entryChars: max bytes per memory entry (default 280, max ${MAX_ENTRY_CHARS})\n` +
-            '- partChars: max characters per output part (default 20000)\n' +
-            '- partLines: max lines per output part (default 500)\n' +
-            'With no arguments, shows the current config. With arguments, updates the corresponding items.\n' +
-            'Changes only affect output formatting; nothing needs to be recomputed.',
+            'View or change the settings of the engineering log memory. Called without arguments, it returns the current settings; with arguments, it changes only those items.\n' +
+            'The settings control how much memory_wake outputs, how output is split into parts and how long new entries may be. Changing them does not rewrite memories that are already saved.',
         parameters: {
-            wakeLines: 'Line budget for wake output. Larger values = more detail.',
-            entryChars: `Max bytes per memory entry. Default 280, max ${MAX_ENTRY_CHARS} (fixed-width record constraint, including record header overhead).`,
-            partChars: 'Max characters per output part.',
-            partLines: 'Max lines per output part.'
+            wakeLines: 'Line budget for memory_wake output, 96 by default (about 8k tokens). Larger values keep more detail.',
+            entryChars: `Maximum size of a single memory in bytes, 280 by default and at most ${MAX_ENTRY_CHARS}.`,
+            partChars: 'Maximum number of characters in each output part, 20000 by default.',
+            partLines: 'Maximum number of lines in each output part, 500 by default.'
         }
     }
 };

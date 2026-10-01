@@ -79,13 +79,14 @@ function createSearchInFilesTool(): Tool {
     // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
     const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
+    // 路径写法、多根工作区格式和可用名称只写在 path 参数里，主说明不重复。
     let pathDescription = isZh
-        ? '相对于工作区根目录的搜索路径。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。默认 "." 搜索整个工作区。'
-        : 'Search path relative to workspace root. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Default "." searches the entire workspace.';
+        ? '一个搜索路径，相对于工作区根目录。目录写成 "dir/"（带尾部斜杠），单个文件写成 "dir/file.ext"，默认 "." 表示整个工作区。要搜索多个路径时，请分别调用。'
+        : 'One search path relative to the workspace root. Write directories as "dir/" (with a trailing slash) and single files as "dir/file.ext"; the default "." searches the whole workspace. To search several paths, make separate calls.';
     if (isMultiRoot) {
         pathDescription = isZh
-            ? `搜索路径，使用 "workspace_name/path" 格式。目录使用 "workspace_name/dir/"（尾部斜杠），单个文件使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}`
-            : `Search path, use "workspace_name/path" format. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            ? `一个搜索路径，格式为 "workspace_name/path"。目录写成 "workspace_name/dir/"（带尾部斜杠），单个文件写成 "workspace_name/file.ext"，"." 表示搜索所有工作区。要搜索多个路径时，请分别调用。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+            : `One search path in the "workspace_name/path" format. Write directories as "workspace_name/dir/" (with a trailing slash) and single files as "workspace_name/file.ext"; "." searches all workspaces. To search several paths, make separate calls. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
     }
     
     return {
@@ -94,13 +95,13 @@ function createSearchInFilesTool(): Tool {
             strict: true,  // API 端强制 schema 校验
             description: (isMultiRoot
                 ? isZh
-                    ? `在工作区多个文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "workspace_name/dir/"（尾部斜杠），单个文件使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
-                    : `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
+                    ? '在工作区文件中搜索内容，或搜索后替换，支持正则表达式。当前是多根工作区，path 的写法见参数说明。'
+                    : 'Search workspace files for content, or search and replace it, with optional regular expressions. This is a multi-root workspace; see the path parameter for how to write paths.'
                 : isZh
-                    ? '在工作区文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。返回匹配的文件和上下文。'
-                    : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.') + (isZh
-                        ? '\n搜索流式遍历全部候选文件，不按文件数量截断。结果、maxResults 和 offset 都按命中行计算，同一行的多处命中合并为一条。结果按文件分组："行号:列号: 内容" 是命中行（多处命中的列号用逗号分隔），"行号- 内容" 是上下文，"--" 分隔不相邻的片段。结果含 nextOffset 时，保持查询条件不变，将它作为 offset 续查。truncationReasons 区分匹配数与输出预算；预算不足时按 continuationHint 缩小范围。'
-                        : '\nSearch streams all candidate files without a file-count cutoff. Results, maxResults and offset count matching lines; several matches on one line are merged into one result. Results are grouped by file: "line:col: text" is a matching line (comma-separated columns for several matches), "line- text" is context, and "--" separates non-adjacent snippets. When results include nextOffset, pass it as offset with unchanged query parameters. truncationReasons distinguishes match and output-budget limits; follow continuationHint when the output budget omits matches.'),
+                    ? '在工作区文件中搜索内容，或搜索后替换，支持正则表达式。'
+                    : 'Search workspace files for content, or search and replace it, with optional regular expressions.') + (isZh
+                        ? '\n\n搜索会检查全部候选文件，不会因为文件多而提前停止。结果、maxResults 和 offset 都按命中行计数，同一行的多处命中算一条。结果按文件分组："行号:列号: 内容" 是命中行，多处命中的列号用逗号分隔；"行号- 内容" 是上下文；"--" 分隔不相邻的片段。返回 nextOffset 时，把它作为 offset 传入即可读取下一页，其他参数保持不变；文件变化后从 offset=0 重新查询。truncationReasons 说明结果是因为命中数还是输出长度受限；输出长度不够时，请按 continuationHint 缩小范围。'
+                        : '\n\nThe search checks every candidate file and does not stop early because there are many files. Results, maxResults and offset all count matching lines, and several matches on one line count as one. Results are grouped by file: "line:col: text" is a matching line, with comma-separated columns when a line matches more than once; "line- text" is context; "--" separates non-adjacent snippets. When nextOffset is returned, pass it as offset to read the next page, keeping the other parameters unchanged; restart from offset 0 if files change. truncationReasons tells you whether the match count or the output size was the limit; when output size is the limit, narrow the search as continuationHint suggests.'),
             category: 'search',
             parameters: {
                 type: 'object',
@@ -109,15 +110,15 @@ function createSearchInFilesTool(): Tool {
                         type: 'string',
                         enum: ['search', 'replace'],
                         description: isZh
-                            ? '操作模式。使用 "search" 仅查找内容，使用 "replace" 执行查找并替换。'
-                            : 'Operation mode. Use "search" for finding content only, use "replace" for search and replace.',
+                            ? '操作模式："search" 只查找，"replace" 查找并替换。'
+                            : 'Operation mode: "search" only finds matches; "replace" finds and replaces them.',
                         default: 'search'
                     },
                     query: {
                         type: 'string',
                         description: isZh
-                            ? '搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 isRegex=true。搜索模式先尝试完整字面短语；isRegex=false 时默认严格匹配完整短语；只有显式 keywordFallback=true 才会在零命中时拆词重试。'
-                            : 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode matches the complete literal phrase by default. Only explicit keywordFallback=true retries space-separated keywords after zero matches.'
+                            ? '要搜索的文本或正则表达式。默认按完整字面短语匹配，不会拆词。查询里用到正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"）时，请设 isRegex=true。'
+                            : 'Text or regular expression to search for. By default the whole query is matched as a literal phrase and is not split into words. If the query uses regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^" or "$", set isRegex=true.'
                     },
                     path: {
                         type: 'string',
@@ -127,61 +128,61 @@ function createSearchInFilesTool(): Tool {
                     pattern: {
                         type: 'string',
                         description: isZh
-                            ? '文件匹配模式，例如："*.ts" 或 "**/*.js"'
-                            : 'File matching pattern, e.g., "*.ts" or "**/*.js"',
+                            ? '文件名要匹配的 glob，例如 "*.ts" 或 "**/*.js"。'
+                            : 'Glob that file names must match, for example "*.ts" or "**/*.js".',
                         default: '**/*'
                     },
                     isRegex: {
                         type: 'boolean',
                         description: isZh
-                            ? '是否将 query 视为正则表达式。默认：false。为 false 时，正则样式的字符按字面量搜索；零结果搜索可能返回 suspected_regex 诊断，而不是静默改变语义。'
-                            : 'Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally; zero-result searches may return suspected_regex diagnostics instead of silently changing semantics.',
+                            ? '是否把 query 当作正则表达式，默认 false。为 false 时正则符号按字面搜索；如果没有结果，可能会返回 suspected_regex 提示，但不会自动改变查询含义。'
+                            : 'Whether query is a regular expression; default false. When false, regex symbols are searched literally, and a search with no results may return a suspected_regex hint, but the query meaning is never changed automatically.',
                         default: false
                     },
                     keywordFallback: {
                         type: 'boolean', default: false,
                         description: isZh
-                            ? '[仅 search 且 isRegex=false] 显式设 true 才在完整短语零命中时按空白拆词并以 OR 重试。默认 false，不扩大查询含义。isRegex=true 或 replace 模式忽略此项。'
-                            : '[Only search with isRegex=false] Explicit true retries whitespace-separated keywords with OR after zero phrase matches. Default false preserves the exact query. Ignored for isRegex=true or replace mode.'
+                            ? '设为 true 时，如果完整短语没有命中，会按空白拆成关键词并用 OR 重试。默认 false，保持查询原意。只在 search 模式且 isRegex=false 时生效。'
+                            : 'When true and the full phrase has no matches, the query is split on whitespace and retried as keywords joined with OR. Defaults to false, which keeps the exact query. Only applies in search mode with isRegex=false.'
                     },
                     includeIgnored: {
                         type: 'boolean', default: false,
                         description: isZh
-                            ? `默认遵循搜索排除配置${host.gitIgnoreSupported ? '及项目 .gitignore' : ''}。true 显式搜索这些忽略文件；独立平台仍跳过 .git 元数据和符号链接。分页时保持不变。`
-                            : `By default, respect search exclusions${host.gitIgnoreSupported ? ' and project .gitignore files' : ''}. True explicitly includes ignored files; the standalone host still excludes .git metadata and symlinks. Keep unchanged while paging.`
+                            ? `默认遵守搜索排除设置${host.gitIgnoreSupported ? '和项目 .gitignore' : ''}。设为 true 会连被忽略的文件一起搜索${host.gitIgnoreSupported ? '，但 .git 元数据和符号链接仍会跳过' : ''}。`
+                            : `By default, search exclusions${host.gitIgnoreSupported ? ' and project .gitignore files' : ''} are respected. true also searches ignored files${host.gitIgnoreSupported ? ', though .git metadata and symlinks are still skipped' : ''}.`
                     },
                     caseSensitive: {
                         type: 'boolean',
                         description: isZh
-                            ? '匹配是否区分大小写。默认值因模式而异：search 模式默认不区分（便于定位），replace 模式默认区分（保守替换）。可显式覆盖，例如在 replace 模式下设置 caseSensitive=false 以替换不区分大小写搜索到的匹配。'
-                            : 'Whether matching is case-sensitive. Defaults differ by mode: search mode defaults to false (case-insensitive), replace mode defaults to true (conservative exact replacement). Pass explicitly to override, e.g. set caseSensitive=false in replace mode to replace matches found by a case-insensitive search.'
+                            ? '是否区分大小写。search 模式默认不区分，便于定位；replace 模式默认区分，避免误替换。可以显式传值覆盖，例如在 replace 模式下传 false，替换不区分大小写搜到的内容。'
+                            : 'Whether matching is case-sensitive. Search mode defaults to false so matches are easier to find; replace mode defaults to true to avoid unintended replacements. Pass a value to override, for example false in replace mode to replace matches found case-insensitively.'
                     },
                     maxResults: {
                         type: 'number',
-                        description: isZh ? '[搜索模式] 最多返回的命中行数' : '[Search mode] Maximum number of matching lines to return',
+                        description: isZh ? '仅 search 模式：每页最多返回的命中行数。' : 'Search mode only: maximum matching lines per page.',
                         default: 100
                     },
                     context: {
                         type: 'integer', minimum: 0, maximum: MAX_CONTEXT_LINES,
                         description: isZh
-                            ? `[搜索模式] 每个命中前后显示的上下文行数（0-${MAX_CONTEXT_LINES}）。省略时使用搜索设置；0 只返回命中行。分页时保持不变。`
-                            : `[Search mode] Context lines before and after each match (0-${MAX_CONTEXT_LINES}). Omit to use search settings; 0 returns matching lines only. Keep unchanged while paging.`
+                            ? `仅 search 模式：每个命中前后显示的上下文行数，范围 0-${MAX_CONTEXT_LINES}。省略时使用搜索设置，0 表示只返回命中行。`
+                            : `Search mode only: context lines before and after each match, 0-${MAX_CONTEXT_LINES}. When omitted, the search settings apply; 0 returns only the matching lines.`
                     },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
                         description: isZh
-                            ? '[搜索模式] 跳过的命中行数。续查时传上次返回的 nextOffset，并保持 query/path/pattern/isRegex/keywordFallback/caseSensitive 不变。每页重新搜索，文件变化后应从 0 重查。'
-                            : '[Search mode] Matching lines to skip. Continue with the returned nextOffset and unchanged query/path/pattern/isRegex/keywordFallback/caseSensitive. Each page rescans live files; restart at 0 after files change.'
+                            ? '仅 search 模式：要跳过的命中行数，用于分页。'
+                            : 'Search mode only: number of matching lines to skip, used for paging.'
                     },
                     replace: {
                         type: 'string',
                         description: isZh
-                            ? '[替换模式] 必须显式提供替换字符串；省略会报错，不会修改文件。显式传空字符串表示删除匹配内容。isRegex=true 时支持 $1、$2 等捕获组。'
-                            : '[Replace mode] Replacement string must be explicitly provided; omitting it returns an error without modifying files. An explicit empty string deletes matches. Supports $1, $2 capture groups when isRegex=true.'
+                            ? '仅 replace 模式：替换后的字符串，必须显式提供，省略时会报错且不修改文件。传空字符串表示删除匹配内容。isRegex=true 时可以用 $1、$2 等捕获组。'
+                            : 'Replace mode only: the replacement string. It must be given explicitly; if omitted, the call fails without changing any file. An empty string deletes the matches. With isRegex=true you can use capture groups such as $1 and $2.'
                     },
                     maxFiles: {
                         type: 'number',
-                        description: isZh ? '[替换模式] 最多处理的文件数' : '[Replace mode] Maximum number of files to process',
+                        description: isZh ? '仅 replace 模式：最多处理的文件数。' : 'Replace mode only: maximum number of files to process.',
                         default: 50
                     }
                 },

@@ -9,23 +9,20 @@ function createMemoryZoomDeclaration(): ToolDeclaration {
     return {
         name: 'memory_zoom',
         description:
-            '展开一个记忆树节点，查看它的两个半部分。\n' +
-            '记忆形成一棵二叉树：memory_wake 输出的每一行 #a-b 都是一个节点。\n' +
-            '用 memory_zoom 可以展开它，看到下一层的两个半部分，直到原始记忆本身。\n' +
-            '参数：blockId（块 ID，如 "16-31"）。\n' +
-            '作用域：有工作区时默认读取当前工作区记忆；如需读取全局记忆请传 scope="global"。',
+            '展开工程日志记忆树中的一个节点，查看它下一层的两个半部分。\n' +
+            'memory_wake 输出中每一行 #a-b 都是一个节点。逐层展开，最终可以看到原始记忆本身。',
         category: 'memory',
         parameters: {
             type: 'object',
             properties: {
                 blockId: {
                     type: 'string',
-                    description: '要展开的块 ID（如 "16-31"）。从 wake 输出或上一次 zoom 的结果中复制。',
+                    description: '要展开的块 ID，例如 "16-31"，从 memory_wake 的输出或上一次 memory_zoom 的结果中复制。',
                 },
                 scope: {
                     type: 'string',
                     enum: ['global', 'workspace'],
-                    description: '记忆作用域。有工作区时默认读取当前工作区记忆；如需读取全局记忆请传 "global"，如需显式读取工作区记忆请传 "workspace"。',
+                    description: '记忆作用域。有工作区时默认读取当前工作区记忆；传 "global" 读取全局记忆，传 "workspace" 显式读取工作区记忆。',
                 },
             },
             required: ['blockId'],

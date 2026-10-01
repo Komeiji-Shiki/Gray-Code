@@ -73,23 +73,17 @@ function generateReadSkillDeclaration(): ToolDeclaration {
     // 仅描述框架按语言生成。
     const description = yamlList
         ? isZh
-            ? `按名称读取某个技能（Skill）的完整内容。
-
-技能是用户定义的知识模块，为特定任务提供专门上下文和指令。每个技能按需加载领域知识。当任务匹配某个可用技能的描述时，你应该主动加载它。
+            ? `按名称读取一个技能（Skill）的完整内容。技能是用户定义的知识模块，为特定任务提供专门的背景和指令，只在需要时加载。任务与下面某个技能的描述相符时，请主动读取它。
 
 可用技能：
-${yamlList}
-传入技能名称以读取其完整内容。`
-            : `Read the full content of a skill by its name.
-
-Skills are user-defined knowledge modules that provide specialized context and instructions for specific tasks. Each skill provides domain expertise that is loaded on demand. When a task matches an available skill's description, you should proactively load it.
+${yamlList}`
+            : `Read the full content of a skill by name. Skills are user-defined knowledge modules that give specialized context and instructions for particular tasks, loaded only when needed. When a task matches the description of one of the skills below, read it proactively.
 
 Available skills:
-${yamlList}
-Pass the skill name to read its full content.`
+${yamlList}`
         : isZh
-            ? '按名称读取某个技能（Skill）的完整内容。当前没有可用技能。'
-            : 'Read the full content of a skill by its name. No skills are currently available.';
+            ? '按名称读取一个技能（Skill）的完整内容。当前没有可用的技能。'
+            : 'Read the full content of a skill by name. No skills are currently available.';
     
     return {
         name: 'read_skill',
@@ -102,8 +96,8 @@ Pass the skill name to read its full content.`
                 name: {
                     type: 'string',
                     description: isZh
-                        ? '要读取的技能名称（来自上方可用技能列表）'
-                        : 'The name of the skill to read (from the available skills list above)',
+                        ? '要读取的技能名称，取自工具说明中的可用技能列表。'
+                        : 'Name of the skill to read, taken from the available skills in the tool description.',
                 },
             },
             required: ['name'],

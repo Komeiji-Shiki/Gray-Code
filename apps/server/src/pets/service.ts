@@ -215,7 +215,7 @@ export class PetService {
     void this.command({ action: 'play', id, durationMs: 120_000 }, { source: 'task', actorId: 'owner' },undefined,request).catch(() => {});
   }
   tools(): RuntimeTool[] {
-    return [{ declaration: { name: 'pet_control', description: '控制本执行设备上用户已选择并显示的桌宠。先用 query 读取实际动作、表情和参数范围；play、expression、look、parameters、cancel、resume 只作用于这个模型。不会开启截图。用户停止具有优先权；其他任务控制中返回忙碌。结果区分已接受和播放器实际应用，切换模型后重新查询。', parameters: { type: 'object', properties: {
+    return [{ declaration: { name: 'pet_control', description: '控制用户在本执行设备上当前显示的桌宠。先用 query 获取它支持的动作、表情和参数范围，其他动作只作用于这只桌宠，切换桌宠后要重新 query。本工具不会截图。用户手动停止的优先级最高；其他任务正在控制时会返回忙碌。结果会分别说明指令是否被接受、是否已实际播放。', parameters: { type: 'object', properties: {
       action: { type: 'string', enum: ['query', 'play', 'expression', 'look', 'parameters', 'cancel', 'resume'] }, id: { type: 'string' }, angle: { type: ['number', 'null'], minimum: 0, exclusiveMaximum: 360 }, parameters: { type: 'object', additionalProperties: { type: 'number' } }, durationMs: { type: 'integer', minimum: 100, maximum: 120000 },
     }, required: ['action'], additionalProperties: false } }, effects: () => ['desktop_control'], execute: async (input, context) => {
       try { this.authorize(context.actorId); context.signal.throwIfAborted(); return input.action === 'query' ? { success: true, data: await this.snapshot() } : await this.command(input as unknown as PetCommandInput, { source: 'model', actorId: context.actorId, runId: context.runId }, context.signal); }

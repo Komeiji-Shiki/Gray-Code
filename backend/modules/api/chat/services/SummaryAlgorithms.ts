@@ -5,24 +5,29 @@ import { resolveMaxContextTokensForConfig, resolveModelContextWindowForConfig } 
 import type { RequestPromptContext } from '../../../channel/types';
 import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { MessageTokenEstimator } from './MessageTokenEstimator';
-export const BUILTIN_SUMMARIZE_SYSTEM_PROMPT = `You are an expert conversation summarization assistant.
-Always respond in English.
-Produce a structured summary with clear, step-by-step sections.
-Follow this exact structure:
-1. User Goal
-2. Completed Steps
-3. Current Progress
-4. Next Steps
-5. Important Constraints
-6. Open Questions / Risks
-Use concise bullet points under each section.
-Preserve exact technical details (file paths, function names, config keys, IDs, and numbers).`;
+/**
+ * 总结请求的系统提示只定义角色与输出语言；内容结构统一由追加在 user 消息末尾的
+ * SUMMARY_HANDOFF_REQUIREMENTS 提供，避免系统提示、设置项与详细要求各写一套结构互相冲突。
+ */
+export const BUILTIN_SUMMARIZE_SYSTEM_PROMPT = `You write handoff summaries of conversations between a user and an AI assistant. The summary replaces the earlier messages, so the work must be able to continue from it alone.
+Write in the language the user has mainly been using in the conversation.
+Preserve exact technical details such as file paths, symbols, configuration keys, IDs, numbers and error messages.`;
 
-/** 仅追加到总结 user 消息末尾的详细操作要求；不改变其他请求参数。 */
-const DETAILED_SUMMARIZE_USER_PROMPT = `Temporarily pause the current task and do not continue implementation or call tools. Read and analyze every preceding message carefully, then produce a detailed standalone handoff summary so the task can resume in a fresh context without rereading the full history, redoing completed work, or being re-supplied with constraints already established. Be complete on the items below even at the cost of length; keep everything else concise. Preserve, stated exactly: (1) what the user asked for, decided, agreed, ruled out, or set as a preference, constraint, or boundary; (2) any difficulties or problems that came up and how they were handled or resolved; (3) any possibilities, options, or approaches that were raised, tried, or set aside, and why; (4) exactly where things stand now — what has been covered, settled, or completed so far; (5) anything still open, unresolved, promised, or expected to happen next; (6) specific details that would be hard to reconstruct — file paths, symbols, configuration keys, API names, IDs, numbers, dates, error messages, test results, links, and exact wording. Clearly distinguish the original goal, completed work, current state, pending work, and the exact next actions, and include important edge cases and explain why key implementation choices were made. Weight the two voices differently: keep what the user said, asked for, shared, or established close to their own words, while your own explanations and reasoning may be condensed to just their conclusions or outputs, as long as nothing in the six items above is dropped. Do not answer the original task, modify files, or omit unfinished details; output only the comprehensive summary.`;
+/** 追加到总结 user 消息末尾的内容要求；用户在设置中填写的提示词放在它之前，可以补充侧重点。 */
+const SUMMARY_HANDOFF_REQUIREMENTS = `Pause the current task: do not continue the work, call tools or modify files. Read every preceding message and write a standalone handoff summary, so the task can resume in a fresh context without rereading the history, redoing finished work or asking the user again for constraints already given.
 
-/** 总结截止锚点提示模板：提示模型忽略锚点消息及其之后的内容（保留区逐字保留）。 */
-const SUMMARY_ANCHOR_HINT = `\n\nIMPORTANT BOUNDARY: The summary must cover ONLY the conversation up to (but not including) the message quoted below. Everything starting from that message must be preserved verbatim and MUST NOT appear in the summary. Stop at the boundary and ignore all messages after it. Boundary message: "{anchor}"`;
+Be complete on the following, even if the summary gets long, and keep everything else brief:
+1. What the user asked for, decided, agreed to, ruled out, or set as a preference, constraint or boundary.
+2. Problems that came up and how they were handled.
+3. Options or approaches that were raised, tried or set aside, and why.
+4. Where things stand now: what has been covered, settled or completed.
+5. What is still open, promised or expected to happen next, including the exact next actions.
+6. Details that would be hard to reconstruct: file paths, symbols, configuration keys, API names, IDs, numbers, dates, error messages, test results, links and exact wording.
+
+Keep what the user said close to their own words. Your own explanations and reasoning can be reduced to their conclusions, as long as nothing in the list above is lost. Explain why key implementation choices were made and note important edge cases. Output only the summary.`;
+
+/** 总结截止锚点：锚点消息及其之后的内容会逐字保留，总结不能覆盖它们。 */
+const SUMMARY_ANCHOR_HINT = `\n\nSummarize only the conversation before the message quoted below. That message and everything after it are kept word for word, so do not include them in the summary. Boundary message: "{anchor}"`;
 
 /** 锚点文本最大长度（字符）。 */
 const SUMMARY_ANCHOR_MAX_CHARS = 120;
@@ -181,7 +186,7 @@ export class SummaryAlgorithms {
         const anchorHint = anchorText
             ? SUMMARY_ANCHOR_HINT.replace('{anchor}', anchorText)
             : '';
-        return `${prompt}\n\n${DETAILED_SUMMARIZE_USER_PROMPT}${anchorHint}`;
+        return `${prompt}\n\n${SUMMARY_HANDOFF_REQUIREMENTS}${anchorHint}`;
     }
 
 

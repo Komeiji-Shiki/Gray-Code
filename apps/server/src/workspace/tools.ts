@@ -42,8 +42,8 @@ export function workspaceTools(
       declaration: {
         name: "workspace_files",
         description: isZh
-          ? '对工作区文本文件进行哈希校验读写。read 返回原文哈希；write/edit/delete 必须传 expectedHash（新文件为 null），存在未保存草稿或文件变化时拒绝修改。edit 只替换唯一的 oldText。普通代码阅读、批量读取和图片/PDF 使用 read_file；需要 Diff 审阅的局部修改使用 apply_diff，新建或重写使用 write_file。仅在需要显式哈希校验写入时选择本工具，并先用本工具 read 获取哈希。'
-          : 'Hash-checked workspace text-file access. Read returns the original-text hash; write/edit/delete require expectedHash (null for a new file). Dirty drafts or external changes cause conflicts. Edit replaces exactly one oldText occurrence. Prefer read_file for ordinary code reading, batches and images/PDFs; apply_diff for targeted Diff edits and write_file for creation/rewrites. Choose this tool when explicit hash-checked writes are needed, and read here first to obtain the hash.',
+          ? '带哈希校验地读写工作区文本文件，只在需要显式校验写入时使用。普通代码阅读、批量读取和图片/PDF 用 read_file，需要 Diff 审阅的局部修改用 apply_diff，新建或重写用 write_file。先用本工具 read 获取原文哈希；write、edit、delete 必须传 expectedHash（新建文件传 null），文件有未保存的草稿或已被修改时会拒绝。edit 只替换唯一出现的 oldText。'
+          : 'Read and write workspace text files with hash checks. Use it only when you need an explicitly hash-checked write; use read_file for ordinary reading, batches and images/PDFs, apply_diff for targeted edits that need Diff review, and write_file for new files or rewrites. Call read here first to get the hash. write, edit and delete require expectedHash (null for a new file) and are rejected if the file has an unsaved draft or has changed. edit replaces exactly one occurrence of oldText.',
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -155,15 +155,15 @@ export function workspaceTools(
       declaration: {
         name: "run_command",
         description: isZh
-          ? '直接启动可执行文件并传入 args 数组，不经过 Shell，也不展开管道、重定向和环境变量。已有独立参数时优先用它，避免命令字符串转义。cwd 可指定工作区内目录；需要 Shell 语法、选择 Shell 或后台完成通知时使用 execute_command。返回的会话 ID 由 process_session 读取、输入或停止，同一账号、对话和工作区继续运行后仍可使用。'
-          : 'Start an executable directly with an args array: no shell, pipe/redirection parsing or environment expansion. Prefer this for already-separated arguments to avoid shell quoting. cwd may select a directory within the workspace. Use execute_command for shell syntax, shell selection or background completion notifications. Use process_session with the returned session ID, including later runs in the same account, conversation and workspace.',
+          ? '直接启动可执行文件并传入 args 数组，不经过 Shell，因此不会解析管道、重定向，也不展开环境变量。参数已经分开时优先用它，可以避免命令字符串的转义问题；需要 Shell 语法、指定 Shell 或后台完成通知时改用 execute_command。返回的会话 ID 交给 process_session 读取输出、发送输入或停止，在同一账号、对话和工作区的后续运行中仍然有效。'
+          : 'Start an executable directly with an args array. No shell is involved, so pipes and redirection are not parsed and environment variables are not expanded. Prefer it when the arguments are already separated, to avoid shell quoting problems; use execute_command when you need shell syntax, a specific shell or a background completion notice. Pass the returned session ID to process_session to read output, send input or stop; it stays valid in later runs of the same account, conversation and workspace.',
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
             command: { type: "string", minLength: 1 },
             args: { type: "array", items: { type: "string" } },
-            cwd: { type: "string", description: isZh ? '工作区内启动目录，省略时为根目录；不允许越界路径或指向工作区外的符号链接。' : 'Working directory within the workspace; defaults to its root. Outside paths or symlink targets outside the workspace are rejected.' },
+            cwd: { type: "string", description: isZh ? '工作区内的启动目录，省略时为工作区根目录。工作区外的路径或指向工作区外的符号链接会被拒绝。' : 'Working directory inside the workspace; defaults to the workspace root. Paths outside the workspace, or symlinks pointing outside it, are rejected.' },
           },
           required: ["command", "args"],
         },
@@ -185,8 +185,8 @@ export function workspaceTools(
       declaration: {
         name: "process_session",
         description: isZh
-          ? '读取输出、发送输入或停止同一账号、对话和工作区通过 run_command 创建的会话，继续运行后仍可使用原 id。id 必须来自 run_command，不适用于 execute_command 的后台 taskId；停止仅作用于该会话受管的进程树。read 可传 cursor/maxChars 按 UTF-16 绝对字符位置增量读取，省略时返回全部保留输出；outputOffset 为本次输出起点，nextCursor 为下次游标，hasMore 表示仍有未读输出，outputLost 表示游标早于保留区。'
-          : 'Read output, send input or stop a run_command session in the same account, conversation and workspace, even after continuing in a new run. The id must come from run_command, not an execute_command background taskId. Stopping affects only the session managed process tree. For read, cursor/maxChars page by absolute UTF-16 character position; omit them to return all retained output. outputOffset is the returned output start, nextCursor is the next position, hasMore indicates unread output, and outputLost means the cursor predates the retained buffer.',
+          ? '读取输出、发送输入或停止 run_command 创建的会话。id 必须来自同一账号、对话和工作区中的 run_command，在后续运行中仍然有效；execute_command 的后台 taskId 不能用在这里。stop 只终止该会话管理的进程树。read 可用 cursor 和 maxChars 按 UTF-16 绝对字符位置分段读取，都省略时返回全部保留的输出。结果中 outputOffset 是本次输出的起点，nextCursor 是下次读取的位置，hasMore 表示还有未读输出，outputLost 表示 cursor 早于保留范围、较早的输出已被丢弃。'
+          : 'Read output from, send input to, or stop a session created by run_command. The id must come from run_command in the same account, conversation and workspace, and stays valid in later runs; execute_command background taskIds do not work here. stop ends only the process tree managed by that session. For read, cursor and maxChars page by absolute UTF-16 character position; omit both to get all retained output. In the result, outputOffset is where this output starts, nextCursor is the position to read next, hasMore means unread output remains, and outputLost means the cursor was older than the retained buffer, so earlier output was discarded.',
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -194,8 +194,8 @@ export function workspaceTools(
             action: { type: "string", enum: ["read", "input", "stop"] },
             id: { type: "string" },
             text: optionalText,
-            cursor: { type: 'integer', minimum: 0, description: isZh ? '仅 read：上次的 nextCursor；早于保留区时返回剩余输出并标记 outputLost。' : 'Read only: previous nextCursor; an expired cursor returns retained output with outputLost.' },
-            maxChars: { type: 'integer', minimum: 1, maximum: 256000, description: isZh ? '仅 read：本次最多返回的 UTF-16 字符数。' : 'Read only: maximum UTF-16 characters to return.' },
+            cursor: { type: 'integer', minimum: 0, description: isZh ? '仅用于 read：上次返回的 nextCursor。' : 'read only: the nextCursor from the previous read.' },
+            maxChars: { type: 'integer', minimum: 1, maximum: 256000, description: isZh ? '仅用于 read：本次最多返回的 UTF-16 字符数。' : 'read only: maximum number of UTF-16 characters to return.' },
           },
           required: ["action", "id"],
         },

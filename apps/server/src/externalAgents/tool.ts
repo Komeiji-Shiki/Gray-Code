@@ -3,11 +3,11 @@ import type { ExternalAgents } from './service';
 
 export function externalAgentTool(service: ExternalAgents): RuntimeTool {
   return {
-    declaration: { name: 'coding_agent', description: 'Use a configured external ACP coding agent in this task workspace. List profiles and sessions; create optionally sends the first prompt. Prompt only appends new input to an existing session. Load restores the agent session without replaying old prompts. Fork explicitly creates a separate session. Configure uses agent-provided mode/config IDs. Events reads the recorded transcript. Close ends the owned agent process; keep the session open when background work still needs it. Unknown execution results must be checked before starting a new operation.',
+    declaration: { name: 'coding_agent', description: 'Work with a configured external ACP coding agent in this task\'s workspace. list shows profiles and sessions. create starts a session and can send the first prompt. prompt appends new input to an existing session. load restores a session without replaying earlier prompts. fork creates a separate session. configure applies mode or config IDs reported by the agent. events reads the recorded transcript. close ends the agent process you own, so keep the session open while background work still needs it. If an earlier operation ended with an unknown result, check it before starting a new one.',
       parameters: { type: 'object', additionalProperties: false, required: ['action'], properties: {
         action: { type: 'string', enum: ['list', 'create', 'prompt', 'load', 'fork', 'configure', 'close', 'events'] },
         profileId: { type: 'string' }, sessionId: { type: 'string' }, prompt: { type: 'string' },
-        images: { type: 'array', items: { type: 'string' }, description: 'Workspace-relative image files to append to this prompt; previous images remain in the agent session.' },
+        images: { type: 'array', items: { type: 'string' }, description: 'Workspace-relative image files to attach to this prompt. Earlier images stay in the agent session.' },
         configId: { type: 'string' }, value: { oneOf: [{ type: 'string' }, { type: 'boolean' }] }, modeId: { type: 'string' }, afterSequence: { type: 'integer', minimum: 0 },
       } } },
     effects: args => ['list', 'events'].includes(String(args.action)) ? ['workspace_read']

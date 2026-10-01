@@ -114,26 +114,9 @@ export function clampSummarizeMaxInputRatio(value: unknown): number {
 export const DEFAULT_SUMMARIZE_CONFIG: SummarizeConfig = {
     method: 'summary',
     userMessageRetention: 'first',
-    summarizePrompt: 'Please summarize the above conversation, keeping key information and context points while removing redundant content.',
-    autoSummarizePrompt: `Please summarize the above conversation history and output the following sections, so that the AI can continue completing the unfinished tasks.
-
-## User Requirements
-What the user wants to accomplish (overall goal).
-
-## Completed Work
-List what has been done in chronological order, including which files were changed and what decisions were made.
-File paths, variable names, and configuration values must be preserved exactly, do not generalize.
-
-## Current Progress
-What step has been reached, what is currently being done.
-
-## TODO Items
-What still needs to be done, listed by priority.
-
-## Important Conventions
-Constraints, preferences, and technical requirements raised by the user (e.g., "do not use third-party libraries", "use TypeScript", etc.).
-
-Output content directly without any prefix.`,
+    // 内容结构由总结请求固定追加的交接要求提供；这里只说明用途，用户可以改写来补充侧重点。
+    summarizePrompt: 'Summarize the conversation above so the work can continue from the summary alone.',
+    autoSummarizePrompt: 'The conversation is approaching the context limit. Summarize it so the unfinished task can continue from the summary alone.',
     keepRecentRounds: 2,
     keepRecentTokens: DEFAULT_KEEP_RECENT_TOKENS,
     useSeparateModel: false,

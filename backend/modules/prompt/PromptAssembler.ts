@@ -1,4 +1,5 @@
 import { CHARACTER_PROMPT_MODULES } from '../../../shared/characterPromptModules'
+import { DYNAMIC_CONTEXT_PREAMBLE } from '../../../shared/defaultPromptTemplates'
 /**
  * GrayCode - 系统提示词管理器
  *
@@ -970,8 +971,8 @@ export class PromptAssembler {
         const sections: string[] = []
         const sectionValues: Record<string, string> = {}
         
-        // 前缀说明
-        sections.push('This is the current turn\'s dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.')
+        // 前缀说明（与默认动态模板同一句）
+        sections.push(DYNAMIC_CONTEXT_PREAMBLE)
         
         // 当前时间
         const now = new Date()

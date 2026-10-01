@@ -32,25 +32,25 @@ export function createFinalizeReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'finalize_review',
     description:
-      'Finalize an existing review document under .graycode/review/**.md, normalize its structure, and update the final review summary.',
+      'Finish the review in progress: record the final conclusion and decision, tidy the structure of its document under .graycode/review/**.md and update the final summary. path must be the document of the review currently in progress. After this call, no more milestones can be recorded unless the review is reopened with reopen_review.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target review document path under .graycode/review/**.md' },
-        conclusion: { type: 'string', description: 'Final review conclusion' },
+        path: { type: 'string', description: 'Path of the review document, under .graycode/review/**.md.' },
+        conclusion: { type: 'string', description: 'Final conclusion of the review.' },
         overallDecision: {
           type: 'string',
           enum: ['accepted', 'conditionally_accepted', 'rejected', 'needs_follow_up'],
-          description: 'Optional overall review decision'
+          description: 'Optional overall decision.'
         },
         recommendedNextAction: {
           type: 'string',
-          description: 'Optional recommended next action for the summary section'
+          description: 'Optional recommended next step to show in the summary.'
         },
         reviewedModules: {
           type: 'array',
-          description: 'Optional reviewed modules to merge into the summary section',
+          description: 'Optional modules covered by the review, merged into the summary.',
           items: { type: 'string' }
         }
       },

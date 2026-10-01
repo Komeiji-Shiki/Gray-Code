@@ -30,17 +30,17 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_plan',
     description:
-      'Create a plan document (markdown) and write it under .graycode/plans/**.md. This tool only creates the plan; it does NOT execute it.',
+      'Create a new Markdown plan document with a TODO checklist under .graycode/plans/**.md. This tool only writes the plan; it does not carry it out. If the target file already exists, the call fails; use update_plan to revise an existing plan. When the plan is based on a confirmed design or review, pass that document as sourceArtifact so you can later check whether the plan still matches it.',
     category: 'plan',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Optional plan title (used for default filename)' },
-        overview: { type: 'string', description: 'Optional one-line overview' },
-        plan: { type: 'string', description: 'Plan content in markdown' },
+        title: { type: 'string', description: 'Optional plan title, also used to build the default file name.' },
+        overview: { type: 'string', description: 'Optional one-line overview.' },
+        plan: { type: 'string', description: 'Plan content in Markdown.' },
         todos: {
           type: 'array',
-          description: 'Optional TODO checklist (Cursor-style)',
+          description: 'TODO checklist for the plan. Required; each item has id, content and status.',
           items: {
             type: 'object',
             properties: {
@@ -53,7 +53,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
         },
         sourceArtifact: {
           type: 'object',
-          description: 'Optional source artifact to track plan freshness against a confirmed design or review.',
+          description: 'Optional confirmed design or review document that the plan is based on.',
           properties: {
             type: { type: 'string', enum: ['design', 'review'] },
             path: { type: 'string' }
@@ -63,7 +63,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .graycode/plans/**.md (or multi-root: workspace/.graycode/plans/**.md).'
+            'Optional output path. It must be under .graycode/plans/**.md (in a multi-root workspace, workspace/.graycode/plans/**.md). If omitted, the path is derived from the title.'
         }
       },
       required: ['plan', 'todos']

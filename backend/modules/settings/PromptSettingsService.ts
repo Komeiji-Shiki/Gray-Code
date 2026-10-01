@@ -33,6 +33,49 @@ import {
 } from './types';
 import { SettingsCore } from './SettingsCore';
 import { migratePromptPreset } from '../../../shared/promptPresetMigration';
+import {
+    CODE_MODE_TEMPLATE,
+    DESIGN_MODE_TEMPLATE,
+    PLAN_MODE_TEMPLATE,
+    ASK_MODE_TEMPLATE,
+    REVIEW_MODE_TEMPLATE,
+    DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+} from '../../../shared/defaultPromptTemplates';
+import { retiredPromptKind, upgradeRetiredPrompt, type RetiredPromptKind } from './retiredPromptDefaults';
+
+const CURRENT_MODE_TEMPLATES: Partial<Record<RetiredPromptKind, string>> = {
+    code: CODE_MODE_TEMPLATE,
+    design: DESIGN_MODE_TEMPLATE,
+    plan: PLAN_MODE_TEMPLATE,
+    ask: ASK_MODE_TEMPLATE,
+    review: REVIEW_MODE_TEMPLATE,
+    dynamic: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+};
+
+/** 保存着旧默认模板的字段换成同类的当前默认值；内容被用户改过就保持原样。 */
+function currentDefaultFor(text: unknown): string | undefined {
+    const kind = retiredPromptKind(text);
+    return kind ? CURRENT_MODE_TEMPLATES[kind] : undefined;
+}
+
+/**
+ * 只在读取时换用当前默认值，不主动写回存储。在 migratePromptPreset 之后调用：legacyPrompt
+ * 保留转换前的原始内容，不参与升级。
+ */
+function upgradeRetiredModeDefaults(mode: PromptMode): PromptMode {
+    const template = currentDefaultFor(mode.template);
+    const dynamicTemplate = upgradeRetiredPrompt(mode.dynamicTemplate, ['dynamic'], DEFAULT_DYNAMIC_CONTEXT_TEMPLATE);
+    const promptEntries = mode.promptEntries?.map(entry => {
+        const content = entry.type === 'chat_history' ? undefined : currentDefaultFor(entry.content);
+        return content ? { ...entry, content } : entry;
+    });
+    return {
+        ...mode,
+        ...(template ? { template } : {}),
+        ...(dynamicTemplate !== mode.dynamicTemplate ? { dynamicTemplate: dynamicTemplate as string } : {}),
+        ...(promptEntries ? { promptEntries } : {})
+    };
+}
 
 /**
  * 系统提示词配置服务
@@ -54,7 +97,12 @@ export class PromptSettingsService {
      * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（design/plan/ask/review）
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
-        const config = this.core.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
+        const stored = this.core.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
+        const config: SystemPromptConfig = {
+            ...stored,
+            template: currentDefaultFor(stored.template) ?? stored.template,
+            dynamicTemplate: upgradeRetiredPrompt(stored.dynamicTemplate, ['dynamic'], DEFAULT_DYNAMIC_CONTEXT_TEMPLATE) as string
+        };
 
         const modes = { ...(config.modes ?? {
             [DEFAULT_MODE_ID]: { ...CODE_PROMPT_MODE, template: config.template ?? CODE_PROMPT_MODE.template,
@@ -65,7 +113,7 @@ export class PromptSettingsService {
             if (!modes[builtin.id]) modes[builtin.id] = builtin;
         }
         for (const [id, mode] of Object.entries(modes)) {
-            const migrated = migratePromptPreset(mode, config.dynamicTemplate);
+            const migrated = upgradeRetiredModeDefaults(migratePromptPreset(mode, config.dynamicTemplate));
             modes[id] = { ...migrated, promptEntries: this.normalizePromptEntries(migrated.promptEntries, 'entries') };
         }
         return this.core.cloneConfig({ ...config, currentModeId: config.currentModeId || DEFAULT_MODE_ID,

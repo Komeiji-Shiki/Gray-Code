@@ -25,17 +25,14 @@ function pick(lang: LocalizationLanguage, zhText: string, enText: string): strin
 
 // ==================== 通用说明片段 ====================
 
-/** read_file：path 与 files 互斥模式说明 */
-const READ_FILE_MODE_NOTE_ZH =
-    '\n\npath 与 files 是单文件和批量两种互斥模式：path 为单文件模式，files 为批量模式，必须选择其中一种，不要同时发送。';
-const READ_FILE_MODE_NOTE_EN =
-    '\n\npath and files are two mutually exclusive modes: path is single-file mode, files is batch mode. Choose exactly one; do not send both.';
-
 /** 图片工具：单任务参数与 images 批量数组互斥模式说明 */
-const MEDIA_MODE_NOTE_ZH =
-    '\n\n单任务参数与 images 批量数组是两种互斥模式，应选择其中一种，不要同时发送。';
-const MEDIA_MODE_NOTE_EN =
-    '\n\nSingle-task parameters and the images batch array are two mutually exclusive modes; choose one and do not send both.';
+function mediaModeNote(lang: LocalizationLanguage, singleParams: string, maxBatchTasks: number): string {
+    return pick(
+        lang,
+        `\n\n单张模式使用 ${singleParams}；批量模式使用 images 数组，最多 ${maxBatchTasks} 个任务。两种模式互斥，只能选择一种，不要同时发送。`,
+        `\n\nSingle mode uses ${singleParams}; batch mode uses the images array, with at most ${maxBatchTasks} tasks. The two modes are mutually exclusive, so send only one of them.`
+    );
+}
 
 /** 多根工作区尾巴（可用工作区名称保留运行时插值） */
 function multiRootTail(lang: LocalizationLanguage, workspaceNames: string[]): string {
@@ -43,15 +40,22 @@ function multiRootTail(lang: LocalizationLanguage, workspaceNames: string[]): st
     if (workspaceNames.length === 0) {
         return pick(
             lang,
-            '\n\n**多根工作区**：路径必须使用 "workspace_name/path" 格式。',
-            '\n\n**Multi-root Workspace**: Paths must use "workspace_name/path" format.'
+            '\n\n当前是多根工作区，所有路径都要使用 "workspace_name/path" 格式。',
+            '\n\nThis is a multi-root workspace, so every path must use the "workspace_name/path" format.'
         );
     }
     return pick(
         lang,
-        `\n\n**多根工作区**：路径必须使用 "workspace_name/path" 格式。可用工作区：${workspaceNames.join(', ')}`,
-        `\n\n**Multi-root Workspace**: Paths must use "workspace_name/path" format. Available workspaces: ${workspaceNames.join(', ')}`
+        `\n\n当前是多根工作区，所有路径都要使用 "workspace_name/path" 格式。可用工作区：${workspaceNames.join(', ')}。`,
+        `\n\nThis is a multi-root workspace, so every path must use the "workspace_name/path" format. Available workspaces: ${workspaceNames.join(', ')}.`
     );
+}
+
+/** 图片工具路径参数：单根时说明相对工作区，多根时格式已在主说明中给出 */
+function mediaPathText(lang: LocalizationLanguage, isMultiRoot: boolean): string {
+    return isMultiRoot
+        ? pick(lang, '格式为 "workspace_name/path"。', 'Use the "workspace_name/path" format.')
+        : pick(lang, '相对于工作区根目录。', 'Relative to the workspace root.');
 }
 
 // ==================== read_file ====================
@@ -99,102 +103,91 @@ export interface ReadFileDescriptions {
  *
  * 中英文都明确：path 与 files 互斥、顶层 startLine/endLine 只属于单文件模式、
  * files[].startLine/endLine 属于批量模式、行范围只适用于文本、行号前缀不是正文。
+ * 跨参数规则只写在顶层说明里，参数说明不再重复。
  */
 export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): ReadFileDescriptions {
     const { lang, isMultiRoot, workspaceNames } = options;
 
-    // 行号格式说明
-    const lineNumberNote = pick(
-        lang,
-        '\n\n说明：读取文本文件时，返回内容会带行号前缀（例如 "   1 | code here"）。这些数字和 "|" 只是定位标记，不属于文件正文；编辑文件时不要把它们写回去。',
-        '\n\nNote: When reading text files, the returned content includes line number prefixes (e.g. "   1 | code here"). These numbers and the "|" are locator markers, not part of the file content; do not write them back when editing files.'
-    );
-
-    // 行范围说明。
+    // 用法：path / files 互斥、行范围的写法与大文件的读取方式。
     // 单文件兼容别名（line/maxLine/maxLines/limit）不再写进描述和 schema 向模型宣传：
     // 每轮请求都会携带工具声明，别名参数既烧 token 又鼓励旧写法。
     // 它们仍通过 declaration 的 paramAliases/compatParams 被接受（见 read_file.ts 声明）。
-    const lineRangeNote = pick(
+    const usageNote = pick(
         lang,
-        '\n\n行范围：单文件用顶层 startLine/endLine，批量在每个 files[] 项中设置。省略 endLine 会读到文件末尾。按搜索或符号结果定位；位置未知时先搜索，或从第 1 行分段浏览大文件，依据返回的总行数继续读取，避免一次展开整份日志或长文档。',
-        '\n\nLine ranges: use top-level startLine/endLine for one file, or set them per files[] item. Omitting endLine reads to EOF. Locate content with search or symbols; otherwise search first or browse a large file in ranges starting at line 1, using totalLines to continue instead of expanding an entire log or long document.'
+        '\n\npath 用于读取单个文件，files 用于批量读取，两者只能选一个，不要同时发送。单个文件的行范围用顶层 startLine/endLine，批量读取时在每个 files 项里分别设置；省略 endLine 会读到文件末尾。请先通过搜索或符号结果定位；位置未知时，可以从第 1 行开始分段读取大文件，并根据返回的总行数继续，不要一次读完整个日志或长文档。',
+        '\n\nUse path to read one file or files to read several; send only one of the two. For a single file, set the line range with the top-level startLine/endLine; in batch mode, set them on each files item. Omitting endLine reads to the end of the file. Find the location through search or symbol results first; when it is unknown, read a large file in chunks starting at line 1 and use the returned total line count to continue, rather than loading a whole log or long document at once.'
     );
 
-    // 多模态/二进制行范围限制说明（多模态开启时强调）
-    const lineRangeBinaryRestrictionNote = pick(
+    // 结果：行号前缀不是正文
+    const lineNumberNote = pick(
         lang,
-        '\n\n重要：startLine/endLine 只适用于文本文件。读取图片、PDF、音频、视频或其他二进制/多模态文件时无需填写行范围；即使误填，工具也会忽略这些行范围参数。',
-        '\n\nImportant: startLine/endLine only apply to text files. Do not fill in line ranges when reading images, PDFs, audio, video, or other binary/multimodal files; even if mistakenly provided, the tool ignores them.'
+        '\n\n文本文件的每一行会带行号前缀，例如 "   1 | code here"。行号和 "|" 只用于定位，不属于文件内容，编辑文件时不要写回去。',
+        '\n\nEach line of a text file comes back with a line-number prefix such as "   1 | code here". The number and the "|" are only for locating lines and are not part of the file, so do not write them back when editing.'
     );
 
-    const modeNote = pick(lang, READ_FILE_MODE_NOTE_ZH, READ_FILE_MODE_NOTE_EN);
+    // 限制：行范围只适用于文本（仅多模态分支需要）
+    const binaryNote = pick(
+        lang,
+        '\n\n行范围只对文本文件有效。读取图片、PDF、音频、视频等非文本文件时不需要填写，填了也会被忽略。',
+        '\n\nLine ranges only apply to text files. Leave them out for images, PDFs, audio, video and other non-text files; they are ignored if given.'
+    );
+
     let description: string;
 
-    if (!options.multimodalEnabled) {
-        // 未启用多模态时，只支持文本文件
+    if (!options.multimodalEnabled || (options.channelType === 'openai' && options.toolMode === 'function_call')) {
+        // 未启用多模态，或 OpenAI function_call 模式（不支持多模态）：只支持文本文件
         description = pick(
             lang,
-            '读取工作区中的一个或多个文件。当前支持类型：文本文件。',
-            'Read one or more files from the workspace. Currently supported types: text files.'
-        ) + modeNote + lineNumberNote + lineRangeNote;
+            '读取工作区中的一个或多个文件，目前只支持文本文件。',
+            'Read one or more files from the workspace. Only text files are supported.'
+        ) + usageNote + lineNumberNote;
     } else if (options.channelType === 'openai') {
-        // OpenAI 格式有特殊限制
-        if (options.toolMode === 'function_call') {
-            // OpenAI function_call 模式不支持多模态
-            description = pick(
-                lang,
-                '读取工作区中的一个或多个文件。当前支持类型：文本文件。',
-                'Read one or more files from the workspace. Currently supported types: text files.'
-            ) + modeNote + lineNumberNote + lineRangeNote;
-        } else {
-            // OpenAI xml/json 模式只支持图片
-            description = pick(
-                lang,
-                '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP/GIF/BMP 等常见格式）。图片会作为多模态数据返回。',
-                'Read one or more files from the workspace. Currently supported types: text files and images (common formats such as PNG/JPEG/WebP/GIF/BMP). Images are returned as multimodal data.'
-            ) + modeNote + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
-        }
+        // OpenAI xml/json 模式只支持图片
+        description = pick(
+            lang,
+            '读取工作区中的一个或多个文件，支持文本文件和图片（PNG/JPEG/WebP/GIF/BMP 等常见格式），图片会以多模态数据返回。',
+            'Read one or more files from the workspace. Text files and images (common formats such as PNG/JPEG/WebP/GIF/BMP) are supported; images are returned as multimodal data.'
+        ) + usageNote + lineNumberNote + binaryNote;
     } else {
         // Gemini 和 Anthropic 全面支持
         description = pick(
             lang,
-            '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP/GIF/BMP 等常见格式）、文档（PDF）。图片和文档会作为多模态数据返回。',
-            'Read one or more files from the workspace. Currently supported types: text files, images (common formats such as PNG/JPEG/WebP/GIF/BMP), and documents (PDF). Images and documents are returned as multimodal data.'
-        ) + modeNote + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
+            '读取工作区中的一个或多个文件，支持文本文件、图片（PNG/JPEG/WebP/GIF/BMP 等常见格式）和 PDF 文档，图片和文档会以多模态数据返回。',
+            'Read one or more files from the workspace. Text files, images (common formats such as PNG/JPEG/WebP/GIF/BMP) and PDF documents are supported; images and documents are returned as multimodal data.'
+        ) + usageNote + lineNumberNote + binaryNote;
     }
 
-    // 多工作区说明（保持原语义：path 与 files[].path 必须带工作区前缀）
+    // 多根工作区：path 与 files[].path 都必须带工作区前缀，可用名称列在路径参数里
     if (isMultiRoot) {
         description += pick(
             lang,
-            '\n\n多根工作区：path 与 files[].path 必须使用 "workspace_name/path" 格式来指定工作区。',
-            '\n\nMulti-root workspace: path and files[].path must use the "workspace_name/path" format to specify the workspace.'
+            '\n\n当前是多根工作区，path 和 files[].path 都要使用 "workspace_name/path" 格式。',
+            '\n\nThis is a multi-root workspace, so both path and files[].path must use the "workspace_name/path" format.'
         );
     }
 
-    // 路径参数描述（多根时列出可用工作区名称，动态部分保留）
     const path = isMultiRoot
         ? pick(
             lang,
-            `单文件读取时使用。当前是多根工作区，必须使用 "workspace_name/path" 格式。可用工作区：${workspaceNames.join(', ')}。`,
-            `Use for single-file reads. This is a multi-root workspace: paths must use the "workspace_name/path" format. Available workspaces: ${workspaceNames.join(', ')}.`
+            `要读取的单个文件路径，格式为 "workspace_name/path"。可用工作区：${workspaceNames.join(', ')}。`,
+            `Path of the single file to read, in the "workspace_name/path" format. Available workspaces: ${workspaceNames.join(', ')}.`
         )
         : pick(
             lang,
-            '单文件读取时使用。要读取的文件路径，相对于当前工作区根目录。例如：src/main.ts。',
-            'Use for single-file reads. The file path to read, relative to the current workspace root. E.g.: src/main.ts.'
+            '要读取的单个文件路径，相对于工作区根目录，例如 src/main.ts。',
+            'Path of the single file to read, relative to the workspace root, for example src/main.ts.'
         );
 
     const batchPath = isMultiRoot
         ? pick(
             lang,
-            `批量读取的文件路径。必须使用 "workspace_name/path" 格式。可用工作区：${workspaceNames.join(', ')}。`,
-            `File path for batch reads. Must use the "workspace_name/path" format. Available workspaces: ${workspaceNames.join(', ')}.`
+            `文件路径，格式为 "workspace_name/path"。可用工作区：${workspaceNames.join(', ')}。`,
+            `File path in the "workspace_name/path" format. Available workspaces: ${workspaceNames.join(', ')}.`
         )
         : pick(
             lang,
-            '批量读取的文件路径，相对于当前工作区根目录。例如：src/main.ts。',
-            'File path for batch reads, relative to the current workspace root. E.g.: src/main.ts.'
+            '文件路径，相对于工作区根目录，例如 src/main.ts。',
+            'File path relative to the workspace root, for example src/main.ts.'
         );
 
     description += toolBatchingGuidance(lang);
@@ -204,28 +197,28 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
         batchPath,
         files: pick(
             lang,
-            '批量读取时使用。每个文件可以分别指定文本行范围；不要与顶层 path/startLine/endLine 同时使用。',
-            'Use for batch reads. Each file can specify its own text line range; do not use together with the top-level path/startLine/endLine.'
+            '批量读取的文件列表，每一项可以单独设置行范围。',
+            'Files to read in batch mode; each item can have its own line range.'
         ),
         startLine: pick(
             lang,
-            '起始行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。指定后从该行读取到文件末尾，或读取到 endLine。',
-            'Start line number, 1-based, inclusive. Text files only; ignored when reading non-text files such as images/PDFs. When specified, reads from this line to the end of the file, or up to endLine.'
+            '起始行号，从 1 开始，包含这一行。',
+            'First line to read, 1-based and inclusive.'
         ),
         endLine: pick(
             lang,
-            '结束行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。未指定 startLine 时，从文件开头读取到该行。',
-            'End line number, 1-based, inclusive. Text files only; ignored when reading non-text files such as images/PDFs. When startLine is not specified, reads from the beginning of the file up to this line.'
+            '结束行号，从 1 开始，包含这一行。只给 endLine 时从第 1 行读起。',
+            'Last line to read, 1-based and inclusive. If only endLine is given, reading starts at line 1.'
         ),
         batchStartLine: pick(
             lang,
-            '该文本文件的起始行号，1-based，包含该行。非文本文件会忽略。',
-            'Start line number of this text file, 1-based, inclusive. Ignored for non-text files.'
+            '这个文件的起始行号，从 1 开始，包含这一行。',
+            'First line to read in this file, 1-based and inclusive.'
         ),
         batchEndLine: pick(
             lang,
-            '该文本文件的结束行号，1-based，包含该行。非文本文件会忽略。',
-            'End line number of this text file, 1-based, inclusive. Ignored for non-text files.'
+            '这个文件的结束行号，从 1 开始，包含这一行。',
+            'Last line to read in this file, 1-based and inclusive.'
         )
     };
 }
@@ -302,177 +295,74 @@ export function buildGenerateImageDescriptions(options: GenerateImageDescription
     // 宽高比 / 图片尺寸参数配置说明（动态强制值保留运行时插值）
     const paramNotes: string[] = [];
     if (config.enableAspectRatio) {
-        if (config.forcedAspectRatio) {
-            paramNotes.push(pick(
-                lang,
-                `- **宽高比**：用户设置为 ${config.forcedAspectRatio}（不可更改）`,
-                `- **Aspect Ratio**: User set to ${config.forcedAspectRatio} (cannot be changed)`
-            ));
-        } else {
-            paramNotes.push(pick(
-                lang,
-                '- **宽高比**：可使用 aspect_ratio 参数（可选）',
-                '- **Aspect Ratio**: Can use aspect_ratio parameter (optional)'
-            ));
-        }
+        paramNotes.push(config.forcedAspectRatio
+            ? pick(lang, `宽高比已由用户固定为 ${config.forcedAspectRatio}，不能更改。`, `The user has fixed the aspect ratio at ${config.forcedAspectRatio}; it cannot be changed.`)
+            : pick(lang, '可以用 aspect_ratio 指定宽高比（可选）。', 'You can set the aspect ratio with aspect_ratio (optional).'));
     }
     if (config.enableImageSize) {
-        if (config.forcedImageSize) {
-            paramNotes.push(pick(
-                lang,
-                `- **图片尺寸**：用户设置为 ${config.forcedImageSize}（不可更改）`,
-                `- **Image Size**: User set to ${config.forcedImageSize} (cannot be changed)`
-            ));
-        } else {
-            paramNotes.push(pick(
-                lang,
-                '- **图片尺寸**：可使用 image_size 参数（可选）',
-                '- **Image Size**: Can use image_size parameter (optional)'
-            ));
-        }
+        paramNotes.push(config.forcedImageSize
+            ? pick(lang, `图片尺寸已由用户固定为 ${config.forcedImageSize}，不能更改。`, `The user has fixed the image size at ${config.forcedImageSize}; it cannot be changed.`)
+            : pick(lang, '可以用 image_size 指定分辨率（可选）。', 'You can set the resolution with image_size (optional).'));
     }
+    const paramSection = paramNotes.length > 0 ? pick(lang, '', ' ') + paramNotes.join(pick(lang, '', ' ')) : '';
 
-    const paramSection = paramNotes.length > 0
-        ? pick(lang, '\n\n**参数配置**：\n', '\n\n**Parameter Configuration**:\n') + paramNotes.join('\n')
-        : '';
+    let description = pick(
+        lang,
+        `用 AI 模型生成图片，可以根据提示词生成，也可以基于参考图片修改或把多张参考图合成新场景。生成的图片会保存到指定路径并返回供查看。
 
-    // 顶层说明
-    let description: string;
-    if (lang === 'zh-CN') {
-        description = `使用 AI 模型生成图片。支持单张生成与批量生成两种模式。
+生成的图片带纯色背景，不是透明背景；需要透明背景时，请生成后再用 remove_background 处理。
 
-**重要**：生成的图片带有纯色背景，不是透明背景。如果需要透明背景图片，请生成后使用 remove_background 工具。
+每次调用最多 ${maxBatchTasks} 个生成任务，每个任务最多保存 ${maxImagesPerTask} 张图片。${paramSection}${mediaModeNote(lang, 'prompt + output_path', maxBatchTasks)}批量模式适合用不同提示词一次生成多张图片。
 
-**限制**：
-- 单次调用最多 ${maxBatchTasks} 个生成任务
-- 每个任务最多保存 ${maxImagesPerTask} 张图片${paramSection}
+提示词可以用完整句子描述场景（例如"一只橙色的猫坐在窗台上，阳光洒在它身上"），也可以用逗号分隔的关键词（例如"orange cat, sitting on windowsill, sunlight, warm lighting, high quality"），或两者结合。`,
+        `Generate images with an AI model, either from a prompt, by editing reference images, or by combining several reference images into a new scene. Generated images are saved to the given path and returned for viewing.
 
-**单张模式**：使用 prompt + output_path 参数
-**批量模式**：使用 images 数组参数（最多 ${maxBatchTasks} 个任务），用不同提示词批量生成多张图片${MEDIA_MODE_NOTE_ZH}
+Generated images have a solid background, not a transparent one; if you need transparency, run remove_background on the result.
 
-**提示词格式**：
-- 自然语言：用完整句子描述场景（例如："一只橙色的猫坐在窗台上，阳光洒在它身上"）
-- 标签式：逗号分隔的关键词（例如："orange cat, sitting on windowsill, sunlight, warm lighting, high quality"）
-- 混合式：两种风格结合
+Each call can run at most ${maxBatchTasks} generation tasks, and each task saves at most ${maxImagesPerTask} images.${paramSection}${mediaModeNote(lang, 'prompt + output_path', maxBatchTasks)} Batch mode is useful for producing several images from different prompts at once.
 
-功能：
-- 文生图：根据提示词生成图片
-- 图片编辑：基于参考图片进行修改
-- 多图合成：使用多张参考图片创作新场景
-- 批量生成：一次请求生成多张不同的图片
+A prompt can describe the scene in full sentences (for example "an orange cat sitting on a windowsill, sunlight shining on it"), list comma-separated keywords (for example "orange cat, sitting on windowsill, sunlight, warm lighting, high quality"), or mix both styles.`
+    );
 
-生成的图片会保存到指定路径并返回供查看。`;
-    } else {
-        description = `Generate images using AI model. Supports single and batch generation modes.
-
-**Important**: Generated images have solid backgrounds, NOT transparent backgrounds. If you need transparent background images, use the remove_background tool after generation.
-
-**Limits**:
-- Maximum ${maxBatchTasks} generation tasks per call
-- Maximum ${maxImagesPerTask} images saved per task${paramSection}
-
-**Single Mode**: Use prompt + output_path parameters
-**Batch Mode**: Use images array parameter (max ${maxBatchTasks} tasks), generate multiple images with different prompts${MEDIA_MODE_NOTE_EN}
-
-**Prompt Format**:
-- Natural language: Describe the scene in complete sentences (e.g., "an orange cat sitting on a windowsill, sunlight shining on it")
-- Tag-style: Comma-separated keywords (e.g., "orange cat, sitting on windowsill, sunlight, warm lighting, high quality")
-- Mixed: Combine both styles
-
-Features:
-- Text-to-image: Generate images from prompts
-- Image editing: Modify based on reference images
-- Multi-image composition: Create new scenes using multiple reference images
-- Batch generation: Generate multiple different images in one request
-
-Generated images will be saved to the specified path and returned for viewing.`;
-    }
-
-    // 多工作区说明
     if (isMultiRoot) {
         description += multiRootTail(lang, workspaceNames);
     }
+
+    const pathText = mediaPathText(lang, isMultiRoot);
+    const aspectRatioText = pick(
+        lang,
+        '可选，图片宽高比，可选值：1:1、3:2、2:3、3:4、4:3、4:5、5:4、9:16、16:9、21:9。',
+        'Optional aspect ratio: 1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9 or 21:9.'
+    );
+    const imageSizeText = pick(
+        lang,
+        '可选，图片分辨率：1K=1024px，2K=2048px，4K=4096px。',
+        'Optional resolution: 1K=1024px, 2K=2048px, 4K=4096px.'
+    );
+    const referenceImagesText = pick(
+        lang,
+        '可选，参考图片路径数组，最多 14 张。即使只有一张也要传数组，例如 ["image.png"]。',
+        'Optional array of reference image paths, up to 14. Pass an array even for one image, for example ["image.png"].'
+    );
 
     return {
         description,
         images: pick(
             lang,
-            '批量模式：图片生成任务数组。每个任务可独立配置提示词、参考图片和输出路径。即使是单个任务也必须传数组，例如：[{"prompt": "...", "output_path": "..."}]',
-            'Batch mode: Image generation task array. Each task can independently configure prompt, reference images, and output path. MUST be an array even for single task, e.g., [{"prompt": "...", "output_path": "..."}]'
+            '批量模式的任务数组，每个任务可以单独设置提示词、参考图片和输出路径。即使只有一个任务也要传数组，例如 [{"prompt": "...", "output_path": "..."}]。',
+            'Task array for batch mode; each task has its own prompt, reference images and output path. Pass an array even for one task, for example [{"prompt": "...", "output_path": "..."}].'
         ),
-        batchPrompt: pick(
-            lang,
-            '图片生成提示词。支持自然语言、标签或混合方式。',
-            'Image generation prompt. Supports natural language, tags, or mixed.'
-        ),
-        batchReferenceImages: pick(
-            lang,
-            '参考图片路径数组（可选）。最多 14 张。即使是单张图片也必须传数组，例如：["image.png"]',
-            'Reference image paths array (optional). Maximum 14 images. MUST be an array even for single image, e.g., ["image.png"]'
-        ),
-        batchOutputPath: pick(
-            lang,
-            '输出文件路径（必填）',
-            'Output file path (required)'
-        ),
-        batchAspectRatio: pick(
-            lang,
-            '图片宽高比（可选）。支持：1:1、3:2、2:3、3:4、4:3、4:5、5:4、9:16、16:9、21:9',
-            'Image aspect ratio (optional). Supported: 1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9'
-        ),
-        batchImageSize: pick(
-            lang,
-            '图片分辨率（可选）。1K=1024px，2K=2048px，4K=4096px。',
-            'Image resolution (optional). 1K=1024px, 2K=2048px, 4K=4096px.'
-        ),
-        singlePrompt: pick(
-            lang,
-            '单张模式：图片生成提示词。支持：1) 自然语言描述；2) 逗号分隔的标签/关键词；3) 混合风格。',
-            'Single mode: Image generation prompt. Supports: 1) Natural language description; 2) Comma-separated tags/keywords; 3) Mixed style.'
-        ),
-        singleReferenceImages: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：参考图片路径数组（可选）。最多 14 张。必须使用 "workspace_name/path" 格式。即使是单张图片也必须传数组。',
-                'Single mode: Reference image paths array (optional). Maximum 14 images. Use "workspace_name/path" format. MUST be an array even for single image.'
-            )
-            : pick(
-                lang,
-                '单张模式：参考图片路径数组（可选）。最多 14 张。即使是单张图片也必须传数组，例如：["image.png"]',
-                'Single mode: Reference image paths array (optional). Maximum 14 images. MUST be an array even for single image, e.g., ["image.png"]'
-            ),
-        singleReferenceImageItem: isMultiRoot
-            ? pick(
-                lang,
-                '参考图片文件路径，使用 "workspace_name/path" 格式',
-                'Reference image file path, use "workspace_name/path" format'
-            )
-            : pick(
-                lang,
-                '参考图片文件路径（相对于工作区）',
-                'Reference image file path (relative to workspace)'
-            ),
-        singleOutputPath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：输出文件路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Output file path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：输出文件路径（必填）。相对于工作区目录。',
-                'Single mode: Output file path (required). Relative to workspace directory.'
-            ),
-        singleAspectRatio: pick(
-            lang,
-            '单张模式：图片宽高比（可选）。支持：1:1、3:2、2:3、3:4、4:3、4:5、5:4、9:16、16:9、21:9',
-            'Single mode: Image aspect ratio (optional). Supported: 1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9'
-        ),
-        singleImageSize: pick(
-            lang,
-            '单张模式：图片分辨率（可选）。1K=1024px，2K=2048px，4K=4096px。',
-            'Single mode: Image resolution (optional). 1K=1024px, 2K=2048px, 4K=4096px.'
-        )
+        batchPrompt: pick(lang, '图片生成提示词。', 'Image generation prompt.'),
+        batchReferenceImages: referenceImagesText,
+        batchOutputPath: pick(lang, '输出文件路径，必填。', 'Output file path; required.'),
+        batchAspectRatio: aspectRatioText,
+        batchImageSize: imageSizeText,
+        singlePrompt: pick(lang, '单张模式的图片生成提示词。', 'Image generation prompt for single mode.'),
+        singleReferenceImages: pick(lang, '单张模式：', 'Single mode: ') + referenceImagesText,
+        singleReferenceImageItem: pick(lang, '参考图片路径，', 'Reference image path. ') + pathText,
+        singleOutputPath: pick(lang, '单张模式的输出文件路径，必填，', 'Output file path for single mode; required. ') + pathText,
+        singleAspectRatio: pick(lang, '单张模式：', 'Single mode: ') + aspectRatioText,
+        singleImageSize: pick(lang, '单张模式：', 'Single mode: ') + imageSizeText
     };
 }
 
@@ -520,116 +410,43 @@ export interface RemoveBackgroundDescriptions {
 export function buildRemoveBackgroundDescriptions(options: RemoveBackgroundDescriptionOptions): RemoveBackgroundDescriptions {
     const { lang, maxBatchTasks, isMultiRoot, workspaceNames } = options;
 
-    let description: string;
-    if (lang === 'zh-CN') {
-        description = `移除图片背景，生成透明 PNG。支持单张和批量两种模式。
-
-**限制**：
-- 单次调用最多 ${maxBatchTasks} 个抠图任务
-
-**单张模式**：使用 image_path + output_path 参数
-**批量模式**：使用 images 数组参数（最多 ${maxBatchTasks} 个任务）${MEDIA_MODE_NOTE_ZH}
-
-**工作原理**：
-1. 使用 AI 生成遮罩（主体=黑色，背景=白色）
-2. 根据遮罩将背景设为透明
-3. 保存为透明 PNG
-
-**适用场景**：
-- 商品图背景移除
-- 人像抠图
-- 物体提取
-- 创意合成素材准备`;
-    } else {
-        description = `Remove background from images, generating transparent PNG. Supports single and batch modes.
-
-**Limits**:
-- Maximum ${maxBatchTasks} background removal tasks per call
-
-**Single Mode**: Use image_path + output_path parameters
-**Batch Mode**: Use images array parameter (max ${maxBatchTasks} tasks)${MEDIA_MODE_NOTE_EN}
-
-**How it works**:
-1. Uses AI to generate a mask (subject=black, background=white)
-2. Sets background to transparent based on the mask
-3. Saves as transparent PNG
-
-**Use cases**:
-- Product image background removal
-- Portrait cutout
-- Object extraction
-- Creative composite material preparation`;
-    }
+    let description = pick(
+        lang,
+        `移除图片背景，生成透明背景的 PNG，适合商品图去背景、人像抠图、提取物体或准备合成素材。工具先用 AI 生成遮罩（主体为黑色、背景为白色），再按遮罩把背景设为透明并保存为 PNG。${mediaModeNote(lang, 'image_path + output_path', maxBatchTasks)}`,
+        `Remove the background from images and save them as transparent PNGs, for example to clean up product shots, cut out portraits, extract objects or prepare compositing material. The tool first uses AI to create a mask (subject black, background white), then makes the background transparent according to the mask and saves a PNG.${mediaModeNote(lang, 'image_path + output_path', maxBatchTasks)}`
+    );
 
     if (isMultiRoot) {
         description += multiRootTail(lang, workspaceNames);
     }
 
+    const pathText = mediaPathText(lang, isMultiRoot);
+    const subjectText = pick(
+        lang,
+        '可选，要保留的主体描述，例如"人"、"商品"、"猫"，可以帮助 AI 更准确地识别主体。',
+        'Optional description of the subject to keep, such as "person", "product" or "cat"; it helps the AI identify the subject more accurately.'
+    );
+    const maskText = pick(
+        lang,
+        '可选，提供时会把遮罩图另存到这个路径。',
+        'Optional; when given, the mask image is also saved to this path.'
+    );
+
     return {
         description,
         images: pick(
             lang,
-            '批量模式：抠图任务数组。每个任务可独立配置输入、输出和主体描述。即使是单个任务也必须传数组。',
-            'Batch mode: Background removal task array. Each task can independently configure input, output, and subject description. MUST be an array even for single task.'
+            '批量模式的任务数组，每个任务可以单独设置输入、输出和主体描述。即使只有一个任务也要传数组。',
+            'Task array for batch mode; each task has its own input, output and subject description. Pass an array even for one task.'
         ),
-        batchImagePath: pick(
-            lang,
-            '源图片路径（必填）',
-            'Source image path (required)'
-        ),
-        batchOutputPath: pick(
-            lang,
-            '输出文件路径（必填）。建议使用 .png 扩展名。',
-            'Output file path (required). Recommend using .png extension.'
-        ),
-        batchSubjectDescription: pick(
-            lang,
-            '主体描述（可选）。帮助 AI 更准确地识别要保留的主体。',
-            'Subject description (optional). Helps AI identify the subject to keep more accurately.'
-        ),
-        batchMaskPath: pick(
-            lang,
-            '遮罩图保存路径（可选）。提供时会额外保存遮罩图。',
-            'Mask image save path (optional). If provided, also saves the mask image.'
-        ),
-        singleImagePath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：源图片路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Source image path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：源图片路径（必填）。相对于工作区。',
-                'Single mode: Source image path (required). Relative to workspace.'
-            ),
-        singleOutputPath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：输出文件路径（必填）。建议使用 .png 扩展名。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Output file path (required). Recommend using .png extension. Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：输出文件路径（必填）。建议使用 .png 扩展名。',
-                'Single mode: Output file path (required). Recommend using .png extension.'
-            ),
-        singleSubjectDescription: pick(
-            lang,
-            '单张模式：主体描述（可选）。帮助 AI 更准确地识别要保留的主体。例如："人"、"商品"、"猫"。',
-            'Single mode: Subject description (optional). Helps AI identify the subject to keep more accurately. E.g., "person", "product", "cat".'
-        ),
-        singleMaskPath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：遮罩图保存路径（可选）。提供时会额外保存遮罩图。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Mask image save path (optional). If provided, also saves the mask image. Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：遮罩图保存路径（可选）。提供时会额外保存遮罩图。',
-                'Single mode: Mask image save path (optional). If provided, also saves the mask image.'
-            )
+        batchImagePath: pick(lang, '源图片路径，必填。', 'Source image path; required.'),
+        batchOutputPath: pick(lang, '输出文件路径，必填，建议使用 .png 扩展名。', 'Output file path; required. A .png extension is recommended.'),
+        batchSubjectDescription: subjectText,
+        batchMaskPath: maskText,
+        singleImagePath: pick(lang, '单张模式的源图片路径，必填，', 'Source image path for single mode; required. ') + pathText,
+        singleOutputPath: pick(lang, '单张模式的输出文件路径，必填，建议使用 .png 扩展名，', 'Output file path for single mode; required, and a .png extension is recommended. ') + pathText,
+        singleSubjectDescription: pick(lang, '单张模式：', 'Single mode: ') + subjectText,
+        singleMaskPath: pick(lang, '单张模式：', 'Single mode: ') + maskText + (isMultiRoot ? pick(lang, '', ' ') + pathText : '')
     };
 }
 
@@ -688,198 +505,56 @@ export interface CropImageDescriptions {
 export function buildCropImageDescriptions(options: CropImageDescriptionOptions): CropImageDescriptions {
     const { lang, maxBatchTasks, isMultiRoot, workspaceNames, useNormalized } = options;
 
-    let description: string;
-    if (useNormalized) {
-        description = pick(
+    const coordinateText = useNormalized
+        ? pick(
             lang,
-            `裁切图片工具。使用归一化坐标（0-1000）指定裁切区域。
-
-**坐标系（归一化模式）**：
-- 使用 0-1000 范围内的归一化坐标
-- (0, 0) 表示左上角
-- (1000, 1000) 表示右下角
-- 工具会自动转换为实际像素坐标
-
-**参数**：
-- x1, y1：裁切区域左上角坐标（0-1000）
-- x2, y2：裁切区域右下角坐标（0-1000）
-- x1 必须小于 x2，y1 必须小于 y2
-
-**示例**：
-- 裁切左上四分之一：x1=0, y1=0, x2=500, y2=500
-- 裁切中心区域：x1=250, y1=250, x2=750, y2=750
-- 裁切右下区域：x1=500, y1=500, x2=1000, y2=1000
-
-**支持格式**：PNG、JPEG、WebP（根据输出路径扩展名自动选择）
-
-**限制**：
-- 单次调用最多 ${maxBatchTasks} 个裁切任务${MEDIA_MODE_NOTE_ZH}`,
-            `Crop image tool. Uses normalized coordinates (0-1000) to specify the crop region.
-
-**Coordinate System (Normalized Mode)**:
-- Uses normalized coordinates in range 0-1000
-- (0, 0) represents top-left corner
-- (1000, 1000) represents bottom-right corner
-- Tool automatically converts to actual pixel coordinates
-
-**Parameters**:
-- x1, y1: Top-left corner coordinates of crop region (0-1000)
-- x2, y2: Bottom-right corner coordinates of crop region (0-1000)
-- x1 must be less than x2, y1 must be less than y2
-
-**Examples**:
-- Crop top-left quarter: x1=0, y1=0, x2=500, y2=500
-- Crop center region: x1=250, y1=250, x2=750, y2=750
-- Crop bottom-right: x1=500, y1=500, x2=1000, y2=1000
-
-**Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)
-
-**Limits**:
-- Maximum ${maxBatchTasks} crop tasks per call${MEDIA_MODE_NOTE_EN}`
-        );
-    } else {
-        description = pick(
+            '按归一化坐标（0-1000）裁切图片。(0, 0) 是左上角，(1000, 1000) 是右下角，工具会自动换算成实际像素。x1、y1 是裁切区域左上角，x2、y2 是右下角，要求 x1 < x2、y1 < y2。例如裁左上四分之一用 x1=0, y1=0, x2=500, y2=500，裁中心区域用 x1=250, y1=250, x2=750, y2=750。',
+            'Crop images using normalized coordinates (0-1000). (0, 0) is the top-left corner and (1000, 1000) the bottom-right; the tool converts them to actual pixels. x1, y1 is the top-left of the crop area and x2, y2 the bottom-right, with x1 < x2 and y1 < y2. For example, x1=0, y1=0, x2=500, y2=500 keeps the top-left quarter, and x1=250, y1=250, x2=750, y2=750 keeps the center.'
+        )
+        : pick(
             lang,
-            `裁切图片工具。使用像素坐标指定裁切区域。
-
-**坐标系（像素模式）**：
-- 使用图片的实际像素坐标
-- (0, 0) 表示左上角
-- 坐标单位为像素
-- 需要根据图片实际尺寸计算坐标
-
-**参数**：
-- x1, y1：裁切区域左上角坐标（像素）
-- x2, y2：裁切区域右下角坐标（像素）
-- x1 必须小于 x2，y1 必须小于 y2
-
-**示例**（假设 1920x1080 图片）：
-- 裁切左上四分之一：x1=0, y1=0, x2=960, y2=540
-- 裁切中心区域：x1=480, y1=270, x2=1440, y2=810
-- 裁切右下区域：x1=960, y1=540, x2=1920, y2=1080
-
-**支持格式**：PNG、JPEG、WebP（根据输出路径扩展名自动选择）
-
-**限制**：
-- 单次调用最多 ${maxBatchTasks} 个裁切任务${MEDIA_MODE_NOTE_ZH}`,
-            `Crop image tool. Uses pixel coordinates to specify the crop region.
-
-**Coordinate System (Pixel Mode)**:
-- Uses actual pixel coordinates of the image
-- (0, 0) represents top-left corner
-- Coordinates are in pixels
-- Need to calculate coordinates based on actual image dimensions
-
-**Parameters**:
-- x1, y1: Top-left corner coordinates (pixels)
-- x2, y2: Bottom-right corner coordinates (pixels)
-- x1 must be less than x2, y1 must be less than y2
-
-**Examples** (assuming 1920x1080 image):
-- Crop top-left quarter: x1=0, y1=0, x2=960, y2=540
-- Crop center region: x1=480, y1=270, x2=1440, y2=810
-- Crop bottom-right: x1=960, y1=540, x2=1920, y2=1080
-
-**Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)
-
-**Limits**:
-- Maximum ${maxBatchTasks} crop tasks per call${MEDIA_MODE_NOTE_EN}`
+            '按像素坐标裁切图片。(0, 0) 是左上角，坐标以图片实际像素为单位，需要根据图片尺寸计算。x1、y1 是裁切区域左上角，x2、y2 是右下角，要求 x1 < x2、y1 < y2。以 1920x1080 的图片为例，裁左上四分之一用 x1=0, y1=0, x2=960, y2=540，裁中心区域用 x1=480, y1=270, x2=1440, y2=810。',
+            'Crop images using pixel coordinates. (0, 0) is the top-left corner, and coordinates are in the image\'s actual pixels, so work them out from its dimensions. x1, y1 is the top-left of the crop area and x2, y2 the bottom-right, with x1 < x2 and y1 < y2. For a 1920x1080 image, x1=0, y1=0, x2=960, y2=540 keeps the top-left quarter, and x1=480, y1=270, x2=1440, y2=810 keeps the center.'
         );
-    }
+
+    let description = coordinateText + pick(
+        lang,
+        '\n\n输出格式由输出路径的扩展名决定，支持 PNG、JPEG 和 WebP。',
+        '\n\nThe output format follows the output path extension; PNG, JPEG and WebP are supported.'
+    ) + mediaModeNote(lang, 'image_path + output_path + x1/y1/x2/y2', maxBatchTasks);
 
     if (isMultiRoot) {
         description += multiRootTail(lang, workspaceNames);
     }
 
     // 坐标说明：归一化（0-1000）与像素两套
-    const batchX1 = pick(
+    const unit = useNormalized ? '0-1000' : pick(lang, '像素', 'pixels');
+    const coord = (zhCorner: string, enCorner: string, axis: string, single: boolean): string => pick(
         lang,
-        useNormalized ? '裁切区域左上角 X 坐标（0-1000）' : '裁切区域左上角 X 坐标（像素）',
-        useNormalized ? 'Crop region top-left X coordinate (0-1000)' : 'Crop region top-left X coordinate (pixels)'
+        `${single ? '单张模式：' : ''}裁切区域${zhCorner} ${axis} 坐标（${unit}${single ? '，必填' : ''}）。`,
+        `${single ? 'Single mode: ' : ''}${axis} coordinate of the crop area's ${enCorner} (${unit}${single ? ', required' : ''}).`
     );
-    const batchY1 = pick(
-        lang,
-        useNormalized ? '裁切区域左上角 Y 坐标（0-1000）' : '裁切区域左上角 Y 坐标（像素）',
-        useNormalized ? 'Crop region top-left Y coordinate (0-1000)' : 'Crop region top-left Y coordinate (pixels)'
-    );
-    const batchX2 = pick(
-        lang,
-        useNormalized ? '裁切区域右下角 X 坐标（0-1000）' : '裁切区域右下角 X 坐标（像素）',
-        useNormalized ? 'Crop region bottom-right X coordinate (0-1000)' : 'Crop region bottom-right X coordinate (pixels)'
-    );
-    const batchY2 = pick(
-        lang,
-        useNormalized ? '裁切区域右下角 Y 坐标（0-1000）' : '裁切区域右下角 Y 坐标（像素）',
-        useNormalized ? 'Crop region bottom-right Y coordinate (0-1000)' : 'Crop region bottom-right Y coordinate (pixels)'
-    );
-    const singleX1 = pick(
-        lang,
-        useNormalized ? '单张模式：裁切区域左上角 X 坐标（0-1000，必填）' : '单张模式：裁切区域左上角 X 坐标（像素，必填）',
-        useNormalized ? 'Single mode: Crop region top-left X coordinate (0-1000, required)' : 'Single mode: Crop region top-left X coordinate (pixels, required)'
-    );
-    const singleY1 = pick(
-        lang,
-        useNormalized ? '单张模式：裁切区域左上角 Y 坐标（0-1000，必填）' : '单张模式：裁切区域左上角 Y 坐标（像素，必填）',
-        useNormalized ? 'Single mode: Crop region top-left Y coordinate (0-1000, required)' : 'Single mode: Crop region top-left Y coordinate (pixels, required)'
-    );
-    const singleX2 = pick(
-        lang,
-        useNormalized ? '单张模式：裁切区域右下角 X 坐标（0-1000，必填）' : '单张模式：裁切区域右下角 X 坐标（像素，必填）',
-        useNormalized ? 'Single mode: Crop region bottom-right X coordinate (0-1000, required)' : 'Single mode: Crop region bottom-right X coordinate (pixels, required)'
-    );
-    const singleY2 = pick(
-        lang,
-        useNormalized ? '单张模式：裁切区域右下角 Y 坐标（0-1000，必填）' : '单张模式：裁切区域右下角 Y 坐标（像素，必填）',
-        useNormalized ? 'Single mode: Crop region bottom-right Y coordinate (0-1000, required)' : 'Single mode: Crop region bottom-right Y coordinate (pixels, required)'
-    );
+    const pathText = mediaPathText(lang, isMultiRoot);
 
     return {
         description,
         images: pick(
             lang,
-            '批量模式：裁切任务数组。每个任务可独立配置输入、输出和裁切坐标。即使是单个任务也必须传数组。',
-            'Batch mode: Array of crop tasks. Each task can independently configure input, output and crop coordinates. MUST be an array even for single task.'
+            '批量模式的任务数组，每个任务可以单独设置输入、输出和裁切坐标。即使只有一个任务也要传数组。',
+            'Task array for batch mode; each task has its own input, output and crop coordinates. Pass an array even for one task.'
         ),
-        batchImagePath: pick(
-            lang,
-            '源图片路径（必填）',
-            'Source image path (required)'
-        ),
-        batchOutputPath: pick(
-            lang,
-            '输出文件路径（必填）',
-            'Output file path (required)'
-        ),
-        batchX1,
-        batchY1,
-        batchX2,
-        batchY2,
-        singleImagePath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：源图片路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Source image path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：源图片路径（必填）。相对于工作区。',
-                'Single mode: Source image path (required). Relative to workspace.'
-            ),
-        singleOutputPath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：输出文件路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Output file path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：输出文件路径（必填）。',
-                'Single mode: Output file path (required).'
-            ),
-        singleX1,
-        singleY1,
-        singleX2,
-        singleY2
+        batchImagePath: pick(lang, '源图片路径，必填。', 'Source image path; required.'),
+        batchOutputPath: pick(lang, '输出文件路径，必填。', 'Output file path; required.'),
+        batchX1: coord('左上角', 'top-left corner', 'X', false),
+        batchY1: coord('左上角', 'top-left corner', 'Y', false),
+        batchX2: coord('右下角', 'bottom-right corner', 'X', false),
+        batchY2: coord('右下角', 'bottom-right corner', 'Y', false),
+        singleImagePath: pick(lang, '单张模式的源图片路径，必填，', 'Source image path for single mode; required. ') + pathText,
+        singleOutputPath: pick(lang, '单张模式的输出文件路径，必填，', 'Output file path for single mode; required. ') + pathText,
+        singleX1: coord('左上角', 'top-left corner', 'X', true),
+        singleY1: coord('左上角', 'top-left corner', 'Y', true),
+        singleX2: coord('右下角', 'bottom-right corner', 'X', true),
+        singleY2: coord('右下角', 'bottom-right corner', 'Y', true)
     };
 }
 
@@ -927,120 +602,33 @@ export interface ResizeImageDescriptions {
 export function buildResizeImageDescriptions(options: ResizeImageDescriptionOptions): ResizeImageDescriptions {
     const { lang, maxBatchTasks, isMultiRoot, workspaceNames } = options;
 
-    let description: string;
-    if (lang === 'zh-CN') {
-        description = `缩放图片工具。将图片缩放到指定的目标尺寸。
-
-**功能**：
-- 将图片缩放到指定的宽度和高度
-- 使用拉伸填充模式（不保持宽高比）
-- 适用于需要精确尺寸的场景
-
-**参数**：
-- width：目标宽度（像素，必填）
-- height：目标高度（像素，必填）
-- image_path：源图片路径（必填）
-- output_path：输出文件路径（必填）
-
-**示例**：
-- 缩放到 800x600：width=800, height=600
-- 缩放到正方形 512x512：width=512, height=512
-- 缩放到 1920x1080：width=1920, height=1080
-
-**支持格式**：PNG、JPEG、WebP（根据输出路径扩展名自动选择）
-
-**限制**：
-- 单次调用最多 ${maxBatchTasks} 个缩放任务
-- 目标尺寸不能超过 16384x16384${MEDIA_MODE_NOTE_ZH}`;
-    } else {
-        description = `Resize image tool. Resizes images to specified target dimensions.
-
-**Features**:
-- Resize image to specified width and height
-- Uses stretch fill mode (does not preserve aspect ratio)
-- Suitable for scenarios requiring exact dimensions
-
-**Parameters**:
-- width: Target width (pixels, required)
-- height: Target height (pixels, required)
-- image_path: Source image path (required)
-- output_path: Output file path (required)
-
-**Examples**:
-- Resize to 800x600: width=800, height=600
-- Resize to square 512x512: width=512, height=512
-- Resize to 1920x1080: width=1920, height=1080
-
-**Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)
-
-**Limits**:
-- Maximum ${maxBatchTasks} resize tasks per call
-- Target dimensions cannot exceed 16384x16384${MEDIA_MODE_NOTE_EN}`;
-    }
+    let description = pick(
+        lang,
+        `把图片缩放到指定的宽度和高度（像素），适合需要精确尺寸的场景。缩放会拉伸填满目标尺寸，不保持原宽高比，例如 width=800, height=600 或 width=512, height=512。目标尺寸不能超过 16384x16384。输出格式由输出路径的扩展名决定，支持 PNG、JPEG 和 WebP。${mediaModeNote(lang, 'image_path + output_path + width + height', maxBatchTasks)}`,
+        `Resize images to an exact width and height in pixels, for cases that need precise dimensions. The image is stretched to fill the target size and does not keep its aspect ratio, for example width=800, height=600 or width=512, height=512. The target size cannot exceed 16384x16384. The output format follows the output path extension; PNG, JPEG and WebP are supported.${mediaModeNote(lang, 'image_path + output_path + width + height', maxBatchTasks)}`
+    );
 
     if (isMultiRoot) {
         description += multiRootTail(lang, workspaceNames);
     }
 
+    const pathText = mediaPathText(lang, isMultiRoot);
+
     return {
         description,
         images: pick(
             lang,
-            '批量模式：缩放任务数组。每个任务可独立配置输入、输出和目标尺寸。即使是单个任务也必须传数组。',
-            'Batch mode: Resize task array. Each task can independently configure input, output, and target dimensions. MUST be an array even for single task.'
+            '批量模式的任务数组，每个任务可以单独设置输入、输出和目标尺寸。即使只有一个任务也要传数组。',
+            'Task array for batch mode; each task has its own input, output and target size. Pass an array even for one task.'
         ),
-        batchImagePath: pick(
-            lang,
-            '源图片路径（必填）',
-            'Source image path (required)'
-        ),
-        batchOutputPath: pick(
-            lang,
-            '输出文件路径（必填）',
-            'Output file path (required)'
-        ),
-        batchWidth: pick(
-            lang,
-            '目标宽度（像素，必填）',
-            'Target width (pixels, required)'
-        ),
-        batchHeight: pick(
-            lang,
-            '目标高度（像素，必填）',
-            'Target height (pixels, required)'
-        ),
-        singleImagePath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：源图片路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Source image path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：源图片路径（必填）。相对于工作区。',
-                'Single mode: Source image path (required). Relative to workspace.'
-            ),
-        singleOutputPath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：输出文件路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Output file path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：输出文件路径（必填）。',
-                'Single mode: Output file path (required).'
-            ),
-        singleWidth: pick(
-            lang,
-            '单张模式：目标宽度（像素，必填）',
-            'Single mode: Target width (pixels, required)'
-        ),
-        singleHeight: pick(
-            lang,
-            '单张模式：目标高度（像素，必填）',
-            'Single mode: Target height (pixels, required)'
-        )
+        batchImagePath: pick(lang, '源图片路径，必填。', 'Source image path; required.'),
+        batchOutputPath: pick(lang, '输出文件路径，必填。', 'Output file path; required.'),
+        batchWidth: pick(lang, '目标宽度（像素），必填。', 'Target width in pixels; required.'),
+        batchHeight: pick(lang, '目标高度（像素），必填。', 'Target height in pixels; required.'),
+        singleImagePath: pick(lang, '单张模式的源图片路径，必填，', 'Source image path for single mode; required. ') + pathText,
+        singleOutputPath: pick(lang, '单张模式的输出文件路径，必填，', 'Output file path for single mode; required. ') + pathText,
+        singleWidth: pick(lang, '单张模式的目标宽度（像素），必填。', 'Target width in pixels for single mode; required.'),
+        singleHeight: pick(lang, '单张模式的目标高度（像素），必填。', 'Target height in pixels for single mode; required.')
     };
 }
 
@@ -1088,127 +676,42 @@ export interface RotateImageDescriptions {
 export function buildRotateImageDescriptions(options: RotateImageDescriptionOptions): RotateImageDescriptions {
     const { lang, maxBatchTasks, isMultiRoot, workspaceNames } = options;
 
-    let description: string;
-    if (lang === 'zh-CN') {
-        description = `旋转图片工具。将图片顺时针旋转指定角度。
-
-**功能**：
-- 支持任意旋转角度（正数、负数、超过 360 度）
-- 正角度表示顺时针旋转
-- 负角度表示逆时针旋转
-- 自动计算最小包围矩形画布
-
-**背景填充**：
-- PNG/WebP：透明背景
-- JPEG：黑色背景
-
-**参数**：
-- angle：旋转角度（必填，正数为顺时针）
-- image_path：源图片路径（必填）
-- output_path：输出文件路径（必填）
-- format：输出格式（可选：png、jpg、jpeg、webp。未指定时使用原格式或根据输出路径推断）
-
-**示例**：
-- 顺时针旋转 90°：angle=90
-- 逆时针旋转 45°：angle=-45
-- 旋转 180°（翻转）：angle=180
-
-**支持格式**：PNG、JPEG、WebP（根据 format 参数或输出路径扩展名选择）
-
-**限制**：
-- 单次调用最多 ${maxBatchTasks} 个旋转任务${MEDIA_MODE_NOTE_ZH}`;
-    } else {
-        description = `Rotate image tool. Rotates images clockwise to specified angle.
-
-**Features**:
-- Supports any rotation angle (positive, negative, over 360 degrees)
-- Positive angles rotate clockwise
-- Negative angles rotate counter-clockwise
-- Automatically calculates minimum bounding rectangle canvas
-
-**Background Fill**:
-- PNG/WebP: Transparent background
-- JPEG: Black background
-
-**Parameters**:
-- angle: Rotation angle (required, positive for clockwise)
-- image_path: Source image path (required)
-- output_path: Output file path (required)
-- format: Output format (optional: png, jpg, jpeg, webp. If not specified, uses original format or infers from output path)
-
-**Examples**:
-- Rotate 90° clockwise: angle=90
-- Rotate 45° counter-clockwise: angle=-45
-- Rotate 180° (flip): angle=180
-
-**Supported Formats**: PNG, JPEG, WebP (selected based on format parameter or output path extension)
-
-**Limits**:
-- Maximum ${maxBatchTasks} rotate tasks per call${MEDIA_MODE_NOTE_EN}`;
-    }
+    let description = pick(
+        lang,
+        `按指定角度旋转图片。angle 可以是任意值，包括负数和超过 360 的数：正数顺时针，负数逆时针，例如 angle=90 顺时针转 90°，angle=-45 逆时针转 45°，angle=180 转半圈。画布会自动扩大到能容纳旋转后图片的最小矩形，空出的区域在 PNG/WebP 中是透明的，在 JPEG 中是黑色的。输出格式优先按 format 参数，其次按输出路径的扩展名，支持 PNG、JPEG 和 WebP。${mediaModeNote(lang, 'image_path + output_path + angle', maxBatchTasks)}`,
+        `Rotate images by a given angle. angle can be any value, including negative numbers and values over 360: positive turns clockwise and negative counter-clockwise, so angle=90 turns 90° clockwise, angle=-45 turns 45° counter-clockwise and angle=180 turns it halfway around. The canvas grows to the smallest rectangle that fits the rotated image; the uncovered area is transparent for PNG/WebP and black for JPEG. The output format comes from format if given, otherwise from the output path extension; PNG, JPEG and WebP are supported.${mediaModeNote(lang, 'image_path + output_path + angle', maxBatchTasks)}`
+    );
 
     if (isMultiRoot) {
         description += multiRootTail(lang, workspaceNames);
     }
 
+    const pathText = mediaPathText(lang, isMultiRoot);
+    const angleText = pick(
+        lang,
+        '旋转角度，必填，正数顺时针，可以是任意值。',
+        'Rotation angle; required. Positive is clockwise, and any value is allowed.'
+    );
+    const formatText = pick(
+        lang,
+        '可选，输出格式：png、jpg、jpeg 或 webp。省略时沿用原格式或按输出路径推断。',
+        'Optional output format: png, jpg, jpeg or webp. When omitted, the original format is kept or inferred from the output path.'
+    );
+
     return {
         description,
         images: pick(
             lang,
-            '批量模式：旋转任务数组。每个任务可独立配置输入、输出、角度和格式。即使是单个任务也必须传数组。',
-            'Batch mode: Rotate task array. Each task can independently configure input, output, angle, and format. MUST be an array even for single task.'
+            '批量模式的任务数组，每个任务可以单独设置输入、输出、角度和格式。即使只有一个任务也要传数组。',
+            'Task array for batch mode; each task has its own input, output, angle and format. Pass an array even for one task.'
         ),
-        batchImagePath: pick(
-            lang,
-            '源图片路径（必填）',
-            'Source image path (required)'
-        ),
-        batchOutputPath: pick(
-            lang,
-            '输出文件路径（必填）',
-            'Output file path (required)'
-        ),
-        batchAngle: pick(
-            lang,
-            '旋转角度（必填，正数为顺时针，可为任意值）',
-            'Rotation angle (required, positive for clockwise, any value)'
-        ),
-        batchFormat: pick(
-            lang,
-            '输出格式（可选：png、jpg、jpeg、webp）',
-            'Output format (optional: png, jpg, jpeg, webp)'
-        ),
-        singleImagePath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：源图片路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Source image path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：源图片路径（必填）。相对于工作区。',
-                'Single mode: Source image path (required). Relative to workspace.'
-            ),
-        singleOutputPath: isMultiRoot
-            ? pick(
-                lang,
-                '单张模式：输出文件路径（必填）。必须使用 "workspace_name/path" 格式。',
-                'Single mode: Output file path (required). Use "workspace_name/path" format.'
-            )
-            : pick(
-                lang,
-                '单张模式：输出文件路径（必填）。',
-                'Single mode: Output file path (required).'
-            ),
-        singleAngle: pick(
-            lang,
-            '单张模式：旋转角度（必填，正数为顺时针，可为任意值）',
-            'Single mode: Rotation angle (required, positive for clockwise, any value)'
-        ),
-        singleFormat: pick(
-            lang,
-            '单张模式：输出格式（可选：png、jpg、jpeg、webp）',
-            'Single mode: Output format (optional: png, jpg, jpeg, webp)'
-        )
+        batchImagePath: pick(lang, '源图片路径，必填。', 'Source image path; required.'),
+        batchOutputPath: pick(lang, '输出文件路径，必填。', 'Output file path; required.'),
+        batchAngle: angleText,
+        batchFormat: formatText,
+        singleImagePath: pick(lang, '单张模式的源图片路径，必填，', 'Source image path for single mode; required. ') + pathText,
+        singleOutputPath: pick(lang, '单张模式的输出文件路径，必填，', 'Output file path for single mode; required. ') + pathText,
+        singleAngle: pick(lang, '单张模式：', 'Single mode: ') + angleText,
+        singleFormat: pick(lang, '单张模式：', 'Single mode: ') + formatText
     };
 }

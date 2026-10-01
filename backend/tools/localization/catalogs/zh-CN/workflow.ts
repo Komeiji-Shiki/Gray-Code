@@ -11,10 +11,11 @@
  *
  * 高价值语义：
  * - todo_update 明确各操作所需字段：
- *   add → id、content、status；set_status → id、status；set_content → id、content；
+ *   add → id、content（status 默认 pending）；set_status → id、status；set_content → id、content；
  *   cancel → id；remove → id；
- * - update_plan 保留 revision 与 progress_sync 的严格边界，删除重复表述；
- * - record_review_milestone / update_progress 等要求数组参数必须传数组。
+ * - update_plan 保留 revision 与 progress_sync 的边界：progress_sync 禁传字段只在主说明写一次，
+ *   updateMode / sourceArtifact 参数各用一句话提及；
+ * - review 系列保留「一次审查对应一份文档、同一会话只有一个进行中的审查、finalize 后需 reopen」。
  */
 
 import type { ToolDescriptionLocalization } from '../../types';
@@ -22,280 +23,283 @@ import type { ToolDescriptionLocalization } from '../../types';
 export const workflow: Record<string, ToolDescriptionLocalization> = {
     todo_write: {
         description:
-            '创建/替换当前会话的 TODO 列表（ConversationMetadata.custom["todoList"]）。' +
-            '重要：使用本工具初始化列表；如需增量更新（状态/内容），请使用 todo_update。',
+            '创建或整体替换当前会话的 TODO 列表。用于第一次建立列表，或需要整体重写列表时；传入的 todos 会替换原有列表。' +
+            '只想修改个别条目的状态或内容时，请使用 todo_update。结果只返回条目数量统计，不返回完整列表。',
         parameters: {
-            todos: '待办事项数组（必须传数组）',
-            'todos[].id': '唯一的待办 ID',
-            'todos[].content': '待办内容',
-            'todos[].status': '待办状态：pending / in_progress / completed / cancelled'
+            todos: '完整的 TODO 条目数组。',
+            'todos[].id': '条目的唯一 ID。',
+            'todos[].content': '条目内容。',
+            'todos[].status': '条目状态：pending、in_progress、completed 或 cancelled。'
         }
     },
 
     todo_update: {
         description:
-            '增量更新当前会话的 TODO 列表（ConversationMetadata.custom["todoList"]），无需重写整个列表即可更新状态或内容。' +
-            '各操作所需字段：add → id、content、status；set_status → id、status；set_content → id、content；cancel → id；remove → id。' +
-            '响应只返回摘要统计，不回传完整列表。',
+            '修改当前会话 TODO 列表中的个别条目，不需要重写整个列表。操作按顺序执行。' +
+            'add 需要 id 和 content，status 默认为 pending；set_status 需要 id 和 status；set_content 需要 id 和 content；cancel 和 remove 只需要 id。' +
+            '结果只返回统计数字、无效操作数和未找到的 id，不返回完整列表。',
         parameters: {
-            ops: '要应用到当前 TODO 列表的操作数组（必须传数组），按顺序应用',
-            'ops[].op': '操作类型：add（新增或 upsert，id 已存在则更新）、set_status（更新状态）、set_content（更新内容）、cancel（设为 cancelled）、remove（移除）',
-            'ops[].id': '目标待办 ID',
-            'ops[].content': '待办内容（add/set_content 操作使用）',
-            'ops[].status': '待办状态（add/set_status 操作使用）：pending / in_progress / completed / cancelled'
+            ops: '要依次应用到当前 TODO 列表的操作数组。',
+            'ops[].op': '操作类型。add 新建条目，id 已存在时覆盖该条目；cancel 把状态设为 cancelled；remove 删除条目。',
+            'ops[].id': '目标条目的 ID。',
+            'ops[].content': '条目内容，供 add 和 set_content 使用。',
+            'ops[].status': '条目状态，供 add 和 set_status 使用：pending、in_progress、completed 或 cancelled。'
         }
     },
 
     create_design: {
         description:
-            '创建设计文档（markdown）并写入 .graycode/design/**.md（多根工作区为 workspace/.graycode/design/**.md）。' +
-            '本工具只创建设计；不创建计划，也不实现代码。目标文件已存在时拒绝覆盖，请改用 update_design。',
+            '在 .graycode/design/**.md 下创建一份新的 Markdown 设计文档。本工具只写设计，不创建计划，也不修改代码。' +
+            '目标文件已存在时调用会失败；修改已有设计请使用 update_design。',
         parameters: {
-            title: '可选的设计标题（用于默认文件名）',
-            overview: '可选的一行概述',
-            design: '设计文档内容（markdown 格式）',
-            path: '可选的输出路径。必须位于 .graycode/design/**.md 下（多根工作区为 workspace/.graycode/design/**.md）。'
+            title: '可选的设计标题，也用于生成默认文件名。',
+            overview: '可选的一行概述。',
+            design: '设计内容，使用 Markdown。',
+            path: '可选的输出路径，必须位于 .graycode/design/**.md 下（多根工作区为 workspace/.graycode/design/**.md）。不传时根据标题生成。'
         }
     },
 
     update_design: {
         description:
-            '更新 .graycode/design/**.md（多根工作区为 workspace/.graycode/design/**.md）下已有的设计文档（markdown）。' +
-            '当用户要修订当前设计而不是新建时使用本工具。',
+            '修改 .graycode/design/**.md 下已有的 Markdown 设计文档。用户想改动当前设计、而不是另起一份时使用。' +
+            '传入的内容会替换整份文档，目标文件必须已经存在。',
         parameters: {
-            path: '目标设计文档路径，位于 .graycode/design/**.md 下',
-            title: '可选的更新后设计标题',
-            overview: '可选的更新后一行概述',
-            design: '更新后的设计内容（markdown 格式）',
-            changeSummary: '可选的本次设计修订变更摘要'
+            path: '已有设计文档的路径，位于 .graycode/design/**.md 下（多根工作区为 workspace/.graycode/design/**.md）。',
+            title: '可选的新标题。',
+            overview: '可选的新的一行概述。',
+            design: '修改后的完整设计内容，使用 Markdown。',
+            changeSummary: '可选的本次修改摘要。'
         }
     },
 
     create_plan: {
         description:
-            '创建计划文档（markdown）并写入 .graycode/plans/**.md（多根工作区为 workspace/.graycode/plans/**.md）。' +
-            '本工具只创建计划；不负责执行。目标文件已存在时拒绝覆盖，请改用 update_plan。',
+            '在 .graycode/plans/**.md 下创建一份带 TODO 清单的新 Markdown 计划文档。本工具只写计划，不负责执行。' +
+            '目标文件已存在时调用会失败；修改已有计划请使用 update_plan。' +
+            '如果计划基于一份已确认的设计或审查文档，请通过 sourceArtifact 传入，之后就能检查计划是否仍与来源文档一致。',
         parameters: {
-            title: '可选的计划标题（用于默认文件名）',
-            overview: '可选的一行概述',
-            plan: '计划内容（markdown 格式）',
-            todos: 'TODO 清单（Cursor 风格），必须传数组；每项包含 id、content、status',
-            'todos[].id': '待办 ID',
-            'todos[].content': '待办内容',
-            'todos[].status': '待办状态：pending / in_progress / completed / cancelled',
-            sourceArtifact: '可选的源工件，用于对照已确认的设计或审查文档跟踪计划的新鲜度',
-            'sourceArtifact.type': '源工件类型：design / review',
-            'sourceArtifact.path': '源工件路径',
-            path: '可选的输出路径。必须位于 .graycode/plans/**.md 下（多根工作区为 workspace/.graycode/plans/**.md）。'
+            title: '可选的计划标题，也用于生成默认文件名。',
+            overview: '可选的一行概述。',
+            plan: '计划内容，使用 Markdown。',
+            todos: '计划的 TODO 清单，必填；每项包含 id、content 和 status。',
+            'todos[].id': '条目 ID。',
+            'todos[].content': '条目内容。',
+            'todos[].status': '条目状态：pending、in_progress、completed 或 cancelled。',
+            sourceArtifact: '可选，计划所依据的已确认设计或审查文档。',
+            'sourceArtifact.type': '来源文档类型：design 或 review。',
+            'sourceArtifact.path': '来源文档路径。',
+            path: '可选的输出路径，必须位于 .graycode/plans/**.md 下（多根工作区为 workspace/.graycode/plans/**.md）。不传时根据标题生成。'
         }
     },
 
     update_plan: {
         description:
-            '更新 .graycode/plans/**.md（多根工作区为 workspace/.graycode/plans/**.md）下已有的计划文档（markdown）。' +
-            'revision 模式重写计划本身并要求重新确认；progress_sync 模式只在实施期间同步 TODO 状态。' +
-            'progress_sync 模式只发送 path、todos、updateMode 和可选的 changeSummary——不要发送 sourceArtifact，' +
-            '也不要转发任何 continuation/source-artifact 延续字段（如 sourceArtifactType、sourcePath、sourceContent、planPath、planContent、continuationPrompt）。',
+            '修改 .graycode/plans/**.md 下已有的 Markdown 计划文档。revision 模式（默认）重写计划，之后需要用户重新确认。' +
+            'progress_sync 只在实施期间更新 TODO 状态，不改动计划正文，只传 path、todos、updateMode 和可选的 changeSummary。' +
+            'sourceArtifact 和其他续接字段（如 sourcePath、planContent、continuationIntent）只在 revision 模式下有意义，progress_sync 中不要传；' +
+            '在 progress_sync 中传入的 sourceArtifact 会被忽略并给出警告，传入本 schema 以外的字段会导致调用失败。',
         parameters: {
-            path: '目标计划文档路径，位于 .graycode/plans/**.md 下。直接复用已批准的计划路径，不要另发 sourcePath 或 planPath 字段。',
-            title: '可选的更新后计划标题',
-            overview: '可选的更新后一行概述',
-            plan: '更新后的计划内容（markdown 格式）。revision 模式下必填。',
-            todos: '更新后的计划 TODO 清单（必须传数组）；每项包含 id、content、status',
-            'todos[].id': '待办 ID',
-            'todos[].content': '待办内容',
-            'todos[].status': '待办状态：pending / in_progress / completed / cancelled',
-            updateMode: 'revision：重写计划并要求重新确认。progress_sync：实施期间仅同步 TODO 状态；该模式只发送 path、todos、updateMode 和可选的 changeSummary，误传 sourceArtifact 会被忽略并给出警告。',
-            sourceArtifact: '可选的源工件，将计划重新绑定到最新已确认的设计或审查文档。仅 revision 模式有效；progress_sync 模式下会被忽略。只在 schema 明确允许时使用此嵌套对象，不要发送同级延续字段（sourceArtifactType、sourcePath、sourceContent 等）。',
-            'sourceArtifact.type': '源工件类型：design / review',
-            'sourceArtifact.path': '源工件路径',
-            changeSummary: '可选的本次计划修订变更摘要'
+            path: '已有计划文档的路径，位于 .graycode/plans/**.md 下。请沿用已批准计划的路径。',
+            title: '可选的新标题。',
+            overview: '可选的新的一行概述。',
+            plan: '修改后的完整计划内容，使用 Markdown。revision 模式下必填，progress_sync 模式下不使用。',
+            todos: '完整的 TODO 清单，会替换原有清单；每项包含 id、content 和 status。',
+            'todos[].id': '条目 ID。',
+            'todos[].content': '条目内容。',
+            'todos[].status': '条目状态：pending、in_progress、completed 或 cancelled。',
+            updateMode: 'revision（默认）重写计划并需要重新确认；progress_sync 只更新 TODO 状态，只接受 path、todos、updateMode 和 changeSummary。',
+            sourceArtifact: '可选，要关联的已确认设计或审查文档；不传时保留原有关联。只在 revision 模式下使用，在 progress_sync 中会被忽略并给出警告。',
+            'sourceArtifact.type': '来源文档类型：design 或 review。',
+            'sourceArtifact.path': '来源文档路径。',
+            changeSummary: '可选的本次修改摘要。'
         }
     },
 
     create_progress: {
         description:
-            '在 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）创建项目进度文档。' +
-            '初始化项目级状态台账，并返回轻量进度快照而不是完整 markdown 正文。' +
-            '文件已存在且有效时返回现有快照，不会创建第二个文件。',
+            '在 .graycode/progress.md 创建项目进度文档，用来跟踪项目状态、阶段、关联文档、TODO、里程碑、风险和变更日志。' +
+            '结果是一份简短的进度快照，而不是完整的 Markdown。' +
+            '如果已经存在有效的进度文档，会返回它的快照并附带警告，不会再建第二份；已有文件无效时调用会失败。status 默认为 active，phase 默认为 design。',
         parameters: {
-            path: '可选的输出路径。必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。',
-            projectName: '可选的项目可读名称（默认取第一个工作区名称）',
-            projectId: '可选的稳定项目 ID（默认由项目名称生成 slug）',
-            status: '项目状态：active / blocked / completed / archived',
-            phase: '项目阶段：design / plan / implementation / review / maintenance',
-            currentFocus: '当前焦点',
-            latestConclusion: '最新结论',
-            currentBlocker: '当前阻塞项',
-            nextAction: '下一步行动',
-            activeArtifacts: '当前关联工件引用（design/plan/review 路径）',
-            'activeArtifacts.design': '设计文档路径',
-            'activeArtifacts.plan': '计划文档路径',
-            'activeArtifacts.review': '审查文档路径',
-            todos: 'TODO 快照，必须传数组；每项包含 id、content、status',
-            'todos[].id': '待办 ID',
-            'todos[].content': '待办内容',
-            'todos[].status': '待办状态：pending / in_progress / completed / cancelled',
-            risks: '风险清单，必须传数组；每项包含 id、title、status、description',
-            'risks[].id': '风险 ID',
-            'risks[].title': '风险标题',
-            'risks[].status': '风险状态：active / resolved / accepted',
-            'risks[].description': '风险描述'
+            path: '可选的输出路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。',
+            projectName: '可选的项目名称，默认取第一个工作区文件夹的名称。',
+            projectId: '可选的稳定项目 ID，默认由项目名称生成 slug。',
+            status: '项目状态：active、blocked、completed 或 archived。',
+            phase: '项目阶段：design、plan、implementation、review 或 maintenance。',
+            currentFocus: '当前的工作重点。',
+            latestConclusion: '最新结论。',
+            currentBlocker: '当前的阻塞问题。',
+            nextAction: '下一步行动。',
+            activeArtifacts: '当前关联的设计、计划和审查文档路径。',
+            'activeArtifacts.design': '设计文档路径。',
+            'activeArtifacts.plan': '计划文档路径。',
+            'activeArtifacts.review': '审查文档路径。',
+            todos: 'TODO 快照；每项包含 id、content 和 status。',
+            'todos[].id': '条目 ID。',
+            'todos[].content': '条目内容。',
+            'todos[].status': '条目状态：pending、in_progress、completed 或 cancelled。',
+            risks: '风险清单；每项包含 id、title、status 和 description。',
+            'risks[].id': '风险 ID。',
+            'risks[].title': '风险标题。',
+            'risks[].status': '风险状态：active、resolved 或 accepted。',
+            'risks[].description': '风险说明。'
         }
     },
 
     update_progress: {
         description:
-            '更新 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）项目进度文档。' +
-            '刷新摘要字段、关联工件、TODO 快照、风险与最近日志条目，并返回轻量进度快照。未传入的字段保持原值。',
+            '修改 .graycode/progress.md 中已有的项目进度文档。只会改动传入的字段：activeArtifacts 只更新传入的键，todos 和 risks 整体替换原有列表，appendLog 把条目追加到日志末尾。' +
+            '结果是一份简短的进度快照，并列出改动过的部分。',
         parameters: {
-            path: '可选的目标路径。必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。',
-            status: '项目状态：active / blocked / completed / archived',
-            phase: '项目阶段：design / plan / implementation / review / maintenance',
-            currentFocus: '当前焦点',
-            latestConclusion: '最新结论',
-            currentBlocker: '当前阻塞项',
-            nextAction: '下一步行动',
-            activeArtifacts: '当前关联工件引用（design/plan/review 路径），只更新传入的键',
-            'activeArtifacts.design': '设计文档路径',
-            'activeArtifacts.plan': '计划文档路径',
-            'activeArtifacts.review': '审查文档路径',
-            todos: 'TODO 快照（整体替换），必须传数组；每项包含 id、content、status',
-            'todos[].id': '待办 ID',
-            'todos[].content': '待办内容',
-            'todos[].status': '待办状态：pending / in_progress / completed / cancelled',
-            risks: '风险清单（整体替换），必须传数组；每项包含 id、title、status、description',
-            'risks[].id': '风险 ID',
-            'risks[].title': '风险标题',
-            'risks[].status': '风险状态：active / resolved / accepted',
-            'risks[].description': '风险描述',
-            appendLog: '要追加的日志条目数组（必须传数组），每项包含 type 与 message，可带 refId',
-            'appendLog[].type': '日志类型：created / updated / milestone_recorded / artifact_changed / risk_changed',
-            'appendLog[].refId': '可选的关联 ID（如里程碑 ID）',
-            'appendLog[].message': '日志消息'
+            path: '可选的目标路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。',
+            status: '项目状态：active、blocked、completed 或 archived。',
+            phase: '项目阶段：design、plan、implementation、review 或 maintenance。',
+            currentFocus: '当前的工作重点。',
+            latestConclusion: '最新结论。',
+            currentBlocker: '当前的阻塞问题。',
+            nextAction: '下一步行动。',
+            activeArtifacts: '当前关联的设计、计划和审查文档路径。',
+            'activeArtifacts.design': '设计文档路径。',
+            'activeArtifacts.plan': '计划文档路径。',
+            'activeArtifacts.review': '审查文档路径。',
+            todos: '新的 TODO 快照；每项包含 id、content 和 status。',
+            'todos[].id': '条目 ID。',
+            'todos[].content': '条目内容。',
+            'todos[].status': '条目状态：pending、in_progress、completed 或 cancelled。',
+            risks: '新的风险清单；每项包含 id、title、status 和 description。',
+            'risks[].id': '风险 ID。',
+            'risks[].title': '风险标题。',
+            'risks[].status': '风险状态：active、resolved 或 accepted。',
+            'risks[].description': '风险说明。',
+            appendLog: '要追加的日志条目；每项包含 type 和 message，可以带 refId。',
+            'appendLog[].type': '日志类型：created、updated、milestone_recorded、artifact_changed 或 risk_changed。',
+            'appendLog[].refId': '可选的关联 ID，例如里程碑 ID。',
+            'appendLog[].message': '日志内容。'
         }
     },
 
     record_progress_milestone: {
         description:
-            '在 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）中记录项目里程碑，并刷新最新进度快照。' +
-            '本工具用于项目级进度节点，不是完整的审查发现或计划文档。',
+            '在 .graycode/progress.md 中记录一个项目级里程碑，并返回刷新后的进度快照。它用于记录项目进展节点，审查发现和计划内容不要写在这里。' +
+            '不传 milestoneId 时自动生成下一个 ID（PG1、PG2……），传入已存在的 ID 会导致调用失败。' +
+            'status 默认为 completed，此时 completedAt 默认取当前时间。latestConclusion、currentBlocker 和 nextAction 也会同步更新文档摘要。',
         parameters: {
-            path: '可选的目标路径。必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。',
-            milestoneId: '可选的里程碑 ID（省略时自动生成，如 PG1、PG2…）；已存在则报错',
-            title: '里程碑标题',
-            status: '里程碑状态：in_progress / completed（默认 completed）',
-            summary: '里程碑摘要',
-            relatedTodoIds: '关联的 TODO ID 数组（必须传数组）',
-            relatedReviewMilestoneIds: '关联的审查里程碑 ID 数组（必须传数组）',
-            relatedArtifacts: '关联工件引用（design/plan/review 路径）',
-            'relatedArtifacts.design': '设计文档路径',
-            'relatedArtifacts.plan': '计划文档路径',
-            'relatedArtifacts.review': '审查文档路径',
-            startedAt: '开始时间（ISO 时间字符串）',
-            completedAt: '完成时间（ISO 时间字符串；status 为 completed 时默认取当前时间）',
-            nextAction: '下一步行动',
-            latestConclusion: '最新结论',
-            currentBlocker: '当前阻塞项'
+            path: '可选的目标路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。',
+            milestoneId: '可选的里程碑 ID。',
+            title: '里程碑标题。',
+            status: '里程碑状态：in_progress 或 completed。',
+            summary: '里程碑摘要。',
+            relatedTodoIds: '相关 TODO 的 ID 数组。',
+            relatedReviewMilestoneIds: '相关审查里程碑的 ID 数组。',
+            relatedArtifacts: '相关的设计、计划和审查文档路径。',
+            'relatedArtifacts.design': '设计文档路径。',
+            'relatedArtifacts.plan': '计划文档路径。',
+            'relatedArtifacts.review': '审查文档路径。',
+            startedAt: '开始时间，使用 ISO 时间字符串。',
+            completedAt: '完成时间，使用 ISO 时间字符串。',
+            nextAction: '下一步行动。',
+            latestConclusion: '最新结论。',
+            currentBlocker: '当前的阻塞问题。'
         }
     },
 
     validate_progress_document: {
         description:
-            '只读校验 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）进度文档，不修改文件。' +
-            '报告元数据健康度、章节顺序与基本不变量。',
+            '检查 .graycode/progress.md 中的进度文档，不修改文件。结果会列出元数据、章节顺序和基本一致性规则方面的问题。',
         parameters: {
-            path: '目标进度文档路径。必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。'
+            path: '进度文档路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。'
         }
     },
 
     create_review: {
         description:
-            '创建审查文档（markdown）并写入 .graycode/review/**.md（多根工作区为 workspace/.graycode/review/**.md）。' +
-            '本工具仅供 Review 模式使用，不得修改业务代码。目标文件已存在时拒绝覆盖，请用 record_review_milestone 或 finalize_review 继续。',
+            '在 .graycode/review/**.md 下创建一份 Markdown 审查文档，并以它开始一次审查。本工具属于 Review 模式，只写审查文档，不修改项目代码。' +
+            '一次审查只对应一份文档，同一会话中同时只能有一个进行中的审查；要开始新的审查，请先结束当前审查。' +
+            '目标文件已存在时调用会失败；请用 record_review_milestone 或 finalize_review 继续那次审查，或者换一个路径。',
         parameters: {
-            title: '可选的审查标题（用于默认文件名）',
-            overview: '可选的一行审查概述',
-            review: '初始审查内容（markdown 格式）',
-            path: '可选的输出路径。必须位于 .graycode/review/**.md 下（多根工作区为 workspace/.graycode/review/**.md）。'
+            title: '可选的审查标题，也用于生成默认文件名。',
+            overview: '可选的一行审查概述。',
+            review: '初始审查内容，使用 Markdown，例如审查范围和方法。',
+            path: '可选的输出路径，必须位于 .graycode/review/**.md 下（多根工作区为 workspace/.graycode/review/**.md）。不传时根据标题生成。'
         }
     },
 
     record_review_milestone: {
         description:
-            '向 .graycode/review/**.md 下已有的审查文档追加里程碑，并更新结构化摘要区与问题汇总区。',
+            '为进行中的审查追加一个里程碑，并更新它在 .graycode/review/**.md 下的文档的摘要、问题和统计。' +
+            'path 必须是当前会话中进行中的那次审查的文档。调用 finalize_review 之后不能再记录里程碑，除非先用 reopen_review 重新打开。',
         parameters: {
-            path: '目标审查文档路径，位于 .graycode/review/**.md 下',
-            milestoneId: '可选的里程碑 ID（省略时自动生成）',
-            milestoneTitle: '里程碑标题',
-            summary: '里程碑摘要（markdown 格式）',
-            status: '里程碑状态：in_progress / completed',
-            conclusion: '可选的摘要区最新结论',
-            evidenceFiles: '可选的关联证据文件路径数组（必须传数组）。当无法提供行级引用时，用此字段做简单的文件级证据。',
-            evidence: '可选的结构化证据引用数组（必须传数组），包含文件路径及可选的起始行、结束行、符号或摘要哈希',
-            'evidence[].path': '证据文件路径',
-            'evidence[].lineStart': '起始行号（1-based，可选）',
-            'evidence[].lineEnd': '结束行号（1-based，可选）',
-            'evidence[].symbol': '可选的符号名',
-            'evidence[].excerptHash': '可选的证据片段哈希',
-            findings: '可选的旧版问题字符串数组（必须传数组），合并到审查问题区',
-            structuredFindings: '可选的结构化问题数组（必须传数组），合并到审查问题区。标题保持简洁，详细说明放到 description 中。',
-            'structuredFindings[].id': '可选的问题 ID。没有简洁的现成 ID 时可省略。',
-            'structuredFindings[].severity': '严重级别：high / medium / low',
-            'structuredFindings[].category': '问题类别：html / css / javascript / accessibility / performance / maintainability / docs / test / other',
-            'structuredFindings[].title': '简短问题标题。使用简洁的问题标签，不要写成完整句子、文件路径或建议。',
-            'structuredFindings[].description': '问题的详细说明。把推理过程、影响和背景放在这里。',
-            'structuredFindings[].evidenceFiles': '可选的该问题简单证据文件路径数组（必须传数组）',
-            'structuredFindings[].evidence': '可选的结构化证据引用数组（必须传数组）',
-            'structuredFindings[].evidence[].path': '证据文件路径',
-            'structuredFindings[].evidence[].lineStart': '起始行号（1-based，可选）',
-            'structuredFindings[].evidence[].lineEnd': '结束行号（1-based，可选）',
-            'structuredFindings[].evidence[].symbol': '可选的符号名',
-            'structuredFindings[].evidence[].excerptHash': '可选的证据片段哈希',
-            'structuredFindings[].relatedMilestoneIds': '可选的关联里程碑 ID 数组（必须传数组），用于交叉引用',
-            'structuredFindings[].recommendation': '可选的后续修复或处理建议',
-            'structuredFindings[].trackingStatus': '跟踪状态：open / accepted_risk / fixed / wont_fix / duplicate',
-            reviewedModules: '可选的已审查模块数组（必须传数组），合并到审查摘要区',
-            recommendedNextAction: '可选的审查摘要区推荐下一步行动'
+            path: '审查文档路径，位于 .graycode/review/**.md 下。',
+            milestoneId: '可选的里程碑 ID，不传时自动生成。',
+            milestoneTitle: '里程碑标题。',
+            summary: '里程碑摘要，使用 Markdown。',
+            status: '里程碑状态：in_progress 或 completed。',
+            conclusion: '可选，要显示在审查摘要中的最新结论。',
+            evidenceFiles: '可选的证据文件路径数组。无法指出具体行号时使用。',
+            evidence: '可选的证据引用数组，每项包含文件路径，以及可选的行号、符号或片段哈希。',
+            'evidence[].path': '证据文件路径。',
+            'evidence[].lineStart': '可选的起始行号，从 1 开始。',
+            'evidence[].lineEnd': '可选的结束行号，从 1 开始。',
+            'evidence[].symbol': '可选的符号名。',
+            'evidence[].excerptHash': '可选的证据片段哈希。',
+            findings: '可选的纯文本问题数组，会合并到问题区。优先使用 structuredFindings。',
+            structuredFindings: '可选的结构化问题数组，会合并到问题区。标题保持简短，详细说明写在 description 中。',
+            'structuredFindings[].id': '可选的简短、稳定的问题 ID。没有现成的 ID 时省略。',
+            'structuredFindings[].severity': '严重程度：high、medium 或 low。',
+            'structuredFindings[].category': '问题类别：html、css、javascript、accessibility、performance、maintainability、docs、test 或 other。',
+            'structuredFindings[].title': '简短的问题标签，不要写成完整句子、文件路径或建议。',
+            'structuredFindings[].description': '问题的详细说明，包括推理过程、影响和背景。',
+            'structuredFindings[].evidenceFiles': '可选，作为该问题证据的文件路径数组。',
+            'structuredFindings[].evidence': '可选，该问题的证据引用数组。',
+            'structuredFindings[].evidence[].path': '证据文件路径。',
+            'structuredFindings[].evidence[].lineStart': '可选的起始行号，从 1 开始。',
+            'structuredFindings[].evidence[].lineEnd': '可选的结束行号，从 1 开始。',
+            'structuredFindings[].evidence[].symbol': '可选的符号名。',
+            'structuredFindings[].evidence[].excerptHash': '可选的证据片段哈希。',
+            'structuredFindings[].relatedMilestoneIds': '可选，相关里程碑的 ID 数组。',
+            'structuredFindings[].recommendation': '可选的修复或处理建议。',
+            'structuredFindings[].trackingStatus': '跟踪状态：open、accepted_risk、fixed、wont_fix 或 duplicate。',
+            reviewedModules: '可选，本次审查覆盖的模块数组，会合并到审查摘要。',
+            recommendedNextAction: '可选，要显示在审查摘要中的建议下一步。'
         }
     },
 
     finalize_review: {
         description:
-            '结束 .graycode/review/**.md 下已有的审查文档：规范化其结构并更新最终审查摘要。',
+            '结束进行中的审查：记录最终结论和总体决定，整理它在 .graycode/review/**.md 下的文档结构，并更新最终摘要。' +
+            'path 必须是当前进行中的那次审查的文档。调用之后不能再记录里程碑，除非先用 reopen_review 重新打开。',
         parameters: {
-            path: '目标审查文档路径，位于 .graycode/review/**.md 下',
-            conclusion: '最终审查结论',
-            overallDecision: '可选的总体审查决策：accepted / conditionally_accepted / rejected / needs_follow_up',
-            recommendedNextAction: '可选的摘要区推荐下一步行动',
-            reviewedModules: '可选的已审查模块数组（必须传数组），合并到摘要区'
+            path: '审查文档路径，位于 .graycode/review/**.md 下。',
+            conclusion: '审查的最终结论。',
+            overallDecision: '可选的总体决定：accepted、conditionally_accepted、rejected 或 needs_follow_up。',
+            recommendedNextAction: '可选，要显示在摘要中的建议下一步。',
+            reviewedModules: '可选，本次审查覆盖的模块数组，会合并到摘要。'
         }
     },
 
     validate_review_document: {
         description:
-            '只读校验 .graycode/review/**.md 下已有的审查文档，不修改文件。报告格式、元数据健康度与不变量问题。',
+            '检查 .graycode/review/**.md 下已有的审查文档，不修改文件。结果会列出格式、元数据和一致性规则方面的问题。',
         parameters: {
-            path: '目标审查文档路径，位于 .graycode/review/**.md 下'
+            path: '审查文档路径，位于 .graycode/review/**.md 下。'
         }
     },
 
     reopen_review: {
         description:
-            '重新打开 .graycode/review/**.md 下已结束的审查文档，使同一轮审查可以继续记录里程碑。',
+            '重新打开 .graycode/review/**.md 下一份已结束的审查文档，让同一次审查可以继续记录里程碑。当前会话中已有其他进行中的审查时，调用会失败。',
         parameters: {
-            path: '目标已结束审查文档路径，位于 .graycode/review/**.md 下'
+            path: '已结束的审查文档路径，位于 .graycode/review/**.md 下。'
         }
     },
 
     compare_review_documents: {
         description:
-            '只读比较 .graycode/review/**.md 下的两份审查文档，不修改任何文件。' +
-            '返回问题增量（新增/移除/持续）、跟踪状态变化与快照统计差异。',
+            '比较 .graycode/review/**.md 下的两份审查文档，不修改任何文件。结果列出新增、移除和延续的问题、跟踪状态的变化，以及摘要统计的差异。',
         parameters: {
-            basePath: '基准审查文档路径，位于 .graycode/review/**.md 下',
-            targetPath: '目标审查文档路径，位于 .graycode/review/**.md 下',
-            includeUnchanged: '是否在结果中包含未变化的持续问题'
+            basePath: '作为比较起点的较早审查文档路径。',
+            targetPath: '要与之比较的较新审查文档路径。',
+            includeUnchanged: '是否同时列出没有变化的延续问题，默认为 false。'
         }
     }
 };

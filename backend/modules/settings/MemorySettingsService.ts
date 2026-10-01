@@ -9,6 +9,7 @@
 import type { MemoryToolConfig } from './types';
 import { DEFAULT_MEMORY_TOOL_CONFIG } from './types';
 import { SettingsCore } from './SettingsCore';
+import { retiredPromptKind } from './retiredPromptDefaults';
 
 /**
  * 记忆配置服务
@@ -33,7 +34,9 @@ export class MemorySettingsService {
      * 获取记忆工具配置
      */
     getMemoryConfig(): Readonly<MemoryToolConfig> {
-        return this.core.getToolsConfigEntry('memory', DEFAULT_MEMORY_TOOL_CONFIG);
+        const config = this.core.getToolsConfigEntry('memory', DEFAULT_MEMORY_TOOL_CONFIG);
+        // 保存下来的旧版默认记忆提示词视为未自定义，改用内置默认值（空串即使用内置文本）。
+        return retiredPromptKind(config.systemPrompt) === 'memory' ? { ...config, systemPrompt: '' } : config;
     }
 
     /**
