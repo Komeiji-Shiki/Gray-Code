@@ -11,18 +11,17 @@ function createMemoryNoteDeclaration(): ToolDeclaration {
     return {
         name: 'memory_note',
         description:
-            '记录一条对未来会话仍有价值的工程日志（项目约定、踩坑经验、长期技术决定）。用户本人的事实、偏好和经历使用 memory_remember，不要用本工具代替。\n' +
-            '记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n' +
-            `一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 ${MAX_ENTRY_CHARS}）。\n` +
-            '不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n' +
-            '如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩，同一待压缩状态不会重复提示。',
+            '记录一条在以后的会话里仍然有用的工程日志，例如项目约定、踩过的坑或长期的技术决定。用户本人的事实、偏好和经历属于个人长期记忆，请用 memory_remember 记录，不要用本工具代替。\n' +
+            '有工作区时，记录保存到当前工作区的记忆中，与全局记忆分开；memory_wake 会同时读取两者。\n' +
+            '不要记录临时进度、工作流水、可以从仓库重新得到的内容、秘密或重复的信息。\n' +
+            '如果结果包含 pendingCompression，它只是可延后的维护提示：不要中断当前用户任务，完成当前交付后再压缩；同一个待压缩状态不会重复提示。',
         category: 'memory',
         parameters: {
             type: 'object',
             properties: {
                 text: {
                     type: 'string',
-                    description: '要记录的记忆文本。一行，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符）。',
+                    description: `要记录的文本，只能有一行。长度按 UTF-8 字节计算，上限是 memory_config 的 entryChars（默认 280 字节，一个中文字符通常占 3 字节），最高可调到 ${MAX_ENTRY_CHARS}。`,
                 },
             },
             required: ['text'],

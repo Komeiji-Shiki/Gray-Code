@@ -162,13 +162,12 @@ function createExecuteCommandDeclaration(): Tool['declaration'] {
     // 生成工作区说明
     let workspaceDescription = '';
     if (isMultiRoot) {
+        // cwd 的多根写法由 cwd 参数说明负责，这里只列出各工作区的实际路径。
         workspaceDescription = isZh
-            ? '\n\n**多根工作区模式：**\n' +
-                workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n') +
-                '\n\n使用 "workspace_name/path" 格式指定工作目录'
-            : '\n\n**Multi-root Workspace Mode:**\n' +
-                workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n') +
-                '\n\nUse "workspace_name/path" format to specify the working directory';
+            ? '\n\n工作区（多根，cwd 的写法见参数说明）：\n' +
+                workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n')
+            : '\n\nWorkspaces (multi-root; see the cwd parameter for how to write cwd):\n' +
+                workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n');
     }
     
     // shellConfig 的 getAvailableShellsDescription 只有英文文案（'- No available Shell' / '(default)'），
@@ -193,23 +192,21 @@ function createExecuteCommandDeclaration(): Tool['declaration'] {
             description: isZh
                 ? `执行 Shell 命令并返回输出。
 
-**当前用户环境：**
-- OS: ${osName} (${osArch})
-- OS Version: ${osRelease}
-- 默认 Shell: ${getDefaultShellName()}
+当前环境：
+- 操作系统：${osName} (${osArch})，版本 ${osRelease}
+- 默认 Shell：${getDefaultShellName()}
 
-**当前可用 Shell：**
+可用的 Shell：
 ${availableShellsText}${workspaceDescription}
 
 ${getExecuteCommandShellGuidanceDescription()}`
-                : `Execute a Shell command and return its output.
+                : `Run a shell command and return its output.
 
-**Current user environment:**
-- OS: ${osName} (${osArch})
-- OS Version: ${osRelease}
-- Default Shell: ${getDefaultShellName()}
+Current environment:
+- OS: ${osName} (${osArch}), version ${osRelease}
+- Default shell: ${getDefaultShellName()}
 
-**Enabled Shells / Available Shells:**
+Available shells:
 ${availableShellsText}${workspaceDescription}
 
 ${getExecuteCommandShellGuidanceDescription()}`,
@@ -219,8 +216,8 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                     command: {
                         type: 'string',
                         description: isZh
-                            ? '要执行的 Shell 命令文本。注意：这是给所选 shell 解析的命令字符串，不是 argv 数组。'
-                            : 'The Shell command text to execute. Note: this is a command string parsed by the selected shell, not an argv array.'
+                            ? '要执行的命令文本。'
+                            : 'The command text to run.'
                     },
                     cwd: {
                         type: 'string',
@@ -229,23 +226,23 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                     shell: {
                         type: 'string',
                         description: isZh
-                            ? `Shell 类型。可选值：${getEnabledShellTypesForEnum().join(', ')}。不传或传 default 时使用当前默认 Shell。`
-                            : `Shell type. Available values: ${getEnabledShellTypesForEnum().join(', ')}. When omitted or set to "default", the current default shell is used.`,
+                            ? `要使用的 Shell 类型，可选值：${getEnabledShellTypesForEnum().join(', ')}。`
+                            : `Shell type to use: ${getEnabledShellTypesForEnum().join(', ')}.`,
                         enum: getEnabledShellTypesForEnum(),
                         default: 'default'
                     },
                     timeout: {
                         type: 'number',
                         description: isZh
-                            ? `前台命令的超时时间（毫秒），当前默认 ${defaultTimeout}；0 表示不超时。后台命令不使用此限制。`
-                            : `Foreground timeout in milliseconds; current default ${defaultTimeout}. 0 disables it. Background commands ignore this limit.`,
+                            ? `前台命令的超时时间，单位毫秒，当前默认 ${defaultTimeout}，0 表示不限时。后台命令不受此限制。`
+                            : `Foreground timeout in milliseconds; the current default is ${defaultTimeout}, and 0 disables it. Background commands are not subject to it.`,
                         default: defaultTimeout
                     },
                     background: {
                         type: 'boolean',
                         description: isZh
-                            ? '在后台运行此命令。仅用于长时间运行的命令（构建、服务器、批处理任务），用户无需等待。工具立即返回 taskId；最终输出稍后以 "[Background task completed]" 用户消息到达。不要等待或轮询它。后台命令忽略 timeout 参数。'
-                            : 'Run this command in the BACKGROUND. Use ONLY for long-running commands (builds, servers, batch jobs) when the user should not have to wait. The tool returns immediately with a taskId; the final output will arrive later as a "[Background task completed]" user message. Do NOT wait or poll for it. Background commands ignore the timeout parameter.'
+                            ? '在后台运行命令。只用于用户不必等待的长时间任务，例如构建、服务器或批处理。工具会立即返回 taskId，最终输出稍后以 "[Background task completed]" 用户消息送达，不要等待或轮询。'
+                            : 'Run the command in the background. Use this only for long-running work the user should not have to wait for, such as builds, servers or batch jobs. The tool returns a taskId right away, and the final output arrives later as a "[Background task completed]" user message; do not wait or poll for it.'
                     }
                 },
                 required: ['command']

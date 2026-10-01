@@ -41,22 +41,22 @@ export function createTodoWriteToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_write',
         strict: true,  // API 端强制 schema 校验
-        description: 'Create/replace the per-conversation TODO list (ConversationMetadata.custom["todoList"]). IMPORTANT: Use this tool to initialize the list. For incremental updates (status/content), use todo_update.',
+        description: 'Create or replace the TODO list for the current conversation. Use it to set up the list, or to rewrite it as a whole; the todos you pass replace the previous list. To change the status or content of individual items, use todo_update. The result reports item counts, not the full list.',
         category: 'todo',
         parameters: {
             type: 'object',
             properties: {
                 todos: {
                     type: 'array',
-                    description: 'Array of todo items',
+                    description: 'The complete list of TODO items.',
                     items: {
                         type: 'object',
                         properties: {
-                            id: { type: 'string', description: 'Unique todo id' },
-                            content: { type: 'string', description: 'Todo content' },
+                            id: { type: 'string', description: 'Unique ID of the item.' },
+                            content: { type: 'string', description: 'What the item is about.' },
                             status: {
                                 type: 'string',
-                                description: 'Todo status',
+                                description: 'Status of the item.',
                                 enum: ['pending', 'in_progress', 'completed', 'cancelled']
                             }
                         },

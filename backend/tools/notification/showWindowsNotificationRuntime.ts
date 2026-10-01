@@ -31,25 +31,25 @@ export function createShowWindowsNotificationToolDeclaration(): ToolDeclaration 
     name: 'show_windows_notification',
     strict: true,
     category: 'notification',
-    description: 'Show a Windows system notification with a custom title and message. Use this when you need to notify the user outside the chat UI, for example when a long task finishes, user action is needed, or an important status changes. On non-Windows platforms the tool reports that notification is unsupported.',
+    description: 'Show a Windows system notification with a title and message. Use it to reach the user outside the chat, for example when a long task finishes, user action is needed, or an important status changes. On other platforms the tool reports that notifications are not supported.',
     parameters: {
       type: 'object',
       properties: {
         title: {
           type: 'string',
-          description: 'Notification title. Keep it short and clear.'
+          description: 'Notification title; keep it short and clear.'
         },
         message: {
           type: 'string',
-          description: 'Notification body text. Summarize the important information for the user.'
+          description: 'Notification body, summarizing what the user needs to know.'
         },
         silent: {
           type: 'boolean',
-          description: 'Whether to suppress notification sound. Default: true.'
+          description: 'Whether to play the notification without sound; default true.'
         },
         openChatOnClick: {
           type: 'boolean',
-          description: 'Whether clicking the notification should open the GrayCode chat view. Default: true.'
+          description: 'Whether clicking the notification opens the GrayCode chat view; default true.'
         }
       },
       required: ['title', 'message']

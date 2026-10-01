@@ -11,29 +11,26 @@ function createMemoryCompressDeclaration(): ToolDeclaration {
     return {
         name: 'memory_compress',
         description:
-            '执行待处理的记忆压缩合并。\n' +
-            '记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\n' +
+            '处理待压缩的工程日志记忆。记忆按二叉树组织：相邻的两条记忆合并成一行摘要，摘要再两两合并。\n' +
+            '不传 blockId 和 summary 时，返回下一个待压缩的提示；按提示写好摘要后，再用 blockId 和 summary 提交。\n' +
             '成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n' +
-            '开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。\n' +
-            `参数：blockId（块 ID，如 "0-1"）；summary（压缩后的摘要文本，一行，长度取 entryChars 与树记录容量 ${MAX_TREE_SUMMARY_BYTES} 字节的较小值，默认配置下不超 280 字节）。\n` +
-            '不传参数时，返回下一个待压缩的提示。\n' +
-            '作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope="global"。',
+            '开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。',
         category: 'memory',
         parameters: {
             type: 'object',
             properties: {
                 blockId: {
                     type: 'string',
-                    description: '要压缩的块 ID（如 "0-1"）。从压缩提示中复制。',
+                    description: '要压缩的块 ID，例如 "0-1"，从压缩提示中复制。',
                 },
                 summary: {
                     type: 'string',
-                    description: `压缩后的摘要文本。一行，长度不超过 ${MAX_TREE_SUMMARY_BYTES} 字节且受 entryChars 上限约束（默认配置下最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。`,
+                    description: `压缩后的摘要，只能有一行。长度不能超过 entryChars 和 ${MAX_TREE_SUMMARY_BYTES} 字节中较小的那个，默认配置下最多 280 字节。保留长期有效的决定、偏好、约束、事实和必要的上下文，去掉临时进度和重复内容，不要编造。`,
                 },
                 scope: {
                     type: 'string',
                     enum: ['global', 'workspace'],
-                    description: '记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 "global"，如需显式操作工作区记忆请传 "workspace"。',
+                    description: '记忆作用域。有工作区时默认操作当前工作区记忆；传 "global" 操作全局记忆，传 "workspace" 显式操作工作区记忆。',
                 },
             },
         },

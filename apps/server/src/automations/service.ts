@@ -386,7 +386,7 @@ export class ApplicationAutomations {
         record.progress ? `最近进度：${record.progress}` : ''].filter(Boolean).join('\n') };
   }
   tool(): RuntimeTool {
-    return { declaration: { name: 'goal_update', description: '记录当前长期目标的进度，或报告目标已完成／必须等待用户信息。仅操作当前目标。',
+    return { declaration: { name: 'goal_update', description: '记录当前长期目标的进度（progress），或报告目标已完成（complete）、必须等待用户提供信息（needs_input）。只作用于当前目标。',
       parameters: { type: 'object', properties: { status: { type: 'string', enum: ['progress', 'complete', 'needs_input'] }, summary: { type: 'string', description: '已经完成的工作、验证结果，或需要用户补充的信息。' } }, required: ['status', 'summary'], additionalProperties: false } },
       effects: () => [], execute: (args, context) => this.progress(context, String(args.status), String(args.summary)) };
   }

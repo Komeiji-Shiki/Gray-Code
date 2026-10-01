@@ -25,18 +25,18 @@ export function createCreateDesignToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_design',
     description:
-      'Create a design document (markdown) and write it under .graycode/design/**.md. This tool only creates the design; it does NOT create a plan or implement code.',
+      'Create a new Markdown design document under .graycode/design/**.md. This tool only writes the design; it does not create a plan or change any code. If the target file already exists, the call fails; use update_design to revise an existing design.',
     category: 'design',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Optional design title (used for default filename)' },
-        overview: { type: 'string', description: 'Optional one-line overview' },
-        design: { type: 'string', description: 'Design content in markdown' },
+        title: { type: 'string', description: 'Optional design title, also used to build the default file name.' },
+        overview: { type: 'string', description: 'Optional one-line overview.' },
+        design: { type: 'string', description: 'Design content in Markdown.' },
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .graycode/design/**.md (or multi-root: workspace/.graycode/design/**.md).'
+            'Optional output path. It must be under .graycode/design/**.md (in a multi-root workspace, workspace/.graycode/design/**.md). If omitted, the path is derived from the title.'
         }
       },
       required: ['design']

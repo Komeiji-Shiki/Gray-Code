@@ -60,7 +60,7 @@ export class QuestionBroker {
 
 export function createAskUserTool(): RuntimeTool {
   return {
-    declaration: { name: 'ask_user', description: 'Ask up to three optional questions while continuing independent work. Suggestions are optional; the user may type an answer. After a few minutes without an answer, decide within existing permissions. Never use for approvals, irreversible decisions, or required information.',
+    declaration: { name: 'ask_user', description: 'Ask the user up to three optional questions and keep working on anything that does not depend on the answers. options are suggestions only; the user can type their own answer. If no answer arrives within a few minutes, decide on your own within your existing permissions. Never use this for approvals, irreversible decisions or information you cannot proceed without.',
       parameters: { type: 'object', additionalProperties: false, required: ['questions'], properties: {
         questions: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'object', additionalProperties: false, required: ['title'], properties: {
           title: { type: 'string', minLength: 1, maxLength: 2000 }, options: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string', minLength: 1, maxLength: 500 } },

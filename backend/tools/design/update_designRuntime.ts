@@ -24,21 +24,21 @@ export function createUpdateDesignToolDeclaration(): ToolDeclaration {
   return {
     name: 'update_design',
     description:
-      'Update an existing design document (markdown) under .graycode/design/**.md. Use this when the user wants to revise the current design instead of creating a new one.',
+      'Revise an existing Markdown design document under .graycode/design/**.md. Use it when the user wants to change the current design rather than start a new one. The content you pass replaces the whole document, and the file must already exist.',
     category: 'design',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target existing design document path under .graycode/design/**.md.'
+          description: 'Path of the existing design document, under .graycode/design/**.md (in a multi-root workspace, workspace/.graycode/design/**.md).'
         },
         title: { type: 'string', description: 'Optional updated design title.' },
         overview: { type: 'string', description: 'Optional updated one-line overview.' },
-        design: { type: 'string', description: 'Updated design content in markdown.' },
+        design: { type: 'string', description: 'The complete updated design in Markdown.' },
         changeSummary: {
           type: 'string',
-          description: 'Optional short summary of what changed in this design revision.'
+          description: 'Optional short summary of what changed in this revision.'
         }
       },
       required: ['path', 'design']

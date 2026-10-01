@@ -172,28 +172,21 @@ function createFindFilesTool(): Tool {
     // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
     const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
-    const arrayFormatNote = isZh
-        ? '\n\n重要：patterns 参数必须是数组，即使只有一个模式也要写成 {"patterns": ["*.ts"]}，不要写成 {"pattern": "*.ts"}。'
-        : '\n\nImportant: the patterns parameter must be an array, even for a single pattern, e.g., {"patterns": ["*.ts"]}, NOT {"pattern": "*.ts"}.';
-
     const paginationNote = isZh
-        ? '\n每个模式含 nextOffset 时可作为 offset 续查。offset 按宿主发现顺序跳过，结果仅页内排序；不同宿主顺序可能不同，每页重新遍历，文件或排除设置变化后从 0 重查。排除策略见 effectiveExclude/excludeSource/respectsGitIgnore。'
-        : '\nContinue each pattern with its nextOffset as offset. Offset skips host discovery order; only each page is sorted. Host order may differ and each page rescans live files; restart at 0 after files or exclusion settings change. See effectiveExclude/excludeSource/respectsGitIgnore for the effective exclusions.';
+        ? '\n\n结果按模式分别分页，只在当前页内排序。某个模式返回 nextOffset 时，只传这个模式并把 nextOffset 作为 offset 传入，即可读取下一页，其他参数保持不变；文件或排除设置变化后从 offset=0 重新查询。实际生效的排除规则见结果中的 effectiveExclude、excludeSource 和 respectsGitIgnore。'
+        : '\n\nResults are paged separately for each pattern and sorted only within a page. When a pattern returns nextOffset, pass just that pattern with nextOffset as offset to read the next page, keeping the other parameters unchanged; restart from offset 0 if files or exclusion settings change. effectiveExclude, excludeSource and respectsGitIgnore in the result show which exclusions were applied.';
 
     return {
         declaration: {
             name: 'find_files',
             readOnly: true,
-            // 修改原因：用户要求 find_files 与 list_files 的新工具描述统一改为中文，并强调新增 lineCount 元数据。
-            // 修改方式：主描述说明 glob、fileDetails.lineCount、数组参数和多根工作区规则，参数描述也同步中文化。
-            // 修改目的：减少中文会话中模型误用 pattern 单字符串或忽略行数元数据的概率。
             description: (isMultiRoot
                 ? isZh
-                    ? `根据一个或多个 glob 模式查找文件。每个模式的结果在 fileDetails 中列出文件 path，可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。当前是多根工作区，结果会带工作区前缀。可用工作区：${workspaces.map(w => w.name).join(', ')}。${arrayFormatNote}`
-                    : `Find files by one or more glob patterns. Each pattern lists file paths in fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range. This is a multi-root workspace, so results are prefixed with the workspace name. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.${arrayFormatNote}`
+                    ? `按一个或多个 glob 模式查找文件。每个模式的结果在 fileDetails 中列出文件 path，能统计的文本文件还会带 lineCount（行数），可据此决定是否用 read_file 按行范围读取。当前是多根工作区，结果路径会带工作区名前缀。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+                    : `Find files matching one or more glob patterns. Each pattern lists file paths in fileDetails, and text files that can be counted also include lineCount, which helps you decide whether to read with a line range in read_file. This is a multi-root workspace, so result paths are prefixed with the workspace name. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
                 : isZh
-                    ? `根据一个或多个 glob 模式查找文件。每个模式的结果在 fileDetails 中列出文件 path，可统计的文本文件会带 lineCount 行数，便于决定是否用 read_file 范围读取。${arrayFormatNote}`
-                    : `Find files by one or more glob patterns. Each pattern lists file paths in fileDetails; text files that can be counted include a lineCount, to help decide whether to use read_file with a line range.${arrayFormatNote}`) + paginationNote,
+                    ? '按一个或多个 glob 模式查找文件。每个模式的结果在 fileDetails 中列出文件 path，能统计的文本文件还会带 lineCount（行数），可据此决定是否用 read_file 按行范围读取。'
+                    : 'Find files matching one or more glob patterns. Each pattern lists file paths in fileDetails, and text files that can be counted also include lineCount, which helps you decide whether to read with a line range in read_file.') + paginationNote,
             category: 'search',
             parameters: {
                 type: 'object',
@@ -204,32 +197,32 @@ function createFindFilesTool(): Tool {
                             type: 'string'
                         },
                         description: isZh
-                            ? '要搜索的 glob 模式数组。即使只有一个模式也必须传数组，例如：["**/*.ts", "src/**/*.js"]。'
-                            : 'Array of glob patterns to search. Even a single pattern must be passed as an array, e.g., ["**/*.ts", "src/**/*.js"].'
+                            ? 'glob 模式数组，例如 ["**/*.ts", "src/**/*.js"]。即使只有一个模式也要传数组，参数名是 patterns 而不是 pattern。'
+                            : 'Array of glob patterns, for example ["**/*.ts", "src/**/*.js"]. Pass an array even for a single pattern; the parameter is patterns, not pattern.'
                     },
                     exclude: {
                         type: 'string',
                         // 非空 exclude 一直是覆盖而非追加；不能用 schema default 诱导模型覆盖用户配置。
                         description: isZh
-                            ? '非空 glob 整体替换设置中的排除列表（不是追加），例如："**/node_modules/**"。省略或传空字符串沿用设置；未配置/空列表时回退排除 node_modules。includeIgnored=true 时仍应用显式 exclude。'
-                            : 'A nonempty glob replaces the configured exclusions (not appended), e.g., "**/node_modules/**". Omitted or empty string uses settings; missing/empty settings fall back to excluding node_modules. Explicit exclude still applies when includeIgnored=true.'
+                            ? '排除用的 glob，例如 "**/node_modules/**"。非空值会整体替换设置中的排除列表，而不是追加。省略或传空字符串时沿用设置；设置为空时默认排除 node_modules。'
+                            : 'Exclusion glob, for example "**/node_modules/**". A nonempty value replaces the configured exclusion list instead of adding to it. When omitted or empty, the configured list is used; if that is empty, node_modules is excluded by default.'
                     },
                     includeIgnored: {
                         type: 'boolean', default: false,
                         description: isZh
-                            ? `默认遵循查找排除配置${host.gitIgnoreSupported ? '及项目 .gitignore' : ''}。true 跳过这些忽略规则，但仍应用显式 exclude；独立平台始终跳过 .git 元数据、符号链接。分页时保持不变。`
-                            : `By default, respect find exclusions${host.gitIgnoreSupported ? ' and project .gitignore files' : ''}. True skips these rules, but explicit exclude still applies; the standalone host always skips .git metadata and symlinks. Keep unchanged while paging.`
+                            ? `默认遵守排除设置${host.gitIgnoreSupported ? '和项目 .gitignore' : ''}。设为 true 会跳过这些忽略规则，但显式传入的 exclude 仍然生效${host.gitIgnoreSupported ? '，.git 元数据和符号链接也始终跳过' : ''}。`
+                            : `By default, configured exclusions${host.gitIgnoreSupported ? ' and project .gitignore files' : ''} are respected. true skips those rules, but an explicit exclude still applies${host.gitIgnoreSupported ? ', and .git metadata and symlinks are always skipped' : ''}.`
                     },
                     maxResults: {
                         type: 'number',
-                        description: isZh ? '每个模式每页最多返回多少个结果。' : 'Maximum number of results returned per pattern per page.',
+                        description: isZh ? '每个模式每页最多返回的结果数。' : 'Maximum results per pattern per page.',
                         default: 500
                     },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
                         description: isZh
-                            ? '每个模式按发现顺序跳过的文件数（多根累计，不是排序后的索引）。续查建议只传对应的单个模式及其 nextOffset，保持 exclude 不变；文件/设置变化后从 0 重查。'
-                            : 'Files to skip in discovery order per pattern (across roots, not a sorted index). Continue one pattern with its nextOffset and unchanged exclude; restart at 0 after files/settings change.'
+                            ? '每个模式要跳过的文件数。它不是排序后的序号，请只使用上一页返回的 nextOffset。'
+                            : 'Number of files to skip for each pattern. It is not an index into sorted results, so only use a nextOffset returned by the previous page.'
                     }
                 },
                 required: ['patterns']

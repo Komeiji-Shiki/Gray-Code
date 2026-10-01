@@ -48,17 +48,17 @@ export function createCreateProgressToolDeclaration(): ToolDeclaration {
     name: 'create_progress',
     strict: true,
     description:
-      'Create the project progress document at .graycode/progress.md. This initializes the project-level status ledger and returns a lightweight progress snapshot instead of the full markdown body.',
+      'Create the project progress document at .graycode/progress.md, which tracks project status, phase, related documents, TODOs, milestones, risks and a change log. The result is a short progress snapshot rather than the full Markdown. If a valid progress document already exists, the call returns its snapshot with a warning instead of creating a second file; if the existing file is invalid, the call fails. status defaults to active and phase to design.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional output path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
+          description: 'Optional output path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
         },
-        projectName: { type: 'string', description: 'Optional human-readable project name.' },
-        projectId: { type: 'string', description: 'Optional stable project id. Defaults to a slug from the project name.' },
+        projectName: { type: 'string', description: 'Optional readable project name. Defaults to the name of the first workspace folder.' },
+        projectId: { type: 'string', description: 'Optional stable project ID. Defaults to a slug of the project name.' },
         status: { type: 'string', enum: ['active', 'blocked', 'completed', 'archived'] },
         phase: { type: 'string', enum: ['design', 'plan', 'implementation', 'review', 'maintenance'] },
         currentFocus: { type: 'string' },

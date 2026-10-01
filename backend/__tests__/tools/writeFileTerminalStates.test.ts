@@ -207,7 +207,7 @@ describe('write_file 终态语义（diff 审阅）', () => {
 
     test('工具契约说明确认前预创建、拒绝清理范围和失败报告', () => {
         const description = registerWriteFile().declaration.description;
-        expect(description).toContain('确认前预创建空文件');
+        expect(description).toContain('确认前先创建一个空文件');
         expect(description).toContain('本次新建且仍为空的父目录');
         expect(description).toContain('清理失败');
     });

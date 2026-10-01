@@ -12,33 +12,27 @@ function createMemoryConfigDeclaration(): ToolDeclaration {
     return {
         name: 'memory_config',
         description:
-            '查看或修改永久记忆系统的配置参数。\n' +
-            '可配置项：\n' +
-            '- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n' +
-            `- entryChars: 单条记忆最大字节数（默认 280，上限 ${MAX_ENTRY_CHARS}）\n` +
-            '- partChars: 输出分页最大字符数（默认 20000）\n' +
-            '- partLines: 输出分页最大行数（默认 500）\n' +
-            '不传参数时显示当前配置。传参数时修改对应项。\n' +
-            '修改只影响输出格式，不需要重新计算任何东西。',
+            '查看或修改工程日志记忆的配置。不传参数时返回当前配置；传入参数时只修改对应的项。\n' +
+            '这些配置控制 memory_wake 的输出篇幅、分页方式和以后写入的单条长度上限，修改后不会改写已保存的记忆。',
         category: 'memory',
         parameters: {
             type: 'object',
             properties: {
                 wakeLines: {
                     type: 'number',
-                    description: 'wake 输出的行数预算。更大的值 = 更多细节。',
+                    description: 'memory_wake 输出的行数预算，默认 96（约 8k tokens）。值越大，保留的细节越多。',
                 },
                 entryChars: {
                     type: 'number',
-                    description: `单条记忆最大字节数。默认 280，上限 ${MAX_ENTRY_CHARS}（固定宽度记录约束，含记录头部开销）。`,
+                    description: `单条记忆的最大字节数，默认 280，最高 ${MAX_ENTRY_CHARS}。`,
                 },
                 partChars: {
                     type: 'number',
-                    description: '输出分页最大字符数。',
+                    description: '每个输出部分的最大字符数，默认 20000。',
                 },
                 partLines: {
                     type: 'number',
-                    description: '输出分页最大行数。',
+                    description: '每个输出部分的最大行数，默认 500。',
                 },
             },
         },

@@ -67,14 +67,14 @@ export function createUpdateProgressToolDeclaration(): ToolDeclaration {
     name: 'update_progress',
     strict: true,
     description:
-      'Update the project progress document at .graycode/progress.md. This refreshes summary fields, artifacts, TODO snapshot, risks, and recent log entries while returning a lightweight progress snapshot.',
+      'Update the existing project progress document at .graycode/progress.md. Only the fields you pass are changed: activeArtifacts updates only the keys you provide, todos and risks replace their whole lists, and appendLog adds entries to the end of the log. The result is a short progress snapshot that lists the changed sections.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional target path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
+          description: 'Optional target path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
         },
         status: { type: 'string', enum: ['active', 'blocked', 'completed', 'archived'] },
         phase: { type: 'string', enum: ['design', 'plan', 'implementation', 'review', 'maintenance'] },

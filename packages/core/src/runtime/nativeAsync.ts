@@ -30,11 +30,11 @@ export function nativeToolDeclaration(tool: ToolDeclaration, description?: strin
     // 通用等待规则由 wait_for_tasks 统一说明；工具自身只补宿主特有边界，减少稳定前缀中的重复文本。
     description: `${tool.description}${description ? `\n${description}` : ''}`,
     parameters: { ...tool.parameters, properties: { ...properties,
-      task_handle: { type: 'string', minLength: 1, maxLength: 120, description: 'Unique handle for this call, including earlier completed tasks. Use it with wait_for_tasks.' } },
+      task_handle: { type: 'string', minLength: 1, maxLength: 120, description: 'A handle for this call that is unique among all task handles, including completed ones. Pass it to wait_for_tasks.' } },
       required: [...new Set([...(tool.parameters.required as string[] ?? []), 'task_handle'])] } };
 }
 export const waitForTasksDeclaration: ToolDeclaration = {
-  name: WAIT_FOR_TASKS, description: 'Wait only for the specified native async task_handles. Their results are delivered on the original calls before this wait returns. Continue independent work instead of waiting for results you do not need.',
+  name: WAIT_FOR_TASKS, description: 'Wait for the listed native async task_handles only. Their results are delivered on the original calls before this wait returns. Do not wait for results you do not need yet; continue independent work instead.',
   parameters: { type: 'object', additionalProperties: false, required: ['task_handles'], properties: {
     task_handles: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 120 } },
   } },

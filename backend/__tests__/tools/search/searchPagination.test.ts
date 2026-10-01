@@ -177,7 +177,7 @@ describe('search_in_files 续查', () => {
         expect((await tool.handler({ query: 'hit', mode: 'replace', replace: '', offset: 1 })).error).toContain('not paginated');
         const description = tool.declaration.parameters.properties?.replace.description ?? '';
         expect(description).not.toMatch(/省略会静默|would silently/);
-        expect(description).toMatch(/省略会报错|omitting it returns an error/);
+        expect(description).toMatch(/省略时会报错|if omitted, the call fails/);
     });
 
     test('续查元数据经过真实模型结果格式化仍然可见', async () => {

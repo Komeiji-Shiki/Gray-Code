@@ -27,18 +27,18 @@ export function createLiteralSearchTool(host: NodeFileHost): Tool {
     declaration: {
       name: 'search_files', readOnly: true, category: 'search',
       description: isZh
-        ? '轻量、严格字面量搜索 UTF-8 文本，每个匹配行返回一次，不自动拆词。沿用 search_in_files 的排除配置及项目 .gitignore；includeIgnored=true 可显式搜索忽略文件，仍跳过 .git 元数据、符号链接、二进制和大文件。结果按文件分组，命中行写成 "行:列: 内容"；长行只返回命中附近的片段，被裁剪的一端用 … 标出，列号是原行中的位置。需要正则、上下文或替换时使用 search_in_files。用 nextOffset 续查并保持参数不变；文件或排除设置变化后从 0 重查。'
-        : 'Lightweight strict literal UTF-8 search, one result per matching line without keyword fallback. Uses search_in_files exclusions and project .gitignore; includeIgnored=true explicitly searches ignored files, still skipping .git metadata, symlinks, binary and large files. Results are grouped by file as "line:col: text"; long lines return a match-centered snippet with … on trimmed ends, and columns refer to the original line. Use search_in_files for regex, context or replacement. Continue with nextOffset and unchanged parameters; restart at 0 after files or exclusions change.',
+        ? '在 UTF-8 文本中做轻量的严格字面量搜索，不自动拆词，每个匹配行只返回一次。沿用 search_in_files 的排除配置和项目 .gitignore；includeIgnored=true 时也搜索被忽略的文件，但仍跳过 .git 元数据、符号链接、二进制文件和大文件。结果按文件分组，命中行格式为 "行:列: 内容"；长行只返回命中附近的片段，被截断的一端用 … 标出，列号按原行计算。需要正则、上下文或替换时改用 search_in_files。返回 nextOffset 时，保持其他参数不变、把它作为 offset 传入即可读取下一页；文件或排除设置变化后从 offset=0 重新查询。'
+        : 'Lightweight, strict literal search over UTF-8 text. Queries are not split into keywords, and each matching line is returned once. It uses the search_in_files exclusions and the project .gitignore; with includeIgnored=true it also searches ignored files but still skips .git metadata, symlinks, binary files and large files. Results are grouped by file as "line:col: text". Long lines return a snippet around the match with … marking trimmed ends, and columns refer to the original line. Use search_in_files for regex, context or replacement. When nextOffset is returned, pass it as offset with the other parameters unchanged to read the next page; restart from offset 0 if files or exclusions change.',
       parameters: { type: 'object', additionalProperties: false, properties: {
         query: { type: 'string', minLength: 1 }, directory: { type: 'string' },
         pattern: { type: 'string', minLength: 1, description: isZh
-          ? '可选文件 glob，相对于 directory（默认工作区根目录），例如 "**/*.ts"。省略时搜索全部文件。'
-          : 'Optional file glob relative to directory (default workspace root), e.g. "**/*.ts". Omit to search all files.' },
+          ? '可选的文件 glob，相对于 directory（默认为工作区根目录），例如 "**/*.ts"；省略时搜索全部文件。'
+          : 'Optional file glob relative to directory (the workspace root by default), such as "**/*.ts". Omit it to search all files.' },
         caseSensitive: { type: 'boolean' },
         includeIgnored: { type: 'boolean', default: false },
         limit: { type: 'integer', minimum: 1, maximum: 200 },
-        offset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '跳过的匹配行数，续查用 nextOffset。' : 'Matching lines to skip; use nextOffset to continue.' },
-        scanOffset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '候选文件扫描起点；达到扫描上限后使用 nextScanOffset，匹配 offset 重置为 0。' : 'Candidate file scan position. Continue with nextScanOffset after the scan limit, resetting offset to 0.' },
+        offset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '要跳过的匹配行数，用于分页。' : 'Number of matching lines to skip, for paging.' },
+        scanOffset: { type: 'integer', minimum: 0, default: 0, description: isZh ? '候选文件的扫描起点。扫描达到上限时会返回 nextScanOffset，把它作为 scanOffset 传入，并将 offset 重置为 0。' : 'Scan position among candidate files. When the scan limit is reached, nextScanOffset is returned; pass it as scanOffset and reset offset to 0.' },
       }, required: ['query'] },
     },
     handler: async (args, context) => {

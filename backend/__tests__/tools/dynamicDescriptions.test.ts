@@ -146,8 +146,8 @@ describe('buildGenerateImageDescriptions 动态上限', () => {
             expect(out.description).toContain('最多 7 个生成任务');
             expect(out.description).toContain('最多保存 2 张图片');
         } else {
-            expect(out.description).toContain('Maximum 7 generation tasks per call');
-            expect(out.description).toContain('Maximum 2 images saved per task');
+            expect(out.description).toContain('at most 7 generation tasks');
+            expect(out.description).toContain('each task saves at most 2 images');
         }
     });
 });

@@ -38,7 +38,9 @@ export class PlatformTerminals {
       getEnabledShellTypesForEnum: () => ['default', ...config.shells.filter(shell => shell.enabled).map(shell => shell.type)],
       getAvailableShellsDescription: () => config.shells.filter(shell => shell.enabled)
         .map(shell => `- ${shell.displayName ?? shell.type} (${shell.type})`).join('\n'),
-      getUnavailableShellsDescription: () => '- Availability is checked immediately before execution.',
+      getUnavailableShellsDescription: () => getActualLanguage() === 'zh-CN'
+        ? '- 已启用的 Shell 会在每次执行前检查是否可用。'
+        : '- Each enabled shell is checked for availability right before it runs.',
     };
     const output = createOutputRuntime({ getConfig });
     const prompts = createTerminalPrompts({ shells, getMaxOutputLines: output.getMaxOutputLines, roots: () => [], workspaceBinding: 'task' });

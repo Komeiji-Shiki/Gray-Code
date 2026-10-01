@@ -219,14 +219,14 @@ export function createCompareReviewDocumentsToolDeclaration(): ToolDeclaration {
   return {
     name: 'compare_review_documents',
     description:
-      'Compare two review documents under .graycode/review/**.md without modifying them. Returns finding deltas, tracking changes, and snapshot statistics differences.',
+      'Compare two review documents under .graycode/review/**.md without modifying them. The result lists findings that were added, removed or carried over, changes in tracking status, and differences in summary statistics.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        basePath: { type: 'string', description: 'Base review document path under .graycode/review/**.md' },
-        targetPath: { type: 'string', description: 'Target review document path under .graycode/review/**.md' },
-        includeUnchanged: { type: 'boolean', description: 'Whether to include unchanged persisted findings in the result' }
+        basePath: { type: 'string', description: 'Path of the earlier review document to compare from.' },
+        targetPath: { type: 'string', description: 'Path of the later review document to compare against.' },
+        includeUnchanged: { type: 'boolean', description: 'Whether to also list carried-over findings that did not change. Defaults to false.' }
       },
       required: ['basePath', 'targetPath']
     }

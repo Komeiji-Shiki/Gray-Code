@@ -252,27 +252,27 @@ export function createTodoUpdateToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_update',
         description:
-            'Incrementally update the per-conversation TODO list stored in ConversationMetadata.custom["todoList"]. Use this to update status/content without rewriting the entire list.',
+            'Update individual items in the current conversation\'s TODO list without rewriting the whole list. Operations run in order. add needs id and content, and status defaults to pending; set_status needs id and status; set_content needs id and content; cancel and remove need only id. The result reports summary counts, invalid operations and ids that were not found, not the full list.',
         category: 'todo',
         parameters: {
             type: 'object',
             properties: {
                 ops: {
                     type: 'array',
-                    description: 'Operations to apply to the current TODO list',
+                    description: 'Operations to apply to the current TODO list, in order.',
                     items: {
                         type: 'object',
                         properties: {
                             op: {
                                 type: 'string',
-                                description: 'Operation type',
+                                description: 'Operation type. add creates an item, or overwrites it if the id already exists; cancel sets the status to cancelled; remove deletes the item.',
                                 enum: ['add', 'set_status', 'set_content', 'cancel', 'remove']
                             },
-                            id: { type: 'string', description: 'Target todo id' },
-                            content: { type: 'string', description: 'Todo content (for add/set_content)' },
+                            id: { type: 'string', description: 'ID of the target item.' },
+                            content: { type: 'string', description: 'Item content, used by add and set_content.' },
                             status: {
                                 type: 'string',
-                                description: 'Todo status (for add/set_status)',
+                                description: 'Item status, used by add and set_status.',
                                 enum: ['pending', 'in_progress', 'completed', 'cancelled']
                             }
                         },

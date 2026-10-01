@@ -33,18 +33,18 @@ export function createCreateReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_review',
     description:
-      'Create a review document (markdown) and write it under .graycode/review/**.md. This tool is for Review mode and must not modify business code.',
+      'Create a Markdown review document under .graycode/review/**.md and start a review with it. It belongs to Review mode and only writes the review document, never project code. Each review uses one document, and a conversation can have only one review in progress; finalize the current review before creating another. If the target file already exists, the call fails; continue that review with record_review_milestone or finalize_review, or choose a different path.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Optional review title (used for default filename)' },
-        overview: { type: 'string', description: 'Optional one-line review overview' },
-        review: { type: 'string', description: 'Initial review content in markdown' },
+        title: { type: 'string', description: 'Optional review title, also used to build the default file name.' },
+        overview: { type: 'string', description: 'Optional one-line overview of the review.' },
+        review: { type: 'string', description: 'Initial review content in Markdown, such as scope and approach.' },
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .graycode/review/**.md (or multi-root: workspace/.graycode/review/**.md).'
+            'Optional output path. It must be under .graycode/review/**.md (in a multi-root workspace, workspace/.graycode/review/**.md). If omitted, the path is derived from the title.'
         }
       },
       required: ['review']

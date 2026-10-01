@@ -9,24 +9,22 @@ function createMemoryForgetDeclaration(): ToolDeclaration {
     return {
         name: 'memory_forget',
         description:
-            '丢弃错误的树摘要，或删除原始记忆。\n' +
-            '当 blockId 是范围（如 "16-31"，破折号）：仅丢弃树摘要及其上层摘要，原始记忆（LOG）不会被触碰。\n' +
-            '当 blockId 是单个数字（如 "5"）：删除这一条原始记忆（其后的记录 id 前移重编号）。\n' +
-            '当 blockId 是闭区间（如 "1,3"，逗号分隔）：删除 ID 1 到 3 的所有原始记忆（含端点）。\n' +
-            '参数：blockId（块 ID 如 "16-31"、单个 ID 如 "5"、或闭区间如 "1,3"）。\n' +
-            '作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope="global"。',
+            '丢弃有误的工程日志树摘要，或删除原始记忆。具体行为取决于 blockId 的写法：\n' +
+            '- 用短横线表示的块，例如 "16-31"：只丢弃这个摘要及其上层摘要，原始记忆保持不变。\n' +
+            '- 单个数字，例如 "5"：删除这一条原始记忆，之后的记忆 ID 依次前移。\n' +
+            '- 用逗号表示的闭区间，例如 "1,3"：删除 ID 1 到 3（含两端）的所有原始记忆。',
         category: 'memory',
         parameters: {
             type: 'object',
             properties: {
                 blockId: {
                     type: 'string',
-                    description: '块 ID（如 "16-31"）丢弃树摘要；单个 ID（如 "5"）删除这一条记忆；闭区间（如 "1,3"）删除 1 到 3 的所有记忆。',
+                    description: '要处理的块 ID（如 "16-31"）、单个记忆 ID（如 "5"）或闭区间（如 "1,3"）。',
                 },
                 scope: {
                     type: 'string',
                     enum: ['global', 'workspace'],
-                    description: '记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 "global"，如需显式操作工作区记忆请传 "workspace"。',
+                    description: '记忆作用域。有工作区时默认操作当前工作区记忆；传 "global" 操作全局记忆，传 "workspace" 显式操作工作区记忆。',
                 },
             },
             required: ['blockId'],

@@ -40,25 +40,25 @@ export function createRecordReviewMilestoneToolDeclaration(): ToolDeclaration {
   return {
     name: 'record_review_milestone',
     description:
-      'Append a milestone to an existing review document under .graycode/review/**.md and update the structured summary sections.',
+      'Add a milestone to the review in progress and update the summary, findings and statistics of its document under .graycode/review/**.md. path must be the document of the review currently in progress in this conversation. After finalize_review, milestones can no longer be recorded unless the review is reopened with reopen_review.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target review document path under .graycode/review/**.md' },
-        milestoneId: { type: 'string', description: 'Optional milestone identifier. If omitted, it is generated automatically.' },
-        milestoneTitle: { type: 'string', description: 'Milestone title' },
-        summary: { type: 'string', description: 'Milestone summary in markdown' },
-        status: { type: 'string', enum: ['in_progress', 'completed'], description: 'Milestone status' },
-        conclusion: { type: 'string', description: 'Optional latest conclusion for the summary section' },
+        path: { type: 'string', description: 'Path of the review document, under .graycode/review/**.md.' },
+        milestoneId: { type: 'string', description: 'Optional milestone ID. Generated automatically if omitted.' },
+        milestoneTitle: { type: 'string', description: 'Milestone title.' },
+        summary: { type: 'string', description: 'Milestone summary in Markdown.' },
+        status: { type: 'string', enum: ['in_progress', 'completed'], description: 'Milestone status.' },
+        conclusion: { type: 'string', description: 'Optional latest conclusion to show in the review summary.' },
         evidenceFiles: {
           type: 'array',
-          description: 'Optional related evidence file paths. Use this for simple file-level evidence when line-level references are not available.',
+          description: 'Optional file paths that serve as evidence. Use them when you cannot point to specific lines.',
           items: { type: 'string' }
         },
         evidence: {
           type: 'array',
-          description: 'Optional structured evidence references with file path and optional line or symbol details.',
+          description: 'Optional evidence references, each with a file path and optional lines, symbol or excerpt hash.',
           items: {
             type: 'object',
             properties: {
@@ -73,24 +73,24 @@ export function createRecordReviewMilestoneToolDeclaration(): ToolDeclaration {
         },
         findings: {
           type: 'array',
-          description: 'Optional legacy finding strings to merge into the review findings section',
+          description: 'Optional findings as plain text, merged into the findings section. Prefer structuredFindings.',
           items: { type: 'string' }
         },
         structuredFindings: {
           type: 'array',
-          description: 'Optional structured findings to merge into the review findings section. Keep title concise, and put detailed explanation into description.',
+          description: 'Optional structured findings, merged into the findings section. Keep each title short and put the explanation in description.',
           items: {
             type: 'object',
             properties: {
-              id: { type: 'string', description: 'Optional short stable finding identifier. Omit it if you do not already have a concise id.' },
+              id: { type: 'string', description: 'Optional short, stable finding ID. Leave it out unless you already have one.' },
               severity: { type: 'string', enum: ['high', 'medium', 'low'] },
               category: {
                 type: 'string',
                 enum: ['html', 'css', 'javascript', 'accessibility', 'performance', 'maintainability', 'docs', 'test', 'other']
               },
-              title: { type: 'string', description: 'Short finding title. Use a concise issue label, not a full sentence, file path, or recommendation.' },
-              description: { type: 'string', description: 'Detailed explanation of the finding. Put reasoning, impact, and context here.' },
-              evidenceFiles: { type: 'array', description: 'Optional simple evidence file paths for this finding.', items: { type: 'string' } },
+              title: { type: 'string', description: 'Short label for the issue, not a full sentence, file path or recommendation.' },
+              description: { type: 'string', description: 'Detailed explanation of the finding, including reasoning, impact and context.' },
+              evidenceFiles: { type: 'array', description: 'Optional file paths that serve as evidence for this finding.', items: { type: 'string' } },
               evidence: {
                 type: 'array',
                 items: {
@@ -105,8 +105,8 @@ export function createRecordReviewMilestoneToolDeclaration(): ToolDeclaration {
                   required: ['path']
                 }
               },
-              relatedMilestoneIds: { type: 'array', description: 'Optional related milestone ids for cross-reference.', items: { type: 'string' } },
-              recommendation: { type: 'string', description: 'Optional follow-up recommendation for fixing or handling the finding.' },
+              relatedMilestoneIds: { type: 'array', description: 'Optional IDs of related milestones.', items: { type: 'string' } },
+              recommendation: { type: 'string', description: 'Optional suggestion for fixing or handling the finding.' },
               trackingStatus: { type: 'string', enum: ['open', 'accepted_risk', 'fixed', 'wont_fix', 'duplicate'] }
             },
             required: ['title']
@@ -114,12 +114,12 @@ export function createRecordReviewMilestoneToolDeclaration(): ToolDeclaration {
         },
         reviewedModules: {
           type: 'array',
-          description: 'Optional reviewed modules to merge into the review summary section',
+          description: 'Optional modules covered by the review, merged into the review summary.',
           items: { type: 'string' }
         },
         recommendedNextAction: {
           type: 'string',
-          description: 'Optional recommended next action for the review summary section'
+          description: 'Optional recommended next step to show in the review summary.'
         }
       },
       required: ['path', 'milestoneTitle', 'summary']

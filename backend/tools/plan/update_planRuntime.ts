@@ -44,21 +44,21 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
     name: 'update_plan',
     strict: true,
     description:
-      'Update an existing plan document (markdown) under .graycode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.',
+      'Update an existing Markdown plan document under .graycode/plans/**.md. revision mode (the default) rewrites the plan, which then needs to be confirmed again. progress_sync only updates TODO status during implementation and leaves the plan body unchanged, so send only path, todos, updateMode and the optional changeSummary. sourceArtifact and other carry-over fields (such as sourcePath, planContent or continuationIntent) only make sense in revision mode and should not be sent with progress_sync; a sourceArtifact sent there is ignored with a warning, and fields outside this schema make the call fail.',
     category: 'plan',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target existing plan document path under .graycode/plans/**.md. Reuse the approved plan path here; do not send separate sourcePath or planPath fields.'
+          description: 'Path of the existing plan document, under .graycode/plans/**.md. Reuse the path of the approved plan.'
         },
         title: { type: 'string', description: 'Optional updated plan title.' },
         overview: { type: 'string', description: 'Optional updated one-line overview.' },
-        plan: { type: 'string', description: 'Updated plan content in markdown. Required in revision mode.' },
+        plan: { type: 'string', description: 'The complete updated plan in Markdown. Required in revision mode and not used in progress_sync.' },
         todos: {
           type: 'array',
-          description: 'Updated TODO checklist for the plan.',
+          description: 'The complete TODO checklist; it replaces the previous one.',
           items: {
             type: 'object',
             properties: {
@@ -71,12 +71,12 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
         },
         updateMode: {
           type: 'string',
-          description: 'revision rewrites the plan and requires re-confirmation. progress_sync only updates TODO state during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is included by mistake, it will be ignored with a warning.',
+          description: 'revision (default) rewrites the plan and requires confirmation again. progress_sync only updates TODO status and accepts only path, todos, updateMode and changeSummary.',
           enum: ['revision', 'progress_sync']
         },
         sourceArtifact: {
           type: 'object',
-          description: 'Optional source artifact to rebind the plan to the latest confirmed design or review. Allowed only in revision mode. Use this nested object only when the schema explicitly allows it. Do NOT send sibling carry-over fields such as sourceArtifactType, sourcePath, or sourceContent.',
+          description: 'Optional confirmed design or review document to link the plan to; if omitted, the existing link is kept. Only used in revision mode, and ignored with a warning in progress_sync.',
           properties: {
             type: { type: 'string', enum: ['design', 'review'] },
             path: { type: 'string' }
@@ -85,7 +85,7 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
         },
         changeSummary: {
           type: 'string',
-          description: 'Optional short summary of what changed in this plan revision.'
+          description: 'Optional short summary of what changed in this update.'
         }
       },
       required: ['path', 'todos']

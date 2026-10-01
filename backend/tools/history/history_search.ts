@@ -69,29 +69,15 @@ let historySearchDescriptionCache: { key: string; value: string } | null = null;
 
 function buildHistorySearchDescription(scope: string, isZh: boolean): string {
     if (isZh) {
-        const scopeText = scope === 'summarized' ? '仅压缩/总结过的历史' : '完整对话历史';
-        return `搜索并读取对话历史，不是工作区文件。当前设置允许搜索范围：[${scopeText}]。` +
-            `用于查找更早的对话轮次、之前的工具调用、工具结果和用户决策；仓库文件请使用 search_in_files 或 find_files。` +
-            `历史以带行号的虚拟文档形式呈现，工具结果按模型当时收到的文本展开为多行。` +
-            `行号标记仅用于导航，不属于原文正文。` +
-            `每个轮次标题显示其行范围，例如 "══ Round 3 (L45-L88) ══"；一轮内有多次模型回复时，每次回复及其工具结果另有 "── Step 2 (L60-L75) ──" 标题。` +
-            `两种模式：\n` +
-            `"search" — 在历史中查找关键词/正则并返回带上下文的匹配行号。搜索输出是定位器，不是完整内容。如果查询使用了正则语法，请设置 is_regex=true；否则这些字符按字面量处理。` +
-            `"read" — 使用 start_line/end_line（snake_case，每次最多 ${MAX_READ_LINES} 行）从格式化历史中读取指定行范围。这里不要使用 read_file 风格的 startLine/endLine。` +
-            `典型流程：先用 search 定位相关行，再用 read 获取这些行，或按轮次/步骤标题的范围读取完整内容。\n` +
-            `提示：要获取单个长行（例如工具调用参数或结构化结果）的完整内容，使用 start_line=N end_line=N 读取——单行读取永不截断。`;
+        const scopeText = scope === 'summarized' ? '只包括已压缩或总结过的历史' : '完整的对话历史';
+        return `搜索和读取对话历史（不是工作区文件）。当前设置允许的搜索范围：${scopeText}。适合查找更早的对话轮次、之前的工具调用和结果，以及用户做过的决定；仓库里的文件请用 search_in_files 或 find_files。\n\n` +
+            `历史会整理成一份带行号的文档，工具结果按模型当时收到的文本逐行展开；行号只用于定位，不属于原文。每轮开头有 "══ Round 3 (L45-L88) ══" 这样的标题，标出这一轮的行范围；一轮里有多次模型回复时，每次回复及其工具结果还有 "── Step 2 (L60-L75) ──" 这样的标题。\n\n` +
+            `mode="search" 查找关键词或正则，返回匹配的行号和上下文，结果只用于定位，不是完整内容。mode="read" 用 start_line/end_line 读取指定行范围，每次最多 ${MAX_READ_LINES} 行；注意这里的参数是 snake_case，不是 read_file 的 startLine/endLine。通常先用 search 定位，再用 read 读取相关行，或按轮次、步骤标题上的范围读取完整内容。单个长行（例如工具调用参数或结构化结果）可以用 start_line=N、end_line=N 读取，单行读取不会被截断。`;
     }
-    const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
-    return `Search and read conversation history, not workspace files. CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}]. ` +
-        `Use this tool for earlier chat turns, previous tool calls, tool results, and user decisions; use search_in_files or find_files for repository files. ` +
-        `The history is formatted as a virtual document with line numbers; tool results are expanded into lines exactly as the model received them. ` +
-        `The line number markers are for navigation and are not part of the original message body. ` +
-        `Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══"; when a round has several model replies, each reply and its tool results get a "── Step 2 (L60-L75) ──" header. ` +
-        `Two modes:\n` +
-        `"search" — find keywords/regex in history and return matching line numbers with context. Search output is a locator, not the full content. If the query uses regex syntax, set is_regex=true; otherwise those characters are treated literally. ` +
-        `"read" — read a specific line range from the formatted history using start_line/end_line (snake_case, max ${MAX_READ_LINES} lines per read). Do not use read_file-style startLine/endLine here. ` +
-        `Typical workflow: use search to locate relevant lines, then use read to get the complete content around those lines or the range from a round or step header.\n` +
-        `Tip: to get the full content of a single long line (e.g. tool call arguments or a structured result), use read with start_line=N end_line=N — single-line reads are never truncated.`;
+    const scopeText = scope === 'summarized' ? 'only compressed or summarized history' : 'the entire conversation history';
+    return `Search and read the conversation history (not workspace files). The current settings allow searching ${scopeText}. Use it to find earlier turns, previous tool calls and results, and decisions the user made; for repository files, use search_in_files or find_files.\n\n` +
+        `The history is laid out as a document with line numbers, and tool results are expanded line by line exactly as the model received them; the line numbers are only for navigation and are not part of the original text. Each round starts with a header such as "══ Round 3 (L45-L88) ══" showing its line range, and when a round has several model replies, each reply and its tool results get a header such as "── Step 2 (L60-L75) ──".\n\n` +
+        `mode="search" finds keywords or regex matches and returns line numbers with context; the output only locates content and is not the full text. mode="read" reads a line range with start_line/end_line, up to ${MAX_READ_LINES} lines per call; note that these are snake_case, not read_file's startLine/endLine. Usually you search first, then read the relevant lines or the range shown in a round or step header. To get one long line in full, such as tool call arguments or a structured result, read it with start_line=N and end_line=N; single-line reads are never truncated.`;
 }
 
 // ─── 工具声明与处理器 ───────────────────────────────────
@@ -110,39 +96,35 @@ export function createHistorySearchToolDeclaration(config?: () => HistorySearchT
                 mode: {
                     type: 'string',
                     description: isZh
-                        ? '操作模式。' +
-                            '"search"：搜索关键词/正则，返回匹配的行号和上下文。' +
-                            '"read"：按行号范围读取。'
-                        : 'Operation mode. ' +
-                            '"search": search for keywords/regex, returns line numbers and context. ' +
-                            '"read": read lines by line number range.',
+                        ? '操作模式："search" 搜索，"read" 按行范围读取。'
+                        : 'Operation mode: "search" to search, "read" to read a line range.',
                     enum: ['search', 'read']
                 },
                 query: {
                     type: 'string',
                     description: isZh
-                        ? '[搜索模式] 搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 is_regex=true。搜索结果是带上下文的定位器，不是完整历史内容。'
-                        : '[search mode] Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set is_regex=true. Search results are locators with context, not complete history content.'
+                        ? '仅 search 模式：要搜索的关键词、短语或正则表达式。查询里用到正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"）时，请设 is_regex=true。'
+                        : 'Search mode only: keyword, phrase or regular expression to search for. If the query uses regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^" or "$", set is_regex=true.'
                 },
                 is_regex: {
                     type: 'boolean',
                     description: isZh
-                        ? '[搜索模式] 是否将 query 视为正则表达式。默认：false。为 false 时，正则样式的字符按字面量搜索。'
-                        : '[search mode] Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally.'
+                        ? '仅 search 模式：是否把 query 当作正则表达式，默认 false；为 false 时正则符号按字面搜索。'
+                        : 'Search mode only: whether query is a regular expression; default false, in which case regex symbols are searched literally.'
                 },
                 start_line: {
                     type: 'integer',
                     minimum: 1,
                     description: isZh
-                        ? '[读取模式] 虚拟历史文档中的起始行号（1-based，包含）。使用 snake_case 的 start_line，不要用 read_file 风格的 startLine。'
-                        : '[read mode] Start line number from the virtual history document (1-based, inclusive). Use snake_case start_line, not read_file-style startLine.'
+                        ? '仅 read 模式：历史文档中的起始行号，从 1 开始，包含这一行。'
+                        : 'Read mode only: first line to read in the history document, 1-based and inclusive.'
                 },
                 end_line: {
                     type: 'integer',
                     minimum: 1,
                     description: isZh
-                        ? '[读取模式] 虚拟历史文档中的结束行号（1-based，包含）。每次最多读取 ' + MAX_READ_LINES + ' 行。要获取单个完整长行，请让 end_line 等于 start_line。'
-                        : '[read mode] End line number from the virtual history document (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read. For one complete long line, set end_line equal to start_line.'
+                        ? '仅 read 模式：历史文档中的结束行号，从 1 开始，包含这一行。'
+                        : 'Read mode only: last line to read in the history document, 1-based and inclusive.'
                 }
             },
             required: ['mode']

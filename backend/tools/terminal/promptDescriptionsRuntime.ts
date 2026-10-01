@@ -49,13 +49,13 @@ function getExecuteCommandShellGuidanceDescription(): string {
     const unavailable = getUnavailableShellsDescription();
     const output = getMaxOutputLines() === -1
         ? (zh ? '默认不截断输出。' : 'Output is not truncated by default.')
-        : (zh ? `默认保留最后 ${getMaxOutputLines()} 行输出。` : `Output keeps the last ${getMaxOutputLines()} lines by default.`);
+        : (zh ? `默认只保留最后 ${getMaxOutputLines()} 行输出。` : `By default only the last ${getMaxOutputLines()} lines of output are kept.`);
     return [
         zh
-            ? `command 是交给所选 Shell 解析的文本，不是 argv。省略 shell 或填 default 使用 ${getDefaultShellType()}；只选择参数 enum 中的 Shell，勿混用其语法与转义规则。`
-            : `command is text parsed by the selected shell, not argv. Omitted/default shell uses ${getDefaultShellType()}. Use only the shell enum values; do not mix their syntax or escaping rules.`,
+            ? `command 是交给所选 Shell 解析的文本，不是 argv 数组。省略 shell 或填 default 时使用 ${getDefaultShellType()}。只能选择 shell 参数列出的类型，并按所选 Shell 的语法和转义规则书写，不要混用。`
+            : `command is text parsed by the selected shell, not an argv array. Omitting shell or passing default uses ${getDefaultShellType()}. Choose only a shell listed for the shell parameter, and follow that shell's syntax and escaping rules without mixing them.`,
         output,
-        unavailable === '- 无' ? '' : (zh ? '已配置但可能不可用的 Shell：\n' : 'Configured shell availability:\n') + unavailable,
+        unavailable === '- 无' ? '' : (zh ? '已启用但可能不可用的 Shell：\n' : 'Enabled shells that may be unavailable:\n') + unavailable,
         enabled.has('powershell') ? getPowerShellGuidanceDescription(lang) : '',
         enabled.has('cmd') ? getCmdGuidanceDescription(lang) : '',
         posix.length ? getPosixShellGuidanceDescription(posix, lang) : '',
@@ -71,36 +71,32 @@ function getExecuteCommandShellGuidanceDescription(): string {
 
 
 /**
- * 1.2.2-fix：把同一套 cwd 规则压缩到参数 schema 描述里。
- *
- * 为什么要改：不同模型有时只读参数描述，不一定完整读完主工具描述。
- * 怎么改：让 `cwd` 字段本身也说明根目录、相对路径、多根工作区和外部路径边界。
- * 目的：在 Function Calling 参数层直接降低 `cwd` 填错概率。
+ * cwd 规则同时写在参数说明里：有些模型只读参数说明，不一定完整读完主说明。
  */
 function getCwdParameterDescription(workspaceRoots: WorkspaceRootPromptInfo[], isMultiRoot: boolean): string {
     const lang = getDeclarationLanguage();
     if (host.workspaceBinding === 'task') return lang === 'zh-CN'
-        ? 'Shell 启动目录，以当前任务绑定的工作区为根。省略或填 . 使用根目录，子目录用 backend、frontend/src 等相对路径。文件目标写在 command 中，并相对于 cwd；不要拼接工作区绝对路径；只有工作区外目标才在 command 中使用绝对路径。执行前任务必须已选择工作区。'
-        : 'Shell startup directory within this task’s bound workspace. Omit or use . for its root; use relative subdirectories such as backend or frontend/src. Put file targets in command relative to cwd, without concatenating the workspace absolute path. Use absolute command targets only outside the workspace. The task must have a workspace selected before execution.';
+        ? 'Shell 的启动目录，以当前任务绑定的工作区为根。省略或填 . 表示根目录，子目录写成 backend、frontend/src 这样的相对路径。命令里的文件路径相对于 cwd 书写，不要拼接工作区的绝对路径；只有工作区外的目标才在命令里写绝对路径。执行前任务必须已经选择了工作区。'
+        : 'Shell startup directory, rooted at the workspace bound to this task. Omit it or use . for the root, and give subdirectories as relative paths such as backend or frontend/src. Write file paths in command relative to cwd rather than prefixing the workspace absolute path; use absolute paths in command only for targets outside the workspace. The task must have a workspace selected before the command runs.';
     const common = lang === 'zh-CN'
-        ? '`cwd` 是 Shell 启动工作目录，不是目标文件路径；workspace 内使用相对路径，不要拼接 workspace 绝对路径。'
-        : '`cwd` is the shell startup working directory, not the target file path; use relative paths inside the workspace and do not concatenate workspace absolute paths.';
+        ? 'cwd 是 Shell 的启动目录，不是目标文件路径。工作区内请用相对路径，不要拼接工作区的绝对路径。'
+        : 'cwd is the shell startup directory, not a target file path. Inside the workspace, use relative paths instead of prefixing the workspace absolute path.';
 
     if (workspaceRoots.length === 0) {
         return lang === 'zh-CN'
-            ? `${common} 当前没有打开 workspace，工具执行时会报错。`
-            : `${common} No workspace is currently open; the tool will error when executed.`;
+            ? `${common}当前没有打开工作区，执行时会报错。`
+            : `${common} No workspace is currently open, so running a command will fail.`;
     }
 
     if (isMultiRoot) {
         return lang === 'zh-CN'
-            ? `${common} 多根工作区必须使用 "workspace_name/path" 或 "@workspace_name/path"；根目录写 workspace_name 或 @workspace_name。可用工作区：${workspaceRoots.map(w => w.name).join(', ')}`
-            : `${common} In a multi-root workspace you must use "workspace_name/path" or "@workspace_name/path"; the root is written as workspace_name or @workspace_name. Available workspaces: ${workspaceRoots.map(w => w.name).join(', ')}`;
+            ? `${common}多根工作区要写成 "workspace_name/path" 或 "@workspace_name/path"，根目录写 workspace_name 或 @workspace_name。可用工作区：${workspaceRoots.map(w => w.name).join(', ')}。`
+            : `${common} In a multi-root workspace, write it as "workspace_name/path" or "@workspace_name/path", and the root as workspace_name or @workspace_name. Available workspaces: ${workspaceRoots.map(w => w.name).join(', ')}.`;
     }
 
     return lang === 'zh-CN'
-        ? `${common} 单根工作区不传或填 "." 表示 workspace 根目录；子目录写 "backend"、"frontend/src"；workspace 外目标使用 command 内的绝对路径。`
-        : `${common} In a single-root workspace, omit \`cwd\` or pass "." for the workspace root; subdirectories as "backend", "frontend/src"; targets outside the workspace use absolute paths in the command.`;
+        ? `${common}省略 cwd 或填 "." 表示工作区根目录，子目录写成 "backend"、"frontend/src"；工作区外的目标在命令里使用绝对路径。`
+        : `${common} Omit cwd or pass "." for the workspace root, and give subdirectories as "backend" or "frontend/src"; targets outside the workspace use absolute paths in the command.`;
 }
 
 
@@ -115,8 +111,8 @@ function getPowerShellGuidanceDescription(lang: LocalizationLanguage): string {
             '- 环境变量写法是 `$env:NAME`，例如 `$env:TEMP`，不是 Bash 的 `$NAME`。',
             '- 未引用的 `|` 是 PowerShell 管道，示例：`Get-ChildItem | Select-Object -First 10`。',
             '- 调用路径含空格的可执行文件，用 `&`：`& "C:\\Program Files\\nodejs\\node.exe" --version`。',
-            '- 调 native exe 时，PowerShell 解析后还会进入 Windows/native argv 规则；引号和反斜杠紧贴双引号时要格外小心。',
-            '- 复杂 Node/Python/JSON/正则内容不要硬写成 `node -e "..."`，优先用单引号 here-string 写临时脚本。'
+            '- 调用原生可执行文件时，PowerShell 解析完还会再经过 Windows 的 argv 规则；引号和反斜杠紧贴双引号时要格外小心。',
+            '- 复杂的 Node/Python/JSON/正则内容不要硬写成 `node -e "..."`，优先用单引号 here-string 写成临时脚本。'
         ].join('\n')
         : [
             '## PowerShell rules (`shell: "powershell"`)',
@@ -145,7 +141,7 @@ function getCmdGuidanceDescription(lang: LocalizationLanguage): string {
             '- 字面管道符可放进双引号：`"a|b"`；必要时使用 `a^|b`。如果已经在双引号内，不要额外写 `^|`。',
             '- 多命令串联可用 `&&`：`npm install && npm test`。',
             '- 路径含空格时使用双引号。复杂脚本通常优先改用 PowerShell 或 sh。',
-            '- 不要给整条命令外层再加引号（cmd 启动时会剥除最外层引号，命令内再含引号会解析失败）。'
+            '- 不要给整条命令外面再包一层引号：cmd 启动时会去掉最外层引号，命令里如果还有引号就会解析失败。'
         ].join('\n')
         : [
             '## CMD rules (`shell: "cmd"`)',
@@ -173,7 +169,7 @@ function getPosixShellGuidanceDescription(shellNames: string[], lang: Localizati
             '- 双引号允许变量展开和命令替换：`"$HOME"`、`"$(hostname)"`。',
             '- 未引用的 `|` 是管道，示例：`find . -name \'*.ts\' | head`。',
             '- 复杂多行内容优先使用强字面量 heredoc：`cat > /tmp/probe.sh <<\'EOF\' ... EOF`。',
-            '- 如果这是 Windows 上的 Git sh/Git Bash，还要遵守 Git/MSYS 路径转换规则。'
+            '- 在 Windows 上使用 Git sh/Git Bash 时，还要注意 Git/MSYS 的路径转换规则。'
         ].join('\n')
         : [
             `## Shared POSIX rules (${shellName})`,
@@ -214,7 +210,7 @@ function getWslGuidanceDescription(lang: LocalizationLanguage): string {
         ? [
             '## WSL 规则（`shell: "wsl"`）',
             '',
-            '- WSL 模式通过 `wsl.exe -- bash -c <command>` 执行，命令进入 WSL 内的 bash 解析。',
+            '- WSL 模式通过 `wsl.exe -- bash -c <command>` 执行，命令由 WSL 内的 bash 解析。',
             '- 路径应使用 WSL/Linux 格式，例如 `/mnt/c/Users/...`，不要直接使用 PowerShell 的 `$env:TEMP`。',
             '- 从 WSL 调 Windows 程序通常需要写 `.exe`，例如 `notepad.exe`。',
             '- 如果当前环境提示 WSL 未安装或未启用，不要选择 `wsl`。'
@@ -260,7 +256,7 @@ function getSshGuidanceDescription(lang: LocalizationLanguage, powershell: boole
             '',
             '- SSH 至少有两层解析：本地 shell 先解析整条 `ssh ...` 命令；远端用户 shell 再解析远端命令。远端命令不是 argv 直达目标程序。',
             ...(powershell ? ['- 在 PowerShell 中调用 SSH，外层单引号只能阻止本地 PowerShell 展开；远端 shell 仍会解释 `$HOME`、`$(hostname)`、`|` 等。'] : []),
-            ...(powershell ? ['- 当前实测链路 PowerShell → ssh → 远端 bash 中，如果需要远端 shell 用双引号保护参数，PowerShell 命令里通常要写 `\\"`；如果要远端收到字面 `$HOME`，写 `\\"\\$HOME\\"`；字面 `$(hostname)` 写 `\\"\\$(hostname)\\"`。'] : []),
+            ...(powershell ? ['- 在 PowerShell → ssh → 远端 bash 这条链路中，如果远端 shell 需要用双引号保护参数，PowerShell 命令里通常要写 `\\"`；要让远端收到字面的 `$HOME`，写 `\\"\\$HOME\\"`；字面的 `$(hostname)` 写 `\\"\\$(hostname)\\"`。'] : []),
             '- 复杂远端操作不要硬塞一行：优先本地生成脚本，`scp` 上传到远端 `/tmp/...`，`ssh` 执行远端脚本，完成后清理脚本。',
             ...(powershell ? ['- Windows 用户目录 SSH key 示例：`ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`。'] : []),
         ].join('\n')
@@ -269,7 +265,7 @@ function getSshGuidanceDescription(lang: LocalizationLanguage, powershell: boole
             '',
             '- SSH has at least two parsing layers: the local shell first parses the whole `ssh ...` command; the remote user shell then parses the remote command. The remote command is not passed as argv directly to the target program.',
             ...(powershell ? ['- When calling SSH from PowerShell, an outer single quote only stops local PowerShell expansion; the remote shell still interprets `$HOME`, `$(hostname)`, `|`, etc.'] : []),
-            ...(powershell ? ['- In the currently tested PowerShell → ssh → remote bash chain, if the remote shell needs double quotes to protect arguments, PowerShell commands usually need `\\"`; to deliver a literal `$HOME` remotely, write `\\"\\$HOME\\"`; literal `$(hostname)` write `\\"\\$(hostname)\\"`.'] : []),
+            ...(powershell ? ['- In a PowerShell → ssh → remote bash chain, if the remote shell needs double quotes to protect arguments, the PowerShell command usually needs `\\"`; to pass a literal `$HOME` to the remote side, write `\\"\\$HOME\\"`, and for a literal `$(hostname)` write `\\"\\$(hostname)\\"`.'] : []),
             '- Do not cram complex remote operations into one line: prefer generating the script locally, `scp` it to `/tmp/...` on the remote, `ssh` to run it, then clean up the script.',
             ...(powershell ? ['- Windows SSH key example in the user directory: `ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`.'] : []),
         ].join('\n');

@@ -9,8 +9,8 @@ export const snapshotProperties = {
   frameId: { type: 'string', description: '从 frames 返回值取得，限定读取某个 iframe。' },
 };
 export const actionObservationProperties = {
-  after: { type: 'string', enum: ['screenshot', 'snapshot', 'both'], default: 'screenshot', description: '动作后观察方式：默认截图；snapshot 返回新元素 ref；both 同时返回截图和快照。' },
-  snapshotOptions: { type: 'object', properties: snapshotProperties, additionalProperties: false, description: 'after=snapshot/both 时的快照筛选；从头读取，不沿用动作前的 ref 或 offset。' },
+  after: { type: 'string', enum: ['screenshot', 'snapshot', 'both'], default: 'screenshot', description: '动作后的观察方式：默认 screenshot 返回截图，snapshot 返回带新 ref 的快照，both 同时返回两者。' },
+  snapshotOptions: { type: 'object', properties: snapshotProperties, additionalProperties: false, description: '仅在 after=snapshot 或 both 时使用的快照筛选。快照从头读取，不沿用动作前的 ref 或 offset。' },
   maxImageDimension: { type: 'integer', minimum: 320, maximum: 2560, description: '操作后截图最长边像素，默认 1280。' },
 };
 export interface ActionObservationOptions {
