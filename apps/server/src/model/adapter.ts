@@ -105,7 +105,10 @@ export class ProviderModelAdapter implements ModelProvider {
     const formatter = new FormatterRegistry().get(profile.protocol);
     if (!formatter)
       throw new Error(`Unsupported model protocol: ${profile.protocol}`);
-    let history = (structuredClone(input.messages) as Content[]).flatMap(message => {
+    // 不再深复制完整历史：视觉预处理、重复响应修复与格式器都按写时复制产生新对象（Responses WebSocket
+    // 的增量输入一直直接格式化原消息），这里的 flatMap 也只为中断消息新建对象。冻结输入的请求稳定性测试
+    // 守护这一前提；若以后有步骤需要原地修改历史，应在该步骤内部复制，而不是恢复整份深复制。
+    let history = (input.messages as Content[]).flatMap(message => {
       if (message.role !== 'model' || !message.incompleteReason) return [message];
       // 部分思考保存在历史中供用户查看，但没有完整供应方签名，不能作为下一次请求的有效思考块。
       const parts = message.parts.flatMap(part => part.functionCall && part.functionCall.async === true

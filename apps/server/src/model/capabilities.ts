@@ -131,6 +131,14 @@ export function overrideChannelReasoning(channel: ChannelConfig, effort: string)
   return { options: { ...channel.options, [key]: thinking }, optionsEnabled: { ...channel.optionsEnabled, [key]: true } };
 }
 
+/** 返回去掉字段后的副本；字段不存在或不是对象时保持原引用，与原地 delete 的可见效果一致。 */
+function withoutField(value: any, field: string): any {
+  if (!value || typeof value !== "object" || !Object.prototype.hasOwnProperty.call(value, field)) return value;
+  const copy = Array.isArray(value) ? [...value] : { ...value };
+  delete copy[field];
+  return copy;
+}
+
 export function applyProviderCapabilities(
   options: HttpRequestOptions,
   profile: ProviderDefinition,
@@ -141,7 +149,10 @@ export function applyProviderCapabilities(
     profile,
     input.modelOverride ?? profile.model,
   );
-  const body = structuredClone(options.body) as Record<string, any>;
+  // 写时复制：格式器正文可能与历史、工具声明或渠道选项共享嵌套对象，只复制实际修改的路径；
+  // 未修改的消息与图片继续共享引用。替换已有字段时用展开覆盖，键顺序与原先深复制后原地修改一致，
+  // 序列化结果逐字节不变。后续步骤只在这里新建的顶层正文上增删字段。
+  const body = { ...options.body } as Record<string, any>;
   const limit = profile.generation.maxOutputTokens;
   if (
     capabilities.outputTokenParameter !== "protocol_default" &&
@@ -158,8 +169,8 @@ export function applyProviderCapabilities(
   const effort = input.reasoningEffort ?? profile.generation.reasoningEffort;
   if (capabilities.reasoningParameter !== "protocol_default") {
     delete body.reasoning_effort;
-    if (body.reasoning) delete body.reasoning.effort;
-    if (body.output_config) delete body.output_config.effort;
+    if (body.reasoning) body.reasoning = withoutField(body.reasoning, "effort");
+    if (body.output_config) body.output_config = withoutField(body.output_config, "effort");
     if (effort && capabilities.reasoningParameter !== "disabled") {
       const field = capabilities.reasoningParameter;
       if (field === "reasoning_effort") body.reasoning_effort = effort;
@@ -181,13 +192,15 @@ export function applyProviderCapabilities(
     Array.isArray(body.tools) &&
     capabilities.strictTools !== "protocol_default"
   ) {
-    for (const tool of body.tools) {
-      if (tool.type !== "function") continue;
-      const definition = tool.function ?? tool;
-      definition.strict = capabilities.strictTools === "enabled";
-      if (definition.strict && definition.parameters)
+    const strict = capabilities.strictTools === "enabled";
+    body.tools = body.tools.map((tool: any) => {
+      if (tool.type !== "function") return tool;
+      const source = tool.function ?? tool;
+      const definition = { ...source, strict };
+      if (strict && definition.parameters)
         definition.parameters = ensureStrictSchema(definition.parameters, true);
-    }
+      return tool.function != null ? { ...tool, function: definition } : definition;
+    });
   }
   const headers = { ...options.headers, ...profile.customHeaders };
   return applyOpenCodeSessionHeader(

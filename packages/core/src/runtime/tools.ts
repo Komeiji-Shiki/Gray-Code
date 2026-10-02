@@ -62,6 +62,12 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+/** 校验器缓存与目录捕获共用同一份 Schema 规范化结果，替换时才能准确判断是否可以复用。 */
+function validationParameters(tool: RuntimeTool, declaration?: ToolDeclaration): ToolDeclaration['parameters'] {
+  if (tool.validationSchema) return canonical(tool.validationSchema) as ToolDeclaration['parameters'];
+  return (declaration ?? canonical(tool.declaration) as ToolDeclaration).parameters;
+}
+
 /** Tool selection belongs to agent configuration, never to the current speaker's role. */
 export class RuntimeToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
@@ -90,7 +96,7 @@ export class RuntimeToolRegistry {
       if (!tool) throw new Error(`Configured tool is unavailable: ${name}`);
       const declaration = canonical(tool.declaration) as ToolDeclaration;
       declarations.push(declaration);
-      const parameters = tool.validationSchema ? canonical(tool.validationSchema) as ToolDeclaration['parameters'] : declaration.parameters;
+      const parameters = validationParameters(tool, declaration);
       if (tool.validationSchema) validationSchemas[name] = parameters;
       const schema = JSON.stringify(parameters);
       let cached = this.validators.get(name);
@@ -117,7 +123,13 @@ export class RuntimeToolRegistry {
     const next = new RuntimeToolRegistry(this.decorate);
     for (const tool of tools) next.register(tool);
     for (const name of this.tools.keys()) if (name.startsWith(prefix)) this.tools.delete(name);
-    for (const name of this.validators.keys()) if (name.startsWith(prefix)) this.validators.delete(name);
+    // 发现刷新常常只改动命名空间里的少数工具：Schema 未变的校验器继续复用，避免整批重新编译；
+    // 已移除或 Schema 变化的名称立即释放，catalog 也会按 Schema 字符串再次核对。
+    for (const [name, cached] of this.validators) {
+      if (!name.startsWith(prefix)) continue;
+      const tool = next.tools.get(name);
+      if (!tool || JSON.stringify(validationParameters(tool)) !== cached.schema) this.validators.delete(name);
+    }
     for (const [name, tool] of next.tools) this.tools.set(name, tool);
   }
 }

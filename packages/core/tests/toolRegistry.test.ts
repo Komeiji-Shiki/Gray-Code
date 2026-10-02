@@ -62,6 +62,27 @@ test('模型声明的兼容处理不会放宽执行校验，原始约束变化�
   expect(before.entries.get('mcp__sample')!.validate({ value: 'ok', extra: true })).toBe(false);
 });
 
+test('命名空间替换只重建 Schema 变化的校验器，并释放已移除名称的校验器', () => {
+  const named = (name: string, type = 'string'): RuntimeTool => ({ ...tool(type), declaration: { ...tool(type).declaration, name } });
+  const registry = new RuntimeToolRegistry();
+  registry.replaceNamespace('mcp__', [named('mcp__a__same'), named('mcp__a__changed'), named('mcp__b__removed')]);
+  const before = registry.catalog(['mcp__a__same', 'mcp__a__changed', 'mcp__b__removed']);
+  expect(registry.diagnostics().compiledToolSchemas).toBe(3);
+  registry.replaceNamespace('mcp__', [named('mcp__a__same'), named('mcp__a__changed', 'number')]);
+  // 已移除与 Schema 变化的名称在替换时就释放，不等待下一次捕获。
+  expect(registry.diagnostics().compiledToolSchemas).toBe(1);
+  const after = registry.catalog(['mcp__a__same', 'mcp__a__changed']);
+  expect(after.entries.get('mcp__a__same')!.validate).toBe(before.entries.get('mcp__a__same')!.validate);
+  expect(after.entries.get('mcp__a__changed')!.validate).not.toBe(before.entries.get('mcp__a__changed')!.validate);
+  expect(after.entries.get('mcp__a__changed')!.validate({ value: 2 })).toBe(true);
+  expect(before.entries.get('mcp__a__changed')!.validate({ value: 2 })).toBe(false);
+  expect(() => registry.catalog(['mcp__b__removed'])).toThrow('unavailable');
+  // 重新加入同名工具时重新编译，不会拿到已释放的旧校验器。
+  registry.replaceNamespace('mcp__', [named('mcp__a__same'), named('mcp__b__removed')]);
+  expect(registry.catalog(['mcp__b__removed']).entries.get('mcp__b__removed')!.validate).not.toBe(before.entries.get('mcp__b__removed')!.validate);
+  expect(registry.catalog(['mcp__a__same']).entries.get('mcp__a__same')!.validate).toBe(before.entries.get('mcp__a__same')!.validate);
+});
+
 test.each([
   ['http://json-schema.org/draft-06/schema#', { type: 'number', exclusiveMinimum: 0 }, 1, 0],
   ['http://json-schema.org/draft-07/schema#', { type: 'array', items: [{ type: 'string' }], additionalItems: false }, ['ok'], [1]],

@@ -28,6 +28,58 @@ test('桌面 MCP 清理开关控制模型声明，同时保留原始参数校验
   } finally { await app.close(); await f.cleanup(); }
 });
 
+test('MCP 列表变更只重建工具变化的服务器，保留未变化的校验器与目录顺序', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  try {
+    const schema = (type: string) => ({ type: 'object' as const, properties: { value: { type } }, required: ['value'] });
+    // 服务器 a_ 的工具名也以 mcp__a__ 开头，用来确认刷新不按服务器前缀误删邻近服务器的工具。
+    const servers = [
+      { serverId: 'b', serverName: 'B', cleanSchema: true, tools: [{ name: 'write', inputSchema: schema('string') }, { name: 'read', inputSchema: schema('string') }] },
+      { serverId: 'a', serverName: 'A', cleanSchema: true, tools: [{ name: 'list', inputSchema: schema('string') }] },
+      { serverId: 'a_', serverName: 'A2', cleanSchema: true, tools: [{ name: 'list', inputSchema: schema('string') }] },
+    ];
+    jest.spyOn(app.mcp.manager, 'getAllTools').mockImplementation(() => structuredClone(servers));
+    const emit = (serverId: string, method: string) => (app.mcp.manager as any).emitEvent({ type: 'server:capabilities_updated', serverId, data: { method }, timestamp: Date.now() });
+    const replace = jest.spyOn(app.tools, 'replaceNamespace');
+    await app.mcp.synchronize();
+    const names = app.mcp.names();
+    expect(names).toEqual(['mcp__b__write', 'mcp__b__read', 'mcp__a__list', 'mcp__a___list']);
+    const before = app.tools.catalog(names);
+    const initial = replace.mock.calls.at(-1)![1];
+    replace.mockClear();
+
+    // 资源或提示词变化时工具内容不变：不替换命名空间，校验器和目录版本保持原样。
+    emit('a', 'notifications/resources/list_changed');
+    emit('b', 'notifications/prompts/list_changed');
+    expect(replace).not.toHaveBeenCalled();
+    const unchanged = app.tools.catalog(names);
+    expect(unchanged.version).toBe(before.version);
+    for (const name of names) expect(unchanged.entries.get(name)!.validate).toBe(before.entries.get(name)!.validate);
+
+    // 一个服务器的工具变化：只有该工具重新编译，其余工具的执行对象与校验器复用，目录顺序不变。
+    servers[1].tools[0].inputSchema = schema('number');
+    emit('a', 'notifications/tools/list_changed');
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(app.mcp.names()).toEqual(names);
+    const changed = app.tools.catalog(names);
+    expect(changed.version).not.toBe(before.version);
+    expect(changed.entries.get('mcp__a__list')!.validate({ value: 1 })).toBe(true);
+    expect(changed.entries.get('mcp__a___list')!.validate({ value: 1 })).toBe(false);
+    // 未变化服务器传入的仍是同一批工具对象，变化的服务器才重新构建；注册表按 Schema 保留其余校验器
+    // 的行为由 toolRegistry.test.ts 针对源码覆盖（本文件经 @graycode/core 构建产物运行）。
+    const replaced = replace.mock.calls[0][1];
+    expect(replaced.map(tool => tool.declaration.name)).toEqual(names);
+    expect(replaced.map((tool, index) => tool === initial[index])).toEqual([true, true, false, true]);
+
+    // 服务器断开后只保留仍连接服务器的工具。
+    servers.splice(0, 1);
+    emit('b', 'notifications/tools/list_changed');
+    expect(app.mcp.names()).toEqual(['mcp__a__list', 'mcp__a___list']);
+    expect(replace.mock.calls[1][1].map(tool => tool === replaced[tool.declaration.name === 'mcp__a__list' ? 2 : 3])).toEqual([true, true]);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
 test('MCP configuration drafts do not spawn processes; committed stdio discovery and calls run through the task core', async () => {
   const f = await fixture(); await f.store.close();
   const captured: string[][] = [];
