@@ -19,7 +19,7 @@ namespace GrayCode.ComputerHost {
     public WindowIdentity window;
     public List<ElementRecord> elements=new List<ElementRecord>();
     public bool truncated;
-    public string accessibilityError,focusedElementId;
+    public string accessibilityError,focusedElementId,redirectedFrom,notice;
   }
   internal static class AutomationState {
     private static readonly object gate=new object();
@@ -33,8 +33,16 @@ namespace GrayCode.ComputerHost {
     private static string Runtime(AutomationElement element) { return string.Join(".",element.GetRuntimeId()); }
     internal static Observation Observe(Dictionary<string,object> args) {
       DesktopWindows.RequireInteractive();
-      var window=DesktopWindows.Parse(Json.Text(args,"windowId"));
-      var result=new Observation {id=Guid.NewGuid().ToString("N"),capturedAt=Json.Now,window=DesktopWindows.Describe(window,Json.Flag(args,"includeCommandLine",true))};
+      var window=DesktopWindows.Parse(Json.Text(args,"windowId"));string redirectedFrom=null,notice=null;
+      // 隐藏的宿主窗口没有画面，改为观察它名下最大的可见窗口，并在结果里说明实际窗口 ID。
+      if(!DesktopWindows.Displayable(window)) {
+        var owned=DesktopWindows.VisibleOwned(window);var requested=window.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if(owned.Count>0) {
+          window=owned[0];redirectedFrom=requested;var actual=window.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture);
+          notice="窗口 "+requested+" 本身不可见，已改为观察它名下可见的窗口 "+actual+"；后续请直接使用这个 ID。"+(owned.Count>1?"名下还有 "+(owned.Count-1)+" 个可见窗口，可用 computer_windows 查看。":"");
+        } else notice="窗口 "+requested+" 不可见且名下没有可见窗口，可能没有可采集的画面。";
+      }
+      var result=new Observation {id=Guid.NewGuid().ToString("N"),capturedAt=Json.Now,window=DesktopWindows.Describe(window,Json.Flag(args,"includeCommandLine",true)),redirectedFrom=redirectedFrom,notice=notice};
       var limit=Math.Max(1,Math.Min(1000,Json.Number(args,"maxElements",250)));
       var depth=Math.Max(1,Math.Min(30,Json.Number(args,"maxDepth",14)));
       try {

@@ -139,6 +139,40 @@ describe('workspace checkpoints application contract', () => {
     expect(summary).toMatchObject({ id: before.id, messageIndex: 1 });
   });
 
+  test('后续检查点沿用未变化文件的内容，删除旧检查点后共享内容仍可恢复', async () => {
+    await createConversation('incremental');
+    await writeFile(path.join(f.source, 'same.txt'), 'unchanged');
+    await writeFile(path.join(f.source, 'edit.txt'), 'v1');
+    const first = await app.checkpoints.create('owner', 'incremental');
+    await writeFile(path.join(f.source, 'edit.txt'), 'v2');
+    const second = await app.checkpoints.create('owner', 'incremental');
+    const key = (name: string) => Object.keys(first.manifest.files).find(file => file.endsWith(`/${name}`))!;
+    const same = key('same.txt'); const edit = key('edit.txt');
+
+    expect(first.contentIds[same]).toEqual(expect.any(String));
+    expect(second.contentIds[same]).toBe(first.contentIds[same]);
+    expect(second.contentIds[edit]).toEqual(expect.any(String));
+    expect(second.contentIds[edit]).not.toBe(first.contentIds[edit]);
+    expect(second.manifest.files[same]).toMatchObject({ hash: first.manifest.files[same].hash, size: 9 });
+    expect(second.manifest.files[same].mtimeMs).toEqual(expect.any(Number));
+
+    await app.checkpoints.delete('owner', 'incremental', first.id, { force: true });
+    expect(await app.storage.getRecord('workspace-checkpoint-content', first.contentIds[edit])).toBeNull();
+    expect(await app.storage.getRecord('workspace-checkpoint-content', second.contentIds[same])).not.toBeNull();
+
+    await writeFile(path.join(f.source, 'same.txt'), 'changed later');
+    await writeFile(path.join(f.source, 'edit.txt'), 'v3');
+    expect((await app.checkpoints.restore('owner', 'incremental', second.id)).success).toBe(true);
+    expect(await readFile(path.join(f.source, 'same.txt'), 'utf8')).toBe('unchanged');
+    expect(await readFile(path.join(f.source, 'edit.txt'), 'utf8')).toBe('v2');
+
+    // 基线被删除后下一次采集回退为独立保存，内容记录不会指向已删除的数据。
+    await app.checkpoints.delete('owner', 'incremental', second.id, { force: true });
+    const third = await app.checkpoints.create('owner', 'incremental');
+    for (const contentId of Object.values(third.contentIds))
+      expect(await app.storage.getRecord('workspace-checkpoint-content', contentId)).not.toBeNull();
+  });
+
   test('清单外脏文件也阻止恢复', async () => {
     await createConversation('dirty-outside');
     await writeFile(path.join(f.source, 'a.txt'), 'a0');

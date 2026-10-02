@@ -77,7 +77,12 @@ export function workspaceTools(
         if (args.action === "list")
           return { success: true, data: await files.list(target, file) };
         if (args.action === "read") {
-          const value = await files.read(target, file);
+          const value = await files.read(target, file).catch(error => {
+            // workspace_files 只按 UTF-8 读写并以文本哈希校验；非 UTF-8 文件交给会保留原编码的工具。
+            if (/encoded data was not valid/i.test(String((error as Error)?.message)))
+              throw new Error('ENCODING_NOT_UTF8: 文件不是 UTF-8 文本。读取请用 read_file（自动识别 GBK、Shift-JIS 等编码），修改请用 apply_diff 或 write_file，它们会按原编码写回。');
+            throw error;
+          });
           if (value.hash === null)
             return {
               success: false,

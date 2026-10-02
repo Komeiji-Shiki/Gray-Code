@@ -54,9 +54,15 @@ jest.mock('../../tools/terminal/shellConfig', () => {
 });
 
 import { decodeWithMode, pushOutputLines, type StreamDecodeMode } from '../../tools/terminal/outputDecoder';
+import * as shellModule from '../../tools/terminal/shellConfig';
 import { getShellConfig } from '../../tools/terminal/shellConfig';
+import * as outputModule from '../../tools/terminal/outputDecoder';
+import * as promptModule from '../../tools/terminal/promptDescriptions';
 import { createExecuteCommandTool } from '../../tools/terminal/execute_command';
 import { killTerminalProcess, getActiveTerminalProcesses, type TerminalProcess } from '../../tools/terminal/processRunner';
+import { createTerminalRuntime } from '../../tools/terminal/processRunnerRuntime';
+import { TaskManager } from '../../tools/taskManager';
+import type { ProcessRecord } from '../../tools/terminal/processTree';
 
 const spawnMock = jest.mocked(cp.spawn);
 const osModule = require('os') as typeof os;
@@ -298,9 +304,26 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         );
         const finalArg = spawnMock.mock.calls[0][1]![4] as string;
         expect(finalArg).toContain('$OutputEncoding');
+        // PowerShell 7 关闭颜色渲染；尾部诊断在换行后追加，失败时仍以 1 退出
+        expect(finalArg).toContain("if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }");
+        expect(finalArg).toMatch(/echo hi\nif \(-not \$\?\) \{.*\$Error\[0\].*exit 1 \}$/);
 
         proc.emit('close', 0);
         await promise;
+    });
+
+    test('结果输出去掉 ANSI 颜色序列，界面实时流保留原文', async () => {
+        const proc = makeFakeProc();
+        const promise = runCommand({ command: 'Get-Process | Format-Table', cwd: tmpDir, shell: 'powershell', timeout: 0 });
+        await flush();
+
+        proc.stdout.write(Buffer.from('\u001b[32;1m   Id\u001b[0m\u001b[32;1m Name\u001b[0m\n'));
+        proc.stderr.write(Buffer.from('\u001b[31;1mGet-Process: \u001b[31;1mnot found\u001b[0m\n'));
+        proc.emit('close', 1);
+
+        const result = await promise;
+        expect(result.data.output).toBe('   Id Name\nGet-Process: not found');
+        expect(result.error).toContain('code 1');
     });
 
     test('完整执行流：stdout/stderr 数据收集 → close(0) → success + output + exitCode', async () => {
@@ -419,6 +442,59 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(result.cancelled).toBe(true);
         expect(result.success).toBe(false);
         expect(result.error).toContain('User cancelled');
+    });
+
+    test('Shell 已退出而后代占着管道：中断不再挂起，补杀脱链后代并报告原因与清理结果', async () => {
+        const now = Date.now();
+        const shellRecord: ProcessRecord = { pid: 4242, ppid: 1, createdAt: now, name: 'powershell.exe', sessionId: 1 };
+        const launcher: ProcessRecord = { pid: 5000, ppid: 4242, createdAt: now + 20, name: 'gm8emulator.exe', sessionId: 1 };
+        const wow64: ProcessRecord = { pid: 5001, ppid: 5000, createdAt: now + 40, name: 'gm8emulator-wow64.exe', sessionId: 1 };
+        // 采样时还能看到启动器；中断时只剩孙进程，补杀后全部退出
+        const snapshots = [[shellRecord, launcher, wow64], [wow64], []];
+        const processTree = { snapshot: jest.fn(async () => snapshots.length > 1 ? snapshots.shift()! : snapshots[0]), terminate: jest.fn(async () => {}) };
+        const treeKillMock = require('tree-kill') as jest.Mock;
+        const runtime = createTerminalRuntime({ getConfig: () => WINDOWS_EXEC_CONFIG as any, shells: shellModule as any, output: outputModule as any, prompts: promptModule as any,
+            tasks: TaskManager, getAllWorkspaces: () => [{ name: 'test-ws', fsPath: tmpDir }], parseWorkspacePath: value => ({ workspace: { name: 'test-ws', fsPath: tmpDir }, relativePath: value }), processTree });
+        const abort = new AbortController();
+        const proc = makeFakeProc();
+        const promise = runtime.createExecuteCommandTool().handler({ command: 'gm8emulator.exe game.exe', cwd: tmpDir, shell: 'powershell', timeout: 0 },
+            { toolId: 'orphan-pipe', conversationId: 'conv-1', abortSignal: abort.signal } as any);
+        await flush();
+        // 先让追踪器记录完整的链，再模拟 Shell 退出、管道仍被占用
+        await (runtime.getActiveTerminals().get('orphan-pipe') as any).tracker.sample();
+        proc.exitCode = 0; proc.emit('exit', 0);
+        // 本端管道被关闭后，Node 才会发出 close
+        proc.stdout.on('close', () => setImmediate(() => proc.emit('close', 0)));
+        abort.abort(new Error('Cancelled by user.'));
+
+        const result = await promise;
+        expect(treeKillMock).not.toHaveBeenCalled(); // Shell 已退出，不再按可能被复用的 PID 发信号
+        expect(processTree.terminate).toHaveBeenCalledWith([5001]);
+        expect(result.cancelled).toBe(true);
+        expect(result.data.interruption).toMatchObject({ reason: 'user_cancelled',
+            processTree: { verified: true, cleaned: true, detached: [{ pid: 5001, name: 'gm8emulator-wow64.exe' }] } });
+        expect(result.error).toContain('User cancelled');
+        expect(result.error).toContain('gm8emulator-wow64.exe (PID 5001)');
+    }, 15000);
+
+    test('任务层取消与超时分别报告原因；没有进程快照时说明清理未核实', async () => {
+        const abort = new AbortController();
+        const proc = makeFakeProc();
+        const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 0 }, { abortSignal: abort.signal });
+        await flush();
+        abort.abort(new Error('synthetic stream failure'));
+        proc.emit('close', 1);
+        const cancelled = await promise;
+        expect(cancelled.data.interruption).toMatchObject({ reason: 'task_cancelled', processTree: { verified: false } });
+        expect(cancelled.error).toContain('synthetic stream failure');
+        expect(cancelled.error).toContain('could not be verified');
+
+        const timedProc = makeFakeProc();
+        const timed = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 });
+        await flush();
+        await new Promise(resolve => setTimeout(resolve, 250));
+        timedProc.emit('close', 1);
+        expect((await timed).data.interruption).toMatchObject({ reason: 'timeout' });
     });
 
     test('超时后 SIGTERM 免疫进程最终被 SIGKILL 强杀（升级兜底）', async () => {

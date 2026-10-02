@@ -23,6 +23,7 @@ export function toDisplayMessages(history: ConversationHistory, startIndex = 0):
             foregroundWorkTransition,
             characterTurn,
             longMemoryInputIds,
+            longMemoryInputBase,
             longMemoryReferences,
             memoryRedacted,
             memoryContext,

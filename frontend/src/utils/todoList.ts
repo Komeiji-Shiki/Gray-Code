@@ -145,6 +145,8 @@ export interface ReplayTodoState {
   todos: TodoItem[] | null
   /** TODO 面板插入点（首个有效工具调用消息的 backendIndex + 1，保证渲染在该消息下方） */
   anchorBackendIndex: number | null
+  /** 重放实际读取到的最后一条消息下标（未读取任何消息时为 fromIndex - 1）；之后的消息不影响结果 */
+  lastReadIndex: number
 }
 
 export interface ReplayTodoOptions {
@@ -178,10 +180,12 @@ export function replayTodoStateFromMessages(
       ? options.stopAtBackendIndex
       : null
   let stopped = false
+  let lastReadIndex = fromIndex - 1
 
   for (let i = fromIndex; i < messages.length; i++) {
     const msg = messages[i]
     if (stopped) break
+    lastReadIndex = i
     const msgBackendIndex =
       typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)
         ? msg.backendIndex
@@ -279,7 +283,8 @@ export function replayTodoStateFromMessages(
 
   return {
     todos: touched ? list : null,
-    anchorBackendIndex
+    anchorBackendIndex,
+    lastReadIndex
   }
 }
 

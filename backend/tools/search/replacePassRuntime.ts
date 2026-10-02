@@ -5,7 +5,7 @@ import type { LockHolder } from '../../core/fileWriteLockManager';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 import type { SearchMatch, SkippedFileInfo } from './searchPassRuntime';
 import { normalizeLineEndingsToLF, escapeRegExp } from '../shared/textUtils';
-import { createTextReader, detectTextFromHeader, decodeTextBytes, type TextDetectionResult } from './textEncodingRuntime';
+import { createTextReader, detectTextFromHeader, detectTextEncoding, decodeTextBytes, type TextDetectionResult } from './textEncodingRuntime';
 import type { SearchFileHost, FileLocation, FileDiscoveryOptions } from './fileHost';
 import { createSearchPass } from './searchPassRuntime';
 export type { SkippedFileInfo };
@@ -114,6 +114,11 @@ async function searchAndReplaceInDirectory(
             }
 
             const content = await host.readFile(fileUri);
+            // 与审阅写回使用同一套完整内容检测，确保 GBK 等文件按原编码解码与写回
+            if (!detection.bomLength && detection.encoding === 'utf-8') {
+                detection = detectTextEncoding(content);
+                if (!detection.isText) continue;
+            }
             const originalText = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
             
             const input: TextSearchInput = { kind: 'replace', source: searchRegex.source, flags: searchRegex.flags,

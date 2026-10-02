@@ -6,6 +6,8 @@
 | --- | --- | --- |
 | `jose.txt` | jose 6.2.12（沿用工作区锁定版本，server 显式声明直接依赖） | 安装包原始 `LICENSE.md`，MIT；[官方源码](https://github.com/panva/jose) |
 | `ajv.txt` | Ajv 8.20.0（沿用工作区已有版本，server 显式声明直接依赖） | 安装包原始 `LICENSE`，MIT；[官方源码](https://github.com/ajv-validator/ajv) |
+| `iconv-lite.txt` | iconv-lite 0.6.3（沿用工作区锁定版本，用于文件工具按原编码读写 GBK、Shift-JIS、Big5 等文本） | 安装包原始 `LICENSE`，MIT；[官方源码](https://github.com/ashtuchkin/iconv-lite) |
+| `safer-buffer.txt` | safer-buffer 2.1.2（iconv-lite 的依赖） | 安装包原始 `LICENSE`，MIT；[官方源码](https://github.com/ChALkeR/safer-buffer) |
 | `acp-sdk.txt` | `@agentclientprotocol/sdk` 1.5.0 | 安装包原始 `LICENSE`，Apache-2.0；[官方源码](https://github.com/agentclientprotocol/typescript-sdk) |
 | `mcp-client.txt` | `@modelcontextprotocol/client` 2.0.0 | 安装包原始 `LICENSE`；[官方源码](https://github.com/modelcontextprotocol/typescript-sdk) |
 | `mcp-core.txt` | `@modelcontextprotocol/core` 2.0.0 | 安装包原始 `LICENSE`；[官方源码](https://github.com/modelcontextprotocol/typescript-sdk) |

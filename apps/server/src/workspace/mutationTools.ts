@@ -13,26 +13,41 @@ import type { StructuredDiffHunk, LegacyDiffBlock } from '../../../../backend/to
 import { insertAtLine, splitContentLines, deleteLineRange } from '../../../../backend/tools/file/lineMutations';
 import { MAX_EDIT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
 import { countSplitTextLines, normalizeLineEndingsToLF as normalize } from '../../../../shared/textLines';
+import { decodeTextBytes, detectTextEncoding, findUnencodableCharacter, isLegacyEncoding, roundTripsExactly, type TextDetectionResult } from '../../../../backend/tools/search/textEncodingRuntime';
 
 /** 原文件工具只负责参数和提案；文件效果统一交给宿主事务与审阅服务。 */
 export function mutationTools(app: PlatformApplication, format: 'unified' | 'search_replace'): RuntimeTool[] {
   const declarationOptions = { language: 'zh-CN' as const, precreateEmptyFile: false };
   const declaration = (value: { name: string; description: string; parameters: unknown }): ToolDeclaration =>
     ({ name: value.name, description: value.description, parameters: value.parameters as ToolDeclaration['parameters'] });
-  async function read(context: ToolContext, file: string, limit?: number) {
+  /**
+   * UTF-8（含 BOM，BOM 保留在正文里原样写回）维持原路径；UTF-16 与 GBK、Shift-JIS、Big5 等按检测到的编码解码，
+   * 审阅通过后按原编码写回。旧编码的推测结果必须能逐字节还原原文件，否则拒绝编辑，不把文件改成 UTF-8。
+   */
+  async function read(context: ToolContext, file: string, limit?: number): Promise<{ text: string; hash: string | null; encoding?: TextDetectionResult }> {
     if (!context.workspace) throw new Error('请先选择工作区。');
     return app.files.transaction(context.workspace, async transaction => {
       const value = await transaction.capture(file);
       if (limit && value.bytes && value.bytes.length > limit) throw new Error(`文件超过 ${limit} 字节，请修改较小范围或使用 write_file。`);
-      if (value.bytes?.includes(0)) throw new Error('不能将二进制文件作为代码编辑。');
-      return { text: value.bytes === null ? '' : new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value.bytes), hash: value.hash };
+      if (value.bytes === null) return { text: '', hash: value.hash };
+      const detection = detectTextEncoding(value.bytes);
+      if (!detection.isText) throw new Error('不能将二进制文件作为代码编辑。');
+      if (detection.encoding === 'utf-8') return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value.bytes), hash: value.hash };
+      if (isLegacyEncoding(detection.encoding) && !roundTripsExactly(value.bytes, detection))
+        throw new Error(`ENCODING_UNSAFE: 文件不是 UTF-8，按推测的 ${detection.encoding} 解码后无法原样写回。为避免损坏文件，这里不做修改；可用 read_file 的 encoding 参数确认编码，或由用户在编辑器中处理。`);
+      return { text: decodeTextBytes(value.bytes, detection), hash: value.hash, encoding: detection };
     }, { writeGrants: context.fileWriteGrants });
   }
-  async function review(context: ToolContext, file: string, before: { text: string; hash: string | null }, content: string) {
+  async function review(context: ToolContext, file: string, before: { text: string; hash: string | null; encoding?: TextDetectionResult }, content: string) {
     if (before.hash !== null && normalize(before.text) === content) return { path: file, success: true, status: 'accepted', action: 'unchanged' };
-    const result = await app.diffs.propose(context, file, before.text, content, before.hash);
+    // 先检查新内容能否用原编码表示，避免用户确认 Diff 后才发现无法保存。
+    const unsupported = before.encoding && findUnencodableCharacter(content, before.encoding.encoding);
+    if (unsupported) return { path: file, success: false, status: 'rejected', action: 'unchanged', encoding: before.encoding!.encoding,
+      error: `ENCODING_UNREPRESENTABLE: 文件编码为 ${before.encoding!.encoding}，第 ${unsupported.line} 行的字符 "${unsupported.character}" 无法用该编码写回，文件未修改。请改用该编码支持的字符。` };
+    const result = await app.diffs.propose(context, file, before.text, content, before.hash, before.encoding);
     return { path: file, success: result.status === 'accepted', status: result.status, cancelled: result.status === 'cancelled',
-      action: before.hash === null ? 'created' : 'modified', diffContentId: result.id, pendingDiffId: result.id, error: result.error };
+      action: before.hash === null ? 'created' : 'modified', diffContentId: result.id, pendingDiffId: result.id, error: result.error,
+      encoding: before.encoding?.encoding };
   }
   async function batch(entries: Record<string, any>[], operation: (entry: Record<string, any>) => Promise<Record<string, any>>): Promise<ToolOutcome> {
     if (!Array.isArray(entries) || !entries.length) return { success: false, error: '至少提供一个文件条目。' };

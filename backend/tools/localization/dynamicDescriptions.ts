@@ -91,6 +91,10 @@ export interface ReadFileDescriptions {
     batchStartLine: string;
     /** files[].endLine 参数说明 */
     batchEndLine: string;
+    /** 顶层 encoding 参数说明 */
+    encoding: string;
+    /** files[].encoding 参数说明 */
+    batchEncoding: string;
 }
 
 /**
@@ -118,11 +122,11 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
         '\n\nUse path to read one file or files to read several; send only one of the two. For a single file, set the line range with the top-level startLine/endLine; in batch mode, set them on each files item. Omitting endLine reads to the end of the file. Find the location through search or symbol results first; when it is unknown, read a large file in chunks starting at line 1 and use the returned total line count to continue, rather than loading a whole log or long document at once.'
     );
 
-    // 结果：行号前缀不是正文
+    // 结果：行号前缀不是正文；非 UTF-8 文本会自动识别编码
     const lineNumberNote = pick(
         lang,
-        '\n\n文本文件的每一行会带行号前缀，例如 "   1 | code here"。行号和 "|" 只用于定位，不属于文件内容，编辑文件时不要写回去。',
-        '\n\nEach line of a text file comes back with a line-number prefix such as "   1 | code here". The number and the "|" are only for locating lines and are not part of the file, so do not write them back when editing.'
+        '\n\n文本文件的每一行会带行号前缀，例如 "   1 | code here"。行号和 "|" 只用于定位，不属于文件内容，编辑文件时不要写回去。GBK、Shift-JIS、Big5、UTF-16 等非 UTF-8 文本会自动识别，结果里的 encoding 字段给出实际编码，encodingGuessed 表示这是按内容推测的结果；没有 encoding 字段就是 UTF-8。',
+        '\n\nEach line of a text file comes back with a line-number prefix such as "   1 | code here". The number and the "|" are only for locating lines and are not part of the file, so do not write them back when editing. Non-UTF-8 text such as GBK, Shift-JIS, Big5 and UTF-16 is detected automatically: the encoding field in the result names the actual encoding, and encodingGuessed means it was inferred from the content. No encoding field means UTF-8.'
     );
 
     // 限制：行范围只适用于文本（仅多模态分支需要）
@@ -219,6 +223,16 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
             lang,
             '这个文件的结束行号，从 1 开始，包含这一行。',
             'Last line to read in this file, 1-based and inclusive.'
+        ),
+        encoding: pick(
+            lang,
+            '可选，按指定编码解码文本，例如 gbk、gb18030、shift_jis、big5、euc-kr、utf-16le。只在自动识别不对时填写；批量读取时作为未单独指定的项的默认值。',
+            'Optional encoding to decode the text with, such as gbk, gb18030, shift_jis, big5, euc-kr or utf-16le. Set it only when automatic detection is wrong; in batch mode it is the default for items that do not set their own.'
+        ),
+        batchEncoding: pick(
+            lang,
+            '可选，这个文件的编码，用法同顶层 encoding。',
+            'Optional encoding for this file; same as the top-level encoding.'
         )
     };
 }

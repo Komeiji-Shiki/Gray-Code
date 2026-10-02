@@ -41,6 +41,8 @@ export interface SnapshotFileStat {
     mtimeMs: number;
     size: number;
     mtimeNs?: string;
+    /** 权限位（& 0o777）；复用哈希的文件无需重读即可生成完整清单项 */
+    mode?: number;
 }
 
 /** 被排除的文件记录（超限/不可读），恢复时用于解释"为什么没有备份" */
@@ -273,6 +275,7 @@ async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
         const size = Number(stat.size);
         const mtimeMs = Number(stat.mtimeMs);
         const mtimeNs = stat.mtimeNs.toString();
+        const mode = Number(stat.mode) & 0o777;
 
         // 大小上限：超出则记录排除，不进入哈希（避免读入超大文件）
         if (maxSize !== undefined && size > maxSize) {
@@ -294,14 +297,14 @@ async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
             previous?.fileHashes[scopedPath] !== undefined
         ) {
             fileHashes[scopedPath] = previous.fileHashes[scopedPath];
-            fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
+            fileStats[scopedPath] = { mtimeMs, size, mtimeNs, mode };
             return;
         }
 
         // 流式哈希
         const hash = await hashFileStreaming(absolutePath, params.signal);
         fileHashes[scopedPath] = hash;
-        fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
+        fileStats[scopedPath] = { mtimeMs, size, mtimeNs, mode };
     } catch (error) {
         params.signal?.throwIfAborted();
         const code = (error as NodeJS.ErrnoException).code;

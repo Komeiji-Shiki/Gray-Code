@@ -2,7 +2,7 @@
  * Chat Store 状态定义
  */
 
-import { reactive, ref, triggerRef } from 'vue'
+import { reactive, ref, toRaw, triggerRef } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointSummary } from '../../types'
 import type { Attachment } from '../../types'
@@ -278,6 +278,23 @@ function evictOldestToolResponseCacheEntry(cache: Map<string, Record<string, unk
 }
 
 /**
+ * 缓存内容版本：只在响应值真正改变时递增。按 Map 对象记录，整体换新 Map 时版本自然不同。
+ * 增量重放（todoSnapshot 等）以「Map 身份 + 版本号」判断响应是否变化，无需逐项复制比较。
+ */
+const toolResponseCacheRevisions = new WeakMap<Map<string, Record<string, unknown>>, number>()
+
+export function getToolResponseCacheRevision(state: Pick<ChatStoreState, 'toolResponseCache'>): number {
+  return toolResponseCacheRevisions.get(toRaw(state.toolResponseCache.value)) ?? 0
+}
+
+/** 缓存值被改写或删除后调用：递增版本并通知读取方。 */
+export function markToolResponseCacheChanged(state: Pick<ChatStoreState, 'toolResponseCache'>): void {
+  const cache = toRaw(state.toolResponseCache.value)
+  toolResponseCacheRevisions.set(cache, (toolResponseCacheRevisions.get(cache) ?? 0) + 1)
+  triggerRef(state.toolResponseCache)
+}
+
+/**
  * 写入一条工具响应缓存并触发 ref 更新（Map.set 不会被 Vue 的 ref 追踪，必须手动 triggerRef）。
  * 仅「新增 key」且已满员时才淘汰最旧条目：覆盖更新已有 key 不增加容量，不应误淘汰
  * 其他条目（满员时更新已有 key 若无条件淘汰，最旧条目会被无辜踢出）。
@@ -292,7 +309,23 @@ export function setToolResponseCacheEntry(
     evictOldestToolResponseCacheEntry(cache)
   }
   cache.set(toolCallId, response)
-  triggerRef(state.toolResponseCache)
+  markToolResponseCacheChanged(state)
+}
+
+/**
+ * 读取路径回填：只记录已从消息中查到的同一份响应，不通知读取方。
+ * 读取方在未命中时已依赖消息与索引，回填不改变任何可见结果；若在渲染中触发，
+ * 窗口内所有工具卡片会因为彼此的回填反复重算。
+ */
+export function rememberToolResponse(
+  state: Pick<ChatStoreState, 'toolResponseCache'>,
+  toolCallId: string,
+  response: Record<string, unknown>
+): void {
+  const cache = toRaw(state.toolResponseCache.value)
+  if (cache.has(toolCallId)) return
+  if (cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) evictOldestToolResponseCacheEntry(cache)
+  cache.set(toolCallId, toRaw(response))
 }
 
 /**
@@ -312,7 +345,7 @@ export function setToolResponseCacheEntries(
     }
     cache.set(toolCallId, response)
   }
-  triggerRef(state.toolResponseCache)
+  markToolResponseCacheChanged(state)
 }
 
 /**

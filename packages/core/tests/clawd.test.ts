@@ -78,9 +78,9 @@ describe('Clawd 自定义 HTTP Agent 联动', () => {
   });
 
   test('真实任务的思考、审批、工具和完成送往本机 HTTP，只包含生命周期元数据', async () => {
-    const modelGate = hold(), toolGate = hold(), finishGate = hold(); let calls = 0;
+    const modelGate = hold(), toolGate = hold(), finishGate = hold(); let calls = 0, modelEntered = false;
     generate = async () => {
-      if (++calls === 1) { await modelGate.promise; return { role: 'model', parts: [{ functionCall: { id: 'tool-1', name: 'clawd_fixture', args: { secret: 'private-tool-input' } } }] }; }
+      if (++calls === 1) { modelEntered = true; await modelGate.promise; return { role: 'model', parts: [{ functionCall: { id: 'tool-1', name: 'clawd_fixture', args: { secret: 'private-tool-input' } } }] }; }
       await finishGate.promise; return { role: 'model', parts: [{ text: 'private-model-output' }] };
     };
     app.tools.register({ declaration: { name: 'clawd_fixture', description: 'fixture', parameters: { type: 'object' } },
@@ -89,7 +89,9 @@ describe('Clawd 自定义 HTTP Agent 联动', () => {
     snapshot.settings.agents[0].toolApproval = { clawd_fixture: 'ask' };
     await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
     await enable(); const run = await start();
-    await waitUntil(() => requests.some(item => item.body.state === 'thinking'));
+    // model.started 在调用模型前发出；等它被联动队列处理完再改名，改名心跳才一定是最新请求。
+    await waitUntil(() => modelEntered && requests.some(item => item.body.event === 'ModelStart'));
+    await (app.clawd as unknown as { processing: Promise<void> }).processing;
     expect(requests.every(item => item.body.session_title === 'Clawd fixture')).toBe(true);
     await app.productUi.call(owner, 'conversation.rename', { conversationId: run.conversationId, title: '修复对话名称显示' });
     await waitUntil(() => requests.some(item => item.body.session_title === '修复对话名称显示'));

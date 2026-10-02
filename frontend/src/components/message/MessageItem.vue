@@ -99,10 +99,14 @@ const agentCardContent = computed(() => {
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
 
+// 对话框关闭时不读取检查点列表：每次工具执行都会新增检查点，窗口内每条消息都重算会随会话变长。
+const NO_CHECKPOINTS: CheckpointRecord[] = []
+
 // 获取当前消息及之前所有消息的检查点
 // 之前消息的存档点：包含所有阶段（before/after），因为这些代表已完成的操作状态
 // 当前消息的存档点：只包含 before 阶段，因为用户要撤销的是这条消息的效果
 const availableCheckpoints = computed<CheckpointRecord[]>(() => {
+  if (!showRetryDialog.value) return NO_CHECKPOINTS
   return chatStore.checkpoints
     .filter(cp => {
       if (cp.messageIndex < props.messageIndex) return true          // 之前的消息：包含所有阶段
@@ -115,6 +119,7 @@ const availableCheckpoints = computed<CheckpointRecord[]>(() => {
 // 优先显示该用户消息的"消息前存档"（如果存在）
 // 如果不存在，则显示之前最近的一个存档点
 const checkpointsBeforeMessage = computed<CheckpointRecord[]>(() => {
+  if (!showEditDialog.value) return NO_CHECKPOINTS
   // 首先查找该消息的"用户消息前"存档点
   const userMessageBefore = chatStore.checkpoints.find(cp =>
     cp.messageIndex === props.messageIndex &&

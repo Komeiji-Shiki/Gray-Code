@@ -74,6 +74,35 @@ test('停止仅作用于受管任务，输出可以继续读，未知和跨工�
   expect(await task({ action: 'stop', taskId: id })).toMatchObject({ success: true, data: { running: false } });
 }, 25000);
 
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// 实机复现启动器场景：启动器拉起继承标准输出的子进程后退出，Shell 随之结束，子进程的父进程已不存在。
+(process.platform === 'win32' ? test : test.skip)('前台命令中断时终止父进程已退出的后代，并说明原因与清理结果', async () => {
+  const pidFile = path.join(f.root, 'orphan.pid');
+  await writeFile(path.join(f.root, 'orphan-child.cjs'), `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`);
+  await writeFile(path.join(f.root, 'orphan-launcher.cjs'), `const child = require('node:child_process').spawn(process.execPath, [require('node:path').join(__dirname, 'orphan-child.cjs')], { stdio: 'inherit', detached: true });
+    child.unref(); setTimeout(() => {}, 3000);`);
+  const controller = new AbortController();
+  const pending = app.tools.catalog(['execute_command']).entries.get('execute_command')!.tool.execute(
+    { command: 'node orphan-launcher.cjs', shell: 'powershell', timeout: 0 }, { ...context, toolCallId: 'orphan-call', signal: controller.signal }) as Promise<any>;
+  let child = 0;
+  for (const deadline = Date.now() + 10_000; !child && Date.now() < deadline;) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    child = Number(await import('node:fs/promises').then(fs => fs.readFile(pidFile, 'utf8')).catch(() => '0'));
+  }
+  try {
+    expect(child).toBeGreaterThan(0);
+    // 等启动器和 Shell 退出后再中断：此时 taskkill /T 从 Shell 已经找不到子进程
+    await new Promise(resolve => setTimeout(resolve, 4500));
+    expect(alive(child)).toBe(true);
+    controller.abort(new Error('Cancelled by user.'));
+    const result = await pending;
+    expect(result).toMatchObject({ success: false, code: 'CANCELLED', data: { interruption: { reason: 'user_cancelled', processTree: { verified: true, cleaned: true } } } });
+    expect(result.data.interruption.processTree.detached).toEqual(expect.arrayContaining([expect.objectContaining({ pid: child })]));
+    expect(result.error).toContain('User cancelled');
+    expect(alive(child)).toBe(false);
+  } finally { if (child && alive(child)) process.kill(child); }
+}, 40000);
+
 test('已保存输出支持截断游标、旧记录与分页，重启后标记中断而不重放', async () => {
   for (let index = 0; index < 3; index++) await app.storage.putRecord({ namespace: 'terminal-records', id: `saved-${index}`, ownerId: 'terminal-chat', value: {
     id: `saved-${index}`, actorId: 'owner', conversationId: 'terminal-chat', runId: context.runId, workspaceId: context.workspace!.id,

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { ConversationState, RecordMutation, WorkspaceDefinition } from '@graycode/contracts';
 import type { PreparedConversationChange } from '@graycode/core';
 import type { PlatformApplication } from '../application';
-import { collectWorkspaceSnapshot, type WorkspaceSnapshot, type WorkspaceSnapshotManifest } from './snapshot';
+import { collectWorkspaceSnapshot, type WorkspaceSnapshotBase, type WorkspaceSnapshotManifest } from './snapshot';
 import { fileHash, type DirectoryChange, type FileChange, type FileTransaction } from './fileTransaction';
 import { computeRestorePlan, isProtectedScopedPath } from '../../../../backend/modules/checkpoint/CheckpointRestoreEngine';
 import { parseWorkspaceScopedPath } from '../../../../backend/modules/checkpoint/CheckpointWorkspace';
@@ -25,15 +25,30 @@ const md5 = (bytes: Uint8Array) => createHash('md5').update(bytes).digest('hex')
 
 export class WorkspaceCheckpoints {
   private readonly previews = new Map<string, RestorePreview>();
+  /** 每个对话最近发布的检查点；下一次采集只保存相对它变化的文件。重启后首次采集仍为全量。 */
+  private readonly latest = new Map<string, string>();
   constructor(private readonly app: PlatformApplication) {}
+  /** 基线必须仍存在且属于同一工作区与目录；否则回退为独立采集。 */
+  private async base(conversationId: string, workspace: WorkspaceDefinition): Promise<WorkspaceSnapshotBase | undefined> {
+    const id = this.latest.get(conversationId);
+    if (!id) return undefined;
+    const value = await this.app.storage.getRecord(namespace, id) as WorkspaceCheckpoint | null;
+    const roots = workspaceSnapshotRoots(workspace).map(root => `${root.id}\n${root.uri}`).join('\n');
+    if (!value || value.conversationId !== conversationId || value.workspaceId !== workspace.id
+      || value.manifest.roots.map(root => `${root.id}\n${root.uri}`).join('\n') !== roots) {
+      this.latest.delete(conversationId);
+      return undefined;
+    }
+    return { manifest: value.manifest, contentIds: value.contentIds };
+  }
   private async workspace(actorId: string, conversationId: string, effects: ('workspace_read' | 'workspace_write')[]): Promise<WorkspaceDefinition> {
     const conversation = await this.app.conversation(actorId, conversationId);
     if (typeof conversation.workspaceId !== 'string') throw new Error('对话没有绑定工作区。');
     return this.app.workspace(actorId, conversation.workspaceId, effects);
   }
-  private scan(workspace: WorkspaceDefinition, signal = new AbortController().signal, affectedPaths?: string[]) {
+  private scan(workspace: WorkspaceDefinition, signal = new AbortController().signal, affectedPaths?: string[], base?: WorkspaceSnapshotBase) {
     return collectWorkspaceSnapshot({ workspace, config: this.app.product.runtimeSettings().getCheckpointConfig(),
-      dataDirectory: this.app.storage.directory, signal, affectedPaths });
+      dataDirectory: this.app.storage.directory, signal, affectedPaths, base });
   }
   async get(actorId: string, conversationId: string, id: string): Promise<WorkspaceCheckpoint> {
     await this.app.conversation(actorId, conversationId);
@@ -99,13 +114,13 @@ export class WorkspaceCheckpoints {
     const created = await this.app.files.transaction(workspace, async () => {
       const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
       options.operation?.update('scanning');
-      const snapshot = await this.scan(workspace, options.signal ?? options.operation?.signal, options.affectedPaths);
+      const snapshot = await this.scan(workspace, options.signal ?? options.operation?.signal, options.affectedPaths, await this.base(conversationId, workspace));
       const beforeFutureModel = options.toolName === 'model_message' && options.phase === 'before' && !options.messageId;
       const checkpoint: WorkspaceCheckpoint = { id: randomUUID(), conversationId, workspaceId: workspace.id, directory: workspace.directory,
         timestamp: Date.now(), name: options.name, toolName: options.toolName ?? 'manual', phase: options.phase ?? 'after', runId: options.runId,
         messageIndex: options.messageId ? state.history.messages.findIndex(message => message.id === options.messageId)
           : beforeFutureModel ? state.history.total : Math.max(0, state.history.total - 1),
-        messageNodeId: options.messageId ?? (beforeFutureModel ? undefined : state.history.messages.at(-1)?.id), manifest: snapshot.manifest, contentIds: {} };
+        messageNodeId: options.messageId ?? (beforeFutureModel ? undefined : state.history.messages.at(-1)?.id), manifest: snapshot.manifest, contentIds: { ...snapshot.reused } };
       const branches = readBranches(state);
       // 工具结果属于前一条模型节点；检查点与分支绑定在发布清单的同一事务提交。
       let position = checkpoint.messageIndex;
@@ -134,11 +149,12 @@ export class WorkspaceCheckpoints {
             { namespace, id: checkpoint.id, ownerId: conversationId, expectedRevision: null, value: checkpoint },
             ...(node ? [branchMutation(state, branches)] : [])] });
       } catch (error) {
-        if (await this.app.storage.getRecord(namespace, checkpoint.id)) return checkpoint;
+        if (await this.app.storage.getRecord(namespace, checkpoint.id)) { this.latest.set(conversationId, checkpoint.id); return checkpoint; }
         for (let offset = 0; offset < records.length; offset += 200)
           await this.app.storage.commitRecords(records.slice(offset, offset + 200).map(record => ({ namespace: record.namespace, id: record.id, delete: true })));
         throw error;
       }
+      this.latest.set(conversationId, checkpoint.id);
       this.app.publish({ type: 'workspace.checkpoint.changed', conversationId });
       return checkpoint;
     });
@@ -255,12 +271,12 @@ export class WorkspaceCheckpoints {
     }
   }
   /**
-   * A1：删除单个检查点（含其独占的内容记录）。
+   * A1：删除单个检查点（含不再被引用的内容记录）。
    *
    * 引用保护：检查点仍被当前历史或任意分支引用时拒绝（分支切换 chat-and-workspace
-   * 靠它定位恢复点），除非 force。内容记录 id 含检查点 id 前缀、无跨检查点共享，
-   * 可直接随清单删除。删除与恢复共用 files.transaction（workspace-mutations 串行），
-   * 与 Diff 审阅落盘（changes.write 同经该事务）天然互斥。
+   * 靠它定位恢复点），除非 force。后续检查点会沿用未变化文件的内容记录，因此只删除
+   * 同一对话其他检查点都不再引用的内容。删除与恢复共用 files.transaction（workspace-mutations
+   * 串行），与创建及 Diff 审阅落盘（changes.write 同经该事务）互斥。
    */
   async delete(actorId: string, conversationId: string, checkpointId: string, options: { force?: boolean } = {}) {
     const workspace = await this.workspace(actorId, conversationId, ['workspace_write']);
@@ -274,7 +290,14 @@ export class WorkspaceCheckpoints {
           Object.values(branch?.graph.nodes ?? {}).some(node => node.id === checkpoint.messageNodeId || node.workspaceCheckpointId === checkpointId);
         if (referenced) throw new Error('检查点仍被历史或分支引用，未删除。');
       }
-      const contentIds = Object.values(checkpoint.contentIds);
+      const shared = new Set<string>();
+      for (const id of await this.app.storage.listRecords(namespace, conversationId)) {
+        if (id === checkpoint.id) continue;
+        const other = await this.app.storage.getRecord(namespace, id) as WorkspaceCheckpoint | null;
+        for (const contentId of Object.values(other?.contentIds ?? {})) shared.add(contentId);
+      }
+      const contentIds = [...new Set(Object.values(checkpoint.contentIds))].filter(id => !shared.has(id));
+      if (this.latest.get(conversationId) === checkpoint.id) this.latest.delete(conversationId);
       for (let offset = 0; offset < contentIds.length; offset += 200)
         await this.app.storage.commitRecords(contentIds.slice(offset, offset + 200)
           .map(id => ({ namespace: contentsNamespace, id, delete: true })));

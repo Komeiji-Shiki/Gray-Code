@@ -13,7 +13,7 @@
  * restoreTodoExpandedState）一律由 MessageList 以参数注入，不搞全局。
  */
 
-import { ref, computed, watch, nextTick, onMounted, onUpdated, onBeforeUnmount } from 'vue'
+import { ref, computed, toRaw, watch, nextTick, onMounted, onUpdated, onBeforeUnmount } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { useChatStore } from '../../stores'
 import { CustomScrollbar } from '../common'
@@ -154,20 +154,28 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     const fallback = Math.max(virtualWindowStart.value, (Number(chatStore.windowStartIndex) || 0) + windowEnd.value)
     return typeof last?.backendIndex === 'number' ? Math.max(virtualWindowStart.value, last.backendIndex + 1) : fallback
   })
-  const allMessageMarkers = computed<MessageMarker[]>(() => {
+  // 用户消息对象写入后不再改写，按对象缓存标记；流式增量只替换助手消息，不必重新生成预览。
+  const localMarkerByMessage = new WeakMap<Message, MessageMarker>()
+  const sameMarkers = (left: readonly MessageMarker[], right: readonly MessageMarker[]) =>
+    left.length === right.length && left.every((marker, index) => marker === right[index])
+  // 标记集合未变时返回同一数组，滚动条不会因为每批流式增量重新测量布局。
+  const allMessageMarkers = computed<MessageMarker[]>((previous) => {
     const byIndex = new Map<number, MessageMarker>()
     for (const marker of messageMarkers.value) byIndex.set(marker.index, marker)
     for (const message of props.messages) {
       if (message.role !== 'user' || message.isFunctionResponse || typeof message.backendIndex !== 'number') continue
       if (byIndex.has(message.backendIndex)) continue
-      const preview = message.content.replace(/\s+/g, ' ').trim().slice(0, 80)
-      byIndex.set(message.backendIndex, {
-        index: message.backendIndex,
-        id: message.id,
-        ...(preview ? { preview } : {})
-      })
+      const raw = toRaw(message)
+      let marker = localMarkerByMessage.get(raw)
+      if (!marker || marker.index !== message.backendIndex) {
+        const preview = message.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+        marker = { index: message.backendIndex, id: message.id, ...(preview ? { preview } : {}) }
+        localMarkerByMessage.set(raw, marker)
+      }
+      byIndex.set(message.backendIndex, marker)
     }
-    return Array.from(byIndex.values()).sort((a, b) => a.index - b.index)
+    const next = Array.from(byIndex.values()).sort((a, b) => a.index - b.index)
+    return previous && sameMarkers(previous, next) ? previous : next
   })
 
   async function refreshMessageMarkers(conversationId: string | null): Promise<void> {

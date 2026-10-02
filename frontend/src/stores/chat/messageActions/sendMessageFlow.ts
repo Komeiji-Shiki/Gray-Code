@@ -10,7 +10,7 @@
  * P2 回执窗口、interrupt 限频等已修 bug 注释原样保留，一行未改。
  */
 
-import { toRaw, triggerRef } from 'vue'
+import { toRaw } from 'vue'
 import { MESSAGE_NAMES, type CancelStreamResponse, type ForegroundWorkTransition } from '@shared/protocol'
 import { contentToMessageEnhanced } from '../parsers'
 import type { Content, Message, Attachment } from '../../../types'
@@ -22,7 +22,7 @@ import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, replaceMessageAt, setToolResponseCacheEntry } from '../state'
+import { rebuildMessageIndexById, appendMessage, replaceMessageAt, setToolResponseCacheEntry, markToolResponseCacheChanged } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
 import { isAgentMessageRoundPending } from '../agentMessageClaimGate'
@@ -348,7 +348,7 @@ function revertHiddenFunctionResponse(state: ChatStoreState, undo: HiddenFunctio
   if (undo.toolCallId && isAppliedCachedResponse(undo.toolCallId, cache.get(undo.toolCallId), undo)) {
     if (undo.previousCachedResponse) cache.set(undo.toolCallId, undo.previousCachedResponse)
     else cache.delete(undo.toolCallId)
-    triggerRef(state.toolResponseCache)
+    markToolResponseCacheChanged(state)
   }
 }
 

@@ -60,10 +60,10 @@ namespace GrayCode.ComputerHost {
             case "status":result=control.Status();break;
             case "windows":result=DesktopWindows.List();break;
             case "observe":result=AutomationState.Observe(args);break;
-            case "capture":result=WindowCapture.Visible(AutomationState.Peek(Json.Text(args,"observationId")),args);break;
+            case "capture":result=WindowCapture.Visible(AutomationState.Peek(Json.Text(args,"observationId")),args,control);break;
             case "displayCapture":result=WindowCapture.Display(args);break;
             case "validate":var observed=AutomationState.Peek(Json.Text(args,"observationId"));DesktopWindows.Verify(observed.window,false);result=new {valid=true};break;
-            case "acquire":result=control.Acquire(Json.Text(args,"owner"),Json.Strings(args,"windowIds"));break;
+            case "acquire":result=control.Acquire(Json.Text(args,"owner"),Json.Strings(args,"windowIds"),Json.Text(args,"mode"),Json.Text(args,"leaseId"));break;
             case "action":result=InputActions.Perform(control,AutomationState.Consume(Json.Text(args,"observationId")),args);break;
             default:throw new ComputerException("METHOD_UNSUPPORTED","不支持的宿主请求。");
           }

@@ -79,12 +79,28 @@ test('stream failure cancels an issued read and preserves a paired history for t
   const entered = deferred(); let cancelled = false;
   const context = await setup({ generate: async input => {
     input.onToolCallReady?.(call); await entered.promise; throw new Error('synthetic stream failure');
-  } }, async signal => { entered.resolve(); await new Promise<void>(resolve => signal.addEventListener('abort', () => { cancelled = true; resolve(); }, { once: true })); return { success: false, code: 'CANCELLED' }; });
+  } }, async signal => { entered.resolve(); await new Promise<void>(resolve => signal.addEventListener('abort', () => { cancelled = true; resolve(); }, { once: true }));
+    return { success: false, code: 'CANCELLED', error: 'stopped by fixture', data: { cleaned: true } }; });
   try {
     const run = await context.start(); expect((await context.runtime.wait(run.id))?.status).toBe('failed'); expect(cancelled).toBe(true);
     const history = (await context.f.store.readFullHistory('native')).messages;
     expect(history[1]).toMatchObject({ incompleteReason: 'interrupted', parts: [{ functionCall: call }] });
-    expect(history[2].parts[0].functionResponse).toMatchObject({ id: call.id, response: { code: 'INTERRUPTED' } });
+    // 工具已给出的取消结果（原因、清理情况）优先于通用的中断占位，且只保存一次
+    const responses = history.flatMap(message => message.parts).flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
+    expect(responses).toEqual([expect.objectContaining({ id: call.id, response: { success: false, code: 'CANCELLED', error: 'stopped by fixture', data: { cleaned: true } } })]);
+  } finally { await context.runtime.close(); await context.f.cleanup(); }
+});
+
+test('工具在停止时抛出异常，仍只保存一个配对的失败结果', async () => {
+  const entered = deferred();
+  const context = await setup({ generate: async input => {
+    input.onToolCallReady?.(call); await entered.promise; throw new Error('synthetic stream failure');
+  } }, async () => { entered.resolve(); throw new Error('tool crashed while stopping'); });
+  try {
+    const run = await context.start(); expect((await context.runtime.wait(run.id))?.status).toBe('failed');
+    const responses = (await context.f.store.readFullHistory('native')).messages.flatMap(message => message.parts)
+      .flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
+    expect(responses).toHaveLength(1); expect(responses[0]).toMatchObject({ id: call.id, response: { success: false } });
   } finally { await context.runtime.close(); await context.f.cleanup(); }
 });
 

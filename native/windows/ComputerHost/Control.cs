@@ -33,16 +33,46 @@ namespace GrayCode.ComputerHost {
       if(keyboardHook==IntPtr.Zero||mouseHook==IntPtr.Zero)throw new ComputerException("INPUT_OBSERVER_UNAVAILABLE","无法监听用户接管输入。");
       banner=new ControlBanner(delegate{Stop("user_input");});
     }
-    internal object Status() { lock(gate)return new { active=Active,leaseId=leaseId,owner=owner,reason=reason,generation=generation,stopShortcut="Ctrl+Alt+Esc",stopShortcutRegistered=HotkeyRegistered }; }
-    internal object Acquire(string requestedOwner,IEnumerable<string> windows) {
+    internal object Status() { return Status(null); }
+    private object Status(string notice) {
+      lock(gate) {
+        var granted=new List<object>();
+        foreach(var item in targets.Values)granted.Add(new { id=item.id,title=item.title,className=item.className,processId=item.processId,ownerId=item.ownerId });
+        return new { active=Active,leaseId=leaseId,owner=owner,reason=reason,generation=generation,stopShortcut="Ctrl+Alt+Esc",stopShortcutRegistered=HotkeyRegistered,targets=granted,notice=notice };
+      }
+    }
+    // mode 为 replace 或 add 时只在同一租约仍然有效时改变目标；用户接管后租约已失效，不会借此重新取得控制权。
+    internal object Acquire(string requestedOwner,IEnumerable<string> windows,string mode="",string expectedLease="") {
       DesktopWindows.RequireInteractive();var expectedGeneration=generation;
-      var selected=new List<WindowIdentity>();
-      foreach(var id in windows) { var window=DesktopWindows.Parse(id);selected.Add(DesktopWindows.Describe(window,false)); }
+      var selected=new List<WindowIdentity>();var notices=new List<string>();var seen=new HashSet<string>();
+      foreach(var id in windows) {
+        var window=DesktopWindows.Parse(id);var identity=DesktopWindows.Describe(window,false);
+        if(seen.Add(identity.id))selected.Add(identity);
+        if(DesktopWindows.Displayable(window))continue;
+        var owned=DesktopWindows.VisibleOwned(window);var names=new List<string>();
+        foreach(var item in owned) {
+          var child=DesktopWindows.Describe(item,false);names.Add(child.id+"（"+(child.title.Length>0?child.title:child.className)+"）");
+          if(seen.Add(child.id))selected.Add(child);
+        }
+        notices.Add(owned.Count>0
+          ?"窗口 "+identity.id+" 本身不可见，已一并纳入它名下可见的窗口 "+string.Join("、",names)+"；观察和操作请使用这些窗口 ID。"
+          :"窗口 "+identity.id+" 不可见且名下没有可见窗口，可能只是隐藏的宿主窗口；请用 computer_windows 按进程筛选找到实际显示画面的窗口。");
+      }
       if(selected.Count==0)throw new ComputerException("TARGET_REQUIRED","取得控制权时必须选择至少一个窗口。");
+      var notice=notices.Count>0?string.Join(" ",notices):null;
+      if(mode=="replace"||mode=="add") {
+        lock(gate) {
+          if(Active&&owner!=requestedOwner)throw new ComputerException("CONTROL_BUSY","另一任务正在控制桌面，请先停止或接管。");
+          if(!Active||leaseId!=expectedLease)throw new ComputerException("CONTROL_RELEASED","控制权已停止或被用户接管，不能直接修改控制范围。");
+          if(mode=="replace")targets.Clear();
+          foreach(var item in selected)targets[long.Parse(item.id,System.Globalization.CultureInfo.InvariantCulture)]=item;
+        }
+        return Status(notice);
+      }
       lock(gate) {
         if(Active) {
           if(owner!=requestedOwner)throw new ComputerException("CONTROL_BUSY","另一任务正在控制桌面，请先停止或接管。");
-          return Status();
+          return Status(notice);
         }
       }
       ComputerException failure=null;
@@ -57,7 +87,7 @@ namespace GrayCode.ComputerHost {
         banner.Display();
       },null);
       if(failure!=null)throw failure;
-      Publish();return Status();
+      Publish();return Status(notice);
     }
     internal int Require(string expectedLease,IntPtr window) {
       DesktopWindows.RequireInteractive();
@@ -73,6 +103,10 @@ namespace GrayCode.ComputerHost {
         if(!allowed)throw new ComputerException("TARGET_NOT_GRANTED","该窗口不在本次取得控制权的范围内。");
         return generation;
       }
+    }
+    // 观察时只用于判断能否为截图切换前台；租约失效或窗口不在范围内都不切换。
+    internal bool Holds(string expectedLease,IntPtr window) {
+      try {Require(expectedLease,window);return true;} catch(ComputerException) {return false;}
     }
     internal void Check(int expectedGeneration) { if(!Active||generation!=expectedGeneration)throw new ComputerException("CONTROL_RELEASED","操作已停止，后续输入没有继续发送。"); }
     internal void Stop(string stopReason) {

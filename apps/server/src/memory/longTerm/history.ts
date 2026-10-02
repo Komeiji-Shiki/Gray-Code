@@ -41,8 +41,8 @@ export class MemoryHistoryView {
     }
     const deletedRecords=new Set(tombstones.filter(tomb=>tomb.kind==='record').map(referenceKey));
     const sourceIds=new Set(tombstones.flatMap(tomb=>tomb.reference?.conversationId===conversationId&&tomb.reference.messageId?[tomb.reference.messageId]:[]));
-    const filter=(messages:PlatformMessage[],knownBlockedIds:Set<string>=new Set())=>{
-      const blockedIds=new Set([...sourceIds,...knownBlockedIds]),calls=new Set<string>();
+    const filter=(messages:PlatformMessage[],known:{blockedIds:Set<string>;evaluatedIds:Set<string>}={blockedIds:new Set(),evaluatedIds:new Set()})=>{
+      const blockedIds=new Set([...sourceIds,...known.blockedIds]),calls=new Set<string>(),evaluatedIds=new Set(known.evaluatedIds);
       const invalidDirectory=(message:PlatformMessage)=>message.parts.some(part=>{
         const versions=(part.functionResponse as {response?:{memoryScopeVersions?:Array<{scopeId:string;invalidation:number}>}}|undefined)?.response?.memoryScopeVersions;
         return Array.isArray(versions)&&versions.some(version=>scopes.find(scope=>scope.id===version.scopeId)?.invalidation!==version.invalidation);
@@ -56,7 +56,11 @@ export class MemoryHistoryView {
       for(const message of messages){
         if(message.isUserInput&&!message.userFeedback)legacySourceBlocked=!!message.id&&blockedIds.has(message.id);
         const dependencies=Array.isArray(message.longMemoryInputIds)?message.longMemoryInputIds:Array.isArray(message.summarizedMessageIds)?message.summarizedMessageIds:[];
-        if(dependencies.some(id=>blockedIds.has(String(id)))||legacySourceBlocked&&message.role==='model'&&!Array.isArray(message.longMemoryInputIds))if(message.id)blockedIds.add(message.id);
+        // 增量记录继承基线回复的判定；基线已不在历史中时无法确认其依赖，只要存在被删除的来源就按受影响处理。
+        const base=typeof message.longMemoryInputBase==='string'?message.longMemoryInputBase:undefined;
+        const baseBlocked=base!==undefined&&(blockedIds.has(base)||!evaluatedIds.has(base)&&blockedIds.size>0);
+        if(baseBlocked||dependencies.some(id=>blockedIds.has(String(id)))||legacySourceBlocked&&message.role==='model'&&!Array.isArray(message.longMemoryInputIds))if(message.id)blockedIds.add(message.id);
+        if(message.id)evaluatedIds.add(message.id);
         for(const part of message.parts){const call=part.functionCall as {id?:string;name?:string}|undefined;if(message.id&&blockedIds.has(message.id)&&call?.id&&call.name!=='memory_remove')calls.add(call.id);}
         if(message.parts.some(part=>calls.has(String((part.functionResponse as {id?:string}|undefined)?.id))))if(message.id)blockedIds.add(message.id);
       }
@@ -69,12 +73,14 @@ export class MemoryHistoryView {
           return [];
         });
         if(!parts.length)parts.push({text:notice} as any);
-        return {...message,parts,memoryRedacted:true,characterOriginalParts:parts,characterDisplayParts:parts,
+        const {longMemoryInputBase:_base,...rest}=message;
+        return {...rest,parts,memoryRedacted:true,characterOriginalParts:parts,characterDisplayParts:parts,
           longMemoryInputIds:[],longMemoryReferences:[]};
       });
-      return {messages:cleaned,blockedIds};
+      return {messages:cleaned,blockedIds,evaluatedIds};
     };
     const initial=filter(original);
-    return {...initial,filter:(messages:PlatformMessage[])=>filter(messages,initial.blockedIds).messages};
+    // 裁剪后的模型视图可能不含基线回复，沿用完整历史的判定结果。
+    return {messages:initial.messages,blockedIds:initial.blockedIds,filter:(messages:PlatformMessage[])=>filter(messages,initial).messages};
   }
 }

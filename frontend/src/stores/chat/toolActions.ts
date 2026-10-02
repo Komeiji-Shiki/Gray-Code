@@ -11,7 +11,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { insertMessageAt, removeMessageAt, rebuildMessageIndexById, setToolResponseCacheEntry, setToolResponseCacheEntries } from './state'
+import { buildToolResponseIndex, insertMessageAt, removeMessageAt, replaceMessageAt, rebuildMessageIndexById, rememberToolResponse, setToolResponseCacheEntries } from './state'
 import { finishSmoothStreamForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 import { t } from '../../composables/useI18n'
 
@@ -69,9 +69,9 @@ export function getToolResponseById(
     }
   }
 
-  // 4) 回填值缓存（带容量上限，超限淘汰最旧条目，见 state.ts setToolResponseCacheEntry）
+  // 4) 回填值缓存：不通知读取方（本函数常在渲染和 computed 中调用，见 state.ts rememberToolResponse）
   if (latest !== null) {
-    setToolResponseCacheEntry(state, toolCallId, latest)
+    rememberToolResponse(state, toolCallId, latest)
   }
 
   return latest
@@ -160,12 +160,8 @@ function stopStreamingMessage(state: ChatStoreState, messageId?: string | null):
 
   if (targetIndex === -1) return
 
-  const msg = all[targetIndex]
-  state.allMessages.value = [
-    ...all.slice(0, targetIndex),
-    { ...msg, streaming: false },
-    ...all.slice(targetIndex + 1)
-  ]
+  // 尾部替换保持可见消息与增量重放缓存；中间位置替换由 replaceMessageAt 统一失效，无需复制整个窗口。
+  replaceMessageAt(state, targetIndex, { ...all[targetIndex], streaming: false })
 }
 
 /**
@@ -220,8 +216,14 @@ function markIncompleteToolsAsError(
 ): IncompleteToolInfo | null {
   const all = state.allMessages.value
 
-  // 只要工具调用在历史中没有对应 functionResponse、也没有已回传的业务结果，就认为它“未完成”
-  const isToolIncomplete = (tool: ToolUsage) => isToolMissingResponse(state, tool)
+  // 只要工具调用在历史中没有对应 functionResponse、也没有已回传的业务结果，就认为它“未完成”。
+  // 同一工具在定位、收集和改写时各查一次，结果在本次停止内不变。
+  const incomplete = new Map<ToolUsage, boolean>()
+  const isToolIncomplete = (tool: ToolUsage) => {
+    let value = incomplete.get(tool)
+    if (value === undefined) incomplete.set(tool, value = isToolMissingResponse(state, tool))
+    return value
+  }
 
   // 1) 优先定位指定 messageId
   let targetIndex = -1
@@ -281,11 +283,7 @@ function markIncompleteToolsAsError(
     tools: updatedTools
   }
 
-  state.allMessages.value = [
-    ...all.slice(0, targetIndex),
-    updatedMessage,
-    ...all.slice(targetIndex + 1)
-  ]
+  replaceMessageAt(state, targetIndex, updatedMessage)
 
   return {
     messageIndex: targetIndex,
@@ -314,17 +312,10 @@ function ensureFunctionResponseMessageForRejectedTools(
     return
   }
 
-  // 如果这些 toolCallId 在历史中已经有 functionResponse，也不再插入（防止极端竞态重复）
-  const respondedIds = new Set<string>()
-  for (const msg of all) {
-    if (msg.isFunctionResponse && msg.parts) {
-      for (const p of msg.parts) {
-        const id = (p as any)?.functionResponse?.id
-        if (id) respondedIds.add(id)
-      }
-    }
-  }
-  const missingCalls = info.toolCalls.filter(c => !respondedIds.has(c.id))
+  // 如果这些 toolCallId 在历史中已经有 functionResponse，也不再插入（防止极端竞态重复）。
+  // 权威索引随消息写入维护，按调用 ID 查询即可，不必扫描整个窗口。
+  const responded = state.toolResponseIndex?.value ?? buildToolResponseIndex(all)
+  const missingCalls = info.toolCalls.filter(c => !responded.has(c.id))
   if (missingCalls.length === 0) {
     return
   }

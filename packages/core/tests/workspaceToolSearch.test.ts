@@ -3,8 +3,9 @@ import { createLiteralSearchTool, literalMatchPreview } from '../../../apps/serv
 import type { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../backend/modules/settings/types';
 import { serializeToolResultForLLM } from '../../../backend/modules/channel/formatters/toolResponseFormatter';
+import * as iconv from 'iconv-lite';
 
-function toolsFixture(contents: Record<string, string> = { 'a.txt': 'hit hit\r\nhit\r\n', 'nested/b.txt': 'hit\nother' }) {
+function toolsFixture(contents: Record<string, string | Buffer> = { 'a.txt': 'hit hit\r\nhit\r\n', 'nested/b.txt': 'hit\nother' }) {
   const host = {
     getAllWorkspaces: () => [{ name: 'project', uri: { fsPath: '/project', scheme: 'file' } }],
     searchConfig: () => DEFAULT_SEARCH_IN_FILES_CONFIG,
@@ -108,11 +109,33 @@ describe('独立平台轻量搜索与工具选择说明', () => {
     const { host, search } = toolsFixture({ 'large.txt': '', 'bad.txt': '', 'binary.bin': '\0hit', 'grown.txt': 'x'.repeat(2 * 1024 * 1024 + 1) });
     host.stat.mockImplementation(async file => ({ size: file.fsPath === 'large.txt' ? 3 * 1024 * 1024 : 1, type: 1 }));
     host.readFile.mockImplementation(async file => { if (file.fsPath === 'bad.txt') throw new Error('EACCES'); return Buffer.from(file.fsPath === 'binary.bin' ? '\0hit' : 'x'.repeat(2 * 1024 * 1024 + 1)); });
-    const result = (await search.handler({ query: 'hit' })).data;
+    // 默认只给数量，明细按需请求
+    const counted = (await search.handler({ query: 'hit' })).data;
+    expect(counted).toMatchObject({ matches: [], skippedCount: 4, skippedBinaryCount: 1, skippedOtherCount: 3 });
+    expect(counted).not.toHaveProperty('skippedFiles');
+    const result = (await search.handler({ query: 'hit', includeSkipped: true })).data;
     expect(result).toMatchObject({ matches: [], skippedCount: 4, skippedBinaryCount: 1, skippedFilesTruncated: false });
     expect(result.skippedFiles.map((file: any) => file.file)).not.toContain('binary.bin');
-    expect(host.readFile).toHaveBeenCalledTimes(3);
+    expect(host.readFile).toHaveBeenCalledTimes(6);
     expect(result.skippedFiles[1].reason).toContain('EACCES');
+  });
+
+  test('GBK、Shift-JIS、UTF-16 文件自动识别后搜索并标注编码，也可显式指定', async () => {
+    const { search } = toolsFixture({
+      'start.cmd': iconv.encode('@echo off\r\nrem 启动游戏并等待退出\r\n', 'gbk'),
+      'ja.txt': iconv.encode('ゲームを起動します\n', 'shift_jis'),
+      'wide.txt': Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('启动 UTF-16\n', 'utf16le')]),
+      'plain.txt': '启动 UTF-8\n',
+    });
+    const zh = (await search.handler({ query: '启动' })).data;
+    expect(zh.matches.map((item: any) => item.path).sort()).toEqual(['plain.txt', 'start.cmd', 'wide.txt']);
+    expect(zh.encodings).toEqual({ 'start.cmd': 'gbk', 'wide.txt': 'utf-16le' });
+    expect(zh).toMatchObject({ skippedCount: 0 });
+    const ja = (await search.handler({ query: '起動' })).data;
+    expect(ja).toMatchObject({ matches: [{ path: 'ja.txt', text: 'ゲームを起動します' }], encodings: { 'ja.txt': 'shift_jis' } });
+    // 显式编码对所有文件生效；不支持的编码名直接报错
+    expect((await search.handler({ query: '启动游戏', encoding: 'GB2312' })).data.matches).toEqual([expect.objectContaining({ path: 'start.cmd', line: 2 })]);
+    await expect(search.handler({ query: 'x', encoding: 'klingon' })).rejects.toThrow('不支持的编码');
   });
 
   test('声明说明互补能力和正确的进程会话来源', () => {

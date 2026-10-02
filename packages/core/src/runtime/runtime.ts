@@ -65,7 +65,7 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
   | { type: 'model.continued'; runId: string }
   | { type: 'model.delta'; runId: string; parts: Record<string, unknown>[] }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
-interface ActiveRun { conversationId: string; controller: AbortController; done: Promise<void> }
+interface ActiveRun { conversationId: string; actorId: string; controller: AbortController; done: Promise<void> }
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
 interface FunctionCall extends ModelToolCall {}
 export interface PreparedConversationChange {
@@ -102,6 +102,8 @@ export class PlatformRuntime {
   activeRunIds(conversationId: string): string[] {
     return [...this.active].filter(([, value]) => value.conversationId === conversationId).map(([id]) => id);
   }
+  /** 本进程正在执行的任务所属账号；已结束或不属于本进程时返回 undefined。 */
+  activeActorId(runId: string): string | undefined { return this.active.get(runId)?.actorId; }
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly listeners = new Set<(event: RuntimeNotification) => void>();
   private closing = false;
@@ -276,7 +278,7 @@ export class PlatformRuntime {
     const execute = () => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection);
     const done = Promise.resolve().then(() => this.services.runInScope ? this.services.runInScope(run, execute) : execute())
       .finally(() => { scope?.signal?.removeEventListener('abort', abort); this.active.delete(run.id); this.questions.clear(run.id); });
-    this.active.set(run.id, { conversationId: run.conversationId, controller, done });
+    this.active.set(run.id, { conversationId: run.conversationId, actorId: run.actorId, controller, done });
     // 对话事务和取消句柄都已建立，界面才开始订阅这一轮任务。
     this.notify({ type: 'run.created', runId: run.id, run: structuredClone(run), ...(message ? { message: structuredClone(message) } : {}) });
     void done.catch(() => undefined);
@@ -295,10 +297,12 @@ export class PlatformRuntime {
     return this.services.storage.getRun(runId);
   }
   async cancel(runId: string, actorId: string): Promise<void> {
-    const run = await this.services.storage.getRun(runId);
+    // 活跃任务的归属已在内存中，授权后立即中止；存储线程繁忙时停止不必排在大请求之后。
+    const active = this.active.get(runId);
+    const ownerId = active?.actorId ?? (await this.services.storage.getRun(runId))?.actorId;
     const actor = await this.services.actor(actorId);
-    if (!run || !actor || actor.revoked || (actor.role !== 'owner' && actor.id !== run.actorId)) throw new Error('This account cannot cancel the run.');
-    this.active.get(runId)?.controller.abort(new Error('Cancelled by user.'));
+    if (ownerId === undefined || !actor || actor.revoked || (actor.role !== 'owner' && actor.id !== ownerId)) throw new Error('This account cannot cancel the run.');
+    (active ?? this.active.get(runId))?.controller.abort(new Error('Cancelled by user.'));
   }
   /** 宿主生命周期端口，不作为远程 RPC 暴露；用于结束已确认归属的子任务。 */
   interrupt(runId: string, reason: Error): void { this.active.get(runId)?.controller.abort(reason); }
@@ -359,6 +363,8 @@ export class PlatformRuntime {
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
         let streamingEvent: Promise<void> | undefined;
+        // 请求快照与上游请求并行写入；开始流式事件排在请求记录之后，保持事件顺序。
+        let requestRecorded: Promise<void> = Promise.resolve();
         const partialParts: PlatformMessage['parts'] = [];
         const deltas = new DeltaCoalescer(parts => {
           // 已显示的正文和思考均保留；未完成签名、工具参数不能成为可执行的历史调用。
@@ -388,7 +394,7 @@ export class PlatformRuntime {
             if (accepted) early.set(call.id, { call: saved });
             return accepted;
           },
-          onRequest: async captured => {
+          onRequest: captured => requestRecorded = (async () => {
             const id = `${run.id}:${iteration}`;
             await this.services.storage.putRecord({ namespace: 'model-requests', id, ownerId: run.conversationId,
               value: { ...captured, runId: run.id, iteration, capturedAt: Date.now(), turnContext: request.turnContext,
@@ -398,11 +404,11 @@ export class PlatformRuntime {
                   promptContext: request.promptContext, taskContext: request.taskContext, turnContext: request.turnContext } } satisfies ModelRequestSnapshot });
             await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model,
               ...(captured.metrics ? { metrics: captured.metrics } : {}) });
-          },
+          })(),
           onDelta: parts => {
             if (deltas.closed || signal.aborted) return;
             if (!streamingEvent) {
-              streamingEvent = this.event(run.id, 'model.streaming', { iteration });
+              streamingEvent = requestRecorded.catch(() => undefined).then(() => this.event(run.id, 'model.streaming', { iteration }));
               void streamingEvent.catch(() => undefined);
             }
             deltas.push(parts);

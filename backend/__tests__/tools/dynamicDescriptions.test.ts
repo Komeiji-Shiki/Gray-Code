@@ -247,6 +247,7 @@ describe('图片工具批量互斥说明', () => {
  *   path/files/images/prompt/output 等 schema 键、图片工具参数名
  *   （image_path、aspect_ratio、image_size、subject_description、width/height/angle/format…）；
  * - 图片格式专有名词：PNG / JPEG / WebP / PDF；模型/厂商名：OpenAI / Gemini / Anthropic / API；
+ * - read_file 的编码字段 encoding / encodingGuessed 与编码名 Shift-JIS（shift_jis）；
  * - generate_image 中文说明里故意保留的英文标签式提示词示例
  *   （orange cat, sitting on windowsill, sunlight, warm lighting, high quality）。
  * 白名单外出现 ≥5 个连续 ASCII 字母，说明有整段英文漏本地化——测试应失败。
@@ -256,7 +257,8 @@ const ZH_ALLOWED_EN_WORDS = new Set([
     'workspace', 'images', 'prompt', 'output', 'remove', 'background', 'aspect', 'ratio',
     'image', 'subject', 'description', 'width', 'height', 'angle', 'format',
     'orange', 'sitting', 'windowsill', 'sunlight', 'lighting', 'quality',
-    'openai', 'gemini', 'anthropic', 'api', 'pdf', 'png', 'jpeg', 'webp'
+    'openai', 'gemini', 'anthropic', 'api', 'pdf', 'png', 'jpeg', 'webp',
+    'encoding', 'encodingguessed', 'shift'
 ]);
 
 /** 返回文本中白名单外的连续英文单词（≥5 个 ASCII 字母），去重 */

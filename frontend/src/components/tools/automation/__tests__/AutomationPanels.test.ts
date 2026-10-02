@@ -144,6 +144,19 @@ test('窗口列表优先标题/进程/状态，显示器返回实际尺寸', () 
   expect(wrapper.find('.computer-displays').text()).toContain('1920 × 1080')
 })
 
+test('控制权和观察结果显示宿主的窗口说明', async () => {
+  const wrapper = track(mount(ComputerToolPanel, { props: { toolName: 'computer_control', args: { action: 'acquire', windowIds: ['200'] }, result: { success: true, data: { active: true, available: true, reason: 'acquired', controller: { actorId: 'owner', windowIds: ['200', '201'] }, notice: '已一并纳入可见窗口 201' } } } }))
+  expect(wrapper.find('.computer-notice').text()).toContain('可见窗口 201')
+  await wrapper.setProps({ toolName: 'computer_observe', args: { windowId: '200' }, result: { success: true, data: { id: 'obs-2', capturedAt: 0, window: windowInfo, redirectedFrom: '200', notice: '已改为观察窗口 105', elements: [], truncated: false } } })
+  expect(wrapper.find('.computer-notice').text()).toContain('窗口 105')
+})
+
+test('精简窗口列表没有完整路径时显示进程名', () => {
+  const wrapper = track(mount(ComputerToolPanel, { props: { toolName: 'computer_windows', args: { processName: 'gm8emulator' }, result: { success: true, data: { windows: [{ id: '201', title: 'Game Window', processName: 'gm8emulator.exe', processId: 777, className: 'TRunnerForm', ownerId: '200', bounds: { x: 0, y: 0, width: 640, height: 480 } }], displays: [], matchedCount: 1, totalCount: 30 } } } }))
+  expect(wrapper.find('.computer-windows').text()).toContain('gm8emulator.exe')
+  expect(wrapper.find('.computer-windows').text()).toContain('640 × 480')
+})
+
 test('电脑控制成功查询但未控制，不误报取得控制；错误与人工接管可见', async () => {
   const wrapper = track(mount(ComputerToolPanel, { props: { toolName: 'computer_control', args: { action: 'status' }, result: { success: true, data: { active: false, available: false, reason: 'user_input', pausedRunId: 'paused-1', error: 'Host unavailable', stopShortcut: 'Ctrl+Alt+Esc', stopShortcutRegistered: false } } } }))
   expect(wrapper.find('.control-state').text()).toBe('未控制')

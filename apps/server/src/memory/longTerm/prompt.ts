@@ -15,6 +15,8 @@ const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).d
 
 export class LongMemoryPrompt {
   readonly history:MemoryHistoryView;
+  /** 每个对话最近一条回复的完整输入；下一条回复只记录相对它新增的输入。重启后首条回复记录完整列表。 */
+  private readonly lastInputs=new Map<string,{messageId:string;ids:Set<string>}>();
   constructor(private readonly service:PlatformLongMemory){this.history=new MemoryHistoryView(service.app);}
   async capture(context:ModelRequestContext,preview=false):Promise<PreparedMemory>{
     const empty:PreparedMemory={text:'',references:[],estimatedTokens:0,method:'keyword'};
@@ -77,9 +79,24 @@ export class LongMemoryPrompt {
     input.turnContext??={};input.turnContext.longMemory={references:memory.references,derivedReferences:[...dependencies.values()],estimatedTokens:memory.estimatedTokens,method:memory.method,embeddingError:memory.embeddingError};
     return result;
   }
+  /**
+   * 记录回复依赖的输入。完整列表会让每条回复都携带此前全部消息 ID，长会话的历史体积和
+   * 遗忘判定都按平方增长。上一条回复仍在输入中时改为增量：longMemoryInputBase 指向它，
+   * longMemoryInputIds 只列出相对它新增的输入。基线自身的依赖已计入它的屏蔽判定，结果与完整列表一致。
+   */
   output(message:PlatformMessage,input:ModelInput):PlatformMessage{
     const memory=input.turnContext?.longMemory as {references?:MemoryRecordReference[];derivedReferences?:MemoryRecordReference[]}|undefined;
-    return {...message,longMemoryInputIds:input.messages.filter(item=>item.id&&!item.memoryContext&&!item.memoryRedacted).map(item=>item.id!),
+    const ids=input.messages.filter(item=>item.id&&!item.memoryContext&&!item.memoryRedacted).map(item=>item.id!);
+    const previous=this.lastInputs.get(input.conversationId);
+    const dependencies=previous&&ids.includes(previous.messageId)
+      ?{longMemoryInputBase:previous.messageId,longMemoryInputIds:ids.filter(id=>!previous.ids.has(id))}
+      :{longMemoryInputIds:ids};
+    if(message.id){
+      this.lastInputs.delete(input.conversationId);
+      if(this.lastInputs.size>=256)this.lastInputs.delete(this.lastInputs.keys().next().value!);
+      this.lastInputs.set(input.conversationId,{messageId:message.id,ids:new Set(ids)});
+    }
+    return {...message,...dependencies,
       ...(memory?.derivedReferences?.length?{longMemoryReferences:memory.derivedReferences}:{})};
   }
 }
