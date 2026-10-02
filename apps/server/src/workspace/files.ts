@@ -166,6 +166,7 @@ export class WorkspaceFiles {
   async transaction<T>(workspace: WorkspaceDefinition, operation: (transaction: FileTransaction) => Promise<T>, options: {
     clientId?: string; recovery?: boolean; writeGrants?: ToolContext['fileWriteGrants'];
     rejectDirty?: boolean; discardDirtyFiles?: readonly string[]; dirtyDirectory?: string;
+    signal?: AbortSignal;
   } = {}): Promise<T> {
     return this.locked('workspace-mutations', async () => {
       if (this.recoveryError && !options.recovery) throw new Error(`WORKSPACE_RECOVERY_REQUIRED: ${this.recoveryError}`);
@@ -238,7 +239,7 @@ export class WorkspaceFiles {
         this.documentReset(event);
       }
       return result;
-    });
+    }, options.signal);
   }
 
   async resolve(workspace: WorkspaceDefinition, file: string): Promise<string> {
@@ -309,16 +310,29 @@ export class WorkspaceFiles {
   private async locked<T>(
     absolute: string,
     operation: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
+    signal?.throwIfAborted();
     const key = this.key(absolute);
+    let started = false;
     const pending = (this.queues.get(key) ?? Promise.resolve())
       .catch(() => undefined)
-      .then(operation);
+      .then(() => { signal?.throwIfAborted(); started = true; return operation(); });
     this.queues.set(key, pending);
+    const clear = () => { if (this.queues.get(key) === pending) this.queues.delete(key); };
+    void pending.then(clear, clear);
+    if (!signal) return pending;
+    // 只立即取消尚未取得写锁的请求；队列位置保留到前序操作结束，已开始的写入继续自行结算。
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => { if (!started) reject(signal.reason); };
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    });
     try {
-      return await pending;
+      return await Promise.race([pending, cancelled]);
     } finally {
-      if (this.queues.get(key) === pending) this.queues.delete(key);
+      signal.removeEventListener('abort', abort);
     }
   }
   private documentKey(clientId: string, absolute: string): string {

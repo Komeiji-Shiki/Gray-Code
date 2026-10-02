@@ -22,6 +22,7 @@ export interface ConversationWithCheckpoints {
   title: string
   checkpointCount: number
   totalSize: number
+  logicalSize?: boolean
   /** M8: 存在缺少 backupBytes 的旧存档时 totalSize 不完整（展示「部分未统计」提示） */
   sizeIncomplete?: boolean
   createdAt?: number
@@ -34,6 +35,7 @@ export interface DeleteConfirmState {
   title: string
   count: number
   size: number
+  logicalSize?: boolean
   /** L-3: 单条删除取消时清空选中态 */
   single?: boolean
   /** 快照：checkpoints 删除目标——确认弹窗期间展开/选中状态变化不影响删除目标 */
@@ -245,6 +247,7 @@ export function useCheckpointCleanup() {
       }),
       count: selectedConversationsCheckpointCount.value,
       size: selectedConversationsSize.value,
+      logicalSize: selectedConversations.value.some(conversation => conversation.logicalSize),
       // 快照删除目标：确认弹窗期间选中状态变化不影响删除目标
       conversationIds: [...selectedConversationIds.value]
     }
@@ -260,6 +263,7 @@ export function useCheckpointCleanup() {
       }),
       count: selectedCheckpointIds.value.size,
       size: selectedCheckpointsSize.value,
+      logicalSize: conversationsWithCheckpoints.value.find(conversation => conversation.conversationId === expandedConversationId.value)?.logicalSize,
       // 快照删除目标：确认弹窗期间展开/选中状态变化不影响删除目标
       conversationId: expandedConversationId.value || undefined,
       checkpointIds: [...selectedCheckpointIds.value]
@@ -275,6 +279,7 @@ export function useCheckpointCleanup() {
       title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.checkpointsMessage', { count: 1 }),
       count: 1,
       size: cp.size || 0,
+      logicalSize: conversationsWithCheckpoints.value.find(conversation => conversation.conversationId === expandedConversationId.value)?.logicalSize,
       single: true,
       // 快照删除目标：确认弹窗期间展开状态变化不影响删除目标
       conversationId: expandedConversationId.value || undefined,
@@ -291,6 +296,7 @@ export function useCheckpointCleanup() {
       title: conversation.title || conversation.conversationId,
       count: conversation.checkpointCount,
       size: conversation.totalSize || 0,
+      logicalSize: conversation.logicalSize,
       // L-3: 单条对话删除取消时同样清空残留选中态（见 cancelDelete）
       single: true,
       // 快照删除目标：确认弹窗期间选中状态变化不影响删除目标

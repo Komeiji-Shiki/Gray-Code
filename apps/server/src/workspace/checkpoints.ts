@@ -32,8 +32,9 @@ export class WorkspaceCheckpoints {
   private readonly metadataCache = new Map<string, { revision: number | null; value: Promise<WorkspaceCheckpointMetadata> }>();
   constructor(private readonly app: PlatformApplication) {}
   /** 基线必须仍存在且属于同一工作区与目录；否则回退为独立采集。 */
-  private async base(actorId: string, conversationId: string, workspace: WorkspaceDefinition): Promise<WorkspaceSnapshotBase | undefined> {
-    const id = this.latest.get(conversationId) ?? (await this.listMetadata(actorId, conversationId)).at(-1)?.id;
+  private async base(actorId: string, conversationId: string, workspace: WorkspaceDefinition, signal?: AbortSignal): Promise<WorkspaceSnapshotBase | undefined> {
+    const id = this.latest.get(conversationId) ?? (await this.listMetadata(actorId, conversationId, signal)).at(-1)?.id;
+    signal?.throwIfAborted();
     if (!id) return undefined;
     const value = await this.app.storage.getRecord(namespace, id) as WorkspaceCheckpoint | null;
     const roots = workspaceSnapshotRoots(workspace).map(root => `${root.id}\n${root.uri}`).join('\n');
@@ -72,12 +73,14 @@ export class WorkspaceCheckpoints {
     for (const id of await this.app.storage.listRecords(namespace, conversationId)) values.push(await this.get(actorId, conversationId, id));
     return values.sort((a, b) => a.timestamp - b.timestamp);
   }
-  async listMetadata(actorId: string, conversationId: string): Promise<WorkspaceCheckpointMetadata[]> {
+  async listMetadata(actorId: string, conversationId: string, signal?: AbortSignal): Promise<WorkspaceCheckpointMetadata[]> {
+    signal?.throwIfAborted();
     await this.app.conversation(actorId, conversationId);
     const ids = await this.app.storage.listRecords(namespace, conversationId);
     const revisions = await this.app.storage.recordRevisions(ids.map(id => ({ namespace, id })));
     const values: WorkspaceCheckpointMetadata[] = [];
     for (const [index, id] of ids.entries()) {
+      signal?.throwIfAborted();
       let cached = this.metadataCache.get(id);
       if (!cached || cached.revision !== revisions[index]) {
         const entry: { revision: number | null; value: Promise<WorkspaceCheckpointMetadata> } = { revision: revisions[index], value: this.app.storage.getVersionedRecord(namespace, id, {
@@ -102,6 +105,7 @@ export class WorkspaceCheckpoints {
       // 逐条等待，让消息页等请求能在检查点之间进入存储线程；并发读取同一列表共用摘要请求。
       values.push({ ...await cached.value });
     }
+    signal?.throwIfAborted();
     return values.sort((a, b) => a.timestamp - b.timestamp);
   }
   async summaries(actorId: string, conversationId: string, includeInactive = false) {
@@ -145,13 +149,16 @@ export class WorkspaceCheckpoints {
   }
   async create(actorId: string, conversationId: string, options: { name?: string; runId?: string; toolName?: string; phase?: 'before' | 'after';
     messageId?: string; affectedPaths?: string[]; signal?: AbortSignal; operation?: CheckpointOperationControl; capturedWorkspace?: WorkspaceDefinition } = {}): Promise<WorkspaceCheckpoint> {
+    const signal = options.signal ?? options.operation?.signal;
+    signal?.throwIfAborted();
     const current = await this.workspace(actorId, conversationId, ['workspace_read']);
     const workspace = options.capturedWorkspace ?? current;
     if (workspace.id !== current.id) throw new Error('检查点与任务的工作区不一致。');
     const created = await this.app.files.transaction(workspace, async () => {
+      signal?.throwIfAborted();
       const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
       options.operation?.update('scanning');
-      const snapshot = await this.scan(workspace, options.signal ?? options.operation?.signal, options.affectedPaths, await this.base(actorId, conversationId, workspace));
+      const snapshot = await this.scan(workspace, signal, options.affectedPaths, await this.base(actorId, conversationId, workspace, signal));
       const beforeFutureModel = options.toolName === 'model_message' && options.phase === 'before' && !options.messageId;
       const checkpoint: WorkspaceCheckpoint = { id: randomUUID(), conversationId, workspaceId: workspace.id, directory: workspace.directory,
         timestamp: Date.now(), name: options.name, toolName: options.toolName ?? 'manual', phase: options.phase ?? 'after', runId: options.runId,
@@ -194,10 +201,10 @@ export class WorkspaceCheckpoints {
       this.latest.set(conversationId, checkpoint.id);
       this.app.publish({ type: 'workspace.checkpoint.changed', conversationId });
       return checkpoint;
-    });
+    }, { signal });
     // 清理自身也需要文件锁，必须等创建释放锁后再执行。
-    try { await this.prune(actorId, conversationId); }
-    catch (error) { this.app.publish({ type: 'workspace.checkpoint.warning', runId: options.runId, error: String(error) }); }
+    try { await this.prune(actorId, conversationId, signal); }
+    catch (error) { if (!signal?.aborted) this.app.publish({ type: 'workspace.checkpoint.warning', runId: options.runId, error: String(error) }); }
     return created;
   }
   private async plan(workspace: WorkspaceDefinition, checkpoint: WorkspaceCheckpoint, transaction: FileTransaction, signal?: AbortSignal) {
@@ -314,8 +321,9 @@ export class WorkspaceCheckpoints {
     const nodes = Object.values(branch?.graph.nodes ?? {});
     const messageIds = new Set([...state.history.messages.map(message => message.id), ...nodes.map(node => node.id)]);
     const checkpointIds = new Set(nodes.map(node => node.workspaceCheckpointId));
-    return (checkpoint: Pick<WorkspaceCheckpoint, 'id' | 'messageNodeId'>) =>
-      Boolean(checkpoint.messageNodeId && messageIds.has(checkpoint.messageNodeId)) || checkpointIds.has(checkpoint.id);
+    return Object.assign((checkpoint: Pick<WorkspaceCheckpoint, 'id' | 'messageNodeId'>) =>
+      Boolean(checkpoint.messageNodeId && messageIds.has(checkpoint.messageNodeId)) || checkpointIds.has(checkpoint.id),
+      { historyRevision: state.history.revision, branchRevision: state.records.find(item => item.namespace === branchNamespace)?.record.revision ?? null });
   }
   /**
    * A1：删除单个检查点（含不再被引用的内容记录）。
@@ -326,50 +334,92 @@ export class WorkspaceCheckpoints {
    * 串行），与创建及 Diff 审阅落盘（changes.write 同经该事务）互斥。
    */
   async delete(actorId: string, conversationId: string, checkpointId: string, options: { force?: boolean } = {}) {
+    const result = await this.deleteBatch(actorId, conversationId, [checkpointId], options);
+    if (!result.deletedIds.includes(checkpointId)) throw new Error(result.error ?? '检查点不属于当前对话。');
+    return { success: true, id: checkpointId };
+  }
+  async deleteBatch(actorId: string, conversationId: string, checkpointIds: string[], options: { force?: boolean; signal?: AbortSignal } = {}) {
+    options.signal?.throwIfAborted();
     const workspace = await this.workspace(actorId, conversationId, ['workspace_write']);
-    const checkpoint = await this.get(actorId, conversationId, checkpointId);
     return this.app.files.transaction(workspace, async () => {
-      if (!options.force) {
-        const referenced = await this.checkpointReferences(conversationId);
-        if (referenced(checkpoint)) throw new Error('检查点仍被历史或分支引用，未删除。');
+      const result = { deletedIds: [] as string[], rejectedIds: [] as string[], error: undefined as string | undefined };
+      const metadata = await this.listMetadata(actorId, conversationId, options.signal);
+      const byId = new Map(metadata.map(checkpoint => [checkpoint.id, checkpoint]));
+      let referenced = options.force ? undefined : await this.checkpointReferences(conversationId);
+      const candidates: WorkspaceCheckpointMetadata[] = [];
+      for (const id of new Set(checkpointIds)) {
+        const checkpoint = byId.get(id);
+        if (!checkpoint || referenced?.(checkpoint)) {
+          result.rejectedIds.push(id);
+          result.error = checkpoint ? '检查点仍被历史或分支引用，未删除。' : '检查点不属于当前对话。';
+        } else candidates.push(checkpoint);
       }
-      const shared = new Set<string>();
-      for (const id of await this.app.storage.listRecords(namespace, conversationId)) {
-        if (id === checkpoint.id) continue;
-        const other = (await this.app.storage.getVersionedRecord(namespace, id, { fields: ['contentIds'] })).value as Pick<WorkspaceCheckpoint, 'contentIds'> | null;
-        for (const contentId of Object.values(other?.contentIds ?? {})) shared.add(contentId);
+      if (!candidates.length) return result;
+      const selected = new Set(candidates.map(checkpoint => checkpoint.id));
+      const contentsById = new Map<string, string[]>();
+      const references = new Map<string, number>();
+      // 同一批删除只读取一遍内容索引，不保留完整文件清单，也不为每个存档重建共享集合。
+      for (const checkpoint of metadata) {
+        options.signal?.throwIfAborted();
+        const record = await this.app.storage.getVersionedRecord(namespace, checkpoint.id, { fields: ['contentIds'] });
+        const value = record.value as Pick<WorkspaceCheckpoint, 'contentIds'> | null;
+        const ids = [...new Set(Object.values(value?.contentIds ?? {}))];
+        for (const id of ids) references.set(id, (references.get(id) ?? 0) + 1);
+        if (selected.has(checkpoint.id)) contentsById.set(checkpoint.id, ids);
       }
-      const contentIds = [...new Set(Object.values(checkpoint.contentIds))].filter(id => !shared.has(id));
-      if (this.latest.get(conversationId) === checkpoint.id) this.latest.delete(conversationId);
-      for (let offset = 0; offset < contentIds.length; offset += 200)
-        await this.app.storage.commitRecords(contentIds.slice(offset, offset + 200)
-          .map(id => ({ namespace: contentsNamespace, id, delete: true })));
-      await this.app.storage.commitRecords([{ namespace, id: checkpoint.id, delete: true }]);
-      this.app.publish({ type: 'workspace.checkpoint.changed', conversationId });
-      return { success: true, id: checkpoint.id };
-    });
+      for (const checkpoint of candidates) {
+        options.signal?.throwIfAborted();
+        try {
+          this.app.workspace(actorId, workspace.id, ['workspace_write']);
+          if (referenced) {
+            const [history, [branchRevision]] = await Promise.all([
+              this.app.storage.historyInfo(conversationId),
+              this.app.storage.recordRevisions([{ namespace: branchNamespace, id: conversationId }]),
+            ]);
+            if (history.revision !== referenced.historyRevision || branchRevision !== referenced.branchRevision)
+              referenced = await this.checkpointReferences(conversationId);
+            if (referenced(checkpoint)) throw new Error('检查点仍被历史或分支引用，未删除。');
+          }
+          const ids = contentsById.get(checkpoint.id) ?? [];
+          const unshared = ids.filter(id => references.get(id) === 1);
+          // 先移除存档入口并回收首批内容；中途退出最多留下待清理内容，不保留无法恢复的存档。
+          await this.app.storage.commitRecords([{ namespace, id: checkpoint.id, delete: true },
+            ...unshared.slice(0, 199).map(id => ({ namespace: contentsNamespace, id, delete: true as const }))]);
+          for (const id of ids) references.set(id, references.get(id)! - 1);
+          if (this.latest.get(conversationId) === checkpoint.id) this.latest.delete(conversationId);
+          this.metadataCache.delete(checkpoint.id);
+          result.deletedIds.push(checkpoint.id);
+          for (let offset = 199; offset < unshared.length; offset += 200)
+            await this.app.storage.commitRecords(unshared.slice(offset, offset + 200).map(id => ({ namespace: contentsNamespace, id, delete: true })));
+        } catch (error) {
+          if (result.deletedIds.includes(checkpoint.id)) this.app.publish({ type: 'workspace.checkpoint.warning', conversationId, error: String(error) });
+          else { result.rejectedIds.push(checkpoint.id); result.error = String(error); }
+        }
+      }
+      if (result.deletedIds.length) this.app.publish({ type: 'workspace.checkpoint.changed', conversationId });
+      return result;
+    }, { signal: options.signal });
   }
   /**
    * A1：按配置 maxCheckpoints 保留最近的检查点，多余从最旧开始清理。
    * 被历史引用的跳过（计入 skipped），不硬删。create 成功后自动调用一次。
    */
-  async prune(actorId: string, conversationId: string) {
+  async prune(actorId: string, conversationId: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const max = this.app.product.runtimeSettings().getCheckpointConfig().maxCheckpoints;
     if (!Number.isSafeInteger(max) || max <= 0) return { deleted: 0, skipped: 0 };
-    const values = await this.listMetadata(actorId, conversationId);
+    const values = await this.listMetadata(actorId, conversationId, signal);
     const overflow = values.length - max;
     if (overflow <= 0) return { deleted: 0, skipped: 0 };
     // 同一批清理只读取一次引用集合，不能为每个受保护存档反复加载长历史和完整快照。
     // 真正删除时仍在文件锁内重读引用，保留并发新增历史或分支的保护。
     let referenced: Awaited<ReturnType<WorkspaceCheckpoints['checkpointReferences']>>;
     try { referenced = await this.checkpointReferences(conversationId); }
-    catch { return { deleted: 0, skipped: overflow }; }
-    let deleted = 0; let skipped = 0;
-    for (const value of values.slice(0, overflow)) {
-      if (referenced(value)) { skipped++; continue; }
-      try { await this.delete(actorId, conversationId, value.id); deleted++; }
-      catch { skipped++; }
-    }
-    return { deleted, skipped };
+    catch { signal?.throwIfAborted(); return { deleted: 0, skipped: overflow }; }
+    signal?.throwIfAborted();
+    const candidates = values.slice(0, overflow).filter(value => !referenced(value));
+    if (!candidates.length) return { deleted: 0, skipped: overflow };
+    const result = await this.deleteBatch(actorId, conversationId, candidates.map(checkpoint => checkpoint.id), { signal });
+    return { deleted: result.deletedIds.length, skipped: overflow - result.deletedIds.length };
   }
 }

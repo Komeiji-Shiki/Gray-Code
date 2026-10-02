@@ -202,11 +202,12 @@ export class ProductChat {
     void immediate.catch(() => {}); // 会话授权先失败时不再等待它，仍需处理它的失败。
     const snapshot = this.app.storage.listRuns({ conversationId, activeOnly: true });
     void snapshot.catch(() => {}); // 授权拒绝时不会再等待这个只读请求，仍需处理它的失败。
-    await this.app.conversation(client.actorId, conversationId);
     const actor = this.app.actor(client.actorId);
     if (!actor || actor.revoked) throw new Error('This account cannot cancel the run.');
     const starts = acceptedStarts.filter(pending => actor.role === 'owner' || pending.actorId === actor.id);
     for (const pending of starts) pending.controller.abort(Object.assign(new Error('Cancelled by user.'), { code: 'CANCELLED_ERROR' }));
+    // 准备请求已按内存中的账号归属中止，会话查询不能让停止排在长存储操作后面。
+    await this.app.conversation(client.actorId, conversationId);
     await immediate;
     const runs = await snapshot;
     const runIds = [...new Set([...runs.map(run => run.id), ...acceptedRunIds])];

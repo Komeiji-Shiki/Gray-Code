@@ -18,7 +18,7 @@ describe('独立桌面输入准备和运行释放的取消边界', () => {
   const data = (id: string, streamId: string) => ({ conversationId: id, streamId, configId: 'fixture', message: '开始' });
 
   test('提示词尚未准备完时停止等待真实释放，取消不生成任务或用户历史', async () => {
-    const entered = deferred(), release = deferred(), aborted = deferred();
+    const entered = deferred(), release = deferred(), aborted = deferred(), authorization = deferred(), releaseAuthorization = deferred();
     const prepare = PlatformPromptService.prototype.prepare;
     jest.spyOn(PlatformPromptService.prototype, 'prepare').mockImplementationOnce(async function(this: PlatformPromptService, input) {
       entered.resolve(); await release.promise; return prepare.call(this, input);
@@ -35,14 +35,20 @@ describe('独立桌面输入准备和运行释放的取消边界', () => {
       expect(app.productUi.chat.hasPendingStarts()).toBe(true);
       expect(await app.storage.listRuns({ conversationId, activeOnly: true })).toEqual([]);
       expect(await app.productUi.chat.awaitIdle(conversationId, 20)).toEqual({ idle: false });
+      const conversation = app.conversation.bind(app);
+      jest.spyOn(app, 'conversation').mockImplementationOnce(async (...args) => {
+        authorization.resolve(); await releaseAuthorization.promise; return conversation(...args);
+      });
       stopping = app.productUi.chat.cancel(owner, conversationId).then(value => { returned = true; return value; });
+      await authorization.promise;
       await aborted.promise; expect(returned).toBe(false);
+      releaseAuthorization.resolve();
       release.resolve(); expect(await stopping).toEqual({ success: true }); await rejected;
       expect(app.productUi.chat.hasPendingStarts()).toBe(false);
       expect((await app.storage.readFullHistory(conversationId)).messages).toEqual([]);
       expect(await app.storage.listRuns({ conversationId })).toEqual([]);
       expect(generate).not.toHaveBeenCalled();
-    } finally { release.resolve(); await started.catch(() => {}); await stopping; }
+    } finally { releaseAuthorization.resolve(); release.resolve(); await started.catch(() => {}); await stopping; }
   });
 
   test('交互队列中的输入被停止后不会在前序设置请求完成时迟到启动', async () => {

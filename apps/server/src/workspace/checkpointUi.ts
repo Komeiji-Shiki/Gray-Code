@@ -45,11 +45,8 @@ export class CheckpointUi {
           try {
             await this.app.conversation(actorId, item.conversationId);
             if ((await this.app.storage.listRuns({ conversationId: item.conversationId, activeOnly: true, limit: 1 })).length) throw new Error('对话仍有运行任务，已跳过清理。');
-            if (!ids.length) ids = (await this.app.checkpoints.list(actorId, item.conversationId)).map(value => value.id);
-            for (const id of new Set(ids)) {
-              try { await this.app.checkpoints.delete(actorId, item.conversationId, id); result.deletedIds.push(id); }
-              catch (error) { result.rejectedIds.push(id); result.error = String(error); }
-            }
+            if (!ids.length) ids = await this.app.storage.listRecords('workspace-checkpoints', item.conversationId);
+            Object.assign(result, await this.app.checkpoints.deleteBatch(actorId, item.conversationId, ids));
           } catch (error) { result.success = false; result.rejectedIds = ids.filter(id => !result.deletedIds.includes(id)); result.error = String(error); }
           results.push(result); operation.update('deleting', results.length, data.items.length);
         }
@@ -58,14 +55,14 @@ export class CheckpointUi {
     };
   }
   private async list(actorId: string) {
-    const conversations: Array<{ conversationId: string; title: string; checkpointCount: number; totalSize: number }> = [];
+    const conversations: Array<{ conversationId: string; title: string; checkpointCount: number; totalSize: number; logicalSize: boolean }> = [];
     let cursor: { updatedAt: number; id: string } | undefined;
     do {
       const page = await this.app.storage.listConversations({ limit: 1000, cursor });
       for (const item of page.items) {
         const { checkpoints } = await this.app.checkpoints.summaries(actorId, item.id, true);
         if (checkpoints.length) conversations.push({ conversationId: item.id, title: item.title ?? '未命名对话',
-          checkpointCount: checkpoints.length, totalSize: checkpoints.reduce((sum, value) => sum + value.size, 0) });
+          checkpointCount: checkpoints.length, totalSize: checkpoints.reduce((sum, value) => sum + value.size, 0), logicalSize: true });
       }
       cursor = page.nextCursor;
     } while (cursor);

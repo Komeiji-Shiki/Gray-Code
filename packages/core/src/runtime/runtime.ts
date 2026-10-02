@@ -437,6 +437,7 @@ export class PlatformRuntime {
         const page = state.history;
         signal.throwIfAborted();
         await this.services.modelBoundary?.(run, workspace, signal, 'before', iteration);
+        signal.throwIfAborted();
         await this.event(run.id, 'model.started', { iteration });
         let generated: PlatformMessage;
         try {

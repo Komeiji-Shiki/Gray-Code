@@ -11,6 +11,7 @@ export class CheckpointLifecycle {
   private async capture(run: Pick<RunRecord, 'id' | 'actorId' | 'conversationId'>, options: { phase: 'before' | 'after'; toolName: string; messageId?: string; signal?: AbortSignal; capturedWorkspace: WorkspaceDefinition }) {
     try { await this.app.checkpoints.create(run.actorId, run.conversationId, { ...options, runId: run.id }); }
     catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
       // 保留原行为：快照失败明确报告，不把已授权工具伪装为未执行。
       this.app.publish({ type: 'workspace.checkpoint.warning', runId: run.id, error: String(error) });
     }

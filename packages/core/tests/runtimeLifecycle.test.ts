@@ -99,6 +99,20 @@ describe('运行器启动、关闭和工具准备的取消边界', () => {
     expect((await f.store.readRunEvents(run.id)).map(event => event.type)).not.toContain('runtime.preparation.changed');
   });
 
+  test('模型前检查点等待期间取消，边界结束后不调用模型', async () => {
+    const entered = deferred(), release = deferred();
+    services.modelBoundary = async (_run, _workspace, _signal, phase) => {
+      if (phase === 'before') { entered.resolve(); await release.promise; }
+    };
+    const run = await runtime.start(input);
+    try {
+      await entered.promise;
+      await runtime.cancel(run.id, 'owner'); release.resolve();
+      expect((await runtime.wait(run.id))?.status).toBe('cancelled');
+      expect(services.models.generate).not.toHaveBeenCalled();
+    } finally { release.resolve(); await runtime.wait(run.id); }
+  });
+
   test('工具准备期间取消只结算该调用，不执行尚未开始的工具', async () => {
     const entered = deferred(), release = deferred();
     const execute = jest.fn(async () => ({ success: true }));

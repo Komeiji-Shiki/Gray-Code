@@ -104,13 +104,13 @@ defineEmits<{
         <template v-if="selectedConversations.length > 0">
           {{ t('components.settings.checkpoint.sections.cleanup.selectedCount', { count: selectedConversations.length }) }}
           ·
-          {{ t('components.settings.checkpoint.sections.cleanup.selectedSize', { size: formatSize(selectedConversationsSize) }) }}
+          {{ t(selectedConversations.some(conversation => conversation.logicalSize) ? 'desktop.shell.checkpointLogicalSize' : 'components.settings.checkpoint.sections.cleanup.selectedSize', { size: formatSize(selectedConversationsSize) }) }}
         </template>
         <template v-else>
           {{ formatCheckpointCount(conversationsWithCheckpoints.reduce((sum, c) => sum + c.checkpointCount, 0)) }}
           <template v-if="totalCheckpointsSize > 0">
             ·
-            {{ t('components.settings.checkpoint.sections.cleanup.totalSize', { size: formatSize(totalCheckpointsSize) }) }}
+            {{ t(conversationsWithCheckpoints.some(conversation => conversation.logicalSize) ? 'desktop.shell.checkpointLogicalSize' : 'components.settings.checkpoint.sections.cleanup.totalSize', { size: formatSize(totalCheckpointsSize) }) }}
             <span
               v-if="totalCheckpointsSizeIncomplete"
               class="size-incomplete"
@@ -225,9 +225,9 @@ defineEmits<{
                     <i class="codicon codicon-archive"></i>
                     {{ formatCheckpointCount(conv.checkpointCount) }}
                   </span>
-                  <span class="size-info">
+                  <span class="size-info" :title="conv.logicalSize ? t('desktop.shell.checkpointLogicalSizeHint') : undefined">
                     <i class="codicon codicon-database"></i>
-                    {{ formatSize(conv.totalSize) }}
+                    {{ conv.logicalSize ? t('desktop.shell.checkpointLogicalSize', { size: formatSize(conv.totalSize) }) : formatSize(conv.totalSize) }}
                     <span
                       v-if="conv.sizeIncomplete"
                       class="size-incomplete"
@@ -720,6 +720,7 @@ defineEmits<{
 
 .conversation-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   font-size: 11px;

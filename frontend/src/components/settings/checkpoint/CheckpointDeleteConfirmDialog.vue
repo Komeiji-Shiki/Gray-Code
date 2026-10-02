@@ -37,7 +37,7 @@ const emit = defineEmits<{
     <template v-if="state">
       <p class="dialog-title-text">{{ state.title }}</p>
       <p class="delete-stats">
-        {{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.stats', {
+        {{ t(state.logicalSize ? 'desktop.shell.checkpointLogicalDeleteStats' : 'components.settings.checkpoint.sections.cleanup.confirmDelete.stats', {
           count: state.count,
           size: formatSize(state.size)
         }) }}

@@ -187,8 +187,10 @@ describe('workspace checkpoints application contract', () => {
     expect(second.manifest.files[same]).toMatchObject({ hash: first.manifest.files[same].hash, size: 9 });
     expect(second.manifest.files[same].mtimeMs).toEqual(expect.any(Number));
 
-    await app.checkpoints.delete('owner', 'incremental', unchanged.id, { force: true });
-    await app.checkpoints.delete('owner', 'incremental', first.id, { force: true });
+    const contentReads = jest.spyOn(app.storage, 'getVersionedRecord');
+    expect(await app.checkpoints.deleteBatch('owner', 'incremental', [unchanged.id, first.id], { force: true })).toMatchObject({ deletedIds: [unchanged.id, first.id], rejectedIds: [] });
+    expect(contentReads.mock.calls.filter(([namespace, _id, projection]) => namespace === 'workspace-checkpoints' && projection?.fields?.[0] === 'contentIds')).toHaveLength(3);
+    contentReads.mockRestore();
     expect(await app.storage.getRecord('workspace-checkpoint-content', first.contentIds[edit])).toBeNull();
     expect(await app.storage.getRecord('workspace-checkpoint-content', second.contentIds[same])).not.toBeNull();
 
@@ -203,6 +205,28 @@ describe('workspace checkpoints application contract', () => {
     const third = await app.checkpoints.create('owner', 'incremental');
     for (const contentId of Object.values(third.contentIds))
       expect(await app.storage.getRecord('workspace-checkpoint-content', contentId)).not.toBeNull();
+  });
+
+  test('等待工作区写锁的检查点可取消，取消后不执行迟到的采集', async () => {
+    await createConversation('queued-snapshot');
+    let entered!: () => void, release!: () => void, queued!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const wait = new Promise<void>(resolve => { release = resolve; });
+    const enqueued = new Promise<void>(resolve => { queued = resolve; });
+    const holding = app.files.transaction(workspace(), async () => { entered(); await wait; });
+    await started;
+    const transaction = app.files.transaction.bind(app.files);
+    const spy = jest.spyOn(app.files, 'transaction').mockImplementationOnce((project, operation, options) => {
+      queued(); return transaction(project, operation, options);
+    });
+    const controller = new AbortController();
+    const snapshot = app.checkpoints.create('owner', 'queued-snapshot', { signal: controller.signal });
+    const cancelled = expect(snapshot).rejects.toThrow('取消等待');
+    try {
+      await enqueued; controller.abort(new Error('取消等待')); await cancelled;
+      release(); await holding;
+      expect(await app.checkpoints.list('owner', 'queued-snapshot')).toEqual([]);
+    } finally { release(); spy.mockRestore(); await holding; await snapshot.catch(() => {}); }
   });
 
   test('清单外脏文件也阻止恢复', async () => {
