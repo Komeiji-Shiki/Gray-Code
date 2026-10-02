@@ -189,11 +189,12 @@ function plausibility(text: string, encoding: string): number {
 
 function guessLegacyEncoding(bytes: Uint8Array): TextEncoding {
     let best: { encoding: TextEncoding; score: number } | undefined;
-    // Node 的 gbk 解码器不接受四字节序列；gbk 失败时再试 GB18030，两者都成功时优先保持 GBK。
+    // TextDecoder 的 GBK 实现也可能接受 GB18030 四字节序列，须确认实际写回编码能还原字节后再优先选 GBK。
     for (const encoding of ['gbk', 'gb18030', 'shift_jis', 'big5'] as const) {
         if (encoding === 'gb18030' && best?.encoding === 'gbk') continue;
         let text: string;
         try { text = new TextDecoder(encoding, { fatal: true }).decode(bytes); } catch { continue; }
+        if (encoding === 'gbk' && !iconv.encode(text, encoding).equals(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))) continue;
         const score = plausibility(text, encoding === 'gb18030' ? 'gbk' : encoding);
         if (!best || score > best.score) best = { encoding, score };
     }
