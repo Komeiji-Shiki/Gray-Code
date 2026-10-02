@@ -124,7 +124,8 @@ export function normalizeTextEncodingName(value: string): TextEncoding {
         'utf8': 'utf-8', 'utf-8': 'utf-8', 'utf-8-bom': 'utf-8', 'utf8bom': 'utf-8', 'utf-16': 'utf-16le', 'utf16': 'utf-16le', 'utf-16le': 'utf-16le', 'utf16le': 'utf-16le',
         'utf-16be': 'utf-16be', 'utf16be': 'utf-16be', 'gbk': 'gbk', 'gb2312': 'gbk', 'cp936': 'gbk', 'gb18030': 'gb18030',
         'shift-jis': 'shift_jis', 'shiftjis': 'shift_jis', 'sjis': 'shift_jis', 'cp932': 'shift_jis', 'windows-31j': 'shift_jis', 'big5': 'big5', 'cp950': 'big5',
-        'latin1': 'windows-1252', 'iso-8859-1': 'windows-1252', 'cp1252': 'windows-1252', 'windows-1252': 'windows-1252',
+        // Latin-1 的 0x80–0x9F 是控制字符，不能按 Windows-1252 的标点与货币符号解码。
+        'latin1': 'iso-8859-1', 'iso-8859-1': 'iso-8859-1', 'cp1252': 'windows-1252', 'windows-1252': 'windows-1252',
     };
     const resolved = alias[name] ?? name;
     if (!UNICODE_ENCODINGS.has(resolved) && !iconv.encodingExists(resolved)) throw new Error(`不支持的编码：${value}。可用 utf-8、utf-16le、utf-16be、gbk、gb18030、shift_jis、big5、euc-kr、windows-1252 等。`);
