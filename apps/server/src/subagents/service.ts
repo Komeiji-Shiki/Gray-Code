@@ -501,6 +501,8 @@ export class SubagentExecutionService {
     }));
     const report = [`[Partial result: ${record.status}]`, `Continue with subagents(continueFromRunId="${record.id}").`,
       `History conversation: ${record.conversationId}; tool results: ${steps.length}.`];
+    // 前台回执与后台反馈共用此报告，错误原因必须与本次部分结果一起交付。
+    if (record.error) report.push(`Error: ${record.error}`);
     // 原始工具结果与正文都保留在历史中；交付只用确定的已有记录，不另发模型请求来总结。
     let remaining = 12000;
     for (const step of steps) {
