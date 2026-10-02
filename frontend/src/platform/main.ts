@@ -112,7 +112,7 @@ function receiveDesktopEvent(event: Record<string, any>) {
   if (event.type === 'migration.progress' || event.type === 'migration.completed')
     dispatch({ type: 'command', command: event.type, data: event });
   if (event.type === 'conversation.changed') dispatch({ type: 'platformConversationChanged', data: { conversationId: event.conversationId, deleted: event.deleted, metadataOnly: event.metadataOnly, preserveWindow: event.preserveWindow } });
-  if (event.type === 'event' && (event.event?.type?.startsWith('question.') || event.event?.type?.startsWith('run.')))
+  if (event.type === 'event' && (event.event?.type?.startsWith('question.') || event.event?.type?.startsWith('approval.') || event.event?.type?.startsWith('run.')))
     dispatch({ type: 'platformQuestionsChanged' });
   if (event.type === 'ui.message') {
     if (event.message?.command === 'platform.modeSelected' && event.message.data?.promptModeId) defaultPromptModeId = event.message.data.promptModeId;

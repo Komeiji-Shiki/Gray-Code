@@ -13,6 +13,7 @@ import BackgroundTaskBar from './components/backgroundTasks/BackgroundTaskBar.vu
 import { WelcomePanel } from './components/home'
 import { ConversationTabs } from './components/tabs'
 import AsyncQuestions from './components/input/AsyncQuestions.vue'
+import SubAgentPendingRequests from './components/subagents/SubAgentPendingRequests.vue'
 import { CustomScrollbar } from './components/common'
 import UpdateModal from './components/common/UpdateModal.vue'
 import Splash from './components/Splash.vue'
@@ -640,6 +641,7 @@ onBeforeUnmount(() => {
 
       <!-- 输入区域：语言就绪后按需加载渠道；不等待完整聊天/历史初始化 -->
       <AsyncQuestions v-if="isDesktopHost" :conversation-id="chatStore.currentConversationId" />
+      <SubAgentPendingRequests v-if="isDesktopHost" :conversation-id="chatStore.currentConversationId" />
       <InputArea
         v-if="languageLoaded"
         :attachments="attachments"

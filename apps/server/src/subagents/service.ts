@@ -267,6 +267,28 @@ export class SubagentExecutionService {
     return { approvals: this.app.runtime.pendingApprovals().filter(item => record.coreRunIds.includes(item.runId)),
       questions: this.app.runtime.pendingQuestions().filter(item => record.coreRunIds.includes(item.runId)) };
   }
+  /** 该对话派发出的全部后代子代理中尚未处理的审批与问题，供主界面和主代理在不打开监视器时处理。 */
+  async conversationRequests(actorId: string, conversationId: string) {
+    await this.app.conversation(actorId, conversationId);
+    const owner = this.app.actor(actorId)?.role === 'owner';
+    const byRun = new Map<string, PlatformSubagent>();
+    for (const record of this.records.values()) {
+      if (record.conversationId === conversationId || !owner && record.actorId !== actorId) continue;
+      // 只收集挂在本对话之下的后代：沿父链向上必须经过本对话。
+      let parent: string | undefined = record.parentConversationId;
+      let descendant = false;
+      for (let depth = 0; parent && depth <= MAX_SUBAGENT_NESTING_DEPTH; depth++) {
+        if (parent === conversationId) { descendant = true; break; }
+        parent = [...this.records.values()].find(item => item.conversationId === parent)?.parentConversationId;
+      }
+      if (descendant) for (const runId of record.coreRunIds) byRun.set(runId, record);
+    }
+    const subagent = (runId: string) => { const record = byRun.get(runId)!; return { subagentRunId: record.id, agentName: record.agentName }; };
+    return {
+      approvals: this.app.runtime.pendingApprovals().filter(item => byRun.has(item.runId)).map(item => ({ ...item, ...subagent(item.runId) })),
+      questions: this.app.runtime.pendingQuestions().filter(item => byRun.has(item.runId)).map(item => ({ ...item, ...subagent(item.runId) })),
+    };
+  }
   async answer(actorId: string, id: string, requestId: string, response: boolean | string[], choiceId?: string) {
     const requests = await this.requests(actorId, id);
     if (typeof response === 'boolean') {

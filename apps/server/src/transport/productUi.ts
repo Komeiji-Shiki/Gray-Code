@@ -123,7 +123,7 @@ export class ProductUi {
     }
     if (['platform.discord.guilds', 'platform.discord.channels', 'platform.discord.user', 'platform.discord.outbox', 'platform.discord.retryDelivery', 'platform.onebot.outbox', 'platform.onebot.retryDelivery'].includes(type))
       return this.invoke(client, type, data);
-    if (['subagents.pauseRun', 'subagents.resumeRun', 'subagents.exitRun', 'subagents.resolveApproval', 'subagents.answerQuestion', 'subagents.monitor.requests'].includes(type))
+    if (['subagents.pauseRun', 'subagents.resumeRun', 'subagents.exitRun', 'subagents.resolveApproval', 'subagents.answerQuestion', 'subagents.monitor.requests', 'subagents.pendingRequests'].includes(type))
       return this.invoke(client, type, data);
     if (['platform.accounts.revoke', 'platform.accounts.delete', 'checkpoint.cancelOperation', 'checkpoint.getOperationProgress', 'dependencies.list', 'dependencies.getInstallPath', 'dependencies.install', 'dependencies.uninstall', 'tokenizer.getResource', 'chat.awaitConversationIdle', 'chat.sendInterruptMessage', 'imageGeneration.cancel', 'terminal.kill', 'terminal.getOutput', 'terminal.detachToBackground', 'task.cancel', 'task.getAll', 'cancelStream', 'cancelSummarizeRequest', 'toolConfirmation', 'models.getModels', 'migration.cancel', 'migration.status', 'diff.accept', 'diff.reject', 'platform.questions.answer', 'platform.discord.start', 'platform.discord.stop', 'platform.discord.status', 'platform.onebot.start', 'platform.onebot.stop', 'platform.onebot.status', 'disconnectMcpServer'].includes(type))
       return this.invoke(client, type, data);
@@ -252,6 +252,7 @@ export class ProductUi {
       case 'subagents.monitorReady': return this.app.subagentMonitor.ready(client.actorId, data.conversationId, data.runId);
       case 'subagents.monitor.getRunWindow': return this.app.subagentMonitor.window(client.actorId, data.runId, data.conversationId, data.options);
       case 'subagents.monitor.requests': return this.app.subagents.requests(client.actorId, data.runId);
+      case 'subagents.pendingRequests': return this.app.subagents.conversationRequests(client.actorId, data.conversationId);
       case 'subagents.resolveApproval':
         if (typeof data.accepted !== 'boolean') throw new Error('请明确接受或拒绝操作。');
         return this.app.subagents.answer(client.actorId, data.runId, data.id, data.accepted, data.choiceId);

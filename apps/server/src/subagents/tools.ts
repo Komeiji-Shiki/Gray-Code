@@ -4,6 +4,7 @@ import { createAgentMessageDeclaration } from '../../../../backend/tools/subagen
 import { AGENT_INBOX_MAX_MESSAGES, AGENT_MESSAGE_MAX_LENGTH } from '../../../../backend/core/services/agentMessages';
 import { DEFAULT_SUBAGENTS_CONFIG, type SubAgentsConfig } from '../../../../backend/modules/settings/types/subAgentsTypes';
 import type { PlatformApplication } from '../application';
+import { subagentRequestsTool } from './requestsTool';
 
 export function subagentTools(app: PlatformApplication, config: SubAgentsConfig = DEFAULT_SUBAGENTS_CONFIG): RuntimeTool[] {
   const names = config.agents.filter(agent => agent.enabled).map(agent => agent.name);
@@ -23,5 +24,6 @@ export function subagentTools(app: PlatformApplication, config: SubAgentsConfig 
   return [{ declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters }, effects: () => [],
     execute: (args, context) => app.subagents.dispatch(args, context) },
     { declaration: { name: messages.name, description: messages.description, parameters: messages.parameters }, effects: () => [],
-      execute: (args, context) => app.subagents.messages.send(args, context) }];
+      execute: (args, context) => app.subagents.messages.send(args, context) },
+    subagentRequestsTool(app, isZh)];
 }
