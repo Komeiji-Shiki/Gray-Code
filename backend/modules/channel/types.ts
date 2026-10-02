@@ -331,6 +331,8 @@ export { ErrorType } from '../../core/errorTypes';
  * 渠道错误
  */
 export class ChannelError extends Error {
+    httpStatus?: number;
+    retryAfterMs?: number;
     constructor(
         public type: ErrorType,
         message: string,

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import { serializeToolResultForLLM } from '../../../../backend/modules/channel/formatters/toolResponseFormatter';
 import type { AgentDefinition, PlatformMessage, RunRecord, ToolOutcome, RecordMutation } from '@graycode/contracts';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
@@ -23,6 +25,7 @@ interface LiveSubagent {
   detach: (result: ToolOutcome) => void;
   acceptingMessages: boolean;
   coreRunId?: string;
+  taskRunStart?: number;
   /** Model phase only; never persisted with the subagent record. */
   streamingContentIndex?: number;
   pauseRequested: boolean;
@@ -30,6 +33,7 @@ interface LiveSubagent {
   resume?: () => void;
   retry?: () => void;
   hasSlot: boolean;
+  modelFailure?: { kind: 'rate_limit'; remainingRetries: number; resumeSafe: boolean; delayMs: number };
 }
 class SubagentTimeoutError extends Error {}
 const namespace = 'platform-subagents';
@@ -58,7 +62,7 @@ export class SubagentExecutionService {
     this.limiter = new SubAgentConcurrencyLimiter(() => this.config().maxConcurrentAgents);
     this.unsubscribe = app.subscribe(event => {
       if (event.type === 'settings.changed') { this.limiter.onCapacityChanged(); return; }
-      if (!['event', 'message.persisted', 'model.delta', 'tool.progress'].includes(String(event.type))) return;
+      if (!['event', 'message.persisted', 'model.delta', 'model.retrying', 'tool.progress'].includes(String(event.type))) return;
       const completedRunId = event.type === 'event' && ['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'].includes(String((event.event as { type?: string })?.type))
         ? (event.event as { runId: string }).runId : undefined;
       if (completedRunId) this.pendingCompletions.add(completedRunId);
@@ -425,27 +429,43 @@ export class SubagentExecutionService {
     signal.addEventListener('abort', abort);
     try {
       let message = initial;
+      const taskRunStart = record.coreRunIds.length;
+      live.taskRunStart = taskRunStart;
+      let retryCount: number | undefined;
       for (;;) {
+        live.runtimeTimer?.pause();
         signal.throwIfAborted(); record.status = 'queued'; record.error = undefined; await this.save(record); this.emit(record, 'run_queued');
         await this.limiter.acquire(record.id, signal, Number(this.config().queueTimeoutSeconds) * 1000); live.hasSlot = true;
         const input = { requestKey: `subagent:${record.id}:${randomUUID()}`, actorId: record.actorId, agentId: record.profile.id, conversationId: record.conversationId,
           workspaceId: (await this.app.storage.getConversation(record.conversationId))?.workspaceId as string | undefined };
         const parent = record.parentRunId ? await this.app.storage.getRun(record.parentRunId) : null;
-        const scope = { ...(Object.hasOwn(record, 'workspace') ? { workspace: record.workspace ?? undefined } : {}), modelSelection: record.selection,
+        const scope = { ...(Object.hasOwn(record, 'workspace') ? { workspace: record.workspace ?? undefined } : {}), modelSelection: record.selection, modelRetryCount: retryCount,
           nodeOrigin: parent?.nodeOrigin ?? record.parentConfiguration?.configuration.nodeOrigin,
           automationId: parent?.automationId ?? record.parentConfiguration?.configuration.automationId };
-        live.runtimeTimer = new SubagentRuntimeTimer(record.maxRuntime, () => live.controller.abort(new SubagentTimeoutError('子代理超过配置的运行时间。')));
+        live.modelFailure = undefined;
+        live.runtimeTimer ??= new SubagentRuntimeTimer(record.maxRuntime, () => live.controller.abort(new SubagentTimeoutError('子代理超过配置的运行时间。')));
+        live.runtimeTimer.resume();
         const run = message ? await this.app.runtime.start({ ...input, message }, undefined, scope)
           : await this.app.runtime.continue({ ...input, expectedRevision: (await this.app.storage.historyInfo(record.conversationId)).revision }, undefined, scope);
         message = undefined; live.coreRunId = run.id; record.coreRunIds.push(run.id); this.byCoreRun.set(run.id, record);
         if (signal.aborted) abort();
         let finished: RunRecord | null;
         try { finished = await this.app.runtime.wait(run.id); }
-        finally { live.runtimeTimer.dispose(); live.runtimeTimer = undefined; this.limiter.release(record.id); live.hasSlot = false; }
+        finally { live.runtimeTimer.pause(); this.limiter.release(record.id); live.hasSlot = false; }
         await this.events;
         record.updatedAt = Date.now();
         record.status = finished?.status === 'completed' ? 'completed' : signal.aborted && !(signal.reason instanceof SubagentTimeoutError) ? 'cancelled' : 'failed';
         record.error = finished?.error;
+        // 请求层已耗尽预算时直接交付部分结果；有部分输出或原生连接被明确限流时，从已保存历史接续。
+        const retry = this.live.get(record.id)?.modelFailure;
+        if (record.status === 'failed' && !signal.aborted && retry?.resumeSafe && retry.remainingRetries > 0) {
+          retryCount = Math.min(retryCount ?? retry.remainingRetries, retry.remainingRetries) - 1;
+          record.status = 'queued'; await this.save(record);
+          this.emit(record, 'llm_retry', { type: 'retrying', nextRetryIn: retry.delayMs, remainingRetries: retryCount, error: record.error });
+          live.runtimeTimer.resume();
+          await delay(Math.min(retry.delayMs, 2_147_483_647), undefined, { signal });
+          continue;
+        }
         if (await this.messages.settle(record, record.status === 'completed')) continue;
         if (record.status === 'failed' && record.failureMode === 'wait_for_monitor_action') {
           record.status = 'awaiting_monitor_action'; await this.save(record); this.emit(record, 'run_waiting');
@@ -456,7 +476,7 @@ export class SubagentExecutionService {
     } catch (error) { record.status = signal.aborted && !(signal.reason instanceof SubagentTimeoutError) ? 'cancelled' : 'failed'; record.error = (error as Error).message; record.updatedAt = Date.now(); }
     finally { live.runtimeTimer?.dispose(); live.acceptingMessages = false; signal.removeEventListener('abort', abort); if (live.hasSlot) this.limiter.release(record.id); }
     await this.save(record); this.emit(record, `run_${record.status}`);
-    const response = await this.output(record, live.coreRunId);
+    const response = await this.output(record, live.coreRunId, record.coreRunIds.slice(live.taskRunStart ?? record.coreRunIds.length));
     if (record.background) {
       try { await this.feedback.enqueue(record, response); }
       catch { this.app.publish({ type: 'notification', message: '子代理已结束，结果尚未同步到主对话，可以先从监视器查看。' }); }
@@ -465,13 +485,30 @@ export class SubagentExecutionService {
     return { success: record.status === 'completed', cancelled: record.status === 'cancelled', error: record.error,
       data: { agentName: record.agentName, runId: record.id, response, status: record.status, duration: record.updatedAt - record.createdAt } };
   }
-  private async output(record: PlatformSubagent, coreRunId: string | undefined): Promise<string> {
+  private async output(record: PlatformSubagent, coreRunId: string | undefined, taskRunIds = coreRunId ? [coreRunId] : []): Promise<string> {
     if (!coreRunId || !await this.app.storage.getConversation(record.conversationId)) return record.error || '子代理本次运行没有返回正文。';
     const history = await this.app.storage.readFullHistory(record.conversationId);
     // 接续会话含以往交付；失败/超时只能报告本次执行，不能拿上一轮成功报告冒充本次结果。
     const last = [...history.messages].reverse().find(message => message.runId === coreRunId && message.role === 'model'
       && message.parts.some(part => typeof part.text === 'string' && !part.thought));
-    return last?.parts.filter(part => !part.thought).map(part => typeof part.text === 'string' ? part.text : '').join('') || record.error || '子代理没有返回正文。';
+    const text = last?.parts.filter(part => !part.thought).map(part => typeof part.text === 'string' ? part.text : '').join('');
+    if (record.status === 'completed') return text || '子代理没有返回正文。';
+    const messages = history.messages.filter(message => typeof message.runId === 'string' && taskRunIds.includes(message.runId));
+    const steps = messages.flatMap(message => message.parts.flatMap(part => {
+      const step = part.functionResponse as { name?: string; id?: string; response?: Record<string, unknown> } | undefined;
+      return step && typeof step.name === 'string' ? [{ name: step.name, id: step.id, response: step.response }] : [];
+    }));
+    const report = [`[Partial result: ${record.status}]`, `Continue with subagents(continueFromRunId="${record.id}").`,
+      `History conversation: ${record.conversationId}; tool results: ${steps.length}.`];
+    // 原始工具结果与正文都保留在历史中；交付只用确定的已有记录，不另发模型请求来总结。
+    let remaining = 12000;
+    for (const step of steps) {
+      const body = serializeToolResultForLLM(step.name, step.response);
+      const excerpt = body.slice(0, Math.min(2000, remaining)); remaining -= excerpt.length;
+      report.push(`${step.name}${step.id ? ` (${step.id})` : ''}: ${excerpt}${excerpt.length < body.length ? ' [Full result in child history]' : ''}`);
+    }
+    if (text) report.push('Last partial text:', text);
+    return report.join('\n\n');
   }
   private async notification(event: Record<string, any>): Promise<void> {
     const runId = event.runId ?? event.event?.runId;
@@ -488,6 +525,8 @@ export class SubagentExecutionService {
     }
     if (!record) return; this.byCoreRun.set(runId, record);
     const live = this.live.get(record.id);
+    if (live && event.type === 'event' && event.event.type === 'run.failed') live.modelFailure = event.event.payload.modelRetry;
+    if (event.type === 'model.retrying') { this.emit(record, 'llm_retry', { ...event, type: 'retrying' }); return; }
     if (live && event.type === 'event') {
       if (event.event.type === 'model.started') live.streamingContentIndex = record.contentCount;
       else if (event.event.type.startsWith('run.') && terminal(event.event.type.slice(4))) live.streamingContentIndex = undefined;

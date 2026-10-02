@@ -88,4 +88,33 @@ describe('主对话处理子代理等待的审批', () => {
     await waitUntil(() => app.subagents.activeIds().length === 0);
     expect(executions).toBe(1);
   });
+  test.each([true, false])('限流接续不重复工具，最终交付保留已完成结果（恢复=%s）', async recover => {
+    let previews = 0, childCalls = 0; let received: any;
+    app.tools.register({ declaration: { name: 'preview_fixture', description: 'local preview', parameters: { type: 'object', properties: {} } },
+      effects: () => [], execute: async () => { previews++; return { success: true, data: { path: 'preview.html', url: 'http://localhost/preview' } }; } });
+    const snapshot = app.settings.snapshot(); snapshot.settings.agents.find(item => item.id === agent.id)!.toolNames.push('preview_fixture');
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    const root = await app.createConversation('owner', '限流接续');
+    generate = async input => {
+      if (input.conversationId === root.id) {
+        const reply = input.messages.flatMap(message => message.parts).find(part => (part.functionResponse as any)?.name === 'subagents')?.functionResponse as any;
+        if (!reply) return { role: 'model', parts: [{ functionCall: { id: 'launch-preview', name: 'subagents', args: { agentName: 'General Worker', prompt: 'preview once', background: false } } }] };
+        received = reply.response; return answer('parent finished');
+      }
+      childCalls++;
+      if (childCalls === 1) return { role: 'model', parts: [{ functionCall: { id: 'preview-once', name: 'preview_fixture', args: {} } }] };
+      if (childCalls === 2) throw Object.assign(new Error('HTTP 429: rate limit'), { modelRetry: {
+        kind: 'rate_limit', remainingRetries: recover ? 1 : 0, resumeSafe: true, delayMs: 0 } });
+      expect(input.retryCount).toBe(0);
+      expect(input.messages.some(message => message.parts.some(part => (part.functionResponse as any)?.name === 'preview_fixture'))).toBe(true);
+      return answer('preview recovered');
+    };
+    const run = await app.runtime.start({ actorId: 'owner', conversationId: root.id, agentId: agent.id, requestKey: `rate-limit:${recover}`,
+      message: { role: 'user', parts: [{ text: 'preview' }] } });
+    expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(previews).toBe(1);
+    if (recover) { expect(childCalls).toBe(3); expect(received.data.response).toContain('preview recovered'); }
+    else { expect(childCalls).toBe(2); expect(received.success).toBe(false); expect(received.data.response).toContain('preview.html');
+      expect(received.data.response).toContain('continueFromRunId'); }
+  });
+
 });

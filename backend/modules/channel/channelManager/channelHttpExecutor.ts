@@ -8,6 +8,7 @@
 import { t } from '../../../i18n';
 import { Logger } from '../../../core/logger';
 import { ChannelError, ErrorType } from '../types';
+import { retryAfterMilliseconds } from '../../../core/modelRetry';
 import type { HttpRequestOptions, HttpResponse } from '../types';
 import { createProxyFetch, proxyStreamFetch, USER_AGENT } from '../proxyFetch';
 import { parseStreamBuffer } from '../streamBufferParser';
@@ -317,13 +318,16 @@ export class ChannelHttpExecutor {
                     rejectionLogged = true;
                     logResponsesRejection(diagnostic, response.status, errorBody);
                     const upstreamMessage = extractUpstreamErrorMessage(errorBody);
-                    throw new ChannelError(
+                    const error = new ChannelError(
                         ErrorType.API_ERROR,
                         upstreamMessage
                             ? `HTTP ${response.status}: ${upstreamMessage}`
                             : t('modules.channel.errors.apiError', { status: response.status }),
                         errorBody
                     );
+                    error.httpStatus = response.status;
+                    error.retryAfterMs = retryAfterMilliseconds(response.headers.get('retry-after') ?? undefined);
+                    throw error;
                 }
                 
                 if (!response.body) {

@@ -85,6 +85,7 @@ export interface RuntimeRunScope {
   /** 可信调用方取消已受理的启动请求；连接断开不触发此信号。 */
   signal?: AbortSignal;
   modelSelection?: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort'>;
+  modelRetryCount?: number;
 }
 
 function captureRunScope(scope?: RuntimeRunScope): RuntimeRunScope | undefined {
@@ -228,7 +229,7 @@ export class PlatformRuntime {
       ...(typeof source.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: source.deepSeekVisionTileSplit } : {}),
       role: 'user', parts: structuredClone(prepared?.messageParts ?? source.parts), id: source.id || randomUUID(),
       timestamp: now, parentId: history.at(-1)?.id ?? null, actorId: actor.id, isUserInput: true, runId: run.id, requestKey: run.requestKey } : undefined;
-    const selection = { ...modelSelection, promptContext: prepared?.promptContext, turnContext: prepared?.turnContext };
+    const selection = { ...modelSelection, retryCount: scope?.modelRetryCount, promptContext: prepared?.promptContext, turnContext: prepared?.turnContext };
     const configuredAgent = { ...agent, systemPrompt: prepared?.systemPrompt ?? agent.systemPrompt };
     return { actor, workspace, state, catalog, modelSelection, prepared, run, message, selection, configuredAgent };
   }
@@ -287,7 +288,7 @@ export class PlatformRuntime {
   }
 
   private modelInput(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, actor: ActorIdentity, catalog: ToolCatalog,
-    messages: PlatformMessage[], selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext'>, signal: AbortSignal): ModelInput {
+    messages: PlatformMessage[], selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext' | 'retryCount'>, signal: AbortSignal): ModelInput {
     return { conversationId: run.conversationId, ...selection, systemPrompt: agent.systemPrompt, messages,
       taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace },
       tools: structuredClone(catalog.declarations), signal };
@@ -336,7 +337,7 @@ export class PlatformRuntime {
     await Promise.allSettled([...this.active.values()].map(run => run.done));
   }
 
-  private async execute(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext'>): Promise<void> {
+  private async execute(run: RunRecord, agent: AgentDefinition, workspace: WorkspaceDefinition | undefined, catalog: ToolCatalog, signal: AbortSignal, selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext' | 'retryCount'>): Promise<void> {
     const executionController = new AbortController();
     let interrupted = false;
     try {
@@ -538,7 +539,10 @@ export class PlatformRuntime {
       const detached = await this.nativeTools.interrupt(run.id);
       await this.settleInterrupted(run, signal.aborted ? 'CANCELLED' : 'INTERRUPTED', detached);
       interrupted = true;
-      await this.event(run.id, signal.aborted ? 'run.cancelled' : 'run.failed', { error: error instanceof Error ? error.message : String(error) }, {
+      const retry = (error as { modelRetry?: { kind?: string; remainingRetries?: number; resumeSafe?: boolean; delayMs?: number } })?.modelRetry;
+      const modelRetry = retry?.kind === 'rate_limit' && Number.isSafeInteger(retry.remainingRetries) && Number.isFinite(retry.delayMs)
+        ? { kind: 'rate_limit', remainingRetries: retry.remainingRetries, resumeSafe: retry.resumeSafe === true, delayMs: Math.max(0, retry.delayMs!) } : undefined;
+      await this.event(run.id, signal.aborted ? 'run.cancelled' : 'run.failed', { error: error instanceof Error ? error.message : String(error), ...(modelRetry ? { modelRetry } : {}) }, {
         status: signal.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : String(error),
       });
     } finally {

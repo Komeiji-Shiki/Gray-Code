@@ -129,6 +129,8 @@ export interface ModelInput {
   providerId: string;
   modelOverride?: string;
   reasoningEffort?: string;
+  /** 接续已限流的子任务时沿用剩余重试次数，不改变渠道设置。 */
+  retryCount?: number;
   /** 宿主内部任务的独立输出预算，不修改已保存的渠道设置。 */
   maxOutputTokens?: number;
   taskContext?: { actor: Pick<ActorIdentity, 'id' | 'displayName' | 'role'>; workspace?: WorkspaceDefinition };

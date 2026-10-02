@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type { PlatformMessage } from '@graycode/contracts';
-import type { HttpRequestOptions } from '../../../../backend/modules/channel/types';
+import { ChannelError, ErrorType, type HttpRequestOptions } from '../../../../backend/modules/channel/types';
+import { retryAfterMilliseconds } from '../../../../backend/core/modelRetry';
 import { establishConnectTunnel } from '../../../../backend/modules/channel/proxyFetch/proxyConnectTunnel';
 
 type Event = Record<string, any>;
@@ -41,6 +42,11 @@ export class ResponsesWebSocket {
       catch { this.fail(new Error('Responses WebSocket 返回了无效事件。')); }
     });
     socket.on('pong', () => { this.lastActivity = Date.now(); });
+    socket.on('unexpected-response', (_request, response) => {
+      const error = new ChannelError(ErrorType.API_ERROR, `HTTP ${response.statusCode}: Responses WebSocket 握手被拒绝。`);
+      error.httpStatus = response.statusCode; error.retryAfterMs = retryAfterMilliseconds(String(response.headers['retry-after'] ?? ''));
+      response.resume(); this.fail(error);
+    });
     socket.on('error', () => this.fail(new Error('Responses WebSocket 连接失败。')));
     socket.on('close', () => this.fail(new Error('Responses WebSocket 连接已关闭，当前任务不能继续复用响应。')));
     socket.on('open', () => this.pulse());
@@ -113,7 +119,9 @@ export class ResponsesWebSocket {
     }
     if (event.type === 'error') {
       // 错误正文可能包含代理凭据或原始请求，界面只展示结构化状态。
-      this.fail(new Error(`Responses WebSocket 上游拒绝请求 (${event.status ?? 'error'} / ${event.error?.code ?? event.error?.type ?? 'unknown'})。`));
+      const error = new ChannelError(ErrorType.API_ERROR, `Responses WebSocket 上游拒绝请求 (${event.status ?? 'error'} / ${event.error?.code ?? event.error?.type ?? 'unknown'})。`, event.error);
+      error.httpStatus = typeof event.status === 'number' ? event.status : undefined;
+      this.fail(error);
       return;
     }
     if (event.type === 'response.created') {

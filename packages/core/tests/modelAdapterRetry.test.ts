@@ -6,7 +6,7 @@ import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
 import { buildChannelConfig } from '../../../apps/server/src/model/capabilities';
 import type { ChannelConfig } from '../../../backend/modules/config/types';
 
-type Reply = { status?: number; chunks?: unknown[]; done?: boolean; body?: unknown };
+type Reply = { status?: number; chunks?: unknown[]; done?: boolean; body?: unknown; headers?: Record<string, string> };
 const thinking = (text: string) => ({ choices: [{ delta: { reasoning_content: text }, finish_reason: null }] });
 const content = (text: string) => ({ choices: [{ delta: { content: text }, finish_reason: null }] });
 const stop = { choices: [{ delta: {}, finish_reason: 'stop' }] };
@@ -22,7 +22,7 @@ describe('模型适配器按渠道设置重试空回复', () => {
     server = createServer(async (req, res) => {
       for await (const _ of req) { /* 读完请求正文 */ }
       const reply = replies[Math.min(requests, replies.length - 1)]; requests++;
-      if (reply.body !== undefined) { res.writeHead(reply.status ?? 200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(reply.body)); return; }
+      if (reply.body !== undefined) { res.writeHead(reply.status ?? 200, { 'Content-Type': 'application/json', ...reply.headers }); res.end(JSON.stringify(reply.body)); return; }
       res.writeHead(reply.status ?? 200, { 'Content-Type': 'text/event-stream' });
       for (const chunk of reply.chunks ?? []) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
       res.end(reply.done === false ? '' : 'data: [DONE]\n\n');
@@ -91,4 +91,27 @@ describe('模型适配器按渠道设置重试空回复', () => {
     await expect(pending).rejects.toThrow('Cancelled by user.');
     expect(requests).toBe(1);
   });
+  // HTTP 限流沿用真实本机夹具，避免只验证错误字符串。
+  test('429 尊重 Retry-After，余额错误不重试，接续预算不会重新增加', async () => {
+    replies = [{ status: 429, headers: { 'Retry-After': '0.02' }, body: { error: { code: 'rate_limit_exceeded', message: 'rate limit' } } },
+      { chunks: [content('恢复'), stop] }];
+    const retries: Array<{ nextRetryIn: number }> = [];
+    expect((await adapter().generate(input({ onRetry: status => retries.push(status) }))).parts).toContainEqual({ text: '恢复' });
+    expect(requests).toBe(2); expect(retries[0].nextRetryIn).toBe(20);
+    requests = 0; replies = [{ status: 429, body: { error: { code: 'insufficient_quota', message: 'no balance' } } }];
+    await expect(adapter().generate(input())).rejects.toMatchObject({ type: 'API_ERROR' }); expect(requests).toBe(1);
+    requests = 0; replies = [{ status: 429, headers: { 'Retry-After': '0' }, body: { error: { message: 'rate limit' } } }];
+    await expect(adapter().generate(input({ retryCount: 1 }))).rejects.toMatchObject({ modelRetry: { remainingRetries: 0 } });
+    expect(requests).toBe(2);
+  });
+  test('原生连接握手限流保留状态和等待时间，供子代理按剩余次数接续', async () => {
+    profile.protocol = 'openai-responses';
+    channel = { ...buildChannelConfig(profile, input(), ''), responsesWebSocketEnabled: true, retryEnabled: true, retryCount: 1, retryInterval: 1 } as ChannelConfig;
+    server.on('upgrade', (_req, socket) => { requests++; socket.end('HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); });
+    await expect(adapter().generate(input({ runId: 'native-rate-limit' }))).rejects.toMatchObject({
+      httpStatus: 429, modelRetry: { remainingRetries: 1, resumeSafe: true, delayMs: 0 } });
+    expect(requests).toBe(1);
+  });
+
 });
+

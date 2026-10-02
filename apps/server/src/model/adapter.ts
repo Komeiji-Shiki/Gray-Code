@@ -13,6 +13,8 @@ import { repairDuplicateFunctionResponses } from "../../../../backend/modules/co
 import { extractUpstreamErrorMessage, partHasContent } from "../../../../backend/modules/channel/channelManager/channelResponseHelpers";
 import { ChannelError, ErrorType } from "../../../../backend/modules/channel/types";
 import { isRetryableError } from "../../../../backend/core/errors";
+import { isPermanentModelFailure, isTransientRateLimit, modelRetryInterval, retryAfterMilliseconds } from '../../../../backend/core/modelRetry';
+import { createHash } from 'node:crypto';
 import type { Content } from "../../../../backend/modules/conversation/types";
 import type { GenerateRequest } from "../../../../backend/modules/channel/types";
 import type { ToolDeclaration } from "../../../../backend/tools/types";
@@ -55,6 +57,7 @@ export class ProviderModelAdapter implements ModelProvider {
   private readonly http: ChannelHttpExecutor;
   private readonly sockets = new Map<string, { socket: ResponsesWebSocket; formatInput: (messages: PlatformMessage[]) => any[] }>();
   private readonly runIdentities = new Map<string, string>();
+  private readonly rateLimits = new Map<string, number>();
   hasContinuation(runId: string): boolean { return this.sockets.get(runId)?.socket.hasContinuation() ?? false; }
   endRun(runId: string): void { this.sockets.get(runId)?.socket.close(); this.sockets.delete(runId); this.runIdentities.delete(runId); }
   async steer(runId: string, message: PlatformMessage): Promise<boolean> {
@@ -176,7 +179,10 @@ export class ProviderModelAdapter implements ModelProvider {
       options.url = `${CHATGPT_API_BASE_URL}/responses`;
       options.stream = true;
     }
-    return { profile, config, formatter, options, credentialIdentity: subscriptionCredential?.identity };
+    const rateLimitKey = createHash('sha256').update(JSON.stringify([new URL(options.url).origin, subscriptionCredential?.identity ?? Object.entries(options.headers ?? {})
+      .filter(([key]) => ['authorization', 'x-api-key', 'api-key', 'x-goog-api-key', 'chatgpt-account-id'].includes(key.toLowerCase()))
+      .sort(([left], [right]) => left.localeCompare(right)), new URL(options.url).searchParams.get('key')])).digest('hex');
+    return { profile, config, formatter, options, rateLimitKey, credentialIdentity: subscriptionCredential?.identity };
   }
   /** 使用真实协议格式器生成正文；预览不读取凭据，也不执行 HTTP 请求。 */
   async preview(input: ModelInput) {
@@ -202,7 +208,19 @@ export class ProviderModelAdapter implements ModelProvider {
     const capture = async (body: any) => { await input.onRequest?.({ protocol: profile.protocol, model: config.model, body, metrics: modelRequestMetrics(body) }); };
     let captured: Promise<void> | undefined;
     if (native) {
-      socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal);
+      await this.waitRateLimit(prepared.rateLimitKey, input.signal);
+      try { socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal); }
+      catch (error) {
+        if (isTransientRateLimit(error) && error instanceof Error) {
+          const retry = config as ChannelConfig & { retryEnabled?: boolean; retryCount?: number; retryInterval?: number };
+          const delayMs = modelRetryInterval(error, 0, retry.retryInterval ?? 3000);
+          this.rateLimits.set(prepared.rateLimitKey, Math.max(this.rateLimits.get(prepared.rateLimitKey) ?? 0, Date.now() + delayMs));
+          Object.assign(error, { modelRetry: { kind: 'rate_limit', resumeSafe: true,
+            remainingRetries: this.services.channel && retry.retryEnabled !== false ? Math.min(retry.retryCount ?? 3, input.retryCount ?? Infinity) : 0,
+            delayMs } });
+        }
+        throw error;
+      }
       const formatInput = (messages: PlatformMessage[]) => formatter.buildRequest({ configId: config.id, conversationId: input.conversationId,
         history: messages as Content[], dynamicContextStrategy: 'preserve', skipTools: true }, config).body.input;
       this.sockets.set(input.runId!, { socket, formatInput });
@@ -227,22 +245,40 @@ export class ProviderModelAdapter implements ModelProvider {
    * 不重试：重新请求会重复已显示的内容或重复执行工具。只显示了思考的空回复可以重试，并通过 onRetry
    * 通知运行器丢弃这次思考。请求快照只在第一次尝试时记录。
    */
+  private async waitRateLimit(key: string, signal: AbortSignal): Promise<void> {
+    // 同一账户的 HTTP 与原生连接共用冷却期限；期间延长的期限也要继续等待。
+    for (;;) {
+      const until = this.rateLimits.get(key);
+      if (!until) return;
+      if (until > Date.now()) await retryDelay(until - Date.now(), signal);
+      if (this.rateLimits.get(key) === until) { this.rateLimits.delete(key); return; }
+    }
+  }
   private async receiveWithRetry(input: ModelInput, prepared: Awaited<ReturnType<ProviderModelAdapter['prepare']>>,
     native: boolean, socket: ResponsesWebSocket | undefined, source: AsyncIterable<any> | undefined): Promise<PlatformMessage> {
     const config = prepared.config as ChannelConfig & { retryEnabled?: boolean; retryCount?: number; retryInterval?: number };
     // 没有渠道配置的调用（内部快捷配置）不启用重试。
     const configured = !!this.services.channel && config.retryEnabled !== false;
-    const maxRetries = configured && !native ? Math.max(0, Math.floor(Number(config.retryCount ?? 3)) || 0) : 0;
+    const configuredRetries = configured ? Math.max(0, Math.floor(Number(config.retryCount ?? 3)) || 0) : 0;
+    const retryBudget = Math.min(configuredRetries, input.retryCount ?? configuredRetries);
+    const maxRetries = native ? 0 : retryBudget;
     const interval = Math.max(0, Number(config.retryInterval ?? 3000) || 0);
+    const limitKey = prepared.rateLimitKey;
     for (let attempt = 0; ; attempt++) {
       const state: AttemptState = { visible: false, issued: 0 };
       try {
+        await this.waitRateLimit(limitKey, input.signal);
         return await this.receive(input, prepared, native, socket, attempt === 0 ? source : undefined, state);
       } catch (error) {
-        const retryable = error instanceof ChannelError && isRetryableError(error.type);
+        const limited = isTransientRateLimit(error);
+        const delay = modelRetryInterval(error, attempt, interval);
+        if (limited) this.rateLimits.set(limitKey, Math.max(this.rateLimits.get(limitKey) ?? 0, Date.now() + delay));
+        if (limited && error instanceof Error) Object.assign(error, { modelRetry: { kind: 'rate_limit',
+          remainingRetries: retryBudget - attempt, resumeSafe: state.issued === 0, delayMs: delay } });
+        const retryable = error instanceof ChannelError && isRetryableError(error.type) && !isPermanentModelFailure(error);
         if (!retryable || attempt >= maxRetries || input.signal.aborted || state.visible || state.issued > 0) throw error;
-        input.onRetry?.({ attempt: attempt + 1, maxAttempts: maxRetries, error: error.message, nextRetryIn: interval });
-        await retryDelay(interval, input.signal);
+        input.onRetry?.({ attempt: attempt + 1, maxAttempts: maxRetries, error: error.message, nextRetryIn: delay });
+        if (!limited) await retryDelay(delay, input.signal);
       }
     }
   }
@@ -254,9 +290,12 @@ export class ProviderModelAdapter implements ModelProvider {
       const requestStartedAt = Date.now();
       const response = await this.http.executeRequest(options, input.signal);
       const responseDuration = Date.now() - requestStartedAt;
-      if (response.status < 200 || response.status >= 300)
-        throw new ChannelError(ErrorType.API_ERROR,
+      if (response.status < 200 || response.status >= 300) {
+        const error = new ChannelError(ErrorType.API_ERROR,
           `HTTP ${response.status}: ${extractUpstreamErrorMessage(response.body) ?? "Model request failed."}`, response.body);
+        error.httpStatus = response.status; error.retryAfterMs = retryAfterMilliseconds(response.headers['retry-after']);
+        throw error;
+      }
       // 非流式上游只能确认完整请求耗时，无法把整次耗时当作首字延迟或思考耗时。
       const content = formatter.parseResponse(response.body).content as PlatformMessage;
       if (!content.parts.some(part => visiblePart(part)))
