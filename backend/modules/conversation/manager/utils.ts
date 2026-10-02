@@ -6,8 +6,8 @@
  * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
  */
 
-import type { Content, ConversationHistory } from '../types';
-import type { IStorageAdapter } from '../storage';
+import type { Content, ContentPart, ConversationHistory } from '../types';
+import type { HistoryOutlineEntry, IStorageAdapter } from '../storage';
 import { needsNodeIdMigration } from './nodeId';
 import { isPlaceholderToolResponse } from './historyRepair';
 
@@ -44,6 +44,36 @@ export interface InitialPageScan {
     needsNodeIdMigration: boolean;
     /** 该会话当前活跃（未终结）任务的 ID 集合；undefined 表示存储不支持或不提供该信息。 */
     activeRunIds?: Set<string>;
+    /**
+     * 扫描时已经完整读取的历史（存储不提供摘要时）。无异常且无需迁移时调用方直接复用，
+     * 不再为同一份历史读取第二次。
+     */
+    history?: ConversationHistory;
+    /** 扫描使用的存储摘要；导航标记和按 ID 定位在正常历史上直接用它得出结果。 */
+    outline?: HistoryOutlineEntry[];
+}
+
+/**
+ * 把存储摘要还原成只含配对字段的消息骨架，让摘要与完整历史共用同一套扫描与迁移判据。
+ * 响应里只保留 isPlaceholderToolResponse 会检查的结构标记。
+ */
+function outlineSkeleton(entry: HistoryOutlineEntry): Content {
+    const parts: ContentPart[] = [];
+    for (const call of entry.calls ?? []) {
+        parts.push({ functionCall: { id: call.id, name: '', args: {}, ...(call.rejected ? { rejected: true } : {}) } });
+    }
+    for (const response of entry.responses ?? []) {
+        const { id, ...flags } = response;
+        parts.push({ functionResponse: { id, name: '', response: flags } });
+    }
+    return {
+        role: entry.role as Content['role'],
+        parts,
+        ...(entry.id ? { id: entry.id } : {}),
+        ...(entry.hasParentId ? { parentId: null } : {}),
+        ...(entry.runId ? { runId: entry.runId } : {}),
+        ...(entry.isFunctionResponse ? { isFunctionResponse: true } : {}),
+    } as Content;
 }
 
 /**
@@ -60,8 +90,9 @@ export async function scanHistoryForInitialPage(
     storage: IStorageAdapter,
     conversationId: string
 ): Promise<InitialPageScan> {
-    const result = await storage.loadHistoryWithStatus(conversationId);
-    const history = result.value;
+    // 存储提供摘要时只读取配对所需的字段；读取失败或不存在时仍走完整读取，保持原有错误与不存在语义。
+    const outline = storage.loadHistoryOutline ? (await storage.loadHistoryOutline(conversationId)).value ?? undefined : undefined;
+    const history = outline ? outline.map(outlineSkeleton) : (await storage.loadHistoryWithStatus(conversationId)).value;
     if (!history) return { hasUnresolvedCalls: false, hasResponseAnomalies: false, needsNodeIdMigration: false };
 
     // 查询失败时无法断言任务已经结束，必须保留原历史，不能按闲置状态补写拒绝结果。
@@ -107,6 +138,7 @@ export async function scanHistoryForInitialPage(
         hasResponseAnomalies,
         needsNodeIdMigration: needsNodeIdMigration(history),
         ...(activeRunIds ? { activeRunIds } : {}),
+        ...(outline ? { outline } : { history }),
     };
 }
 

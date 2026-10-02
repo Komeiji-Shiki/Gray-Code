@@ -92,6 +92,19 @@ export interface SubAgentTranscriptData {
     };
 }
 
+/** 与平台存储的历史摘要条目结构一致；这里按结构声明，避免旧宿主依赖平台核心。 */
+export interface HistoryOutlineEntry {
+    role: string;
+    id?: string;
+    /** parentId 字段是否存在（null 也算存在） */
+    hasParentId: boolean;
+    runId?: string;
+    isFunctionResponse?: boolean;
+    calls?: Array<{ id: string; rejected?: true }>;
+    responses?: Array<{ id: string; rejected?: true; cancelled?: true; code?: string }>;
+    preview?: string;
+}
+
 export interface IStorageAdapter {
     /** Atomically create metadata and empty history when the storage supports transactions. */
     createConversation?(metadata: ConversationMetadata): Promise<void>;
@@ -181,6 +194,12 @@ export interface IStorageAdapter {
      * undefined，读取路径保持原行为（不跳过）。
      */
     listActiveRunIds?(conversationId: string): Promise<Set<string> | undefined>;
+
+    /**
+     * 整段历史的轻量摘要（可选）：只含角色、节点 ID、工具调用/响应配对标记与用户消息预览。
+     * 导航标记、楼层、按 ID 定位与首屏异常扫描用它代替完整读取；未实现时调用方回退完整历史。
+     */
+    loadHistoryOutline?(conversationId: string): Promise<StorageReadResult<HistoryOutlineEntry[]>>;
 
     /** 读取修复使用：空闲状态和历史版本必须在写入事务内验证，冲突时只返回最新历史。 */
     mutateHistoryIfIdle?(conversationId: string, mutator: (history: ConversationHistory) => ConversationHistory): Promise<ConversationHistory>;

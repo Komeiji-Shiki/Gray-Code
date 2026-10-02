@@ -103,7 +103,8 @@ export class ConversationManager {
     constructor(private storage: IStorageAdapter, private readonly usageIndexStore?: UsageIndexStore) {
         this.query = new ConversationQueryService({
             storage,
-            loadHistory: (conversationId, workspaceUri) => this.loadHistory(conversationId, workspaceUri),
+            loadHistory: (conversationId, workspaceUri, preloaded) => this.loadHistory(conversationId, workspaceUri, preloaded),
+            isDeleted: conversationId => this.deletedConversationIds.has(conversationId),
             ensureHistoryNodeIds: conversationId => this.ensureHistoryNodeIds(conversationId),
             mutateHistoryForDisplay: (conversationId, mutator, workspaceUri) => {
                 const mutate = this.storage.mutateHistoryIfIdle?.bind(this.storage);
@@ -1087,11 +1088,13 @@ export class ConversationManager {
      *                     若不绑定 workspaceUri，记忆工具执行时会回退全局，造成跨工作区污染）。
      *                     默认 undefined 保持向后兼容；webview 读取入口可传入当前工作区 URI。
      */
-    private async loadHistory(conversationId: string, workspaceUri?: string): Promise<ConversationHistory> {
+    private async loadHistory(conversationId: string, workspaceUri?: string, preloaded?: ConversationHistory): Promise<ConversationHistory> {
         if (this.deletedConversationIds.has(conversationId)) {
             // 已删除会话：读路径不再自动重建（防止删除后读操作把会话“复活”为空历史）
             return [];
         }
+        // 调用方刚完整读取过且未修改的历史（只可能来自存在的会话），直接复用。
+        if (preloaded) return preloaded;
         const result = await this.storage.loadHistoryWithStatus(conversationId);
         if (result.value) {
             return result.value;

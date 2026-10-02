@@ -158,13 +158,31 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   const localMarkerByMessage = new WeakMap<Message, MessageMarker>()
   const sameMarkers = (left: readonly MessageMarker[], right: readonly MessageMarker[]) =>
     left.length === right.length && left.every((marker, index) => marker === right[index])
+  // 助手正文流式更新只替换助手消息；用户楼层的对象、位置和服务端标记都未变时不再重建与排序。
+  let lastServerMarkers: readonly MessageMarker[] | null = null
+  let lastUserMessages: Message[] = []
+  let lastUserIndices: number[] = []
   // 标记集合未变时返回同一数组，滚动条不会因为每批流式增量重新测量布局。
   const allMessageMarkers = computed<MessageMarker[]>((previous) => {
-    const byIndex = new Map<number, MessageMarker>()
-    for (const marker of messageMarkers.value) byIndex.set(marker.index, marker)
+    const serverMarkers = messageMarkers.value
+    const userMessages: Message[] = []
+    const userIndices: number[] = []
     for (const message of props.messages) {
       if (message.role !== 'user' || message.isFunctionResponse || typeof message.backendIndex !== 'number') continue
-      if (byIndex.has(message.backendIndex)) continue
+      userMessages.push(message)
+      userIndices.push(message.backendIndex)
+    }
+    const unchanged = previous && serverMarkers === lastServerMarkers && userMessages.length === lastUserMessages.length
+      && userMessages.every((message, index) => message === lastUserMessages[index] && userIndices[index] === lastUserIndices[index])
+    lastServerMarkers = serverMarkers
+    lastUserMessages = userMessages
+    lastUserIndices = userIndices
+    if (unchanged) return previous
+
+    const byIndex = new Map<number, MessageMarker>()
+    for (const marker of serverMarkers) byIndex.set(marker.index, marker)
+    for (const message of userMessages) {
+      if (typeof message.backendIndex !== 'number' || byIndex.has(message.backendIndex)) continue
       const raw = toRaw(message)
       let marker = localMarkerByMessage.get(raw)
       if (!marker || marker.index !== message.backendIndex) {

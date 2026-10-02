@@ -9,7 +9,7 @@
 
 import { t } from '../../../i18n';
 import type { Content, ContentPart, ConversationHistory, MessageFilter, MessagePosition } from '../types';
-import type { IStorageAdapter } from '../storage';
+import type { HistoryOutlineEntry, IStorageAdapter } from '../storage';
 import { ensureNodeId, needsNodeIdMigration } from './nodeId';
 import { findFunctionResponseInsertIndex, messageRunId, scanHistoryForInitialPage } from './utils';
 import type { InitialPageScan } from './utils';
@@ -19,7 +19,10 @@ import { toDisplayMessages } from './historyFormatting';
 /** ConversationQueryService 依赖的 ConversationManager 能力（委托绑定） */
 export interface ConversationQueryContext {
     storage: IStorageAdapter;
-    loadHistory(conversationId: string, workspaceUri?: string): Promise<ConversationHistory>;
+    /** preloaded：调用方刚从存储完整读取、未修改的历史；已删除会话仍按原语义返回空历史。 */
+    loadHistory(conversationId: string, workspaceUri?: string, preloaded?: ConversationHistory): Promise<ConversationHistory>;
+    /** 会话是否已被本管理器删除（删除进行中也算）；摘要快路径不能让已删除会话重新显示。 */
+    isDeleted(conversationId: string): boolean;
     ensureHistoryNodeIds(conversationId: string): Promise<boolean>;
     mutateHistoryForDisplay(conversationId: string, mutator: (history: ConversationHistory) => ConversationHistory, workspaceUri?: string): Promise<ConversationHistory>;
 }
@@ -106,12 +109,17 @@ export class ConversationQueryService {
         // （清理重复响应），不能再复用仍标记异常的陈旧扫描——否则会重复进入 mutateContents
         // （深拷贝 + 写锁）路径。降级为「异常已处理，仅按 needsNodeIdMigration 决定是否补 ID
         // （幂等）」；hasUnresolvedCalls / hasResponseAnomalies 原本为 false 时该降级与原始
-        // 扫描等价（行为不变）。
+        // 扫描等价（行为不变）。扫描时读到的完整历史只在没有任何写回（异常修复或补 ID）时复用。
+        const untouched = initialPageScan && !initialPageScan.hasUnresolvedCalls && !initialPageScan.hasResponseAnomalies
+            && !initialPageScan.needsNodeIdMigration;
         const history = await this.normalizeHistoryForDisplay(
             conversationId,
             workspaceUri,
             initialPageScan
-                ? { hasUnresolvedCalls: false, hasResponseAnomalies: false, needsNodeIdMigration: initialPageScan.needsNodeIdMigration }
+                ? {
+                    hasUnresolvedCalls: false, hasResponseAnomalies: false, needsNodeIdMigration: initialPageScan.needsNodeIdMigration,
+                    ...(untouched && initialPageScan.history ? { history: initialPageScan.history } : {})
+                }
                 : undefined
         );
 
@@ -149,7 +157,21 @@ export class ConversationQueryService {
     ): Promise<{ total: number; markers: Array<{ index: number; id?: string; preview?: string }>; floorIndices: number[] }> {
         // 与 getMessagesPaged 使用同一显示规范化入口，保证悬空工具响应插入、Bot
         // 来源格式化和稳定 ID 迁移后，marker 的绝对索引仍与前端真实分页一致。
-        const history = await this.normalizeHistoryForDisplay(conversationId);
+        // 正常历史（无异常、无需迁移）直接用扫描时的存储摘要生成，不再完整读取历史；
+        // 摘要与完整历史按同一口径生成预览和楼层。
+        const scan = await scanHistoryForInitialPage(this.ctx.storage, conversationId);
+        const outline = this.cleanOutline(conversationId, scan);
+        if (outline) {
+            const markers: Array<{ index: number; id?: string; preview?: string }> = [];
+            const floorIndices: number[] = [];
+            outline.forEach((entry, index) => {
+                if (entry.role === 'model' || (entry.role === 'user' && !entry.isFunctionResponse)) floorIndices.push(index);
+                if (entry.role !== 'user' || entry.isFunctionResponse) return;
+                markers.push({ index, ...(entry.id ? { id: entry.id } : {}), ...(entry.preview ? { preview: entry.preview } : {}) });
+            });
+            return { total: outline.length, markers, floorIndices };
+        }
+        const history = await this.normalizeHistoryForDisplay(conversationId, undefined, scan);
         const markers: Array<{ index: number; id?: string; preview?: string }> = [];
         const floorIndices: number[] = [];
 
@@ -181,9 +203,18 @@ export class ConversationQueryService {
     /** 搜索结果按稳定 ID 解析显示索引，避免旧历史规范化时插入消息造成偏移。 */
     async getMessagePosition(conversationId: string, messageId: string): Promise<{ index?: number }> {
         if (typeof messageId !== 'string' || !messageId || messageId.length > 512) return {};
-        const history = await this.normalizeHistoryForDisplay(conversationId);
-        const index = history.findIndex(message => message.id === messageId);
+        const scan = await scanHistoryForInitialPage(this.ctx.storage, conversationId);
+        const outline = this.cleanOutline(conversationId, scan);
+        const index = outline
+            ? outline.findIndex(entry => entry.id === messageId)
+            : (await this.normalizeHistoryForDisplay(conversationId, undefined, scan)).findIndex(message => message.id === messageId);
         return index >= 0 ? { index } : {};
+    }
+
+    /** 只有不需要任何显示修复的历史，摘要的绝对索引才与规范化后的分页一致。 */
+    private cleanOutline(conversationId: string, scan: InitialPageScan): HistoryOutlineEntry[] | undefined {
+        if (!scan.outline || scan.hasUnresolvedCalls || scan.hasResponseAnomalies || scan.needsNodeIdMigration) return undefined;
+        return this.ctx.isDeleted(conversationId) ? undefined : scan.outline;
     }
 
     /**
@@ -294,8 +325,10 @@ export class ConversationQueryService {
             if (initialScan.needsNodeIdMigration) {
                 // BR-02：缺 id 才在写锁内补 ID（幂等迁移），补写后锁外重读
                 await this.ctx.ensureHistoryNodeIds(conversationId);
+                return await this.ctx.loadHistory(conversationId, workspaceUri);
             }
-            return await this.ctx.loadHistory(conversationId, workspaceUri);
+            // 扫描已完整读取且未发生写回时复用同一份历史，避免紧接着再全量读一次。
+            return await this.ctx.loadHistory(conversationId, workspaceUri, initialScan.history);
         }
 
         return await this.ctx.mutateHistoryForDisplay(conversationId, history => {

@@ -293,6 +293,26 @@ describe('消息窗口分页与连续定位', () => {
     wrapper.unmount()
   })
 
+  test('助手正文更新不重建用户标记，用户楼层变化时才重算', async () => {
+    const { wrapper, state, navigation } = mountWindow(false, 0, 4)
+    state.messages[1] = { ...state.messages[1], role: 'assistant', content: '回答' }
+    state.messages[3] = { ...state.messages[3], role: 'assistant', content: '流式' }
+    await flushPromises()
+    const initial = navigation.messageMarkers.value
+    expect(initial.map(marker => marker.index)).toEqual([0, 2])
+    for (let chunk = 0; chunk < 5; chunk++) {
+      state.messages[3] = { ...state.messages[3], content: `流式 ${chunk}` }
+      await nextTick()
+      expect(navigation.messageMarkers.value).toBe(initial)
+    }
+    state.messages = [...state.messages, { ...messages(4, 1)[0], content: '新的问题' }]
+    await nextTick()
+    expect(navigation.messageMarkers.value).not.toBe(initial)
+    expect(navigation.messageMarkers.value.map(marker => [marker.index, marker.preview])).toEqual([[0, 'message'], [2, 'message'], [4, '新的问题']])
+    expect(navigation.messageMarkers.value[0]).toBe(initial[0])
+    wrapper.unmount()
+  })
+
   test('中段向下阅读时分页连续重叠、保留锚点，并最终到达真实尾部', async () => {
     const { wrapper, state, chatStore, navigation } = mountWindow(true)
     chatStore.totalMessages = 1250

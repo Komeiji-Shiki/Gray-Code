@@ -2,7 +2,7 @@ import { PlatformStorage, PlatformStorageError, type PlatformMessage } from '@gr
 import type { Content, ConversationHistory, ConversationMetadata, HistorySnapshot } from './types';
 import type {
   IStorageAdapter, StorageReadResult, StorageHistoryPage, ConversationStorageIntegrity,
-  HistoryIndexInfo, SubAgentTranscriptData,
+  HistoryIndexInfo, SubAgentTranscriptData, HistoryOutlineEntry,
 } from './storageTypes';
 
 function toPlatform(content: Content): PlatformMessage {
@@ -52,6 +52,16 @@ export class SqliteStorageAdapter implements IStorageAdapter {
       return new Set(runs.map(run => run.id));
   }
 
+  loadHistoryOutline(id: string): Promise<StorageReadResult<HistoryOutlineEntry[]>> {
+    return this.read(async () => {
+      try { return (await this.platform.readHistoryOutline(id)).entries; }
+      catch (error) {
+        if (error instanceof PlatformStorageError && error.code === 'NOT_FOUND') return null;
+        throw error;
+      }
+    });
+  }
+
   async mutateHistoryIfIdle(id: string, mutator: (history: ConversationHistory) => ConversationHistory): Promise<ConversationHistory> {
     const page = await this.platform.readFullHistory(id);
     const history = page.messages as ConversationHistory;
@@ -97,8 +107,9 @@ export class SqliteStorageAdapter implements IStorageAdapter {
     const ids: string[] = [];
     let cursor: { updatedAt: number; id: string } | undefined;
     do {
-      const page = await this.platform.listConversations({ limit: 1000, cursor });
-      ids.push(...page.items.map(item => item.id)); cursor = page.nextCursor;
+      // 只取编号：不读取历史信息，也不解码元数据。
+      const page = await this.platform.listConversationIds({ limit: 1000, cursor });
+      ids.push(...page.ids); cursor = page.nextCursor;
     } while (cursor);
     return ids;
   }
