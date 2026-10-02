@@ -117,7 +117,20 @@ describe('workspace checkpoints application contract', () => {
     expect(checkpoint.messageNodeId).toBe(nodeId);
     const reread = await app.checkpoints.get('owner', 'protected', checkpoint.id);
     expect(reread.messageNodeId).toBe(nodeId);
+    const otherCheckpoints = [await app.checkpoints.create('owner', 'protected', { messageId: nodeId }),
+      await app.checkpoints.create('owner', 'protected', { messageId: nodeId })];
+    await app.productUi.call(owner, 'ui.settings.begin', {});
+    await app.productUi.call(owner, 'checkpoint.updateConfig', { config: { maxCheckpoints: 1 } });
+    await app.productUi.call(owner, 'ui.settings.save', {});
+    await app.productUi.call(owner, 'ui.settings.end', {});
+    const reads = jest.spyOn(app.storage, 'readConversationState');
+    const deletions = jest.spyOn(app.checkpoints, 'delete');
+    expect(await app.checkpoints.prune('owner', 'protected')).toEqual({ deleted: 0, skipped: 2 });
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(deletions).not.toHaveBeenCalled();
+    reads.mockRestore(); deletions.mockRestore();
     await expect(app.checkpoints.delete('owner', 'protected', checkpoint.id)).rejects.toThrow('仍被历史或分支引用');
+    for (const other of otherCheckpoints) await app.checkpoints.delete('owner', 'protected', other.id, { force: true });
     await app.checkpoints.delete('owner', 'protected', checkpoint.id, { force: true });
     expect(await app.checkpoints.list('owner', 'protected')).toHaveLength(0);
   });

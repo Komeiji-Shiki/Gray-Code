@@ -307,6 +307,16 @@ export class WorkspaceCheckpoints {
       throw error;
     }
   }
+  private async checkpointReferences(conversationId: string) {
+    const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
+    const branch = state.records.find(item => item.namespace === branchNamespace)?.record.value as BranchState | undefined;
+    if (branch && !validate(branch.graph).valid) throw new Error('分支记录损坏，无法确认检查点引用，未删除。');
+    const nodes = Object.values(branch?.graph.nodes ?? {});
+    const messageIds = new Set([...state.history.messages.map(message => message.id), ...nodes.map(node => node.id)]);
+    const checkpointIds = new Set(nodes.map(node => node.workspaceCheckpointId));
+    return (checkpoint: Pick<WorkspaceCheckpoint, 'id' | 'messageNodeId'>) =>
+      Boolean(checkpoint.messageNodeId && messageIds.has(checkpoint.messageNodeId)) || checkpointIds.has(checkpoint.id);
+  }
   /**
    * A1：删除单个检查点（含不再被引用的内容记录）。
    *
@@ -320,17 +330,13 @@ export class WorkspaceCheckpoints {
     const checkpoint = await this.get(actorId, conversationId, checkpointId);
     return this.app.files.transaction(workspace, async () => {
       if (!options.force) {
-        const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
-        const branch = state.records.find(item => item.namespace === branchNamespace)?.record.value as BranchState | undefined;
-        if (branch && !validate(branch.graph).valid) throw new Error('分支记录损坏，无法确认检查点引用，未删除。');
-        const referenced = (checkpoint.messageNodeId && state.history.messages.some(message => message.id === checkpoint.messageNodeId)) ||
-          Object.values(branch?.graph.nodes ?? {}).some(node => node.id === checkpoint.messageNodeId || node.workspaceCheckpointId === checkpointId);
-        if (referenced) throw new Error('检查点仍被历史或分支引用，未删除。');
+        const referenced = await this.checkpointReferences(conversationId);
+        if (referenced(checkpoint)) throw new Error('检查点仍被历史或分支引用，未删除。');
       }
       const shared = new Set<string>();
       for (const id of await this.app.storage.listRecords(namespace, conversationId)) {
         if (id === checkpoint.id) continue;
-        const other = await this.app.storage.getRecord(namespace, id) as WorkspaceCheckpoint | null;
+        const other = (await this.app.storage.getVersionedRecord(namespace, id, { fields: ['contentIds'] })).value as Pick<WorkspaceCheckpoint, 'contentIds'> | null;
         for (const contentId of Object.values(other?.contentIds ?? {})) shared.add(contentId);
       }
       const contentIds = [...new Set(Object.values(checkpoint.contentIds))].filter(id => !shared.has(id));
@@ -353,8 +359,14 @@ export class WorkspaceCheckpoints {
     const values = await this.listMetadata(actorId, conversationId);
     const overflow = values.length - max;
     if (overflow <= 0) return { deleted: 0, skipped: 0 };
+    // 同一批清理只读取一次引用集合，不能为每个受保护存档反复加载长历史和完整快照。
+    // 真正删除时仍在文件锁内重读引用，保留并发新增历史或分支的保护。
+    let referenced: Awaited<ReturnType<WorkspaceCheckpoints['checkpointReferences']>>;
+    try { referenced = await this.checkpointReferences(conversationId); }
+    catch { return { deleted: 0, skipped: overflow }; }
     let deleted = 0; let skipped = 0;
     for (const value of values.slice(0, overflow)) {
+      if (referenced(value)) { skipped++; continue; }
       try { await this.delete(actorId, conversationId, value.id); deleted++; }
       catch { skipped++; }
     }

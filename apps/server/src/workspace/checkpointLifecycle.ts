@@ -18,10 +18,13 @@ export class CheckpointLifecycle {
   async beforeRun(run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal) {
     const config = this.app.product.runtimeSettings().getCheckpointConfig();
     if (!workspace || !config.enabled) return;
+    const phases = (['before', 'after'] as const).filter(phase =>
+      config.messageCheckpoint?.[phase === 'before' ? 'beforeMessages' : 'afterMessages'].includes('user'));
+    if (!phases.length) return;
     const page = await this.app.storage.readFullHistory(run.conversationId);
     const input = page.messages.find(message => message.runId === run.id && message.isUserInput);
     if (!input) return;
-    for (const phase of ['before', 'after'] as const) if (config.messageCheckpoint?.[phase === 'before' ? 'beforeMessages' : 'afterMessages'].includes('user'))
+    for (const phase of phases)
       await this.capture(run, { phase, toolName: 'user_message', messageId: input.id, signal, capturedWorkspace: workspace });
   }
   async modelBoundary(run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal, phase: 'before' | 'after', iteration: number, message?: PlatformMessage) {
