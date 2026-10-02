@@ -10,13 +10,17 @@ import { bindLanguageDocument, editorUri } from "../languages";
 import { bindEditorUndo, workspaceEditorServices } from '../editorWorkspaceEdits';
 import { bindEditorDebugging } from '../editorDebugging';
 import { documentLanguageId, editorLanguageId } from '../../../../shared/documentLanguages';
+import { documentChangeRegion, type DocumentChangeRegion } from '../../../../shared/documentPatch';
 const props = defineProps<{ workspaceId: string; path: string; value: string; version: number;
   flush: () => Promise<unknown>; open: (path: string, range?: monaco.IRange, focus?: boolean) => Promise<void>;
   selection?: monaco.IRange }>();
-const emit = defineEmits<{ change: [value: string]; save: []; problems: []; outline: []; ready: [model: monaco.editor.ITextModel] }>();
+const emit = defineEmits<{ change: [value: string, edit?: { previous: string; region: DocumentChangeRegion }]; save: []; problems: []; outline: []; ready: [model: monaco.editor.ITextModel] }>();
 const root = ref<HTMLDivElement>();
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 let applying = false;
+// 模型当前全文（含 BOM）的已知副本：父组件回传本组件刚发出的同一字符串时无需再取全文比较，
+// 也是变更范围所基于的文本；挂载前为 undefined。
+let synced: string | undefined;
 let language: ReturnType<typeof bindLanguageDocument> | undefined;
 const languageState = ref<LanguageDocumentStatus>({ languageId: '' });
 const diagnosticCounts = ref({ errors: 0, warnings: 0 });
@@ -79,9 +83,17 @@ onMounted(() => {
   markerListener = monaco.editor.onDidChangeMarkers(uris => { if (uris.some(uri => uri.toString() === model.uri.toString())) updateCounts(); });
   updateCounts();
   if (props.selection) { editor.setSelection(props.selection); editor.revealRangeInCenter(props.selection); }
-  editor.onDidChangeModelContent(() => {
+  synced = model.getValue(undefined, true);
+  editor.onDidChangeModelContent(event => {
     language?.clearMarkers();
-    if (!applying) emit("change", model.getValue(undefined, true));
+    if (applying) return;
+    const previous = synced, value = model.getValue(undefined, true);
+    synced = value;
+    // 重置与换行符切换没有可靠的局部范围（EOL 切换可能不带 changes），BOM 也可能随重置变化。
+    // Monaco 偏移不含 BOM；同一模型的普通编辑不改变 BOM，按当前全文与无 BOM 长度之差补偿。
+    const region = previous === undefined || event.isFlush || event.isEolChange ? undefined
+      : documentChangeRegion(event.changes, value.length - model.getValueLength());
+    emit("change", value, region && previous !== undefined ? { previous, region } : undefined);
   });
   editor.onDidChangeCursorPosition(event => { cursor.value = event.position; });
   editor.addAction({ id: 'graycode.showCompletions', label: '显示代码补全', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ], run: suggest });
@@ -93,10 +105,15 @@ onMounted(() => {
 watch(
   () => props.value,
   (value) => {
-    if (editor && editor.getModel()?.getValue(undefined, true) !== value) {
+    // 输入回传的是刚发出的同一字符串，引用相同即可跳过全文比较。
+    if (!editor || value === synced) return;
+    const model = editor.getModel();
+    synced = model?.getValue(undefined, true);
+    if (synced !== value) {
       applying = true;
-      editor.setValue(value);
-      applying = false;
+      try { editor.setValue(value); } finally { applying = false; }
+      // 以模型实际内容为准：setValue 可能统一换行符，之后的变更范围都基于规范化后的文本。
+      synced = model?.getValue(undefined, true);
     }
   },
 );

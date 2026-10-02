@@ -11,7 +11,7 @@ import {
 import type { IRange, editor as MonacoEditor } from "monaco-editor";
 import type { DocumentState, ProjectReplacement, SourceRange } from "@graycode/contracts";
 import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/editorBatchHistory';
-import { documentTextPatch } from '../../../../shared/documentPatch';
+import { documentTextPatch, trackDocumentChange, type DocumentChangeRegion, type TrackedDocumentChange } from '../../../../shared/documentPatch';
 import { call, subscribe } from "../api";
 import { guard, report, state } from "../state";
 import { shellText as t } from '../i18n';
@@ -44,6 +44,8 @@ const CodeEditor = defineAsyncComponent(() => import("./CodeEditor.vue"));
 const DiffPanel = defineAsyncComponent(() => import("./DiffPanel.vue"));
 const documents = reactive<DocumentState[]>([]);
 const synchronizedText = new WeakMap<DocumentState, { text: string; version: number }>();
+// 桌面编辑器报告的累计变更范围，仅用于缩小补丁的前后缀查找；与基线或待发文本对不上时不使用。
+const changeTracks = new WeakMap<DocumentState, TrackedDocumentChange>();
 const current = ref("");
 const pane = ref('empty');
 const diffTarget = ref<{ workspaceId: string; id?: string; path?: string; toolCallId?: string }>();
@@ -244,17 +246,24 @@ const pendingChanges = new PendingDocumentChanges<DocumentState>(
     // 重连先核对原文和版本，再发送离线输入；否则服务器重启后的版本号可能恰好相同。
     if (!transportConnected || recoveringDocuments.has(doc)) return;
     if (documentConflicts.has(doc)) throw recoveryConflict(doc);
-    const base = synchronizedText.get(doc);
-    const patch = doc.supportsPatches && base?.version === doc.version ? documentTextPatch(base.text, text) : undefined;
+    const base = synchronizedText.get(doc), tracked = changeTracks.get(doc);
+    const region = tracked?.text === text && tracked.base === base?.text ? tracked.region : undefined;
+    const patch = doc.supportsPatches && base?.version === doc.version ? documentTextPatch(base.text, text, region) : undefined;
     // 全文更短或基线未知时沿用旧协议；版本冲突必须保留草稿，不能用全文覆盖宿主。
     const payload = patch && JSON.stringify(patch).length < text.length ? { patch } : { text };
+    // 发送前改以本次文本为基线，回执前到达的输入接着累计；发送失败时 synchronizedText 不更新，
+    // 基线对不上便自动回退全文比较。记录已超前于本次文本（保存边界冻结了旧快照）时保留原记录，
+    // 它的基线不再等于回执后的同步文本，下一次发送同样回退全文比较。
+    if (!tracked || tracked.text === text) changeTracks.set(doc, { base: text, text });
     const result = await call<Pick<DocumentState, 'version' | 'dirty'>>('documents.update', { workspaceId: doc.workspaceId, path: doc.path, ...payload, version: doc.version });
     synchronizedText.set(doc, { text, version: result.version });
     doc.version = result.version;
     if (doc.text === text) doc.dirty = result.dirty;
   },
 );
-function change(doc: DocumentState, text: string) {
+function change(doc: DocumentState, text: string, edit?: { previous: string; region: DocumentChangeRegion }) {
+  const tracked = trackDocumentChange(changeTracks.get(doc), text, edit);
+  if (tracked) changeTracks.set(doc, tracked); else changeTracks.delete(doc);
   doc.text = text;
   doc.dirty = true;
   pendingChanges.push(doc, text);
@@ -441,7 +450,7 @@ onUnmounted(() => { readyWaiters.dispose(); openSequence++; unsubscribe(); windo
         <div class="editors">
           <template v-for="doc in documents" :key="key(doc)">
             <MobileCodeEditor v-if="compact" v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :value="doc.text" :selection="selections[key(doc)]" @change="text => change(doc, text)" @save="guard(() => save(doc))" @breakpoint="line => guard(() => toggleBreakpoint(doc.workspaceId, doc.path, line))" />
-            <CodeEditor v-else v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :workspace-id="doc.workspaceId" :version="doc.version" :flush="() => flushDocument(doc)" :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)" :selection="selections[key(doc)]" :value="doc.text" @change="text => change(doc, text)" @save="guard(() => save(doc))" @problems="activatePanel('problems')" @outline="activatePanel('outline')" @ready="model => editorReady(doc, model)" />
+            <CodeEditor v-else v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))" :path="doc.path" :workspace-id="doc.workspaceId" :version="doc.version" :flush="() => flushDocument(doc)" :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)" :selection="selections[key(doc)]" :value="doc.text" @change="(text, edit) => change(doc, text, edit)" @save="guard(() => save(doc))" @problems="activatePanel('problems')" @outline="activatePanel('outline')" @ready="model => editorReady(doc, model)" />
           </template>
           <article v-if="active && markdownPreview && /\.md$/i.test(active.path)" class="markdown-preview" @click="markdownLink" v-html="renderedMarkdown"></article>
           <div v-if="!documents.length" class="editor-empty file-select-empty"><NavigationIcon name="file" /><h2>选择一个文件</h2><p>从文件列表打开文档，在这里查看和编辑。</p></div>
