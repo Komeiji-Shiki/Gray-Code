@@ -30,10 +30,11 @@ async function refresh() {
   try {
     const result = await sendToExtension<{ approvals: Approval[]; questions: Question[] }>('subagents.pendingRequests', { conversationId });
     if (disposed || current !== epoch || props.conversationId !== conversationId) return;
-    approvals.value = result.approvals;
-    questions.value = result.questions;
+    // 宿主未提供该接口或返回结构不完整时不显示面板，也不影响对话其余界面。
+    approvals.value = Array.isArray(result?.approvals) ? result.approvals : [];
+    questions.value = Array.isArray(result?.questions) ? result.questions : [];
     error.value = '';
-    for (const question of result.questions) answers.value[question.id] ??= question.questions.map(() => '');
+    for (const question of questions.value) answers.value[question.id] ??= question.questions.map(() => '');
   } catch (cause) {
     if (!disposed && current === epoch && props.conversationId === conversationId) error.value = (cause as Error).message;
   }
