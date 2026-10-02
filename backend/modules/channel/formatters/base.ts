@@ -428,9 +428,12 @@ export function ensureStrictSchema<T extends Record<string, any>>(schema: T, req
         if (requireAllProperties) result.required = Object.keys(newProps);
     }
 
-    // 递归处理 items（array 类型的元素定义）
-    if (result.items && typeof result.items === 'object') {
-        result.items = ensureStrictSchema(result.items, requireAllProperties);
+    // 递归处理 items（array 类型的元素定义）。元组形式的 items 与 prefixItems 是 schema 数组，
+    // 必须逐项处理并保持数组；直接按对象展开会变成数字键对象，生成无效的 schema。
+    for (const keyword of ['items', 'prefixItems']) {
+        const value = result[keyword];
+        if (Array.isArray(value)) result[keyword] = value.map(item => ensureStrictSchema(item, requireAllProperties));
+        else if (value && typeof value === 'object') result[keyword] = ensureStrictSchema(value, requireAllProperties);
     }
 
     for (const keyword of ['anyOf', 'oneOf', 'allOf']) {
