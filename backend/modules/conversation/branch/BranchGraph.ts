@@ -224,9 +224,14 @@ export function importLinearHistory(
     history: ReadonlyArray<Content>,
     options: { createdAt?: number } = {}
 ): ConversationBranchGraph {
-    let graph = createEmptyBranchGraph();
+    // 节点对象和节点表都在本函数内新建，直接原地构建。逐条 insertNode 会复制整张节点表并
+    // 重新推导尾指针，长历史下是平方复杂度；这里的结果与逐条插入（setActive + updateTail）一致。
+    const graph = createEmptyBranchGraph();
+    const nodes = graph.nodes;
     const now = options.createdAt ?? Date.now();
     let previousNode: ConversationBranchNode | null = null;
+    // 已为合并 functionResponse 复制过 parts 的节点，避免改写消息自身的 parts 数组。
+    const ownedParts = new Set<ConversationBranchNode>();
     // M-4/复查：createdAt 沿消息顺序严格递增（相同/乱序 timestamp 时按序 +1），
     // 保证 childrenIndex 候选排序 = 消息顺序，不回退到同毫秒的 id 字典序。
     let previousCreatedAt = Number.NEGATIVE_INFINITY;
@@ -235,12 +240,11 @@ export function importLinearHistory(
         if (isFunctionResponseMessage(message)) {
             // 决策 8：functionResponse 依附前一个节点（模型节点），不建独立节点。
             if (previousNode) {
-                const merged: ConversationBranchNode = {
-                    ...previousNode,
-                    parts: [...previousNode.parts, ...(message.parts ?? [])],
-                };
-                graph = { ...graph, nodes: { ...graph.nodes, [merged.id]: merged } };
-                previousNode = merged;
+                if (!ownedParts.has(previousNode)) {
+                    previousNode.parts = [...previousNode.parts];
+                    ownedParts.add(previousNode);
+                }
+                previousNode.parts.push(...(message.parts ?? []));
             } else {
                 // M-4：首条消息即为 functionResponse 且无前驱节点——无法挂载（没有可依附的
                 // 模型/用户节点），静默丢弃会掩盖异常历史输入，此处显式记录丢弃原因。
@@ -256,7 +260,7 @@ export function importLinearHistory(
         const parentId =
             typeof message.parentId === 'string'
                 && message.parentId !== id
-                && graph.nodes[message.parentId]
+                && nodes[message.parentId]
                 ? message.parentId
                 : (previousNode ? previousNode.id : null);
         const rawCreatedAt = typeof message.timestamp === 'number' ? message.timestamp : now + i;
@@ -278,10 +282,21 @@ export function importLinearHistory(
             // R8b-M2：中断/取消流的截断用量标记随节点一起拷贝（统计端回退估算）
             usageMetadataPartial: message.usageMetadataPartial,
         };
-        graph = insertNode(graph, node, { setActive: true, updateTail: true });
+        if (nodes[id]) {
+            throw new BranchError('INVALID_BRANCH_RELATION', `duplicate node id: ${id}`);
+        }
+        nodes[id] = node;
+        if (parentId === null) {
+            graph.rootNodeId = id;
+            graph.activeTailNodeId = id;
+        } else {
+            nodes[parentId]!.activeChildId = id;
+            // 父节点就是当前尾时新节点直接成为尾；父链指向更早的节点时按活跃链重新推导。
+            graph.activeTailNodeId = parentId === graph.activeTailNodeId ? id : deriveActiveTail(graph);
+        }
         previousNode = node;
     }
-    return graph;
+    return syncRootMirror(graph);
 }
 
 /**
@@ -858,6 +873,7 @@ export function validate(graph: ConversationBranchGraph): BranchValidationResult
         issues.push({ code, message, nodeId });
     };
     const nodes = graph.nodes;
+    const parentChainLoops = parentChainLoopStates(nodes);
 
     // BG-1：版本不符视为损坏（写路径只产生 BRANCH_GRAPH_VERSION；读侧旧/新版本由
     // 迁移/降级处理，validate 不做猜测式放行）。
@@ -889,20 +905,9 @@ export function validate(graph: ConversationBranchGraph): BranchValidationResult
         if (current.parentId !== null && !nodes[current.parentId]) {
             push('NODE_NOT_FOUND', `parentId points to missing node: ${current.parentId}`, current.id);
         }
-        // parentId 链无环
-        const seen = new Set<string>();
-        let cursor: string | null = current.parentId;
-        while (cursor !== null) {
-            if (seen.has(cursor)) {
-                push('INVALID_BRANCH_RELATION', 'cycle detected in parentId chain', current.id);
-                break;
-            }
-            seen.add(cursor);
-            const parent = nodes[cursor];
-            if (!parent) {
-                break; // 已在上方报告
-            }
-            cursor = parent.parentId;
+        // parentId 链无环（缺失父节点已在上方报告，按链终止处理）
+        if (parentChainLoops.get(current.id)) {
+            push('INVALID_BRANCH_RELATION', 'cycle detected in parentId chain', current.id);
         }
     }
 
@@ -1022,6 +1027,45 @@ export function validate(graph: ConversationBranchGraph): BranchValidationResult
     }
 
     return { valid: issues.length === 0, issues };
+}
+
+/**
+ * 每个节点沿 parentId 向上是否会进入环（节点自身在环上，或祖先链进入环）。
+ * 共享祖先的判定结果复用，整体线性；逐节点重走到根在长历史上是平方复杂度。
+ */
+function parentChainLoopStates(nodes: ConversationBranchGraph['nodes']): Map<string, boolean> {
+    const loops = new Map<string, boolean>();
+    for (const start of Object.keys(nodes)) {
+        if (loops.has(start)) {
+            continue;
+        }
+        const path: string[] = [];
+        const inPath = new Set<string>();
+        let cursor: string | null = start;
+        let result = false;
+        while (true) {
+            const node: ConversationBranchNode | undefined = cursor === null ? undefined : nodes[cursor];
+            if (cursor === null || !node) {
+                break;
+            }
+            const known = loops.get(cursor);
+            if (known !== undefined) {
+                result = known;
+                break;
+            }
+            if (inPath.has(cursor)) {
+                result = true;
+                break;
+            }
+            path.push(cursor);
+            inPath.add(cursor);
+            cursor = node.parentId;
+        }
+        for (const id of path) {
+            loops.set(id, result);
+        }
+    }
+    return loops;
 }
 
 /** 新增 / 覆盖候选摘要（TREE-02；摘要文本由写入方生成） */

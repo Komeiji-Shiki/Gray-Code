@@ -548,6 +548,27 @@ describe('validate', () => {
         const result = validate(g);
         expect(result.issues.some(i => i.code === 'BRANCH_STORAGE_CORRUPT' && i.message.includes('rootNodeId is null'))).toBe(true);
     });
+
+    test('祖先链进入环的节点与环上节点都报告环，指向缺失父节点的链不误报环', () => {
+        const g: ConversationBranchGraph = {
+            version: 1,
+            rootNodeId: 'root',
+            activeTailNodeId: 'root',
+            nodes: {
+                root: node('root', null),
+                tail: node('tail', 'a'),
+                a: node('a', 'b'),
+                b: node('b', 'a'),
+                self: node('self', 'self'),
+                orphan: node('orphan', 'ghost'),
+                child: node('child', 'orphan'),
+            },
+            activeChildId: null,
+            candidateSummaries: [],
+        };
+        const cycles = validate(g).issues.filter(i => i.message.includes('cycle')).map(i => i.nodeId).sort();
+        expect(cycles).toEqual(['a', 'b', 'self', 'tail']);
+    });
 });
 
 describe('候选摘要 upsertCandidateSummary / removeCandidateSummary', () => {
@@ -688,6 +709,57 @@ describe('importLinearHistory（MIG-01 / BR-09 线性导入）', () => {
         expect(g.nodes['m1']!.parts![1]).toMatchObject({ functionResponse: { id: 't1' } });
         expect(g.nodes['m1']!.parts![2]).toMatchObject({ functionResponse: { id: 't2' } });
         expect(validate(g).valid).toBe(true);
+    });
+
+    test('合并 functionResponse 不改写原消息的 parts 数组', () => {
+        const modelParts = [{ functionCall: { id: 't1', name: 'toolA', args: {} } }];
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'u1', timestamp: 1 },
+            { role: 'model', parts: modelParts, id: 'm1', timestamp: 2 },
+            { role: 'user', parts: [{ functionResponse: { id: 't1', name: 'toolA', response: {} } }], id: 'f1', timestamp: 3, isFunctionResponse: true },
+        ] as any;
+        const g = importLinearHistory(history);
+        expect(g.nodes['m1']!.parts).toHaveLength(2);
+        expect(modelParts).toHaveLength(1);
+        expect(history[1].parts).toBe(modelParts);
+    });
+
+    test('parentId 指向较早节点时与逐条 insertNode 结果一致，重复 id 拒绝导入', () => {
+        const history = [
+            { role: 'user', parts: [{ text: 'q1' }], id: 'u1', timestamp: 1 },
+            { role: 'model', parts: [{ text: 'a1' }], id: 'm1', parentId: 'u1', timestamp: 2 },
+            { role: 'user', parts: [{ text: 'q2' }], id: 'u2', parentId: 'm1', timestamp: 3 },
+            { role: 'model', parts: [{ text: 'alt' }], id: 'm2', parentId: 'u1', timestamp: 4 },
+            { role: 'user', parts: [{ text: 'q3' }], id: 'u3', timestamp: 5 },
+        ] as any;
+        let expected = createEmptyBranchGraph();
+        for (const [id, parentId, createdAt] of [['u1', null, 1], ['m1', 'u1', 2], ['u2', 'm1', 3], ['m2', 'u1', 4], ['u3', 'm2', 5]] as const) {
+            const message = history.find((item: { id: string }) => item.id === id);
+            expected = insertNode(expected, { id, parentId, role: message.role, parts: message.parts, kind: 'imported', createdAt,
+                timestamp: createdAt, modelVersion: undefined, usageMetadata: undefined, contentMetadata: undefined, usageMetadataPartial: undefined });
+        }
+        const g = importLinearHistory(history);
+        expect(g).toEqual(expected);
+        expect(activePath(g)).toEqual(['u1', 'm2', 'u3']);
+        expect(validate(g).valid).toBe(true);
+        expectBranchError(() => importLinearHistory([history[0], { ...history[1], id: 'u1' }] as any), 'INVALID_BRANCH_RELATION');
+    });
+
+    test('长历史导入、对账和校验保持线性复杂度', () => {
+        const history: any[] = [];
+        for (let round = 0; round < 5000; round++) {
+            history.push({ role: 'user', parts: [{ text: `q${round}` }], id: `u${round}`, timestamp: round * 4 },
+                { role: 'model', parts: [{ functionCall: { id: `c${round}`, name: 'toolA', args: {} } }], id: `m${round}`, timestamp: round * 4 + 1 },
+                { role: 'user', parts: [{ functionResponse: { id: `c${round}`, name: 'toolA', response: {} } }], id: `f${round}`, timestamp: round * 4 + 2, isFunctionResponse: true },
+                { role: 'model', parts: [{ text: `a${round}` }], id: `a${round}`, timestamp: round * 4 + 3 });
+        }
+        const started = performance.now();
+        const graph = importLinearHistory(history);
+        const rebased = rebaseActivePathFromHistory(graph, history.slice(0, -40));
+        expect(validate(rebased).valid).toBe(true);
+        expect(activePath(rebased)).toHaveLength(14_970);
+        // 平方实现在这个规模下需要数十秒，线性实现只需几十毫秒。
+        expect(performance.now() - started).toBeLessThan(5000);
     });
 
     test('消息无 id 时用确定性兜底 id；空历史 → 空图', () => {
