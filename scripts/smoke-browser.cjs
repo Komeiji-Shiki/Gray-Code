@@ -38,6 +38,8 @@ function fixtureHtml(origin, crossOrigin) {
   <input type="number" aria-label="Year" value="2020"><input type="date" aria-label="Published after">
   <div contenteditable="true" role="textbox" aria-label="Abstract notes">Old abstract</div>
   <div id="hover"><button aria-label="Analysis menu">Analysis menu</button><div id="menu"><button onclick="document.getElementById('results').textContent='Metrics opened'">Metrics</button></div></div>
+  <button id="meaning" onclick="this.textContent='Delete record'">Save record</button>
+  <button id="removed" onclick="this.remove()">Remove this control</button>
   <div id="shadow"></div><div id="covered"><button aria-label="Covered control">Covered control</button><div id="cover">Overlay</div></div>
   <iframe title="Same origin" src="${origin}/frame"></iframe><iframe title="Cross origin" src="${crossOrigin}/frame"></iframe>
   ${'<section role="group">'.repeat(35)}<button aria-label="Deep component" onclick="this.textContent='Deep clicked'">Deep component</button>${'</section>'.repeat(35)}
@@ -159,7 +161,18 @@ async function run(output) {
     const deepRef = await find('Deep component', 'button'); assert(deepRef);
     const searchRef = await find('Search papers', 'searchbox');
     const filled = await action({ action: 'fill', ref: searchRef, text: 'first query', after: 'snapshot', snapshotOptions: { query: 'Search papers', role: 'searchbox', compact: false } });
-    await action({ action: 'fill', ref: filled.data.snapshot.nodes[0].ref, text: '' });
+    assert.equal(filled.data.snapshot.nodes[0].ref, searchRef);
+    await find('Discipline', 'combobox');
+    await action({ action: 'fill', ref: searchRef, text: '' });
+    const changedRef = await find('Save record', 'button');
+    await action({ action: 'click', ref: changedRef });
+    const changed = await tool('browser_action', { tabId, url, action: 'click', ref: changedRef });
+    assert.equal(changed.success, false); assert.match(changed.error, /操作含义已经变化/);
+    assert.notEqual(await find('Delete record', 'button'), changedRef);
+    const removedRef = await find('Remove this control', 'button');
+    await action({ action: 'click', ref: removedRef });
+    assert.equal((await tool('browser_action', { tabId, url, action: 'click', ref: removedRef })).success, false);
+    checks.push('stable-reference-across-actions-and-snapshots-with-semantic-and-removal-guards');
     checks.push('snapshot-only-ref-chaining-without-extra-read');
     assert.equal((await read({ query: 'Search papers', role: 'searchbox' })).data.nodes[0].value ?? '', '');
     const submitted = await action({ action: 'type', ref: await find('Search papers', 'searchbox'), text: 'quantum methods' });

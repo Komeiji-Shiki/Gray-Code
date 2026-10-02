@@ -4,7 +4,7 @@ import type { BrowserHost } from './port';
 import { actionObservationProperties, snapshotProperties } from './observationOptions';
 
 const tabId = { type: 'string', description: '浏览器返回的稳定标签 ID。' };
-const ref = { type: 'string', description: '最近一次 snapshot 返回的元素引用，操作或导航后需要重新获取。对某个区域分页读取时，用最新的 scopeRef 继续限定在原区域。' };
+const ref = { type: 'string', description: 'snapshot 返回的元素引用，同一文档中节点和操作含义未变时可跨动作、快照和分页复用；导航、节点删除或含义改变后重新读取。对某个区域分页读取时，用最新的 scopeRef 继续限定在原区域。' };
 export function browserTools(host?: BrowserHost): RuntimeTool[] {
   const declarations = [
     { name: 'browser_tabs', description: '管理应用内置浏览器的标签页。list 同时返回当前账号可用的登录配置；create 在后台新建标签页；show 把标签页显示给本机用户，但不会显示或聚焦操作系统窗口。任务结束后标签页会保留，用户可以继续使用。',

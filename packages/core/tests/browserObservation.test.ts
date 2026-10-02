@@ -11,6 +11,9 @@ function fixture(nodes: AxNode[]) {
   const sendCommand = jest.fn(async (method: string, params?: any, sessionId?: string): Promise<any> => {
     if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main-frame', url: 'https://fixture.test/' } } };
     if (method === 'Accessibility.getFullAXTree') return { nodes };
+    if (method === 'Accessibility.getPartialAXTree') return { nodes: nodes.filter(node => node.backendDOMNodeId === params.backendNodeId) };
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'fixture-node' } };
+    if (method === 'Runtime.callFunctionOn') return { result: { value: true } };
     if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 1280, clientHeight: 720, pageX: 0, pageY: 0 } };
     return {};
   });
@@ -32,7 +35,7 @@ test('精简页面保留真实引用、状态和带引号的正文，显著减�
   expect(nodes).toEqual(original);
 });
 
-test('按引用聚焦区域返回新引用，输入使用实际节点且旧引用失效', async () => {
+test('区域读取和连续动作沿用有效引用，导航后失效', async () => {
   // 子节点先出现，区域选择也应完整。
   const f = fixture([ax('3', '输入字段', '2'), ax('1', '网页'), ax('2', '表单', '1'), ax('4', '其他区域', '1')]);
   const first = await f.page.snapshot(signal(), { compact: false });
@@ -41,12 +44,12 @@ test('按引用聚焦区域返回新引用，输入使用实际节点且旧引�
   const rows = scoped.nodes as SnapshotNode[];
   expect(rows.map(row => row.name)).toEqual(['表单', '输入字段']);
   expect(rows.find(row => row.name === '表单')!.depth).toBe(0);
-  expect(rows.map(row => row.ref)).not.toContain(region);
-  await expect(f.page.action({ action: 'press', ref: region, key: 'Enter' }, signal())).rejects.toThrow('元素引用不存在');
+  expect(rows.map(row => row.ref)).toContain(region);
+  await f.page.action({ action: 'press', ref: region, key: 'Enter' }, signal());
   const inputRef = rows.find(row => row.name === '输入字段')!.ref!;
   await f.page.action({ action: 'press', ref: inputRef, key: 'Enter' }, signal());
   expect(f.sendCommand).toHaveBeenCalledWith('DOM.focus', { backendNodeId: 3 }, undefined);
-  await expect(f.page.action({ action: 'press', ref: inputRef, key: 'Enter' }, signal())).rejects.toThrow('元素引用不存在');
+  await f.page.action({ action: 'press', ref: inputRef, key: 'Enter' }, signal());
   const current = await f.page.snapshot(signal(), { compact: false });
   f.contents.emit('did-start-navigation');
   await expect(f.page.snapshot(signal(), { ref: (current.nodes as SnapshotNode[])[0].ref })).rejects.toThrow('元素引用不存在');
@@ -335,10 +338,10 @@ test('连续分页在页面未变时复用同一棵树，变化、换筛选、�
   expect(first).toMatchObject({ total: 30, nextOffset: 10 }); expect(f.reads()).toBe(1);
   const second = await f.page.snapshot(signal(), { offset: 10, maxNodes: 10, compact: false });
   expect(f.reads()).toBe(1);
-  // 输出顺序与分页语义不变，引用仍按本次输出重建，上一页的引用失效。
+  // 分页保留先前观察到的元素引用，直到节点或文档真正改变。
   expect(second).toMatchObject({ total: 30, offset: 10, returned: 10, nextOffset: 20, partial: false });
   expect((second.nodes as SnapshotNode[]).map(node => node.name)).toEqual(Array.from({ length: 10 }, (_, index) => `条目 ${index + 10}`));
-  await expect(f.page.action({ action: 'press', ref: (first.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).rejects.toThrow('元素引用不存在');
+  await expect(f.page.action({ action: 'press', ref: (first.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).resolves.toBeUndefined();
   f.change();
   expect(await f.page.snapshot(signal(), { offset: 20, maxNodes: 10, compact: false })).toMatchObject({ offset: 20, returned: 10, truncated: false });
   expect(f.reads()).toBe(2);
@@ -391,4 +394,20 @@ test('条件等待在标记未变时跳过完整重读，变化后立即重读�
     await jest.advanceTimersByTimeAsync(400);
     expect(await absent).toMatchObject({ conditionMet: true, total: 0 }); expect(f.reads()).toBe(4);
   } finally { jest.useRealTimers(); }
+});
+
+
+test('节点被复用成其他含义或移除时拒绝旧引用，重新观察会给出新引用', async () => {
+  const node = ax('1', '保存'), f = fixture([node]);
+  const first = await f.page.snapshot(signal(), { compact: false });
+  const ref = (first.nodes as SnapshotNode[])[0].ref!;
+  node.name.value = '删除';
+  await expect(f.page.action({ action: 'press', ref, key: 'Enter' }, signal())).rejects.toThrow('操作含义已经变化');
+  const current = await f.page.snapshot(signal(), { compact: false });
+  expect((current.nodes as SnapshotNode[])[0].ref).not.toBe(ref);
+  const base = f.sendCommand.getMockImplementation()!;
+  f.sendCommand.mockImplementation(async (method, params, session) => method === 'Runtime.callFunctionOn'
+    ? { result: { value: false } } : base(method, params, session));
+  await expect(f.page.action({ action: 'press', ref: (current.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).rejects.toThrow('页面元素已移除');
+  expect(f.sendCommand.mock.calls.filter(([method]) => method === 'Input.dispatchKeyEvent')).toHaveLength(0);
 });
