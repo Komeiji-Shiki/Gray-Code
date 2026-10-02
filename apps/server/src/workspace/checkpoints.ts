@@ -70,9 +70,11 @@ export class WorkspaceCheckpoints {
   }
   async summaries(actorId: string, conversationId: string, includeInactive = false) {
     await this.app.conversation(actorId, conversationId);
+    const checkpoints = await this.list(actorId, conversationId);
+    // 没有存档点时不必读取完整历史来定位消息，长会话切换时这是一次完整读取。
+    if (!checkpoints.length) return { checkpoints: [] };
     const history = await this.app.storage.readFullHistory(conversationId);
     const positions = new Map(history.messages.map((message, index) => [message.id, index]));
-    const checkpoints = await this.list(actorId, conversationId);
     const modelBeforeByRun = new Map<string, WorkspaceCheckpoint[]>();
     for (const checkpoint of checkpoints) {
       if (checkpoint.toolName !== 'model_message' || checkpoint.phase !== 'before' || !checkpoint.runId) continue;

@@ -5,6 +5,24 @@ import { ObjectStore } from './objects';
 import { assertIdentifier, invalid, PlatformStorageError } from '../errors';
 
 const SEGMENT_ENTRIES = 128;
+/** 已解码消息正文的缓存上限（估算字节）。切换和准备长会话时同一份历史会被多个请求完整读取。 */
+const BODY_CACHE_BYTES = 96 * 1024 * 1024;
+const BODY_CACHE_ENTRY_BYTES = 2 * 1024 * 1024;
+
+/** 粗略估算已解码值占用的内存；只用于缓存淘汰，不参与存储语义。 */
+function estimatedBytes(value: unknown, limit: number): number {
+  let total = 0;
+  const stack: unknown[] = [value];
+  while (stack.length && total <= limit) {
+    const item = stack.pop();
+    if (typeof item === 'string') total += item.length * 2;
+    else if (item instanceof Uint8Array) total += item.byteLength;
+    else if (Array.isArray(item)) { total += 16; stack.push(...item); }
+    else if (item && typeof item === 'object') { for (const [key, child] of Object.entries(item)) { total += key.length * 2 + 16; stack.push(child); } }
+    else total += 8;
+  }
+  return total;
+}
 interface HistoryRow { id: string; message_count: number; revision: number; search_revision: number; search_position: number }
 interface SpanRow { start_index: number; segment_id: number; segment_offset: number; count: number }
 interface EntryRow { body_hash: Buffer; message_id: string | null; role: string; timestamp: number | null }
@@ -30,10 +48,16 @@ export class HistoryStore {
   private readonly cursorSnapshots = new Map<string, { historyId: string; revision: number; spans: SpanRow[] }>();
   // 仅保留最近一次楼层窗口，避免随着浏览过的会话数量积累派生元数据。
   private floorSnapshot?: { historyId: string; revision: number; spans: SpanRow[]; floorIndices: number[] };
+  /**
+   * 正文按内容哈希寻址且不可变，已解码的正文可以跨请求、跨分叉共享。读取结果经线程消息复制后才交给调用方，
+   * 存储线程内不修改解码后的消息，因此缓存不需要随版本失效。按最近使用顺序淘汰。
+   */
+  private readonly bodies = new Map<string, { body: Record<string, unknown>; bytes: number }>();
+  private bodyBytes = 0;
   constructor(private readonly db: SqliteConnection, private readonly objects: ObjectStore) {}
 
   releaseCursor(runId: string): void { this.cursorSnapshots.delete(runId); }
-  clearSnapshots(): void { this.cursorSnapshots.clear(); this.floorSnapshot = undefined; }
+  clearSnapshots(): void { this.cursorSnapshots.clear(); this.floorSnapshot = undefined; this.bodies.clear(); this.bodyBytes = 0; }
 
   readIncremental(id: string, cursor: RuntimeHistoryCursor) {
     const info = this.info(id);
@@ -285,8 +309,24 @@ export class HistoryStore {
     return { body_hash: this.objects.putValue(body), message_id: id ?? null, role, timestamp };
   }
 
+  private body(hash: Buffer): Record<string, unknown> {
+    const key = hash.toString('hex');
+    const cached = this.bodies.get(key);
+    if (cached) { this.bodies.delete(key); this.bodies.set(key, cached); return cached.body; }
+    const body = this.objects.getValue<Record<string, unknown>>(hash);
+    const bytes = estimatedBytes(body, BODY_CACHE_ENTRY_BYTES);
+    if (bytes <= BODY_CACHE_ENTRY_BYTES) {
+      this.bodies.set(key, { body, bytes }); this.bodyBytes += bytes;
+      for (const [oldest, entry] of this.bodies) {
+        if (this.bodyBytes <= BODY_CACHE_BYTES) break;
+        this.bodies.delete(oldest); this.bodyBytes -= entry.bytes;
+      }
+    }
+    return body;
+  }
+
   private decode(row: EntryRow): PlatformMessage {
-    const body = this.objects.getValue<Record<string, unknown>>(row.body_hash);
+    const body = this.body(row.body_hash);
     const message = { ...body, role: row.role } as PlatformMessage;
     if (row.message_id !== null) message.id = row.message_id;
     if (row.timestamp !== null) message.timestamp = row.timestamp;
