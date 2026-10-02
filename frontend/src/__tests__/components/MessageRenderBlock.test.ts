@@ -63,10 +63,13 @@ describe('MessageRenderBlock thought 三段式视图', () => {
   beforeEach(() => {
     disposeAllSmoothStreams()
     stubAnimationFrame()
+    // 固定在页面刚启动时，验证没有滚轮输入也能贴底，避免用例耗时掩盖初始化冷静期问题。
+    vi.spyOn(performance, 'now').mockReturnValue(0)
   })
 
   afterEach(() => {
     disposeAllSmoothStreams()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     document.body.innerHTML = ''
   })

@@ -70,8 +70,8 @@ const STICK_BOTTOM_THRESHOLD = 40
 // 抵消滚动距离（滚 50px 内容长 40px），无冷静期时连续滚动也会被拉回。
 // wheel 输入事件同步派发、早于 scroll 事件，是可靠的「用户滚动意图」信号
 const USER_SCROLL_COOLDOWN_MS = 250
-/** 最近一次用户滚动输入的时间（performance.now 时间轴） */
-let lastUserScrollInputAt = 0
+/** 最近一次用户滚动输入的时间；null 表示没有输入，避免页面启动的前 250ms 被误判为冷静期。 */
+let lastUserScrollInputAt: number | null = null
 // 上次复验时的 scrollTop：内容增长只改 scrollHeight 不改 scrollTop。
 // scrollTop 未变 = 用户没动 → 保持吸底状态（大段输出/md 解析不丢吸底）；
 // scrollTop 变化 = 用户滚动或程序贴底写入 → 按当前位置重新判定
@@ -85,7 +85,7 @@ const mediumTrimmed = ref(false)
 function shouldStickBottom(): boolean {
   // 用户滚动输入冷静期内不贴底：让滚动真正生效（内容增长可能抵消滚动距离）。
   // 不修改 stickToBottom：冷静期结束后用户若仍在底部可无缝恢复吸底
-  if (performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS) return false
+  if (lastUserScrollInputAt !== null && performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS) return false
   if (!stickToBottom.value) return false
   if (!userScrolled.value) return true
   const el = mediumScrollContainerRef.value
@@ -264,7 +264,7 @@ watch(
         mediumTrimmed.value = messageId ? mediumTrimmedByMessageId.get(messageId) ?? false : false
         stickToBottom.value = true
         userScrolled.value = false
-        lastUserScrollInputAt = 0 // 重置冷静期：重新进入中展开立即恢复贴底
+        lastUserScrollInputAt = null // 重置冷静期：重新进入中展开立即恢复贴底
         registerSmoothDisplay(messageId, host, {
           noFade: true,
           tailWindow: 4096,
