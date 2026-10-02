@@ -5,7 +5,16 @@ import type { Content, ConversationMetadata } from '../../../../backend/modules/
 import type { ConversationBranchGraph } from '../../../../backend/modules/conversation/branch/types';
 import type { PlatformApplication } from '../application';
 
-interface CachedUsage { signature: string; value: UsageIndex }
+/** 每条主历史 model 消息一项（无用量时 entry 为 null），条数与存储返回的 keep 对齐，用于截断共享前缀之后的部分。 */
+interface UsageRow { entry: UsageIndexMessage | null; id?: string }
+interface CachedUsage {
+  signature: string; value: UsageIndex; token: string; main: UsageRow[];
+  imported: { revision: number | null; entries: UsageIndexMessage[] };
+  // 只保留分支图提取出的用量条目，不持有整张图；all 供主历史 ID 去重，inactive 是主历史无 ID 时的活跃路径兜底结果。
+  branches: { revision: number | null; all: UsageIndexMessage[]; inactive: UsageIndexMessage[] };
+}
+/** extractBranchUsageMessages 只用 size 和 has：非空且不含任何 ID，得到全部可计的候选，再按当前主历史 ID 筛选。 */
+const NO_HISTORY_IDS = { size: 1, has: () => false } as unknown as ReadonlySet<string>;
 type UsageQuery = { startTime?: number; endTime?: number };
 type UsageResult = Awaited<ReturnType<typeof aggregateUsageStats>> & { readErrors: Record<string, string> };
 export function validateLegacyUsageIndex(value: unknown, conversationId: string): UsageIndex {
@@ -34,21 +43,40 @@ export class PlatformUsage {
   }
   private async own(conversation: UsageConversation): Promise<UsageIndex> {
     const id = conversation.id;
-    const records = [{ namespace: 'conversation-usage', id }, { namespace: 'conversation-branches', id, projection: { fields: ['graph'], omitBinary: true } }];
     const signature = JSON.stringify([conversation.historyId, conversation.revision, conversation.usageRevision, conversation.branchesRevision]);
     const previous = this.cache.get(id);
     if (previous?.signature === signature) return previous.value;
-    const state = await this.app.storage.readUsageState(id, records);
-    const index = buildConversationUsageIndex(id, state.messages as Content[]);
-    const imported = state.records.find(item => item.namespace === 'conversation-usage')!.record;
-    const branches = state.records.find(item => item.namespace === 'conversation-branches')!.record;
-    index.messages.push(...importedSubagentUsage(imported.value, id));
-    if (branches.value) {
-      const graph = (branches.value as { graph?: ConversationBranchGraph }).graph;
-      if (!graph || typeof graph.nodes !== 'object' || !graph.nodes) throw new Error(`分支用量数据无法读取：${id}`);
-      index.messages.push(...extractBranchUsageMessages(graph, new Set(state.messages.flatMap(message => message.id ? [message.id] : []))));
+    // 只重读版本变化的附属记录；历史只取共享前缀之后的 model 消息，前缀改写时存储返回较小的 keep。
+    const records = [
+      ...(!previous || previous.imported.revision !== conversation.usageRevision ? [{ namespace: 'conversation-usage', id }] : []),
+      ...(!previous || previous.branches.revision !== conversation.branchesRevision
+        ? [{ namespace: 'conversation-branches', id, projection: { fields: ['graph'], omitBinary: true } }] : []),
+    ];
+    let state = await this.app.storage.readUsageState(id, records, previous?.token);
+    // 缓存与令牌不一致时不猜测对应关系，重新全量读取。
+    if (state.keep > (previous?.main.length ?? 0)) state = await this.app.storage.readUsageState(id, records);
+    const rows = (state.messages as Content[]).map(message => ({ entry: buildConversationUsageIndex(id, [message]).messages[0] ?? null,
+      ...(message.id ? { id: message.id } : {}) }));
+    const main = state.keep ? [...previous!.main.slice(0, state.keep), ...rows] : rows;
+    const read = (namespace: string) => state.records.find(item => item.namespace === namespace)?.record;
+    const usageRecord = read('conversation-usage'), branchRecord = read('conversation-branches');
+    const imported = usageRecord ? { revision: usageRecord.revision, entries: importedSubagentUsage(usageRecord.value, id) } : previous!.imported;
+    let branches = previous?.branches;
+    if (branchRecord) {
+      branches = { revision: branchRecord.revision, all: [], inactive: [] };
+      if (branchRecord.value) {
+        const graph = (branchRecord.value as { graph?: ConversationBranchGraph }).graph;
+        if (!graph || typeof graph.nodes !== 'object' || !graph.nodes) throw new Error(`分支用量数据无法读取：${id}`);
+        branches.all = extractBranchUsageMessages(graph, NO_HISTORY_IDS);
+        branches.inactive = extractBranchUsageMessages(graph, new Set());
+      }
     }
-    this.cache.set(id, { signature: JSON.stringify([conversation.historyId, state.revision, imported.revision, branches.revision]), value: index });
+    const historyIds = new Set(main.flatMap(row => row.id ? [row.id] : []));
+    const branchEntries = historyIds.size ? branches!.all.filter(item => !(item.id && historyIds.has(item.id))) : branches!.inactive;
+    const index: UsageIndex = { version: 1, conversationId: id, updatedAt: Date.now(),
+      messages: [...main.flatMap(row => row.entry ? [row.entry] : []), ...imported.entries, ...branchEntries] };
+    this.cache.set(id, { signature: JSON.stringify([conversation.historyId, state.revision, imported.revision, branches!.revision]),
+      value: index, token: state.token, main, imported, branches: branches! });
     return index;
   }
   stats(actorId: string, options: UsageQuery): Promise<UsageResult> {

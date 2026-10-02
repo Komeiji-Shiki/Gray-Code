@@ -10,6 +10,8 @@ interface Delivery {
   phase: 'queued' | 'sending' | 'editing' | 'unknown'; final: boolean; createdAt: number; error?: string;
   reconcileReceipt?: boolean;
 }
+/** 待发送条目的内存索引：只含排序和跳过判断所需的字段，正文仍在锁内从存储读取。 */
+interface PendingDelivery { createdAt: number; phase: Delivery['phase']; error?: string; route: BotRoute }
 const fingerprint = (message: BotReply) => {
   const hash = createHash('sha256').update(message.content ?? '');
   for (const file of message.files ?? []) hash.update(file.name).update(file.data);
@@ -23,6 +25,13 @@ export class BotOutbox {
   private readonly locks = new Map<string, Promise<unknown>>();
   private pendingCount = 0;
   private lastError?: string;
+  /**
+   * 本实例是该命名空间唯一的写入方，启动后首次投递时从存储载入一次，之后随每次保存和删除更新，
+   * 流式更新不再列举并读取整个队列。载入期间发生的修改先记入 loadingChanges，载入完成后覆盖快照中的旧值。
+   */
+  private pending?: Map<string, PendingDelivery>;
+  private loading?: Promise<Map<string, PendingDelivery>>;
+  private loadingChanges?: Map<string, PendingDelivery | null>;
   constructor(private readonly app: PlatformApplication, private readonly platform: BotPlatform,
     private readonly gateway: () => { gateway: BotGateway; botId: string } | undefined,
     private readonly admitted: (route: BotRoute) => Promise<boolean>) {}
@@ -32,6 +41,25 @@ export class BotOutbox {
     const operation = (this.locks.get(id) ?? Promise.resolve()).catch(() => {}).then(action);
     this.locks.set(id, operation);
     try { return await operation; } finally { if (this.locks.get(id) === operation) this.locks.delete(id); }
+  }
+  private track(id: string, value: Delivery | null): void {
+    const entry = value && { createdAt: value.createdAt, phase: value.phase, error: value.error, route: value.route };
+    this.loadingChanges?.set(id, entry);
+    if (!this.pending) return;
+    if (entry) this.pending.set(id, entry); else this.pending.delete(id);
+  }
+  private index(): Promise<Map<string, PendingDelivery>> {
+    if (this.pending) return Promise.resolve(this.pending);
+    return this.loading ??= (async () => {
+      const changes = this.loadingChanges = new Map();
+      try {
+        const pending = new Map<string, PendingDelivery>();
+        for (const { id, value } of await Promise.all((await this.app.storage.listRecords(this.namespace)).map(async id => ({ id, value: await this.read(id) }))))
+          if (value) pending.set(id, { createdAt: value.createdAt, phase: value.phase, error: value.error, route: value.route });
+        for (const [id, entry] of changes) if (entry) pending.set(id, entry); else pending.delete(id);
+        return this.pending = pending;
+      } finally { this.loadingChanges = undefined; this.loading = undefined; }
+    })();
   }
   private async read(id: string): Promise<Delivery | null> {
     const value = await this.app.storage.getRecord(this.namespace, id) as Delivery | { route: BotRoute; parts: string[]; next: number } | null;
@@ -49,7 +77,7 @@ export class BotOutbox {
     const value: Delivery = previous ? { ...previous, messages, final } : {
       version: 2, route, messages, next: 0, messageIds: [], sentHashes: [], phase: 'queued', final, createdAt: Date.now(),
     };
-    await this.app.storage.putRecord({ namespace: this.namespace, id, value });
+    await this.app.storage.putRecord({ namespace: this.namespace, id, value }); this.track(id, value);
     });
     await this.flush();
   }
@@ -59,18 +87,24 @@ export class BotOutbox {
       while (this.flushRequested) { this.flushRequested = false; await this.deliver(); }
     })().finally(() => { this.flushing = undefined; });
   }
-  private async save(id: string, value: Delivery) { await this.app.storage.putRecord({ namespace: this.namespace, id, value }); }
+  private async save(id: string, value: Delivery) { await this.app.storage.putRecord({ namespace: this.namespace, id, value }); this.track(id, value); }
   private async deliver(): Promise<void> {
-    const records = await Promise.all((await this.app.storage.listRecords(this.namespace)).map(async id => ({ id, value: await this.read(id) })));
-    records.sort((a, b) => (a.value?.createdAt ?? 0) - (b.value?.createdAt ?? 0) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    const pending = await this.index();
+    const order = [...pending].sort(([a, left], [b, right]) => left.createdAt - right.createdAt || a.localeCompare(b, undefined, { numeric: true })).map(([id]) => id);
     this.pendingCount = 0; this.lastError = undefined;
-    for (const { id } of records) await this.locked(id, async () => {
+    for (const id of order) await this.locked(id, async () => {
+      // 等待锁期间条目可能已发送完或被改写，先以索引里的最新状态判断。
+      const summary = pending.get(id);
+      if (!summary) return;
+      // 结果未确认或当前无法发送的条目只计数，不读取正文；中断的发送仍要先落盘为未确认。
+      if (summary.phase === 'unknown') { this.pendingCount++; this.lastError = summary.error; return; }
+      const connected = this.gateway();
+      if (summary.phase !== 'sending' && (!connected || connected.botId !== summary.route.botId || !await this.admitted(summary.route))) { this.pendingCount++; return; }
+      // 锁内只读一次；发送前的逐条权限复查仍在下方循环中进行。
       const value = await this.read(id);
-      if (!value) return;
+      if (!value) { this.track(id, null); return; }
       if (value.phase === 'sending') { value.phase = 'unknown'; value.error = '上次新消息发送中断，尚未确认是否送达。'; await this.save(id, value); }
       if (value.phase === 'unknown') { this.pendingCount++; this.lastError = value.error; return; }
-      const connected = this.gateway();
-      if (!connected || connected.botId !== value.route.botId || !await this.admitted(value.route)) { this.pendingCount++; return; }
       let failed = false;
       for (let index = 0; index < value.messages.length; index++) {
         const current = this.gateway();
@@ -133,10 +167,12 @@ export class BotOutbox {
           await this.save(id, value); this.lastError = value.error; failed = true;
         }
       }
-      if (!failed && value.final && value.next >= value.messages.length) await this.app.storage.commitRecords([
-        { namespace: this.namespace, id, delete: true }, { namespace: `${this.platform}-delivered`, id, value: { deliveredAt: Date.now(), messageIds: value.messageIds } },
-      ]);
-      else if (failed) this.pendingCount++;
+      if (!failed && value.final && value.next >= value.messages.length) {
+        await this.app.storage.commitRecords([
+          { namespace: this.namespace, id, delete: true }, { namespace: `${this.platform}-delivered`, id, value: { deliveredAt: Date.now(), messageIds: value.messageIds } },
+        ]);
+        this.track(id, null);
+      } else if (failed) this.pendingCount++;
     });
   }
   async list(): Promise<BotDeliverySummary[]> {
@@ -166,6 +202,7 @@ export class BotOutbox {
         { namespace: this.namespace, id, delete: true },
         { namespace: `${this.platform}-suppressed`, id, value: { reason, suppressedAt: Date.now(), messageIds: value.messageIds } },
       ]);
+      this.track(id, null);
     });
   }
   async close() { await this.flushing; }

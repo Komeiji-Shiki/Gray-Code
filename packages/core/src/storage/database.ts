@@ -8,6 +8,7 @@ import { HistoryStore } from './histories';
 import { MemoryRepository } from './memories';
 import { LongMemoryRepository } from './longMemory/repository';
 import { VectorRanker } from './longMemory/vectorWorker';
+import { VectorMatrixCache } from './longMemory/vectors';
 import type { LongMemoryQuery, LongMemoryRecall } from '@graycode/contracts';
 import { captureStorageSnapshot } from './backup';
 import { backupInventory } from './backupInventory';
@@ -19,6 +20,14 @@ interface ConversationRow {
   id: string; title: string | null; created_at: number; updated_at: number;
   workspace_uri: string | null; metadata_hash: Buffer; history_id: string;
 }
+/** 列表和用量统计共用的元数据字段投影。 */
+interface SummaryProjection {
+  workspaceId?: string; botPlatform?: 'discord' | 'onebot'; parentConversationId?: string; isSubagent: boolean;
+}
+/** 投影只含少量短字符串；按条数限制即可覆盖大存档的一轮完整分页。 */
+const SUMMARY_PROJECTIONS = 20_000;
+/** 计算线程保留的候选矩阵总量；不同项目、账号或主题交替检索时不必重新读取和打包。 */
+const VECTOR_CACHE_BYTES = 256 * 1024 * 1024;
 interface MigrationRow {
   source_key: string; fingerprint: string; conversation_id: string; metadata_hash: Buffer;
   history_id: string | null; imported_count: number; status: 'importing' | 'complete';
@@ -35,7 +44,8 @@ export class PlatformDatabase {
   private readonly databasePath: string;
   private readonly objectPath: string;
   private vectorRanker?: VectorRanker;
-  private vectorIndexKey?: string;
+  private readonly vectorMatrices = new VectorMatrixCache(VECTOR_CACHE_BYTES);
+  private readonly projections = new Map<string, SummaryProjection>();
 
   constructor(directory: string) {
     if (!path.isAbsolute(directory)) invalid('Storage directory must be absolute.');
@@ -52,11 +62,18 @@ export class PlatformDatabase {
   }
 
   async recallMemory(query: LongMemoryQuery): Promise<LongMemoryRecall> {
-    const prepared = this.longMemories.query.prepareVectors(query, this.vectorIndexKey);
+    const prepared = this.longMemories.query.prepareVectors(query, key => this.vectorMatrices.has(key));
     if (!prepared.rowIds.length) return this.longMemories.query.recall(query, { available: false, matches: [] });
     const ranker = this.vectorRanker ??= new VectorRanker();
-    const matches = await ranker.rank(prepared.input);
-    this.vectorIndexKey = prepared.key;
+    const evict = this.vectorMatrices.drain();
+    let matches;
+    try { matches = await ranker.rank({ ...prepared.input, evict }); }
+    catch (error) {
+      // 不确定线程是否已处理这次请求：本次矩阵不登记，待释放的矩阵随下一次请求重发。
+      this.vectorMatrices.discard([...evict, prepared.key]);
+      throw error;
+    }
+    if (prepared.input.vectors) this.vectorMatrices.add(prepared.key, prepared.bytes, query.scopes.map(scope => scope.id));
     return this.longMemories.query.recall(query, { available: prepared.rowIds.length > 0,
       matches: matches.map(item => ({ rowId: prepared.rowIds[item.index], score: item.score })) });
   }
@@ -142,15 +159,17 @@ export class PlatformDatabase {
       },
       saveMetadata: metadata => this.saveMetadata(metadata),
       listConversations: options => this.listConversations(options),
+      listConversationIds: options => this.listConversationIds(options),
       searchConversationIds: ({ query }) => this.searchConversationIds(query),
       listUsageConversations: options => this.listUsageConversations(options),
       readHistory: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }),
       readHistoryWithFloors: ({ id, options }) => ({ conversationId: id, ...this.histories.pageWithFloors(this.conversation(id).history_id, options) }),
+      readHistoryOutline: ({ id }) => ({ conversationId: id, ...this.histories.outline(this.conversation(id).history_id) }),
       historyInfo: ({ id }) => {
         const info = this.histories.info(this.conversation(id).history_id);
         return { total: info.message_count, revision: info.revision };
       },
-      readUsageState: ({ id, records = [] }) => ({ ...this.histories.usage(this.conversation(id).history_id),
+      readUsageState: ({ id, records = [], since }) => ({ ...this.histories.usage(this.conversation(id).history_id, since),
         records: records.map(record => ({ namespace: record.namespace, id: record.id, record: this.execute('getVersionedRecord', record) })) }),
       recordRevisions: ({ records }) => records.map(({ namespace, id }) => {
         assertIdentifier(namespace); assertIdentifier(id);
@@ -279,7 +298,11 @@ export class PlatformDatabase {
     if (!Object.hasOwn(operations, method)) invalid('Unknown storage operation.');
     const result = operations[method](input);
     // 只失效记忆数据的计算缓存，普通聊天写入不会迫使下一次搜索重传向量。
-    if (['longMemoryWrite', 'longMemoryVector', 'longMemoryRestore', 'longMemoryJobFinish', 'mergeBackupUnits'].includes(method)) this.vectorIndexKey = undefined;
+    // 这些操作只修改输入声明的范围（删除后复用的行号也由写入方范围的失效覆盖）；备份合并无法判断范围，全部失效。
+    if (method === 'longMemoryWrite' || method === 'longMemoryVector' || method === 'longMemoryJobFinish')
+      this.vectorMatrices.invalidate([(input as StorageOperations['longMemoryWrite' | 'longMemoryVector' | 'longMemoryJobFinish']['input']).scope.id]);
+    else if (method === 'longMemoryRestore') this.vectorMatrices.invalidate((input as StorageOperations['longMemoryRestore']['input']).archive.scopes.map(scope => scope.id));
+    else if (method === 'mergeBackupUnits') this.vectorMatrices.invalidate();
     return result;
   }
 
@@ -423,22 +446,43 @@ export class PlatformDatabase {
     })();
   }
 
-  private summary(row: ConversationRow): ConversationSummary {
-    const history = this.histories.info(row.history_id);
-    const { workspaceId, custom } = this.objects.getValue<{ workspaceId?: unknown; custom?: { botOrigin?: { platform?: unknown } } }>(row.metadata_hash, { fields: ['workspaceId', 'custom'] });
+  /**
+   * 列表只需要元数据里的少数字段。元数据按内容哈希寻址且不可变，投影以哈希为键缓存无需失效；
+   * 元数据更新会换新哈希，旧项随最近使用顺序淘汰。
+   */
+  private projection(hash: Buffer): SummaryProjection {
+    const key = hash.toString('hex');
+    const cached = this.projections.get(key);
+    if (cached) { this.projections.delete(key); this.projections.set(key, cached); return cached; }
+    const { workspaceId, parentConversationId, custom } = this.objects.getValue<{ workspaceId?: unknown; parentConversationId?: unknown;
+      custom?: { botOrigin?: { platform?: unknown }; platformSubagentId?: unknown } }>(hash, { fields: ['workspaceId', 'parentConversationId', 'custom'], omitBinary: true });
     const botPlatform = custom?.botOrigin?.platform;
-    return { id: row.id, title: row.title ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
+    const value: SummaryProjection = {
       ...(typeof workspaceId === 'string' ? { workspaceId } : {}),
       ...(botPlatform === 'discord' || botPlatform === 'onebot' ? { botPlatform } : {}),
+      ...(typeof parentConversationId === 'string' ? { parentConversationId } : {}),
+      isSubagent: !!custom?.platformSubagentId,
+    };
+    this.projections.set(key, value);
+    if (this.projections.size > SUMMARY_PROJECTIONS) this.projections.delete(this.projections.keys().next().value!);
+    return value;
+  }
+
+  private summary(row: ConversationRow, history: { message_count: number; revision: number } = this.histories.info(row.history_id)): ConversationSummary {
+    const { workspaceId, botPlatform } = this.projection(row.metadata_hash);
+    return { id: row.id, title: row.title ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
+      ...(workspaceId !== undefined ? { workspaceId } : {}),
+      ...(botPlatform !== undefined ? { botPlatform } : {}),
       workspaceUri: row.workspace_uri ?? undefined, messageCount: history.message_count, revision: history.revision };
   }
 
-  private listConversations(options: ConversationListOptions): ConversationList {
+  /** 列表与 ID 列表共用的筛选和游标条件；列名带表名，可以和 histories 连接。 */
+  private conversationFilter(options: ConversationListOptions): { limit: number; sql: string; args: Array<string | number> } {
     const limit = options.limit ?? 50;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) invalid('List limit must be between 1 and 1000.');
     const where: string[] = [];
     const args: Array<string | number> = [];
-    if (options.workspaceUri !== undefined) { where.push('workspace_uri=?'); args.push(options.workspaceUri); }
+    if (options.workspaceUri !== undefined) { where.push('conversations.workspace_uri=?'); args.push(options.workspaceUri); }
     if (options.query !== undefined) {
       const query = this.validateSearchQuery(options.query);
       if (query) { const search = this.conversationSearchCondition(query); where.push(search.sql); args.push(...search.args); }
@@ -446,13 +490,28 @@ export class PlatformDatabase {
     if (options.cursor) {
       if (!Number.isFinite(options.cursor.updatedAt)) invalid('Invalid conversation cursor.');
       assertIdentifier(options.cursor.id);
-      where.push('(updated_at<? OR (updated_at=? AND id>?))');
+      where.push('(conversations.updated_at<? OR (conversations.updated_at=? AND conversations.id>?))');
       args.push(options.cursor.updatedAt, options.cursor.updatedAt, options.cursor.id);
     }
-    const rows = this.db.prepare(`SELECT * FROM conversations ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY updated_at DESC,id LIMIT ?`).all(...args, limit + 1) as ConversationRow[];
+    return { limit, sql: `${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY conversations.updated_at DESC,conversations.id LIMIT ?`, args };
+  }
+
+  /** 只需要编号的兼容接口不读取历史信息，也不解码元数据。 */
+  private listConversationIds(options: ConversationListOptions): StorageOperations['listConversationIds']['output'] {
+    const filter = this.conversationFilter(options);
+    const rows = this.db.prepare(`SELECT conversations.id,conversations.updated_at FROM conversations ${filter.sql}`)
+      .all(...filter.args, filter.limit + 1) as Array<{ id: string; updated_at: number }>;
+    const page = rows.slice(0, filter.limit), last = page.at(-1);
+    return { ids: page.map(row => row.id), ...(rows.length > filter.limit && last ? { nextCursor: { updatedAt: last.updated_at, id: last.id } } : {}) };
+  }
+
+  private listConversations(options: ConversationListOptions): ConversationList {
+    // 历史条数和版本在同一条查询中连接读取，不再逐行查询 histories。
+    const { limit, sql, args } = this.conversationFilter(options);
+    const rows = this.db.prepare(`SELECT conversations.*,h.message_count,h.revision FROM conversations
+      JOIN histories h ON h.id=conversations.history_id ${sql}`).all(...args, limit + 1) as Array<ConversationRow & { message_count: number; revision: number }>;
     const more = rows.length > limit;
-    const items = rows.slice(0, limit).map(row => this.summary(row));
+    const items = rows.slice(0, limit).map(row => this.summary(row, row));
     const last = items.at(-1);
     return { items, ...(more && last ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } } : {}) };
   }
@@ -519,11 +578,10 @@ export class PlatformDatabase {
         revision: number; usage_revision: number | null; branches_revision: number | null;
       }>;
     const items = rows.slice(0, limit).map(row => {
-      const metadata = this.objects.getValue<Pick<PlatformConversation, 'parentConversationId' | 'custom'>>(
-        row.metadata_hash, { fields: ['parentConversationId', 'custom'], omitBinary: true });
+      const metadata = this.projection(row.metadata_hash);
       return { id: row.id, title: row.title ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
-        parentConversationId: typeof metadata.parentConversationId === 'string' ? metadata.parentConversationId : undefined,
-        isSubagent: !!(metadata.custom as Record<string, unknown> | undefined)?.platformSubagentId,
+        parentConversationId: metadata.parentConversationId,
+        isSubagent: metadata.isSubagent,
         historyId: row.history_id, revision: row.revision,
         usageRevision: row.usage_revision, branchesRevision: row.branches_revision };
     });

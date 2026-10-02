@@ -1,4 +1,5 @@
 import type { ValueProjection } from './objects';
+import type { HistoryOutlineEntry } from './histories';
 import type { LongMemoryGraph } from '@graycode/contracts';
 import type {
   ConversationSummary, HistoryPage, HistoryWriteOptions, PageOptions,
@@ -13,6 +14,7 @@ import type { RunEventWrite } from './runs';
 import type { LongMemoryScope, LongMemoryScopeState, LongMemoryWrite, LongMemoryWriteResult, LongMemoryQuery, LongMemoryRecall, LongMemoryRead, LongMemoryReadResult, LongMemoryTopic, LongMemoryRecord, LongMemoryVector, LongMemoryArchive, LongMemoryJob } from '@graycode/contracts';
 
 export interface HistoryWriteResult { revision: number; total: number }
+export interface HistoryOutline { conversationId: string; total: number; revision: number; entries: HistoryOutlineEntry[] }
 export interface ConversationListOptions {
   limit?: number;
   workspaceUri?: string;
@@ -83,12 +85,16 @@ export interface StorageOperations {
   getConversationInfo: { input: { id: string }; output: { metadata: PlatformConversation; metadataToken: string; messageCount: number; historyRevision: number } | null };
   saveMetadata: { input: PlatformConversation; output: void };
   listConversations: { input: ConversationListOptions; output: ConversationList };
+  /** 与 listConversations 同样的筛选、排序和游标，只返回编号。 */
+  listConversationIds: { input: ConversationListOptions; output: { ids: string[]; nextCursor?: ConversationList['nextCursor'] } };
   searchConversationIds: { input: { query: string }; output: { matches: Array<{ id: string; messageIndex?: number; messageId?: string; excerpt?: string }>; indexing: boolean } };
   listUsageConversations: { input: Pick<ConversationListOptions, 'limit' | 'cursor'>; output: { items: UsageConversation[]; nextCursor?: ConversationList['nextCursor'] } };
   readHistory: { input: { id: string; options?: PageOptions }; output: HistoryPage };
   readHistoryWithFloors: { input: { id: string; options?: PageOptions }; output: HistoryPage & { floorIndices: number[] } };
+  readHistoryOutline: { input: { id: string }; output: HistoryOutline };
   historyInfo: { input: { id: string }; output: HistoryWriteResult };
-  readUsageState: { input: { id: string; records?: { namespace: string; id: string; projection?: ValueProjection }[] }; output: { revision: number; messages: PlatformMessage[]; records: { namespace: string; id: string; record: VersionedRecord }[] } };
+  /** since 为上次的 token 时 messages 只含共享前缀之后的 model 消息，keep 为前缀中仍有效的 model 条数；缺省或令牌失效时 keep=0、返回全部。 */
+  readUsageState: { input: { id: string; records?: { namespace: string; id: string; projection?: ValueProjection }[]; since?: string }; output: { revision: number; messages: PlatformMessage[]; token: string; keep: number; records: { namespace: string; id: string; record: VersionedRecord }[] } };
   recordRevisions: { input: { records: { namespace: string; id: string }[] }; output: (number | null)[] };
   readFullHistory: { input: { id: string }; output: HistoryPage };
   appendHistory: { input: { id: string; messages: PlatformMessage[]; options?: HistoryWriteOptions }; output: HistoryWriteResult };

@@ -8,6 +8,53 @@ const SEGMENT_ENTRIES = 128;
 /** 已解码消息正文的缓存上限（估算字节）。切换和准备长会话时同一份历史会被多个请求完整读取。 */
 const BODY_CACHE_BYTES = 96 * 1024 * 1024;
 const BODY_CACHE_ENTRY_BYTES = 2 * 1024 * 1024;
+/** 导航摘要按历史保留少量快照：切换标签时来回读取的几个会话都能增量复用。 */
+const OUTLINE_SNAPSHOTS = 4;
+const OUTLINE_FIELDS = ['parentId', 'runId', 'isFunctionResponse', 'parts'] as const;
+
+/**
+ * 导航标记、楼层与读取修复扫描只需要的消息摘要。正文、工具载荷与附件留在存储线程，
+ * 长会话刷新导航时不再复制完整消息。
+ */
+export interface HistoryOutlineEntry {
+  role: string;
+  id?: string;
+  /** parentId 字段是否存在（null 也算存在），用于节点 ID 迁移判据。 */
+  hasParentId: boolean;
+  runId?: string;
+  isFunctionResponse?: boolean;
+  /** 带 ID 的工具调用，保持 parts 中的原始顺序。 */
+  calls?: { id: string; rejected?: true }[];
+  /** 带 ID 的工具响应，只保留判断占位响应所需的结构标记。 */
+  responses?: { id: string; rejected?: true; cancelled?: true; code?: string }[];
+  /** 用户输入（非工具响应）的文字预览，口径与导航标记一致。 */
+  preview?: string;
+}
+
+function outlineEntry(row: EntryRow, body: Record<string, unknown>): HistoryOutlineEntry {
+  const entry: HistoryOutlineEntry = { role: row.role, hasParentId: body.parentId !== undefined };
+  if (row.message_id !== null) entry.id = row.message_id;
+  if (typeof body.runId === 'string' && body.runId) entry.runId = body.runId;
+  if (body.isFunctionResponse) entry.isFunctionResponse = true;
+  const parts = Array.isArray(body.parts) ? body.parts as Array<Record<string, any> | null> : [];
+  for (const part of parts) {
+    const call = part?.functionCall;
+    if (call && typeof call.id === 'string' && call.id) (entry.calls ??= []).push(call.rejected ? { id: call.id, rejected: true } : { id: call.id });
+    const response = part?.functionResponse;
+    if (response && typeof response.id === 'string' && response.id) {
+      const value = response.response && typeof response.response === 'object' && !Array.isArray(response.response) ? response.response : {};
+      (entry.responses ??= []).push({ id: response.id,
+        ...(value.rejected === true ? { rejected: true as const } : {}),
+        ...(value.cancelled === true ? { cancelled: true as const } : {}),
+        ...(typeof value.code === 'string' && value.code.length <= 64 ? { code: value.code } : {}) });
+    }
+  }
+  if (row.role === 'user' && !entry.isFunctionResponse) {
+    const preview = parts.map(part => typeof part?.text === 'string' ? part.text : '').join(' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (preview) entry.preview = preview;
+  }
+  return entry;
+}
 
 /** 粗略估算已解码值占用的内存；只用于缓存淘汰，不参与存储语义。 */
 function estimatedBytes(value: unknown, limit: number): number {
@@ -48,16 +95,23 @@ export class HistoryStore {
   private readonly cursorSnapshots = new Map<string, { historyId: string; revision: number; spans: SpanRow[] }>();
   // 仅保留最近一次楼层窗口，避免随着浏览过的会话数量积累派生元数据。
   private floorSnapshot?: { historyId: string; revision: number; spans: SpanRow[]; floorIndices: number[] };
+  /** 按最近使用顺序保存的导航摘要快照；段内条目不可变，新版本只解码共享前缀之后的消息。 */
+  private readonly outlineSnapshots = new Map<string, { revision: number; spans: SpanRow[]; entries: HistoryOutlineEntry[] }>();
   /**
    * 正文按内容哈希寻址且不可变，已解码的正文可以跨请求、跨分叉共享。读取结果经线程消息复制后才交给调用方，
    * 存储线程内不修改解码后的消息，因此缓存不需要随版本失效。按最近使用顺序淘汰。
    */
   private readonly bodies = new Map<string, { body: Record<string, unknown>; bytes: number }>();
   private bodyBytes = 0;
+  /** 用量前缀令牌的有效期；回收或备份合并后段号可能复用，随 clearSnapshots 换新，旧令牌回退全量读取。 */
+  private usageEpoch = randomUUID();
   constructor(private readonly db: SqliteConnection, private readonly objects: ObjectStore) {}
 
   releaseCursor(runId: string): void { this.cursorSnapshots.delete(runId); }
-  clearSnapshots(): void { this.cursorSnapshots.clear(); this.floorSnapshot = undefined; this.bodies.clear(); this.bodyBytes = 0; }
+  clearSnapshots(): void {
+    this.cursorSnapshots.clear(); this.floorSnapshot = undefined; this.outlineSnapshots.clear(); this.bodies.clear(); this.bodyBytes = 0;
+    this.usageEpoch = randomUUID();
+  }
 
   readIncremental(id: string, cursor: RuntimeHistoryCursor) {
     const info = this.info(id);
@@ -156,6 +210,34 @@ export class HistoryStore {
       });
       this.floorSnapshot = { historyId: id, revision: info.revision, spans, floorIndices };
       return { ...page, floorIndices: [...floorIndices] };
+    })();
+  }
+
+  /**
+   * 整段历史的导航摘要（同一快照）。同一历史优先与自身上次快照比较；首次读取分叉时借用最近
+   * 一份快照，分叉共享的段前缀同样不必重新解码。
+   */
+  outline(id: string): { total: number; revision: number; entries: HistoryOutlineEntry[] } {
+    return this.db.transaction(() => {
+      const info = this.info(id);
+      const own = this.outlineSnapshots.get(id);
+      if (own) { this.outlineSnapshots.delete(id); this.outlineSnapshots.set(id, own); }
+      if (own?.revision === info.revision) return { total: info.message_count, revision: info.revision, entries: [...own.entries] };
+      const spans = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index').all(id) as SpanRow[];
+      const previous = own ?? [...this.outlineSnapshots.values()].at(-1);
+      const startIndex = previous ? sharedSpanPrefix(previous.spans, spans) : 0;
+      const entries = previous ? previous.entries.slice(0, startIndex) : [];
+      const rows = this.rows(id, startIndex, info.message_count);
+      if (rows.length !== info.message_count - startIndex) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+      for (const row of rows) {
+        // 已缓存的完整正文直接复用；否则只投影摘要字段，附件不解码，也不挤占正文缓存。
+        const body = this.bodies.get(row.body_hash.toString('hex'))?.body
+          ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: OUTLINE_FIELDS, omitBinary: true });
+        entries.push(outlineEntry(row, body));
+      }
+      this.outlineSnapshots.set(id, { revision: info.revision, spans, entries });
+      while (this.outlineSnapshots.size > OUTLINE_SNAPSHOTS) this.outlineSnapshots.delete(this.outlineSnapshots.keys().next().value!);
+      return { total: info.message_count, revision: info.revision, entries: [...entries] };
     })();
   }
 
@@ -262,13 +344,24 @@ export class HistoryStore {
     return target;
   }
 
-  /** 用量页不恢复附件；只有旧版部分输出估算需要读取文字和工具参数。 */
-  usage(id: string): { revision: number; messages: PlatformMessage[] } {
+  /**
+   * 用量页不恢复附件；只有旧版部分输出估算需要读取文字和工具参数。
+   * since 是上次返回的前缀令牌：段内条目不可变，段身份一致的前缀里 model 消息不会变化，只解码共享前缀之后的消息；
+   * keep 是共享前缀中的 model 条数，调用方据此截断缓存。删除、重生成、分支切换会改写段序列，共享前缀随之缩短。
+   */
+  usage(id: string, since?: string): { revision: number; messages: PlatformMessage[]; token: string; keep: number } {
     const info = this.info(id);
-    const rows = this.db.prepare(`SELECT e.body_hash,e.message_id,e.role,e.timestamp
-      FROM history_spans s JOIN segment_entries e ON e.segment_id=s.segment_id
+    const spans = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index').all(id) as SpanRow[];
+    const previous = this.usageSpans(since);
+    const shared = previous ? sharedSpanPrefix(previous, spans) : 0;
+    const source = `FROM history_spans s JOIN segment_entries e ON e.segment_id=s.segment_id
       AND e.ordinal>=s.segment_offset AND e.ordinal<s.segment_offset+s.count
-      WHERE s.history_id=? AND e.role='model' ORDER BY s.start_index,e.ordinal`).all(id) as EntryRow[];
+      WHERE s.history_id=? AND e.role='model'`;
+    const position = 's.start_index+e.ordinal-s.segment_offset';
+    // 共享前缀只计数，不读取正文。
+    const keep = shared ? (this.db.prepare(`SELECT count(*) AS n ${source} AND ${position}<?`).get(id, shared) as { n: number }).n : 0;
+    const rows = this.db.prepare(`SELECT e.body_hash,e.message_id,e.role,e.timestamp ${source} AND ${position}>=?
+      ORDER BY s.start_index,e.ordinal`).all(id, shared) as EntryRow[];
     const fields = ['runId', 'modelVersion', 'usageMetadata', 'usageMetadataPartial', 'candidatesTokenCount', 'thoughtsTokenCount'];
     const messages = rows.map(row => {
       const body = this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields, omitBinary: true });
@@ -277,7 +370,21 @@ export class HistoryStore {
       return { ...body, parts: parts ?? [], role: row.role, ...(row.message_id ? { id: row.message_id } : {}),
         ...(row.timestamp !== null ? { timestamp: row.timestamp } : {}) } as PlatformMessage;
     });
-    return { revision: info.revision, messages };
+    const token = JSON.stringify([this.usageEpoch, spans.map(span => [span.start_index, span.segment_id, span.segment_offset, span.count])]);
+    return { revision: info.revision, messages, token, keep };
+  }
+
+  /** 令牌来自调用方缓存，格式不符或已过期时按无前缀处理。 */
+  private usageSpans(token?: string): SpanRow[] | undefined {
+    if (typeof token !== 'string') return undefined;
+    try {
+      const [epoch, spans] = JSON.parse(token) as [unknown, unknown];
+      if (epoch !== this.usageEpoch || !Array.isArray(spans)) return undefined;
+      return spans.map(item => {
+        if (!Array.isArray(item) || item.length !== 4 || !item.every(value => Number.isSafeInteger(value) && value >= 0)) throw new Error('invalid span');
+        return { start_index: item[0], segment_id: item[1], segment_offset: item[2], count: item[3] };
+      });
+    } catch { return undefined; }
   }
 
   private truncate(id: string, length: number): void {

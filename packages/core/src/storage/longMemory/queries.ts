@@ -2,7 +2,8 @@ import type { LongMemoryQuery, LongMemoryRecall, LongMemoryRecord, LongMemoryRea
 import { invalid } from '../../errors';
 import { MemoryMutationStore, validateMemoryTopic, validateMemoryVector, type RecordRow } from './mutations';
 import { memoryDigest, memoryTerms, memoryTokens } from './text';
-import { rankVectors, type VectorRankingRequest } from './vectors';
+import { createHash } from 'node:crypto';
+import { rankVectors, vectorMatrixBytes, type VectorRankingRequest } from './vectors';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
 import type { LongMemoryTopicQuery, LongMemoryTopicPage } from '@graycode/contracts';
 import { readMemoryPage } from './pages';
@@ -78,15 +79,20 @@ export class MemoryQueries {
     return { cte, parameters, filter: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', filters };
   }
 
-  prepareVectors(query: LongMemoryQuery, previousKey?: string): { key: string; rowIds: number[]; input: VectorRankingRequest } {
+  /**
+   * 候选行每次按可见性重新筛选，矩阵按行集合命名；行集合与顺序完全相同才复用，排序和分数因此与重新打包一致。
+   * 向量值在同一行上的替换不会改变键，由调用方在写入后按范围失效。
+   */
+  prepareVectors(query: LongMemoryQuery, cached?: (key: string) => boolean): { key: string; rowIds: number[]; bytes: number; input: VectorRankingRequest } {
     const vector = query.vector!; validateMemoryVector(vector);
     const { cte, parameters, filter, filters } = this.plan(query);
     const rows = this.store.db.prepare(`${cte} SELECT r.row_id,r.id FROM long_memory_vectors v JOIN eligible r ON r.row_id=v.record_row
       WHERE v.model=? AND v.dimensions=?${filter}`).all(...parameters, vector.model, vector.dimensions, ...filters) as Array<{ row_id: number; id: string }>;
-    const rowIds = rows.map(row => row.row_id), key = JSON.stringify([vector.model, vector.dimensions, rowIds]);
+    const rowIds = rows.map(row => row.row_id);
+    const key = createHash('sha256').update(JSON.stringify([vector.model, vector.dimensions, rowIds])).digest('hex');
     const input: VectorRankingRequest = { dimensions: vector.dimensions, values: vector.values,
-      ids: rows.map(row => row.id), limit: Math.max(40, query.limit) + 1 };
-    if (key !== previousKey) {
+      ids: rows.map(row => row.id), limit: Math.max(40, query.limit) + 1, key };
+    if (!cached?.(key)) {
       const bytes = vector.dimensions * 4, packed = Buffer.allocUnsafeSlow(rows.length * bytes);
       const offsets = new Map(rowIds.map((id, index) => [id, index]));
       for (let start = 0; start < rowIds.length; start += 500) {
@@ -98,7 +104,7 @@ export class MemoryQueries {
       }
       input.vectors = packed.buffer as ArrayBuffer;
     }
-    return { key, rowIds, input };
+    return { key, rowIds, bytes: vectorMatrixBytes(rows.length, vector.dimensions), input };
   }
 
   recall(query: LongMemoryQuery, semanticCandidates?: SemanticCandidates): LongMemoryRecall {

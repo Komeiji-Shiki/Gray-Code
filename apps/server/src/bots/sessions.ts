@@ -8,7 +8,7 @@ import { captureBotAgent } from './profiles';
 import { BOT_CHANNEL_ACCESS, addBotParticipant, sameBotChannel, type BotChannelAccess } from './channelAccess';
 import { BotInbox, type BotInboxItem } from './inbox';
 import { captureBotEnvironment } from './prompt';
-import { actorForBotRun, isBotUserBlocked, resolveBotUser } from './permissions';
+import { actorForBotRun, isBotUserBlocked, resolveBotGuestActor, resolveBotUser } from './permissions';
 import { authorizeEffects, type ConversationListOptions } from '@graycode/core';
 import { distributionSourceNotice } from '../../../../shared/distribution';
 
@@ -54,15 +54,17 @@ export class BotSessions {
     if (!actor) throw new Error('当前部署没有可用的主人账号。');
     return actor;
   }
+  /** 权限判断只用到账号、绑定和平台准入配置；每条消息发送前都会复查，只复制这些字段，不克隆完整设置。 */
+  private permissionSettings() { return this.app.settings.read('accounts', 'bindings', 'botGuestAccountId', 'discord', 'onebot'); }
   canRecord(context: BotContext): boolean {
-    if (isBotUserBlocked(this.app.settings.snapshot().settings, { platform: context.platform, platformUserId: context.authorId, network: context.network })) return false;
-    const config = this.app.settings.snapshot().settings[context.platform];
+    const settings = this.permissionSettings();
+    if (isBotUserBlocked(settings, { platform: context.platform, platformUserId: context.authorId, network: context.network })) return false;
+    const config = settings[context.platform];
     if (!config?.enabled) return false;
     if (!context.direct) return config.allowedChannelIds.includes(context.channelId);
-    try { this.authorize(context); return true; } catch { return false; }
+    try { this.authorize(context, settings); return true; } catch { return false; }
   }
-  authorize(context: BotContext): ActorIdentity {
-    const settings = this.app.settings.snapshot().settings;
+  authorize(context: BotContext, settings = this.permissionSettings()): ActorIdentity {
     const source = { platform: context.platform, platformUserId: context.authorId, network: context.network };
     const actor = resolveBotUser(settings, source);
     if (!actor) throw new Error(isBotUserBlocked(settings, source) ? '这个用户已被拉黑或授权已撤销。' : `账号尚未绑定，默认访客对话也未启用。你的数字用户 ID 是 ${context.authorId}，请由主人配置默认权限或单独授权。`);
@@ -75,8 +77,10 @@ export class BotSessions {
   async admitted(route: BotRoute): Promise<boolean> {
     if (route.direct === undefined) return false;
     const platform = route.platform ?? 'discord';
-    const settings = this.app.settings.snapshot().settings;
-    const actor = this.app.actor(route.actorId);
+    const settings = this.permissionSettings();
+    // 与 app.actor 相同的解析，复用同一份字段投影，避免再次复制账号与绑定列表。
+    const account = settings.accounts.find(item => item.id === route.actorId);
+    const actor = account && !account.revoked ? account : resolveBotGuestActor(settings, route.actorId);
     const candidates = settings.bindings.filter(binding => binding.platform === platform && binding.accountId === route.actorId
       && (platform !== 'onebot' || (binding.network ?? 'qq') === (route.network ?? 'qq')));
     const userId = route.platformUserId ?? (candidates.length === 1 ? candidates[0].platformUserId : undefined);

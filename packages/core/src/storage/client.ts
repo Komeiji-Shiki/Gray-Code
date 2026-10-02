@@ -102,14 +102,17 @@ export class PlatformStorage {
   memoryWrite(input: MemoryWrite) { return this.request('memoryWrite', input); }
   saveMetadata(metadata: PlatformConversation) { return this.request('saveMetadata', metadata); }
   listConversations(options: ConversationListOptions = {}) { return this.request('listConversations', options); }
+  listConversationIds(options: ConversationListOptions = {}) { return this.request('listConversationIds', options); }
   searchConversationIds(query: string) { return this.request('searchConversationIds', { query }); }
   listUsageConversations(options: StorageOperations['listUsageConversations']['input'] = {}) { return this.request('listUsageConversations', options); }
   readHistory(id: string, options: PageOptions = {}) { return this.request('readHistory', { id, options }); }
   /** Omit options to read only global floor metadata; supplied options fetch a bounded page in the same revision. */
   readHistoryWithFloors(id: string, options?: PageOptions) { return this.request('readHistoryWithFloors', { id, options }); }
+  /** 整段历史的导航摘要（角色、ID、工具配对标记与用户预览），不含正文与附件。 */
+  readHistoryOutline(id: string) { return this.request('readHistoryOutline', { id }); }
   historyInfo(id: string) { return this.request('historyInfo', { id }); }
   /** Explicit full reads use one worker operation; UI callers should use readHistory pages. */
-  readUsageState(id: string, records: StorageOperations['readUsageState']['input']['records'] = []) { return this.request('readUsageState', { id, records }); }
+  readUsageState(id: string, records: StorageOperations['readUsageState']['input']['records'] = [], since?: string) { return this.request('readUsageState', { id, records, since }); }
   recordRevisions(records: StorageOperations['recordRevisions']['input']['records']) { return this.request('recordRevisions', { records }); }
   readFullHistory(id: string) { return this.request('readFullHistory', { id }); }
   appendHistory(id: string, messages: PlatformMessage[], options?: HistoryWriteOptions) { return this.request('appendHistory', { id, messages, options }); }
