@@ -51,17 +51,26 @@ describe('独立桌面输入准备和运行释放的取消边界', () => {
     } finally { releaseAuthorization.resolve(); release.resolve(); await started.catch(() => {}); await stopping; }
   });
 
-  test('交互队列中的输入被停止后不会在前序设置请求完成时迟到启动', async () => {
-    const entered = deferred(), release = deferred();
+  test.each([false, true])('交互队列中的输入被停止后不会在前序设置请求完成时迟到启动（已等待前序请求：%s）', async waiting => {
+    const entered = deferred(), release = deferred(), queued = deferred();
     await app.productUi.call(owner, 'getSettings');
     const draft = app.product.draft.bind(app.product);
     jest.spyOn(app.product, 'draft').mockImplementationOnce(async () => { entered.resolve(); await release.promise; return draft(); });
     const settings = app.productUi.call(owner, 'ui.settings.begin'); await entered.promise;
+    const queueStart = app.productUi.chat.queueStart.bind(app.productUi.chat);
+    jest.spyOn(app.productUi.chat, 'queueStart').mockImplementationOnce((client, id, operation) => queueStart(client, id, signal => {
+      const result = operation(signal); queued.resolve(); return result;
+    }));
     const started = app.productUi.call(owner, 'chatStream', data(conversationId, 'queued'));
     const rejected = expect(started).rejects.toMatchObject({ code: 'CANCELLED_ERROR' });
     try {
       expect(app.productUi.chat.hasPendingStarts(conversationId)).toBe(true);
-      expect(await app.productUi.chat.cancel(owner, conversationId, 20)).toEqual({ success: false, code: 'RUN_CANCEL_TIMEOUT' });
+      // 立即中止尚未进入队列回调的输入可直接释放；已等待前序请求的输入仍须等队列退出。
+      if (waiting) await queued.promise;
+      expect(await app.productUi.chat.cancel(owner, conversationId, 20)).toEqual(waiting
+        ? { success: false, code: 'RUN_CANCEL_TIMEOUT' } : { success: true });
+      expect(app.productUi.chat.hasPendingStarts(conversationId)).toBe(waiting);
+      if (!waiting) await rejected;
       release.resolve(); await settings; await rejected;
       expect(await app.productUi.chat.cancel(owner, conversationId, 200)).toEqual({ success: true });
       expect((await app.storage.readFullHistory(conversationId)).messages).toEqual([]);
