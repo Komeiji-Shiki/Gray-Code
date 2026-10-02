@@ -38,6 +38,16 @@ describe('持久目标和定时触发', () => {
     throw new Error('自动任务状态未达到预期');
   }
 
+  test('事件来源的对话选项按列表摘要的归属账号筛选，不逐个读取元数据', async () => {
+    await app.storage.createConversation({ id: 'guest-chat', title: '别人的对话', createdAt: now, updatedAt: now, actorId: 'guest', custom: { platformMode: 'chat' } });
+    await app.storage.createConversation({ id: 'untitled-chat', createdAt: now, updatedAt: now, actorId: 'owner' });
+    const metadataReads = jest.spyOn(app.storage, 'getConversation');
+    const options = await app.automations.options('owner');
+    expect(metadataReads).not.toHaveBeenCalled();
+    expect(options.eventConversations).toEqual(expect.arrayContaining([{ id: 'auto-chat', title: '自动任务测试' }, { id: 'untitled-chat', title: 'untitled-chat' }]));
+    expect(options.eventConversations.some(row => row.id === 'guest-chat')).toBe(false);
+  });
+
   test('目标跨轮继续，完成工具结算后结束，并保留原目标消息与调用用量', async () => {
     generate = async () => calls.length === 1 ? answer() : complete();
     const goal = await create(); await app.automations.tick(now);

@@ -110,8 +110,14 @@ describe('桌宠资源与统一控制', () => {
     const conversation = await app.pets.call(client, 'pets.chat.create', {}) as { id: string };
     const result = await app.pets.call(client, 'pets.chat.send', { conversationId: conversation.id, configId, message: '请在这段对话继续。', streamId: 'pet-chat-1' }) as { runId: string };
     expect((await app.runtime.wait(result.runId))?.status).toBe('completed');
+    await app.createConversation('owner', '代码对话', undefined, { platformMode: 'code' });
+    const metadataReads = jest.spyOn(app.storage, 'getConversation');
     const inbox = await app.pets.call(client, 'pets.inbox', { conversationId: conversation.id }) as any;
-    expect(inbox.history.map((message: any) => message.text).join('')).toContain('同一段对话'); expect(inbox.runs[0]).toMatchObject({ id: result.runId, conversationId: conversation.id });
+    // 列表和任务标题都来自列表摘要，列表里的其他对话不再逐个读取完整元数据；
+    // 只有当前选中的对话（以及后台处理它的任务）会读取。
+    expect(new Set(metadataReads.mock.calls.map(([id]) => id))).toEqual(new Set([conversation.id])); metadataReads.mockRestore();
+    expect(inbox.conversations).toEqual([{ id: conversation.id, title: '陪伴对话' }]);
+    expect(inbox.history.map((message: any) => message.text).join('')).toContain('同一段对话'); expect(inbox.runs[0]).toMatchObject({ id: result.runId, conversationId: conversation.id, title: '陪伴对话' });
     await configure({ visible: false }); expect((await app.storage.getRun(result.runId))?.status).toBe('completed');
     await app.productUi.call(client, 'ui.mode.select', { conversationId: conversation.id, mode: 'code' });
     const changed = await app.pets.call(client, 'pets.inbox', { conversationId: conversation.id }) as any;

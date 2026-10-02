@@ -164,8 +164,9 @@ export class ApplicationAutomations {
     const providerId = custom?.inputModelConfig?.configId ?? runtime.getActiveChannelId() ?? '';
     const conversations = await this.app.storage.listConversations({ limit: 200 });
     const hidden = this.app.subagents.childConversationIds();
-    const eventConversations = (await Promise.all(conversations.items.filter(row => !hidden.has(row.id)).map(async row =>
-      (await this.app.storage.getConversation(row.id))?.actorId === actorId ? { id: row.id, title: row.title || row.id } : null))).filter((row): row is NonNullable<typeof row> => !!row);
+    // 列表摘要已带归属账号，不再为每个对话单独读取元数据。
+    const eventConversations = conversations.items.filter(row => !hidden.has(row.id) && row.actorId === actorId)
+      .map(row => ({ id: row.id, title: row.title || row.id }));
     return { eventConversations, eventPeers: this.app.nodes.status(actorId).peers.filter(peer => !peer.revokedAt).map(peer => ({ id: peer.id, name: peer.name })),
       agents: settings.agents.map(({ id, name }) => ({ id, name })), providers,
       workspaces: settings.workspaces.filter(workspace => !workspace.managedConversationId), promptModes: runtime.getAllPromptModes().map(({ id, name }) => ({ id, name })),

@@ -13,17 +13,21 @@ export async function petInteraction(app: PlatformApplication, client: ClientSes
       streamId: input.streamId, message: input.message, attachments: input.attachments });
   }
   if (method !== 'pets.inbox') throw new Error('未知桌宠交互操作。');
-  const conversations = (await Promise.all((await app.storage.listConversations({ limit: 80 })).items.map(item => app.storage.getConversation(item.id))))
-    .filter(item => item?.actorId === client.actorId && (item.custom as any)?.platformMode === 'chat');
+  // 列表摘要已带归属账号与对话模式，不再逐个读取完整元数据。
+  const recent = (await app.storage.listConversations({ limit: 80 })).items;
+  const conversations = recent.filter(item => item.actorId === client.actorId && item.platformMode === 'chat');
   const runs = await app.storage.listRuns({ limit: 30 });
   const approvals = app.runtime.pendingApprovals(), questions = app.runtime.pendingQuestions();
   for (const pending of [...approvals, ...questions]) if (!runs.some(run => run.id === pending.runId)) { const run = await app.storage.getRun(pending.runId); if (run) runs.push(run); }
-  const titles = Object.fromEntries(await Promise.all([...new Set(runs.map(run => run.conversationId))].map(async id => [id, (await app.storage.getConversation(id))?.title ?? id])));
+  // 任务标题优先取自已读取的列表，只有不在最近列表里的对话才单独读取。
+  const listedTitles = new Map(recent.map(item => [item.id, item.title]));
+  const titles = Object.fromEntries(await Promise.all([...new Set(runs.map(run => run.conversationId))].map(async id =>
+    [id, (listedTitles.has(id) ? listedTitles.get(id) : (await app.storage.getConversation(id))?.title) ?? id])));
   const candidate = input.conversationId ? await app.storage.getConversation(input.conversationId) : undefined;
   if (candidate && candidate.actorId !== client.actorId) throw new Error('请选择自己的普通对话。');
   const selected = (candidate?.custom as any)?.platformMode === 'chat' ? candidate : undefined;
   const history = selected ? (await app.storage.readHistory(selected.id, { limit: 12 })).messages : [];
-  return { conversations: conversations.map(item => ({ id: item!.id, title: item!.title })),
+  return { conversations: conversations.map(item => ({ id: item.id, title: item.title })),
     selectedConversationId: selected?.id, selection: (selected?.custom as any)?.inputModelConfig,
     providers: app.settings.snapshot().settings.providers.map(provider => ({ id: provider.id, name: provider.name, model: provider.model, models: provider.models })),
     history: history.map(message => ({ id: message.id, role: message.role, text: message.parts.filter(part => !part.thought).map(part => part.text ?? '').join('').slice(0, 12000) })).filter(message => message.text),

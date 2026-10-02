@@ -12,7 +12,8 @@ describe('会话列表批量读取', () => {
     for (let index = 0; index < 7; index++) {
       const id = `list_${index}`;
       await f.store.createConversation({ ...metadata(id), updatedAt: 1000 + (index % 3), workspaceUri: index % 2 ? 'file:///odd' : undefined,
-        ...(index === 1 ? { workspaceId: 'workspace-one', custom: { botOrigin: { platform: 'discord' } } } : {}) });
+        ...(index === 1 ? { workspaceId: 'workspace-one', actorId: 'owner', custom: { botOrigin: { platform: 'discord' }, platformMode: 'chat' } } : {}),
+        ...(index === 2 ? { actorId: 42, custom: { platformMode: ['code'] } } : {}) });
       if (index % 2) await f.store.appendHistory(id, [message(0), message(1)]);
     }
     const all = await f.store.listConversations({ limit: 1000 });
@@ -20,7 +21,12 @@ describe('会话列表批量读取', () => {
       const info = (await f.store.getConversationInfo(item.id))!;
       expect(item).toMatchObject({ messageCount: info.messageCount, revision: info.historyRevision, updatedAt: info.metadata.updatedAt });
     }
-    expect(all.items.find(item => item.id === 'list_1')).toMatchObject({ workspaceId: 'workspace-one', botPlatform: 'discord', messageCount: 2 });
+    expect(all.items.find(item => item.id === 'list_1')).toMatchObject({ workspaceId: 'workspace-one', botPlatform: 'discord', actorId: 'owner', platformMode: 'chat', messageCount: 2 });
+    // 没有归属与模式的旧元数据、类型不对的字段都不出现在摘要里。
+    for (const id of ['list_0', 'list_2']) {
+      const item = all.items.find(row => row.id === id)!;
+      expect('actorId' in item).toBe(false); expect('platformMode' in item).toBe(false);
+    }
     for (const options of [{}, { workspaceUri: 'file:///odd' }, { query: '会话 list_' }]) {
       const summaries: string[] = [], ids: string[] = [];
       let cursor: { updatedAt: number; id: string } | undefined;
@@ -33,6 +39,7 @@ describe('会话列表批量读取', () => {
     await f.store.saveMetadata({ ...current, workspaceId: 'workspace-two', custom: {} });
     const updated = (await f.store.listConversations({ limit: 1000 })).items.find(item => item.id === 'list_1')!;
     expect(updated.workspaceId).toBe('workspace-two'); expect(updated.botPlatform).toBeUndefined();
+    expect(updated.actorId).toBe('owner'); expect(updated.platformMode).toBeUndefined();
   });
 });
 

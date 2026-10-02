@@ -49,6 +49,9 @@ export interface ConversationSummary {
   workspaceUri?: string;
   workspaceId?: string;
   botPlatform?: 'discord' | 'onebot';
+  /** 元数据中的归属账号与对话模式；列表调用方据此筛选，不必逐个读取完整元数据。 */
+  actorId?: string;
+  platformMode?: string;
   messageCount: number;
   revision: number;
 }
