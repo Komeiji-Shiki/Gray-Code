@@ -6,7 +6,7 @@ import { previewPrompt } from '../prompt/preview';
 import { ArtifactApproval } from '../artifacts/approval';
 import { CheckpointUi } from '../workspace/checkpointUi';
 import { conversationUiHandlers } from '../conversations/ui';
-import { inputFileHandlers } from '../workspace/uiFiles';
+import { inputFileHandlers, workspaceFileSearchKey, WorkspaceFileSearches } from '../workspace/uiFiles';
 import { pinnedFileHandlers } from '../workspace/pinned';
 import { workspaceUiHandlers } from '../workspace/ui';
 import { BranchRetention } from '../conversations/retention';
@@ -45,6 +45,7 @@ export class ProductUi {
   private readonly disconnectedClients = new Set<string>();
   private readonly accountActions = new Map<string, 'revoke' | 'delete'>();
   private readonly queues = new Map<string, Promise<unknown>>();
+  private readonly fileSearches = new WorkspaceFileSearches();
   constructor(private readonly app: PlatformApplication) {
     this.chat = new ProductChat(app);
     this.checkpointUi = new CheckpointUi(app);
@@ -127,12 +128,15 @@ export class ProductUi {
       return this.invoke(client, type, data);
     if (['platform.accounts.revoke', 'platform.accounts.delete', 'checkpoint.cancelOperation', 'checkpoint.getOperationProgress', 'dependencies.list', 'dependencies.getInstallPath', 'dependencies.install', 'dependencies.uninstall', 'tokenizer.getResource', 'chat.awaitConversationIdle', 'chat.sendInterruptMessage', 'imageGeneration.cancel', 'terminal.kill', 'terminal.getOutput', 'terminal.detachToBackground', 'task.cancel', 'task.getAll', 'cancelStream', 'cancelSummarizeRequest', 'toolConfirmation', 'models.getModels', 'migration.cancel', 'migration.status', 'diff.accept', 'diff.reject', 'platform.questions.answer', 'platform.discord.start', 'platform.discord.stop', 'platform.discord.status', 'platform.onebot.start', 'platform.onebot.stop', 'platform.onebot.status', 'disconnectMcpServer'].includes(type))
       return this.invoke(client, type, data);
-    const previous = this.queues.get(client.clientId) ?? Promise.resolve();
-    const queued = (signal?: AbortSignal) => previous.catch(() => {}).then(() => {
+    const previous = this.queues.get(client.clientId);
+    const queued = (signal?: AbortSignal) => (previous ?? Promise.resolve()).catch(() => {}).then(() => {
       signal?.throwIfAborted(); return this.invoke(client, type, data, signal);
     });
     const operation = ['chatStream', 'retryStream', 'chat.rerollStream', 'chat.editBranchStream'].includes(type)
-      ? this.chat.queueStart(client, data.conversationId, queued) : queued();
+      ? this.chat.queueStart(client, data.conversationId, queued)
+      // 新查询在入队时就中止旧遍历；相同查询只在旧搜索仍是队尾时复用，中间排入的切换工作区等操作会改变搜索上下文。
+      : type === 'searchWorkspaceFiles' ? this.fileSearches.run(`${client.actorId}\0${client.clientId}`, workspaceFileSearchKey(data), queued, running => running === previous)
+      : queued();
     this.queues.set(client.clientId, operation);
     try { return await operation; } finally { if (this.queues.get(client.clientId) === operation) this.queues.delete(client.clientId); }
   }
@@ -648,7 +652,7 @@ export class ProductUi {
       case 'getOpenTabs': return { tabs: this.app.files.editorContext(client.clientId, workspace).openFiles };
       case 'getActiveEditor': return { path: this.app.files.editorContext(client.clientId, workspace).activeFile ?? null };
     }
-    const handlers: Record<string, (data: Record<string, any>) => unknown> = { ...productSettingsHandlers(ui.preferences, this.app, ui.mode), ...workspaceUiHandlers(this.app, client, workspace), ...inputFileHandlers(this.app, client, workspace), ...pinnedFileHandlers(this.app, client, ui.preferences, workspace), ...conversationUiHandlers(this.app, client) };
+    const handlers: Record<string, (data: Record<string, any>) => unknown> = { ...productSettingsHandlers(ui.preferences, this.app, ui.mode), ...workspaceUiHandlers(this.app, client, workspace), ...inputFileHandlers(this.app, client, workspace, signal), ...pinnedFileHandlers(this.app, client, ui.preferences, workspace), ...conversationUiHandlers(this.app, client) };
     let handler = handlers[type];
     if (type === 'getSkillsConfig' || type === 'refreshSkills') handler = data => this.app.skills.list(client.actorId, data.conversationId, workspace?.id, ui.preferences);
     if (type === 'getSkillsDirectory') handler = () => ({ path: this.app.skills.directory() });

@@ -19,7 +19,32 @@ export function uiFilePath(value: unknown): string {
 }
 const excluded = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'out', '.vscode', '.idea', '__pycache__', '.cache', 'coverage']);
 
-export function inputFileHandlers(app: PlatformApplication, client: ClientSession, selected?: WorkspaceDefinition) {
+/**
+ * 输入框文件搜索每个客户端只保留一次在途请求。界面请求按客户端串行，旧遍历不退出新查询只能排队，
+ * 前端又会丢弃迟到的结果，所以新查询到达时立即中止旧的；相同查询在 reusable 确认上下文未变时复用同一结果。
+ */
+export class WorkspaceFileSearches {
+  private readonly flights = new Map<string, { key: string; controller: AbortController; promise: Promise<unknown> }>();
+  run(owner: string, key: string, start: (signal: AbortSignal) => Promise<unknown>,
+    reusable: (running: Promise<unknown>) => boolean = () => true): Promise<unknown> {
+    const current = this.flights.get(owner);
+    if (current && current.key === key && reusable(current.promise)) return current.promise;
+    current?.controller.abort();
+    const controller = new AbortController();
+    const flight = { key, controller, promise: start(controller.signal) };
+    this.flights.set(owner, flight);
+    // 结束后立即释放，表里只有在途搜索；失败由调用方处理，这里只是不让清理链产生未处理拒绝。
+    void flight.promise.then(() => undefined, () => undefined).then(() => { if (this.flights.get(owner) === flight) this.flights.delete(owner); });
+    return flight.promise;
+  }
+}
+
+/** 合并判断用的查询键，与处理器对查询的规范化保持一致。 */
+export function workspaceFileSearchKey(data: Record<string, any>): string {
+  return JSON.stringify([typeof data.query === 'string' ? data.query.trim().toLowerCase() : '', data.limit ?? null, data.conversationId ?? null]);
+}
+
+export function inputFileHandlers(app: PlatformApplication, client: ClientSession, selected?: WorkspaceDefinition, signal?: AbortSignal) {
   const workspace = (data: Record<string, any>) => uiWorkspace(app, client, selected, data);
   async function resolve(data: Record<string, any>, value: unknown) {
     const target = await workspace(data); const absolute = await app.files.resolve(target, uiFilePath(value));
@@ -61,7 +86,7 @@ export function inputFileHandlers(app: PlatformApplication, client: ClientSessio
     },
     searchWorkspaceFiles: async (data: Record<string, any>) => {
       if (!selected && !data.conversationId) return { files: [], activeFilePath: null };
-      const target = await workspace(data); const query = typeof data.query === 'string' ? data.query.trim().toLowerCase() : '';
+      const target = await workspace(data); signal?.throwIfAborted(); const query = typeof data.query === 'string' ? data.query.trim().toLowerCase() : '';
       const limit = Number.isFinite(data.limit) ? Math.min(200, Math.max(1, Math.floor(data.limit))) : 50;
       const editor = app.files.editorContext(client.clientId, target);
       const opened = editor.openFiles; const activeFilePath = editor.activeFile ?? null;
@@ -72,6 +97,8 @@ export function inputFileHandlers(app: PlatformApplication, client: ClientSessio
       }
       const pending = ['.'];
       while (pending.length && files.length < limit) {
+        // 无匹配的查询会扫完整个工作区；被新查询取代后在下一个目录前退出，已发出的单次列目录仍会完成。
+        signal?.throwIfAborted();
         const directory = pending.shift()!;
         let entries; try { entries = await app.files.list(target, directory); } catch { continue; }
         for (const entry of entries) {
