@@ -16,7 +16,7 @@ export type TextSearchInput = Pattern & (
     { kind: 'scan'; fragments: string[]; offset?: number }
     | { kind: 'replace'; text: string; replacement: string; literal?: boolean }
     | { kind: 'fileSearch'; fragments: string[]; offset?: number; path: string; remainingChars?: number;
-        contextBefore: number; contextAfter: number; linePreviewChars: number }
+        contextBefore: number; contextAfter: number; linePreviewChars: number; startFragment?: number; endFragment?: number; lineOffset?: number }
 );
 export interface TextSearchResult {
     matches: TextMatch[];
@@ -49,7 +49,7 @@ export function presentToolMatch(input: Extract<TextSearchInput, { kind: 'fileSe
             if (end > line.length) { end = line.length; start = Math.max(0, end - input.previewChars); }
             preview = (start > 0 ? '…' : '') + line.slice(start, end) + (end < line.length ? '…' : '');
         }
-        context.push(String(current + 1) + ': ' + preview);
+        context.push(String((input.lineOffset ?? 0) + current + 1) + ': ' + preview);
     }
     const body = context.join('\n');
     return { text: match, context: body, cost: input.path.length + match.length + body.length + 80 };
@@ -81,7 +81,7 @@ export function evaluateTextSearch(input: TextSearchInput, expand: typeof expand
         // 其余起点记在 indexes 里。上限常量必须内联，线程序列化时不能引用模块变量。
         const maxIndexesPerLine = 50;
         result.seen = 0; result.remainingChars = input.remainingChars;
-        for (let fragment = 0; fragment < input.fragments.length; fragment++) {
+        for (let fragment = input.startFragment ?? 0; fragment < (input.endFragment ?? input.fragments.length); fragment++) {
             if (result.matches.length >= input.limit) break;
             if (result.remainingChars !== undefined && result.remainingChars <= 0) { result.budgetTruncated = true; break; }
             let first: RegExpMatchArray | undefined;

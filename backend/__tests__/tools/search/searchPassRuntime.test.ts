@@ -392,3 +392,39 @@ describe('与重构前逻辑的参考实现一致', () => {
         }
     });
 });
+
+
+test('大文件流式扫描保持跨块字符、换行、批次上下文和真实列号，退出关闭读取', async () => {
+    const lines = Array.from({ length: 270 }, (_, index) => `${index}:普通行`);
+    lines[127] = '界中 target'; lines[128] = 'next target';
+    const text = lines.join('\r\n') + '\rfinal target';
+    const fake = makeHost({ 'large.json': { content: text, sizeOverride: 15 * 1024 * 1024 } });
+    let closed = 0;
+    fake.host.readChunks = async function* () {
+        const bytes = Buffer.from(text);
+        try { for (let at = 0; at < bytes.length; at += 7) yield bytes.subarray(at, at + 7); }
+        finally { closed++; }
+    };
+    const result = await runSearch(fake, /target/gm);
+    expect(fake.reads.size).toBe(0);
+    expect(result.skippedFiles).toEqual([]);
+    expect(result.matches.map(match => [match.line, match.column])).toEqual([[128, 4], [129, 6], [271, 7]]);
+    expect(result.matches[0].context).toContain('129: next target');
+    expect(result.matches[1].context).toContain('128: 界中 target');
+    expect(closed).toBe(2);
+    const one = await runSearch(fake, /target/gm, undefined, 1);
+    expect(one.matches).toHaveLength(1); expect(closed).toBe(4);
+});
+
+test('15 MiB 单行 JSON 可搜到末尾命中，输出仍受预览预算限制', async () => {
+    const text = '{"padding":"' + 'x'.repeat(15 * 1024 * 1024) + '","target":"found"}';
+    const fake = makeHost({ 'project.json': { content: text } });
+    fake.host.readChunks = async function* () {
+        const bytes = Buffer.from(text);
+        for (let at = 0; at < bytes.length; at += 64 * 1024) yield bytes.subarray(at, at + 64 * 1024);
+    };
+    const result = await runSearch(fake, /target/gm);
+    expect(fake.reads.size).toBe(0); expect(result.skippedFiles).toEqual([]);
+    expect(result.matches[0]).toMatchObject({ line: 1, column: text.indexOf('target') + 1 });
+    expect(result.matches[0].context).toContain('target'); expect(result.matches[0].context.length).toBeLessThan(300);
+});

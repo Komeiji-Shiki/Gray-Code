@@ -132,9 +132,8 @@ export interface SearchInFilesToolConfig {
     headerSampleBytes?: number;
     
     /**
-     * 搜索模式下允许读取并搜索的最大文件大小（字节）
-     * 超过该大小的文件将被跳过，避免内存/输出过大。
-     * 默认 5MB
+     * 搜索模式整体读入内存的文件大小阈值（字节），默认 5 MiB。
+     * 支持分块读取的宿主对更大文本流式搜索；其他宿主仍跳过超限文件。
      */
     maxFileSizeBytes?: number;
     

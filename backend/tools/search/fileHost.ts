@@ -17,6 +17,8 @@ export interface SearchFileHost {
   file(absolute: string): FileLocation;
   stat(file: FileLocation): Promise<{ size: number; type: number }>;
   readFile(file: FileLocation): Promise<Uint8Array>;
+  /** 大文本按块读取，消费方退出或取消时关闭文件。 */
+  readChunks?(file: FileLocation, signal?: AbortSignal): AsyncIterable<Uint8Array>;
   readHeader?(file: FileLocation, bytes: number): Promise<Uint8Array>;
   findFiles(root: FileLocation, pattern: string, exclude: string, limit: number, options?: FileDiscoveryOptions): Promise<FileLocation[]>;
   /** 搜索按发现顺序流式消费；仅结果与输出预算封顶，不截断待扫描文件。 */

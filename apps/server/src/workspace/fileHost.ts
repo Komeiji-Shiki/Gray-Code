@@ -1,6 +1,7 @@
 import { parseWorkspacePath, resolveWorkspacePath, workspaceFilePath, workspaceRootFor, workspaceRoots } from './paths';
 import type { FileReadAccess } from './readAccess';
 import path from 'node:path';
+import { createReadStream } from 'node:fs';
 import { lstat, open, readFile, readdir, stat } from 'node:fs/promises';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
@@ -83,6 +84,11 @@ export class NodeFileHost implements SearchFileHost, ReadFileHost, ListFilesHost
     return { size: value.size, type: value.isDirectory() ? 2 : value.isFile() ? 1 : 0 };
   }
   async readFile(file: unknown): Promise<Uint8Array> { return readFile(await this.safe(file as FileLocation), { signal: this.context.signal }); }
+  async *readChunks(file: FileLocation, signal = this.context.signal): AsyncGenerator<Uint8Array> {
+    const stream = createReadStream(await this.safe(file), { signal, highWaterMark: 64 * 1024 });
+    try { for await (const chunk of stream) { signal.throwIfAborted(); yield chunk as Buffer; } }
+    finally { stream.destroy(); }
+  }
   async readHeader(file: FileLocation, bytes: number): Promise<Uint8Array> {
     const handle = await open(await this.safe(file), 'r');
     try {

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { createReadStream } from 'node:fs';
 import { getAllWorkspaces, getWorkspaceRoot, parseWorkspacePath, resolveFileToolPathWithInfo, toRelativePath } from '../shared/workspacePaths';
 import { countTextFileLines } from '../shared/fileStats';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
@@ -15,6 +16,12 @@ export const vscodeFileHost: SearchFileHost = {
   joinPath: (root, file) => vscode.Uri.joinPath(root as vscode.Uri, file), file: absolute => vscode.Uri.file(absolute),
   stat: async file => vscode.workspace.fs.stat(file as vscode.Uri),
   readFile: async file => vscode.workspace.fs.readFile(file as vscode.Uri),
+  readChunks: async function* (file, signal) {
+    if (file.scheme !== 'file') throw new Error('该文件系统不支持流式搜索，请调整文件大小限制后读取。');
+    const stream = createReadStream(file.fsPath, { signal, highWaterMark: 64 * 1024 });
+    try { for await (const chunk of stream) { signal?.throwIfAborted(); yield chunk as Buffer; } }
+    finally { stream.destroy(); }
+  },
   findFiles: async (root, pattern, exclude, limit) => vscode.workspace.findFiles(new vscode.RelativePattern(root as vscode.Uri, pattern), exclude, limit),
   countLines: (file, relative) => countTextFileLines(file as vscode.Uri, relative),
   findExcludePatterns: () => getGlobalSettingsManager()?.getFindFilesConfig().excludePatterns,
