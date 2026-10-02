@@ -489,7 +489,8 @@ export class SubagentExecutionService {
     if (!coreRunId || !await this.app.storage.getConversation(record.conversationId)) return record.error || '子代理本次运行没有返回正文。';
     const history = await this.app.storage.readFullHistory(record.conversationId);
     // 接续会话含以往交付；失败/超时只能报告本次执行，不能拿上一轮成功报告冒充本次结果。
-    const last = [...history.messages].reverse().find(message => message.runId === coreRunId && message.role === 'model'
+    const last = [...history.messages].reverse().find(message => (message.runId === coreRunId
+      || record.status !== 'completed' && typeof message.runId === 'string' && taskRunIds.includes(message.runId)) && message.role === 'model'
       && message.parts.some(part => typeof part.text === 'string' && !part.thought));
     const text = last?.parts.filter(part => !part.thought).map(part => typeof part.text === 'string' ? part.text : '').join('');
     if (record.status === 'completed') return text || '子代理没有返回正文。';

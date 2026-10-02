@@ -88,7 +88,8 @@ describe('主对话处理子代理等待的审批', () => {
     await waitUntil(() => app.subagents.activeIds().length === 0);
     expect(executions).toBe(1);
   });
-  test.each([true, false])('限流接续不重复工具，最终交付保留已完成结果（恢复=%s）', async recover => {
+  test.each(['recover', 'no_retry', 'resume_exhausted'])('限流接续不重复工具，最终交付保留已完成结果（%s）', async mode => {
+    const recover = mode !== 'no_retry';
     let previews = 0, childCalls = 0; let received: any;
     app.tools.register({ declaration: { name: 'preview_fixture', description: 'local preview', parameters: { type: 'object', properties: {} } },
       effects: () => [], execute: async () => { previews++; return { success: true, data: { path: 'preview.html', url: 'http://localhost/preview' } }; } });
@@ -103,18 +104,23 @@ describe('主对话处理子代理等待的审批', () => {
       }
       childCalls++;
       if (childCalls === 1) return { role: 'model', parts: [{ functionCall: { id: 'preview-once', name: 'preview_fixture', args: {} } }] };
-      if (childCalls === 2) throw Object.assign(new Error('HTTP 429: rate limit'), { modelRetry: {
-        kind: 'rate_limit', remainingRetries: recover ? 1 : 0, resumeSafe: true, delayMs: 0 } });
+      if (childCalls === 2) {
+        input.onDelta?.([{ text: 'preview details already collected' }]);
+        throw Object.assign(new Error('HTTP 429: rate limit'), { modelRetry: {
+          kind: 'rate_limit', remainingRetries: recover ? 1 : 0, resumeSafe: true, delayMs: 0 } });
+      }
       expect(input.retryCount).toBe(0);
       expect(input.messages.some(message => message.parts.some(part => (part.functionResponse as any)?.name === 'preview_fixture'))).toBe(true);
+      if (mode === 'resume_exhausted') throw Object.assign(new Error('HTTP 429: rate limit'), { modelRetry: {
+        kind: 'rate_limit', remainingRetries: 0, resumeSafe: true, delayMs: 0 } });
       return answer('preview recovered');
     };
     const run = await app.runtime.start({ actorId: 'owner', conversationId: root.id, agentId: agent.id, requestKey: `rate-limit:${recover}`,
       message: { role: 'user', parts: [{ text: 'preview' }] } });
     expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(previews).toBe(1);
-    if (recover) { expect(childCalls).toBe(3); expect(received.data.response).toContain('preview recovered'); }
-    else { expect(childCalls).toBe(2); expect(received.success).toBe(false); expect(received.data.response).toContain('preview.html');
-      expect(received.data.response).toContain('continueFromRunId'); }
+    if (mode === 'recover') { expect(childCalls).toBe(3); expect(received.data.response).toContain('preview recovered'); }
+    else { expect(childCalls).toBe(recover ? 3 : 2); expect(received.success).toBe(false); expect(received.data.response).toContain('preview.html');
+      expect(received.data.response).toContain('continueFromRunId'); expect(received.data.response).toContain('preview details already collected'); }
   });
 
 });
