@@ -165,6 +165,47 @@ describe('StreamAccumulator - Responses 摘要增量追加', () => {
         expect(thought().text).toBe('摘要续');
         expect(accumulator.getContentRevision()).toBeGreaterThan(revision);
     });
+
+    test('无 summary_index 的推理 delta 原地追加条目，已交出的快照不被后续修改', () => {
+        const { accumulator, feed } = createResponsesStream();
+        const internal = () => (accumulator as any).parts.find((part: any) => part.thought).openaiResponsesReasoning.content as unknown[];
+        feed({ type: 'response.reasoning_text.delta', delta: 'a' });
+        feed({ type: 'response.reasoning_text.delta', delta: 'b' });
+        const array = internal();
+        for (let i = 0; i < 50; i++) feed({ type: 'response.reasoning_text.delta', delta: String(i % 10) });
+        // 未交出快照时不再每个 delta 复制整个数组
+        expect(internal()).toBe(array);
+        expect(array).toHaveLength(52);
+
+        const snapshot = accumulator.getStreamingContent();
+        const exposed = snapshot.parts.find(part => part.thought)!.openaiResponsesReasoning!.content!;
+        const exposedCopy = structuredClone(exposed);
+        feed({ type: 'response.reasoning_text.delta', delta: 'X' });
+        feed({ type: 'response.reasoning_text.delta', delta: 'Y' });
+        expect(exposed).toEqual(exposedCopy);
+        // 交出后只复制一次，之后继续原地追加
+        const afterExposure = internal();
+        expect(afterExposure).not.toBe(exposed);
+        feed({ type: 'response.reasoning_text.delta', delta: 'Z' });
+        expect(internal()).toBe(afterExposure);
+
+        const expectedText = 'ab' + Array.from({ length: 50 }, (_, i) => String(i % 10)).join('') + 'XYZ';
+        const final = accumulator.getFinalContent().parts.find(part => part.thought)!;
+        expect(final.text).toBe(expectedText);
+        expect(final.openaiResponsesReasoning!.content!.map(entry => entry.text).join('')).toBe(expectedText);
+        expect(final.openaiResponsesReasoning!.content!.every(entry => entry.type === 'reasoning_text')).toBe(true);
+    });
+
+    test('无 summary_index 的摘要 delta 与事件输入对象不共享条目', () => {
+        const accumulator = new StreamAccumulator();
+        accumulator.setProviderType('openai-responses');
+        const incoming = [{ type: 'summary_text', text: '外部' }];
+        accumulator.add(chunkOf([{ text: '开始', thought: true, openaiResponsesReasoning: { id: 'rs_x', status: 'in_progress', summary: [{ type: 'summary_text', text: '开始' }] } }]));
+        accumulator.add(chunkOf([{ text: '外部', thought: true, openaiResponsesReasoning: { id: 'rs_x', status: 'in_progress', summary: incoming } } as any]));
+        incoming[0].text = '被改写';
+        const summary = accumulator.getFinalContent().parts.find(part => part.thought)!.openaiResponsesReasoning!.summary!;
+        expect(summary.map(entry => entry.text)).toEqual(['开始', '外部']);
+    });
 });
 
 describe('StreamAccumulator - 工具参数增量解析门控', () => {

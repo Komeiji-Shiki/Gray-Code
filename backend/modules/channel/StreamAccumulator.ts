@@ -78,6 +78,15 @@ export class StreamAccumulator {
     /** 只服务于增量参数的解析门控，不进入 Content，也不参与持久化。 */
     private functionCallArgsScans = new WeakMap<object, FunctionCallArgsScanState>();
 
+    /**
+     * 无 summary_index 的推理 delta 追加 summary/content 时的写时复制状态。快照只浅拷贝 part，
+     * 会与累加器共享这些数组；每次对外交出 parts（构造快照、终态校准）后 epoch 加一，
+     * 仅当数组在当前 epoch 内由本累加器新建、尚未交出时才原地追加，否则先复制一次。
+     * 这样连续 delta 不再每次复制整个数组，已交出的快照也不会被后续修改。
+     */
+    private exposureEpoch = 0;
+    private ownedReasoningArrays = new WeakMap<object, number>();
+
     /** 提示词工具的原始 message 用于比较 done 全文，工具 ID 仍由同一个增量解析器维护。 */
     private responsesPromptParts: ContentPart[] = [];
 
@@ -231,6 +240,7 @@ export class StreamAccumulator {
                 for (const part of reconciled.delta) this.addPart(part, { visibleDelta });
                 this.responsesPromptParts = reconciled.parts;
             } else {
+                this.exposureEpoch++;
                 const reconciled = reconcileResponsesOutput(this.parts, chunk.contentSnapshot.parts);
                 this.parts = reconciled.parts;
                 visibleDelta.push(...reconciled.delta);
@@ -478,10 +488,10 @@ export class StreamAccumulator {
                     ...(isReasoningDelta
                         ? {
                             ...(incomingSummary.length > 0 ? {
-                                summary: [...(existingMetadata.summary || []), ...incomingSummary.map(entry => ({ ...entry }))]
+                                summary: this.appendReasoningEntries(existingMetadata.summary, incomingSummary)
                             } : {}),
                             ...(incomingContent.length > 0 ? {
-                                content: [...(existingMetadata.content || []), ...incomingContent.map(entry => ({ ...entry }))]
+                                content: this.appendReasoningEntries(existingMetadata.content, incomingContent)
                             } : {})
                         }
                         : {
@@ -909,11 +919,22 @@ export class StreamAccumulator {
     //   （ToolCallParserService.extractFunctionCalls 同样跳过 thought part）。
     // 旧路径除了 O(n²) 的重复扫描外，还会重建 parts 数组导致索引漂移，故删除。
 
+    /** 追加推理条目：数组仍由本累加器独占时原地追加，已交出或来自外部时复制一次后再独占。 */
+    private appendReasoningEntries<T extends object>(existing: T[] | undefined, incoming: readonly T[]): T[] {
+        const owned = !!existing && this.ownedReasoningArrays.get(existing) === this.exposureEpoch;
+        const target = owned ? existing! : [...(existing || [])];
+        for (const entry of incoming) target.push({ ...entry });
+        this.ownedReasoningArrays.set(target, this.exposureEpoch);
+        return target;
+    }
+
     /**
      * 构造Content 的唯一内部入口。
      * streaming snapshot 只做轻量投影；最终写历史或工具执行前才解析partialArgs 并清理内部字段。
+     * 快照与累加器共享推理数组，交出前推进 epoch，之后的追加先复制。
      */
     private buildContent(options: BuildContentOptions): Content {
+        this.exposureEpoch++;
         return buildContentFromState({
             parts: this.parts,
             thoughtSignatures: this.thoughtSignatures,
@@ -1041,6 +1062,8 @@ export class StreamAccumulator {
         this.parts = [];
         this.responsesSummarySegments = new WeakMap();
         this.functionCallArgsScans = new WeakMap();
+        this.ownedReasoningArrays = new WeakMap();
+        this.exposureEpoch++;
         this.responsesPromptParts = [];
         this.isDone = false;
         // 恢复初始 providerType（构造默认 gemini）：reset 后累加器回到全新状态，
