@@ -11,7 +11,11 @@ export class CapturedContext {
   readonly messageUpdates = new Map<number, PlatformMessage>();
   readonly store: ContextConversationStore;
   constructor(state: ConversationState, filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
-    this.state = structuredClone(state);
+    // 正文、附件和回合快照只读复用；元数据、消息头与计数字段独立，修改仍在提交后生效。
+    // 总结等需要改写正文或父链的操作自行复制，普通工具迭代无需深拷贝整份长会话。
+    this.state = { ...state, metadata: structuredClone(state.metadata), history: { ...state.history,
+      messages: state.history.messages.map(message => ({ ...message,
+        ...(message.tokenCountByChannel ? { tokenCountByChannel: { ...message.tokenCountByChannel } } : {}) })) } };
     const updateMessage: ContextConversationStore['updateMessage'] = async (_id, index, updates) => {
       const message = this.state.history.messages[index];
       if (!message) throw new Error('Token update refers to an unavailable message.');

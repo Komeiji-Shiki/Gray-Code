@@ -308,20 +308,16 @@ export function formatHistoryForAPI(
     const asyncResponseIds = new Set(history.flatMap(message =>
         (message.parts ?? []).flatMap(part => part.functionResponse?.id ? [part.functionResponse.id] : [])));
     const legacyAsyncCallIds = new Set<string>();
-    for (let i = 0; i < history.length; i++) {
+    // 反向累积紧邻的响应块，避免每条消息重复扫描整段工具结果，长批次按线性处理。
+    const blockIds = new Set<string>();
+    for (let i = history.length - 1; i >= 0; i--) {
         const message = history[i];
-        const blockIds = new Set<string>();
+        // 下一条不是工具响应时重建边界；当前消息内的响应仍可与本消息的调用配对。
+        if (!history[i + 1]?.isFunctionResponse) blockIds.clear();
         // 同一条消息内携带的 functionResponse（中断残留/修复数据的混合形态）
         for (const part of message.parts ?? []) {
             const id = part.functionResponse?.id;
             if (id) blockIds.add(id);
-        }
-        // 紧随其后的连续 functionResponse 消息块
-        for (let j = i + 1; j < history.length && history[j]?.isFunctionResponse; j++) {
-            for (const part of history[j].parts ?? []) {
-                const id = part.functionResponse?.id;
-                if (id) blockIds.add(id);
-            }
         }
         for (const part of message.parts ?? []) {
             const callId = part.functionCall?.id;
