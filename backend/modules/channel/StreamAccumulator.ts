@@ -17,6 +17,38 @@ import {
 import { mergeUsageMetadata } from './streamAccumulator/streamUsageMerger';
 import { collectNewCompletedFunctionCalls } from './streamAccumulator/streamFunctionCallReporter';
 import { mergeResponsesMessagePart, reconcileResponsesOutput } from './streamAccumulator/responsesOutput';
+import {
+    createJsonClosureState,
+    mayBeClosedJsonObject,
+    scanJsonClosure,
+    type JsonClosureState
+} from './streamAccumulator/jsonClosureScanner';
+
+/**
+ * 一个 reasoning part 的摘要分段合并状态。
+ * text/reasoning 记录本状态最后一次写入 part 的引用：其他分支（无 summary_index 的 done、
+ * reasoning_text、终态快照）改写 part 后引用不再相同，下一次 delta 自动回退到完整排序校准。
+ */
+interface ResponsesSummaryState {
+    segments: Map<number, string>;
+    /** segments 的键升序排列；正常顺序下只会在末尾追加 */
+    order: number[];
+    text: string;
+    reasoning: ContentPart['openaiResponsesReasoning'];
+}
+
+/**
+ * 工具参数闭合扫描缓存。text 是最后一次扫描到的 partialArgs 引用（字符串值），
+ * 与当前 partialArgs 不同即说明参数被覆盖、解析成功后清空或被外部改写，需要从头重建。
+ */
+interface FunctionCallArgsScanState {
+    text: string;
+    plain: JsonClosureState;
+    /** 预填 input 的「预填 JSON 去尾闭合符 + 增量」候选；无预填时为 undefined */
+    prefilled?: JsonClosureState;
+    prefilledArgs: unknown;
+    prefilledFlag: unknown;
+}
 
 export interface StreamingContentOptions {
     includeInternalFields?: boolean;
@@ -41,7 +73,10 @@ export class StreamAccumulator {
     private parts: ContentPart[] = [];
 
     /** 摘要索引只用于当前流内合并，持久化仍使用标准 summary 数组。 */
-    private responsesSummarySegments = new WeakMap<ContentPart, Map<number, string>>();
+    private responsesSummarySegments = new WeakMap<ContentPart, ResponsesSummaryState>();
+
+    /** 只服务于增量参数的解析门控，不进入 Content，也不参与持久化。 */
+    private functionCallArgsScans = new WeakMap<object, FunctionCallArgsScanState>();
 
     /** 提示词工具的原始 message 用于比较 done 全文，工具 ID 仍由同一个增量解析器维护。 */
     private responsesPromptParts: ContentPart[] = [];
@@ -374,24 +409,56 @@ export class StreamAccumulator {
                 // 各段分别合并，避免第二段完成后遇到中断时覆盖已经展示的第一段。
                 const target = existingThought || { ...part };
                 const previousText = existingThought?.text || '';
-                let segments = this.responsesSummarySegments.get(target);
-                if (!segments) {
-                    segments = new Map((existingThought?.openaiResponsesReasoning?.summary || [])
-                        .map((entry, index) => [index, entry.text]));
-                    this.responsesSummarySegments.set(target, segments);
-                }
+                const state: ResponsesSummaryState = this.responsesSummarySegments.get(target) ?? {
+                    segments: new Map((existingThought?.openaiResponsesReasoning?.summary || [])
+                        .map((entry, index) => [index, entry.text])),
+                    order: [],
+                    text: '',
+                    reasoning: undefined
+                };
+                this.responsesSummarySegments.set(target, state);
                 const incomingText = incomingMetadata.summary.map(entry => entry.text).join('');
-                segments.set(summaryIndex, isReasoningDelta
-                    ? (segments.get(summaryIndex) || '') + incomingText
+                const lastIndex = state.order.length ? state.order[state.order.length - 1] : -1;
+                // 正常顺序：delta 追加到最后一段或开启更大索引的新段，且 part 仍是本状态上次写入的结果。
+                // 此时新全文必然是「旧全文 + [换行] + 增量」，可以直接拼接，不必重新排序、join 全部分段再比较前缀；
+                // 长摘要小片段输出时旧做法的累计扫描量接近平方增长。
+                // 乱序（较早段收到 delta 或新段索引小于已有最大值）、done 替换全文、part 被其他分支改写时
+                // 走下方完整排序与前缀校准。
+                if (existingThought
+                    && isReasoningDelta
+                    && summaryIndex >= lastIndex
+                    && state.text === existingThought.text
+                    && state.reasoning === existingThought.openaiResponsesReasoning) {
+                    const isNewSegment = summaryIndex > lastIndex;
+                    state.segments.set(summaryIndex, (state.segments.get(summaryIndex) || '') + incomingText);
+                    if (isNewSegment) state.order.push(summaryIndex);
+                    // 已有段时 join('\n') 会在新段前插入换行；空增量开启的新段同样要补换行以保持一致。
+                    const appended = (isNewSegment && state.order.length > 1 ? '\n' : '') + incomingText;
+                    const summary = state.order.map(index => ({ type: 'summary_text' as const, text: state.segments.get(index)! }));
+                    existingThought.openaiResponsesReasoning = {
+                        ...existingThought.openaiResponsesReasoning,
+                        ...incomingMetadata,
+                        summary
+                    };
+                    existingThought.text = previousText + appended;
+                    state.text = existingThought.text;
+                    state.reasoning = existingThought.openaiResponsesReasoning;
+                    if (appended) options?.visibleDelta?.push({ text: appended, thought: true });
+                    return;
+                }
+                state.segments.set(summaryIndex, isReasoningDelta
+                    ? (state.segments.get(summaryIndex) || '') + incomingText
                     : incomingText);
-                const summary = [...segments.entries()].sort(([a], [b]) => a - b)
-                    .map(([, text]) => ({ type: 'summary_text' as const, text }));
+                state.order = [...state.segments.keys()].sort((a, b) => a - b);
+                const summary = state.order.map(index => ({ type: 'summary_text' as const, text: state.segments.get(index)! }));
                 target.openaiResponsesReasoning = {
                     ...target.openaiResponsesReasoning,
                     ...incomingMetadata,
                     summary
                 };
                 target.text = summary.map(entry => entry.text).join('\n');
+                state.text = target.text;
+                state.reasoning = target.openaiResponsesReasoning;
                 if (!existingThought) this.parts.push(target);
                 const canAppendText = target.text.startsWith(previousText);
                 if (canAppendText && target.text.length > previousText.length) {
@@ -625,6 +692,7 @@ export class StreamAccumulator {
                         }
                         // 合并 partialArgs
                         if (fc.partialArgs !== undefined) {
+                            const previousArgs = lastFc.partialArgs;
                             // finalArgs 表示完整 arguments，应覆盖而不是继续追加到增量 JSON。
                             lastFc.partialArgs = fc.finalArgs === true
                                 ? fc.partialArgs
@@ -632,7 +700,12 @@ export class StreamAccumulator {
 
                             // Responses 的arguments.delta 是半截JSON，避免在高频热路径逐片段JSON.parse。
                             const shouldParseNow = this.providerType !== 'openai-responses' || fc.finalArgs === true;
-                            if (shouldParseNow && lastFc.partialArgs.trim()) {
+                            // 其他渠道先用增量闭合扫描门控：门控为 false 时旧逻辑的 trim/parse 必然跳过或失败，
+                            // 省去的只是对累计全文的无效扫描与异常；门控为 true 时仍走原有解析路径。
+                            const mayComplete = !shouldParseNow || fc.finalArgs === true
+                                ? true
+                                : this.mayCompleteFunctionCallArgs(lastFc, previousArgs, fc.partialArgs);
+                            if (shouldParseNow && mayComplete && lastFc.partialArgs.trim()) {
                                 // 解析成功意味着工具调用“完成”，属于投影可见变化
                                 //（预填 input 场景按「预填 + 增量 / 增量自身」两种语义解析）
                                 if (tryParseFunctionCallArgs(lastFc)) {
@@ -777,6 +850,57 @@ export class StreamAccumulator {
         this.contentRevision++;
     }
 
+    /**
+     * 增量参数是否可能已经拼成完整 JSON 对象（tryParseFunctionCallArgs 的必要条件）。
+     *
+     * 状态只在「上次扫描的全文 + 本次片段 = 当前全文」时增量推进；参数被整体替换、解析成功后清空、
+     * 预填 args 变化或非字符串时从当前全文重建（这些场景全文很短或只发生一次）。
+     * 候选与 tryParseFunctionCallArgs 一一对应：预填时同时跟踪「预填 JSON 去尾闭合符 + 增量」和「增量自身」。
+     * 任一候选首字符不是 '{'（数组、标量、预填剩余片段以 ',' 开头等）无法用深度判断，返回 true 回退为旧行为。
+     */
+    private mayCompleteFunctionCallArgs(fc: any, previousArgs: unknown, fragment: unknown): boolean {
+        const text = fc.partialArgs;
+        if (typeof text !== 'string') return true;
+
+        const prefilledArgs = fc.prefilledArgs === true && fc.args && typeof fc.args === 'object' ? fc.args : undefined;
+        let state = this.functionCallArgsScans.get(fc);
+        const canAdvance = !!state
+            && typeof previousArgs === 'string'
+            && typeof fragment === 'string'
+            && state.text === previousArgs
+            && state.prefilledArgs === prefilledArgs
+            && state.prefilledFlag === fc.prefilledArgs;
+        if (canAdvance) {
+            scanJsonClosure(state!.plain, fragment as string);
+            if (state!.prefilled) scanJsonClosure(state!.prefilled, fragment as string);
+            state!.text = text;
+        } else {
+            let prefilled: JsonClosureState | undefined;
+            if (prefilledArgs) {
+                let prefillJson: string | undefined;
+                try {
+                    prefillJson = JSON.stringify(prefilledArgs);
+                } catch {
+                    prefillJson = undefined;
+                }
+                // 与 tryParseFunctionCallArgs 的候选 1 拼接方式保持一致；序列化异常时无法预判，直接回退。
+                if (prefillJson === undefined) return true;
+                prefilled = scanJsonClosure(scanJsonClosure(createJsonClosureState(), prefillJson.slice(0, -1)), text);
+            }
+            state = {
+                text,
+                plain: scanJsonClosure(createJsonClosureState(), text),
+                prefilled,
+                prefilledArgs,
+                prefilledFlag: fc.prefilledArgs
+            };
+            this.functionCallArgsScans.set(fc, state);
+        }
+
+        const candidates = state!.prefilled ? [state!.prefilled, state!.plain] : [state!.plain];
+        return candidates.some(candidate => candidate.mode === 'other' || mayBeClosedJsonObject(candidate));
+    }
+
     // 注意：这里以前有一个 extractAndConvertToolCalls()，在每次文本合并后
     // 全量重扫所有 parts、把文本中的工具调用标记转换为 functionCall。
     // 该职责已完全由 IncrementalPromptToolParser（addPart 入口处）接管：
@@ -916,6 +1040,7 @@ export class StreamAccumulator {
     reset(): void {
         this.parts = [];
         this.responsesSummarySegments = new WeakMap();
+        this.functionCallArgsScans = new WeakMap();
         this.responsesPromptParts = [];
         this.isDone = false;
         // 恢复初始 providerType（构造默认 gemini）：reset 后累加器回到全新状态，
