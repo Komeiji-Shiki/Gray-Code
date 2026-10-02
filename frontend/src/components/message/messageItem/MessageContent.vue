@@ -14,11 +14,11 @@ import MessageRenderBlock from '../MessageRenderBlock.vue'
 import { MarkdownRenderer } from '../../common'
 import CharacterText from '../../character/CharacterText.vue'
 import { characterPresentation } from '../../../platform/characterPresentation'
-import type { Message, ToolUsage } from '../../../types'
+import type { Message } from '../../../types'
 import { hasContextBlocks } from '../../../types/contextParser'
 import { formatTime } from '../../../utils/format'
 import { calculateTokenRate, formatTokenRate } from '../../../utils/tokenRate'
-import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../../utils/toolRenderEntries'
+import { projectRenderBlocks } from './projectRenderBlocks'
 import { useChatStore } from '../../../stores/chatStore'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import { useI18n } from '../../../i18n'
@@ -142,7 +142,8 @@ onUnmounted(() => {
 /**
  * 将 parts 转换为渲染块，保持原始顺序
  *
- * 连续的 text 块会合并，连续的 functionCall 块会合并成一个 tools 块。
+ * 连续的 text 块会合并，连续的 functionCall 块会合并成一个 tools 块（见 projectRenderBlocks，
+ * 工具条目与工具块在内容未变时复用上次引用）。
  *
  * 性能优化：对 text/thought 类型的 block 做引用稳定化——
  * 当仅工具状态变更（message.tools 变化而 parts 不变）导致 computed 重算时，
@@ -152,136 +153,11 @@ onUnmounted(() => {
 let _prevRenderBlocks: RenderBlock[] = []
 
 const renderBlocks = computed<RenderBlock[]>(() => {
-  const parts = props.message.parts
-  if (!parts || parts.length === 0) {
+  const blocks = projectRenderBlocks(props.message, _prevRenderBlocks)
+  if (blocks.length === 0) {
     _prevRenderBlocks = []
     return []
   }
-
-  const blocks: RenderBlock[] = []
-  let currentTextBlock: string[] = []
-  let currentToolBlock: ToolUsage[] = []
-  let currentThoughtBlock: string[] = []
-  // 块级段落身份（H2-B）：记录合并进当前块的最后一个 part 索引与 part 数量，
-  // 与平滑显示层的 partKey 对齐，供流式期间按段落精确替换。
-  let currentTextPartIndex = -1
-  let currentTextPartCount = 0
-  let currentThoughtPartIndex = -1
-  let currentThoughtPartCount = 0
-
-  const messageTools = props.message.tools || []
-  let functionCallOrdinal = 0
-
-  // 辅助函数：刷新文本块
-  const flushText = () => {
-    if (currentTextBlock.length > 0) {
-      const text = currentTextBlock.join('')
-      if (text.trim()) {
-        // 修改原因：流式正文每个 delta 都会改变 text.length；把长度/正文片段写进 key 会让 Vue 销毁重建 MarkdownRenderer，触发闪烁。
-        // 修改方式：key 只表达结构身份（第几个 block + 类型），内容增长只通过 props 更新。
-        // 修改目的：让主聊天与 Monitor 的流式文本块都复用同一组件实例，保留旧 HTML 直到新 HTML 渲染完成。
-        blocks.push({ type: 'text', text, key: `${blocks.length}:text`, partKey: `text:${currentTextPartIndex}`, partCount: currentTextPartCount })
-      }
-      currentTextBlock = []
-      currentTextPartIndex = -1
-      currentTextPartCount = 0
-    }
-  }
-
-  // 辅助函数：刷新工具块
-  const flushTools = () => {
-    if (currentToolBlock.length > 0) {
-      blocks.push({
-        type: 'tool',
-        tools: [...currentToolBlock],
-        key: `${blocks.length}:tool:${currentToolBlock.map(tool => tool.id).join('|')}`
-      })
-      currentToolBlock = []
-    }
-  }
-
-  // 辅助函数：刷新思考块
-  const flushThought = () => {
-    if (currentThoughtBlock.length > 0) {
-      const text = currentThoughtBlock.join('')
-      if (text.trim()) {
-        // 修改原因：thought 与正文共享同一 RenderBlock 身份契约；思考内容增长也不应改变组件身份。
-        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought`, partKey: `thought:${currentThoughtPartIndex}`, partCount: currentThoughtPartCount })
-      }
-      currentThoughtBlock = []
-      currentThoughtPartIndex = -1
-      currentThoughtPartCount = 0
-    }
-  }
-
-  const upsertToolAcrossRenderedBlocks = (entry: ToolUsage) => {
-    const currentIndex = currentToolBlock.findIndex(tool => tool.id === entry.id)
-    if (currentIndex !== -1) {
-      upsertToolRenderEntry(currentToolBlock, entry)
-      return
-    }
-
-    for (const block of blocks) {
-      if (block.type !== 'tool' || !block.tools) continue
-      if (block.tools.some(tool => tool.id === entry.id)) {
-        // 为什么要跨 block 去重：流式快照/终结事件可能让同一逻辑工具的占位 part 和最终 part 中间夹着文本或思考片段，
-        // 只在当前连续工具块里 upsert 仍会渲染成两张工具卡。
-        upsertToolRenderEntry(block.tools, entry)
-        return
-      }
-    }
-
-    upsertToolRenderEntry(currentToolBlock, entry)
-  }
-
-  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-    const part = parts[partIndex]
-    // 处理思考内容
-    if (part.thought && part.text) {
-      // 思考内容：先刷新其他块
-      flushText()
-      flushTools()
-      currentThoughtBlock.push(part.text)
-      currentThoughtPartIndex = partIndex
-      currentThoughtPartCount += 1
-      continue
-    }
-
-    // 处理文本
-    if (part.text) {
-      // 文本块：先刷新思考块和工具块
-      flushThought()
-      flushTools()
-      currentTextBlock.push(part.text)
-      currentTextPartIndex = partIndex
-      currentTextPartCount += 1
-    }
-
-    // 处理工具调用（即使同一个 part 有 thoughtSignature）
-    if (part.functionCall) {
-      // 工具调用：先刷新文本块和思考块
-      flushText()
-      flushThought()
-
-      // 为什么工具渲染不再只按 functionCall.id 解析：pending 阶段可能同时存在临时占位 part 和最终 call_id part。
-      const renderTool = buildFunctionCallToolRenderEntry({
-        messageId: props.message.id,
-        functionCall: part.functionCall,
-        messageTools,
-        functionCallOrdinal
-      })
-
-      upsertToolAcrossRenderedBlocks(renderTool)
-
-      functionCallOrdinal += 1
-    }
-    // 忽略其他类型（如 inlineData、fileData 等，后续可扩展）
-  }
-
-  // 刷新剩余块
-  flushThought()
-  flushText()
-  flushTools()
 
   // 平滑流式显示：活动 text 尾块摘出，活动 thought 尾块保留卡片外壳但正文由
   // MessageRenderBlock 内的 CharFlow host 托管。两条高频路径都绕过 Vue/Markdown。

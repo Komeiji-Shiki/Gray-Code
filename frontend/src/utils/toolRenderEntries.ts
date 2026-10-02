@@ -20,25 +20,50 @@ function areArgsEquivalent(a: unknown, b: unknown): boolean {
   }
 }
 
+/**
+ * message.tools 的一次性索引：同一条消息的每个 functionCall part 都要匹配一次，
+ * 逐个 find 会把投影变成 parts × tools。各表只保留首个命中项，与 find 的语义一致。
+ */
+export interface ToolRenderLookup {
+  byId: Map<string, ToolUsage>
+  byItemId: Map<string, ToolUsage>
+  byIndex: Map<number, ToolUsage>
+}
+
+export function buildToolRenderLookup(messageTools: ToolUsage[]): ToolRenderLookup {
+  const lookup: ToolRenderLookup = { byId: new Map(), byItemId: new Map(), byIndex: new Map() }
+  for (const tool of messageTools) {
+    if (!lookup.byId.has(tool.id)) lookup.byId.set(tool.id, tool)
+    const itemId = normalizeNonEmptyString((tool as any).itemId)
+    if (itemId && !lookup.byItemId.has(itemId)) lookup.byItemId.set(itemId, tool)
+    const index = (tool as any).index
+    // NaN 用 === 永远不命中，而 Map 会把 NaN 当作同一个键；保持旧语义必须跳过。
+    if (typeof index === 'number' && !Number.isNaN(index) && !lookup.byIndex.has(index)) lookup.byIndex.set(index, tool)
+  }
+  return lookup
+}
+
 function findMatchingToolForFunctionCall(
   functionCall: FunctionCallLike,
   messageTools: ToolUsage[],
-  functionCallOrdinal: number
+  functionCallOrdinal: number,
+  lookup: ToolRenderLookup = buildToolRenderLookup(messageTools)
 ): ToolUsage | undefined {
   const id = normalizeNonEmptyString(functionCall.id)
   if (id) {
-    const byId = messageTools.find(t => t.id === id)
+    const byId = lookup.byId.get(id)
     if (byId) return byId
   }
 
   const itemId = normalizeNonEmptyString((functionCall as any).itemId)
   if (itemId) {
-    const byItemId = messageTools.find(t => normalizeNonEmptyString((t as any).itemId) === itemId)
+    const byItemId = lookup.byItemId.get(itemId)
     if (byItemId) return byItemId
   }
 
-  if (typeof (functionCall as any).index === 'number') {
-    const byIndex = messageTools.find(t => typeof (t as any).index === 'number' && (t as any).index === (functionCall as any).index)
+  const index = (functionCall as any).index
+  if (typeof index === 'number' && !Number.isNaN(index)) {
+    const byIndex = lookup.byIndex.get(index)
     if (byIndex) return byIndex
   }
 
@@ -70,9 +95,11 @@ export function buildFunctionCallToolRenderEntry(options: {
   functionCall: FunctionCallLike
   messageTools: ToolUsage[]
   functionCallOrdinal: number
+  /** 同一 messageTools 的预建索引；批量投影时传入以避免每个 part 重建。 */
+  lookup?: ToolRenderLookup
 }): ToolUsage {
-  const { messageId, functionCall, messageTools, functionCallOrdinal } = options
-  const existingTool = findMatchingToolForFunctionCall(functionCall, messageTools, functionCallOrdinal)
+  const { messageId, functionCall, messageTools, functionCallOrdinal, lookup } = options
+  const existingTool = findMatchingToolForFunctionCall(functionCall, messageTools, functionCallOrdinal, lookup)
   const toolIdFromPart = normalizeNonEmptyString(functionCall.id)
   const stableToolId = existingTool?.id || toolIdFromPart || `${messageId}:tool:${functionCallOrdinal}`
 
@@ -101,14 +128,17 @@ export function upsertToolRenderEntry(target: ToolUsage[], entry: ToolUsage): vo
     target.push(entry)
     return
   }
+  target[existingIndex] = mergeToolRenderEntry(target[existingIndex], entry)
+}
 
-  const previous = target[existingIndex]
+/** 同一逻辑工具再次出现时的合并规则；已知位置的调用方可直接使用，免去 findIndex。 */
+export function mergeToolRenderEntry(previous: ToolUsage, entry: ToolUsage): ToolUsage {
   const previousHasArgs = hasNonEmptyArgs(previous.args)
   const entryHasArgs = hasNonEmptyArgs(entry.args)
   // 为什么重复 id 时替换而不是追加：同一逻辑工具可能先以占位 part 出现，再以完整参数 part 出现；追加会产生重复工具卡。
   // 怎么改：保留已有运行态字段，同时用后到达的 name/args/partialArgs 覆盖展示内容；但迟到空占位不能覆盖已解析好的参数。
   // 目的：pending 阶段只显示一张最新、最完整的工具卡，并保留执行状态和结果。
-  target[existingIndex] = {
+  return {
     ...previous,
     ...entry,
     args: entryHasArgs || !previousHasArgs ? entry.args : previous.args,
@@ -118,4 +148,18 @@ export function upsertToolRenderEntry(target: ToolUsage[], entry: ToolUsage): vo
     error: entry.error ?? previous.error,
     duration: entry.duration ?? previous.duration
   }
+}
+
+/**
+ * 投影结果是否与上次相同：逐字段按引用比较。所有字段都直接取自 part / message.tools，
+ * 引用不变即内容不变；任一字段被替换都会得到新对象，不会吞掉状态更新。
+ */
+export function isSameToolRenderEntry(a: ToolUsage, b: ToolUsage): boolean {
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false
+    if ((a as unknown as Record<string, unknown>)[key] !== (b as unknown as Record<string, unknown>)[key]) return false
+  }
+  return true
 }
