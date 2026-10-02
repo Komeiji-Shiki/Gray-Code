@@ -33,12 +33,19 @@ export function invalidateWorkspaceAssets(paths?: readonly string[]): void {
   imageCache.clear()
   imageCacheBytes = 0
   completedRenderCache.clear()
+  streamingBlockRenderCache.clear()
   assetRevision.value++
   notifyAssetChanges()
 }
 
 /** 全部消息共用一份预算；script setup 中的缓存会为每个组件重复创建。 */
 export const completedRenderCache = new StringLruCache(128, 8 * 1024 * 1024)
+
+/**
+ * 流式渲染的顶层块缓存：块原文 + 渲染上下文 → 净化后的 HTML。
+ * 渐进 markdown 每次只在末尾追加，已定型块命中缓存即可跳过 render / KaTeX / sanitize。
+ */
+export const streamingBlockRenderCache = new StringLruCache(512, 4 * 1024 * 1024)
 
 /** highlightAuto 结果缓存：避免相同无标注代码块重复遍历 192 种语法 */
 export const codeHighlightCache = new StringLruCache(500, 4 * 1024 * 1024)

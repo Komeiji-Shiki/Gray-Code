@@ -10,11 +10,11 @@ import type { Options } from 'markdown-it'
 import type Token from 'markdown-it/lib/token.mjs'
 import type Renderer from 'markdown-it/lib/renderer.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import { getMathRenderer, getSyntaxHighlighter } from './renderDependencies'
+import { getMathRenderer, getSyntaxHighlighter, renderDependencyRevision } from './renderDependencies'
 import { t } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE, RENDER_LATEX_ONLY_PAREN_INLINE_RE, RENDER_LATEX_ONLY_BRACKET_BLOCK_RE } from '@/components/common/markdownUtils'
 import { markdownItMathBlock } from '@/utils/markdownMathBlock'
-import { fileExistenceCache, codeHighlightCache } from './markdownItCore'
+import { fileExistenceCache, codeHighlightCache, streamingBlockRenderCache } from './markdownItCore'
 import { workspaceAssetCacheKey } from './assetChanges'
 import {
   WORKSPACE_FILE_REF_FIND_RE,
@@ -721,8 +721,10 @@ export function renderContent(content: string, latexOnly: boolean, renderProfile
   // 完整 Markdown 模式：LaTeX 由 markdown-it 插件解析（$...$ / $$...$$）
   // 每次渲染传入独立 env，保证 code block 的序号从 1 开始
   const environment: MathRenderEnvironment = { trustedMath: renderProfile !== 'artifactSafe' ? new Map() : undefined, conversationId }
-  let html = markdownIt.render(content, environment)
+  return finishRenderedHtml(markdownIt.render(content, environment), renderProfile, environment)
+}
 
+function finishRenderedHtml(html: string, renderProfile: RenderProfile, environment: MathRenderEnvironment): string {
   // #66：html:true 模式下净化产物，避免模型正文中的原始 HTML（script/on*）在 webview 执行
   // artifactSafe 模式已使用 html:false，无需重复净化
   if (renderProfile !== 'artifactSafe') {
@@ -730,7 +732,136 @@ export function renderContent(content: string, latexOnly: boolean, renderProfile
   }
   
   // 保留多个连续空格（在段落内容中）
-  html = preserveSpacesInBlocks(html)
-  
-  return html
+  return preserveSpacesInBlocks(html)
+}
+
+interface StreamingRenderEnvironment extends MathRenderEnvironment {
+  references?: Record<string, unknown>
+  footnotes?: unknown
+  __grayCode?: { codeBlockSeq: number }
+}
+
+interface StreamingBlock {
+  tokenStart: number
+  tokenEnd: number
+  startLine: number
+  endLine: number
+  fenceCount: number
+  /** 渲染输出依赖的工作区文件状态（解析期生成的链接 + fence 标题引用的存在性）。 */
+  fileSignature: string
+}
+
+// 与 markdown-it normalize 规则一致，token.map 的行号基于归一化后的源文。
+const MARKDOWN_NEWLINES_RE = /\r\n?|\n/g
+const MARKDOWN_NULL_RE = /\0/g
+const FENCE_CODE_REF_RE = /^(\d+):(\d+):(.+)$/
+
+/**
+ * 按顶层 token 切块；任一块的输出可能受块外内容影响时返回 null（调用方整篇渲染）：
+ * - 原始 HTML：开闭标签可跨块，分块净化会各自补全标签，结果与整篇净化不同；
+ * - 没有 map 的顶层 token（如脚注区）：无法定位块原文作为缓存键。
+ */
+function collectStreamingBlocks(tokens: Token[], conversationId: string | null | undefined): StreamingBlock[] | null {
+  const blocks: StreamingBlock[] = []
+  let index = 0
+  while (index < tokens.length) {
+    const first = tokens[index]
+    if (first.level !== 0 || first.nesting === -1 || !first.map) return null
+    let depth = 0
+    let fenceCount = 0
+    let fileSignature = ''
+    let end = index
+    for (; end < tokens.length; end++) {
+      const token = tokens[end]
+      if (token.type === 'html_block') return null
+      if (token.type === 'fence') {
+        fenceCount++
+        // fence 渲染器在 render 期查询 start:end:path 标题的文件存在性。
+        const codeRef = FENCE_CODE_REF_RE.exec((token.info || '').trim())
+        if (codeRef) {
+          const path = normalizeWorkspaceFilePath(codeRef[3] || '')
+          const exists = fileExistenceCache.get(workspaceAssetCacheKey(path, conversationId)) === true
+          fileSignature += `\u0001f:${path}:${exists ? 1 : 0}`
+        }
+      }
+      if (token.type === 'inline' && token.children) {
+        for (const child of token.children) {
+          if (child.type === 'html_inline') return null
+          // 工作区链接在解析期按文件存在性生成，同一原文可能得到不同 token。
+          if (child.type === 'link_open' && child.attrGet('class') === 'workspace-file-link') {
+            fileSignature += `\u0001l:${child.attrGet('data-path') ?? ''}`
+          }
+        }
+      }
+      depth += token.nesting
+      if (depth <= 0) break
+    }
+    if (end >= tokens.length) return null
+    blocks.push({ tokenStart: index, tokenEnd: end + 1, startLine: first.map[0], endLine: first.map[1], fenceCount, fileSignature })
+    index = end + 1
+  }
+  return blocks
+}
+
+/**
+ * 流式渲染：结果与 renderContent 一致，但按顶层块复用 render / KaTeX / sanitize 结果。
+ *
+ * 仍整篇 parse：块边界（setext 标题、表格、列表松紧等）可能被后续行改变，
+ * 只有重新解析才能得到准确的 token。顶层块的 token 只由其原文决定（引用式链接定义与脚注
+ * 除外，存在时整篇渲染），因此以「块原文 + 代码块起始序号 + 文件状态 + 渲染上下文」为键。
+ * 末块仍在增长，不写缓存，避免长表格逐行增长时把中间版本塞满 LRU。
+ * v-html 仍整片替换；DOM 级局部 patch 会与代码块展开态等 DOM 控制器冲突，不在此处理。
+ */
+export function renderStreamingContent(
+  content: string,
+  latexOnly: boolean,
+  renderProfile: RenderProfile,
+  conversationId: string | null | undefined,
+  language: string
+): string {
+  if (!content || latexOnly) return renderContent(content, latexOnly, renderProfile, conversationId)
+
+  const markdownIt = getMarkdownItInstance(renderProfile)
+  const environment: StreamingRenderEnvironment = {
+    trustedMath: renderProfile !== 'artifactSafe' ? new Map() : undefined,
+    conversationId
+  }
+  const tokens = markdownIt.parse(content, environment)
+  const hasCrossBlockState = Object.keys(environment.references ?? {}).length > 0 || environment.footnotes !== undefined
+  const blocks = hasCrossBlockState ? null : collectStreamingBlocks(tokens, conversationId)
+  if (!blocks || blocks.length < 2) {
+    // 与 renderContent 等价（markdownIt.render = renderer.render(parse(src, env))），复用已完成的 parse。
+    return finishRenderedHtml(markdownIt.renderer.render(tokens, markdownIt.options, environment), renderProfile, environment)
+  }
+
+  const source = content.replace(MARKDOWN_NEWLINES_RE, '\n').replace(MARKDOWN_NULL_RE, '\uFFFD')
+  const lineStarts = [0]
+  for (let i = source.indexOf('\n'); i >= 0; i = source.indexOf('\n', i + 1)) lineStarts.push(i + 1)
+  const lineOffset = (line: number) => line < lineStarts.length ? lineStarts[line] : source.length
+  const contextKey = `${renderProfile}\u0000${conversationId ?? ''}\u0000${language}\u0000${renderDependencyRevision.value}`
+
+  const parts: string[] = []
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]
+    const seqStart = environment.__grayCode?.codeBlockSeq ?? 0
+    const isLast = i === blocks.length - 1
+    const key = isLast
+      ? ''
+      : `${contextKey}\u0000${seqStart}\u0000${block.fileSignature}\u0000${source.slice(lineOffset(block.startLine), lineOffset(block.endLine))}`
+    const cached = isLast ? undefined : streamingBlockRenderCache.get(key)
+    if (cached !== undefined) {
+      parts.push(cached)
+      // 命中时跳过了 fence 渲染器，手动推进序号，保证后续代码块 data-block-id 与整篇渲染一致。
+      if (block.fenceCount > 0) environment.__grayCode = { codeBlockSeq: seqStart + block.fenceCount }
+      continue
+    }
+    const html = finishRenderedHtml(
+      markdownIt.renderer.render(tokens.slice(block.tokenStart, block.tokenEnd), markdownIt.options, environment),
+      renderProfile,
+      environment
+    )
+    if (!isLast) streamingBlockRenderCache.set(key, html)
+    parts.push(html)
+  }
+  return parts.join('')
 }

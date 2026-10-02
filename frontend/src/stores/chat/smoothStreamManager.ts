@@ -47,10 +47,17 @@ interface SmoothEntry {
   committed: string
   /** 已提升（promote）给渐进 markdown 层的文本：CharFlow 当前显示 = baseText + committed - promotedText */
   promotedText: string
+  /** promotedText 中的换行数，随 promotedText 增量维护，避免每次边界扫描重数整个已提升前缀。 */
+  promotedLineCount: number
   /** 已提升前缀末尾仍可继续接收数据行的 GFM 表格上下文；null 表示不在表格中。 */
   tableContinuation: TableContinuation | null
   /** 上次检查时 settled 的长度；只有新追加内容含换行时才需要重扫 Markdown 块边界。 */
   lastPromoteObservedLength: number
+  /**
+   * 上次边界扫描的可续扫状态，绑定扫描时的 CharFlow。settled 只被追加时续扫新行；
+   * restore / promote / 尾窗裁剪 / 段落切换 / 重新注册等改写 settled 前缀的路径必须清空。
+   */
+  promoteScan: { flow: CharFlow; state: PromoteScanState } | null
   /** 上次快照时间（performance.now）；null 表示尚未生成首帧快照 */
   lastSnapshotAt: number | null
   /** 上次快照的显示文本；null 允许首帧显式发布空基线 */
@@ -127,6 +134,8 @@ interface PromoteCut {
   cut: number
   /** 提升到 cut 后，下一完整行可继续所属的表格上下文。 */
   tableContinuation: TableContinuation | null
+  /** 本次扫描结束时的状态；同一输入仅追加内容时可传回 findPromoteCut 续扫。 */
+  scan: PromoteScanState
 }
 
 interface TableContinuation {
@@ -134,6 +143,34 @@ interface TableContinuation {
   startLine: number
   /** 到 delimiter 为止的固定解析前缀；后续逐行验证不重复解析已提升的 tbody。 */
   probePrefix: string
+  /** probePrefix 中的换行数（构造时即可算出），免去每次扫描重数整个前缀。 */
+  probeLineCount: number
+}
+
+/**
+ * findPromoteCut 扫描到 scannedEnd（完整行末尾）时的循环状态快照。
+ *
+ * 典型热点是未闭合的长代码块：cut 一直为 0，settled 只增不减，旧实现每收到一行
+ * 都要从头拆分、扫描全部完整行（1+2+…+k）。保存逐行状态机的全部变量后，
+ * 同一输入只被追加时只需检查新增行；任何前提不成立都回退全量扫描。
+ */
+interface PromoteScanState {
+  /** 扫描时的已提升前缀 / 表格上下文（按引用比较）；任一变化都表示输入已非同一前缀。 */
+  promotedPrefix: string
+  startsInTable: TableContinuation | null
+  /** 已扫描完整行的末尾偏移（settled 内）；之后的内容尚未检查。 */
+  scannedEnd: number
+  /** 已扫描完整行数（不含 parser 前缀行）。 */
+  lineCount: number
+  /** 已扫描行中是否出现过疑似 delimiter；决定是否需要 markdown-it 表格解析。 */
+  sawDelimiter: boolean
+  /** 上次解析出的 table 起始行索引；续扫时用于确认旧行看到的表格范围未变。 */
+  tableByStart: Map<number, ParsedTableRange>
+  cut: number
+  cutContinuesTable: TableContinuation | null
+  inTable: TableContinuation | null
+  fence: FenceState | null
+  htmlBlock: HtmlBlockState | null
 }
 
 interface ParsedTableRange {
@@ -162,11 +199,11 @@ const HTML_BLOCK_TAGS = new Set([
   'tfoot', 'th', 'thead', 'title', 'tr', 'track', 'ul'
 ])
 
-/** 只返回已经收到换行符的行；末尾半行永远不能提升。 */
-function getCompleteLines(text: string): CompleteLine[] {
+/** 只返回已经收到换行符的行；末尾半行永远不能提升。from 必须是行首（0 或紧跟 \n）。 */
+function getCompleteLines(text: string, from = 0): CompleteLine[] {
   const lines: CompleteLine[] = []
-  let start = 0
-  let newline = text.indexOf('\n')
+  let start = from
+  let newline = text.indexOf('\n', from)
   while (newline >= 0) {
     const endWithoutCr = newline > start && text.charCodeAt(newline - 1) === 13 ? newline - 1 : newline
     lines.push({ text: text.slice(start, endWithoutCr), start, end: newline + 1 })
@@ -264,32 +301,56 @@ function parseHtmlBlockStart(line: string): HtmlBlockState | null {
  *
  * 返回值同时携带「提升后仍在表格中」状态，使下一次调用只拿到 settled 尾巴时
  * 仍能识别数据行；末尾半行和未闭合 fence 永远留在 CharFlow。
+ *
+ * previous 为上次对同一 settled（仅追加）的扫描状态时只检查新增完整行，结果与
+ * 全量扫描逐字段一致；调用方负责在 settled 前缀被改写时丢弃 previous。
  */
 function findPromoteCut(
   text: string,
   promotedPrefix: string,
-  startsInTable: TableContinuation | null
+  startsInTable: TableContinuation | null,
+  promotedLineCount = countLineBreaks(promotedPrefix),
+  previous: PromoteScanState | null = null
 ): PromoteCut {
-  const lines = getCompleteLines(text)
-  const completeEnd = lines[lines.length - 1]?.end ?? 0
   const parserPrefix = startsInTable?.probePrefix ?? promotedPrefix
-  const prefixLineCount = countLineBreaks(parserPrefix)
-  const totalCompleteLines = prefixLineCount + lines.length
-  const shouldParseTables = startsInTable !== null || lines.some((line) => looksLikeTableDelimiter(line.text))
+  const prefixLineCount = startsInTable?.probeLineCount ?? promotedLineCount
+  let base = previous !== null && canResumePromoteScan(previous, text, promotedPrefix, startsInTable)
+    ? previous
+    : null
+  const newLines = getCompleteLines(text, base?.scannedEnd ?? 0)
+  // 没有新完整行时逐行状态机输入未变，直接复用上次结论。
+  if (base && newLines.length === 0) {
+    return { cut: base.cut, tableContinuation: base.cutContinuesTable, scan: base }
+  }
+  const completeEnd = newLines[newLines.length - 1]?.end ?? 0
+  const sawDelimiter = (base?.sawDelimiter ?? false) ||
+    newLines.some((line) => looksLikeTableDelimiter(line.text))
+  const shouldParseTables = startsInTable !== null || sawDelimiter
+  // 表格判定依赖整段 markdown-it 解析，追加行可能改变旧行所属的 token
+  // （例如旧末行因新 delimiter 变成表头）；此路径仍需完整解析，与旧实现同为 O(n)。
   const tableRanges = shouldParseTables
     ? parseTableRanges(parserPrefix + text.slice(0, completeEnd))
     : []
   const tableByStart = new Map(tableRanges.map((range) => [range.startLine, range]))
+  // 旧行只查询过 < resumeLine 的 table 起始行；这些范围不变时旧行的处理结果也不变。
+  if (base && !sameTableRangesBefore(base.tableByStart, tableByStart, prefixLineCount + base.lineCount)) {
+    base = null
+  }
+  const lines = base ? newLines : getCompleteLines(text)
+  const baseLineCount = base?.lineCount ?? 0
+  const totalCompleteLines = prefixLineCount + baseLineCount + lines.length
 
-  let cut = 0
-  let cutContinuesTable = startsInTable
-  let inTable = startsInTable
-  let fence: FenceState | null = null
-  let htmlBlock: HtmlBlockState | null = null
+  let cut = base?.cut ?? 0
+  // 续扫时 cutContinuesTable 可能按旧的总行数算出；inTable 非空时下一行必定重算它，
+  // inTable 为空时它恒为 null，因此至少一条新行后与全量扫描一致。
+  let cutContinuesTable = base ? base.cutContinuesTable : startsInTable
+  let inTable = base ? base.inTable : startsInTable
+  let fence: FenceState | null = base?.fence ?? null
+  let htmlBlock: HtmlBlockState | null = base?.htmlBlock ?? null
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex]
-    const globalLine = prefixLineCount + lineIndex
+    const globalLine = prefixLineCount + baseLineCount + lineIndex
     const blank = line.text.trim().length === 0
 
     if (inTable) {
@@ -349,7 +410,8 @@ function findPromoteCut(
     if (startingRange && startingRange.endLine >= globalLine + 1) {
       const tableStart: TableContinuation = {
         startLine: startingRange.startLine,
-        probePrefix: parserPrefix + text.slice(0, line.end)
+        probePrefix: parserPrefix + text.slice(0, line.end),
+        probeLineCount: globalLine + 1
       }
       cut = line.end
       cutContinuesTable = startingRange.endLine === totalCompleteLines ? tableStart : null
@@ -365,8 +427,59 @@ function findPromoteCut(
     }
   }
 
-  return { cut, tableContinuation: cutContinuesTable }
+  return {
+    cut,
+    tableContinuation: cutContinuesTable,
+    scan: {
+      promotedPrefix,
+      startsInTable,
+      scannedEnd: base && lines.length === 0 ? base.scannedEnd : completeEnd,
+      lineCount: baseLineCount + lines.length,
+      sawDelimiter,
+      tableByStart,
+      cut,
+      cutContinuesTable,
+      inTable,
+      fence,
+      htmlBlock
+    }
+  }
 }
+
+/**
+ * 续扫前提：同一已提升前缀与表格上下文（按引用，避免逐字比较长前缀），且上次扫描终点
+ * 仍落在行首。后两项只能廉价排除明显的改写；settled 被替换的路径由调用方显式清空状态。
+ */
+function canResumePromoteScan(
+  previous: PromoteScanState,
+  text: string,
+  promotedPrefix: string,
+  startsInTable: TableContinuation | null
+): boolean {
+  return previous.promotedPrefix === promotedPrefix &&
+    previous.startsInTable === startsInTable &&
+    previous.scannedEnd <= text.length &&
+    (previous.scannedEnd === 0 || text.charCodeAt(previous.scannedEnd - 1) === 10)
+}
+
+function sameTableRangesBefore(
+  previous: Map<number, ParsedTableRange>,
+  next: Map<number, ParsedTableRange>,
+  lineLimit: number
+): boolean {
+  for (const [startLine, range] of previous) {
+    if (startLine >= lineLimit) continue
+    const other = next.get(startLine)
+    if (!other || other.endLine !== range.endLine) return false
+  }
+  for (const startLine of next.keys()) {
+    if (startLine < lineLimit && !previous.has(startLine)) return false
+  }
+  return true
+}
+
+/** 仅供测试对比续扫与全量扫描结果；生产路径经 maybePromote 调用。 */
+export const findPromoteCutForTests = findPromoteCut
 
 /**
  * 渐进 markdown 提升：已定型文本到达安全段落边界时，把该前缀从 CharFlow 剥离并回调给宿主
@@ -381,13 +494,23 @@ function maybePromote(entry: SmoothEntry): void {
   const appended = observedLength <= settledText.length
     ? settledText.slice(observedLength)
     : settledText
+  // settled 变短只可能是前缀被改写，续扫状态不再对应当前文本。
+  if (observedLength > settledText.length) entry.promoteScan = null
   entry.lastPromoteObservedLength = settledText.length
 
   // 表格/空行/fence 的安全边界都只会在收到新换行后成立。避免长代码块或
   // 长单行输出的每个字符都重新拆分、扫描全部 settled 文本。
   if (!appended.includes('\n')) return
 
-  const boundary = findPromoteCut(settledText, entry.promotedText, entry.tableContinuation)
+  const previousScan = entry.promoteScan?.flow === display.flow ? entry.promoteScan.state : null
+  const boundary = findPromoteCut(
+    settledText,
+    entry.promotedText,
+    entry.tableContinuation,
+    entry.promotedLineCount,
+    previousScan
+  )
+  entry.promoteScan = { flow: display.flow, state: boundary.scan }
   if (boundary.cut <= 0) {
     // 已收到完整 table terminator 时，即使本轮没有可提升文本，也要结束 continuation。
     entry.tableContinuation = boundary.tableContinuation
@@ -395,7 +518,10 @@ function maybePromote(entry: SmoothEntry): void {
   }
   const bridged = display.flow.promoteWithBridge(boundary.cut)
   if (!bridged) return
+  // 已提升前缀从 settled 开头移走，剩余文本的行偏移全部变化，下次必须全量扫描。
+  entry.promoteScan = null
   entry.promotedText += bridged.text
+  entry.promotedLineCount += countLineBreaks(bridged.text)
   entry.tableContinuation = boundary.tableContinuation
   entry.lastPromoteObservedLength = display.flow.settledText.length
   dispatchPromotion(display, bridged.text, 'delta', bridged.release)
@@ -513,6 +639,7 @@ export function registerSmoothDisplay(
     flow.restore(restoreFull ? fullText : fullText.slice(entry.promotedText.length))
     // 新 flow 的 settled 即使与旧 flow 等长，也必须完整扫描一次。
     entry.lastPromoteObservedLength = 0
+    entry.promoteScan = null
     if (entry.promotedText && onPromote) {
       const releaseBridge = flow.bridgeText(entry.promotedText)
       dispatchPromotion(display, entry.promotedText, 'replay', releaseBridge)
@@ -569,11 +696,13 @@ export function pushSmoothText(
     // 档位重建：旧实例先放完积压；promote 边界（promotedText）继承给新实例，
     // 使 CharFlow 尾巴与宿主渐进 markdown（tailRendered）保持连续，不重复不丢失。
     let inheritedPromoted = ''
+    let inheritedPromotedLineCount = 0
     let inheritedTableContinuation: TableContinuation | null = null
     if (entry) {
       entry.streamer.flush()
       maybeSnapshot(entry, true)
       inheritedPromoted = entry.promotedText
+      inheritedPromotedLineCount = entry.promotedLineCount
       inheritedTableContinuation = entry.tableContinuation
       entry.streamer.dispose()
       entries.delete(messageId)
@@ -594,8 +723,11 @@ export function pushSmoothText(
       baseText,
       committed: '',
       promotedText: inheritedPromoted,
+      promotedLineCount: inheritedPromotedLineCount,
       tableContinuation: inheritedTableContinuation,
       lastPromoteObservedLength: 0,
+      // 下方 restore 重写了 settled，旧 entry 的续扫状态不继承。
+      promoteScan: null,
       lastSnapshotAt: null,
       lastSnapshotText: null,
       lastSnapshotPartKey: null,
@@ -610,7 +742,10 @@ export function pushSmoothText(
           // 修复：trim 若先于 promote 执行，flush/大 chunk 时会把尚未提升的完整表格结构裁掉。
           target.flow.append(graphemes, frameDurMs, instant, true)
           maybePromote(created)
+          const beforeTrim = target.flow.settledText.length
           target.flow.trimNow()
+          // 尾窗裁掉的是 settled 开头，已扫描行的偏移全部失效。
+          if (target.flow.settledText.length !== beforeTrim) created.promoteScan = null
         }
         maybeSnapshot(created)
       },
@@ -640,8 +775,10 @@ export function pushSmoothText(
     entry.baseText = baseText
     entry.committed = ''
     entry.promotedText = ''
+    entry.promotedLineCount = 0
     entry.tableContinuation = null
     entry.lastPromoteObservedLength = 0
+    entry.promoteScan = null
     entry.partKey = partKey
     maybeSnapshot(entry, true)
   }

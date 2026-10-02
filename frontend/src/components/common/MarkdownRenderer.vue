@@ -25,7 +25,7 @@ import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from '@/i18n'
 import { renderMermaid, fileExistenceCache, completedRenderCache, workspaceAssetRevision } from './markdown/markdownItCore'
 import { extractPotentialFilePaths } from './markdown/workspaceFileRefs'
-import { renderContent, type RenderProfile } from './markdown/markdownItEngine'
+import { renderContent, renderStreamingContent, type RenderProfile } from './markdown/markdownItEngine'
 import { renderDependencyRevision } from './markdown/renderDependencies'
 import { createCodeBlockDomController } from './markdown/codeBlockDom'
 import { createWorkspaceAssetController } from './markdown/workspaceAssets'
@@ -161,7 +161,8 @@ function renderCurrentContent(): boolean {
     lastRenderedMode = 'streaming'
     lastCompletedRenderCacheKey = ''
     lastRenderedConversationId = conversation?.value
-    renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile, conversation?.value)
+    // 流式内容只在末尾增长：按顶层块复用已定型块的 render/KaTeX/sanitize 结果，输出与 renderContent 一致。
+    renderedContent.value = renderStreamingContent(props.content, props.latexOnly, props.renderProfile, conversation?.value, actualLanguage.value)
     return true
   }
 
