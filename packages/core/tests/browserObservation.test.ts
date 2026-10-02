@@ -312,3 +312,83 @@ test('动作后观察共享五秒截止，停止加载也可释放文档等待',
     await expect(f.page.snapshotAfterAction(signal())).resolves.toMatchObject({ total: 0 });
   } finally { timeout.mockRestore(); jest.useRealTimers(); }
 });
+
+// 模拟隔离世界里的变更标记：change() 相当于 MutationObserver 触发，unavailable 模拟创建世界失败。
+function watched(nodes: AxNode[]) {
+  const f = fixture(nodes), base = f.sendCommand.getMockImplementation()!;
+  const marker = { id: 0, changed: true, unavailable: false };
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => {
+    if (method === 'Page.createIsolatedWorld') { if (marker.unavailable) throw new Error('no world'); return { executionContextId: 7 }; }
+    if (method === 'Runtime.evaluate' && params?.contextId === 7) {
+      if (String(params.expression).includes('MutationObserver')) { marker.changed = false; return { result: { value: ++marker.id } }; }
+      return { result: { value: marker.changed ? 0 : marker.id } };
+    }
+    return base(method, params, sessionId);
+  });
+  const reads = () => f.sendCommand.mock.calls.filter(([method]) => method === 'Accessibility.getFullAXTree').length;
+  return { ...f, marker, reads, change: () => { marker.changed = true; } };
+}
+
+test('连续分页在页面未变时复用同一棵树，变化、换筛选、导航、动作和框架增减都重新读取', async () => {
+  const f = watched(Array.from({ length: 30 }, (_, index) => ax(String(index + 1), `条目 ${index}`)));
+  const first = await f.page.snapshot(signal(), { maxNodes: 10, compact: false });
+  expect(first).toMatchObject({ total: 30, nextOffset: 10 }); expect(f.reads()).toBe(1);
+  const second = await f.page.snapshot(signal(), { offset: 10, maxNodes: 10, compact: false });
+  expect(f.reads()).toBe(1);
+  // 输出顺序与分页语义不变，引用仍按本次输出重建，上一页的引用失效。
+  expect(second).toMatchObject({ total: 30, offset: 10, returned: 10, nextOffset: 20, partial: false });
+  expect((second.nodes as SnapshotNode[]).map(node => node.name)).toEqual(Array.from({ length: 10 }, (_, index) => `条目 ${index + 10}`));
+  await expect(f.page.action({ action: 'press', ref: (first.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).rejects.toThrow('元素引用不存在');
+  f.change();
+  expect(await f.page.snapshot(signal(), { offset: 20, maxNodes: 10, compact: false })).toMatchObject({ offset: 20, returned: 10, truncated: false });
+  expect(f.reads()).toBe(2);
+  // 不是严格续页（筛选不同或 offset 不等于上次 nextOffset）时始终读取当前页面。
+  await f.page.snapshot(signal(), { maxNodes: 10 }); expect(f.reads()).toBe(3);
+  await f.page.snapshot(signal(), { offset: 10, maxNodes: 10, query: '条目' }); expect(f.reads()).toBe(4);
+  await f.page.snapshot(signal(), { maxNodes: 10 }); await f.page.snapshot(signal(), { offset: 15, maxNodes: 10 }); expect(f.reads()).toBe(6);
+  await f.page.snapshot(signal(), { offset: 25, maxNodes: 10 }); expect(f.reads()).toBe(6);
+  // 返回两页之间发生 between 时的完整读取次数。
+  const pages = async (between: (page: { nodes: unknown }) => unknown) => {
+    const before = f.reads(), page = await f.page.snapshot(signal(), { maxNodes: 10, compact: false });
+    await between(page); await f.page.snapshot(signal(), { offset: 10, maxNodes: 10 });
+    return f.reads() - before;
+  };
+  expect(await pages(() => {})).toBe(1);
+  expect(await pages(() => f.contents.emit('did-start-navigation'))).toBe(2);
+  expect(await pages(() => f.contents.debugger.emit('message', {}, 'Page.frameAttached', { frameId: 'late-frame' }))).toBe(2);
+  expect(await pages(page => f.page.action({ action: 'press', ref: (page.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal()))).toBe(2);
+  // 标记不可用时无法证明未变，退回每次完整读取。
+  f.marker.unavailable = true;
+  expect(await pages(() => {})).toBe(2);
+});
+
+test('续页缓存有时限，超时后释放原始树并重新读取', async () => {
+  jest.useFakeTimers();
+  try {
+    const f = watched(Array.from({ length: 30 }, (_, index) => ax(String(index + 1), `条目 ${index}`)));
+    await f.page.snapshot(signal(), { maxNodes: 10 });
+    await jest.advanceTimersByTimeAsync(30_000);
+    await f.page.snapshot(signal(), { offset: 10, maxNodes: 10 });
+    expect(f.reads()).toBe(2);
+  } finally { jest.useRealTimers(); }
+});
+
+test('条件等待在标记未变时跳过完整重读，变化后立即重读，标记看不到的变化仍按间隔兜底', async () => {
+  jest.useFakeTimers();
+  const nodes = [ax('1', '加载中')], f = watched(nodes);
+  try {
+    const waiting = f.page.waitForSnapshot(signal(), { query: '结果就绪', timeoutMs: 10000 });
+    await jest.advanceTimersByTimeAsync(700);
+    expect(f.reads()).toBe(1);
+    nodes.push(ax('2', '结果就绪')); f.change();
+    await jest.advanceTimersByTimeAsync(200);
+    expect(await waiting).toMatchObject({ conditionMet: true, total: 1 }); expect(f.reads()).toBe(2);
+    // 脚本直接赋值等标记覆盖不到的变化：最多每秒完整重读一次，条件仍由实际读取结果判断。
+    const absent = f.page.waitForSnapshot(signal(), { query: '加载中', state: 'absent', timeoutMs: 10000 });
+    await jest.advanceTimersByTimeAsync(0); expect(f.reads()).toBe(3);
+    nodes.shift();
+    await jest.advanceTimersByTimeAsync(800); expect(f.reads()).toBe(3);
+    await jest.advanceTimersByTimeAsync(400);
+    expect(await absent).toMatchObject({ conditionMet: true, total: 0 }); expect(f.reads()).toBe(4);
+  } finally { jest.useRealTimers(); }
+});

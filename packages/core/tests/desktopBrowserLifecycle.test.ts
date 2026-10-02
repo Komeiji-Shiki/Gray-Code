@@ -30,12 +30,13 @@ jest.mock('electron', () => {
       destroyed = false; finish!: () => void; fail!: (error: Error) => void;
       loading = new Promise<void>((resolve, reject) => { this.finish = resolve; this.fail = reject; });
       webContents = Object.assign(new EventEmitter(), { isDestroyed: () => this.destroyed, close: jest.fn(() => { this.destroyed = true; }),
-        loadURL: jest.fn(() => this.loading), stop: jest.fn(),
+        loadURL: jest.fn(() => this.loading), stop: jest.fn(), setBackgroundThrottling: jest.fn(),
         setWindowOpenHandler: (handler: unknown) => { this.webContents.openHandler = handler; }, openHandler: undefined as any,
         getURL: () => 'about:blank', getTitle: () => '',
         navigationHistory: { canGoBack: () => false, canGoForward: () => false } });
       constructor() { mockViews.push(this); }
-      getBounds() { return this.bounds; } setBounds(value: any) { this.bounds = value; } setVisible() {}
+      visible = true;
+      getBounds() { return this.bounds; } setBounds(value: any) { this.bounds = value; } setVisible(value: boolean) { this.visible = value; }
     },
     BaseWindow: class {
       visible = false; minimized = false; destroyed = false;
@@ -45,7 +46,10 @@ jest.mock('electron', () => {
         this.contentView.children.push(view);
       },
         removeChildView: (view: any) => { this.contentView.children = this.contentView.children.filter(item => item !== view); } };
-      webContents = { getZoomFactor: () => 1 }; on() {} off() {}
+      webContents = { getZoomFactor: () => 1 }; listeners = new Map<string, Set<() => void>>();
+      on(name: string, listener: () => void) { this.listeners.set(name, (this.listeners.get(name) ?? new Set()).add(listener)); }
+      off(name: string, listener: () => void) { this.listeners.get(name)?.delete(listener); }
+      emit(name: string) { for (const listener of this.listeners.get(name) ?? []) listener(); }
       constructor() { mockHosts.push(this); }
       isDestroyed() { return this.destroyed; } isVisible() { return this.visible; } isMinimized() { return this.minimized; }
       getContentSize() { return [1100, 800]; } setIgnoreMouseEvents() {} setContentSize() {}
@@ -447,4 +451,61 @@ test('动作后的观察期间真实键盘输入立即接管', async () => {
     });
     expect(f.signal.aborted).toBe(true); expect(f.page.action).toHaveBeenCalledTimes(1);
   } finally { f.browser.close(); }
+});
+
+// 后台节流跟随标签状态：只记录实际切换，创建时的 webPreferences 是关闭节流（false）。
+const throttled = (contents: any) => contents.setBackgroundThrottling.mock.calls.at(-1)?.[0] ?? false;
+
+test('租约和截图期间关闭后台节流，任务与截图都结束后才隐藏并恢复', async () => {
+  const f = await automatedTab();
+  try {
+    // 自动化标签创建时不可见，申领租约后立即关闭节流，截图时不重复切换。
+    expect(f.contents.setBackgroundThrottling.mock.calls).toEqual([[true], [false]]);
+    let release!: () => void;
+    f.page.screenshot.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { release = resolve; });
+      return { observation: { id: 'late', url: 'about:blank' }, attachment: { mimeType: 'image/png', data: 'fixture' } };
+    });
+    const capturing = f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context);
+    await settle(); expect(f.page.screenshot).toHaveBeenCalledTimes(2);
+    // 等帧期间任务结束：租约已释放，但采集完成前不能恢复节流或隐藏视图。
+    f.browser.finishRun(f.context.runId);
+    expect(throttled(f.contents)).toBe(false); expect(mockViews[0].visible).toBe(true);
+    release(); await capturing;
+    expect(throttled(f.contents)).toBe(true); expect(mockViews[0].visible).toBe(false); expect(mockHosts[0].visible).toBe(false);
+    await f.browser.tool('browser_read', { action: 'snapshot', tabId: f.tab.id }, { ...f.context, runId: 'next-run' });
+    expect(throttled(f.contents)).toBe(false);
+    expect(f.contents.setBackgroundThrottling).toHaveBeenCalledTimes(4);
+  } finally { f.browser.close(); }
+});
+
+test('切换标签、隐藏或最小化工作台时空闲标签恢复节流，可见标签保持关闭', async () => {
+  const { browser } = fixture();
+  const { BaseWindow } = jest.requireMock('electron');
+  const parent = new BaseWindow(); parent.visible = true; parent.webContents.isOffscreen = () => false;
+  (browser as any).getWindow = () => parent;
+  try {
+    browser.layout({ x: 0, y: 0, width: 700, height: 500, visible: true });
+    const open = async (index: number) => {
+      const opening = browser.call('owner', 'browser.newTab', {});
+      await settle(); mockViews[index].finish(); return (await opening) as BrowserTab;
+    };
+    const first = await open(0);
+    const [one] = mockViews.map(view => view.webContents);
+    expect(throttled(one)).toBe(false); expect(one.setBackgroundThrottling).not.toHaveBeenCalled();
+    await open(1);
+    const two = mockViews[1].webContents;
+    expect(throttled(one)).toBe(true); expect(throttled(two)).toBe(false); expect(mockViews[0].visible).toBe(false);
+    for (const [hide, show] of [['minimize', 'restore'], ['hide', 'show']] as const) {
+      parent.minimized = hide === 'minimize'; parent.visible = hide !== 'hide'; parent.emit(hide);
+      expect(throttled(two)).toBe(true); expect(throttled(one)).toBe(true);
+      parent.minimized = false; parent.visible = true; parent.emit(show);
+      expect(throttled(two)).toBe(false); expect(throttled(one)).toBe(true);
+    }
+    await browser.call('owner', 'browser.select', { tabId: first.id });
+    expect(throttled(one)).toBe(false); expect(throttled(two)).toBe(true);
+    browser.layout({ x: 0, y: 0, width: 700, height: 500, visible: false });
+    expect(throttled(one)).toBe(true);
+  } finally { browser.close(); }
+  expect(parent.listeners.get('minimize')?.size).toBe(0);
 });

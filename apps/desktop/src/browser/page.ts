@@ -8,6 +8,29 @@ import { checkedState, pointInElement, prepareTextInput, selectElement } from '.
 
 interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string }
 interface PageLog { cursor: number; time: number; kind: 'console' | 'network' | 'error'; text: string }
+/** 一次完整读取的原始 AX 节点；marker 是读树前在该框架隔离世界里布置的变更标记。 */
+interface FrameRead { frameId?: string; identity?: string; sessionId?: string; nodes: AxNode[]; marker?: { contextId: number; id: number } }
+interface PageRead { epoch: number; topology: number; frames: Array<Record<string, unknown>>; reads: FrameRead[] }
+
+// 在隔离世界运行，页面脚本看不到也改不了。第一次变化就断开观察，频繁更新的页面不会持续产生记录。
+// 覆盖 DOM 增删、属性与文字变化、输入和焦点事件，以及布置时已存在的开放 shadow root；
+// 脚本直接赋值 value、封闭 shadow root 和纯 CSS 状态变化不在范围内，所以标记只用于续页复用和等待间隔，不替代重读。
+const watchExpression = `(() => {
+  const state = globalThis.__graycodeSnapshotWatch ??= { id: 0, changed: true, observers: [] };
+  state.mark ??= () => { state.changed = true; for (const observer of state.observers) observer.disconnect(); state.observers = []; };
+  for (const observer of state.observers) observer.disconnect(); state.observers = [];
+  if (state.document !== document) {
+    state.document = document;
+    for (const type of ['input', 'change', 'focusin', 'focusout']) document.addEventListener(type, state.mark, true);
+  }
+  const observe = root => { const observer = new MutationObserver(state.mark); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); state.observers.push(observer); };
+  const visit = root => { observe(root); for (const element of root.querySelectorAll('*')) if (element.shadowRoot) visit(element.shadowRoot); };
+  visit(document);
+  state.changed = false; return ++state.id;
+})()`;
+const unchangedExpression = '(() => { const state = globalThis.__graycodeSnapshotWatch; return !!state && state.document === document && !state.changed ? state.id : 0; })()';
+/** 续页复用上限；标记覆盖不到的变化最多延迟这么久，也限制大页面原始树在内存中的停留时间。 */
+const continuationLifetime = 30_000;
 
 /** 只提供固定的页面操作。模型参数不能成为脚本、CDP 方法名或宿主接口。 */
 export class BrowserPage {
@@ -21,6 +44,9 @@ export class BrowserPage {
   private debuggerOwned = false;
   private observation?: Omit<BrowserObservation, 'tabId'>;
   private mainDocumentPending = false;
+  /** 框架或 OOPIF 会话增减时递增；只用于判断缓存的读取是否还覆盖全部框架，不影响引用或截图。 */
+  private topology = 0;
+  private continuation?: { key: string; offset: number; read: PageRead; timer: ReturnType<typeof setTimeout> };
   constructor(readonly contents: WebContents, private readonly changed: () => void) {
     contents.on('did-start-navigation', details => {
       this.invalidate();
@@ -34,10 +60,11 @@ export class BrowserPage {
     });
     contents.debugger.on('message', (_event, method, params, sessionId) => {
       if (method === 'Target.attachedToTarget' && params.targetInfo.type === 'iframe') {
-        this.sessions.set(params.sessionId, params.targetInfo);
+        this.sessions.set(params.sessionId, params.targetInfo); this.topology++;
         void this.enable(params.sessionId).catch(error => this.log('error', String(error)));
       }
-      if (method === 'Target.detachedFromTarget') { this.sessions.delete(params.sessionId); this.invalidate(); }
+      if (method === 'Target.detachedFromTarget') { this.sessions.delete(params.sessionId); this.topology++; this.invalidate(); }
+      if (method === 'Page.frameAttached' || method === 'Page.frameDetached') this.topology++;
       if (method === 'Runtime.consoleAPICalled') this.log('console', `${params.type}: ${(params.args ?? []).map((value: { value?: unknown; description?: string }) => value.value ?? value.description ?? '').join(' ')}`);
       if (method === 'Runtime.exceptionThrown') this.log('error', params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.text ?? '页面脚本异常');
       if (method === 'Network.responseReceived') this.log('network', `${params.response.status} ${params.type} ${params.response.url}`);
@@ -51,7 +78,11 @@ export class BrowserPage {
     });
   }
   get revision(): number { return this.epoch; }
-  invalidate(): void { this.references.clear(); this.observation = undefined; this.epoch++; }
+  invalidate(): void { this.references.clear(); this.observation = undefined; this.epoch++; this.forget(); }
+  private forget(): void {
+    if (this.continuation) clearTimeout(this.continuation.timer);
+    this.continuation = undefined;
+  }
   log(kind: PageLog['kind'], value: unknown): void {
     this.records.push({ cursor: ++this.logCursor, time: Date.now(), kind, text: String(value).slice(0, 3000) });
     if (this.records.length > 200) this.records.splice(0, this.records.length - 200);
@@ -98,6 +129,9 @@ export class BrowserPage {
     } finally { if (timer) clearTimeout(timer); if (abort) signal.removeEventListener('abort', abort); }
   }
   async snapshot(signal: AbortSignal, options: SnapshotOptions = {}) {
+    return (await this.observe(signal, options)).result;
+  }
+  private async observe(signal: AbortSignal, options: SnapshotOptions) {
     signal.throwIfAborted(); await this.pending(this.connect(), signal);
     const scope = options.ref ? this.reference(options.ref) : undefined;
     // 读取文字不会改变截图坐标；只更新元素引用，截图仍按导航、滚动和缩放校验。
@@ -105,17 +139,18 @@ export class BrowserPage {
     const references = new Map<string, ElementReference>();
     const scopeRef = scope ? `${prefix}-scope` : undefined;
     if (scopeRef) references.set(scopeRef, scope!);
-    const rows: SnapshotNode[] = []; const frames: Array<Record<string, unknown>> = [];
+    const rows: SnapshotNode[] = [];
     const maximum = options.maxNodes ?? 250, offset = options.offset ?? 0;
+    // 连续分页在文档未导航、标记未变时复用上一页的原始树：大页面一次完整读取可达数秒，
+    // 而且同一棵树上的 offset 不会因两次读取之间的插入而错位。只接受严格的续页（同一筛选、offset 等于上次
+    // nextOffset），其他读取始终重新获取当前页面。引用仍按本次输出重新生成，旧引用照常失效。
+    const key = JSON.stringify([scope?.backendNodeId, scope?.sessionId, scope?.frameId, options.frameId, options.query, options.role, options.interactiveOnly === true]);
+    const previous = this.continuation; this.forget();
+    const reused = previous && previous.key === key && previous.offset === offset && await this.unchanged(previous.read, signal) ? previous.read : undefined;
+    const read = reused ?? await this.collect(signal, options, scope);
     let total = 0, characters = 0, budgetReached = false;
-    const read = async (frameId?: string, url?: string, sessionId?: string) => {
-      const identity = frameId ?? this.sessions.get(sessionId!)?.targetId;
-      if (options.frameId && options.frameId !== identity) return;
+    for (const { frameId, identity, sessionId, nodes } of read.reads) {
       // 深层组件不截断树深度；输出预算在筛选之后应用，后面的正文和 iframe 仍可检索。
-      const { nodes } = await this.command('Accessibility.getFullAXTree', frameId ? { frameId } : {}, signal, sessionId) as { nodes: AxNode[] };
-      const failed = frames.findIndex(frame => frame.frameId === identity && frame.unavailable);
-      if (failed >= 0) frames.splice(failed, 1);
-      frames.push({ frameId: identity, url });
       for (const { node, row } of snapshotRows(nodes, options, scope?.backendNodeId)) {
         if (total++ < offset || rows.length >= maximum || budgetReached) continue;
         const size = JSON.stringify(row).length;
@@ -125,31 +160,80 @@ export class BrowserPage {
         if (id) references.set(id, { backendNodeId: node.backendDOMNodeId!, sessionId, frameId });
         rows.push({ ...(id ? { ref: id } : {}), frameId: identity, ...row });
       }
+    }
+    const frames = read.frames.map(frame => ({ ...frame }));
+    if (options.frameId && !frames.length) throw new Error('页面框架不存在或已经变化，请先读取整个页面确认 frameId。');
+    if (epoch !== this.epoch || read.epoch !== epoch) throw Object.assign(new Error('页面在读取时发生导航，请重新读取。'), { code: 'BROWSER_PAGE_CHANGED' });
+    for (const [id, reference] of references) this.references.set(id, reference);
+    const nextOffset = offset + rows.length < total ? offset + rows.length : undefined;
+    const partial = frames.some(frame => frame.unavailable);
+    // 不完整的读取不复用，续页时还能重试失败的框架；缺少标记的框架无法证明未变，也不保留。
+    if (nextOffset !== undefined && !partial && read.reads.every(item => item.marker)) {
+      const timer = setTimeout(() => { if (this.continuation?.timer === timer) this.continuation = undefined; }, continuationLifetime);
+      timer.unref?.();
+      this.continuation = { key, offset: nextOffset, read, timer };
+    }
+    return { read, result: { url: this.contents.getURL(), title: this.contents.getTitle(), frames,
+      format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows),
+      offset, returned: rows.length, total, nextOffset, truncated: nextOffset !== undefined,
+      partial, ...(scopeRef ? { scopeRef } : {}), ...(budgetReached ? { characterLimit: 60000 } : {}) } };
+  }
+  /** 按框架顺序读取完整 AX 树；框架顺序和失败重试规则决定输出顺序。 */
+  private async collect(signal: AbortSignal, options: SnapshotOptions, scope?: ElementReference): Promise<PageRead> {
+    const read: PageRead = { epoch: this.epoch, topology: this.topology, frames: [], reads: [] };
+    const frames = read.frames;
+    const load = async (frameId?: string, url?: string, sessionId?: string) => {
+      const identity = frameId ?? this.sessions.get(sessionId!)?.targetId;
+      if (options.frameId && options.frameId !== identity) return;
+      // 标记先于读树布置，读取期间发生的变化也会让后续复用失效。
+      const marker = await this.watch(identity, sessionId, signal);
+      const { nodes } = await this.command('Accessibility.getFullAXTree', frameId ? { frameId } : {}, signal, sessionId) as { nodes: AxNode[] };
+      const failed = frames.findIndex(frame => frame.frameId === identity && frame.unavailable);
+      if (failed >= 0) frames.splice(failed, 1);
+      frames.push({ frameId: identity, url });
+      read.reads.push({ frameId, identity, sessionId, nodes, marker });
     };
     const visit = async (node: { frame: { id: string; url: string }; childFrames?: any[] }) => {
-      try { await read(node.frame.id, node.frame.url); }
+      try { await load(node.frame.id, node.frame.url); }
       catch (error) { signal.throwIfAborted(); frames.push({ frameId: node.frame.id, url: node.frame.url, unavailable: String(error) }); }
       for (const child of node.childFrames ?? []) await visit(child);
     };
     if (scope) {
-      await read(scope.frameId, scope.sessionId ? this.sessions.get(scope.sessionId)?.url : undefined, scope.sessionId);
+      await load(scope.frameId, scope.sessionId ? this.sessions.get(scope.sessionId)?.url : undefined, scope.sessionId);
     } else {
       const tree = await this.command('Page.getFrameTree', {}, signal);
       await visit(tree.frameTree);
       for (const [sessionId, target] of this.sessions) {
         if (frames.some(frame => frame.frameId === target.targetId && !frame.unavailable)) continue;
-        try { await read(undefined, target.url, sessionId); }
+        try { await load(undefined, target.url, sessionId); }
         catch (error) { signal.throwIfAborted(); frames.push({ frameId: target.targetId, url: target.url, unavailable: String(error) }); }
       }
     }
-    if (options.frameId && !frames.length) throw new Error('页面框架不存在或已经变化，请先读取整个页面确认 frameId。');
-    if (epoch !== this.epoch) throw Object.assign(new Error('页面在读取时发生导航，请重新读取。'), { code: 'BROWSER_PAGE_CHANGED' });
-    for (const [id, reference] of references) this.references.set(id, reference);
-    const nextOffset = offset + rows.length < total ? offset + rows.length : undefined;
-    return { url: this.contents.getURL(), title: this.contents.getTitle(), frames,
-      format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows),
-      offset, returned: rows.length, total, nextOffset, truncated: nextOffset !== undefined,
-      partial: frames.some(frame => frame.unavailable), ...(scopeRef ? { scopeRef } : {}), ...(budgetReached ? { characterLimit: 60000 } : {}) };
+    return read;
+  }
+  /** 布置变更标记；失败只表示这次读取不可复用，不影响快照本身。 */
+  private async watch(frameId: string | undefined, sessionId: string | undefined, signal: AbortSignal): Promise<FrameRead['marker']> {
+    if (!frameId) return undefined;
+    try {
+      const world = await this.pending(this.contents.debugger.sendCommand('Page.createIsolatedWorld', { frameId, worldName: 'graycode-snapshot' }, sessionId), signal, 1000);
+      const contextId = world?.executionContextId;
+      if (typeof contextId !== 'number') return undefined;
+      const armed = await this.pending(this.contents.debugger.sendCommand('Runtime.evaluate', { expression: watchExpression, contextId, returnByValue: true }, sessionId), signal, 1000);
+      const id = armed?.result?.value;
+      return typeof id === 'number' && id > 0 ? { contextId, id } : undefined;
+    } catch { signal.throwIfAborted(); return undefined; }
+  }
+  /** 只有文档未导航、框架未增减且每个框架的标记都未触发时才算未变化；任何读取失败都按已变化处理。 */
+  private async unchanged(read: PageRead, signal: AbortSignal): Promise<boolean> {
+    if (read.epoch !== this.epoch || read.topology !== this.topology || !read.reads.length || read.frames.some(frame => frame.unavailable)) return false;
+    for (const { marker, sessionId } of read.reads) {
+      if (!marker) return false;
+      try {
+        const checked = await this.pending(this.contents.debugger.sendCommand('Runtime.evaluate', { expression: unchangedExpression, contextId: marker.contextId, returnByValue: true }, sessionId), signal, 1000);
+        if (checked?.result?.value !== marker.id) return false;
+      } catch { signal.throwIfAborted(); return false; }
+    }
+    return read.epoch === this.epoch && read.topology === this.topology;
   }
 
   private async documentReady(signal: AbortSignal): Promise<void> {
@@ -204,17 +288,24 @@ export class BrowserPage {
     if (options.ref || options.offset) throw new Error('wait 请使用 query、role 或 frameId 指定条件，不使用会变化的 ref 或 offset。');
     const timeoutMs = options.timeoutMs ?? 10000, started = Date.now();
     const deadline = AbortSignal.timeout(timeoutMs), waiting = AbortSignal.any([signal, deadline]);
+    // 标记未触发时跳过完整重读，但至少每隔 refresh 重读一次：标记看不到脚本赋值、封闭 shadow root 与纯 CSS 变化，
+    // 条件是否满足始终只由实际读取结果判断。短等待按比例缩短间隔，避免漏掉截止前的变化。
+    const refresh = Math.min(1000, Math.max(200, timeoutMs / 4));
     let snapshot: Awaited<ReturnType<BrowserPage['snapshot']>> | undefined;
+    let last: { read: PageRead; at: number } | undefined;
     try {
       while (true) {
         try {
-          snapshot = await this.snapshot(waiting, options);
-          const conditionMet = options.state === 'absent' ? snapshot.total === 0 && !snapshot.partial : snapshot.total > 0;
-          if (conditionMet) return { ...snapshot, conditionMet: true, timedOut: false, waitedMs: Date.now() - started };
+          if (!last || Date.now() - last.at >= refresh || !await this.unchanged(last.read, waiting)) {
+            const observed = await this.observe(waiting, options);
+            snapshot = observed.result; last = { read: observed.read, at: Date.now() };
+            const conditionMet = options.state === 'absent' ? snapshot.total === 0 && !snapshot.partial : snapshot.total > 0;
+            if (conditionMet) return { ...snapshot, conditionMet: true, timedOut: false, waitedMs: Date.now() - started };
+          }
         } catch (error) {
           waiting.throwIfAborted();
           if ((error as { code?: string }).code !== 'BROWSER_PAGE_CHANGED') throw error;
-          snapshot = undefined;
+          snapshot = undefined; last = undefined;
         }
         await delay(200, undefined, { signal: waiting });
       }

@@ -20,6 +20,8 @@ interface OwnedTab {
   userControlled: boolean; takeoverSource?: string; queue: Promise<unknown>; modelInput: boolean;
   blockedDownload?: { filename: string; url: string };
   actionPopups?: ActionPopups;
+  /** 与 webContents 当前的后台节流设置一致；capturing 计数并行截图，最后一个结束后才允许恢复节流。 */
+  throttled: boolean; capturing: number;
 }
 interface PopupResult {
   requestedUrl: string; status: 'opening' | 'opened' | 'failed'; tab?: OwnedTab; error?: string;
@@ -45,6 +47,8 @@ export class DesktopBrowser implements BrowserHost {
   private captureWindow?: BaseWindow;
   private displayWindow?: BrowserWindow;
   private readonly restoreLayout = () => { if (this.lastLayout) this.layout(this.lastLayout); };
+  // 最小化或隐藏工作台不会触发 layout；当前标签此时同样不可见，要按状态恢复节流。
+  private readonly windowHidden = () => { for (const tab of this.tabs.values()) this.throttle(tab); };
   constructor(private readonly application: PlatformApplication, private readonly getWindow: () => BrowserWindow | undefined,
     private readonly notify: (event: Record<string, unknown>) => void) {
     this.profiles = new BrowserProfiles(application);
@@ -131,7 +135,7 @@ export class DesktopBrowser implements BrowserHost {
       offscreen: parent?.webContents.isOffscreen() === true } });
     const id = randomUUID();
     const tab: OwnedTab = { id, actorId, profileId: selected.profileId, view, page: new BrowserPage(view.webContents, () => this.changed(actorId)), loading: false,
-      userControlled: false, queue: Promise.resolve(), modelInput: false };
+      userControlled: false, queue: Promise.resolve(), modelInput: false, throttled: false, capturing: 0 };
     this.tabs.set(id, tab);
     view.setBounds({ x: 0, y: 0, width: 1100, height: 800 }); view.setVisible(false);
     this.attach(tab);
@@ -185,6 +189,8 @@ export class DesktopBrowser implements BrowserHost {
     } finally { signal?.removeEventListener('abort', abort); }
     if (foreground || !this.active.has(actorId)) this.active.set(actorId, id);
     this.changed(actorId); if (foreground) this.show(tab);
+    // 创建时关闭节流只为初始化不被拖慢；此后由显示、租约和截图状态决定。
+    this.throttle(tab);
     return tab;
   }
   private async popup(source: OwnedTab, result: PopupResult, actionSignal?: AbortSignal): Promise<void> {
@@ -198,7 +204,7 @@ export class DesktopBrowser implements BrowserHost {
     }
     if (tab.userControlled) throw new Error('新标签已被用户接管。');
     tab.page.automated = automated;
-    if (lease) tab.lease = { runId: lease.runId, conversationId: lease.conversationId, controller: new AbortController() };
+    if (lease) { tab.lease = { runId: lease.runId, conversationId: lease.conversationId, controller: new AbortController() }; this.throttle(tab); }
     const navigationSignal = tab.lease ? AbortSignal.any([tab.lease.controller.signal, ...(signal ? [signal] : [])]) : signal;
     // 子页尚在导航时，其后续工具调用必须排在导航之后；取消和接管同样能中止加载。
     tab.queue = this.navigate(tab, result.requestedUrl, navigationSignal);
@@ -251,15 +257,16 @@ export class DesktopBrowser implements BrowserHost {
     tab.userControlled = true; tab.takeoverSource = source;
     tab.lease?.controller.abort(new Error(`用户已接管此网页标签${source ? `（${source}）` : ''}。`)); tab.lease = undefined;
     tab.page.invalidate(); tab.page.allowManualInput(); this.changed(tab.actorId);
-    this.pauseIdleCapture();
+    this.throttle(tab); this.pauseIdleCapture();
   }
   layout(input: BrowserLayout): void {
     if (this.closing) return;
     this.lastLayout = input;
     const parent = this.getWindow(); if (!parent || parent.isDestroyed()) return;
     if (parent !== this.displayWindow) {
-      this.displayWindow?.off('show', this.restoreLayout); this.displayWindow?.off('restore', this.restoreLayout);
+      this.unbindDisplayWindow();
       this.displayWindow = parent; parent.on('show', this.restoreLayout); parent.on('restore', this.restoreLayout);
+      parent.on('hide', this.windowHidden); parent.on('minimize', this.windowHidden);
     }
     const visible = input.visible && [input.x, input.y, input.width, input.height].every(Number.isFinite) && input.width > 0 && input.height > 0;
     const zoom = parent.webContents.getZoomFactor(); const [width, height] = parent.getContentSize();
@@ -273,13 +280,18 @@ export class DesktopBrowser implements BrowserHost {
         if (previous.width !== bounds.width || previous.height !== bounds.height) tab.page.invalidate();
         tab.view.setBounds(bounds);
         tab.view.setVisible(true);
+        this.throttle(tab, true);
       } else if (tab.lease) {
-        this.attach(tab);
+        this.attach(tab); this.throttle(tab, false);
       } else {
-        tab.view.setVisible(false);
+        tab.view.setVisible(false); this.throttle(tab, false);
       }
     }
     this.pauseIdleCapture();
+  }
+  private unbindDisplayWindow(): void {
+    this.displayWindow?.off('show', this.restoreLayout); this.displayWindow?.off('restore', this.restoreLayout);
+    this.displayWindow?.off('hide', this.windowHidden); this.displayWindow?.off('minimize', this.windowHidden);
   }
   private async preview(tab: OwnedTab, workspaceId: string, file: string, signal?: AbortSignal): Promise<void> {
     const workspace = this.application.workspace(tab.actorId, workspaceId, ['workspace_read']);
@@ -342,14 +354,36 @@ export class DesktopBrowser implements BrowserHost {
     if (!tab.lease) {
       tab.lease = { runId: context.runId, conversationId: context.conversationId, controller: new AbortController() };
       tab.page.automated = true;
-      this.changed(context.actorId);
+      this.changed(context.actorId); this.throttle(tab);
     }
     return AbortSignal.any([context.signal, tab.lease.controller.signal]);
   }
+  /** 用户在工作台上能看到的标签；与 layout 显示子视图的条件一致。 */
+  private foreground(tab: OwnedTab): boolean {
+    const parent = this.getWindow();
+    return !!parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
+      && !!this.lastLayout?.visible && tab.actorId === 'owner' && this.active.get('owner') === tab.id;
+  }
+  /**
+   * 只有可见、正在被任务操作或正在截图的标签关闭后台节流。空闲的隐藏标签恢复节流后，
+   * 动画、rAF 与定时器按 Chromium 后台规则降频，document.visibilityState 也会变为 hidden。
+   * 截图等待的 rAF 在节流的隐藏页上不会触发，所以截图期间必须保持关闭，见 capture。
+   */
+  private throttle(tab: OwnedTab, foreground = this.foreground(tab)): void {
+    const wc = tab.view.webContents;
+    const allowed = !foreground && !tab.lease && tab.capturing === 0;
+    if (allowed === tab.throttled || wc.isDestroyed()) return;
+    wc.setBackgroundThrottling(allowed); tab.throttled = allowed;
+  }
+  /** 释放后的后台标签要真正隐藏：透明宿主可能因其他任务的标签继续显示，页面进入 hidden 才会实际节流。 */
+  private settle(tab: OwnedTab): void {
+    const foreground = this.foreground(tab);
+    if (!foreground && !tab.lease && tab.capturing === 0 && !tab.view.webContents.isDestroyed()) tab.view.setVisible(false);
+    this.throttle(tab, foreground);
+  }
   private attach(tab: OwnedTab): void {
     let parent: BaseWindow | undefined = this.getWindow();
-    const foreground = parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
-      && this.lastLayout?.visible && tab.actorId === 'owner' && this.active.get('owner') === tab.id;
+    const foreground = this.foreground(tab);
     if (!foreground) {
       const bounds = tab.view.getBounds();
       if (!this.captureWindow || this.captureWindow.isDestroyed())
@@ -371,10 +405,14 @@ export class DesktopBrowser implements BrowserHost {
     if (host && !host.isDestroyed() && ![...this.tabs.values()].some(tab => tab.lease && host.contentView.children.includes(tab.view))) host.hide();
   }
   private async capture(tab: OwnedTab, signal: AbortSignal, dimension = 1280): Promise<ToolOutcome> {
-    this.attach(tab);
-    const frame = await tab.page.screenshot(signal, tab.view.getBounds(), dimension);
-    const observation: BrowserObservation = { ...frame.observation, tabId: tab.id };
-    return { success: true, data: observation, attachments: [frame.attachment] };
+    // 截图通常已持有租约；单独计数是为了租约在截图中途被接管或结束时，仍在等帧和采集完成后才恢复节流。
+    tab.capturing++; this.throttle(tab);
+    try {
+      this.attach(tab);
+      const frame = await tab.page.screenshot(signal, tab.view.getBounds(), dimension);
+      const observation: BrowserObservation = { ...frame.observation, tabId: tab.id };
+      return { success: true, data: observation, attachments: [frame.attachment] };
+    } finally { tab.capturing--; this.settle(tab); this.pauseIdleCapture(); }
   }
   private async actionResult(tab: OwnedTab, outcome: ToolOutcome, signal: AbortSignal, options: ActionObservationOptions): Promise<ToolOutcome> {
     const data: Record<string, unknown> = { ...outcome.data as Record<string, unknown> };
@@ -514,6 +552,7 @@ export class DesktopBrowser implements BrowserHost {
   finishRun(runId: string): void {
     for (const tab of this.tabs.values()) if (tab.lease?.runId === runId) {
       tab.lease.controller.abort(new Error('任务已结束。')); tab.lease = undefined; tab.page.invalidate(); this.changed(tab.actorId);
+      this.settle(tab);
     }
     this.pauseIdleCapture();
   }
@@ -532,7 +571,7 @@ export class DesktopBrowser implements BrowserHost {
   }
   close(): void {
     this.closing = true; this.unsubscribe(); for (const tab of [...this.tabs.values()]) this.closeTab(tab);
-    this.displayWindow?.off('show', this.restoreLayout); this.displayWindow?.off('restore', this.restoreLayout);
+    this.unbindDisplayWindow();
     if (this.captureWindow && !this.captureWindow.isDestroyed()) this.captureWindow.close();
   }
 }
