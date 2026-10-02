@@ -449,8 +449,9 @@ export class PlatformApplication {
       if (event.type === 'event') {
         // 运行中的任务归属在内存中，只有已结束的任务才查询存储；每个事件不再多占一次存储线程。
         const actorId = this.runtime.activeActorId(event.event.runId);
-        if (actorId) this.activity.pulse(actorId);
-        else void storage.getRun(event.event.runId).then(run => run && this.activity.pulse(run.actorId)).catch(() => {});
+        const pulse = actorId ? this.activity.pulse(actorId)
+          : storage.getRun(event.event.runId).then(run => run ? this.activity.pulse(run.actorId) : undefined);
+        void pulse.catch(() => {});
       }
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed'].includes(event.event.type)) this.checkpointLifecycle.clear(event.event.runId);
       if(event.type==='event'&&event.event.type==='run.completed')this.longMemory.background.afterRun(event.event.runId);
