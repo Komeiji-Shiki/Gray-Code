@@ -137,6 +137,8 @@ export interface ModelInput {
   tools: ToolDeclaration[];
   signal: AbortSignal;
   onDelta?: (parts: Record<string, unknown>[]) => void;
+  /** 供应方适配器按渠道设置重新请求前通知；本次已推送的思考增量应当丢弃。 */
+  onRetry?: (status: { attempt: number; maxAttempts: number; error: string; nextRetryIn: number }) => void;
 }
 export interface ModelProvider {
   generate(input: ModelInput): Promise<PlatformMessage>;

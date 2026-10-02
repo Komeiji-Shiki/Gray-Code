@@ -64,6 +64,7 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
   | { type: 'message.persisted'; runId: string; content: PlatformMessage }
   | { type: 'model.continued'; runId: string }
   | { type: 'model.delta'; runId: string; parts: Record<string, unknown>[] }
+  | { type: 'model.retrying'; runId: string; attempt: number; maxAttempts: number; error: string; nextRetryIn: number }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
 interface ActiveRun { conversationId: string; actorId: string; controller: AbortController; done: Promise<void> }
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
@@ -405,6 +406,11 @@ export class PlatformRuntime {
             await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model,
               ...(captured.metrics ? { metrics: captured.metrics } : {}) });
           })(),
+          onRetry: status => {
+            // 上一次尝试只推送了思考；丢弃后界面与中断时保存的部分回复都从下一次尝试重新开始。
+            deltas.discard(); partialParts.length = 0;
+            this.notify({ type: 'model.retrying', runId: run.id, ...status });
+          },
           onDelta: parts => {
             if (deltas.closed || signal.aborted) return;
             if (!streamingEvent) {

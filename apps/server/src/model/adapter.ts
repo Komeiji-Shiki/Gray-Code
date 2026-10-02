@@ -10,7 +10,9 @@ import { ChannelHttpExecutor } from "../../../../backend/modules/channel/channel
 import { StreamAccumulator } from "../../../../backend/modules/channel/StreamAccumulator";
 import { validateHistoryIntegrity } from "../../../../backend/modules/channel/HistoryIntegrityValidator";
 import { repairDuplicateFunctionResponses } from "../../../../backend/modules/conversation/manager/historyRepair";
-import { extractUpstreamErrorMessage } from "../../../../backend/modules/channel/channelManager/channelResponseHelpers";
+import { extractUpstreamErrorMessage, partHasContent } from "../../../../backend/modules/channel/channelManager/channelResponseHelpers";
+import { ChannelError, ErrorType } from "../../../../backend/modules/channel/types";
+import { isRetryableError } from "../../../../backend/core/errors";
 import type { Content } from "../../../../backend/modules/conversation/types";
 import type { GenerateRequest } from "../../../../backend/modules/channel/types";
 import type { ToolDeclaration } from "../../../../backend/tools/types";
@@ -24,6 +26,20 @@ import {
   resolveCapabilities,
   overrideChannelReasoning,
 } from "./capabilities";
+
+/** 正文、工具调用或附件才算可用输出；只有思考的回复不能推进任务。 */
+const visiblePart = (part: Record<string, unknown>) => !part.thought && partHasContent(part);
+/** 单次请求已经产生的外部可见状态，决定失败后能否安全地重新请求。 */
+interface AttemptState { visible: boolean; issued: number }
+
+function retryDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason); return; }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, ms);
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
 
 export interface ModelAdapterServices {
   profile: (id: string) => Promise<ProviderDefinition | null>;
@@ -195,7 +211,7 @@ export class ProviderModelAdapter implements ModelProvider {
       void captured.catch(() => undefined);
     }
     try {
-      const content = await this.receive(input, prepared, !!native, socket, source);
+      const content = await this.receiveWithRetry(input, prepared, !!native, socket, source);
       await captured;
       return content;
     } catch (error) {
@@ -203,19 +219,45 @@ export class ProviderModelAdapter implements ModelProvider {
       throw error;
     }
   }
-  private async receive(input: ModelInput, { profile, config, formatter, options }: Awaited<ReturnType<ProviderModelAdapter['prepare']>>,
+  /**
+   * 按渠道的自动重试设置重新请求。已经显示正文或工具调用、已经交出原生异步调用、使用原生连接或用户取消时
+   * 不重试：重新请求会重复已显示的内容或重复执行工具。只显示了思考的空回复可以重试，并通过 onRetry
+   * 通知运行器丢弃这次思考。请求快照只在第一次尝试时记录。
+   */
+  private async receiveWithRetry(input: ModelInput, prepared: Awaited<ReturnType<ProviderModelAdapter['prepare']>>,
     native: boolean, socket: ResponsesWebSocket | undefined, source: AsyncIterable<any> | undefined): Promise<PlatformMessage> {
+    const config = prepared.config as ChannelConfig & { retryEnabled?: boolean; retryCount?: number; retryInterval?: number };
+    // 没有渠道配置的调用（内部快捷配置）不启用重试。
+    const configured = !!this.services.channel && config.retryEnabled !== false;
+    const maxRetries = configured && !native ? Math.max(0, Math.floor(Number(config.retryCount ?? 3)) || 0) : 0;
+    const interval = Math.max(0, Number(config.retryInterval ?? 3000) || 0);
+    for (let attempt = 0; ; attempt++) {
+      const state: AttemptState = { visible: false, issued: 0 };
+      try {
+        return await this.receive(input, prepared, native, socket, attempt === 0 ? source : undefined, state);
+      } catch (error) {
+        const retryable = error instanceof ChannelError && isRetryableError(error.type);
+        if (!retryable || attempt >= maxRetries || input.signal.aborted || state.visible || state.issued > 0) throw error;
+        input.onRetry?.({ attempt: attempt + 1, maxAttempts: maxRetries, error: error.message, nextRetryIn: interval });
+        await retryDelay(interval, input.signal);
+      }
+    }
+  }
+  private async receive(input: ModelInput, { profile, config, formatter, options }: Awaited<ReturnType<ProviderModelAdapter['prepare']>>,
+    native: boolean, socket: ResponsesWebSocket | undefined, source: AsyncIterable<any> | undefined,
+    state: AttemptState = { visible: false, issued: 0 }): Promise<PlatformMessage> {
     input.signal.throwIfAborted();
     if (!profile.stream && !native) {
       const requestStartedAt = Date.now();
       const response = await this.http.executeRequest(options, input.signal);
       const responseDuration = Date.now() - requestStartedAt;
       if (response.status < 200 || response.status >= 300)
-        throw new Error(
-          `HTTP ${response.status}: ${extractUpstreamErrorMessage(response.body) ?? "Model request failed."}`,
-        );
+        throw new ChannelError(ErrorType.API_ERROR,
+          `HTTP ${response.status}: ${extractUpstreamErrorMessage(response.body) ?? "Model request failed."}`, response.body);
       // 非流式上游只能确认完整请求耗时，无法把整次耗时当作首字延迟或思考耗时。
       const content = formatter.parseResponse(response.body).content as PlatformMessage;
+      if (!content.parts.some(part => visiblePart(part)))
+        throw new ChannelError(ErrorType.EMPTY_RESPONSE_ERROR, t('modules.channel.errors.emptyResponse'));
       return { ...content, responseDuration };
     }
     const accumulator = new StreamAccumulator(config.toolMode ?? "function_call");
@@ -231,7 +273,7 @@ export class ProviderModelAdapter implements ModelProvider {
       if (blocked || item.async !== true || !asyncNames.has(item.name)) { blocked = true; return; }
       const call = formatter.parseResponse({ output: [item] }).content.parts[0]?.functionCall;
       if (call?.id && input.onToolCallReady?.({ id: call.id, name: call.name, args: call.args, async: true,
-        ...(typeof call.namespace === 'string' ? { namespace: call.namespace } : {}) })) issued.add(call.id);
+        ...(typeof call.namespace === 'string' ? { namespace: call.namespace } : {}) })) { issued.add(call.id); state.issued = issued.size; }
       else blocked = true;
     };
     for await (const raw of source) {
@@ -244,14 +286,22 @@ export class ProviderModelAdapter implements ModelProvider {
       }
       const chunk = formatter.parseStreamChunk(raw);
       const delta = accumulator.add(chunk);
-      if (delta.length) input.onDelta?.(delta as Record<string, unknown>[]);
+      if (delta.length) {
+        if (delta.some(part => visiblePart(part as Record<string, unknown>))) state.visible = true;
+        input.onDelta?.(delta as Record<string, unknown>[]);
+      }
     }
     input.signal.throwIfAborted();
-    if (!accumulator.isComplete())
-      throw new Error("The model stream ended before a completion event.");
     const content = accumulator.getFinalContent();
-    if (!content.parts.length && !socket?.hasContinuation())
-      throw new Error("The model returned no content.");
+    const visible = content.parts.some(part => visiblePart(part as Record<string, unknown>));
+    if (!accumulator.isComplete()) {
+      // 没有任何可用输出就断开，等同于空回复，可以重试；已经显示正文或工具调用时只报告截断。
+      if (!visible && !state.issued) throw new ChannelError(ErrorType.EMPTY_RESPONSE_ERROR, "The model stream ended before a completion event.");
+      throw new ChannelError(ErrorType.API_ERROR, "The model stream ended before a completion event.");
+    }
+    // 只有思考、没有正文和工具调用的回复无法推进任务，按空回复处理。
+    if (!visible && !state.issued && !socket?.hasContinuation())
+      throw new ChannelError(ErrorType.EMPTY_RESPONSE_ERROR, t('modules.channel.errors.emptyResponse'));
     return { ...content, ...(socket ? { nativeResponse: socket.reference() } : {}) } as PlatformMessage;
   }
 }

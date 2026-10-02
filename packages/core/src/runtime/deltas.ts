@@ -32,5 +32,7 @@ export class DeltaCoalescer {
     const parts = this.parts; this.parts = []; this.bytes = 0; this.send(parts);
   }
   finish(): void { this.closed = true; this.flush(); }
+  /** 重新请求前丢弃尚未推送的合并内容，避免上一次尝试的思考在重置后才显示。 */
+  discard(): void { clearTimeout(this.timer); this.timer = undefined; this.parts = []; this.bytes = 0; this.inputEvents = 0; }
   statistics() { return { inputEvents: this.inputEvents, outputEvents: this.outputEvents }; }
 }

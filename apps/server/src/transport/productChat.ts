@@ -22,6 +22,8 @@ interface ChatStream {
   remaining: Set<string>;
   results: { id: string; name: string; result: unknown }[];
   resultContents: PlatformMessage[];
+  /** 适配器正在按渠道设置自动重试，收到下一次输出或任务结束时向界面报告结果。 */
+  retrying?: boolean;
 }
 interface PendingChatStart { actorId: string; controller: AbortController; done: Promise<void>; runId?: string }
 /** Map core run events to the existing chat UI stream contract without owning execution. */
@@ -308,6 +310,17 @@ export class ProductChat {
     this.app.publish({ type: 'ui.message', runId: stream.runId, clientId,
       message: { type: 'streamChunk', data: { ...chunk, backgroundRun: client.background, conversationId: stream.conversationId, streamId: client.streamId, createdAt: Date.now() } } });
   }
+  /** 复用共享前端的自动重试提示；只发送给能接收该任务的客户端。 */
+  private retryStatus(stream: ChatStream, data: Record<string, unknown>): void {
+    if (!stream.runId) return;
+    this.app.publish({ type: 'ui.message', runId: stream.runId,
+      message: { type: 'retryStatus', data: { ...data, conversationId: stream.conversationId, createdAt: Date.now() } } });
+  }
+  private settleRetry(stream: ChatStream, succeeded: boolean, error?: string): void {
+    if (!stream.retrying) return;
+    stream.retrying = false;
+    this.retryStatus(stream, { type: succeeded ? 'retrySuccess' : 'retryFailed', attempt: 0, maxAttempts: 0, ...(error ? { error } : {}) });
+  }
   private emit(stream: ChatStream, chunk: Record<string, unknown>): void {
     for (const clientId of stream.clients.keys()) this.emitClient(stream, clientId, chunk);
     if (stream.runId) this.app.publish({ type: 'ui.message', runId: stream.runId, excludeClientIds: [...stream.clients.keys()],
@@ -325,12 +338,22 @@ export class ProductChat {
     }
     const stream = this.streams.get(runId);
     if (!stream) return;
+    if (notification.type === 'model.retrying') {
+      // 上一次尝试只显示了思考，用空快照清掉界面上的部分内容，再显示重试状态。
+      stream.accumulator.reset(); stream.retrying = true;
+      this.emit(stream, { type: 'chunk', chunk: { delta: [], done: false, contentSnapshot: { id: `live:${runId}:retry`, role: 'model', runId, parts: [] } } });
+      this.retryStatus(stream, { type: 'retrying', attempt: notification.attempt, maxAttempts: notification.maxAttempts,
+        error: notification.error, nextRetryIn: notification.nextRetryIn });
+      return;
+    }
     if (notification.type === 'model.delta') {
+      this.settleRetry(stream, true);
       stream.accumulator.add({ delta: notification.parts, done: false });
       this.emit(stream, { type: 'chunk', chunk: { delta: notification.parts, done: false } }); return;
     }
     if (notification.type === 'model.continued') { this.emit(stream, { type: 'toolIteration', content: stream.content, toolResults: [] }); return; }
     if (notification.type === 'message.persisted') {
+      this.settleRetry(stream, true);
       const content = displayCharacterContent(notification.content as PlatformMessage);
       if (content.role === 'model') {
         stream.content = content;
@@ -377,10 +400,13 @@ export class ProductChat {
       this.emit(stream, { type: 'toolStatus', toolStatus: true, tool: { id: event.payload.toolCallId,
         name: event.payload.toolName, args: event.payload.args, status: 'executing' } });
     } else if (event.type === 'run.completed') {
+      this.settleRetry(stream, true);
       this.emit(stream, { type: 'complete', content: stream.content }); this.streams.delete(runId);
     } else if (event.type === 'run.cancelled') {
+      this.settleRetry(stream, false);
       this.emit(stream, { type: 'cancelled', content: stream.content }); this.streams.delete(runId);
     } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
+      this.settleRetry(stream, false, event.payload.error ?? event.payload.reason);
       // The history transaction already committed. Retry continues that history, without
       // repeating the edit/reroll operation or replaying its previous tool side effects.
       this.emit(stream, { type: 'error', ...(stream.content?.incompleteReason ? { content: stream.content } : {}),
