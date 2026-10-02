@@ -22,6 +22,8 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
     draft.app.appearance.fontSize = 18;
     const channel = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000,
       url: 'https://example.invalid/v1', name: '便携渠道', model: 'fixture', apiKey: 'portable-test-secret' });
+    const anthropic = await draft.configs.createConfig({ type: 'anthropic', enabled: true, timeout: 5000,
+      url: 'https://example.invalid/v1', name: 'Anthropic 便携渠道', model: 'fixture', apiKey: '' });
     await draft.settings.updateToolConfig('generate_image', { apiKey: 'portable-image-secret' } as any);
     await app.product.save(draft);
     const subscriptionCredential = 'chatgpt_portable_test';
@@ -30,6 +32,10 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
     await app.storage.initializeConversation({ ...metadata('chat_a'), workspaceId: 'project' }, [message(1, '只留在机器 A 的聊天')]);
     await app.close(); app = undefined;
     app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: machineA, configurationPersistence: new DesktopPortableProfile(directory) });
+    // 已有渠道从关闭改为开启后，便携导入必须保留新选择，不能被旧能力字段覆盖。
+    const enabled = await app.product.draft();
+    await enabled.configs.updateConfig(anthropic, { sendHistoryThoughtSignatures: true });
+    await app.product.save(enabled);
     const encrypted = await readFile(path.join(directory, 'settings.enc'));
     expect(encrypted.includes(Buffer.from('portable-test-secret'))).toBe(false);
     const portableCodec = keySecretCodec(await readFile(path.join(directory, 'profile.key')));
@@ -44,10 +50,13 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
 
     // 模拟旧便携文件仍带着轮换前的令牌，重新导入时不能回退本机登录。
     exported.credentials[subscriptionCredential] = 'old-subscription-session';
+    // 旧版可能已保存了开启的开关和关闭的能力，导入时应以渠道的显式选择为准。
+    exported.settings.providers.find((provider: { id: string }) => provider.id === anthropic).capabilities.reasoningSignature = 'none';
     await writeFile(path.join(directory, 'settings.enc'), await portableCodec.encrypt(JSON.stringify(exported)));
     app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: machineA,
       configurationPersistence: new DesktopPortableProfile(directory) });
     expect(await app.settings.credential(subscriptionCredential)).toBe('renewed-subscription-session');
+    expect(await app.product.channel(anthropic)).toMatchObject({ sendHistoryThoughtSignatures: true });
     await app.close(); app = undefined;
 
     const moved = path.join(f.root, '移动后的便携程序');
@@ -61,12 +70,15 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
     expect(await app.settings.credential(subscriptionCredential)).toBeNull();
     expect((await app.storage.listConversations()).items).toEqual([]);
     expect(await app.product.channel(channel)).toMatchObject({ apiKey: 'portable-test-secret' });
+    expect(await app.product.channel(anthropic)).toMatchObject({ sendHistoryThoughtSignatures: true });
+    expect(app.settings.find('providers', anthropic)?.capabilities.reasoningSignature).toBe('native');
     expect(app.product.runtimeSettings().getToolsConfig().generate_image).toMatchObject({ apiKey: 'portable-image-secret' });
     expect((await app.images.list()).map(image => image.id)).toEqual([background.id]);
     await app.storage.initializeConversation(metadata('chat_b'), [message(2, '只留在机器 B 的聊天')]);
     const changed = await app.product.draft();
     changed.app.appearance.fontSize = 20;
     await changed.configs.deleteConfig(channel);
+    await changed.configs.updateConfig(anthropic, { sendHistoryThoughtSignatures: false });
     await app.product.save(changed);
     await app.images.remove(background.id);
     await app.close(); app = undefined;
@@ -76,6 +88,8 @@ test('移动便携目录后携带配置和密钥，两台机器各自保留工�
     expect(app.settings.snapshot().settings.workspaces.map(workspace => workspace.id)).toEqual(['project']);
     expect((await app.storage.listConversations()).items.map(conversation => conversation.id)).toEqual(['chat_a']);
     expect(await app.product.channel(channel)).toBeNull();
+    expect(await app.product.channel(anthropic)).toMatchObject({ sendHistoryThoughtSignatures: false });
+    expect(app.settings.find('providers', anthropic)?.capabilities.reasoningSignature).toBe('none');
     expect(await app.images.list()).toEqual([]);
     // 模拟移动磁盘暂时不可写，旧配置仍完整，恢复后可重新保存。
     const unavailable = path.join(path.dirname(directory), 'portable-data-unavailable');

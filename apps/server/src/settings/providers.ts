@@ -78,12 +78,14 @@ export function channelProfile(channel: ChannelConfig, previous?: ProviderDefini
     capabilities: {
       outputTokenParameter: 'protocol_default', reasoningParameter: 'protocol_default', reasoningLevels: [],
       ...previous?.capabilities,
-      // Responses 的格式和发送开关以当前渠道为准，旧能力不能覆盖刚保存的选择。
+      // 各协议的显式发送开关以当前渠道为准，避免旧能力在便携导入或重新投影时覆盖选择。
       reasoningSignature: channel.type === 'openai-responses'
         ? channel.reasoningSignatureMode === 'deepseek' ? 'deepseek'
           : channel.sendHistoryThoughtSignatures === false ? 'none'
           : channel.reasoningSignatureMode === 'codex' ? 'codex' : 'native'
-        : previous?.capabilities.reasoningSignature ?? (channel.sendHistoryThoughtSignatures === false ? 'none' : 'native'),
+        : channel.sendHistoryThoughtSignatures === false ? 'none'
+          : channel.sendHistoryThoughtSignatures === true && previous?.capabilities.reasoningSignature === 'none' ? 'native'
+          : previous?.capabilities.reasoningSignature ?? 'native',
       responsesWebSocket: (channel as any).responsesWebSocketEnabled === true,
       responsesAsyncTools: (channel as any).responsesAsyncToolsEnabled === true,
       strictTools: channel.strictToolsEnabled === undefined ? previous?.capabilities.strictTools ?? 'protocol_default' : channel.strictToolsEnabled ? 'enabled' : 'disabled',
