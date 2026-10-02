@@ -16,13 +16,19 @@ const DICTIONARY_VALUE = 45;
 const BINARY_REFERENCE = 46;
 const VALUE_REFERENCE = 47;
 const REQUEST_ARRAY_FIELDS = new Set(['messages', 'input', 'contents', 'tools']);
+const SHARED_MAP_ENTRIES = 128;
 const INVALID_UTF16 = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
 
 function digest(bytes: Uint8Array): Buffer {
   return createHash('sha256').update(bytes).digest();
 }
 
-export interface ValueProjection { fields?: readonly string[]; omitBinary?: boolean }
+export interface ValueProjection {
+  fields?: readonly string[];
+  omitBinary?: boolean;
+  paths?: Record<string, readonly string[]>;
+  mapStats?: Record<string, { path: readonly string[]; sumFields?: readonly string[] }>;
+}
 
 interface ChunkRow { hash: Buffer; raw_bytes: number; codec: number; data: Buffer | null; file_id: string | null }
 
@@ -80,7 +86,7 @@ export class ObjectStore {
   }
 
   /** Only objects referenced by the selected message are decoded; attachments remain lossless. */
-  putValue(value: unknown, deduplicateRequestArrays = false): Buffer {
+  putValue(value: unknown, deduplicateRequestArrays = false, shareLargeMaps = false): Buffer {
     const children: Buffer[] = [];
     const ancestors = new Set<object>();
     const edge = this.db.prepare('INSERT OR IGNORE INTO object_edges(parent_hash,child_hash) VALUES(?,?)');
@@ -148,9 +154,18 @@ export class ObjectStore {
             ]));
           }
         }
-        return Object.fromEntries(Object.entries(record)
+        const start = children.length;
+        const entries = Object.entries(record)
           .filter(([, item]) => item !== undefined)
-          .map(([name, item]) => [name, transform(item, name, depth + 1)]));
+          .map(([name, item]) => [name, transform(item, name, depth + 1)]);
+        const transformed = Object.fromEntries(entries);
+        if (shareLargeMaps && depth > 0 && entries.length >= SHARED_MAP_ENTRIES) {
+          // 大型文件清单与内容索引按内容共享；沿用已有引用格式和对象边，恢复、备份及回收无需新路径。
+          const child = writeValue(transformed, children.splice(start));
+          children.push(child);
+          return new ExtData(VALUE_REFERENCE, child);
+        }
+        return transformed;
       } finally { ancestors.delete(input); }
     };
     return writeValue(transform(value, '', 0), children);
@@ -193,7 +208,52 @@ export class ObjectStore {
         maxArrayLength: 1_000_000, maxMapLength: 1_000_000,
       });
     try {
-      return restore(unpack(this.get(hash))) as T;
+      const stored = unpack(this.get(hash));
+      const projected = restore(stored);
+      if (!projection?.paths && !projection?.mapStats) return projected as T;
+      // 在存储线程内聚合旧记录的大型字典，列表只接收统计值，不复制整份文件清单。
+      const expandStoredValue = (input: unknown): unknown => {
+        let value = input;
+        for (let depth = 0; depth <= 128; depth++) {
+          if (!(value instanceof ExtData)) return value;
+          if (value.type === VALUE_REFERENCE && typeof value.data !== 'function' && value.data.length === 32) {
+            value = unpack(this.get(Buffer.from(value.data)));
+            continue;
+          }
+          if (value.type === DICTIONARY_VALUE && typeof value.data !== 'function') {
+            const entries = decode(value.data);
+            if (!Array.isArray(entries)) throw new PlatformStorageError('CORRUPT_DATA', 'Invalid dictionary payload.');
+            return Object.fromEntries(entries.map(pair => {
+              if (!Array.isArray(pair) || pair.length !== 2) throw new PlatformStorageError('CORRUPT_DATA', 'Invalid dictionary entry.');
+              const key = restore(pair[0], 1);
+              if (typeof key !== 'string') throw new PlatformStorageError('CORRUPT_DATA', 'Invalid dictionary key.');
+              return [key, pair[1]];
+            }));
+          }
+          return restore(value, 1);
+        }
+        throw new PlatformStorageError('CORRUPT_DATA', 'Stored value nesting exceeds 128 levels.');
+      };
+      const atPath = (path: readonly string[]): unknown => {
+        let value = stored;
+        for (const key of path) {
+          value = expandStoredValue(value);
+          value = value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
+        }
+        return value;
+      };
+      const paths = Object.entries(projection.paths ?? {}).map(([name, path]) => [name, restore(atPath(path), 1)]);
+      const stats = Object.entries(projection.mapStats ?? {}).map(([name, options]) => {
+        const map = expandStoredValue(atPath(options.path));
+        const values = map && typeof map === 'object' ? Object.values(map) : [];
+        const sums = (options.sumFields ?? []).map(field => [field, values.reduce<number>((sum, value) => {
+          const item = expandStoredValue(value);
+          const number = item && typeof item === 'object' ? restore((item as Record<string, unknown>)[field], 1) : undefined;
+          return sum + (typeof number === 'number' ? number : 0);
+        }, 0)]);
+        return [name, Object.fromEntries([['count', values.length], ...sums])];
+      });
+      return Object.fromEntries([...Object.entries(projected as Record<string, unknown>), ...paths, ...stats]) as T;
     } catch (error) {
       if (error instanceof PlatformStorageError) throw error;
       throw new PlatformStorageError('CORRUPT_DATA', `Cannot decode stored content: ${error instanceof Error ? error.message : String(error)}`);

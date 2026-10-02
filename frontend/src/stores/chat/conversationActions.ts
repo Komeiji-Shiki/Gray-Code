@@ -109,6 +109,7 @@ interface ConversationViewPayload {
   totalMessages?: number
   messages?: Content[]
   checkpoints?: CheckpointSummary[]
+  checkpointsDeferred?: boolean
   modelConfig?: ConversationModelConfig
   promptMode?: ConversationPromptModeConfig
   activeBuild?: unknown
@@ -883,7 +884,8 @@ export async function switchConversation(
       const view = await perfMeasureAsync('conversation.loadConversationForView', () =>
         sendToExtension<ConversationViewPayload>(MESSAGE_NAMES['conversation.loadConversationForView'], {
           conversationId: requestedId,
-          limit: MESSAGES_PAGE_SIZE
+          limit: MESSAGES_PAGE_SIZE,
+          ...(window.__GRAYCODE_HOST ? { deferCheckpoints: true } : {})
         })
       )
 
@@ -907,6 +909,8 @@ export async function switchConversation(
       void backfillInitialVisibleWindow(state, requestedId, page, total)
 
       state.checkpoints.value = Array.isArray(view?.checkpoints) ? view.checkpoints : []
+      // 首屏与初始化握手不等待存档摘要；老宿主未确认延后加载时沿用其返回的列表。
+      if (view?.checkpointsDeferred) void loadCheckpoints(state)
       state.activeBuild.value = parsePersistedBuildSession(view?.activeBuild, requestedId)
 
       if (view?.metadata?.workspaceUri) {

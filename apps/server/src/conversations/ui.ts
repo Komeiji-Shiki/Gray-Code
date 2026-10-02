@@ -147,13 +147,15 @@ export function conversationUiHandlers(app: PlatformApplication, client: ClientS
   return {
     'conversation.loadConversationForView': async (data: Record<string, any>) => {
       await app.conversation(client.actorId, data.conversationId);
+      const deferCheckpoints = data.deferCheckpoints === true;
       const [metadata, result, checkpoints] = await Promise.all([
         app.productUi.conversations.getMetadata(data.conversationId),
         app.productUi.conversations.getMessagesPaged(data.conversationId, { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit }),
-        app.checkpoints.summaries(client.actorId, data.conversationId),
+        deferCheckpoints ? { checkpoints: [] } : app.checkpoints.summaries(client.actorId, data.conversationId),
       ]);
       const custom = metadata?.custom ?? {};
       return { metadata, messages: result.messages, totalMessages: result.total, checkpoints: checkpoints.checkpoints,
+        ...(deferCheckpoints ? { checkpointsDeferred: true } : {}),
         modelConfig: custom.inputModelConfig, promptMode: custom.promptModeConfig, activeBuild: custom.activeBuild ?? null };
     },
     'conversation.createBranchConversation': (data: Record<string, any>) => app.conversations.fork(client.actorId, data.sourceConversationId, data.branchAtIndex, data),

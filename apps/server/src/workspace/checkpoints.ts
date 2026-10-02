@@ -20,17 +20,20 @@ export interface WorkspaceCheckpoint {
   messageIndex: number; messageNodeId?: string; toolName: string; phase: 'before' | 'after'; runId?: string;
   manifest: WorkspaceSnapshotManifest; contentIds: Record<string, string>;
 }
+const checkpointMetadataFields = ['id', 'conversationId', 'timestamp', 'name', 'messageIndex', 'messageNodeId', 'toolName', 'phase', 'runId'] as const;
+type WorkspaceCheckpointMetadata = Pick<WorkspaceCheckpoint, typeof checkpointMetadataFields[number]> & { fileCount: number; size: number; partial: boolean };
 interface RestorePreview { id: string; actorId: string; checkpointId: string; fingerprint: string; createdAt: number }
 const md5 = (bytes: Uint8Array) => createHash('md5').update(bytes).digest('hex');
 
 export class WorkspaceCheckpoints {
   private readonly previews = new Map<string, RestorePreview>();
-  /** 每个对话最近发布的检查点；下一次采集只保存相对它变化的文件。重启后首次采集仍为全量。 */
+  /** 每个对话最近发布的检查点；重启后从已保存的检查点恢复复用基线。 */
   private readonly latest = new Map<string, string>();
+  private readonly metadataCache = new Map<string, { revision: number | null; value: Promise<WorkspaceCheckpointMetadata> }>();
   constructor(private readonly app: PlatformApplication) {}
   /** 基线必须仍存在且属于同一工作区与目录；否则回退为独立采集。 */
-  private async base(conversationId: string, workspace: WorkspaceDefinition): Promise<WorkspaceSnapshotBase | undefined> {
-    const id = this.latest.get(conversationId);
+  private async base(actorId: string, conversationId: string, workspace: WorkspaceDefinition): Promise<WorkspaceSnapshotBase | undefined> {
+    const id = this.latest.get(conversationId) ?? (await this.listMetadata(actorId, conversationId)).at(-1)?.id;
     if (!id) return undefined;
     const value = await this.app.storage.getRecord(namespace, id) as WorkspaceCheckpoint | null;
     const roots = workspaceSnapshotRoots(workspace).map(root => `${root.id}\n${root.uri}`).join('\n');
@@ -39,6 +42,7 @@ export class WorkspaceCheckpoints {
       this.latest.delete(conversationId);
       return undefined;
     }
+    this.latest.set(conversationId, id);
     return { manifest: value.manifest, contentIds: value.contentIds };
   }
   private async workspace(actorId: string, conversationId: string, effects: ('workspace_read' | 'workspace_write')[]): Promise<WorkspaceDefinition> {
@@ -68,14 +72,45 @@ export class WorkspaceCheckpoints {
     for (const id of await this.app.storage.listRecords(namespace, conversationId)) values.push(await this.get(actorId, conversationId, id));
     return values.sort((a, b) => a.timestamp - b.timestamp);
   }
-  async summaries(actorId: string, conversationId: string, includeInactive = false) {
+  async listMetadata(actorId: string, conversationId: string): Promise<WorkspaceCheckpointMetadata[]> {
     await this.app.conversation(actorId, conversationId);
-    const checkpoints = await this.list(actorId, conversationId);
+    const ids = await this.app.storage.listRecords(namespace, conversationId);
+    const revisions = await this.app.storage.recordRevisions(ids.map(id => ({ namespace, id })));
+    const values: WorkspaceCheckpointMetadata[] = [];
+    for (const [index, id] of ids.entries()) {
+      let cached = this.metadataCache.get(id);
+      if (!cached || cached.revision !== revisions[index]) {
+        const entry: { revision: number | null; value: Promise<WorkspaceCheckpointMetadata> } = { revision: revisions[index], value: this.app.storage.getVersionedRecord(namespace, id, {
+          fields: checkpointMetadataFields,
+          paths: { partial: ['manifest', 'partial'] },
+          mapStats: { files: { path: ['manifest', 'files'], sumFields: ['size'] } },
+        }).then(record => {
+          const value = record.value as Pick<WorkspaceCheckpoint, typeof checkpointMetadataFields[number]> & { partial: boolean; files: { count: number; size: number } } | null;
+          if (!value || value.conversationId !== conversationId) throw new Error('检查点不属于当前对话。');
+          entry.revision = record.revision;
+          const { files, ...metadata } = value;
+          return { ...metadata, fileCount: files.count, size: files.size };
+        }).catch(error => {
+          if (this.metadataCache.get(id) === entry) this.metadataCache.delete(id);
+          throw error;
+        }) };
+        this.metadataCache.delete(id);
+        this.metadataCache.set(id, entry);
+        if (this.metadataCache.size > 512) this.metadataCache.delete(this.metadataCache.keys().next().value!);
+        cached = entry;
+      }
+      // 逐条等待，让消息页等请求能在检查点之间进入存储线程；并发读取同一列表共用摘要请求。
+      values.push({ ...await cached.value });
+    }
+    return values.sort((a, b) => a.timestamp - b.timestamp);
+  }
+  async summaries(actorId: string, conversationId: string, includeInactive = false) {
+    const checkpoints = await this.listMetadata(actorId, conversationId);
     // 没有存档点时不必读取完整历史来定位消息，长会话切换时这是一次完整读取。
     if (!checkpoints.length) return { checkpoints: [] };
     const history = await this.app.storage.readFullHistory(conversationId);
     const positions = new Map(history.messages.map((message, index) => [message.id, index]));
-    const modelBeforeByRun = new Map<string, WorkspaceCheckpoint[]>();
+    const modelBeforeByRun = new Map<string, WorkspaceCheckpointMetadata[]>();
     for (const checkpoint of checkpoints) {
       if (checkpoint.toolName !== 'model_message' || checkpoint.phase !== 'before' || !checkpoint.runId) continue;
       const group = modelBeforeByRun.get(checkpoint.runId) ?? [];
@@ -84,7 +119,7 @@ export class WorkspaceCheckpoints {
     }
     // 旧版“模型消息前”存档错误地绑定上一条消息。按运行 ID 和创建时间
     // 找到真正随后写入的模型消息；若目标消息已删除，保留存档记录但不错误显示在别的消息前。
-    const modelBeforePosition = (checkpoint: WorkspaceCheckpoint): number => {
+    const modelBeforePosition = (checkpoint: WorkspaceCheckpointMetadata): number => {
       if (!checkpoint.runId) return -1;
       const group = modelBeforeByRun.get(checkpoint.runId) ?? [];
       const following = group.find(value => value.timestamp > checkpoint.timestamp
@@ -105,8 +140,8 @@ export class WorkspaceCheckpoints {
       })
       .map(({ value, modelPosition }) => ({ id: value.id, conversationId, timestamp: value.timestamp,
       name: value.name, messageIndex: modelPosition >= 0 ? modelPosition : positions.get(value.messageNodeId ?? '') ?? value.messageIndex, messageNodeId: value.messageNodeId, toolName: value.toolName, phase: value.phase,
-      fileCount: Object.keys(value.manifest.files).length, size: Object.values(value.manifest.files).reduce((sum, file) => sum + file.size, 0),
-      manifestVersion: 1, partial: value.manifest.partial, isUserMessage: value.toolName === 'user_message', isModelMessage: value.toolName === 'model_message' })) };
+      fileCount: value.fileCount, size: value.size,
+      manifestVersion: 1, partial: value.partial, isUserMessage: value.toolName === 'user_message', isModelMessage: value.toolName === 'model_message' })) };
   }
   async create(actorId: string, conversationId: string, options: { name?: string; runId?: string; toolName?: string; phase?: 'before' | 'after';
     messageId?: string; affectedPaths?: string[]; signal?: AbortSignal; operation?: CheckpointOperationControl; capturedWorkspace?: WorkspaceDefinition } = {}): Promise<WorkspaceCheckpoint> {
@@ -116,7 +151,7 @@ export class WorkspaceCheckpoints {
     const created = await this.app.files.transaction(workspace, async () => {
       const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
       options.operation?.update('scanning');
-      const snapshot = await this.scan(workspace, options.signal ?? options.operation?.signal, options.affectedPaths, await this.base(conversationId, workspace));
+      const snapshot = await this.scan(workspace, options.signal ?? options.operation?.signal, options.affectedPaths, await this.base(actorId, conversationId, workspace));
       const beforeFutureModel = options.toolName === 'model_message' && options.phase === 'before' && !options.messageId;
       const checkpoint: WorkspaceCheckpoint = { id: randomUUID(), conversationId, workspaceId: workspace.id, directory: workspace.directory,
         timestamp: Date.now(), name: options.name, toolName: options.toolName ?? 'manual', phase: options.phase ?? 'after', runId: options.runId,
@@ -315,7 +350,7 @@ export class WorkspaceCheckpoints {
   async prune(actorId: string, conversationId: string) {
     const max = this.app.product.runtimeSettings().getCheckpointConfig().maxCheckpoints;
     if (!Number.isSafeInteger(max) || max <= 0) return { deleted: 0, skipped: 0 };
-    const values = await this.list(actorId, conversationId);
+    const values = await this.listMetadata(actorId, conversationId);
     const overflow = values.length - max;
     if (overflow <= 0) return { deleted: 0, skipped: 0 };
     let deleted = 0; let skipped = 0;

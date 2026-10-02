@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PlatformApplication } from '../../../apps/server/src/application';
+import { WorkspaceCheckpoints } from '../../../apps/server/src/workspace/checkpoints';
 import { fixture, message, metadata } from './fixtures';
 
 describe('workspace checkpoints application contract', () => {
@@ -143,9 +144,26 @@ describe('workspace checkpoints application contract', () => {
     await createConversation('incremental');
     await writeFile(path.join(f.source, 'same.txt'), 'unchanged');
     await writeFile(path.join(f.source, 'edit.txt'), 'v1');
+    await Promise.all(Array.from({ length: 128 }, (_, index) => writeFile(path.join(f.source, `shared-${index}.txt`), `shared ${index}`)));
     const first = await app.checkpoints.create('owner', 'incremental');
+    const beforeUnchanged = await app.storage.statistics();
+    // 重建服务模拟重启后的空缓存，基线必须从已保存的检查点恢复。
+    const restarted = new WorkspaceCheckpoints(app);
+    const unchanged = await restarted.create('owner', 'incremental');
+    expect(unchanged.contentIds).toEqual(first.contentIds);
+    expect((await app.storage.listRecords('workspace-checkpoint-content', 'incremental')).length).toBe(130);
+    expect((await app.storage.statistics()).rawBytes - beforeUnchanged.rawBytes).toBeLessThan(32 * 1024);
+    expect(await app.checkpoints.get('owner', 'incremental', unchanged.id)).toEqual(unchanged);
+    const summary = (await app.checkpoints.summaries('owner', 'incremental')).checkpoints.find(value => value.id === unchanged.id)!;
+    expect(summary).toMatchObject({ fileCount: 130, size: Object.values(unchanged.manifest.files).reduce((sum, file) => sum + file.size, 0), partial: false });
+    const projected = await app.storage.getVersionedRecord('workspace-checkpoints', unchanged.id, {
+      fields: ['id'], paths: { partial: ['manifest', 'partial'] },
+      mapStats: { files: { path: ['manifest', 'files'], sumFields: ['size'] } },
+    });
+    expect(projected.value).toEqual({ id: unchanged.id, partial: false, files: { count: 130, size: summary.size } });
     await writeFile(path.join(f.source, 'edit.txt'), 'v2');
-    const second = await app.checkpoints.create('owner', 'incremental');
+    const second = await restarted.create('owner', 'incremental');
+    expect((await app.storage.listRecords('workspace-checkpoint-content', 'incremental')).length).toBe(131);
     const key = (name: string) => Object.keys(first.manifest.files).find(file => file.endsWith(`/${name}`))!;
     const same = key('same.txt'); const edit = key('edit.txt');
 
@@ -156,6 +174,7 @@ describe('workspace checkpoints application contract', () => {
     expect(second.manifest.files[same]).toMatchObject({ hash: first.manifest.files[same].hash, size: 9 });
     expect(second.manifest.files[same].mtimeMs).toEqual(expect.any(Number));
 
+    await app.checkpoints.delete('owner', 'incremental', unchanged.id, { force: true });
     await app.checkpoints.delete('owner', 'incremental', first.id, { force: true });
     expect(await app.storage.getRecord('workspace-checkpoint-content', first.contentIds[edit])).toBeNull();
     expect(await app.storage.getRecord('workspace-checkpoint-content', second.contentIds[same])).not.toBeNull();

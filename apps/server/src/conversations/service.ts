@@ -135,7 +135,7 @@ export class ConversationService {
   }
   private async withCheckpoints(actorId: string, id: string, branches: BranchState) {
     // 较早独立版的检查点已保存消息归属，按该归属补齐尚未记录的分支绑定。
-    for (const checkpoint of (await this.app.checkpoints.list(actorId, id)).reverse()) {
+    for (const checkpoint of (await this.app.checkpoints.listMetadata(actorId, id)).reverse()) {
       const node = branches.graph.nodes[checkpoint.messageNodeId ?? ''];
       if (node && !node.workspaceCheckpointId) { node.workspaceCheckpointId = checkpoint.id; node.workspaceState = 'checkpointed'; }
     }
