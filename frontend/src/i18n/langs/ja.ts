@@ -2597,7 +2597,7 @@ const ja: LanguageMessages = {
                     maxResultChars: '結果の最大文字数',
                     maxResultCharsDesc: '既定は 30000 文字、範囲は 1000～200000 です。検索と複数行の読み取りに適用されます。減らすとコンテキストを節約できますが、追加の読み取りが必要になります。単一行の指定では全文を返します。',
                     lineDisplayLimit: '行表示文字制限',
-                    lineDisplayLimitDesc: '既定は 1 行 500 文字、範囲は 100～5000 です。小さくすると長いログを一覧しやすく、大きくすると詳細を残せます。省略部分は単一行 read で取得できます。'
+                    lineDisplayLimitDesc: '検索プレビューのみを制限します。既定は 1 行 500 文字、範囲は 100～5000 です。小さくすると短く、大きくすると一致箇所の詳細を多く表示します。read は総文字数の上限内で行全体を返します。'
                 },
                 terminal: {
                     executeCommand: {

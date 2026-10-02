@@ -232,3 +232,17 @@ describe('history_search 壳：工具装配', () => {
         expect(String(result.data)).toContain('websocket');
     });
 });
+
+
+test('历史多行读取保留长命令，预算按完整行分页，字符续读不会丢内容', () => {
+    const command = 'command ' + 'x'.repeat(1200) + ' target';
+    const full = String(handleRead(['before', command, 'after'], 1, 3, DEFAULT_CFG).data);
+    expect(full).toContain(command);
+    const page = String(handleRead(['a'.repeat(400), 'b'.repeat(400), 'c'], 1, 3, { ...DEFAULT_CFG, maxResultChars: 700 }).data);
+    expect(page).toContain('a'.repeat(400)); expect(page).not.toContain('b'.repeat(100)); expect(page).toContain('start_line=2');
+    const first = String(handleRead([command, 'after'], 1, 2, { ...DEFAULT_CFG, maxResultChars: 700 }).data);
+    const second = String(handleRead([command], 1, 1, { ...DEFAULT_CFG, maxResultChars: 700 }, { start: 501 }).data);
+    expect(first).toContain(command.slice(0, 500)); expect(first).toContain('start_char=501');
+    expect(second).toContain(command.slice(500, 1000)); expect(second).toContain('start_char=1001');
+    expect(String(handleSearch([command], 'target', false, DEFAULT_CFG).data)).toContain('target');
+});

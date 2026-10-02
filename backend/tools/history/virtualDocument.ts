@@ -150,9 +150,10 @@ export function formatToDocument(messages: Content[]): string[] {
  * 截断过长的行用于显示，附带提示
  * docLines 内部仍存完整内容，仅在输出时调用
  */
-export function truncateLineForDisplay(line: string, lineNum: number, limit: number = LINE_DISPLAY_LIMIT): string {
+export function truncateLineForDisplay(line: string, lineNum: number, limit: number = LINE_DISPLAY_LIMIT, matchIndex: number = 0): string {
     if (line.length <= limit) return line;
-    return line.substring(0, limit)
+    const start = Math.max(0, Math.min(line.length - limit, matchIndex - Math.floor(limit / 3)));
+    return (start ? '...' : '') + line.substring(start, start + limit)
         + `... [${line.length} chars, read line ${lineNum} for full content]`;
 }
 

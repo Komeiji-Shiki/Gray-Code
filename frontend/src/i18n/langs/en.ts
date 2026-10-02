@@ -2597,7 +2597,7 @@ const en: LanguageMessages = {
                     maxResultChars: 'Max Result Characters',
                     maxResultCharsDesc: 'Default: 30000 characters; range: 1000–200000, for search and multi-line reads. Lower values save context but may require further reads. A single-line read returns the entire line.',
                     lineDisplayLimit: 'Line Display Limit',
-                    lineDisplayLimitDesc: 'Default: 500 characters per line; range: 100–5000. Lower values make long logs easier to browse; higher values retain more detail. Use single-line read to retrieve omitted content.'
+                    lineDisplayLimitDesc: 'Search previews only: 500 characters per line by default, range 100–5000. Lower values shorten previews; higher values retain more detail around matches. Read returns complete lines within the total character budget.'
                 },
                 terminal: {
                     executeCommand: {

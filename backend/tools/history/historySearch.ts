@@ -60,6 +60,7 @@ function collectMatchingLineIndices(
 export function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: RuntimeConfig): ToolResult {
     let keywordFallbackTerms: string[] = [];
     let matchLineIndices: number[] = [];
+    let displayPattern = new RegExp(escapeRegExp(query), 'i');
     try {
         if (isRegex) {
             // ReDoS 防护：长度上限 + 危险模式检测 + 构造异常捕获（共享 regexGuard）
@@ -72,6 +73,7 @@ export function handleSearch(docLines: string[], query: string, isRegex: boolean
                 };
             }
             const pattern = guarded.regex;
+            displayPattern = pattern;
             matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
                 pattern.lastIndex = 0;
                 return pattern.test(line);
@@ -94,6 +96,7 @@ export function handleSearch(docLines: string[], query: string, isRegex: boolean
                 });
                 if (matchLineIndices.length > 0) {
                     keywordFallbackTerms = keywordTerms;
+                    displayPattern = new RegExp(keywordTerms.map(escapeRegExp).join('|'), 'i');
                 }
             }
         }
@@ -159,8 +162,10 @@ export function handleSearch(docLines: string[], query: string, isRegex: boolean
             const lineNum = range.start + idx + 1; // 1-based
             const maxDigits = String(docLines.length).length;
             const numStr = String(lineNum).padStart(maxDigits, ' ');
-            const displayLine = truncateLineForDisplay(line, lineNum, cfg.lineDisplayLimit);
             const isMatch = range.matchLines.includes(range.start + idx);
+            displayPattern.lastIndex = 0;
+            const matchIndex = isMatch ? displayPattern.exec(line)?.index ?? 0 : 0;
+            const displayLine = truncateLineForDisplay(line, lineNum, cfg.lineDisplayLimit, matchIndex);
             const marker = isMatch ? '>' : ' ';
             return `${marker} ${numStr} | ${displayLine}`;
         }).join('\n');
@@ -188,7 +193,8 @@ export function handleSearch(docLines: string[], query: string, isRegex: boolean
  *
  * 当 start_line === end_line（单行读取）时，不做字符数截断，保证完整返回该行。
  */
-export function handleRead(docLines: string[], startLine: number, endLine: number, cfg: RuntimeConfig): ToolResult {
+export function handleRead(docLines: string[], startLine: number, endLine: number, cfg: RuntimeConfig,
+    characters?: { start: number; end?: number }): ToolResult {
     const totalLines = docLines.length;
 
     // 边界修正（用户传入 1-based）
@@ -207,13 +213,30 @@ export function handleRead(docLines: string[], startLine: number, endLine: numbe
     }
 
     // 限制单次读取行数
-    const actualEnd0 = Math.min(end0, start0 + cfg.maxReadLines - 1);
+    let actualEnd0 = Math.min(end0, start0 + cfg.maxReadLines - 1);
+    const isSingleLine = start0 === end0;
+    const bodyBudget = Math.max(1, cfg.maxResultChars - 200);
+    let formatted: string;
+    let nextChar: number | undefined;
+    if (characters || !isSingleLine && docLines[start0].length > bodyBudget) {
+        const line = docLines[start0], start = (characters?.start ?? 1) - 1;
+        if (start >= line.length) return { success: false, error: `start_char exceeds line ${start0 + 1} (${line.length} characters).` };
+        const end = Math.min(line.length, characters?.end ?? line.length, start + bodyBudget);
+        formatted = `${start0 + 1} | ${line.slice(start, end)}\n[Characters ${start + 1}-${end} of ${line.length}]`;
+        actualEnd0 = start0;
+        if (end < line.length) nextChar = end + 1;
+    } else {
+        // 读取以完整行为单位消耗总预算；搜索的预览长度不再限制明确请求读取的正文。
+        let used = 0, end = start0;
+        for (; end <= actualEnd0; end++) {
+            const cost = docLines[end].length + String(end + 1).length + 4;
+            if (!isSingleLine && used + cost > bodyBudget) break;
+            used += cost;
+        }
+        actualEnd0 = Math.max(start0, end - 1);
+        formatted = addLineNumbers(docLines.slice(start0, actualEnd0 + 1), start0 + 1);
+    }
     const wasTruncated = actualEnd0 < end0;
-    const isSingleLine = start0 === actualEnd0;
-
-    const slice = docLines.slice(start0, actualEnd0 + 1);
-    // 多行读取时截断长行，单行读取时保留完整内容
-    const formatted = addLineNumbers(slice, start0 + 1, !isSingleLine, cfg.lineDisplayLimit);
 
     const parts: string[] = [];
     parts.push(t('tools.history.readResultHeader', {
@@ -224,19 +247,18 @@ export function handleRead(docLines: string[], startLine: number, endLine: numbe
     parts.push('');
     parts.push(formatted);
 
-    if (wasTruncated) {
+    if (nextChar !== undefined) {
+        parts.push('', `[Continue with mode="read", start_line=${start0 + 1}, end_line=${start0 + 1}, start_char=${nextChar}.]`);
+        if (wasTruncated) parts.push(`[After this line, continue with start_line=${actualEnd0 + 2}, end_line=${end0 + 1}.]`);
+    } else if (wasTruncated) {
         parts.push('');
-        parts.push(t('tools.history.readTruncated', {
-            max: cfg.maxReadLines,
-            nextStart: actualEnd0 + 2  // 1-based
-        }));
+        parts.push(`[Read budget reached. Continue with mode="read", start_line=${actualEnd0 + 2}, end_line=${end0 + 1}.]`);
     }
 
     const result = parts.join('\n');
     return {
         success: true,
-        // 单行读取不截断，保证工具响应等长行可以被完整获取
-        data: isSingleLine ? result : truncateResult(result, cfg.maxResultChars)
+        data: result
     };
 }
 

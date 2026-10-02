@@ -72,12 +72,12 @@ function buildHistorySearchDescription(scope: string, isZh: boolean): string {
         const scopeText = scope === 'summarized' ? '只包括已压缩或总结过的历史' : '完整的对话历史';
         return `搜索和读取对话历史（不是工作区文件）。当前设置允许的搜索范围：${scopeText}。适合查找更早的对话轮次、之前的工具调用和结果，以及用户做过的决定；仓库里的文件请用 search_in_files 或 find_files。\n\n` +
             `历史会整理成一份带行号的文档，工具结果按模型当时收到的文本逐行展开；行号只用于定位，不属于原文。每轮开头有 "══ Round 3 (L45-L88) ══" 这样的标题，标出这一轮的行范围；一轮里有多次模型回复时，每次回复及其工具结果还有 "── Step 2 (L60-L75) ──" 这样的标题。\n\n` +
-            `mode="search" 查找关键词或正则，返回匹配的行号和上下文，结果只用于定位，不是完整内容。mode="read" 用 start_line/end_line 读取指定行范围，每次最多 ${MAX_READ_LINES} 行；注意这里的参数是 snake_case，不是 read_file 的 startLine/endLine。通常先用 search 定位，再用 read 读取相关行，或按轮次、步骤标题上的范围读取完整内容。单个长行（例如工具调用参数或结构化结果）可以用 start_line=N、end_line=N 读取，单行读取不会被截断。`;
+            `mode="search" 查找关键词或正则，返回匹配的行号和上下文，结果只用于定位，不是完整内容。mode="read" 用 start_line/end_line 读取指定行范围，每次最多 ${MAX_READ_LINES} 行；注意这里的参数是 snake_case，不是 read_file 的 startLine/endLine。通常先用 search 定位，再用 read 读取相关行，或按轮次、步骤标题上的范围读取完整内容。read 优先按总字符预算返回完整行，不受搜索预览的单行长度限制；预算不足时按返回的位置继续读取。单行读取默认返回完整内容；超长行可用 start_line=N、end_line=N、start_char 分段读取，end_char 可选。`;
     }
     const scopeText = scope === 'summarized' ? 'only compressed or summarized history' : 'the entire conversation history';
     return `Search and read the conversation history (not workspace files). The current settings allow searching ${scopeText}. Use it to find earlier turns, previous tool calls and results, and decisions the user made; for repository files, use search_in_files or find_files.\n\n` +
         `The history is laid out as a document with line numbers, and tool results are expanded line by line exactly as the model received them; the line numbers are only for navigation and are not part of the original text. Each round starts with a header such as "══ Round 3 (L45-L88) ══" showing its line range, and when a round has several model replies, each reply and its tool results get a header such as "── Step 2 (L60-L75) ──".\n\n` +
-        `mode="search" finds keywords or regex matches and returns line numbers with context; the output only locates content and is not the full text. mode="read" reads a line range with start_line/end_line, up to ${MAX_READ_LINES} lines per call; note that these are snake_case, not read_file's startLine/endLine. Usually you search first, then read the relevant lines or the range shown in a round or step header. To get one long line in full, such as tool call arguments or a structured result, read it with start_line=N and end_line=N; single-line reads are never truncated.`;
+        `mode="search" finds keywords or regex matches and returns line numbers with context; the output only locates content and is not the full text. mode="read" reads a line range with start_line/end_line, up to ${MAX_READ_LINES} lines per call; note that these are snake_case, not read_file's startLine/endLine. Usually you search first, then read the relevant lines or the range shown in a round or step header. Read returns complete lines within the total character budget, independently of search preview limits; follow the continuation position if needed. A single-line read returns the full line by default; use start_char and optional end_char to page an oversized line.`;
 }
 
 // ─── 工具声明与处理器 ───────────────────────────────────
@@ -125,7 +125,9 @@ export function createHistorySearchToolDeclaration(config?: () => HistorySearchT
                     description: isZh
                         ? '仅 read 模式：历史文档中的结束行号，从 1 开始，包含这一行。'
                         : 'Read mode only: last line to read in the history document, 1-based and inclusive.'
-                }
+                },
+                start_char: { type: 'integer', minimum: 1, description: isZh ? '仅单行 read 模式：字符起点（从 1 开始）。用于按返回的续读位置分段读取超长行。' : 'Single-line read only: 1-based character start, for continuing an oversized line.' },
+                end_char: { type: 'integer', minimum: 1, description: isZh ? '仅单行 read 模式：包含在内的字符终点；省略时按总字符预算返回一段。' : 'Single-line read only: inclusive character end; omit to use the result character budget.' }
             },
             required: ['mode']
         }
@@ -244,7 +246,13 @@ async function historySearchHandler(
                 }
                 const startLine = typeof rawStartLine === 'number' ? rawStartLine : 1;
                 const endLine = typeof rawEndLine === 'number' ? rawEndLine : startLine + cfg.maxReadLines - 1;
-                return handleRead(docLines, startLine, endLine, cfg);
+                const hasCharacters = args.start_char !== undefined || args.end_char !== undefined;
+                if (hasCharacters && (startLine !== endLine || isInvalidLine(args.start_char) || isInvalidLine(args.end_char)
+                    || typeof args.end_char === 'number' && args.end_char < Number(args.start_char ?? 1))) {
+                    return { success: false, error: 'start_char/end_char require a single-line read and positive integers with end_char >= start_char.' };
+                }
+                return handleRead(docLines, startLine, endLine, cfg, hasCharacters
+                    ? { start: Number(args.start_char ?? 1), end: args.end_char as number | undefined } : undefined);
             }
 
             default:

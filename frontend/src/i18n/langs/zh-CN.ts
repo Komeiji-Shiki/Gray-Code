@@ -2599,7 +2599,7 @@ const zhCN = {
                     maxResultChars: '结果最大字符数',
                     maxResultCharsDesc: '默认 30000 字符，范围 1000～200000，限制搜索和多行读取的总输出。降低可节省本轮上下文，但需继续读取；指定单行读取会返回该行全文。',
                     lineDisplayLimit: '单行显示字符限制',
-                    lineDisplayLimitDesc: '默认每行显示 500 字符，范围 100～5000。较小值便于浏览长日志，较大值保留更多细节；省略的内容可通过单行 read 完整读取。'
+                    lineDisplayLimitDesc: '仅控制搜索预览：默认每行 500 字符，范围 100～5000。较小值缩短预览，较大值保留更多命中附近的内容；read 按总字符预算返回完整行。'
                 },
                 terminal: {
                     executeCommand: {

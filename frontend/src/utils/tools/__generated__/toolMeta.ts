@@ -250,6 +250,8 @@ export const toolMeta: Record<string, ToolMeta> = {
       "is_regex": {"type":"boolean"},
       "start_line": {"type":"integer"},
       "end_line": {"type":"integer"},
+      "start_char": {"type":"integer"},
+      "end_char": {"type":"integer"},
     },
     parametersDynamic: true,
     source: "backend/tools/history/history_search.ts",
