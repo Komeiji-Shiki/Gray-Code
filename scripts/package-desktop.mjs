@@ -40,7 +40,7 @@ if (process.platform === 'win32') {
  * electron 由运行库自身提供，不进包。
  */
 const RUNTIME_ROOTS = ['sharp', 'jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server',
-  'pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server', '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server'];
+  'pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server', '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server', 'docx', 'exceljs', 'pptxgenjs'];
 /** 工作区包只需 package.json（定位）+ dist（bundle 外部引用的编译产物）。 */
 const WORKSPACE_SLIM = new Set(['@graycode/core', '@graycode/contracts', '@graycode/desktop', '@graycode/server', '@graycode/client']);
 
@@ -136,6 +136,10 @@ const requiredFiles = [
   'node_modules/velopack/lib/native/velopack_nodeffi_win_x64_msvc.node',
   'resources/licenses/velopack.txt',
   'resources/licenses/acp-sdk.txt',
+  'resources/licenses/office-xml.txt',
+  'node_modules/docx/LICENSE',
+  'node_modules/exceljs/LICENSE',
+  'node_modules/pptxgenjs/LICENSE',
   'resources/licenses/mcp-client.txt',
   'resources/licenses/mcp-core.txt',
   'resources/installer/restore-program.ps1',

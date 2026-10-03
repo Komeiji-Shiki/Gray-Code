@@ -2,7 +2,7 @@ import { inside, resolveWorkspacePath, workspaceRoots } from './paths';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 
-const writers = new Set(['write_file', 'apply_diff', 'insert_code', 'delete_code', 'delete_file', 'create_directory', 'search_in_files']);
+const writers = new Set(['write_file', 'apply_diff', 'insert_code', 'delete_code', 'delete_file', 'create_directory', 'search_in_files', 'office_create', 'office_edit']);
 function paths(args: Record<string, unknown>): string[] {
   if (typeof args.path === 'string') return [args.path];
   if (Array.isArray(args.paths)) return args.paths.filter((value): value is string => typeof value === 'string');

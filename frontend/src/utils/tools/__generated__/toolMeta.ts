@@ -333,6 +333,39 @@ export const toolMeta: Record<string, ToolMeta> = {
     },
     source: "backend/tools/memory/memory_zoomRuntime.ts",
   },
+  'office_create': {
+    descriptionDynamic: true,
+    parameters: {
+      "path": {"type":"string","description":"Office 文件路径，后缀为 .docx、.xlsx 或 .pptx。","required":true},
+      "content": {"type":"object","required":true},
+    },
+    source: "backend/tools/office/declarations.ts",
+  },
+  'office_edit': {
+    descriptionDynamic: true,
+    parameters: {
+      "path": {"type":"string","description":"Office 文件路径，后缀为 .docx、.xlsx 或 .pptx。"},
+      "expectedHash": {"type":"string"},
+      "paragraphs": {"type":"array","items":{"type":"object"}},
+      "appendParagraphs": {"type":"array","items":{"type":"string"}},
+      "cells": {"type":"array","items":{"type":"object"}},
+    },
+    parametersDynamic: true,
+    source: "backend/tools/office/declarations.ts",
+  },
+  'office_read': {
+    descriptionDynamic: true,
+    parameters: {
+      "path": {"type":"string","description":"Office 文件路径，后缀为 .docx、.xlsx 或 .pptx。","required":true},
+      "sheet": {"type":"string","description":"只读这个 Excel 工作表。"},
+      "part": {"type":"string","description":"只读这个 Word/PPT XML 部分，使用上次返回的 part。"},
+      "slide": {"type":"integer","description":"只读第几张幻灯片，编号从 1 开始。"},
+      "offset": {"type":"integer"},
+      "limit": {"type":"integer"},
+      "textOffset": {"type":"integer"},
+    },
+    source: "backend/tools/office/declarations.ts",
+  },
   'read_file': {
     descriptionDynamic: true,
     parameters: {

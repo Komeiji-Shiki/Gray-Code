@@ -2707,6 +2707,9 @@ const ja: LanguageMessages = {
                     tooltip: 'ツールを設定'
                 },
                 toolDisplayNames: {
+                    office_read: sharedJa.components.settings.toolsSettings.toolDisplayNames.office_read,
+                    office_create: sharedJa.components.settings.toolsSettings.toolDisplayNames.office_create,
+                    office_edit: sharedJa.components.settings.toolsSettings.toolDisplayNames.office_edit,
                     context_status: sharedJa.components.settings.toolsSettings.toolDisplayNames.context_status,
                     terminal_task: sharedJa.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: 'アプリのウィンドウ', computer_observe: '画面の確認', computer_control: 'デスクトップ制御', computer_action: 'コンピューター操作',
@@ -2779,6 +2782,9 @@ const ja: LanguageMessages = {
                     get_activity_stats: 'アクティビティ統計を取得',
                 },
                 toolDescriptions: {
+                    office_read: sharedJa.components.settings.toolsSettings.toolDescriptions.office_read,
+                    office_create: sharedJa.components.settings.toolsSettings.toolDescriptions.office_create,
+                    office_edit: sharedJa.components.settings.toolsSettings.toolDescriptions.office_edit,
                     context_status: sharedJa.components.settings.toolsSettings.toolDescriptions.context_status,
                     terminal_task: sharedJa.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: '内蔵ブラウザーのタブを一覧表示、作成、管理し、ワークスペースに表示します。',

@@ -2707,6 +2707,9 @@ const en: LanguageMessages = {
                     tooltip: 'Configure Tool'
                 },
                 toolDisplayNames: {
+                    office_read: sharedEn.components.settings.toolsSettings.toolDisplayNames.office_read,
+                    office_create: sharedEn.components.settings.toolsSettings.toolDisplayNames.office_create,
+                    office_edit: sharedEn.components.settings.toolsSettings.toolDisplayNames.office_edit,
                     context_status: sharedEn.components.settings.toolsSettings.toolDisplayNames.context_status,
                     terminal_task: sharedEn.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: 'Application Windows', computer_observe: 'Observe Computer', computer_control: 'Desktop Control', computer_action: 'Computer Action',
@@ -2779,6 +2782,9 @@ const en: LanguageMessages = {
                     get_activity_stats: 'Get Activity Stats',
                 },
                 toolDescriptions: {
+                    office_read: sharedEn.components.settings.toolsSettings.toolDescriptions.office_read,
+                    office_create: sharedEn.components.settings.toolsSettings.toolDescriptions.office_create,
+                    office_edit: sharedEn.components.settings.toolsSettings.toolDescriptions.office_edit,
                     context_status: sharedEn.components.settings.toolsSettings.toolDescriptions.context_status,
                     terminal_task: sharedEn.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: 'List, create and manage built-in browser tabs, and show a tab in the workspace.',

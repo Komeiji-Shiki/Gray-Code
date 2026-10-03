@@ -7,6 +7,8 @@ import { useWorkspaceRoots } from '../workspaceRoots';
 import WorkspaceFileDialog from './WorkspaceFileDialog.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import type { FileDialogRequest } from './files/types';
+import { officeFormatFor } from '../../../../shared/officeFormats';
+import { shellText as t } from '../i18n';
 const emit = defineEmits<{ open: [path: string, workspaceId: string]; hide: [] }>();
 const isWeb = window.graycode?.kind === 'web';
 const { roots } = useWorkspaceRoots();
@@ -84,6 +86,8 @@ async function click(entry: DirectoryEntry) {
   if (entry.kind === 'directory') {
     if (expanded.value.has(entry.path)) expanded.value.delete(entry.path);
     else { expanded.value.add(entry.path); await load(entry.path); }
+  } else if (officeFormatFor(entry.path)) {
+    await call(isWeb ? 'files.download' : 'files.openOffice', { workspaceId: state.workspaceId, path: entry.path });
   } else emit('open', entry.path, state.workspaceId);
 }
 async function navigate(event: KeyboardEvent, entry: DirectoryEntry) {
@@ -137,6 +141,10 @@ async function download() {
 async function reveal() {
   const chosen = menu.value; menu.value = undefined;
   if (chosen) await call('files.reveal', { workspaceId: chosen.workspaceId, path: chosen.entry.path });
+}
+async function openOffice() {
+  const chosen = menu.value; menu.value = undefined;
+  if (chosen) await call('files.openOffice', { workspaceId: chosen.workspaceId, path: chosen.entry.path });
 }
 watch([menu, dialog], () => { state.fileDialogOpen = !!menu.value || !!dialog.value; });
 watch([() => state.workspaceId, () => JSON.stringify(roots.value)], () => {
@@ -196,7 +204,10 @@ onUnmounted(() => {
     </div>
     </div>
     <Teleport to=".application">
-      <template v-if="menu"><div class="file-menu-backdrop" @pointerdown="menu = undefined"></div><div class="file-entry-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }"><button v-if="!isWeb" role="menuitem" @click="guard(reveal)">{{ menu.entry.kind === 'directory' ? '在资源管理器中打开' : '在资源管理器中显示' }}</button><button v-if="!isRoot(menu.entry)" role="menuitem" @click="guard(() => editEntry('move'))">重命名或移动</button><button v-if="menu.entry.kind !== 'directory'" role="menuitem" @click="guard(download)">{{ isWeb ? '下载文件' : '另存文件' }}</button><button v-if="!isRoot(menu.entry)" role="menuitem" class="danger" @click="guard(() => editEntry('remove'))">删除</button></div></template>
+      <template v-if="menu"><div class="file-menu-backdrop" @pointerdown="menu = undefined"></div><div class="file-entry-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
+        <button v-if="!isWeb && menu.entry.kind === 'file' && officeFormatFor(menu.entry.path)" role="menuitem" @click="guard(openOffice)">{{ t('openOfficeExternal') }}</button>
+        <button v-if="!isWeb" role="menuitem" @click="guard(reveal)">{{ menu.entry.kind === 'directory' ? '在资源管理器中打开' : '在资源管理器中显示' }}</button><button v-if="!isRoot(menu.entry)" role="menuitem" @click="guard(() => editEntry('move'))">重命名或移动</button><button v-if="menu.entry.kind !== 'directory'" role="menuitem" @click="guard(download)">{{ isWeb ? '下载文件' : '另存文件' }}</button><button v-if="!isRoot(menu.entry)" role="menuitem" class="danger" @click="guard(() => editEntry('remove'))">删除</button>
+      </div></template>
       <WorkspaceFileDialog v-if="dialog" :request="dialog" @close="dialog = undefined" @changed="(path, workspaceId, open) => guard(() => changed(path, workspaceId, open))" />
     </Teleport>
   </section>

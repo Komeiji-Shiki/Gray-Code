@@ -12,6 +12,7 @@
 | **模型与上下文** | 协议选择、Prompt Caching 优化与上下文注入控制 | [模型、图片与上下文](Models-and-Context.md) |
 | **ChatGPT 订阅** | 浏览器授权、账户与工作区切换、自动续期和用量管理 | [ChatGPT 订阅登录](ChatGPT-Subscription.md) |
 | **编码与工作流** | 工作区管理、代码编辑、差异审阅与 Git 工作树 | [编码、审阅与工作树](Coding-and-Worktrees.md) |
+| **AI 办公** | 读取、创建和修改 Word、Excel、PPT，在外部应用打开文件 | [Office 文件与 AI 办公](Office.md) |
 | **工具与代理** | MCP 服务连接、Skills 技能扩展、子代理与外部 ACP 代理 | [工具、Skills 与代理](Agents-and-MCP.md) |
 | **视觉与电脑操作** | 屏幕截图、UI Automation 控件树、浏览器操作与桌面控制 | [截图与坐标工具](Visual-Tools.md) |
 | **自动化与多端** | 定时/事件自动任务、Discord/QQ 机器人接入与多设备协同 | [自动任务、Bot 与远程设备](Automation-and-Devices.md) |

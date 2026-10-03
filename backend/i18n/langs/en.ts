@@ -94,6 +94,7 @@ const en: BackendLanguageMessages = {
                 "previewPrevious": "Previous image",
                 "previewNext": "Next image",
                 "previewPdf": "PDF preview",
+                "openOfficeExternal": "Open in external application",
                 "previewUnsupported": "Save this file and open it with a local app.",
                 "startupFailed": "GrayCode could not start",
                 "startupDetail": "Your original data directory is preserved. Retry, or start with another data directory and use recovery in Settings.",
@@ -633,6 +634,12 @@ const en: BackendLanguageMessages = {
     },
 
     tools: {
+        office: {
+            readName: 'Read Office File', createName: 'Create Office File', editName: 'Edit Office File',
+            readDescription: 'Read Word, Excel and PPT paragraphs, cells and formulas in bounded pages.',
+            createDescription: 'Create Word documents, Excel workbooks or PPT presentations for an external Office app.',
+            editDescription: 'Edit paragraphs or cells against the read version, preserving other content and recording recoverable file operations.',
+        },
         contextStatus: {
             title: 'Input token usage', remaining: 'Remaining', reservedOutput: 'Reserved output', capacity: 'Context capacity',
             threshold: 'Summary threshold', method: 'Management', retention: 'User messages retained',

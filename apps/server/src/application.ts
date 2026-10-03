@@ -78,6 +78,7 @@ import { WorkspaceCheckpoints } from './workspace/checkpoints';
 import { CheckpointLifecycle } from './workspace/checkpointLifecycle';
 import { mutationTools } from './workspace/mutationTools';
 import { readTools } from './workspace/readTools';
+import { officeTools } from './office/tools';
 import { DEFAULT_APPLY_DIFF_CONFIG } from '../../../backend/modules/settings/types/toolsTypes';
 import { DiscordBotService } from "./bots/discord";
 import type { DiscordGateway } from "./bots/discordGateway";
@@ -261,6 +262,7 @@ export class PlatformApplication {
     for (const tool of mutationTools(this, DEFAULT_APPLY_DIFF_CONFIG.format)) this.tools.register(tool);
     for (const tool of languageTools(this)) this.tools.register(tool);
     for (const tool of readTools(this)) this.tools.register(tool);
+    for (const tool of officeTools(this)) this.tools.register(tool);
     for (const tool of this.artifacts.tools()) this.tools.register(tool);
     for (const tool of conversationTools(this)) this.tools.register(tool);
     for (const tool of contextTools(this)) this.tools.register(tool);

@@ -94,6 +94,7 @@ const ja: BackendLanguageMessages = {
                 "previewPrevious": "前の画像",
                 "previewNext": "次の画像",
                 "previewPdf": "PDF プレビュー",
+                "openOfficeExternal": "外部アプリで開く",
                 "previewUnsupported": "保存してローカルアプリで開くことができます。",
                 "startupFailed": "GrayCode を起動できませんでした",
                 "startupDetail": "元のデータは保持されます。再試行するか、別のデータフォルダーで起動し、設定から復元できます。",
@@ -633,6 +634,12 @@ const ja: BackendLanguageMessages = {
     },
 
     tools: {
+        office: {
+            readName: 'Office ファイルを読む', createName: 'Office ファイルを作成', editName: 'Office ファイルを編集',
+            readDescription: 'Word、Excel、PPT の段落、セル、数式を必要な範囲ごとに読み取ります。',
+            createDescription: 'Word 文書、Excel ブック、PPT 資料を作成し、外部の Office アプリで開けます。',
+            editDescription: '読み取り時の版を確認して段落やセルを編集し、他の内容と復元可能なファイル操作記録を保持します。',
+        },
         contextStatus: {
             title: '入力トークン使用量', remaining: '残り', reservedOutput: '出力予約', capacity: 'コンテキスト容量',
             threshold: '要約しきい値', method: '管理方式', retention: '保持するユーザーメッセージ',

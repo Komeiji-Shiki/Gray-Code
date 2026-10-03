@@ -96,6 +96,7 @@ const zhCN = {
                 "previewPrevious": "上一张",
                 "previewNext": "下一张",
                 "previewPdf": "PDF 预览",
+                "openOfficeExternal": "在外部应用中打开",
                 "previewUnsupported": "此格式可以保存后使用本机应用打开。",
                 "startupFailed": "GrayCode 启动失败",
                 "startupDetail": "原数据目录会保留。可以重试启动，或选择其他数据目录启动后使用设置中的恢复入口。",
@@ -635,6 +636,12 @@ const zhCN = {
     },
 
     tools: {
+        office: {
+            readName: '读取 Office 文件', createName: '创建 Office 文件', editName: '修改 Office 文件',
+            readDescription: '读取 Word、Excel 和 PPT 的段落、单元格与公式，按需分段返回内容。',
+            createDescription: '创建 Word 文档、Excel 工作簿或 PPT 演示文稿，保存后在外部 Office 应用打开。',
+            editDescription: '根据读取版本修改文档段落或表格单元格，保留其他内容并记录可恢复的文件操作。',
+        },
         contextStatus: {
             title: '输入 token 用量', remaining: '剩余额度', reservedOutput: '预留输出', capacity: '上下文容量',
             threshold: '总结阈值', method: '管理方式', retention: '保留用户消息',

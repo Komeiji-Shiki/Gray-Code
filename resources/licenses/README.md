@@ -4,6 +4,8 @@
 
 | 文件 | 组件与锁定版本 | 来源 |
 | --- | --- | --- |
+| `office-xml.txt` | adm-zip 0.6.1、fast-xml-parser 5.11.2 及其 XML/实体解析依赖 | 安装包原始许可全文与版本，供 Office 文件的 ZIP/XML 局部编辑使用；[adm-zip](https://github.com/cthackers/adm-zip)、[fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser)。 |
+| 运行时包中的 `LICENSE` | docx 9.8.1、ExcelJS 4.4.0、PptxGenJS 4.0.1 | 各安装包原始 MIT 许可；[docx](https://github.com/dolanmiu/docx)、[ExcelJS](https://github.com/exceljs/exceljs)、[PptxGenJS](https://github.com/gitbrent/PptxGenJS)。桌面按生产依赖闭包复制包及其传递依赖，保留各自许可。 |
 | `jose.txt` | jose 6.2.12（沿用工作区锁定版本，server 显式声明直接依赖） | 安装包原始 `LICENSE.md`，MIT；[官方源码](https://github.com/panva/jose) |
 | `ajv.txt` | Ajv 8.20.0（沿用工作区已有版本，server 显式声明直接依赖） | 安装包原始 `LICENSE`，MIT；[官方源码](https://github.com/ajv-validator/ajv) |
 | `iconv-lite.txt` | iconv-lite 0.6.3（沿用工作区锁定版本，用于文件工具按原编码读写 GBK、Shift-JIS、Big5 等文本） | 安装包原始 `LICENSE`，MIT；[官方源码](https://github.com/ashtuchkin/iconv-lite) |

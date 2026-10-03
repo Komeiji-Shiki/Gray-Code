@@ -2,6 +2,7 @@ import { hasMessage, t } from '../i18n'
 import { getToolDescription } from './toolLocalization'
 
 export function toolIcon(name: string): string {
+  if (name.startsWith('office_')) return 'codicon-file-text'
   if (name.startsWith('browser_')) return 'codicon-globe'
   if (name.startsWith('computer_')) return 'codicon-device-desktop'
   if (name.startsWith('team_') || name === 'agent_send_message') return 'codicon-organization'

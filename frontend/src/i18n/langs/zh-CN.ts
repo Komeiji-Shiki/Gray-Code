@@ -2709,6 +2709,9 @@ const zhCN = {
                     tooltip: '配置工具'
                 },
                 toolDisplayNames: {
+                    office_read: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.office_read,
+                    office_create: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.office_create,
+                    office_edit: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.office_edit,
                     context_status: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.context_status,
                     terminal_task: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: '应用窗口', computer_observe: '观察电脑', computer_control: '桌面控制权', computer_action: '操作电脑',
@@ -2781,6 +2784,9 @@ const zhCN = {
                     get_activity_stats: '获取活动统计',
                 },
                 toolDescriptions: {
+                    office_read: sharedZhCN.components.settings.toolsSettings.toolDescriptions.office_read,
+                    office_create: sharedZhCN.components.settings.toolsSettings.toolDescriptions.office_create,
+                    office_edit: sharedZhCN.components.settings.toolsSettings.toolDescriptions.office_edit,
                     context_status: sharedZhCN.components.settings.toolsSettings.toolDescriptions.context_status,
                     terminal_task: sharedZhCN.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: '列出、创建和管理内置浏览器标签页，可在工作台中显示标签页。',

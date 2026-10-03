@@ -28,6 +28,7 @@ export interface RpcMethods {
   'files.downloadInfo': Method<FilePath, { name: string; size: number; mimeType: string }>;
   'files.download': Method<FilePath, unknown>;
   'files.reveal': Method<FilePath, { success: true }>;
+  'files.openOffice': Method<FilePath, { success: true }>;
   'workspace.openInExplorer': Method<{ workspaceId?: string; workspaceUri?: string; conversationId?: string }, { success: true }>;
   'files.create': Method<FilePath & { kind: 'file' | 'directory' }, FileEntryInfo>;
   'files.move': Method<FilePath & { target: string; expectedVersion: string }, FileEntryInfo>;
@@ -84,7 +85,7 @@ const tab = { tabId: text };
 const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
   'diagnostics.get': {},
   'settings.get': {}, 'settings.save': { settings: object, expectedRevision: number, credentials: optional(object) },
-  'files.list': { workspaceId: text, path: optional(text) }, 'files.inspect': file, 'files.downloadInfo': file, 'files.download': file, 'files.reveal': file,
+  'files.list': { workspaceId: text, path: optional(text) }, 'files.inspect': file, 'files.downloadInfo': file, 'files.download': file, 'files.reveal': file, 'files.openOffice': file,
   'workspace.openInExplorer': { workspaceId: optional(text), workspaceUri: optional(text), conversationId: optional(text) },
   'files.create': { ...file, kind: oneOf('file', 'directory') },
   'files.move': { ...file, target: text, expectedVersion: text },

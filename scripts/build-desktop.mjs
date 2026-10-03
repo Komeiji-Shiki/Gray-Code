@@ -12,7 +12,7 @@ for (const name of ['main', 'preload', 'desktopDialogPreload']) {
     bundle: true, platform: 'node', format: 'cjs', target: 'node24', sourcemap: true, metafile: true,
     define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo), __GRAYCODE_DISTRIBUTION__: JSON.stringify(distribution) },
     // 沙箱预加载不能 require 工作区包，纯契约代码必须随它一起打包。
-    external: name !== 'main' ? ['electron'] : ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server'] });
+    external: name !== 'main' ? ['electron'] : ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server', 'docx', 'exceljs', 'pptxgenjs'] });
   if (name !== 'main') {
     const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports).filter(item => item.external && item.path !== 'electron');
     if (imports.length) throw new Error(`沙箱预加载包含无法加载的外部依赖：${imports.map(item => item.path).join(', ')}`);

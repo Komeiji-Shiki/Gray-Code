@@ -27,7 +27,7 @@ for (const [entry, output] of [
   const result = await build({
     ...common, entryPoints: [entry], outfile: output, metafile: true,
     external: ['sharp', 'jsonc-parser', 'better-sqlite3', 'node-pty', 'discord.js', '@graycode/contracts', '@graycode/core', 'typescript-language-server', 'typescript',
-      'pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server', '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server'],
+      'pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server', '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server', 'docx', 'exceljs', 'pptxgenjs'],
   });
   const forbidden = entry.startsWith('packages/core/')
     ? Object.keys(result.metafile.inputs).filter(file => /^(backend|webview|frontend)\//.test(file)) : [];
