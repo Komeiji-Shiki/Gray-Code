@@ -29,6 +29,8 @@ interface ModelListCacheEntry {
 }
 
 const modelListCache = new Map<string, ModelListCacheEntry>();
+// 设置页和模型选择器可能同时刷新同一渠道；正在进行的请求与完成后的 TTL 缓存分别管理。
+const modelListRequests = new Map<string, Promise<ModelInfo[]>>();
 
 /** LRU 触碰 + 容量淘汰（与 ConversationManager.touchCache 同模式） */
 function touchModelListCache(key: string): void {
@@ -166,6 +168,26 @@ async function throwModelListRequestError(response: Response, apiKey?: string): 
         ? `HTTP ${response.status}: ${upstreamMessage}`
         : t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText });
     throw new ModelListRequestError(sanitizeUpstreamMessage(message, apiKey), response.status);
+}
+
+/** 列表请求沿用模型请求的计时方式，兼容旧记录缺失超时及已允许的正小数。 */
+async function requestModelListPage(
+    fetchPage: ReturnType<typeof createProxyFetch>,
+    url: string | URL,
+    headers: Record<string, string>,
+    apiKey: string,
+    timeout?: number
+): Promise<any> {
+    const controller = new AbortController();
+    const timeoutId = timeout === undefined ? undefined : setTimeout(() => controller.abort(), timeout);
+    try {
+        const response = await fetchPage(url, { headers, signal: timeoutId ? controller.signal : undefined });
+        if (!response.ok) await throwModelListRequestError(response, apiKey);
+        return await response.json();
+    } finally {
+        // 截止时间覆盖正文读取；请求完成后清理，避免刷新列表后留下计时器。
+        if (timeoutId) clearTimeout(timeoutId);
+    }
 }
 
 /**
@@ -336,13 +358,8 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
         // 应用自定义标头
         applyCustomHeaders(headers, config);
 
-        const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, { headers });
-
-        if (!response.ok) {
-          await throwModelListRequestError(response, apiKey);
-        }
-
-        const data = await response.json() as any;
+        const data = await requestModelListPage(proxyFetch, `${baseUrl}/models?${params.toString()}`,
+          headers, apiKey, config.timeout);
         return { models: data.models || [], data };
       },
       (_models, data) => data.nextPageToken as string | undefined,
@@ -399,11 +416,9 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
     const cacheKey = buildModelListCacheKey(config.type, modelsUrl.href, config, proxyUrl);
     const cached = getModelListCached(cacheKey);
     if (cached) return cached;
-    const response = await createProxyFetch(proxyUrl)(modelsUrl.href, {
-      headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(config.timeout ?? 30_000),
-    });
-    if (!response.ok) await throwModelListRequestError(response, apiKey);
-    const data = await response.json() as { models?: { slug?: string; display_name?: string; visibility?: string }[] };
+    const data = await requestModelListPage(createProxyFetch(proxyUrl), modelsUrl.href,
+      { Authorization: `Bearer ${apiKey}` }, apiKey, config.timeout ?? 30_000
+    ) as { models?: { slug?: string; display_name?: string; visibility?: string }[] };
     if (!Array.isArray(data.models)) throw new ModelListRequestError(t('modules.chatgpt.invalidModels'));
     const models = data.models.filter(model => model.visibility === 'list' && typeof model.slug === 'string' && model.slug)
       .map(model => ({ id: model.slug!, name: model.display_name || model.slug! }));
@@ -449,15 +464,8 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
         // 应用自定义标头
         applyCustomHeaders(headers, config);
 
-        const response = await proxyFetch(`${url}/models?${params.toString()}`, {
-          headers
-        });
-
-        if (!response.ok) {
-          await throwModelListRequestError(response, apiKey);
-        }
-
-        const data = await response.json() as any;
+        const data = await requestModelListPage(proxyFetch, `${url}/models?${params.toString()}`,
+          headers, apiKey, config.timeout);
         return { models: data.data || [], data };
       },
       // has_more 为 true 时以本页最后一条 id 作为下一页游标
@@ -544,15 +552,8 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
         // 应用自定义标头
         applyCustomHeaders(headers, config);
 
-        const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, {
-          headers
-        });
-
-        if (!response.ok) {
-          await throwModelListRequestError(response, apiKey);
-        }
-
-        const data = await response.json() as any;
+        const data = await requestModelListPage(proxyFetch, `${baseUrl}/models?${params.toString()}`,
+          headers, apiKey, config.timeout);
         return { models: data.data || [], data };
       },
       // has_more 为 true 时优先用 last_id，缺失时退回本页最后一条 id
@@ -597,22 +598,32 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
  * 根据配置类型获取模型列表
  */
 export async function getModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
-  const configType = config.type;
-  switch (config.type) {
-    case 'gemini':
-    case 'gemini-interactions':
-      return getGeminiModels(config, proxyUrl);
-    
-    case 'openai':
-      return getOpenAIModels(config, proxyUrl);
-    
-    case 'openai-responses':
-      return getOpenAIModels(config, proxyUrl);
-    
-    case 'anthropic':
-      return getClaudeModels(config, proxyUrl);
-    
-    default:
-      throw new Error(t('modules.channel.modelList.errors.unsupportedConfigType', { type: configType }));
+  const authMode = config.type === 'openai-responses' ? config.authMode : '';
+  const requestKey = `${buildModelListCacheKey(config.type, config.url ?? '', config, proxyUrl)}|${config.timeout}|${authMode}`;
+  let request = modelListRequests.get(requestKey);
+  if (!request) {
+    request = (async () => {
+      const configType = config.type;
+      switch (config.type) {
+        case 'gemini':
+        case 'gemini-interactions':
+          return getGeminiModels(config, proxyUrl);
+        case 'openai':
+        case 'openai-responses':
+          return getOpenAIModels(config, proxyUrl);
+        case 'anthropic':
+          return getClaudeModels(config, proxyUrl);
+        default:
+          throw new Error(t('modules.channel.modelList.errors.unsupportedConfigType', { type: configType }));
+      }
+    })();
+    modelListRequests.set(requestKey, request);
+  }
+  try {
+    // 合并网络工作，不共享可修改的列表；排序或修改名称只影响当前调用方。
+    return (await request).map(model => ({ ...model }));
+  } finally {
+    // 失败和空结果同样释放进行中的请求，下一次刷新仍可立即重试。
+    if (modelListRequests.get(requestKey) === request) modelListRequests.delete(requestKey);
   }
 }
