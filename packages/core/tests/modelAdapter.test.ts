@@ -7,6 +7,8 @@ import { applyProviderCapabilities, buildChannelConfig, overrideChannelReasoning
 import { OpenAIResponsesFormatter } from '../../../backend/modules/channel/formatters/openai-responses';
 import { GeminiFormatter } from '../../../backend/modules/channel/formatters/gemini';
 import { botRoundText } from '../../../apps/server/src/bots/rounds';
+import { longMemoryTools } from '../../../apps/server/src/memory/longTerm/tools';
+import { officeCreateDeclaration, officeEditDeclaration } from '../../../backend/tools/office/declarations';
 
 describe('real HTTP model adapter with existing provider codecs', () => {
   let server: Server;
@@ -24,7 +26,10 @@ describe('real HTTP model adapter with existing provider codecs', () => {
       for await (const chunk of req) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks).toString());
       requests.push({ headers: req.headers, body });
-      if (body.stream) {
+      if (body.contents) {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'done' }] }, finishReason: 'STOP' }] }));
+      } else if (body.stream) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         for (const chunk of [
           { choices: [{ delta: { content: 'stream ' }, finish_reason: null }] },
@@ -47,6 +52,33 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => '' });
   });
   afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+
+  test('Gemini 发送长期记忆和 Office 工具时保留完整 JSON Schema', async () => {
+    profile.protocol = 'gemini';
+    const request = input();
+    // 只提取真实工具声明，测试不会读取或修改记忆。
+    request.tools = [
+      ...longMemoryTools(undefined!).filter(tool => ['memory_read', 'memory_revise'].includes(tool.declaration.name))
+        .map(tool => tool.declaration),
+      officeCreateDeclaration(), officeEditDeclaration(),
+    ];
+    const original = structuredClone(request.tools);
+    const preview = await adapter.preview(request);
+    const response = await adapter.generate(request);
+    expect(response).toBeDefined();
+    expect(requests[0].body).toEqual(preview.body);
+    expect(request.tools).toEqual(original);
+    const declarations = requests[0].body.tools[0].function_declarations;
+    expect(declarations.map((tool: any) => tool.name)).toEqual(original.map(tool => tool.name));
+    for (const [index, tool] of declarations.entries()) {
+      expect(tool).not.toHaveProperty('parameters');
+      expect(tool.parametersJsonSchema).toEqual(original[index].parameters);
+    }
+    expect(declarations[0].parametersJsonSchema.oneOf).toEqual([{ required: ['ids'] }, { required: ['page'] }]);
+    expect(declarations[1].parametersJsonSchema.anyOf).toEqual([
+      { required: ['text'] }, { required: ['oldText', 'newText'] }, { required: ['append'] },
+    ]);
+  });
 
   test('历史保留中断思考，但后续请求只重用已收到的正文', async () => {
     profile.protocol = 'anthropic';

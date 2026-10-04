@@ -790,7 +790,7 @@ export class GeminiFormatter extends BaseFormatter {
      *       {
      *         "name": "tool_name",
      *         "description": "...",
-     *         "parameters": { ... }
+     *         "parametersJsonSchema": { ... }
      *       }
      *     ]
      *   }]
@@ -803,11 +803,12 @@ export class GeminiFormatter extends BaseFormatter {
             return undefined;
         }
         
-        // 转换工具声明，只保留 Gemini API 需要的字段
+        // 工具声明使用 JSON Schema；parameters 的 OpenAPI 子集不能完整表达
+        // required-only 组合分支、联合类型等约束，需使用互斥的 parametersJsonSchema。
         const functionDeclarations = tools.map(tool => ({
             name: tool.name,
             description: tool.description,
-            parameters: tool.parameters
+            parametersJsonSchema: tool.parameters
         }));
         
         // Gemini 格式需要包装在 function_declarations 数组中
