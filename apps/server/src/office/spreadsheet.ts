@@ -42,9 +42,17 @@ function sheetParts(archive: OfficeArchive): Map<string, string> {
   }));
 }
 
+interface SheetEditIndex {
+  data: XmlTree;
+  rows: Map<string, XmlNode>;
+  cells: Map<XmlNode, Map<string, XmlNode>>;
+  merges: Array<{ anchor: string; start: ReturnType<typeof coordinates>; end: ReturnType<typeof coordinates> }>;
+}
+
 /** 只更新目标单元格 XML，保留工作簿中未被编辑的图表、图片、样式和其他资源。 */
 export function editSpreadsheet(archive: OfficeArchive, changes: OfficeCell[]): void {
   const sheets = sheetParts(archive), parts = new Map<string, XmlTree>(), seen = new Set<string>();
+  const indices = new Map<string, SheetEditIndex>();
   for (const change of changes) {
     if (!change.sheet || !sheets.has(change.sheet)) throw new Error(`工作表不存在：${change.sheet ?? ''}`);
     const address = change.address.toUpperCase(), { row, column } = coordinates(address);
@@ -52,28 +60,48 @@ export function editSpreadsheet(archive: OfficeArchive, changes: OfficeCell[]): 
     if (seen.has(key)) throw new Error(`不能重复修改同一个单元格：${key}`);
     seen.add(key);
     const part = sheets.get(change.sheet)!, tree = parts.get(part) ?? archive.read(part); parts.set(part, tree);
-    if (nodes(tree, 'sheetProtection').length) throw new Error(`工作表 ${change.sheet} 已受保护，请先在 Excel 中解除保护。`);
-    const sheet = nodes(tree, 'worksheet')[0], children: XmlTree = sheet.worksheet;
-    for (const merge of nodes(tree, 'mergeCell')) {
-      const range = attribute(merge, 'ref')?.split(':');
-      if (!range || range.length !== 2) continue;
-      const start = coordinates(range[0]), end = coordinates(range[1]);
-      if (row >= start.row && row <= end.row && column >= start.column && column <= end.column && address !== range[0])
-        throw new Error(`${key} 位于合并单元格内，请修改左上角 ${range[0]}。`);
+    let index = indices.get(part);
+    if (!index) {
+      // 单元格编辑不改变保护与合并范围；每张工作表只遍历一次元信息，行和单元格插入时同步更新索引。
+      if (nodes(tree, 'sheetProtection').length) throw new Error(`工作表 ${change.sheet} 已受保护，请先在 Excel 中解除保护。`);
+      const children: XmlTree = nodes(tree, 'worksheet')[0].worksheet;
+      const data = children.find(node => 'sheetData' in node);
+      if (!data) throw new Error('工作表缺少 sheetData。');
+      const merges = nodes(tree, 'mergeCell').flatMap(merge => {
+        const range = attribute(merge, 'ref')?.split(':');
+        return range?.length === 2 ? [{ anchor: range[0], start: coordinates(range[0]), end: coordinates(range[1]) }] : [];
+      });
+      index = { data: data.sheetData, rows: new Map(), cells: new Map(), merges };
+      for (const node of index.data) {
+        const id = attribute(node, 'r'); if (id !== undefined && !index.rows.has(id)) index.rows.set(id, node);
+      }
+      indices.set(part, index);
     }
-    const data = children.find(node => 'sheetData' in node);
-    if (!data) throw new Error('工作表缺少 sheetData。');
-    let rowNode = data.sheetData.find((node: XmlNode) => attribute(node, 'r') === String(row));
+    for (const { anchor, start, end } of index.merges) {
+      if (row >= start.row && row <= end.row && column >= start.column && column <= end.column && address !== anchor)
+        throw new Error(`${key} 位于合并单元格内，请修改左上角 ${anchor}。`);
+    }
+    let rowNode = index.rows.get(String(row));
     if (!rowNode) {
       rowNode = element('row', [], { r: String(row) });
-      const index = data.sheetData.findIndex((node: XmlNode) => Number(attribute(node, 'r')) > row);
-      data.sheetData.splice(index < 0 ? data.sheetData.length : index, 0, rowNode);
+      const position = index.data.findIndex(node => Number(attribute(node, 'r')) > row);
+      index.data.splice(position < 0 ? index.data.length : position, 0, rowNode);
+      index.rows.set(String(row), rowNode);
     }
-    let cell = rowNode.row.find((node: XmlNode) => attribute(node, 'r') === address);
+    let cells = index.cells.get(rowNode);
+    if (!cells) {
+      cells = new Map();
+      for (const node of rowNode.row as XmlTree) {
+        const id = attribute(node, 'r'); if (id !== undefined && !cells.has(id)) cells.set(id, node);
+      }
+      index.cells.set(rowNode, cells);
+    }
+    let cell = cells.get(address);
     if (!cell) {
       cell = element('c', [], { r: address });
-      const index = rowNode.row.findIndex((node: XmlNode) => 'c' in node && coordinates(attribute(node, 'r')!).column > column);
-      rowNode.row.splice(index < 0 ? rowNode.row.length : index, 0, cell);
+      const position = rowNode.row.findIndex((node: XmlNode) => 'c' in node && coordinates(attribute(node, 'r')!).column > column);
+      rowNode.row.splice(position < 0 ? rowNode.row.length : position, 0, cell);
+      cells.set(address, cell);
     }
     const formula = cell.c.find((node: XmlNode) => 'f' in node);
     if (formula && ['shared', 'array', 'dataTable'].includes(attribute(formula, 't') ?? ''))
