@@ -75,7 +75,7 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
 const { getAllWorkspaces, parseWorkspacePath } = host;
 const TaskManager = host.tasks;
 const { getShellConfig, checkShellAvailability, getAvailableShellsDescription, getDefaultShellName, getEnabledShellTypesForEnum } = host.shells;
-const { pushOutputLines, getLastLines, getMaxOutputLines, decodeWithMode, flushDecodeState } = host.output;
+const { createOutputLineBuffer, pushOutputLines, getLastLines, getMaxOutputLines, decodeWithMode, flushDecodeState } = host.output;
 const { getAllWorkspaceRoots, getOSName, getCwdParameterDescription, getExecuteCommandShellGuidanceDescription } = host.prompts;
 
 
@@ -555,16 +555,14 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                     const stdoutDecodeModeRef: StreamDecodeState = { mode: 'utf8' };
                     const stderrDecodeModeRef: StreamDecodeState = { mode: 'utf8' };
 
-                    let stdoutRemaining = '';
-                    let stderrRemaining = '';
+                    const stdoutLines = createOutputLineBuffer();
+                    const stderrLines = createOutputLineBuffer();
 
                     // 收集输出并实时推送
                     proc.stdout?.on('data', (data: Buffer) => {
                         // 第 3 参（utf8Decoder）为兼容保留参数，本实现不再使用
                         const text = decodeWithMode(data, stdoutDecodeModeRef, undefined, stdoutGbkDecoder);
-                        const content = stdoutRemaining + text;
-                        const lines = content.split(/\r?\n/);
-                        stdoutRemaining = lines.pop() || '';
+                        const lines = stdoutLines.push(text);
                         
                         if (lines.length > 0) {
                             pushOutputLines(terminalProcess, lines);
@@ -580,9 +578,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
 
                     proc.stderr?.on('data', (data: Buffer) => {
                         const text = decodeWithMode(data, stderrDecodeModeRef, undefined, stderrGbkDecoder);
-                        const content = stderrRemaining + text;
-                        const lines = content.split(/\r?\n/);
-                        stderrRemaining = lines.pop() || '';
+                        const lines = stderrLines.push(text);
 
                         if (lines.length > 0) {
                             pushOutputLines(terminalProcess, lines);
@@ -604,9 +600,7 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
 
                         if (stdoutTail) {
                             emitTerminalOutput({ terminalId, type: 'output', data: stdoutTail });
-                            const content = stdoutRemaining + stdoutTail;
-                            const lines = content.split(/\r?\n/);
-                            stdoutRemaining = lines.pop() || '';
+                            const lines = stdoutLines.push(stdoutTail);
                             if (lines.length > 0) {
                                 pushOutputLines(terminalProcess, lines);
                             }
@@ -616,21 +610,19 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
 
                         if (stderrTail) {
                             emitTerminalOutput({ terminalId, type: 'error', data: stderrTail });
-                            const content = stderrRemaining + stderrTail;
-                            const lines = content.split(/\r?\n/);
-                            stderrRemaining = lines.pop() || '';
+                            const lines = stderrLines.push(stderrTail);
                             if (lines.length > 0) {
                                 pushOutputLines(terminalProcess, lines);
                             }
                         }
 
+                        const stdoutRemaining = stdoutLines.flush();
+                        const stderrRemaining = stderrLines.flush();
                         if (stdoutRemaining) {
                             pushOutputLines(terminalProcess, [stdoutRemaining]);
-                            stdoutRemaining = '';
                         }
                         if (stderrRemaining) {
                             pushOutputLines(terminalProcess, [stderrRemaining]);
-                            stderrRemaining = '';
                         }
                     });
 

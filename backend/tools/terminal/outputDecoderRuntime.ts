@@ -33,6 +33,34 @@ export function createOutputRuntime(host: createOutputRuntimeHost) {
  */
 const MAX_RETAINED_OUTPUT_LINES = 50000;
 
+/** 未完成的行按块保存，避免长行在每次数据到达时被重新复制和扫描。 */
+function createOutputLineBuffer() {
+    const fragments: string[] = [];
+    return {
+        push(text: string): string[] {
+            if (!text) return [];
+            const lines = text.split('\n');
+            if (lines.length === 1) {
+                fragments.push(text);
+                return [];
+            }
+            if (fragments.length) {
+                lines[0] = fragments.join('') + lines[0];
+                fragments.length = 0;
+            }
+            const remaining = lines.pop()!;
+            if (remaining) fragments.push(remaining);
+            // 原逻辑按 /\r?\n/ 分行；跨数据块的 CRLF 也只移除换行前的一个 CR。
+            return lines.map(line => line.endsWith('\r') ? line.slice(0, -1) : line);
+        },
+        flush(): string {
+            const remaining = fragments.join('');
+            fragments.length = 0;
+            return remaining;
+        }
+    };
+}
+
 
 function pushOutputLines(tp: TerminalProcess, lines: string[]): void {
     if (lines.length === 0) return;
@@ -206,5 +234,5 @@ function flushDecodeState(modeRef: StreamDecodeState, gbkDecoder?: TextDecoder):
     modeRef.pendingBytes = undefined;
     return pending && pending.length > 0 ? utf8TextDecoder.decode(pending) : '';
 }
-return { pushOutputLines, getMaxOutputLines, getLastLines, decodeWithMode, flushDecodeState };
+return { createOutputLineBuffer, pushOutputLines, getMaxOutputLines, getLastLines, decodeWithMode, flushDecodeState };
 }
