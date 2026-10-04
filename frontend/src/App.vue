@@ -86,15 +86,17 @@ if (isDesktopHost && !isSubAgentMonitor) {
 }
 
 async function restoreDesktopConversation(tabId: string | null, revision: number): Promise<void> {
-  if (!savedDesktopConversationId) return
   const canRestore = () => !disposed && desktopNavigationRevision === revision && chatStore.activeTabId === tabId
     && !chatStore.currentConversationId && !chatStore.allMessages.length && !chatStore.inputValue?.trim()
+    && !(chatStore.editorNodes?.length)
     && !(chatStore.storeAttachments?.length) && settingsStore.currentView === 'chat'
   if (!canRestore()) {
     if (!disposed) saveDesktopConversation(chatStore.currentConversationId)
     return
   }
   try {
+    if (chatStore.restoreInputDraft()) return
+    if (!savedDesktopConversationId) return
     // 摘要不在首屏列表时先只读取它，随后再次核对用户是否已开始新的工作。
     if (!chatStore.conversations.some(conversation => conversation.id === savedDesktopConversationId))
       await chatStore.refreshConversationSummary(savedDesktopConversationId)

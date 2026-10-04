@@ -42,6 +42,7 @@ import { clearVisibleChatMessagesCache } from './chat/windowUtils'
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
 import { synchronizeRemoteConversation } from './chat/remoteReconnect'
+import { createInputDraftPersistence } from './chat/inputDraftPersistence'
 import { formatTime } from './chat/utils'
 
 import {
@@ -173,6 +174,8 @@ const initializedChatStates = new WeakSet<object>()
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
+  const inputDrafts = window.__GRAYCODE_HOST && window.__GRAYCODE_VIEW_MODE !== 'subagentMonitor'
+    ? createInputDraftPersistence(state, window.__GRAYCODE_HOST) : undefined
 
   // M1：平滑档位经 state 传递——streamChunkHandlers 每 chunk 只读 state.smoothMode，
   // 不内联 useSettingsStore()（高频调用 + try/catch 吞错）。
@@ -752,6 +755,7 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     const hasSnapshot = state.sessionSnapshots.value.has(tabId)
+    const restoredDraft = inputDrafts?.takeRestoredTab(tabId)
     switchTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx)
     void loadCurrentConfig(state)
     const conversationId = state.currentConversationId.value
@@ -762,13 +766,27 @@ export const useChatStore = defineStore('chat', () => {
       state.isLoading.value = true
       void (async () => {
         try {
+          if (restoredDraft) {
+            await ensureConversationSummary(state, conversationId)
+            if (state.currentConversationId.value !== conversationId) return
+          }
           await loadHistory(state, false, { preserveWindow })
           await resumeDesktopConversation(state, conversationId, { preserveWindow })
+          if (restoredDraft && state.currentConversationId.value === conversationId) void loadBranchGraphAction(state)
         }
         catch (error) { if (state.currentConversationId.value === conversationId) state.error.value = { code: 'RESUME_ERROR', message: (error as Error).message } }
         finally { if (state.currentConversationId.value === conversationId) state.isLoading.value = false }
       })()
     }
+  }
+
+  function restoreInputDraft(): boolean {
+    const tabId = inputDrafts?.takeActiveTab()
+    if (!tabId) return false
+    const initialTabId = state.activeTabId.value
+    switchTabWrapped(tabId)
+    if (initialTabId && initialTabId !== tabId) closeTabWrapped(initialTabId)
+    return true
   }
 
   /**
@@ -843,6 +861,7 @@ export const useChatStore = defineStore('chat', () => {
       if (initialTabId) {
         state.activeTabId.value = initialTabId
       }
+      inputDrafts?.restoreTabs()
     }
 
     // 幂等保护：重复调用（HMR/App 重挂载）时先注销旧订阅再重新注册，
@@ -1083,6 +1102,7 @@ export const useChatStore = defineStore('chat', () => {
     closeTab: closeTabWrapped,
     switchTab: switchTabWrapped,
     openConversationInTab,
+    restoreInputDraft,
     synchronizeRemote,
     getConversationViews,
     reorderTab: (fromIndex: number, toIndex: number) => reorderTabAction(state, fromIndex, toIndex),

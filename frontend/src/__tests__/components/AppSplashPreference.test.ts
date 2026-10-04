@@ -223,7 +223,8 @@ describe('App 开屏动画启动偏好', () => {
       retryFromMessage: vi.fn(),
       getConversationViews: vi.fn().mockReturnValue([]),
       refreshConversationSummary: vi.fn(),
-      openConversationInTab: vi.fn()
+      openConversationInTab: vi.fn(),
+      restoreInputDraft: vi.fn().mockReturnValue(false)
     })
     runtime.terminalStore = { initialize: vi.fn() }
 
@@ -290,6 +291,24 @@ describe('App 开屏动画启动偏好', () => {
       expect(runtime.chatStore.currentConversationId).toBe('saved-conversation')
       expect(save).toHaveBeenLastCalledWith({ desktopConversationId: 'saved-conversation', otherSetting: 7 })
       expect(reportInitialization).toHaveBeenCalledWith()
+    } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
+  })
+
+  test('启动时恢复尚未创建对话的输入草稿，不依赖上次的会话 ID', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({}), setState: vi.fn() }
+    runtime.chatStore.initialize.mockImplementation(async () => { runtime.chatStore.activeTabId = 'initial-tab' })
+    runtime.chatStore.restoreInputDraft.mockImplementation(() => {
+      runtime.chatStore.inputValue = '未发送的新草稿'
+      return true
+    })
+    try {
+      wrapper = mount(App)
+      settingsRequest.resolve(makeSettingsResponse(true))
+      await flushPromises()
+      expect(runtime.chatStore.restoreInputDraft).toHaveBeenCalledOnce()
+      expect(runtime.chatStore.inputValue).toBe('未发送的新草稿')
+      expect(runtime.chatStore.openConversationInTab).not.toHaveBeenCalled()
     } finally { wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost }
   })
 
