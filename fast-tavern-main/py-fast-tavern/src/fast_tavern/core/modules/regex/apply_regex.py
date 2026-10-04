@@ -71,26 +71,19 @@ def _apply_trim(match: str, trims: list[str]) -> str:
 
 def _interpolate_replacement(template: str, match_trimmed: str, groups: list[str]) -> str:
     raw = str(template or "")
-    # 用 lambda 替换：返回字面量 match_trimmed，避免其中的 \1/\g<1> 被 re.sub 当反向引用解析
-    out = re.sub(r"\{\{\s*match\s*\}\}", lambda m: match_trimmed, raw, flags=re.IGNORECASE)
-
-    DOLLAR = "\u0000DOLLAR\u0000"
-    out = out.replace("$$", DOLLAR)
-    out = out.replace("$&", match_trimmed)
-
-    def repl_group(m: re.Match[str]) -> str:
-        n_str = m.group(1)
-        try:
-            n = int(n_str)
-        except Exception:
-            return ""
+    # 只解析模板一次，匹配正文和捕获组中的替换标记保持字面内容。
+    def replace_token(m: re.Match[str]) -> str:
+        capture = m.group(1)
+        if capture is None or capture == "&":
+            return match_trimmed
+        if capture == "$":
+            return "$"
+        n = int(capture)
         if n <= 0:
             return ""
         return str(groups[n - 1] if (n - 1) < len(groups) else "")
 
-    out = re.sub(r"\$(\d{1,2})", repl_group, out)
-    out = out.replace(DOLLAR, "$")
-    return out
+    return re.sub(r"\{\{\s*match\s*\}\}|\$(\$|&|\d{1,2})", replace_token, raw, flags=re.IGNORECASE)
 
 
 def _should_apply_by_depth(script: RegexScriptData, target: RegexTarget, history_depth: int | None) -> bool:

@@ -95,7 +95,10 @@ def build_prompt(params: dict[str, Any] | None = None, **kwargs: Any) -> dict[st
     system_role_policy = _pick(p, "system_role_policy", "systemRolePolicy")
     if system_role_policy is None:
         system_role_policy = "keep"
-    macros: dict[str, str] = p.get("macros") or {}
+    # 角色名只补缺少的 char，不覆盖显式值，也不修改调用方的宏字典。
+    macros: dict[str, str] = dict(p.get("macros") or {})
+    if character and character.get("name") and "char" not in macros:
+        macros["char"] = character["name"]
     variables = _pick(p, "variables", "variables")
     global_variables = _pick(p, "global_variables", "globalVariables")
     options: dict[str, Any] = p.get("options") or {}

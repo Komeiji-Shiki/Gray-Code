@@ -65,11 +65,15 @@ export function buildPrompt(params: BuildPromptParams): BuildPromptResult {
     view,
     outputFormat = 'gemini',
     systemRolePolicy = 'keep',
-    macros = {},
+    macros: userMacros = {},
     variables,
     globalVariables,
     options,
   } = params;
+
+  // 公开入口沿用文档中的角色名宏约定，复制字典后补齐，避免修改调用方的宏对象。
+  const macros: Record<string, string> = { ...userMacros };
+  if (character?.name && !Object.prototype.hasOwnProperty.call(macros, 'char')) macros.char = character.name;
 
   // 1) 世界书：多形态归一化 + 激活（contextText 取最近几条历史文本，默认 5）
   const worldBooksNormalized: WorldBookEntry[] = globals?.worldBooks

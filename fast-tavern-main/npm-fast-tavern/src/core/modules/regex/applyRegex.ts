@@ -78,22 +78,14 @@ function applyTrim(match: string, trims: string[]): string {
 function interpolateReplacement(template: string, matchTrimmed: string, groups: string[]): string {
   const raw = String(template ?? '');
 
-  // 1) {{match}}: 使用函数式替换，返回值不做特殊序列解释，
-  //    避免 matchTrimmed 中的 $& / $` / $' / $1..$99 被 JS 当作替换串特殊序列
-  let out = raw.replace(/\{\{\s*match\s*\}\}/gi, () => matchTrimmed);
-
-  // 2) 兼容 $& / $1..$99 / $$（模板侧语义：模板里的 $1 引用 groups）
-  const DOLLAR = '\u0000DOLLAR\u0000';
-  out = out.replace(/\$\$/g, DOLLAR);
-  out = out.replace(/\$&/g, () => matchTrimmed);
-  out = out.replace(/\$(\d{1,2})/g, (_m, nStr: string) => {
-    const n = Number(nStr);
-    if (!Number.isFinite(n) || n <= 0) return '';
+  // 只解析模板一次；插入的匹配正文或捕获组中即使含 $1、$$ 等，也保持字面内容。
+  return raw.replace(/\{\{\s*match\s*\}\}|\$(\$|&|\d{1,2})/gi, (_m, capture: string | undefined) => {
+    if (capture === undefined || capture === '&') return matchTrimmed;
+    if (capture === '$') return '$';
+    const n = Number(capture);
+    if (n <= 0) return '';
     return String(groups[n - 1] ?? '');
   });
-  out = out.replace(new RegExp(DOLLAR, 'g'), '$');
-
-  return out;
 }
 
 function shouldApplyByDepth(script: RegexScriptData, target: RegexTarget, historyDepth?: number): boolean {

@@ -11,7 +11,7 @@ import { convertMessagesOut } from '../../convert';
 import { assembleTaggedPromptList } from '../assemble';
 import { compileTaggedStages } from '../pipeline';
 import { getActiveEntries } from '../worldbook';
-import mergeRegexRules } from '../regex';
+import { mergeRegexRules } from '../regex';
 import { normalizeRegexes, normalizeWorldbooks } from '../inputs';
 import { createVariableContext } from '../variables';
 
