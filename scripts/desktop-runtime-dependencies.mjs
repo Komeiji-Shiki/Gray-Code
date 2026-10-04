@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { createRequire, isBuiltin } from 'node:module';
 
 /** 沿安装时的模块查找路径收集依赖，保留嵌套版本和工作区包的实际位置。 */
 export function collectRuntimeDependencies(root, names) {
@@ -10,6 +10,8 @@ export function collectRuntimeDependencies(root, names) {
   const inside = (parent, child) => child === parent || child.startsWith(parent + path.sep);
   while (queue.length) {
     const { name, from, optional = false } = queue.shift();
+    // 部分包把 https 等内置模块列为依赖；运行时由 Node 提供，不存在第三方查找路径。
+    if (isBuiltin(name)) continue;
     const search = createRequire(path.join(from, 'package.json')).resolve.paths(name) ?? [];
     const base = search.find(directory => fs.existsSync(path.join(directory, name, 'package.json')));
     if (!base) {
