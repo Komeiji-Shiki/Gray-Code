@@ -32,6 +32,7 @@ export async function serveWorkspaceFile(app: PlatformApplication, auth: { clien
     const bytes = await uploadBytes(request);
     if (!auth.valid()) { response.writeHead(401); response.end(JSON.stringify({ error: '登录已失效，上传未应用。' })); return true; }
     const result = await app.fileActions.upload(auth.client.actorId, workspaceId, file, version, bytes);
+    auth.valid();
     response.end(JSON.stringify({ result })); return true;
   }
   if (route[1] === 'upload' || !['GET', 'HEAD'].includes(request.method ?? '')) throw new Error('文件传输请求方法无效。');

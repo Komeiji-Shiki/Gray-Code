@@ -52,10 +52,13 @@ export async function startHttpServer(application: PlatformApplication, options:
     });
     return completion;
   };
-  const activateClient = async (clientId: string, acknowledgeRelease = false): Promise<boolean> => {
+  const activateClient = async (clientId: string, valid: () => boolean, acknowledgeRelease = false): Promise<boolean> => {
+    if (!valid()) return false;
     clearTimeout(recoveryTimers.get(clientId)); recoveryTimers.delete(clientId);
     // 清理已经开始时先等它结束，避免重连刚恢复的文档或进程被旧清理回调再次释放。
     await clientReleases.get(clientId);
+    // 被撤销的迟到请求不能重新激活资源，也不能取走下一次有效重连需要的重建标记。
+    if (!valid()) return false;
     const released = acknowledgeRelease ? releasedClients.delete(clientId) : releasedClients.has(clientId);
     webClients.add(clientId); router.clientConnected(clientId); scheduleRelease(clientId); return released;
   };
@@ -74,6 +77,7 @@ export async function startHttpServer(application: PlatformApplication, options:
   const host = new WebHost(application, router);
   const failures = new Map<string, { count: number; until: number }>();
   const server = createServer(async (request, response) => {
+    let validSession: (() => boolean) | undefined;
     response.on('error', () => response.destroy());
     response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -103,14 +107,28 @@ export async function startHttpServer(application: PlatformApplication, options:
       }
       const tab = String(request.headers['x-graycode-client'] ?? url.searchParams.get('client') ?? '');
       const auth = sessions.authenticate(request, tab, response);
+      if (auth) {
+        const valid = auth.valid, cookie = response.getHeader('Set-Cookie');
+        auth.valid = () => {
+          const current = valid();
+          // 迟到响应不能用已撤销的 Cookie 覆盖新登录；退出主动写入的清除头和已发出的流式响应保持原样。
+          if (!current && !response.headersSent && response.getHeader('Set-Cookie') === cookie) response.removeHeader('Set-Cookie');
+          return current;
+        };
+        validSession = auth.valid;
+      }
       if (request.method === 'GET' && !['/events', '/auth/session'].includes(url.pathname)
         && !url.pathname.startsWith('/assets/background/') && !url.pathname.startsWith('/preview/') && !url.pathname.startsWith('/files/')) {
-        if (options.clientDirectory && await serveWebAsset(options.clientDirectory, url.pathname, response)) return;
+        if (options.clientDirectory && await serveWebAsset(options.clientDirectory, url.pathname, response, validSession)) return;
       }
       if (!auth) { response.writeHead(401); response.end(JSON.stringify({ error: 'Authentication required.' })); return; }
       if (auth.browser && request.method === 'POST' && request.headers.origin !== ownOrigin) {
         response.writeHead(403); response.end(JSON.stringify({ error: 'Origin is required.' })); return;
       }
+      const stillAuthenticated = () => {
+        if (auth.valid()) return true;
+        response.writeHead(401); response.end(JSON.stringify({ error: 'Authentication required.' })); return false;
+      };
       if (url.pathname === '/auth/session' && request.method === 'GET') {
         response.end(JSON.stringify({ actor: application.actor(auth.client.actorId), clientId: auth.client.clientId })); return;
       }
@@ -124,6 +142,7 @@ export async function startHttpServer(application: PlatformApplication, options:
       if (url.pathname.startsWith('/assets/background/') && request.method === 'GET') {
         application.requireOwner(auth.client.actorId);
         const image = await application.images.get(url.pathname.slice('/assets/background/'.length));
+        if (!stillAuthenticated()) return;
         if (!image) { response.writeHead(404); response.end('{}'); return; }
         response.setHeader('Content-Type', image.mimeType); response.end(Buffer.from(image.bytes)); return;
       }
@@ -131,6 +150,7 @@ export async function startHttpServer(application: PlatformApplication, options:
         application.requireOwner(auth.client.actorId);
         const workspace = application.workspace(auth.client.actorId, decodeURIComponent(url.pathname.slice('/preview/'.length)), ['workspace_read']);
         const document = await application.files.read(workspace, url.searchParams.get('path') ?? '');
+        if (!stillAuthenticated()) return;
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
         // 项目 HTML 在独立沙箱中显示，脚本不能访问登录 cookie、父窗口或宿主接口。
         response.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
@@ -139,33 +159,45 @@ export async function startHttpServer(application: PlatformApplication, options:
       if (url.pathname === '/ui/media' && request.method === 'POST') {
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 70 * 1024 * 1024);
+        if (!stillAuthenticated()) return;
         if (!['previewAttachment', 'showContextContent', 'saveImageToPath'].includes(input.type)) throw new Error('不是媒体传输请求。');
-        await activateClient(auth.client.clientId);
+        await activateClient(auth.client.clientId, auth.valid);
+        if (!stillAuthenticated()) return;
         const result = await host.call(auth.client, 'ui.request', { type: input.type, data: input.data });
+        auth.valid();
         response.end(JSON.stringify({ result })); return;
       }
       if (url.pathname === '/settings/import' && request.method === 'POST') {
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 128 * 1024 * 1024);
-        await activateClient(auth.client.clientId);
+        if (!stillAuthenticated()) return;
+        await activateClient(auth.client.clientId, auth.valid);
+        if (!stillAuthenticated()) return;
         const result = await host.call(auth.client, 'ui.request', { type: 'settings.importData', data: { value: input } });
+        auth.valid();
         response.end(JSON.stringify({ result })); return;
       }
       if (url.pathname === '/character-resources/import' && request.method === 'POST') {
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 44 * 1024 * 1024);
+        if (!stillAuthenticated()) return;
         const result = await application.characters.import(input as { name: string; data: string });
+        auth.valid();
         response.end(JSON.stringify({ result })); return;
       }
       if (url.pathname === '/pet-resources/import' && request.method === 'POST') {
         application.requireOwner(auth.client.actorId);
         const input = await readBody(request, 180 * 1024 * 1024);
-        await activateClient(auth.client.clientId);
+        if (!stillAuthenticated()) return;
+        await activateClient(auth.client.clientId, auth.valid);
+        if (!stillAuthenticated()) return;
         const result = await router.call(auth.client, 'pets.import', input);
+        auth.valid();
         response.end(JSON.stringify({ result })); return;
       }
       if (url.pathname === '/events' && request.method === 'GET') {
-        const released = await activateClient(auth.client.clientId, true);
+        const released = await activateClient(auth.client.clientId, auth.valid, true);
+        if (!stillAuthenticated()) return;
         if (response.destroyed || response.writableEnded) { scheduleRelease(auth.client.clientId); return; }
         response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
         response.write(': connected\n\n');
@@ -199,11 +231,15 @@ export async function startHttpServer(application: PlatformApplication, options:
       }
       if (url.pathname !== '/rpc' || request.method !== 'POST') { response.writeHead(404); response.end('{"error":"Not found."}'); return; }
       const body = await readBody(request);
+      if (!stillAuthenticated()) return;
       if (typeof body.method !== 'string' || (body.params && (typeof body.params !== 'object' || Array.isArray(body.params)))) throw new Error('Invalid RPC request.');
-      await activateClient(auth.client.clientId);
+      await activateClient(auth.client.clientId, auth.valid);
+      if (!stillAuthenticated()) return;
       const result = await host.call(auth.client, body.method, body.params ?? {});
+      auth.valid();
       response.end(JSON.stringify({ result: result ?? null }));
     } catch (error) {
+      validSession?.();
       if (response.destroyed || response.writableEnded) return;
       if (response.headersSent) { response.destroy(); return; }
       response.writeHead(400); response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Request failed.',

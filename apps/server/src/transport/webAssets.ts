@@ -6,7 +6,7 @@ const contentTypes: Record<string, string> = { '.html': 'text/html; charset=utf-
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf' };
 /** 只发布构建后的界面目录，不将项目源码或数据目录作为静态资源根目录。 */
-export async function serveWebAsset(directory: string, pathname: string, response: ServerResponse): Promise<boolean> {
+export async function serveWebAsset(directory: string, pathname: string, response: ServerResponse, beforeResponse?: () => void): Promise<boolean> {
   let file: string;
   try {
     const root = await realpath(directory);
@@ -18,9 +18,9 @@ export async function serveWebAsset(directory: string, pathname: string, respons
   response.setHeader('Content-Type', contentTypes[path.extname(file)] ?? 'application/octet-stream');
   if (pathname === '/pet-renderer.html') {
     response.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; script-src 'self' blob: 'unsafe-eval'; style-src 'unsafe-inline'; img-src blob: data:; connect-src blob: data:; media-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
-    response.end(await readFile(file)); return true;
+    const bytes = await readFile(file); beforeResponse?.(); response.end(bytes); return true;
   }
   response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; media-src 'self' blob:; frame-ancestors 'self'; object-src 'none'; base-uri 'self'");
-  response.end(await readFile(file));
+  const bytes = await readFile(file); beforeResponse?.(); response.end(bytes);
   return true;
 }
