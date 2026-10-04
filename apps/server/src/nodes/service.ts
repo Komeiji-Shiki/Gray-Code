@@ -39,9 +39,17 @@ export class ExecutionNodes {
       }
       const runId = notification.runId ?? (notification.event as { runId?: string } | undefined)?.runId;
       if (typeof runId === 'string' && ['event', 'run.created', 'message.persisted', 'model.delta', 'tool.progress'].includes(String(notification.type))) {
+        if (!this.incoming.size) return;
+        const recipients = new Map([...this.incoming].filter(([, connection]) => connection.wire.online));
+        if (!recipients.size) return;
         const next = this.forwarding.then(async () => {
+          // 没有接收方时不逐条读取本机流式任务；断线后的旧通知不能改发到新连接，持久事件由恢复路径补取。
+          if (![...recipients.values()].some(connection => connection.wire.online)) return;
           const run = (notification.run as RunRecord | undefined) ?? await app.storage.getRun(runId);
-          if (run?.nodeOrigin) this.incoming.get(run.nodeOrigin.peerId)?.wire.event(notification);
+          const origin = run?.nodeOrigin;
+          if (!origin) return;
+          const connection = recipients.get(origin.peerId);
+          if (connection && this.incoming.get(origin.peerId) === connection) connection.wire.event(notification);
         }); this.forwarding = next.catch(() => {});
       }
     });
