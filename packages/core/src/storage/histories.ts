@@ -59,13 +59,22 @@ function outlineEntry(row: EntryRow, body: Record<string, unknown>): HistoryOutl
 /** 粗略估算已解码值占用的内存；只用于缓存淘汰，不参与存储语义。 */
 function estimatedBytes(value: unknown, limit: number): number {
   let total = 0;
-  const stack: unknown[] = [value];
+  // 按需遍历子项，避免大数组展开为函数参数，或在达到预算前先复制整个容器。
+  function* values(record: Record<string, unknown>): Generator<unknown> {
+    for (const key in record) if (Object.hasOwn(record, key)) {
+      total += key.length * 2 + 16;
+      yield record[key];
+    }
+  }
+  const stack: Iterator<unknown>[] = [[value].values()];
   while (stack.length && total <= limit) {
-    const item = stack.pop();
+    const next = stack[stack.length - 1].next();
+    if (next.done) { stack.pop(); continue; }
+    const item = next.value;
     if (typeof item === 'string') total += item.length * 2;
     else if (item instanceof Uint8Array) total += item.byteLength;
-    else if (Array.isArray(item)) { total += 16; stack.push(...item); }
-    else if (item && typeof item === 'object') { for (const [key, child] of Object.entries(item)) { total += key.length * 2 + 16; stack.push(child); } }
+    else if (Array.isArray(item)) { total += 16; stack.push(item.values()); }
+    else if (item && typeof item === 'object') stack.push(values(item as Record<string, unknown>));
     else total += 8;
   }
   return total;
@@ -300,23 +309,50 @@ export class HistoryStore {
     if (!updates.length) return;
     const info = this.info(id);
     const changes = new Map<number, PlatformMessage>();
-    let start = info.message_count;
     for (const { index, message } of updates) {
       if (!Number.isSafeInteger(index) || index < 0 || index >= info.message_count) invalid('历史更新位置超出范围。');
-      changes.set(index, message); start = Math.min(start, index);
+      changes.set(index, message);
     }
-    const rows = this.rows(id, start, info.message_count);
-    if (rows.length !== info.message_count - start) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
-    let firstChanged = info.message_count;
-    for (const [index, message] of changes) {
-      if (this.sameEntry(this.encode(message), rows[index - start])) changes.delete(index);
-      else firstChanged = Math.min(firstChanged, index);
+    const ordered = [...changes].sort(([left], [right]) => left - right);
+    const spans = this.db.prepare(`SELECT * FROM history_spans WHERE history_id=? AND start_index<=? AND start_index+count>?
+      ORDER BY start_index`).all(id, ordered[ordered.length - 1][0], ordered[0][0]) as SpanRow[];
+    const insertEntry = this.db.prepare('INSERT INTO segment_entries(segment_id,ordinal,body_hash,message_id,role,timestamp) VALUES(?,?,?,?,?,?)');
+    const insertSpan = this.db.prepare('INSERT INTO history_spans(history_id,start_index,segment_id,segment_offset,count) VALUES(?,?,?,?,?)');
+    const removeSearch = this.db.prepare('DELETE FROM history_search WHERE history_id=? AND position=?');
+    const insertSearch = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+    let next = 0, changed = false;
+    for (const span of spans) {
+      const end = span.start_index + span.count;
+      if (next >= ordered.length || ordered[next][0] >= end) continue;
+      const rows = this.rows(id, span.start_index, end);
+      if (ordered[next][0] < span.start_index || rows.length !== span.count) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+      const replacements: Array<{ index: number; message: PlatformMessage; entry: EntryRow }> = [];
+      while (next < ordered.length && ordered[next][0] < end) {
+        const [index, message] = ordered[next++], entry = this.encode(message);
+        if (!this.sameEntry(entry, rows[index - span.start_index])) replacements.push({ index, message, entry });
+      }
+      if (!replacements.length) continue;
+      changed = true;
+      const start = replacements[0].index, prefix = start - span.start_index;
+      const entries = rows.slice(prefix);
+      for (const replacement of replacements) entries[replacement.index - start] = replacement.entry;
+      // 仅复制受影响段的不可变条目引用；保留最早改动之前的原段身份，增量游标仍从真实修改位置开始。
+      const segmentId = Number(this.db.prepare('INSERT INTO segments DEFAULT VALUES').run().lastInsertRowid);
+      entries.forEach((entry, ordinal) => insertEntry.run(segmentId, ordinal, entry.body_hash, entry.message_id, entry.role, entry.timestamp));
+      this.db.prepare('DELETE FROM history_spans WHERE history_id=? AND start_index=?').run(id, span.start_index);
+      if (prefix) insertSpan.run(id, span.start_index, span.segment_id, span.segment_offset, prefix);
+      insertSpan.run(id, start, segmentId, 0, entries.length);
+      for (const { index, message } of replacements) {
+        removeSearch.run(id, index);
+        // 已完成的索引前缀原位更新；尚未索引的部分继续从原进度构建，不重扫无关后缀。
+        if (index < info.search_position) {
+          const text = searchableText(message);
+          if (text) insertSearch.run(id, index, message.id ?? null, text, text.toLowerCase());
+        }
+      }
     }
-    if (!changes.size) return;
-    const messages = rows.slice(firstChanged - start).map(row => this.decode(row));
-    for (const [index, message] of changes) messages[index - firstChanged] = message;
-    this.truncate(id, firstChanged);
-    this.append(id, messages);
+    if (next !== ordered.length) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+    if (!changed) return;
     this.db.prepare('UPDATE histories SET revision=?,search_revision=? WHERE id=?')
       .run(info.revision + 1, info.search_revision === info.revision ? info.revision + 1 : -1, id);
   }

@@ -136,23 +136,40 @@ export class PlatformRuntime {
   }
 
   async initialize(): Promise<void> {
+    // 同一会话的待结算调用共用导航摘要；恢复只判断配对身份，不反复读取正文和附件。
+    const recoveredHistories = new Map<string, { calls: Set<string>; responses: Set<string> } | null>();
     for (const id of await this.services.storage.listRecords(NATIVE_ASYNC_NAMESPACE)) {
       const record = await this.services.storage.getRecord(NATIVE_ASYNC_NAMESPACE, id) as NativeToolRecord | null;
       if (!record) continue;
-      if (!await this.services.storage.getConversation(record.run.conversationId)) {
+      let history = recoveredHistories.get(record.run.conversationId);
+      if (history === undefined) {
+        history = null;
+        if (await this.services.storage.getConversation(record.run.conversationId)) {
+          const outline = await this.services.storage.readHistoryOutline(record.run.conversationId);
+          history = { calls: new Set(), responses: new Set() };
+          for (const entry of outline.entries) {
+            for (const call of entry.calls ?? []) history.calls.add(call.id);
+            for (const response of entry.responses ?? []) history.responses.add(response.id);
+          }
+        }
+        recoveredHistories.set(record.run.conversationId, history);
+      }
+      if (!history) {
         await this.services.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, id); continue;
       }
-      const history = (await this.services.storage.readFullHistory(record.run.conversationId)).messages;
-      const hasCall = history.some(message => message.parts.some(part => (part.functionCall as ModelToolCall | undefined)?.id === record.call.id));
+      const hasCall = history.calls.has(record.call.id);
       if (!hasCall && record.published) { await this.services.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, id); continue; }
       if (!hasCall) {
+        const page = await this.services.storage.readHistory(record.run.conversationId, { limit: 1 });
         await this.services.storage.appendHistory(record.run.conversationId, [{ id: randomUUID(), role: 'model', runId: record.run.id,
-          timestamp: Date.now(), parentId: history.at(-1)?.id ?? null, incompleteReason: 'interrupted', parts: [{ functionCall: record.call }] }]);
+          timestamp: Date.now(), parentId: page.messages.at(-1)?.id ?? null, incompleteReason: 'interrupted', parts: [{ functionCall: record.call }] }]);
+        history.calls.add(record.call.id);
       }
-      if (!history.some(message => message.parts.some(part => (part.functionResponse as { id?: string } | undefined)?.id === record.call.id))) {
+      if (!history.responses.has(record.call.id)) {
         const outcome = record.outcome ?? await this.services.recoverAsyncToolResult?.(record)
           ?? { success: false, code: 'INTERRUPTED', error: '服务重启，原异步操作未自动重放。' };
         await this.saveToolResult(record.run, record.call, outcome);
+        history.responses.add(record.call.id);
       }
       await this.services.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, id);
     }
@@ -718,9 +735,9 @@ export class PlatformRuntime {
 
   private async deliverNativeResult(record: NativeToolRecord, detached: boolean): Promise<void> {
     if (detached && this.services.deliverAsyncToolResult) {
-      const history = (await this.services.storage.readFullHistory(record.run.conversationId)).messages;
-      if (!history.some(message => message.parts.some(part => (part.functionCall as ModelToolCall | undefined)?.id === record.call.id))
-        || history.some(message => message.parts.some(part => (part.functionResponse as { id?: string } | undefined)?.id === record.call.id))) return;
+      const history = await this.services.storage.readHistoryOutline(record.run.conversationId);
+      if (!history.entries.some(entry => entry.calls?.some(call => call.id === record.call.id))
+        || history.entries.some(entry => entry.responses?.some(response => response.id === record.call.id))) return;
       const { attachments, ...response } = record.outcome!;
       const message: PlatformMessage = { id: `native-result-${record.run.id}-${record.call.id}`, role: 'user', runId: record.run.id,
         timestamp: Date.now(), isFunctionResponse: true, isUserInput: false,

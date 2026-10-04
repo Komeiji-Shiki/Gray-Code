@@ -141,13 +141,27 @@ test('重启从 SQLite 恢复异步终态与附件，不重放操作或重复补
     await context.f.store.putRecord({ namespace: 'native-tool-calls', id: `${run.id}:${call.id}`, ownerId: 'native',
       value: { run, call, handle: 'read_once', detached: false, published: true,
         outcome: { success: true, data: 'saved', attachments: [{ mimeType: 'image/png', data: 'aW1hZ2U=' }] } } });
+    const unpublished = { ...call, id: 'unpublished-read', args: { task_handle: 'unpublished' } };
+    await context.f.store.putRecord({ namespace: 'native-tool-calls', id: `${run.id}:${unpublished.id}`, ownerId: 'native',
+      value: { run, call: unpublished, handle: 'unpublished', detached: false, published: false,
+        outcome: { success: true, data: 'unpublished-result' } } });
     await context.runtime.close(); await context.f.store.close(); context.f.store = await PlatformStorage.open(context.f.data);
     const recovery = new PlatformRuntime({ storage: context.f.store, tools: new RuntimeToolRegistry(),
       models: { generate: async () => { throw new Error('不能重新生成'); } }, actor: async () => null, agent: async () => null, workspace: async () => null });
+    const outlines = jest.spyOn(context.f.store, 'readHistoryOutline');
+    const fullReads = jest.spyOn(context.f.store, 'readFullHistory');
     await recovery.initialize(); await recovery.initialize();
+    expect(outlines).toHaveBeenCalledTimes(1);
+    expect(fullReads).not.toHaveBeenCalled();
+    fullReads.mockRestore(); outlines.mockRestore();
     const history = (await context.f.store.readFullHistory('native')).messages;
     expect(history.flatMap(message => message.parts).filter(part => (part.functionResponse as any)?.id === call.id)).toHaveLength(1);
-    expect(history.at(-1)!.parts[1]).toEqual({ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } });
+    const response = history.find(message => message.parts.some(part => (part.functionResponse as any)?.id === call.id));
+    expect(response!.parts[1]).toEqual({ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } });
+    const unpublishedCall = history.findIndex(message => message.parts.some(part => (part.functionCall as any)?.id === unpublished.id));
+    expect(history[unpublishedCall].parentId).toBe(response!.id);
+    expect(history[unpublishedCall + 1]).toMatchObject({ parentId: history[unpublishedCall].id,
+      parts: [{ functionResponse: { id: unpublished.id, response: { success: true, data: 'unpublished-result' } } }] });
     expect(await context.f.store.listRecords('native-tool-calls')).toEqual([]); await recovery.close();
   } finally { await context.runtime.close(); await context.f.cleanup(); }
 });

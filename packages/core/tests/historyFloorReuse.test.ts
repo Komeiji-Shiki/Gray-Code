@@ -37,12 +37,31 @@ describe('楼层窗口复用不可变历史前缀', () => {
     db.transaction(() => histories.append(id, appended))();
     expect(histories.pageWithFloors(id).floorIndices).toEqual(floors([...original, ...appended]));
     expect(reads.mock.calls.filter(([, projection]) => projection?.fields?.includes('isFunctionResponse'))).toHaveLength(2);
-    const updated = { ...original[129], isFunctionResponse: true };
-    db.transaction(() => histories.patch(id, [{ index: 129, message: updated }]))();
+    const fork = db.transaction(() => histories.fork(id))();
+    // 模拟旧历史只完成了索引前缀，前后两处修改都不能让构建进度回退。
+    db.prepare('UPDATE histories SET search_revision=-1,search_position=256 WHERE id=?').run(id);
+    db.prepare('DELETE FROM history_search WHERE history_id=? AND position>=256').run(id);
+    const updated = { ...original[129], parts: [{ text: '修订后的索引文字' }], isFunctionResponse: true };
+    const tail = { ...original[257], parts: [{ text: '尚未索引的修订' }], isFunctionResponse: true };
     reads.mockClear();
-    const changed = [...original, ...appended]; changed[129] = updated;
+    db.transaction(() => histories.patch(id, [
+      { index: 257, message: tail }, { index: 129, message: message(129, '被后一次更新覆盖') }, { index: 129, message: updated },
+    ]))();
+    expect(reads).not.toHaveBeenCalled();
+    expect(histories.info(id)).toMatchObject({ search_position: 256, search_revision: -1 });
+    expect(db.prepare('SELECT text FROM history_search WHERE history_id=? AND position=129').get(id)).toEqual({ text: '修订后的索引文字' });
+    expect(db.prepare('SELECT text FROM history_search WHERE history_id=? AND position=257').get(id)).toBeUndefined();
+    reads.mockClear();
+    const changed = [...original, ...appended]; changed[129] = updated; changed[257] = tail;
     expect(histories.pageWithFloors(id).floorIndices).toEqual(floors(changed));
     expect(reads.mock.calls.filter(([, projection]) => projection?.fields?.includes('isFunctionResponse'))).toHaveLength(changed.length - 129);
+    expect(histories.page(id, { offset: 129, limit: 1 }).messages).toEqual([updated]);
+    expect(histories.page(id, { offset: 257, limit: 1 }).messages).toEqual([tail]);
+    expect(histories.page(fork, { offset: 129, limit: 1 }).messages).toEqual([original[129]]);
+    expect(histories.page(fork, { offset: 257, limit: 1 }).messages).toEqual([original[257]]);
+    const revision = histories.info(id).revision;
+    db.transaction(() => histories.patch(id, [{ index: 129, message: updated }, { index: 257, message: tail }]))();
+    expect(histories.info(id).revision).toBe(revision);
     db.transaction(() => histories.replace(id, original.slice(0, 3)))();
     reads.mockClear();
     expect(histories.pageWithFloors(id)).toMatchObject({ total: 3, floorIndices: [1, 2] });
