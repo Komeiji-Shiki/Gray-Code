@@ -15,11 +15,13 @@ let pendingFileUploads = 0;
 let eventSource: EventSource | undefined;
 let lastEventId = '';
 let bridgeInstalled = false;
+let bridgeEpoch = 0;
 const listeners = new Set<(event: Record<string, any>) => void>();
 const tabId = sessionStorage.getItem('graycode.webClient') ?? crypto.randomUUID();
 sessionStorage.setItem('graycode.webClient', tabId);
 
 export async function webRequest(url: string, body?: unknown, timeoutMs = ['/auth/session', '/auth/login'].includes(url) ? 15_000 : 0) {
+  const epoch = bridgeEpoch;
   const controller = timeoutMs ? new AbortController() : undefined;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
   try {
@@ -28,7 +30,8 @@ export async function webRequest(url: string, body?: unknown, timeoutMs = ['/aut
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const value = await response.json();
     if (!response.ok) {
-      if (response.status === 401 && url !== '/auth/login') window.dispatchEvent(new Event('graycode:session-expired'));
+      // 旧连接的迟到认证失败不能关闭已经重新登录的新连接。
+      if (response.status === 401 && url !== '/auth/login' && epoch === bridgeEpoch) window.dispatchEvent(new Event('graycode:session-expired'));
       throw Object.assign(new Error(value.error ?? '请求失败。'), { code: value.code, status: response.status });
     }
     return value;
@@ -78,22 +81,29 @@ function emit(event: Record<string, any>) {
     catch (error) { console.error('Web 事件订阅者处理失败：', event.type, error); }
   }
 }
-export function closeWebBridge() { eventSource?.close(); eventSource = undefined; webUi.connection = 'disconnected'; emit({ type: 'transport.disconnected' }); finishDirectory(false); }
+export function closeWebBridge() { bridgeEpoch++; const previous = eventSource; eventSource = undefined; previous?.close(); webUi.connection = 'disconnected'; emit({ type: 'transport.disconnected' }); finishDirectory(false); }
 export function installWebBridge(): DesktopBridge {
   eventSource?.close();
+  bridgeEpoch++;
   const authenticatedAgain = bridgeInstalled; bridgeInstalled = true;
   let firstSynchronization = true;
+  let sessionCheck: Promise<unknown> | undefined;
   webUi.connection = 'connecting';
-  eventSource = new EventSource(`/events?client=${encodeURIComponent(tabId)}${lastEventId ? `&after=${encodeURIComponent(lastEventId)}` : ''}`);
-  eventSource.onopen = () => { webUi.connection = 'connected'; emit({ type: 'transport.connected' }); };
-  eventSource.onerror = () => {
-    if (webUi.connection !== 'disconnected') emit({ type: 'transport.disconnected' });
+  const source = new EventSource(`/events?client=${encodeURIComponent(tabId)}${lastEventId ? `&after=${encodeURIComponent(lastEventId)}` : ''}`);
+  eventSource = source;
+  source.onopen = () => { if (eventSource !== source) return; webUi.connection = 'connected'; emit({ type: 'transport.connected' }); };
+  source.onerror = () => {
+    if (eventSource !== source) return;
+    const disconnected = webUi.connection === 'disconnected';
     webUi.connection = 'disconnected';
-    void webRequest('/auth/session').catch(() => {});
+    if (!disconnected) emit({ type: 'transport.disconnected' });
+    // SSE 连续重试时共用在途认证探测，避免网络缓慢时积累相同请求。
+    sessionCheck ??= webRequest('/auth/session').catch(() => {}).finally(() => { sessionCheck = undefined; });
   };
-  eventSource.onmessage = event => { lastEventId = event.lastEventId; try { emit(JSON.parse(event.data)); } catch { /* 单条异常事件不终止后续推送。 */ } };
-  eventSource.addEventListener('reset', () => { lastEventId = ''; });
-  eventSource.addEventListener('synchronized', event => {
+  source.onmessage = event => { if (eventSource !== source) return; lastEventId = event.lastEventId; try { emit(JSON.parse(event.data)); } catch { /* 单条异常事件不终止后续推送。 */ } };
+  source.addEventListener('reset', () => { if (eventSource === source) lastEventId = ''; });
+  source.addEventListener('synchronized', event => {
+    if (eventSource !== source) return;
     const reset = JSON.parse((event as MessageEvent).data).reset === true;
     emit({ type: 'transport.resumed', snapshotRequired: reset, authenticatedAgain: authenticatedAgain && firstSynchronization });
     firstSynchronization = false;
@@ -110,6 +120,7 @@ export function installWebBridge(): DesktopBridge {
       let params: Record<string, any> = input;
       if (method === 'pets.import') return (await webRequest('/pet-resources/import', params)).result;
       if (method === 'files.upload') {
+        const epoch = bridgeEpoch;
         pendingFileUploads++;
         try {
         let response: Response;
@@ -117,7 +128,7 @@ export function installWebBridge(): DesktopBridge {
           headers: { 'Content-Type': 'application/octet-stream', 'X-Graycode-Client': tabId, 'X-Graycode-File-Version': params.expectedVersion }, body: params.bytes }); }
         catch { throw new Error('上传连接中断，请刷新目录确认文件是否已经上传。'); }
         const value = await response.json();
-        if (response.status === 401) window.dispatchEvent(new Event('graycode:session-expired'));
+        if (response.status === 401 && epoch === bridgeEpoch) window.dispatchEvent(new Event('graycode:session-expired'));
         if (!response.ok) throw new Error(value.error ?? '文件上传失败。'); return value.result;
         } finally { pendingFileUploads--; }
       }
@@ -142,7 +153,7 @@ export function installWebBridge(): DesktopBridge {
         window.setTimeout(() => URL.revokeObjectURL(url), 10_000); return { success: true, filePath: link.download };
       }
       if (method === 'desktop.chooseWorkspace') return chooseDirectory();
-      if (method === 'web.logout') { await webRequest('/auth/logout', {}); window.dispatchEvent(new Event('graycode:session-expired')); return; }
+      if (method === 'web.logout') { const epoch = bridgeEpoch; await webRequest('/auth/logout', {}); if (epoch === bridgeEpoch) window.dispatchEvent(new Event('graycode:session-expired')); return; }
       if (method === 'desktop.fonts') return [];
       if (method === 'desktop.dirtySettings') { dirtySettings = params.dirty === true; return; }
       if (method === 'desktop.dirtyDocuments') { dirtyDocuments = Number(params.count) > 0; return; }

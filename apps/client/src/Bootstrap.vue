@@ -8,21 +8,22 @@ const native = Boolean(window.graycode);
 const authenticated = ref(native); const loading = ref(!native); const busy = ref(false); const token = ref(''); const error = ref('');
 const deviceName = ref(localStorage.getItem('graycode.webDeviceName') ?? '');
 const mounted = ref(native);
+let disposed = false;
 async function login() {
   if (busy.value) return; busy.value = true; error.value = '';
-  try { await webRequest('/auth/login', { token: token.value, ...(deviceName.value.trim() ? { deviceName: deviceName.value.trim() } : {}) }); token.value = ''; localStorage.setItem('graycode.webDeviceName', deviceName.value.trim()); installWebBridge(); authenticated.value = true; mounted.value = true; }
-  catch (cause) { error.value = (cause as Error).message; }
+  try { await webRequest('/auth/login', { token: token.value, ...(deviceName.value.trim() ? { deviceName: deviceName.value.trim() } : {}) }); if (disposed) return; token.value = ''; localStorage.setItem('graycode.webDeviceName', deviceName.value.trim()); installWebBridge(); authenticated.value = true; mounted.value = true; }
+  catch (cause) { if (!disposed) error.value = (cause as Error).message; }
   finally { busy.value = false; }
 }
 function expired() { authenticated.value = false; closeWebBridge(); error.value = '登录已过期，请重新连接。'; }
 onMounted(async () => {
   if (native) return;
   window.addEventListener('graycode:session-expired', expired);
-  try { await webRequest('/auth/session'); installWebBridge(); authenticated.value = true; mounted.value = true; error.value = ''; }
-  catch (cause) { if ((cause as { status?: number }).status !== 401) error.value = (cause as Error).message; else error.value = ''; }
+  try { await webRequest('/auth/session'); if (disposed) return; installWebBridge(); authenticated.value = true; mounted.value = true; error.value = ''; }
+  catch (cause) { if (!disposed) { if ((cause as { status?: number }).status !== 401) error.value = (cause as Error).message; else error.value = ''; } }
   finally { loading.value = false; }
 });
-onBeforeUnmount(() => { window.removeEventListener('graycode:session-expired', expired); if (!native) closeWebBridge(); });
+onBeforeUnmount(() => { disposed = true; window.removeEventListener('graycode:session-expired', expired); if (!native) closeWebBridge(); });
 </script>
 <template>
   <App v-if="mounted" v-show="authenticated" />
