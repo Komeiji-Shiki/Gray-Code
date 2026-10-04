@@ -7,6 +7,7 @@ interface DapMessage { seq: number; type: string; command?: string; arguments?: 
 /** DAP 使用 UTF-8 字节长度分帧，响应序号与本端的请求序号对应。 */
 export class DapConnection extends EventEmitter {
   private buffer: Buffer = Buffer.alloc(0);
+  private frame?: { body: Buffer; offset: number };
   private sequence = 0;
   private readonly pending = new Map<number, Pending>();
   private closed = false;
@@ -18,17 +19,30 @@ export class DapConnection extends EventEmitter {
   }
   private read = (bytes: Buffer) => {
     try {
-      this.buffer = Buffer.concat([this.buffer, bytes]);
-      for (;;) {
-        const boundary = this.buffer.indexOf('\r\n\r\n');
-        if (boundary < 0) { if (this.buffer.length > 8192) throw new Error('DAP 消息头过长。'); return; }
-        const header = this.buffer.subarray(0, boundary).toString('ascii');
-        const length = Number(/^Content-Length:\s*(\d+)\s*$/im.exec(header)?.[1]);
-        if (!Number.isSafeInteger(length) || length < 1 || length > 16 * 1024 * 1024) throw new Error('DAP 消息长度无效。');
-        if (this.buffer.length < boundary + 4 + length) return;
-        const message = JSON.parse(this.buffer.subarray(boundary + 4, boundary + 4 + length).toString('utf8')) as DapMessage;
-        this.buffer = this.buffer.subarray(boundary + 4 + length);
-        this.receive(message);
+      let offset = 0;
+      while (offset < bytes.length && !this.closed) {
+        if (!this.frame) {
+          // 头部只保留有界片段，正文按已知长度写入一次，避免大变量结果拆包时反复复制全部已收内容。
+          const headerBytes = Buffer.concat([this.buffer, bytes.subarray(offset, offset + 8196 - this.buffer.length)]);
+          const boundary = headerBytes.indexOf('\r\n\r\n');
+          if (boundary < 0) { if (headerBytes.length > 8192) throw new Error('DAP 消息头过长。'); this.buffer = headerBytes; return; }
+          if (boundary > 8192) throw new Error('DAP 消息头过长。');
+          const header = headerBytes.subarray(0, boundary).toString('ascii');
+          const length = Number(/^Content-Length:\s*(\d+)\s*$/im.exec(header)?.[1]);
+          if (!Number.isSafeInteger(length) || length < 1 || length > 16 * 1024 * 1024) throw new Error('DAP 消息长度无效。');
+          offset += boundary + 4 - this.buffer.length;
+          this.buffer = Buffer.alloc(0);
+          this.frame = { body: Buffer.allocUnsafe(length), offset: 0 };
+        }
+        const frame = this.frame;
+        const count = Math.min(frame.body.length - frame.offset, bytes.length - offset);
+        bytes.copy(frame.body, frame.offset, offset, offset + count);
+        frame.offset += count; offset += count;
+        if (frame.offset === frame.body.length) {
+          const message = JSON.parse(frame.body.toString('utf8')) as DapMessage;
+          this.frame = undefined;
+          this.receive(message);
+        }
       }
     } catch (error) { this.dispose(error instanceof Error ? error : new Error(String(error))); }
   };
@@ -86,7 +100,7 @@ export class DapConnection extends EventEmitter {
     this.input.off('data', this.read); this.input.off('end', this.ended); this.input.off('error', this.failed);
     this.output.off('error', this.failed);
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
-    this.pending.clear(); this.buffer = Buffer.alloc(0);
+    this.pending.clear(); this.buffer = Buffer.alloc(0); this.frame = undefined;
     this.emit('close', error); this.input.destroy(); this.output.destroy();
   }
 }
