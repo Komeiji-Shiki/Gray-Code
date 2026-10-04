@@ -16,12 +16,14 @@ interface PendingCall { resolve(value: unknown): void; reject(error: Error): voi
 /** Public asynchronous storage facade; SQLite and compression never run on its caller's thread. */
 export class PlatformStorage {
   private readonly worker: Worker;
+  private readonly exited: Promise<void>;
   private readonly pending = new Map<number, PendingCall>();
   private sequence = 0;
   private closing?: Promise<void>;
   private unavailable?: Error;
   private constructor(public readonly directory: string) {
     this.worker = new Worker(path.join(__dirname, 'storage.worker.cjs'), { workerData: { directory } });
+    this.exited = new Promise(resolve => this.worker.once('exit', () => resolve()));
   }
 
   static async open(directory: string): Promise<PlatformStorage> {
@@ -47,6 +49,10 @@ export class PlatformStorage {
         store.fail(error);
         if (!ready) reject(error);
       });
+    }).catch(async error => {
+      // 初始化失败也要等线程释放数据库句柄，调用方才能立即重试或处理失败的目录。
+      await store.exited;
+      throw error;
     });
     return store;
   }
@@ -147,11 +153,18 @@ export class PlatformStorage {
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
-    if (this.unavailable) return Promise.resolve();
+    if (this.unavailable) return this.exited;
     this.closing = (async () => {
-      const exited = new Promise<void>(resolve => this.worker.once('exit', () => resolve()));
-      await this.request('close', undefined);
-      await exited;
+      try {
+        await this.request('close', undefined);
+        await this.exited;
+      } catch (error) {
+        // 关闭 RPC 失败后不能留下已拒绝新请求、却仍持有数据库的线程。
+        await this.worker.terminate();
+        // 本次仍报告原错；再次退出时线程已释放，可以完成应用的关闭重试。
+        this.closing = this.exited;
+        throw error;
+      }
     })();
     return this.closing;
   }

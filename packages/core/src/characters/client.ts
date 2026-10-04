@@ -13,7 +13,11 @@ export class CharacterEngine {
     return this.evaluate({ type: 'regex', text, rules, context }, signal);
   }
   transformBatch(items: { text: string; context: RegexContext }[], rules: RegexRule[], signal?: AbortSignal): Promise<RegexTransform[]> {
-    if (!rules.length) return Promise.resolve(items.map(item => ({ text: item.text, applied: [], errors: [] })));
+    if (!rules.length) {
+      if (this.closed) return Promise.reject(new Error('角色资源处理器已关闭。'));
+      signal?.throwIfAborted();
+      return Promise.resolve(items.map(item => ({ text: item.text, applied: [], errors: [] })));
+    }
     return this.evaluate({ type: 'regex-batch', items, rules }, signal);
   }
   worldbooks(options: WorldEvaluation, signal?: AbortSignal): Promise<WorldActivation> { return this.evaluate({ type: 'world', options }, signal); }
@@ -27,16 +31,25 @@ export class CharacterEngine {
       let settled = false;
       const finish = (error?: Error, value?: T) => {
         if (settled) return;
-        settled = true; clearTimeout(timer); signal?.removeEventListener('abort', abort); this.active.delete(worker);
-        void worker.terminate(); error ? reject(error) : resolve(value!);
+        settled = true; clearTimeout(timer); signal?.removeEventListener('abort', abort);
+        // 调用完成时名额已释放，调用方可以立即接续下一批，而不会撞上尚在退出的线程。
+        void worker.terminate().then(
+          () => error ? reject(error) : resolve(value!),
+          cause => reject(error ?? cause)
+        );
       };
       const abort = () => finish(new Error('角色资源处理已取消。'));
       const timer = setTimeout(() => finish(new Error('正则或世界书处理超时，请检查复杂表达式。')), this.timeoutMs);
       worker.once('message', message => finish(message.error ? new Error(message.error) : undefined, message.value));
       worker.once('error', finish);
-      worker.once('exit', () => { if (!settled) finish(new Error('角色资源处理器已退出。')); });
+      worker.once('exit', () => {
+        // 收到结果后终止仍是异步的，退出前保留在线程集合中，让 close 等到资源真正释放。
+        this.active.delete(worker);
+        if (!settled) finish(new Error('角色资源处理器已退出。'));
+      });
       signal?.addEventListener('abort', abort, { once: true });
-      if (signal?.aborted) abort(); else worker.postMessage(input);
+      try { if (signal?.aborted) abort(); else worker.postMessage(input); }
+      catch (error) { finish(error as Error); }
     });
   }
   async close(): Promise<void> { this.closed = true; await Promise.all([...this.active].map(worker => worker.terminate())); this.active.clear(); }
