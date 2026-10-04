@@ -62,13 +62,15 @@ function serialize(value: Draft): DebugConfiguration {
 }
 async function saveConfiguration() {
   const workspaceId = state.workspaceId, current = project.value; if (!current) return;
+  const snapshot = JSON.stringify(current.configurations);
   const serialized = current.configurations.map(serialize);
   const saved = await call<DebugWorkspaceState>('debug.configurations.save', { workspaceId, configurations: serialized, expectedRevision: current.revision });
-  current.revision = saved.configurationRevision; current.dirty = false; debugState.settings[workspaceId] = saved;
+  // 保存期间仍允许编辑，回执只能确认点击时的内容，后续输入继续保留未保存标记。
+  current.revision = saved.configurationRevision; current.dirty = JSON.stringify(current.configurations) !== snapshot; debugState.settings[workspaceId] = saved;
 }
 async function action(operation: () => Promise<unknown>) {
-  if (busy.value) return; busy.value = true; error.value = ''; debugState.error = '';
-  try { await operation(); } catch (failure) { error.value = String(failure); } finally { busy.value = false; }
+  if (busy.value) return; const workspaceId = state.workspaceId; busy.value = true; error.value = ''; debugState.error = '';
+  try { await operation(); } catch (failure) { if (!disposed && workspaceId === state.workspaceId) error.value = String(failure); } finally { busy.value = false; }
 }
 async function removeConfiguration() {
   const current = project.value; if (!current) return;
@@ -78,11 +80,12 @@ async function removeConfiguration() {
   catch (error) { current.configurations = before; throw error; }
 }
 async function start() {
-  const current = draft.value; if (!current) return;
+  const current = draft.value, selectedProject = project.value; if (!current || !selectedProject) return;
   const workspaceId = state.workspaceId, configuration = serialize(current);
   await saveConfiguration();
   const result = await call('debug.start', { workspaceId, configuration });
-  debugState.activeId = result.id; project.value.editing = false;
+  if (!selectedProject.dirty) selectedProject.editing = false;
+  if (!disposed && workspaceId === state.workspaceId) debugState.activeId = result.id;
 }
 async function loadSession() {
   const active = session.value, epoch = ++selectionEpoch; ++frameEpoch;

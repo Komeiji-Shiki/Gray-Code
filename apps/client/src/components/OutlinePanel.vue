@@ -8,13 +8,15 @@ interface OutlineEntry { name: string; detail?: string; kind: number; depth: num
 const entries = ref<OutlineEntry[]>([]); const query = ref(''); const notice = ref(''); const busy = ref(false);
 const visible = computed(() => entries.value.filter(entry => `${entry.name} ${entry.detail ?? ''}`.toLowerCase().includes(query.value.trim().toLowerCase())));
 let generation = 0; let timer: ReturnType<typeof setTimeout> | undefined; let requestId: string | undefined;
-function cancel() { generation++; clearTimeout(timer); if (requestId) void call('language.cancel', { requestId }).catch(() => {}); requestId = undefined; }
+function cancel() { generation++; busy.value = false; clearTimeout(timer); if (requestId) void call('language.cancel', { requestId }).catch(() => {}); requestId = undefined; }
 async function refresh() {
   cancel(); const current = generation, doc = props.document;
   if (!doc) { entries.value = []; notice.value = '先打开一个代码文件，再查看其中的符号。'; return; }
   busy.value = true; notice.value = '';
   try {
     await props.flush();
+    // 同步编辑期间可能关闭或切换文件，已取消的请求无需再启动旧文件的语言服务。
+    if (current !== generation) return;
     const ready = await call('language.ensure', { workspaceId: doc.workspaceId, path: doc.path });
     if (current !== generation) return;
     if (!ready.capabilities?.documentSymbolProvider) { entries.value = []; notice.value = '当前语言服务没有提供文件大纲。'; return; }

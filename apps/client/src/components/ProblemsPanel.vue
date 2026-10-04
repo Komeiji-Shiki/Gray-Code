@@ -46,7 +46,9 @@ async function open(uri: string, selection: SourceRange) {
 }
 function fileName(uri: string) { try { return decodeURIComponent(new URL(uri).pathname); } catch { return uri; } }
 const unsubscribe = subscribe(event => {
-  if (event.type === 'language.diagnostics' && event.workspaceId === workspaceId.value) {
+  if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) {
+    void guard(refresh);
+  } else if (event.type === 'language.diagnostics' && event.workspaceId === workspaceId.value) {
     const value = { uri: event.uri, path: event.path, diagnostics: event.diagnostics };
     changedFiles.set(event.uri, { revision: ++revision, value });
     results.value = [...results.value.filter(item => item.uri !== event.uri), value];

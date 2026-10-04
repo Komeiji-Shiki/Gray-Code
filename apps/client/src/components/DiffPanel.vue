@@ -48,6 +48,7 @@ let requestedTarget: DiffTarget | undefined;
 let diffEditor: monaco.editor.IStandaloneDiffEditor | undefined;
 let originalModel: monaco.editor.ITextModel | undefined;
 let proposedModel: monaco.editor.ITextModel | undefined;
+let renderedDiff: Pick<WorkspaceDiff, 'id' | 'path' | 'originalText' | 'proposedText'> | undefined;
 const selected = () => loadedWorkspaceId.value === props.workspaceId
   ? diffs.value.find(diff => diff.id === selectedId.value && diff.workspaceId === props.workspaceId) : undefined;
 function matchesTarget(diff: WorkspaceDiff, target: DiffTarget) {
@@ -90,15 +91,19 @@ async function load() {
 function disposeModels() {
   diffEditor?.setModel(null);
   originalModel?.dispose(); proposedModel?.dispose(); originalModel = undefined; proposedModel = undefined;
+  renderedDiff = undefined;
 }
 function showSelected() {
   const diff = selected();
   if (!diffEditor || !diff) { disposeModels(); diffEditor?.setModel(null); return; }
+  // 列表和审批状态刷新不改变正文时保留模型，避免重新计算差异并重置阅读位置。
+  if (renderedDiff?.id === diff.id && renderedDiff.path === diff.path && renderedDiff.originalText === diff.originalText && renderedDiff.proposedText === diff.proposedText) return;
   disposeModels();
   void ensureEditorLanguage(editorLanguageId(documentLanguageId(diff.path))).catch(cause => { if (selected() === diff) error.value = String(cause); });
   originalModel = monaco.editor.createModel(diff.originalText, undefined, monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/original/' + diff.path }));
   proposedModel = monaco.editor.createModel(diff.proposedText, undefined, monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/proposed/' + diff.path }));
   diffEditor.setModel({ original: originalModel, modified: proposedModel });
+  renderedDiff = { id: diff.id, path: diff.path, originalText: diff.originalText, proposedText: diff.proposedText };
 }
 async function resolve(accepted: boolean) {
   const diff = selected();
@@ -122,8 +127,8 @@ watch(() => [props.workspaceId, props.target] as const, ([workspaceId, target], 
   if (requestedTarget) { selectedId.value = ''; selectTarget(diffs.value); }
   void load();
 }, { immediate: true, flush: 'sync' });
-watch(selectedId, () => { actionError.value = ''; showSelected(); });
-watch(diffs, showSelected, { deep: true });
+watch(selectedId, () => { actionError.value = ''; });
+watch(() => selected(), showSelected);
 onMounted(() => {
   if (panelRoot.value) {
     panelWidth.value = panelRoot.value.getBoundingClientRect().width;

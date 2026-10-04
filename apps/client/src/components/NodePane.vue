@@ -39,9 +39,9 @@ function refresh() {
     } while (again);
   })().finally(() => { pending = undefined; }); return pending;
 }
-async function perform(action: () => Promise<void>) {
+async function perform(action: () => Promise<void>, refreshAfter = true) {
   if (busy.value) return; busy.value = true; error.value = ''; notice.value = '';
-  try { await action(); await refresh(); } catch (cause) { error.value = (cause as Error).message; }
+  try { await action(); if (refreshAfter) await refresh(); } catch (cause) { error.value = (cause as Error).message; }
   finally { busy.value = false; }
 }
 async function save() { await call('nodes.configure', settings); editing.value = false; notice.value = '本机执行入口已保存。'; }
@@ -60,14 +60,14 @@ async function copyInvitation() {
 }
 watch(() => grant.actorId, () => { grant.workspaceIds = []; if (!account.value?.computer) grant.computer = false; invitation.value = undefined; });
 watch(() => peer.value?.id, () => { address.value = peer.value?.address ?? ''; });
-watch(() => props.visible, visible => { if (visible) void perform(async () => { await refresh(); if (!peers.value.length) tab.value = 'pair'; }); }, { immediate: true });
-const off = subscribe(event => { if (props.visible && ['nodes.changed', 'settings.changed'].includes(event.type)) void refresh().catch(cause => { error.value = cause.message; }); });
+watch(() => props.visible, visible => { if (visible) void perform(async () => { await refresh(); if (!peers.value.length) tab.value = 'pair'; }, false); }, { immediate: true });
+const off = subscribe(event => { if (props.visible && (['nodes.changed', 'settings.changed'].includes(event.type) || event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain))) void refresh().catch(cause => { error.value = cause.message; }); });
 onUnmounted(off);
 </script>
 
 <template>
   <section class="node-pane" aria-label="执行设备">
-    <header class="node-header"><div><strong>执行设备</strong><p>把任务交给所选设备，在这里查看结果和操作画面。</p></div><button :disabled="busy" @click="perform(refresh)">刷新</button></header>
+    <header class="node-header"><div><strong>执行设备</strong><p>把任务交给所选设备，在这里查看结果和操作画面。</p></div><button :disabled="busy" @click="perform(refresh, false)">刷新</button></header>
     <div class="node-tabs"><button :class="{active:tab==='tasks'}" @click="tab='tasks'">远端任务</button><button :class="{active:tab==='screen'}" @click="tab='screen'">画面与操作</button><button :class="{active:tab==='pair'}" @click="tab='pair'">配对与权限</button></div>
     <p v-if="error" class="node-error" role="alert">{{ error }}</p><p v-if="notice" class="node-notice" role="status">{{ notice }}</p>
     <div v-if="tab!=='pair'" class="node-target"><label>执行设备<select v-model="selected" aria-label="选择执行设备"><option value="" disabled>请选择已配对设备</option><option v-for="value in peers" :key="value.id" :value="value.id">{{ value.name }} · {{ stateLabel[value.state] }}</option></select></label><span v-if="peer" :class="['node-connection',peer.state]">{{ stateLabel[peer.state] }}<small v-if="peer.capabilities">{{ peer.capabilities.account.displayName }} · {{ peer.capabilities.platform }}</small></span><button v-if="tab==='screen' && peer?.capabilities?.computer" class="node-stop" :disabled="peer.state!=='online'" @click="stopComputer">立即停止电脑操作</button><p v-if="tab==='screen' && stopError" class="node-error">{{ stopError }}</p></div>

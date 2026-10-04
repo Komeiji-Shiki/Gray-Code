@@ -26,13 +26,16 @@ const stagedCount = computed(() => groups.value.find(group => group.id === 'stag
 let refreshEpoch = 0, diffEpoch = 0; let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 async function refresh() {
   const params = context(), key = contextKey(), epoch = ++refreshEpoch;
+  const selected = selection.value, selectedDiffEpoch = diffEpoch;
   if (!params.workspaceId || !params.directory) { status.value = undefined; loading.value = false; return; }
   loading.value = true;
   try {
     const value = await call<GitStatus>('git.status', params);
     if (epoch !== refreshEpoch || key !== contextKey()) return;
     status.value = value; error.value = '';
-    if (selection.value && !value.entries.some(entry => entry.path === selection.value?.path)) { selection.value = undefined; diff.value = ''; }
+    if (selection.value && !value.entries.some(entry => entry.path === selection.value?.path)) { diffEpoch++; selection.value = undefined; diff.value = ''; }
+    // 状态变化后重读当前差异；等待状态期间的新选择已经自行读取，不重复覆盖它。
+    else if (selected && selection.value === selected && diffEpoch === selectedDiffEpoch) await showDiff(selected.path, selected.staged);
   } catch (cause) { if (epoch === refreshEpoch && key === contextKey()) { status.value = undefined; error.value = String(cause); } }
   finally { if (epoch === refreshEpoch) loading.value = false; }
 }
@@ -42,15 +45,13 @@ async function invoke(method: string, input: Record<string, unknown>, success: s
   try {
     await props.flush();
     await call(method, { ...params, ...input });
-    if (key === contextKey()) { await refresh(); notice.value = success; }
+    if (key === contextKey()) { await refresh(); if (key === contextKey()) notice.value = success; }
     return true;
   } catch (cause) { if (key === contextKey()) error.value = String(cause); return false; }
   finally { busy.value = false; }
 }
 async function stage(file: string, staged: boolean) {
-  if (await invoke('git.stage', { path: file, staged }, staged ? '已暂存磁盘中的修改。' : '已取消暂存，工作区文件保留。')) {
-    if (selection.value?.path === file) await showDiff(file, selection.value.staged);
-  }
+  await invoke('git.stage', { path: file, staged }, staged ? '已暂存磁盘中的修改。' : '已取消暂存，工作区文件保留。');
 }
 async function showDiff(file: string, staged: boolean) {
   const key = contextKey(), epoch = ++diffEpoch;
@@ -71,9 +72,9 @@ async function switchBranch(create: boolean) {
   }
 }
 async function save() {
-  if (busy.value) return; busy.value = true; error.value = '';
-  try { await props.saveAll(); await refresh(); notice.value = '已保存打开文件的修改。'; }
-  catch (cause) { error.value = String(cause); }
+  if (busy.value) return; const key = contextKey(); busy.value = true; error.value = '';
+  try { await props.saveAll(); if (key === contextKey()) { await refresh(); if (key === contextKey()) notice.value = '已保存打开文件的修改。'; } }
+  catch (cause) { if (key === contextKey()) error.value = String(cause); }
   finally { busy.value = false; }
 }
 async function openWorktree(entry: GitWorktree, startTask = false) {
@@ -95,10 +96,7 @@ watch(() => props.visible, visible => { clearTimeout(refreshTimer); if (visible)
 const unsubscribe = subscribe(event => {
   if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) {
     clearTimeout(refreshTimer);
-    const selected = selection.value, key = contextKey();
-    if (props.visible) void refresh().then(() => {
-      if (props.visible && key === contextKey() && selected && selection.value === selected) return showDiff(selected.path, selected.staged);
-    });
+    if (props.visible) void refresh();
     return;
   }
   if (['file.changed', 'workspace.git.changed'].includes(event.type) && event.workspaceId === state.workspaceId && props.visible && !busy.value) {
