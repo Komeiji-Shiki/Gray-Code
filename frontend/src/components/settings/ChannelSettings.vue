@@ -30,6 +30,8 @@ const configs = ref<ChannelConfig[]>([])
 const currentConfigId = ref<string>('')
 const isLoading = ref(false)
 const loadError = ref('')
+let disposed = false
+let configLoadGeneration = 0
 
 // 编辑模式
 const isEditing = ref(false)
@@ -429,7 +431,9 @@ async function updateContextManagementMode(_mode: string) {
 }
 
 // 加载配置列表
-async function loadConfigs() {
+async function loadConfigs(): Promise<boolean> {
+  if (disposed) return false
+  const generation = ++configLoadGeneration
   hideApiKey()
   isLoading.value = true
   loadError.value = ''
@@ -443,25 +447,28 @@ async function loadConfigs() {
     if (!Array.isArray(ids)) {
       throw new TypeError('config.listConfigs returned non-array response')
     }
+    if (disposed || generation !== configLoadGeneration) return false
 
-    const loaded: ChannelConfig[] = []
-    for (const id of ids) {
-      const config = await sendToExtension(MESSAGE_NAMES['config.getConfig'], { configId: id })
-      if (config) {
-        loaded.push(config)
-      }
-    }
-
-    configs.value = loaded
+    // 各渠道读取互不依赖，并行等待仍保持列表顺序与整批失败语义。
+    const loaded = await Promise.all(ids.map(id =>
+      sendToExtension<ChannelConfig | null>(MESSAGE_NAMES['config.getConfig'], { configId: id })
+    ))
+    // 页面切走或新刷新已开始时，旧响应不能更新视图和共享缓存。
+    if (disposed || generation !== configLoadGeneration) return false
+    configs.value = loaded.filter((config): config is ChannelConfig => !!config)
     // 成功后同步预加载缓存：切回渠道 tab / 再次打开设置页直接复用，不再重复请求
     setChannelConfigsCache(configs.value)
 
     // 不在这里自动选择配置，让 onMounted 统一处理
+    return true
   } catch (error) {
     console.error('Failed to load configs:', error)
-    loadError.value = error instanceof Error ? error.message : String(error)
+    if (!disposed && generation === configLoadGeneration) {
+      loadError.value = error instanceof Error ? error.message : String(error)
+    }
+    return false
   } finally {
-    isLoading.value = false
+    if (!disposed && generation === configLoadGeneration) isLoading.value = false
   }
 }
 
@@ -660,7 +667,7 @@ async function updateConfigFields(updates: Partial<ChannelConfig>): Promise<bool
 
     // 渠道已切换：跳过本地合并（后端已写入旧渠道，其数据在下次 loadConfigs 时正确；
     // 避免旧渠道的 updates 污染新渠道的本地显示）
-    if (currentConfig.value?.id !== configId) {
+    if (disposed || currentConfig.value?.id !== configId) {
       // 后端已写入旧渠道但本地合并被跳过：共享缓存仍保留编辑前值，失效缓存避免下次挂载读到陈旧数据
       setChannelConfigsCache(null)
       return true
@@ -714,7 +721,7 @@ async function updateConfigField(field: string, value: any) {
     })
 
     // 渠道已切换：跳过本地合并
-    if (currentConfig.value?.id !== configId) {
+    if (disposed || currentConfig.value?.id !== configId) {
       // 同上：失效共享缓存，避免下次挂载读到旧渠道编辑前的陈旧值
       setChannelConfigsCache(null)
       return
@@ -757,7 +764,7 @@ function onRetryIntervalInput(value: string) {
 function syncSelectedConfigId(): void {
   if (chatStore.configId && configs.value.some(c => c.id === chatStore.configId)) {
     currentConfigId.value = chatStore.configId
-  } else if (configs.value.length > 0 && !currentConfigId.value) {
+  } else if (configs.value.length > 0 && !configs.value.some(c => c.id === currentConfigId.value)) {
     // 如果 chatStore 没有配置或配置不存在，才选择第一个
     currentConfigId.value = configs.value[0].id
   }
@@ -766,7 +773,7 @@ function syncSelectedConfigId(): void {
 // 外部批量变更（设置导入等）后重拉：本组件自身的单次编辑已就地刷新，不能重复跑全量请求，
 // 因此只处理不带 configId 的推送（约定见 webview/utils/configChangeNotifier）。
 async function reloadFromExternalChange(): Promise<void> {
-  await loadConfigs()
+  if (!await loadConfigs()) return
   syncSelectedConfigId()
   // 覆盖导入会改变当前使用渠道的内容（url / 模型 / 选项等），chatStore 的渠道快照需一并刷新
   if (chatStore.configId) {
@@ -805,6 +812,8 @@ onMounted(async () => {
       preloadChannelConfigs(),
       loadSummaryHintConfig()
     ])
+    // 异步初始化期间可切换页签，卸载后的实例不得再注册订阅或同步选中态。
+    if (disposed) return
     const cachedConfigs = getChannelConfigsCache()
     if (cachedConfigs === null) {
       await loadConfigs()
@@ -812,8 +821,9 @@ onMounted(async () => {
       configs.value = cachedConfigs
     }
   } finally {
-    isLoading.value = false
+    if (!disposed) isLoading.value = false
   }
+  if (disposed) return
 
   // 优先使用 chatStore 的配置 ID
   syncSelectedConfigId()
@@ -829,10 +839,12 @@ onMounted(async () => {
 
   // 先让初始选中项的监听完成，避免把页面初始化当成用户切换渠道。
   await nextTick()
-  isInitialized.value = true
+  if (!disposed) isInitialized.value = true
 })
 
 onUnmounted(() => {
+  disposed = true
+  configLoadGeneration++
   hideApiKey()
   if (unsubscribeConfigChanged) {
     unsubscribeConfigChanged()
@@ -887,7 +899,7 @@ onUnmounted(() => {
 
     <div v-if="loadError" class="channel-load-error" role="alert">
       <p>{{ t('components.input.channelSetup.error') }} {{ loadError }}</p>
-      <button type="button" class="btn primary" :disabled="isLoading" @click="loadConfigs().then(syncSelectedConfigId)">{{ t('common.retry') }}</button>
+      <button type="button" class="btn primary" :disabled="isLoading" @click="loadConfigs().then(loaded => { if (loaded) syncSelectedConfigId() })">{{ t('common.retry') }}</button>
     </div>
 
     <!-- 配置表单 -->

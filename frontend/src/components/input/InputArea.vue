@@ -94,6 +94,7 @@ const configsLoadError = ref('')
 let configLoadGeneration = 0
 
 const promptModes = ref<PromptMode[]>([])
+let promptModesLoadGeneration = 0
 
 const channelOptions = computed<ChannelOption[]>(() =>
   configs.value
@@ -160,9 +161,11 @@ async function loadConfigs() {
 }
 
 async function loadPromptModes() {
+  const generation = ++promptModesLoadGeneration
   try {
     const result = await configService.getPromptModes()
-    if (result) {
+    // 保存或导入模式可触发连续刷新，迟到结果不能覆盖更新后的模式列表。
+    if (result && generation === promptModesLoadGeneration) {
       promptModes.value = result.modes
       // 动态上下文策略由后端按当前模式/全局配置解析；普通发送不从这里下发覆盖值。
     }
@@ -726,6 +729,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   configLoadGeneration++
+  promptModesLoadGeneration++
   if (unsubscribeAddContext) unsubscribeAddContext()
   if (unsubscribeConfigChanged) unsubscribeConfigChanged()
 })

@@ -773,7 +773,8 @@ watch(
       editorHistory.reset(nodes, getPlainText(nodes).length)
     }
 
-    nextTick(() => adjustHeight())
+    // 输入与撤销路径已安排高度更新，内部回流再次测量会重复触发布局。
+    if (!isInternalEcho) nextTick(() => adjustHeight())
   }
 )
 

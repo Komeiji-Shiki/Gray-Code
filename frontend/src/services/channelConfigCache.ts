@@ -39,7 +39,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   })
 }
 
-/** 拉取完整配置列表：listConfigIds + 逐条 getConfig，单条失败跳过（部分失败语义） */
+/** 拉取完整配置列表：渠道并行读取，单条失败跳过，结果沿用原列表顺序。 */
 async function loadAllConfigs(): Promise<ChannelConfig[]> {
   const ids = await listConfigIds()
   // 非法响应（非数组）按失败处理：抛错使整批预加载失败、缓存保持 null 可重试；
@@ -47,19 +47,16 @@ async function loadAllConfigs(): Promise<ChannelConfig[]> {
   if (!Array.isArray(ids)) {
     throw new TypeError('listConfigIds returned non-array response')
   }
-  const list: ChannelConfig[] = []
-  for (const id of ids) {
+  const list = await Promise.all(ids.map(async id => {
     try {
-      const config = await getConfig(id)
-      if (config) {
-        list.push(config)
-      }
+      return await getConfig(id)
     } catch (error) {
       // 单条配置获取失败不拖垮整批预加载：跳过该项，后续打开设置页仍可看到其余配置
       console.error(`Failed to preload config ${id}:`, error)
+      return null
     }
-  }
-  return list
+  }))
+  return list.filter((config): config is ChannelConfig => !!config)
 }
 
 async function fetchAndCache(): Promise<void> {
