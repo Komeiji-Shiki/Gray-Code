@@ -21,6 +21,7 @@ export class BoundBotService {
   private connectedMessageContent?: boolean;
   private readonly unsubscribe: () => void;
   private starting?: Promise<BotStatus>;
+  private startingEpoch?: number;
   private automatic = false;
   private retryEpoch = 0;
   private retryDelay = 5_000;
@@ -99,7 +100,16 @@ export class BoundBotService {
   protected async interaction(input: BotInteraction): Promise<void> { await input.respond({ content: '当前接入没有操作面板。' }); }
   protected clearInteractions(): void {}
   start(): Promise<BotStatus> { this.cancelAutoRetry(); return this.startAttempt(); }
-  private startAttempt(): Promise<BotStatus> { return this.starting ??= this.connect().finally(() => { this.starting = undefined; this.notifyConnectionChange(); }); }
+  private startAttempt(): Promise<BotStatus> {
+    if (this.starting && this.startingEpoch === this.connectionEpoch) return this.starting;
+    // 停止后立即重连应启动新轮次；旧凭据或网关迟到时，只释放它自己持有的启动状态。
+    const operation = this.connect().finally(() => {
+      if (this.starting === operation) { this.starting = undefined; this.startingEpoch = undefined; }
+      this.notifyConnectionChange();
+    });
+    this.starting = operation; this.startingEpoch = this.connectionEpoch;
+    return operation;
+  }
   private async connect(): Promise<BotStatus> {
     const epoch = this.connectionEpoch + 1;
     await this.disconnect();
@@ -121,7 +131,13 @@ export class BoundBotService {
       if (this.gateway !== gateway || epoch !== this.connectionEpoch) { await gateway.disconnect(); return this.status(); }
       this.connectedMessageContent = allMessages;
       this.current = { status: 'connected', botId: user.id, name: user.name, avatarUrl: user.avatarUrl, controlsReady: user.controlsReady, warning: user.warning };
-      await this.streams.resume(); await this.outbox.flush(); await this.sessions.inbox.resume(this.platform); this.summaries.start(); return this.status();
+      await this.streams.resume();
+      if (epoch !== this.connectionEpoch) return this.status();
+      await this.outbox.flush();
+      if (epoch !== this.connectionEpoch) return this.status();
+      await this.sessions.inbox.resume(this.platform);
+      if (epoch !== this.connectionEpoch) return this.status();
+      this.summaries.start(); return this.status();
     } catch (error) {
       if (epoch !== this.connectionEpoch) return this.status();
       this.gateway = undefined;

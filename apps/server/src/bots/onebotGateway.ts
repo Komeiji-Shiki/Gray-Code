@@ -31,28 +31,37 @@ export class OneBotGateway implements BotGateway {
     });
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return;
+      this.socket = undefined;
       this.failPending(); this.state?.('disconnected');
       if (this.desired && this.botId) this.scheduleReconnect();
     });
-    socket.addEventListener('error', () => { this.state?.('connection_error'); });
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => { socket.close(); reject(new Error('OneBot 连接超时。')); }, 15_000);
-      const finish = (error?: Error) => { clearTimeout(timeout); socket.removeEventListener('open', ready); socket.removeEventListener('error', failed); socket.removeEventListener('close', failed); error ? reject(error) : resolve(); };
-      const ready = () => finish(); const failed = () => finish(new Error('OneBot 连接不可用。'));
-      socket.addEventListener('open', ready, { once: true }); socket.addEventListener('error', failed, { once: true }); socket.addEventListener('close', failed, { once: true });
-    });
-    const login = this.protocol.identity(await this.call(this.protocol.login()));
-    const id = login.id;
-    if (this.botId && this.botId !== id) { this.desired = false; socket.close(); throw new Error('OneBot 登录账号已变化，请手动重新连接。'); }
-    this.botId = id; this.reconnectDelay = 3000; this.state?.('connected');
-    return login;
+    socket.addEventListener('error', () => { if (this.socket === socket) this.state?.('connection_error'); });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => finish(new Error('OneBot 连接超时。')), 15_000);
+        const finish = (error?: Error) => { clearTimeout(timeout); socket.removeEventListener('open', ready); socket.removeEventListener('error', failed); socket.removeEventListener('close', failed); error ? reject(error) : resolve(); };
+        const ready = () => finish(); const failed = () => finish(new Error('OneBot 连接不可用。'));
+        socket.addEventListener('open', ready, { once: true }); socket.addEventListener('error', failed, { once: true }); socket.addEventListener('close', failed, { once: true });
+      });
+      if (!this.desired || this.socket !== socket || socket.readyState !== WebSocket.OPEN) throw new Error('OneBot 连接不可用。');
+      const login = this.protocol.identity(await this.call(this.protocol.login()));
+      // 登录回执与断开通知可以紧邻到达；过期连接不能覆盖后续连接的状态。
+      if (!this.desired || this.socket !== socket || socket.readyState !== WebSocket.OPEN) throw new Error('OneBot 连接不可用。');
+      const id = login.id;
+      if (this.botId && this.botId !== id) { this.desired = false; throw new Error('OneBot 登录账号已变化，请手动重新连接。'); }
+      this.botId = id; this.reconnectDelay = 3000; this.state?.('connected');
+      return login;
+    } catch (error) {
+      if (this.socket === socket) { this.socket = undefined; this.failPending(); }
+      socket.close(); throw error;
+    }
   }
   private scheduleReconnect() {
-    if (!this.desired || this.reconnect) return;
+    if (!this.desired || this.reconnect || this.socket) return;
     this.state?.('reconnecting');
     this.reconnect = setTimeout(() => {
       this.reconnect = undefined;
-      void this.open().catch(() => { this.socket?.close(); this.scheduleReconnect(); });
+      void this.open().catch(() => this.scheduleReconnect());
     }, this.reconnectDelay);
     this.reconnect.unref(); this.reconnectDelay = Math.min(30_000, this.reconnectDelay * 2);
   }
