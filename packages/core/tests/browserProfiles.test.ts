@@ -27,8 +27,10 @@ test.each([undefined, '', ' ', '\t\r\n', '　'])('省略或空白 profileId %j �
 });
 
 test.each(['default:owner', 'owner-work'])('显式账号内配置 %s 仍精确解析', async id => {
-  const { profiles } = fixture();
+  const { profiles, storage } = fixture();
   expect(await profiles.get('owner', id)).toMatchObject({ id, actorId: 'owner' });
+  expect(storage.getRecord).toHaveBeenCalledTimes(1);
+  expect(storage.listRecords).not.toHaveBeenCalled();
 });
 
 test.each(['missing', 'default:guest', 'guest-work', ' default:owner ', ' owner-work '])('显式未知或其他账号配置 %j 不回退到默认配置', async id => {

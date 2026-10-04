@@ -504,7 +504,7 @@ export class DesktopBrowser implements BrowserHost {
     if (name === 'browser_tabs' && args.action === 'create') {
       if (args.url && args.path) throw new Error('url 和 path 只能提供一个。');
       if (args.path && !context.workspace) throw new Error('预览本地文件需要任务绑定工作区。');
-      const tab = await this.create(context.actorId, args.profileId as string | undefined);
+      const tab = await this.create(context.actorId, args.profileId as string | undefined, false, context.signal);
       const signal = this.claim(tab, context);
       if (args.url) await this.navigate(tab, args.url, signal);
       if (args.path) await this.preview(tab, context.workspace!.id, String(args.path), signal);

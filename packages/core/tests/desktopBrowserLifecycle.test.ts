@@ -58,21 +58,39 @@ jest.mock('electron', () => {
   };
 });
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
-function fixture(listRecords = jest.fn(async () => [] as string[])) {
+function fixture() {
   const unsubscribe = jest.fn();
   const app = { actor: () => ({ id: 'owner' }), requireOwner() {}, subscribe: () => unsubscribe,
-    storage: { listRecords, getRecord: jest.fn(), commitRecords: jest.fn(), putRecord: jest.fn() } } as unknown as PlatformApplication;
+    storage: { listRecords: jest.fn(async () => [] as string[]), getRecord: jest.fn(), commitRecords: jest.fn(), putRecord: jest.fn() } } as unknown as PlatformApplication;
   const browser = new DesktopBrowser(app, () => undefined, jest.fn());
   return { browser, unsubscribe, app };
 }
 beforeEach(() => { mockViews.length = 0; mockHosts.length = 0; mockPages.length = 0; mockConnect.mockClear(); });
 
 test('关闭发生在登录配置读取期间时不创建原生网页', async () => {
-  let finish!: (value: string[]) => void;
-  const { browser, unsubscribe } = fixture(jest.fn(() => new Promise<string[]>(resolve => { finish = resolve; })));
+  let finish!: (value: null) => void;
+  const { browser, unsubscribe, app } = fixture();
+  (app.storage.getRecord as jest.Mock).mockImplementationOnce(() => new Promise<null>(resolve => { finish = resolve; }));
   const opening = browser.call('owner', 'browser.newTab', {}); const rejected = expect(opening).rejects.toThrow('浏览器正在关闭');
-  await settle(); browser.close(); finish([]); await rejected;
+  await settle(); browser.close(); finish(null); await rejected;
   expect(mockViews).toHaveLength(0); expect(unsubscribe).toHaveBeenCalledTimes(1);
+});
+
+test('取消正在初始化的工具标签会立即释放页面，不留下空白标签', async () => {
+  const { browser } = fixture();
+  const controller = new AbortController();
+  try {
+    const opening = browser.tool('browser_tabs', { action: 'create' }, {
+      actorId: 'owner', runId: 'cancelled-create', signal: controller.signal,
+    } as ToolContext);
+    const rejected = expect(opening).rejects.toThrow();
+    await settle(); expect(mockViews).toHaveLength(1);
+    controller.abort(new Error('任务已取消。'));
+    expect(mockViews[0].destroyed).toBe(true);
+    mockViews[0].finish(); await rejected;
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect((await browser.state('owner')).tabs).toEqual([]);
+  } finally { browser.close(); }
 });
 
 test('初始网页加载期间关闭宿主后不连接已销毁的页面', async () => {

@@ -15,10 +15,13 @@ export class BrowserProfiles {
     return values.sort((left, right) => Number(right.id === `default:${actorId}`) - Number(left.id === `default:${actorId}`) || left.name.localeCompare(right.name));
   }
   async get(actorId: string, id?: string): Promise<BrowserProfile> {
-    const selectedId = id == null || typeof id === 'string' && !id.trim() ? `default:${actorId}` : id;
-    const value = (await this.list(actorId)).find(item => item.id === selectedId);
-    if (!value) throw new Error('登录配置不存在或不属于当前账号。');
-    return value;
+    const defaultId = `default:${actorId}`;
+    const selectedId = id == null || typeof id === 'string' && !id.trim() ? defaultId : id;
+    // 打开标签只读取选中的配置，避免逐条读取其他账号和未使用的登录配置。
+    const value = await this.app.storage.getRecord(namespace, selectedId) as BrowserProfile | null;
+    if (value?.id === selectedId && value.actorId === actorId) return value;
+    if (selectedId === defaultId) return { id: defaultId, actorId, name: '默认登录配置' };
+    throw new Error('登录配置不存在或不属于当前账号。');
   }
   async create(actorId: string, name: unknown): Promise<BrowserProfile> {
     const value = { id: randomUUID(), actorId, name: this.name(name) };

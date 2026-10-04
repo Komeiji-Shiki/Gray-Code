@@ -13,6 +13,7 @@ function releaseVersion(release: Release): string | null {
 export class DesktopUpdates {
   private status: Record<string, any> = { state: 'idle' };
   private source?: { url: string; version: string };
+  private checking?: { nightly: boolean; promise: Promise<void> };
   constructor(private readonly application: PlatformApplication, private readonly installer?: DesktopInstaller) {}
   private async result() {
     const installation = await this.installer?.status();
@@ -24,9 +25,23 @@ export class DesktopUpdates {
     return this.result();
   }
   async check() {
-    this.source = undefined;
+    const nightly = this.application.product.runtimeSettings().getSettings().updateChannel === 'nightly';
+    if (!this.checking || this.checking.nightly !== nightly) {
+      this.source = undefined;
+      const pending: Promise<void> = this.fetchRelease(nightly).then(result => {
+        // 切换渠道后，旧请求的成功或失败均不能覆盖新请求的状态与安装来源。
+        if (this.checking?.promise !== pending) return;
+        this.status = result.status; this.source = result.source;
+      }).finally(() => { if (this.checking?.promise === pending) this.checking = undefined; });
+      this.checking = { nightly, promise: pending };
+    }
+    // 同一渠道的轮询、手动检查和安装请求复用正在进行的检查。
+    while (this.checking) await this.checking.promise;
+    return this.result();
+  }
+  private async fetchRelease(nightly: boolean): Promise<{ status: Record<string, any>; source?: { url: string; version: string } }> {
+    let source: { url: string; version: string } | undefined;
     try {
-      const nightly = this.application.product.runtimeSettings().getSettings().updateChannel === 'nightly';
       const response = await fetch('https://api.github.com/repos/Komeiji-Shiki/Gray-Code/releases?per_page=30', {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'GrayCode-Desktop' }, signal: AbortSignal.timeout(15000) });
       if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`);
@@ -40,7 +55,7 @@ export class DesktopUpdates {
         return [{ release, version }];
       }).sort((a, b) => compareVersions(b.version, a.version));
       const latest = candidates[0];
-      if (!latest) this.status = { state: 'unavailable', message: '尚未找到当前渠道中版本号明确的独立桌面版发行包。' };
+      if (!latest) return { status: { state: 'unavailable', message: '尚未找到当前渠道中版本号明确的独立桌面版发行包。' } };
       else {
         const { release, version } = latest;
         const manifest = release.assets.find(asset => asset.name === 'releases.win-x64.json');
@@ -48,21 +63,22 @@ export class DesktopUpdates {
           const address = new URL(manifest.browser_download_url);
           if (address.origin === 'https://github.com' && address.pathname.startsWith('/Komeiji-Shiki/Gray-Code/releases/download/')
             && address.pathname.endsWith('/releases.win-x64.json'))
-            this.source = { url: address.href.slice(0, address.href.lastIndexOf('/') + 1), version };
+            source = { url: address.href.slice(0, address.href.lastIndexOf('/') + 1), version };
         }
-        this.status = compareVersions(version, app.getVersion()) > 0
-          ? { state: 'updateAvailable', update: { version, tagName: release.tag_name, name: release.name, body: release.body, manualInstall: !this.source } }
+        const status = compareVersions(version, app.getVersion()) > 0
+          ? { state: 'updateAvailable', update: { version, tagName: release.tag_name, name: release.name, body: release.body, manualInstall: !source } }
           : { state: 'upToDate', message: '未发现版本号更高的独立桌面版发行包。' };
+        return { status, source };
       }
-    } catch (error) { this.status = { state: 'error', message: `桌面更新检查失败：${String(error)}` }; }
-    return this.result();
+    } catch (error) { return { status: { state: 'error', message: `桌面更新检查失败：${String(error)}` } }; }
   }
   async prepare(refresh = false) {
-    if (refresh || this.status.state === 'idle') await this.check();
+    if (refresh || this.status.state === 'idle' || this.checking) await this.check();
     if (this.status.state === 'error') throw new Error(this.status.message);
     if (this.status.state === 'upToDate') return { success: true, alreadyUpToDate: true };
-    if (!this.source || (await this.installer?.status())?.kind !== 'installed') return this.open();
-    return this.installer!.prepare(this.source.url, this.source.version);
+    const source = this.source;
+    if (!source || (await this.installer?.status())?.kind !== 'installed') return this.open();
+    return this.installer!.prepare(source.url, source.version);
   }
   async open() { await shell.openExternal(releasesPage); return { success: true, manual: true, message: '已打开桌面版发布页面，请下载发行包并在退出应用后替换。' }; }
 }

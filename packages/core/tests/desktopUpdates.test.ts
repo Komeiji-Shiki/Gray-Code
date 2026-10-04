@@ -20,6 +20,30 @@ describe('桌面版更新识别', () => {
   afterEach(() => { fetchMock.mockRestore(); jest.clearAllMocks(); });
   const respond = (releases: unknown[]) => fetchMock.mockImplementation(async () => new Response(JSON.stringify(releases)));
 
+  test('并发自动和手动检查复用同一次请求', async () => {
+    let finish!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+    const results = [updates.get(), updates.get(), updates.check()];
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    finish(new Response(JSON.stringify([release('v2.1.0')])));
+    for (const result of await Promise.all(results)) {
+      expect(result.status).toMatchObject({ state: 'updateAvailable', update: { version: '2.1.0' } });
+    }
+  });
+
+  test.each([false, true])('渠道切换后旧请求迟到不会覆盖新结果（旧请求失败=%s）', async fails => {
+    let finish!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+    const previous = updates.check();
+    updateChannel = 'nightly';
+    respond([release('v2.2.0-pre', { prerelease: true })]);
+    expect((await updates.check()).status.update.version).toBe('2.2.0-pre');
+    finish(fails ? new Response('', { status: 503 }) : new Response(JSON.stringify([release('v2.1.0')])));
+    expect((await previous).status).toMatchObject({ state: 'updateAvailable', update: { version: '2.2.0-pre' } });
+    expect((await updates.get()).status.update.version).toBe('2.2.0-pre');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test('同号正式版可更新预览版，构建元数据不影响比较', async () => {
     respond([release('v2.0.0+build.2')]);
     expect((await updates.get()).status).toMatchObject({ state: 'updateAvailable', update: { version: '2.0.0+build.2', tagName: 'v2.0.0+build.2' } });
