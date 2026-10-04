@@ -50,6 +50,7 @@ const current = ref("");
 const pane = ref('empty');
 const diffTarget = ref<{ workspaceId: string; id?: string; path?: string; toolCallId?: string }>();
 let openSequence = 0;
+let disposed = false;
 // 项目切换先使旧打开请求失效，同一事件随后发起的新打开仍能取得焦点。
 watch(() => state.workspaceId, () => { openSequence++; diffTarget.value = undefined; }, { flush: 'sync' });
 const openedPanels = ref<string[]>([]);
@@ -133,7 +134,7 @@ async function saveAll() {
     catch (error) { failures.push({ doc, error }); }
   }
   if (failures.length) {
-    current.value = key(failures[0].doc); pane.value = 'editor'; state.chatFocused = false; state.settingsOpen = false;
+    if (!disposed) { current.value = key(failures[0].doc); pane.value = 'editor'; state.chatFocused = false; state.settingsOpen = false; }
     throw new Error(failures.map(item => `${item.doc.path}: ${item.error instanceof Error ? item.error.message : String(item.error)}`).join('\n'));
   }
 }
@@ -196,7 +197,7 @@ async function copyPath() {
 async function open(path: string, workspaceId = state.workspaceId, selection?: IRange, focus = true) {
   const sequence = focus ? ++openSequence : undefined;
   const intent = focus ? navigate({ workspaceId, tabId: path }) : undefined;
-  const currentIntent = () => sequence === openSequence && intent?.current();
+  const currentIntent = () => !disposed && sequence === openSequence && intent?.current();
   try {
     if (/\.(png|jpe?g|gif|webp|bmp|svg|ico|pdf|mp3|wav|ogg|mp4|webm)$/i.test(path)) {
       await call('browser.openFile', { workspaceId, path }); if (props.compact && focus && currentIntent()) mobileTreeVisible.value = false; return;
@@ -204,6 +205,7 @@ async function open(path: string, workspaceId = state.workspaceId, selection?: I
     let doc = documents.find(item => item.workspaceId === workspaceId && item.path === path);
     if (!doc) {
       const opened = await call<DocumentState>('documents.open', { workspaceId, path });
+      if (disposed) return;
       doc = documents.find(item => key(item) === key(opened));
       if (!doc) { documents.push(opened); doc = documents[documents.length - 1]; synchronizedText.set(doc, { text: doc.text, version: doc.version }); }
     }
@@ -211,7 +213,7 @@ async function open(path: string, workspaceId = state.workspaceId, selection?: I
     if (focus && currentIntent()) { pane.value = 'editor'; openedPanels.value = openedPanels.value.filter(item => item !== 'editor'); if (props.compact) mobileTreeVisible.value = false; if (selection) markdownPreview.value = false; current.value = id; if (selection) selections[id] = { ...selection }; }
     await nextTick();
   } catch (error) {
-    if (!focus || currentIntent()) throw error;
+    if (!disposed && (!focus || currentIntent())) throw error;
   }
 }
 // 聊天仍可保留当前代码标签，发起任务时由核心捕获此客户端的选择。
@@ -237,7 +239,7 @@ function queue(doc: DocumentState, operation: () => Promise<unknown>, isChange =
   const id = key(doc);
   const promise = (queues.get(id) ?? Promise.resolve()).catch(() => undefined).then(operation);
   queues.set(id, promise);
-  void promise.catch(report);
+  void promise.catch(error => { if (!disposed) report(error); });
   return promise;
 }
 const pendingChanges = new PendingDocumentChanges<DocumentState>(
@@ -255,7 +257,10 @@ const pendingChanges = new PendingDocumentChanges<DocumentState>(
     // 基线对不上便自动回退全文比较。记录已超前于本次文本（保存边界冻结了旧快照）时保留原记录，
     // 它的基线不再等于回执后的同步文本，下一次发送同样回退全文比较。
     if (!tracked || tracked.text === text) changeTracks.set(doc, { base: text, text });
-    const result = await call<Pick<DocumentState, 'version' | 'dirty'>>('documents.update', { workspaceId: doc.workspaceId, path: doc.path, ...payload, version: doc.version });
+    const result = await call<Pick<DocumentState, 'version' | 'dirty'>>('documents.update', { workspaceId: doc.workspaceId, path: doc.path, ...payload, version: doc.version }).catch(error => {
+      // 失败时不能确定宿主是否接受了正文；保留草稿，后续保存先核对原基线和版本。
+      recoveringDocuments.add(doc); throw error;
+    });
     synchronizedText.set(doc, { text, version: result.version });
     doc.version = result.version;
     if (doc.text === text) doc.dirty = result.dirty;
@@ -294,7 +299,11 @@ function recoverDocument(doc: DocumentState) {
 async function save(doc: DocumentState) {
   if (!transportConnected) throw new Error(t('connectionTimeout'));
   if (recoveringDocuments.has(doc)) await recoverDocument(doc);
+  const synchronized = flushDocument(doc);
   await queue(doc, async () => {
+    // 保存边界仍在点击时入队；此前的编辑同步失败时，不能继续把宿主旧正文保存为成功。
+    await synchronized;
+    if (!transportConnected) throw new Error(t('connectionTimeout'));
     if (documentConflicts.has(doc)) throw recoveryConflict(doc);
     const result = await call<DocumentState>("documents.save", {
       workspaceId: doc.workspaceId,
@@ -347,23 +356,25 @@ const unsubscribe = subscribe((event) => {
     for (const doc of documents) recoveringDocuments.add(doc);
     void Promise.allSettled(documents.map(recoverDocument)).then(() => {
       const doc = active.value;
-      if (doc && documents.includes(doc) && !closingDocuments.has(doc)) return call('documents.focus', { workspaceId: doc.workspaceId, path: doc.path });
-    }).catch(report);
+      if (!disposed && transportConnected && doc && documents.includes(doc) && !closingDocuments.has(doc) && !recoveringDocuments.has(doc)) return call('documents.focus', { workspaceId: doc.workspaceId, path: doc.path });
+    }).catch(error => { if (!disposed) report(error); });
     return;
   }
   if (event.type === 'desktop.saveAll') {
     void (async () => {
       let error: string | undefined;
-      try { await saveAll(); await call('desktop.dirtyDocuments', { count: documents.filter(doc => doc.dirty).length }); }
-      catch (cause) { error = cause instanceof Error ? cause.message : String(cause); report(cause); }
+      try { await saveAll(); if (!disposed) await call('desktop.dirtyDocuments', { count: documents.filter(doc => doc.dirty).length }); }
+      catch (cause) { error = cause instanceof Error ? cause.message : String(cause); if (!disposed) report(cause); }
       await call('desktop.saveResult', { requestId: event.requestId, participant: 'documents', error });
-    })().catch(report);
+    })().catch(error => { if (!disposed) report(error); });
     return;
   }
   if (event.type === 'document.reset') {
     const doc = documents.find(item => item.workspaceId === event.workspaceId && item.path === event.path);
     if (!doc) return;
-    const newerText = doc.text !== event.previousText;
+    if (typeof event.previousVersion === 'number' && doc.version > event.previousVersion) return;
+    // 输入后撤销回原文字也属于本地编辑，不能仅凭正文相同接受外部重置或删除。
+    const newerText = doc.dirty || doc.text !== event.previousText;
     if (event.document) {
       const previousKey = key(doc); const wasCurrent = current.value === previousKey;
       const text = doc.text;
@@ -374,7 +385,7 @@ const unsubscribe = subscribe((event) => {
         const pending = queues.get(previousKey); queues.delete(previousKey); if (pending) queues.set(key(doc), pending);
         if (selections[previousKey]) { selections[key(doc)] = selections[previousKey]; delete selections[previousKey]; }
       }
-      if (newerText) change(doc, text);
+      if (newerText && text !== doc.text) change(doc, text);
     } else if (!newerText) {
       documents.splice(documents.indexOf(doc), 1);
       if (current.value === key(doc)) current.value = documents.length ? key(documents[0]) : '';
@@ -422,7 +433,7 @@ function projectSearchShortcut(event: KeyboardEvent) {
   }
 }
 window.addEventListener('keydown', projectSearchShortcut);
-onUnmounted(() => { readyWaiters.dispose(); openSequence++; unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
+onUnmounted(() => { disposed = true; readyWaiters.dispose(); openSequence++; unsubscribe(); window.removeEventListener('keydown', projectSearchShortcut); });
 </script>
 <template>
   <section ref="panel" class="workbench side-panel" :class="{ 'tree-hidden': !showingTree || pane !== 'editor', 'tree-resizing': treeResizing, 'compact-workbench': compact }" :style="{ '--tree-width': treeWidth + 'px' }">
