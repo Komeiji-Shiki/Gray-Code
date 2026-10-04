@@ -1,4 +1,4 @@
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolContext, ToolResult } from '../types';
 import { parseArgs } from '../types';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
@@ -47,14 +47,17 @@ async function findInWorkspace(
     maxResults: number,
     includeWorkspacePrefix: boolean,
     page: { remaining: number },
-    includeIgnored: boolean
+    includeIgnored: boolean,
+    signal?: AbortSignal
 ): Promise<FindResult> {
     try {
+        signal?.throwIfAborted();
         // offset 先按宿主发现顺序跳过，再保持旧的页内排序；不能先全局排序，
         // 否则会改变首批结果与已有遍历预算。只统计本页行数，不重读已跳过文件。
         // 多取 1 个仅用于精确判定截断，跨工作区共享剩余 offset。
         const skip = page.remaining;
         const files = await host.findFiles(workspace.uri, pattern, exclude, skip + maxResults + 1, { includeIgnored });
+        signal?.throwIfAborted();
         page.remaining = Math.max(0, skip - files.length);
         const truncated = files.length > skip + maxResults;
         const cappedFiles = files.slice(skip, skip + maxResults);
@@ -62,10 +65,13 @@ async function findInWorkspace(
         // 受控并发：以前用裸 Promise.all 对最多 500 个文件无上限并发全量读取，
         // 同时打开数百文件句柄且内存峰值不可控；行数统计本身也已改为字节流。
         const fileDetails = await mapWithConcurrency(cappedFiles, 8, async (fileUri: FileLocation): Promise<FoundFileDetail> => {
+            signal?.throwIfAborted();
             const relativePath = host.toRelativePath(fileUri, includeWorkspacePrefix);
+            const lineCount = await host.countLines(fileUri, relativePath);
+            signal?.throwIfAborted();
             return {
                 path: relativePath,
-                lineCount: await host.countLines(fileUri, relativePath)
+                lineCount
             };
         });
         fileDetails.sort((a, b) => a.path.localeCompare(b.path));
@@ -81,6 +87,8 @@ async function findInWorkspace(
             truncated
         };
     } catch (error) {
+        // 取消属于当前运行的控制流程，不能当成文件错误继续扫描后续模式或工作区。
+        signal?.throwIfAborted();
         return {
             pattern,
             workspace: includeWorkspacePrefix ? workspace.name : undefined,
@@ -95,7 +103,8 @@ async function findWithPattern(
     exclude: string,
     maxResults: number,
     offset: number,
-    includeIgnored: boolean
+    includeIgnored: boolean,
+    signal?: AbortSignal
 ): Promise<FindResult> {
     const page = { remaining: offset };
     const workspaces = host.getAllWorkspaces();
@@ -109,7 +118,7 @@ async function findWithPattern(
     
     // 单工作区模式
     if (workspaces.length === 1) {
-        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false, page, includeIgnored);
+        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false, page, includeIgnored, signal);
     }
     
     // 多工作区模式：在所有工作区中查找
@@ -119,12 +128,13 @@ async function findWithPattern(
     const workspaceErrors: { workspace: string; error: string }[] = [];
     
     for (const ws of workspaces) {
+        signal?.throwIfAborted();
         // 修改原因：前置 allFiles.length >= maxResults 判断会在「后续工作区可能根本没有匹配文件」
         //           时误报 truncated（恰好累计到 maxResults 条但全库确实只有这么多）。
         // 修改方式：删除前置判断，每个工作区都走 maxResults+1 探测精确判定截断；
         //           remaining<=0 时探测仍能区分「该工作区还有文件（真截断）」与「没有文件（未截断）」。
         const remaining = maxResults - allFiles.length;
-        const result = await findInWorkspace(ws, pattern, exclude, remaining, true, page, includeIgnored);
+        const result = await findInWorkspace(ws, pattern, exclude, remaining, true, page, includeIgnored, signal);
         if (!result.success) {
             // 某根失败不能伪装成「全库无匹配」；保留其他根的结果，但不给出可能漏项的续查游标。
             workspaceErrors.push({ workspace: ws.name, error: result.error || 'File discovery failed' });
@@ -228,7 +238,9 @@ function createFindFilesTool(): Tool {
                 required: ['patterns']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
+            const signal = context?.abortSignal;
+            signal?.throwIfAborted();
             const typed = parseArgs<FindFilesArgs>(args);
             // 支持 patterns 数组或单个 pattern（向后兼容）
             let patternList: string[] = [];
@@ -275,7 +287,8 @@ function createFindFilesTool(): Tool {
             let totalFiles = 0;
 
             for (const pattern of patternList) {
-                const result = await findWithPattern(pattern, exclude, maxResults, offset, includeIgnored);
+                signal?.throwIfAborted();
+                const result = await findWithPattern(pattern, exclude, maxResults, offset, includeIgnored, signal);
                 result.offset = offset;
                 if (result.success && result.truncated) {
                     result.nextOffset = offset + (result.count || 0);

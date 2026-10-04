@@ -16,17 +16,28 @@ export async function mapWithConcurrency<T, R>(
     }
     const results = new Array<R>(items.length);
     let nextIndex = 0;
-    const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 4;
+    const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.max(1, Math.floor(limit)) : 4;
     const runnerCount = Math.min(normalizedLimit, items.length);
+    let failed = false;
+    let firstFailure: unknown;
     const runners = Array.from({ length: runnerCount }, async () => {
-        while (true) {
+        while (!failed) {
             const index = nextIndex++;
             if (index >= items.length) {
                 break;
             }
-            results[index] = await mapper(items[index], index);
+            try {
+                results[index] = await mapper(items[index], index);
+            } catch (error) {
+                // 失败后停止调度，并等待已经开始的读取释放资源，再把首个错误交给调用方。
+                if (!failed) {
+                    failed = true;
+                    firstFailure = error;
+                }
+            }
         }
     });
     await Promise.all(runners);
+    if (failed) throw firstFailure;
     return results;
 }

@@ -29,11 +29,11 @@ export function withLinkedAbort(handler: LinkedAbortHandler): ToolHandler {
         }
 
         if (parentSignal.aborted) {
-            abortController.abort();
+            abortController.abort(parentSignal.reason);
             return handler(args, context, abortController);
         }
 
-        const onParentAbort = () => abortController.abort();
+        const onParentAbort = () => abortController.abort(parentSignal.reason);
         parentSignal.addEventListener('abort', onParentAbort);
         try {
             return await handler(args, context, abortController);
