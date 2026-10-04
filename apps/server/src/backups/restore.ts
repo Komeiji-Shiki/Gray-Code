@@ -81,9 +81,13 @@ export class BackupRestoreState {
     if (state.pending.importPath) await fs.rm(state.pending.importPath, { recursive: true, force: true });
     await this.save({ ...state, pending: undefined });
   }
-  async confirm() {
+  async confirm(expected?: PendingBackupRestore, signal?: AbortSignal) {
     const state = await this.get();
+    signal?.throwIfAborted();
     if (!state.pending) throw new Error('没有准备好的恢复数据。');
+    // 用户确认的是已经展示的计划，对话框期间重新预览或修改选择后需要重新确认。
+    if (expected && (state.pending.id !== expected.id || state.pending.preview?.fingerprint !== expected.preview?.fingerprint
+      || JSON.stringify(state.pending.selection) !== JSON.stringify(expected.selection))) throw new Error('恢复范围在确认期间发生了变化，请重新查看最终预览。');
     if (state.pending.requiresSelection && !state.pending.selection) throw new Error('请先选择恢复范围并查看最终预览。');
     if (state.pending.unavailableCredentials?.length && state.pending.selection?.mode !== 'selective') throw new Error('连接凭据尚不能在当前电脑解密，无法完整恢复。');
     await this.save({ ...state, pending: { ...state.pending, confirmed: true } });

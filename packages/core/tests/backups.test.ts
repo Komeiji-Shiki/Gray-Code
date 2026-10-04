@@ -128,10 +128,25 @@ describe('application data backup and restore', () => {
       const importer = new ApplicationBackups(target, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });
       const preview = await importer.prepareRestore(file, undefined, { previewOnly: true });
       await expect(importer.restore.confirm()).rejects.toThrow('选择恢复范围');
-      await importer.selectRestore({ mode: 'selective', categories: [{ id: 'conversations', conflict: 'replace' }], expectedPreview: preview.pending.preview!.fingerprint });
+      const selected = await importer.selectRestore({ mode: 'selective', categories: [{ id: 'conversations', conflict: 'replace' }], expectedPreview: preview.pending.preview!.fingerprint });
+      await importer.selectRestore({ mode: 'selective', categories: [{ id: 'conversations', conflict: 'keep' }], expectedPreview: preview.pending.preview!.fingerprint });
+      await expect(importer.confirmRestore(selected.pending)).rejects.toThrow('确认期间发生了变化');
+      expect((await importer.restore.get()).pending?.confirmed).not.toBe(true);
+      const current = await importer.selectRestore({ mode: 'selective', categories: [{ id: 'conversations', conflict: 'replace' }], expectedPreview: preview.pending.preview!.fingerprint });
       await target.appendHistory('keep-chat', [message(1, '最终预览后的新消息')]);
       await target.createConversation(metadata('new-after-preview'));
-      await importer.restore.confirm(); await target.close(); await importer.restore.apply();
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>(resolve => { enter = resolve; });
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const original = importer.restore.confirm.bind(importer.restore);
+      const confirm = jest.spyOn(importer.restore, 'confirm').mockImplementation(async (pending, signal) => { enter(); await gate; await original(pending, signal); });
+      const confirming = importer.confirmRestore(current.pending);
+      try {
+        await entered;
+        await expect(importer.previewRestore()).rejects.toThrow('另一个备份或恢复操作');
+      } finally { release(); }
+      await confirming; confirm.mockRestore();
+      await target.close(); await importer.restore.apply();
       target = await PlatformStorage.open(targetPath);
       expect((await target.readHistory('source-chat')).messages[0].parts[0].text).toBe('来源会话');
       expect((await target.searchConversationIds('来源会话')).matches).toEqual([

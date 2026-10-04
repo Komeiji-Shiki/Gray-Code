@@ -34,6 +34,9 @@ export class ApplicationBackups {
   cancel() { this.controller?.abort(new Error('已取消备份操作。')); }
   async close() { this.cancel(); await this.operation?.catch(() => {}); }
   async cancelRestore() { await this.close(); await this.restore.cancel(); }
+  confirmRestore(pending: PendingBackupRestore) {
+    return this.run('restore', signal => this.restore.confirm(pending, signal));
+  }
   private publish(value: BackupProgress) {
     const previous = this.progress; this.progress = value;
     // 完成通知在临时文件清理和忙碌状态解除后发送，窗口关闭策略才能正确判断是否退出。

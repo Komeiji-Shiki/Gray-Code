@@ -497,7 +497,7 @@ async function main(): Promise<void> {
           message: pending.selection?.mode === 'selective' ? '重启并恢复最终预览中的所选数据？' : '重启并应用完整备份？', detail: '当前任务和连接将停止，恢复前的数据目录会完整保留。项目源码不会被替换。',
           buttons: ['重启并恢复', '继续工作'], defaultId: 1, cancelId: 1 });
         if (selected.response !== 0) return { cancelled: true };
-        await backups!.restore.confirm();
+        await backups!.confirmRestore(pending);
         setTimeout(() => { void quit(true).catch(error => dialog.showErrorBox('GrayCode 恢复失败', String(error))); }, 100);
         return { success: true };
       }
