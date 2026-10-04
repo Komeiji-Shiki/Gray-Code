@@ -32,6 +32,22 @@ test('启动和后续文件请求等待编辑器就绪，启动参数的值不�
   await queue.clientReady(); expect(opened).toEqual(['first']);
   queue.suspend(); queue.enqueue(['missing', 'second']); expect(opened).toEqual(['first']);
   await queue.clientReady(); expect(opened).toEqual(['first', 'second']); expect(failures).toHaveBeenCalledTimes(1);
+
+  let entered!: () => void, finish!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { finish = resolve; });
+  const delivered: string[] = [];
+  const reloading = new DesktopOpenFiles(async file => {
+    if (!delivered.length) { entered(); await held; }
+    delivered.push(file);
+  }, failures);
+  reloading.enqueue(['slow', 'next']);
+  const previousPage = reloading.clientReady(); await started;
+  reloading.suspend();
+  const currentPage = reloading.clientReady();
+  finish(); await Promise.all([previousPage, currentPage]);
+  expect(delivered).toEqual(['slow', 'slow', 'next']);
+  expect(failures).toHaveBeenCalledTimes(1);
 });
 
 test('系统打开文件复用最接近的工作区和未保存文档，新目录只注册一次且不创建对话', async () => {

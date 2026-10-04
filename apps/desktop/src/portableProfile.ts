@@ -32,7 +32,15 @@ export class DesktopPortableProfile {
     await this.memories.initialize(application);
   }
 
-  async close(): Promise<void> { await this.memories?.close(); }
+  async close(): Promise<void> {
+    // 保存失败已交给原调用方报告；退出仍须等已受理的写入结束，避免数据库先关闭。
+    for (;;) {
+      const pending = this.queue;
+      await pending.catch(() => {});
+      if (pending === this.queue) break;
+    }
+    await this.memories?.close();
+  }
 
   private async loadSettings(application: PlatformApplication): Promise<void> {
     await mkdir(this.directory, { recursive: true });

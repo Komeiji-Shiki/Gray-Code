@@ -47,18 +47,21 @@ export async function openDesktopPath(app: PlatformApplication, client: ClientSe
 export class DesktopOpenFiles {
   private pending: string[] = [];
   private ready = false;
+  private generation = 0;
   private running?: Promise<void>;
   constructor(private readonly open: (file: string) => Promise<void>, private readonly failure: (file: string, error: unknown) => void) {}
   enqueue(files: string[]): void { this.pending.push(...files); void this.drain(); }
-  suspend(): void { this.ready = false; }
+  suspend(): void { this.ready = false; this.generation++; }
   async clientReady(): Promise<void> { this.ready = true; await this.drain(); }
   private drain(): Promise<void> {
     if (this.running) return this.running;
     if (!this.ready || !this.pending.length) return Promise.resolve();
     this.running = (async () => {
       while (this.ready && this.pending.length) {
-        const file = this.pending.shift()!;
-        try { await this.open(file); } catch (error) { this.failure(file, error); }
+        const file = this.pending[0], generation = this.generation;
+        try { await this.open(file); } catch (error) { if (generation === this.generation) this.failure(file, error); }
+        // 重载期间的事件可能尚无接收者；等新界面就绪后重开同一路径，宿主会复用原文档与草稿。
+        if (generation === this.generation) this.pending.shift();
       }
     })().finally(() => { this.running = undefined; if (this.ready && this.pending.length) void this.drain(); });
     return this.running;
