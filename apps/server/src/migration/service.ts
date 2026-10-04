@@ -495,10 +495,20 @@ export async function convertCheckpoint(
 
 /** 独立宿主迁移组合层：core 只做安全读取/记录，server 注入分支与检查点语义转换。 */
 export class MigrationService {
-  private active?: { id: string; controller: AbortController; status: MigrationStatus; lastPublishedAt: number };
+  private active?: { id: string; controller: AbortController; status: MigrationStatus; lastPublishedAt: number; done: Promise<void> };
+  private closing = false;
   private latestStatus: MigrationStatus = { active: false };
   readonly configurations: ConfigurationMigration;
   constructor(private readonly app: PlatformApplication) { this.configurations = new ConfigurationMigration(app); }
+  async close(): Promise<void> {
+    this.closing = true;
+    const operation = this.active;
+    if (!operation) return;
+    operation.status.state = 'cancelling';
+    operation.controller.abort(new Error('程序正在关闭，已保存的迁移数据可以在再次导入时续传。'));
+    // 迁移的读写和状态收尾先结束，之后宿主才能关闭它使用的服务与存储。
+    await operation.done;
+  }
   cancel(actorId: string) {
     this.app.requireOwner(actorId);
     if (this.active) {
@@ -511,6 +521,7 @@ export class MigrationService {
   status(actorId: string): MigrationStatus { this.app.requireOwner(actorId); return structuredClone(this.active?.status ?? this.latestStatus); }
   start(actorId: string, source: string, options: ServerMigrationOptions = {}): MigrationStatus {
     this.app.requireOwner(actorId);
+    if (this.closing) throw new Error('程序正在关闭，不能启动新的迁移。');
     if (this.active) throw new Error('已有迁移正在执行，请先等待完成或取消。');
     // 核心持有迁移，界面请求只负责启动；长任务不占用设置请求队列。
     void this.importDirectory(actorId, source, options).catch(() => {});
@@ -524,9 +535,12 @@ export class MigrationService {
 
   async importDirectory(actorId: string, source: string, options: ServerMigrationOptions = {}) {
     this.app.requireOwner(actorId);
+    if (this.closing) throw new Error('程序正在关闭，不能启动新的迁移。');
     if (this.active) throw new Error('已有迁移正在执行，请先等待完成或取消。');
     const now = Date.now();
-    const operation = { id: randomUUID(), controller: new AbortController(), lastPublishedAt: 0,
+    let finished!: () => void;
+    const done = new Promise<void>(resolve => { finished = resolve; });
+    const operation = { id: randomUUID(), controller: new AbortController(), lastPublishedAt: 0, done,
       status: { active: true, source, state: 'running', startedAt: now, updatedAt: now } as MigrationStatus };
     operation.status.operationId = operation.id;
     this.active = operation;
@@ -608,6 +622,7 @@ export class MigrationService {
       operation.status.active = false; operation.status.updatedAt = Date.now();
       this.latestStatus = operation.status;
       if (this.active === operation) this.active = undefined;
+      finished();
       this.app.publish({ type: 'migration.progress', ...this.status(actorId) });
     }
   }

@@ -1,4 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { stopOwnedProcess } from '../../../apps/server/src/workspace/processLifecycle';
 import { fixture } from './fixtures';
@@ -31,6 +33,18 @@ test('关闭失败仍清理其他组件，保留存储并只重试失败项', as
 
 test('并发及关闭通知中的重入调用共用同一次清理', async () => {
   app = await PlatformApplication.open({ dataDirectory: f.data, models: model });
+  await fs.mkdir(path.join(f.source, 'dependencies'));
+  await fs.writeFile(path.join(f.source, 'dependencies', 'fixture.txt'), '旧运行资源');
+  let enter!: () => void, release!: () => void, closing!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const migrationClosing = new Promise<void>(resolve => { closing = resolve; });
+  jest.spyOn(app.dependencies, 'importDirectory').mockImplementation(async operation => { enter(); await gate; await operation(); });
+  app.migration.start('owner', f.source);
+  await entered;
+  const closeMigration = app.migration.close.bind(app.migration);
+  const migration = jest.spyOn(app.migration, 'close').mockImplementation(() => { closing(); return closeMigration(); });
+  const storage = jest.spyOn(app.storage, 'close');
   const original = app.screenSense.close.bind(app.screenSense);
   let reentrant: Promise<void> | undefined;
   const screen = jest.spyOn(app.screenSense, 'close').mockImplementation(() => {
@@ -38,7 +52,17 @@ test('并发及关闭通知中的重入调用共用同一次清理', async () =>
   });
   const first = app.close();
   const second = app.close();
+  try {
+    await migrationClosing;
+    expect(app.migration.status('owner').state).toBe('cancelling');
+    expect(screen).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+  } finally { release(); }
   await Promise.all([first, second]);
+  expect(app.migration.status('owner').state).toBe('cancelled');
+  expect(migration).toHaveBeenCalledTimes(1);
+  expect(() => app!.migration.start('owner', f.source)).toThrow('不能启动新的迁移');
+  await expect(app.migration.importDirectory('owner', f.source)).rejects.toThrow('不能启动新的迁移');
   expect(reentrant).toBe(first);
   expect(screen).toHaveBeenCalledTimes(1);
 });

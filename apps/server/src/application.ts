@@ -638,6 +638,7 @@ export class PlatformApplication {
   private async releaseServices(failedStartup: boolean): Promise<void> {
     const services: Array<[string, () => void | Promise<void>]> = [
       // 构造失败时只会取得其中一部分资源；正常启动后的关闭顺序仍保持原有依赖关系。
+      ['旧数据迁移', () => this.migration?.close()],
       ['屏幕感知', () => this.screenSense?.close()],
       ['ChatGPT 授权', () => this.chatgpt?.close()],
       ['桌宠', () => this.pets?.close()],

@@ -64,6 +64,27 @@ describe('legacy history import into platform storage', () => {
     expect(resumed.imported).toEqual(['resume']);
     expect(resumed.issues).toEqual([]);
     expect((await f.store.readHistory('resume', { limit: 1000 })).messages.map(item => item.id)).toEqual(Array.from({ length: 270 }, (_, i) => `message_${i}`));
+    const diffDir = path.join(f.source, 'diffs', 'resume');
+    await fs.mkdir(diffDir, { recursive: true });
+    const artifact = Buffer.from(JSON.stringify({ original: '应保留的旧修改记录' }));
+    for (const id of ['first', 'second']) await fs.writeFile(path.join(diffDir, `${id}.json`), artifact);
+    const controller = new AbortController();
+    const original = f.store.getVersionedRecord.bind(f.store);
+    const reads = jest.spyOn(f.store, 'getVersionedRecord').mockImplementation(async (namespace, id, projection) => {
+      if (namespace === 'legacy-source-artifacts') controller.abort(new Error('取消附属数据迁移'));
+      return original(namespace, id, projection);
+    });
+    try {
+      await expect(importLegacyHistory(f.store, f.source, { signal: controller.signal })).rejects.toThrow('取消附属数据迁移');
+      expect(reads).toHaveBeenCalledTimes(1);
+      expect(await f.store.listRecords('legacy-source-artifacts', 'resume')).toEqual([]);
+      expect(await f.store.listRecords('conversation-diffs', 'resume')).toEqual([]);
+    } finally { reads.mockRestore(); }
+    const artifacts = await importLegacyHistory(f.store, f.source);
+    expect(artifacts.skipped).toEqual(['resume']);
+    expect(artifacts.issues).toEqual([]);
+    expect(artifacts.artifacts?.diffs.sort()).toEqual(['resume:first', 'resume:second']);
+    expect(await fs.readFile(path.join(diffDir, 'first.json'))).toEqual(artifact);
   });
 
   test('rejects malformed history without replacing an existing target or pretending it is empty', async () => {
