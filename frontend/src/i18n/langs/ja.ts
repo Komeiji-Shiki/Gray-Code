@@ -1296,7 +1296,9 @@ const ja: LanguageMessages = {
                 actions: {
                     refresh: '更新',
                     enableAll: 'すべて自動実行',
-                    disableAll: 'すべて確認必要'
+                    disableAll: 'すべて確認必要',
+                    resetAll: 'すべてデフォルトに戻す',
+                    resetDefault: 'デフォルトに戻す'
                 },
                 status: {
                     loading: 'ツールリストを読み込み中...',

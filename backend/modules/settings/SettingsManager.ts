@@ -308,6 +308,13 @@ export class SettingsManager {
     }
 
     /**
+     * 恢复工具的默认确认方式
+     */
+    resetToolAutoExec(toolName: string): Promise<void> {
+        return this.tools.resetToolAutoExec(toolName);
+    }
+
+    /**
      * 批量设置工具自动执行配置
      */
     setToolAutoExecConfig(config: ToolAutoExecConfig): Promise<void> {

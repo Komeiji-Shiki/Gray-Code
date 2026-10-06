@@ -278,9 +278,38 @@ export class ToolsSettingsService {
                 [toolName]: autoExec
             };
             this.core.settings.lastUpdated = Date.now();
-            
+
             await this.core.storage.save(this.core.settings);
-            
+
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'toolAutoExec',
+                oldValue: this.core.cloneConfig(oldConfig),
+                newValue: this.core.cloneConfig(this.core.settings.toolAutoExec),
+                settings: this.core.cloneConfig(this.core.settings)
+            });
+        });
+    }
+
+    /**
+     * 恢复工具的默认确认方式
+     *
+     * 默认配置里的工具写回默认值而不是删除：初始化时默认值会合并进设置，删除后当前进程与重启后的结果会不一致。
+     * 其他工具移除单独设置，回到未配置时的默认行为。
+     *
+     * @param toolName 工具名称
+     */
+    async resetToolAutoExec(toolName: string): Promise<void> {
+        await this.core.serializeMutation(async () => {
+            const oldConfig = { ...this.getToolAutoExecConfig() };
+            const { [toolName]: _configured, ...rest } = this.core.settings.toolAutoExec || {};
+            this.core.settings.toolAutoExec = Object.prototype.hasOwnProperty.call(DEFAULT_TOOL_AUTO_EXEC_CONFIG, toolName)
+                ? { ...rest, [toolName]: DEFAULT_TOOL_AUTO_EXEC_CONFIG[toolName] }
+                : rest;
+            this.core.settings.lastUpdated = Date.now();
+
+            await this.core.storage.save(this.core.settings);
+
             this.core.notifyChange({
                 type: 'tools',
                 path: 'toolAutoExec',

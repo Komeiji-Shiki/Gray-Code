@@ -4,7 +4,7 @@ import { branchRetentionDays, DEFAULT_BRANCH_RETENTION_DAYS } from '../conversat
 import type { ProductSettingsDraft } from '../settings/product';
 import type { PlatformApplication } from '../application';
 import { mcpUiHandlers } from '../mcp/ui';
-import { toolApprovalRules } from '../settings/agent';
+import { toolApprovalConfigured, toolApprovalRules } from '../settings/agent';
 import { getModels } from '../../../../backend/modules/channel/modelList';
 
 type Handler = (data: Record<string, any>) => unknown | Promise<unknown>;
@@ -18,6 +18,9 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     generate_image: () => settings.getGenerateImageConfig(), remove_background: () => settings.getRemoveBackgroundConfig(),
     crop_image: () => settings.getCropImageConfig(), resize_image: () => settings.getResizeImageConfig(), rotate_image: () => settings.getRotateImageConfig(),
   };
+  // 设置页按运行时实际生效的规则显示；risk 表示没有规则，按每次操作的风险决定是否确认。
+  const approvalRules = () => toolApprovalRules(settings, app.tools.names(), app.mcp.names());
+  const approvalState = (name: string, rules = approvalRules()) => ({ approval: rules[name] ?? 'risk', approvalConfigured: toolApprovalConfigured(settings, name) });
   return {
     ...mcpUiHandlers(draft, app),
     'conversation.getBranchRetentionConfig': () => ({ retentionDays: draft.value.branchRetentionDays ?? DEFAULT_BRANCH_RETENTION_DAYS }),
@@ -68,11 +71,11 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     'tools.updateToolConfig': async data => { await settings.updateToolConfig(data.toolName, data.config); return { success: true }; },
     'tools.getMaxToolIterations': () => ({ maxIterations: settings.getMaxToolIterations() }),
     'tools.updateMaxToolIterations': async data => { await settings.setMaxToolIterations(data.maxIterations); for (const agent of draft.app.agents) agent.maxIterations = settings.getMaxToolIterations(); return { success: true }; },
-    'tools.setToolAutoExec': async data => { await settings.setToolAutoExec(data.toolName, data.autoExec); return { success: true }; },
+    'tools.setToolAutoExec': async data => { await settings.setToolAutoExec(data.toolName, data.autoExec); return { success: true, ...approvalState(data.toolName) }; },
+    'tools.resetToolAutoExec': async data => { await settings.resetToolAutoExec(data.toolName); return { success: true, ...approvalState(data.toolName) }; },
     'tools.getTools': () => {
-      // 设置页按运行时实际生效的规则显示；risk 表示未单独设置，按每次操作的风险决定是否确认。
-      const rules = toolApprovalRules(settings, app.tools.names(), app.mcp.names());
-      return { tools: app.tools.declarations().map(tool => ({ ...tool, enabled: settings.isToolEnabled(tool.name), approval: rules[tool.name] ?? 'risk',
+      const rules = approvalRules();
+      return { tools: app.tools.declarations().map(tool => ({ ...tool, enabled: settings.isToolEnabled(tool.name), ...approvalState(tool.name, rules),
         category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files|workspace_files|search_files)$/.test(tool.name) ? 'file'
           : /^(run_command|process_session|execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
             : tool.name.startsWith('memory_') ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'

@@ -56,6 +56,12 @@ export class SettingsTransfer {
     if (exportedFeatures) {
       const { storagePath, ...features } = exportedFeatures;
       await draft.settings.updateSettings(features as Partial<GlobalSettings>); imported.vscodeSettings = true;
+      // 设置项按合并导入，本机多出的键会保留；便携副本是完整配置，另一台机器上已恢复默认的工具确认设置要同步去掉。
+      const toolAutoExec = features.toolAutoExec;
+      if (replaceUserPreferences && toolAutoExec && typeof toolAutoExec === 'object') {
+        for (const name of Object.keys(draft.settings.getScalarSettings('toolAutoExec').toolAutoExec ?? {}))
+          if (!Object.hasOwn(toolAutoExec, name)) await draft.settings.resetToolAutoExec(name);
+      }
     }
     if (data.vscodeSettings && typeof data.vscodeSettings === 'object') {
       const allowed = new Set(['toolsConfig', 'ui', 'toolsEnabled', 'toolAutoExec', 'maxToolIterations', 'defaultToolMode', 'activeChannelId', 'lastReadAnnouncementVersion', 'checkForUpdates', 'updateChannel', 'proxy']);

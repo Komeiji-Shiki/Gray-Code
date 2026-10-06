@@ -5,10 +5,15 @@ import { setLanguage } from '../../../i18n';
 const mocks = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('@/utils/vscode', () => ({ sendToExtension: mocks.send }));
 
-const tool = (name: string, approval?: 'auto' | 'ask' | 'risk') => ({ name, description: name, enabled: true, category: 'other', ...(approval ? { approval } : {}) });
-function respond(tools: unknown[], config: Record<string, boolean>, mcpTools: unknown[] = []) {
-  mocks.send.mockImplementation(async (method: string) => method === 'tools.getTools' ? { tools }
-    : method === 'tools.getMcpTools' ? { tools: mcpTools } : method === 'tools.getAutoExecConfig' ? { config } : { success: true });
+type Approval = 'auto' | 'ask' | 'risk';
+const tool = (name: string, approval?: Approval, approvalConfigured?: boolean) => ({ name, description: name, enabled: true, category: 'other',
+  ...(approval ? { approval, approvalConfigured: approvalConfigured ?? false } : {}) });
+// 模拟独立平台：保存和恢复默认的回执带回最新规则；defaults 是恢复默认后的规则。
+function respond(tools: unknown[], config: Record<string, boolean>, mcpTools: unknown[] = [], defaults: Record<string, Approval> = {}) {
+  mocks.send.mockImplementation(async (method: string, data: { toolName?: string; autoExec?: boolean } = {}) => method === 'tools.getTools' ? { tools }
+    : method === 'tools.getMcpTools' ? { tools: mcpTools } : method === 'tools.getAutoExecConfig' ? { config }
+      : method === 'tools.setToolAutoExec' ? { success: true, approval: data.autoExec ? 'auto' : 'ask', approvalConfigured: true }
+        : method === 'tools.resetToolAutoExec' ? { success: true, approval: defaults[data.toolName!], approvalConfigured: false } : { success: true });
 }
 const row = (wrapper: VueWrapper, name: string) => wrapper.get(`[data-search-tool="${encodeURIComponent(name)}"]`);
 const checked = (wrapper: VueWrapper, name: string) => (row(wrapper, name).get('input[type="checkbox"]').element as HTMLInputElement).checked;
@@ -56,6 +61,25 @@ test('平台内置列表已含的 MCP 工具只显示一行，保留服务器信
     expect(saved()).toEqual([{ toolName: 'mcp__fs__read', autoExec: false }]);
     expect(row(wrapper, 'mcp__fs__read').get('.toggle-label').text()).toBe('需确认');
     expect(checked(wrapper, 'mcp__fs__read')).toBe(false);
+  } finally { wrapper.unmount(); }
+});
+
+test('单独设置过的工具可以恢复默认，全部恢复默认只处理单独设置过的工具', async () => {
+  respond([tool('subagent_requests', 'auto', true), tool('delete_file', 'ask'), tool('run_command', 'ask', true)], { delete_file: false }, [],
+    { subagent_requests: 'risk', run_command: 'risk' });
+  const wrapper = mount(AutoExecSettings); await flushPromises();
+  const resets = () => mocks.send.mock.calls.filter(([method]) => method === 'tools.resetToolAutoExec').map(([, data]) => data);
+  const resetAll = () => wrapper.findAll('.auto-exec-actions .action-btn').find(button => button.text().includes('全部恢复默认'));
+  try {
+    expect(row(wrapper, 'delete_file').find('.reset-btn').exists()).toBe(false);
+    await row(wrapper, 'subagent_requests').get('.reset-btn').trigger('click'); await flushPromises();
+    expect(resets()).toEqual([{ toolName: 'subagent_requests' }]);
+    expect(row(wrapper, 'subagent_requests').get('.toggle-label').text()).toBe('按风险确认');
+    expect(row(wrapper, 'subagent_requests').find('.reset-btn').exists()).toBe(false);
+    await resetAll()!.trigger('click'); await flushPromises();
+    expect(resets()).toEqual([{ toolName: 'subagent_requests' }, { toolName: 'run_command' }]);
+    expect(row(wrapper, 'run_command').get('.toggle-label').text()).toBe('按风险确认');
+    expect(resetAll()).toBeUndefined();
   } finally { wrapper.unmount(); }
 });
 

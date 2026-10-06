@@ -1296,7 +1296,9 @@ const en: LanguageMessages = {
                 actions: {
                     refresh: 'Refresh',
                     enableAll: 'Auto Execute All',
-                    disableAll: 'Confirm All'
+                    disableAll: 'Confirm All',
+                    resetAll: 'Reset All to Default',
+                    resetDefault: 'Reset to default'
                 },
                 status: {
                     loading: 'Loading tools list...',

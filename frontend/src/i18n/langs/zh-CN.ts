@@ -1298,7 +1298,9 @@ const zhCN = {
                 actions: {
                     refresh: '刷新',
                     enableAll: '全部自动执行',
-                    disableAll: '全部需确认'
+                    disableAll: '全部需确认',
+                    resetAll: '全部恢复默认',
+                    resetDefault: '恢复默认'
                 },
                 status: {
                     loading: '加载工具列表...',

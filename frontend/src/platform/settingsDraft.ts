@@ -10,8 +10,10 @@ let discarding = false;
 let localChangeVersion = 0;
 
 function mutationKey(type: string, data: any): string | null {
-  if (!/^(update|set|save|renamePrompt|deletePrompt|createMcp|deleteMcp|mcp\.replaceJson|config\.(create|update|delete)|models\.(add|remove|set)|tools\.(set|update)|conversation\.updateBranchRetentionConfig|settings\.set|checkpoint\.update|subagents\.(create|update|delete)|platform\.(settings|reviewers|modes|development)\.update|platform\.modes\.createCharacterPreset)/.test(type)) return null;
-  return JSON.stringify([type, data?.id, data?.configId, data?.toolName, data?.modeId, data?.mode, data?.updates ? Object.keys(data.updates).sort() : null]);
+  if (!/^(update|set|save|renamePrompt|deletePrompt|createMcp|deleteMcp|mcp\.replaceJson|config\.(create|update|delete)|models\.(add|remove|set)|tools\.(set|update|reset)|conversation\.updateBranchRetentionConfig|settings\.set|checkpoint\.update|subagents\.(create|update|delete)|platform\.(settings|reviewers|modes|development)\.update|platform\.modes\.createCharacterPreset)/.test(type)) return null;
+  // 勾选和恢复默认写同一个工具设置，共用一个键：较晚成功的请求清除较早失败的重试，保存时不会重放旧值。
+  const target = type === 'tools.resetToolAutoExec' ? 'tools.setToolAutoExec' : type;
+  return JSON.stringify([target, data?.id, data?.configId, data?.toolName, data?.modeId, data?.mode, data?.updates ? Object.keys(data.updates).sort() : null]);
 }
 export function trackPreferenceRequest<T>(type: string, data: unknown, request: Promise<T>, retry?: () => Promise<T>): Promise<T> {
   if (type === 'ui.settings.begin') {

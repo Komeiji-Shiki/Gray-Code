@@ -26,9 +26,12 @@ interface ToolInfo {
   serverName?: string
   /** 独立平台返回运行时实际生效的规则；risk 表示未单独设置、按每次操作的风险决定是否确认。旧扩展不提供。 */
   approval?: ToolApproval
+  /** 独立平台返回：用户是否单独设置过，单独设置过的工具可以恢复默认。 */
+  approvalConfigured?: boolean
 }
 
 type ToolApproval = 'auto' | 'ask' | 'risk'
+type ApprovalState = Pick<ToolInfo, 'approval' | 'approvalConfigured'>
 
 // 工具自动执行配置
 interface ToolAutoExecConfig {
@@ -113,28 +116,58 @@ function approvalLabel(tool: ToolInfo): string {
   return approval === 'auto' ? t('components.settings.autoExec.status.autoExecute') : t('components.settings.autoExec.status.needConfirm')
 }
 
+// 独立平台的回执带回该工具最新的规则；旧扩展只回执成功
+function applyApprovalState(tool: ToolInfo, state?: ApprovalState) {
+  if (state?.approval) {
+    tool.approval = state.approval
+  }
+  if (state?.approvalConfigured !== undefined) {
+    tool.approvalConfigured = state.approvalConfigured
+  }
+}
+
 // 切换工具自动执行状态
 async function toggleAutoExec(tool: ToolInfo, autoExec: boolean) {
   const toolName = tool.name
   savingTools.value.add(toolName)
-  
+
   try {
-    await sendToExtension(MESSAGE_NAMES['tools.setToolAutoExec'], {
+    const state = await sendToExtension<ApprovalState | undefined>(MESSAGE_NAMES['tools.setToolAutoExec'], {
       toolName,
       autoExec
     })
-    
-    // 更新本地状态：单独设置后按勾选执行
+
+    // 更新本地状态
     autoExecConfig.value[toolName] = autoExec
-    if (tool.approval) {
-      tool.approval = autoExec ? 'auto' : 'ask'
-    }
+    applyApprovalState(tool, state)
   } catch (error) {
     console.error(`Failed to toggle auto exec for ${toolName}:`, error)
     // 保存失败：恢复原勾选状态（读当前派生值回写，强制受控勾选框回滚到保存前状态）
     autoExecConfig.value[toolName] = isAutoExec(tool)
   } finally {
     savingTools.value.delete(toolName)
+  }
+}
+
+// 恢复默认：去掉单独设置，回到默认规则（多数工具为按风险确认）
+async function resetAutoExec(tool: ToolInfo) {
+  savingTools.value.add(tool.name)
+  try {
+    applyApprovalState(tool, await sendToExtension<ApprovalState>(MESSAGE_NAMES['tools.resetToolAutoExec'], { toolName: tool.name }))
+  } catch (error) {
+    console.error(`Failed to reset auto exec for ${tool.name}:`, error)
+  } finally {
+    savingTools.value.delete(tool.name)
+  }
+}
+
+const hasConfiguredTools = computed(() => tools.value.some(tool => tool.approvalConfigured))
+
+async function resetAllAutoExec() {
+  for (const tool of tools.value) {
+    if (tool.approvalConfigured) {
+      await resetAutoExec(tool)
+    }
   }
 }
 
@@ -212,6 +245,10 @@ onMounted(() => {
         <i class="codicon codicon-shield"></i>
         {{ t('components.settings.autoExec.actions.disableAll') }}
       </button>
+      <button v-if="hasConfiguredTools" class="action-btn" @click="resetAllAutoExec">
+        <i class="codicon codicon-discard"></i>
+        {{ t('components.settings.autoExec.actions.resetAll') }}
+      </button>
     </div>
     
     <!-- 加载状态 -->
@@ -277,6 +314,17 @@ onMounted(() => {
               >
                 {{ approvalLabel(tool) }}
               </span>
+              <button
+                v-if="tool.approvalConfigured"
+                type="button"
+                class="reset-btn"
+                :title="t('components.settings.autoExec.actions.resetDefault')"
+                :aria-label="t('components.settings.autoExec.actions.resetDefault')"
+                :disabled="savingTools.has(tool.name)"
+                @click="resetAutoExec(tool)"
+              >
+                <i class="codicon codicon-discard"></i>
+              </button>
               <CustomCheckbox
                 :modelValue="isAutoExec(tool)"
                 :disabled="savingTools.has(tool.name)"
@@ -556,6 +604,29 @@ onMounted(() => {
 .toggle-label.risk-based {
   color: var(--gc-text-muted);
   cursor: help;
+}
+
+.reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--gc-radius-xs);
+  color: var(--gc-text-muted);
+  cursor: pointer;
+}
+
+.reset-btn:hover:not(:disabled) {
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
+}
+
+.reset-btn .codicon {
+  font-size: 14px;
 }
 
 /* Diff 审阅类工具的状态徽标 */

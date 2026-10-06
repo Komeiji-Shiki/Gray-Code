@@ -319,6 +319,7 @@ export const MESSAGE_NAMES = {
   'tools.getSearchInFilesConfig': 'tools.getSearchInFilesConfig',
   'tools.getToolConfig': 'tools.getToolConfig',
   'tools.getTools': 'tools.getTools',
+  'tools.resetToolAutoExec': 'tools.resetToolAutoExec',
   'tools.setToolAutoExec': 'tools.setToolAutoExec',
   'tools.setToolEnabled': 'tools.setToolEnabled',
   'tools.updateApplyDiffConfig': 'tools.updateApplyDiffConfig',

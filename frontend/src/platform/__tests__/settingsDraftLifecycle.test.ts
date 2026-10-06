@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { defineComponent, h } from 'vue';
 import { sendToExtension } from '../../utils/vscode';
-import { desktopSettingsDraft, trackPreferenceRequest, useDesktopSettingsDraft, markDesktopSettingsDirty, prepareDesktopSettingsNavigation } from '../settingsDraft';
+import { desktopSettingsDraft, trackPreferenceRequest, useDesktopSettingsDraft, markDesktopSettingsDirty, prepareDesktopSettingsNavigation, saveDesktopSettings } from '../settingsDraft';
 vi.mock('@/utils/vscode', () => ({ sendToExtension: vi.fn(async () => ({})) }));
 beforeEach(async () => { await trackPreferenceRequest('ui.settings.end', {}, Promise.resolve({ success: true })); });
 
@@ -11,6 +11,22 @@ test('聊天配置切换不产生设置草稿，进入与结束设置同步真�
   await trackPreferenceRequest('ui.settings.begin', {}, Promise.resolve({ dirty: false })); expect(desktopSettingsDraft.dirty).toBe(false);
   await trackPreferenceRequest('platform.settings.update', {}, Promise.resolve({ success: true })); expect(desktopSettingsDraft.dirty).toBe(true);
   await trackPreferenceRequest('ui.settings.end', {}, Promise.resolve({ success: true })); expect(desktopSettingsDraft.dirty).toBe(false);
+});
+
+test('恢复工具默认确认方式计入设置草稿', async () => {
+  await trackPreferenceRequest('ui.settings.begin', {}, Promise.resolve({ dirty: false }));
+  await trackPreferenceRequest('tools.resetToolAutoExec', { toolName: 'subagent_requests' }, Promise.resolve({ success: true }));
+  expect(desktopSettingsDraft.dirty).toBe(true);
+});
+
+test('同一工具较晚成功的恢复默认会取代较早失败的勾选，保存时不再重放旧请求', async () => {
+  await trackPreferenceRequest('ui.settings.begin', {}, Promise.resolve({ dirty: false }));
+  const retry = vi.fn(async () => ({ success: true }));
+  await trackPreferenceRequest('tools.setToolAutoExec', { toolName: 'run_command', autoExec: true }, Promise.reject(new Error('连接中断')), retry).catch(() => {});
+  await trackPreferenceRequest('tools.resetToolAutoExec', { toolName: 'run_command' }, Promise.resolve({ success: true }));
+  await saveDesktopSettings();
+  expect(retry).not.toHaveBeenCalled();
+  expect(desktopSettingsDraft.error).toBe('');
 });
 
 test('设置初始化较慢时，返回的干净状态不会覆盖已经修改的表单', async () => {
