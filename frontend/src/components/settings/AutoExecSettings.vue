@@ -72,7 +72,13 @@ async function loadData() {
       console.warn('Failed to load MCP tools:', mcpError)
     }
 
-    tools.value = allTools
+    // 独立平台的内置列表已包含已连接的 MCP 工具：同名合并为一行，保留实际规则并补上服务器信息，避免两行状态不一致
+    const byName = new Map<string, ToolInfo>()
+    for (const tool of allTools) {
+      const existing = byName.get(tool.name)
+      byName.set(tool.name, existing ? { ...tool, ...existing } : tool)
+    }
+    tools.value = [...byName.values()]
     
     // 获取自动执行配置
     const configResponse = await sendToExtension<{ config: ToolAutoExecConfig }>(MESSAGE_NAMES['tools.getAutoExecConfig'], {})

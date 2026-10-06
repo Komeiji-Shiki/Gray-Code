@@ -6,9 +6,9 @@ const mocks = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('@/utils/vscode', () => ({ sendToExtension: mocks.send }));
 
 const tool = (name: string, approval?: 'auto' | 'ask' | 'risk') => ({ name, description: name, enabled: true, category: 'other', ...(approval ? { approval } : {}) });
-function respond(tools: unknown[], config: Record<string, boolean>) {
+function respond(tools: unknown[], config: Record<string, boolean>, mcpTools: unknown[] = []) {
   mocks.send.mockImplementation(async (method: string) => method === 'tools.getTools' ? { tools }
-    : method === 'tools.getMcpTools' ? { tools: [] } : method === 'tools.getAutoExecConfig' ? { config } : { success: true });
+    : method === 'tools.getMcpTools' ? { tools: mcpTools } : method === 'tools.getAutoExecConfig' ? { config } : { success: true });
 }
 const row = (wrapper: VueWrapper, name: string) => wrapper.get(`[data-search-tool="${encodeURIComponent(name)}"]`);
 const checked = (wrapper: VueWrapper, name: string) => (row(wrapper, name).get('input[type="checkbox"]').element as HTMLInputElement).checked;
@@ -41,6 +41,21 @@ test('全部需确认同样覆盖按风险确认的工具，已需确认的工�
     await wrapper.findAll('.auto-exec-actions .action-btn')[2].trigger('click'); await flushPromises();
     expect(saved()).toEqual([{ toolName: 'read_file', autoExec: false }, { toolName: 'computer_action', autoExec: false }]);
     expect(row(wrapper, 'read_file').get('.toggle-label').text()).toBe('需确认');
+  } finally { wrapper.unmount(); }
+});
+
+test('平台内置列表已含的 MCP 工具只显示一行，保留服务器信息，切换后状态与规则一致', async () => {
+  const builtin = { ...tool('mcp__fs__read', 'auto'), category: 'mcp' };
+  const mcp = { name: 'mcp__fs__read', description: 'read', enabled: true, category: 'mcp', serverId: 'fs', serverName: '文件服务' };
+  respond([tool('read_file', 'risk'), builtin], {}, [mcp]);
+  const wrapper = mount(AutoExecSettings); await flushPromises();
+  try {
+    expect(wrapper.findAll(`[data-search-tool="${encodeURIComponent('mcp__fs__read')}"]`)).toHaveLength(1);
+    expect(row(wrapper, 'mcp__fs__read').get('.mcp-badge').text()).toBe('文件服务');
+    await row(wrapper, 'mcp__fs__read').get('input[type="checkbox"]').setValue(false); await flushPromises();
+    expect(saved()).toEqual([{ toolName: 'mcp__fs__read', autoExec: false }]);
+    expect(row(wrapper, 'mcp__fs__read').get('.toggle-label').text()).toBe('需确认');
+    expect(checked(wrapper, 'mcp__fs__read')).toBe(false);
   } finally { wrapper.unmount(); }
 });
 
