@@ -1291,7 +1291,7 @@ const en: LanguageMessages = {
                 title: 'Auto Execute',
                 intro: {
                     title: 'Tool Execution Confirmation',
-                    description: 'Configure whether user confirmation is required when AI calls tools. Checked means auto execute (no confirmation needed), unchecked means confirmation required before execution.'
+                    description: 'Configure whether user confirmation is required when AI calls tools. Checked means auto execute (no confirmation needed), unchecked means confirmation required before execution. Tools shown as “By Risk” have no setting of their own and ask only before risky operations.'
                 },
                 actions: {
                     refresh: 'Refresh',
@@ -1302,7 +1302,9 @@ const en: LanguageMessages = {
                     loading: 'Loading tools list...',
                     empty: 'No tools available',
                     autoExecute: 'Auto Execute',
-                    needConfirm: 'Need Confirm'
+                    needConfirm: 'Need Confirm',
+                    riskBased: 'By Risk',
+                    riskBasedTooltip: 'No setting of its own: each operation is judged by its risk. Deleting data, high-risk commands, sending content outside, and administrative operations (such as approving a sub-agent request on your behalf) need confirmation; everything else runs directly. Check to auto execute, or uncheck to confirm every call.'
                 },
                 categories: {
                     file: 'File Operations',

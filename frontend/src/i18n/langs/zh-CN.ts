@@ -1293,7 +1293,7 @@ const zhCN = {
                 title: '自动执行',
                 intro: {
                     title: '工具执行确认',
-                    description: '配置 AI 调用工具时是否需要用户确认。勾选表示自动执行（无需确认），不勾选表示执行前需要用户确认。'
+                    description: '配置 AI 调用工具时是否需要用户确认。勾选表示自动执行（无需确认），不勾选表示执行前需要用户确认；显示“按风险确认”的工具尚未单独设置，只在有风险的操作前确认。'
                 },
                 actions: {
                     refresh: '刷新',
@@ -1304,7 +1304,9 @@ const zhCN = {
                     loading: '加载工具列表...',
                     empty: '暂无可用工具',
                     autoExecute: '自动执行',
-                    needConfirm: '需确认'
+                    needConfirm: '需确认',
+                    riskBased: '按风险确认',
+                    riskBasedTooltip: '尚未单独设置：按每次操作的风险决定。删除数据、高风险命令、向外部发送内容和管理类操作（例如代为批准子代理的请求）需要确认，其余直接执行。勾选后自动执行，取消勾选后每次都需确认。'
                 },
                 categories: {
                     file: '文件操作',

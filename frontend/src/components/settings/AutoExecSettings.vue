@@ -24,7 +24,11 @@ interface ToolInfo {
   category?: string
   serverId?: string
   serverName?: string
+  /** 独立平台返回运行时实际生效的规则；risk 表示未单独设置、按每次操作的风险决定是否确认。旧扩展不提供。 */
+  approval?: ToolApproval
 }
+
+type ToolApproval = 'auto' | 'ask' | 'risk'
 
 // 工具自动执行配置
 interface ToolAutoExecConfig {
@@ -67,7 +71,7 @@ async function loadData() {
     } catch (mcpError) {
       console.warn('Failed to load MCP tools:', mcpError)
     }
-    
+
     tools.value = allTools
     
     // 获取自动执行配置
@@ -82,17 +86,30 @@ async function loadData() {
   }
 }
 
-// 检查工具是否自动执行
-function isAutoExec(toolName: string): boolean {
-  // 如果未配置，默认自动执行
-  if (autoExecConfig.value[toolName] === undefined) {
-    return true
+// 工具当前的确认方式：独立平台以返回的实际规则为准；旧扩展只有自动执行配置，未配置时自动执行
+function approvalOf(tool: ToolInfo): ToolApproval {
+  if (tool.approval) {
+    return tool.approval
   }
-  return autoExecConfig.value[toolName]
+  return autoExecConfig.value[tool.name] === false ? 'ask' : 'auto'
+}
+
+// 检查工具是否自动执行
+function isAutoExec(tool: ToolInfo): boolean {
+  return approvalOf(tool) === 'auto'
+}
+
+function approvalLabel(tool: ToolInfo): string {
+  const approval = approvalOf(tool)
+  if (approval === 'risk') {
+    return t('components.settings.autoExec.status.riskBased')
+  }
+  return approval === 'auto' ? t('components.settings.autoExec.status.autoExecute') : t('components.settings.autoExec.status.needConfirm')
 }
 
 // 切换工具自动执行状态
-async function toggleAutoExec(toolName: string, autoExec: boolean) {
+async function toggleAutoExec(tool: ToolInfo, autoExec: boolean) {
+  const toolName = tool.name
   savingTools.value.add(toolName)
   
   try {
@@ -101,12 +118,15 @@ async function toggleAutoExec(toolName: string, autoExec: boolean) {
       autoExec
     })
     
-    // 更新本地状态
+    // 更新本地状态：单独设置后按勾选执行
     autoExecConfig.value[toolName] = autoExec
+    if (tool.approval) {
+      tool.approval = autoExec ? 'auto' : 'ask'
+    }
   } catch (error) {
     console.error(`Failed to toggle auto exec for ${toolName}:`, error)
     // 保存失败：恢复原勾选状态（读当前派生值回写，强制受控勾选框回滚到保存前状态）
-    autoExecConfig.value[toolName] = isAutoExec(toolName)
+    autoExecConfig.value[toolName] = isAutoExec(tool)
   } finally {
     savingTools.value.delete(toolName)
   }
@@ -118,20 +138,20 @@ async function enableAllAutoExec() {
     if (isDiffReviewTool(tool.name)) {
       continue
     }
-    if (!isAutoExec(tool.name)) {
-      await toggleAutoExec(tool.name, true)
+    if (!isAutoExec(tool)) {
+      await toggleAutoExec(tool, true)
     }
   }
 }
 
-// 全部需要确认（Diff 审阅类工具不受本页控制，跳过）
+// 全部需要确认，包括按风险确认的工具（Diff 审阅类工具不受本页控制，跳过）
 async function disableAllAutoExec() {
   for (const tool of tools.value) {
     if (isDiffReviewTool(tool.name)) {
       continue
     }
-    if (isAutoExec(tool.name)) {
-      await toggleAutoExec(tool.name, false)
+    if (approvalOf(tool) !== 'ask') {
+      await toggleAutoExec(tool, false)
     }
   }
 }
@@ -244,13 +264,17 @@ onMounted(() => {
               </span>
             </div>
             <div v-else class="tool-toggle" :class="{ saving: savingTools.has(tool.name) }">
-              <span class="toggle-label" :class="{ 'auto-exec': isAutoExec(tool.name) }">
-                {{ isAutoExec(tool.name) ? t('components.settings.autoExec.status.autoExecute') : t('components.settings.autoExec.status.needConfirm') }}
+              <span
+                class="toggle-label"
+                :class="{ 'auto-exec': approvalOf(tool) === 'auto', 'risk-based': approvalOf(tool) === 'risk' }"
+                :title="approvalOf(tool) === 'risk' ? t('components.settings.autoExec.status.riskBasedTooltip') : undefined"
+              >
+                {{ approvalLabel(tool) }}
               </span>
               <CustomCheckbox
-                :modelValue="isAutoExec(tool.name)"
+                :modelValue="isAutoExec(tool)"
                 :disabled="savingTools.has(tool.name)"
-                @update:modelValue="(val: boolean) => toggleAutoExec(tool.name, val)"
+                @update:modelValue="(val: boolean) => toggleAutoExec(tool, val)"
               />
             </div>
           </div>
@@ -521,6 +545,11 @@ onMounted(() => {
 
 .toggle-label.auto-exec {
   color: var(--gc-success);
+}
+
+.toggle-label.risk-based {
+  color: var(--gc-text-muted);
+  cursor: help;
 }
 
 /* Diff 审阅类工具的状态徽标 */

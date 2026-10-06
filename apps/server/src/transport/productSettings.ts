@@ -4,6 +4,7 @@ import { branchRetentionDays, DEFAULT_BRANCH_RETENTION_DAYS } from '../conversat
 import type { ProductSettingsDraft } from '../settings/product';
 import type { PlatformApplication } from '../application';
 import { mcpUiHandlers } from '../mcp/ui';
+import { toolApprovalRules } from '../settings/agent';
 import { getModels } from '../../../../backend/modules/channel/modelList';
 
 type Handler = (data: Record<string, any>) => unknown | Promise<unknown>;
@@ -68,11 +69,15 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     'tools.getMaxToolIterations': () => ({ maxIterations: settings.getMaxToolIterations() }),
     'tools.updateMaxToolIterations': async data => { await settings.setMaxToolIterations(data.maxIterations); for (const agent of draft.app.agents) agent.maxIterations = settings.getMaxToolIterations(); return { success: true }; },
     'tools.setToolAutoExec': async data => { await settings.setToolAutoExec(data.toolName, data.autoExec); return { success: true }; },
-    'tools.getTools': () => ({ tools: app.tools.declarations().map(tool => ({ ...tool, enabled: settings.isToolEnabled(tool.name),
-      category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files|workspace_files|search_files)$/.test(tool.name) ? 'file'
-        : /^(run_command|process_session|execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
-          : tool.name.startsWith('memory_') ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'
-            : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) }),
+    'tools.getTools': () => {
+      // 设置页按运行时实际生效的规则显示；risk 表示未单独设置，按每次操作的风险决定是否确认。
+      const rules = toolApprovalRules(settings, app.tools.names(), app.mcp.names());
+      return { tools: app.tools.declarations().map(tool => ({ ...tool, enabled: settings.isToolEnabled(tool.name), approval: rules[tool.name] ?? 'risk',
+        category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files|workspace_files|search_files)$/.test(tool.name) ? 'file'
+          : /^(run_command|process_session|execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
+            : tool.name.startsWith('memory_') ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'
+              : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) };
+    },
     'tools.setToolEnabled': async data => { await settings.setToolEnabled(data.toolName, data.enabled); return { success: true }; },
     'tools.setToolsEnabled': async data => { await settings.setToolsEnabled(data.states); return { success: true }; },
     getSkillsConfig: () => settings.getSkillsConfig(),
