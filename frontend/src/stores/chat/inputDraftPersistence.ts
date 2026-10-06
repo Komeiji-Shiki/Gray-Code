@@ -1,4 +1,5 @@
-import { watch } from 'vue'
+import { toRaw, watch } from 'vue'
+import type { Attachment } from '../../types'
 import type { HostTransport } from '../../utils/hostTransport'
 import type { ChatStoreState, ConversationSessionSnapshot, TabInfo } from './types'
 import { snapshotCurrentSession } from './tabActions'
@@ -42,12 +43,37 @@ export function createInputDraftPersistence(state: ChatStoreState, host: HostTra
     return { version: 1, activeTabId: state.activeTabId.value, drafts }
   }
 
+  // 附件加入输入框后不再修改，内容可能有数 MB：变更检测只比较附件对象，写入时复用按对象缓存的纯数据副本，
+  // 输入文字时不再重复序列化附件内容。
+  const attachmentKeys = new WeakMap<Attachment, number>()
+  const plainAttachments = new WeakMap<Attachment, Attachment>()
+  let nextAttachmentKey = 0
+  function attachmentKey(attachment: Attachment) {
+    const raw = toRaw(attachment)
+    let key = attachmentKeys.get(raw)
+    if (key === undefined) attachmentKeys.set(raw, key = nextAttachmentKey++)
+    return key
+  }
+  function plainAttachment(attachment: Attachment) {
+    const raw = toRaw(attachment)
+    let value = plainAttachments.get(raw)
+    if (!value) plainAttachments.set(raw, value = JSON.parse(JSON.stringify(raw)) as Attachment)
+    return value
+  }
+
   // 同一轮状态变更后立即写入：避开切标签时的中间状态，也不依赖退出事件或延迟定时器。
   // 只跟踪草稿投影，流式消息更新不会反复序列化整段会话。
-  watch(() => JSON.stringify(capture()), serialized => {
+  let captured: InputDraftState
+  watch(() => {
+    captured = capture()
+    return JSON.stringify({ ...captured, drafts: captured.drafts.map(({ tab, input }) =>
+      ({ tab, input: { ...input, attachments: input.attachments.map(attachmentKey) } })) })
+  }, serialized => {
     if (!started) return
+    const inputDrafts = JSON.parse(serialized) as InputDraftState
+    inputDrafts.drafts.forEach((draft, index) => { draft.input.attachments = captured.drafts[index].input.attachments.map(plainAttachment) })
     const previous = host.getState()
-    host.setState({ ...(previous && typeof previous === 'object' ? previous : {}), inputDrafts: JSON.parse(serialized) })
+    host.setState({ ...(previous && typeof previous === 'object' ? previous : {}), inputDrafts })
   })
 
   return {

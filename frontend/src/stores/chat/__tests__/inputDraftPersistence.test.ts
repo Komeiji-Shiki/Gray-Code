@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { effectScope, nextTick } from 'vue'
+import type { Attachment } from '../../../types'
 import type { HostTransport } from '../../../utils/hostTransport'
 import { createChatState } from '../state'
 import { createTab, switchTab } from '../tabActions'
@@ -50,6 +51,23 @@ test('草稿在编辑时保存，未执行卸载也能在新实例恢复文字�
   expect(restarted.state.attachments.value).toEqual(first.state.attachments.value)
   expect(restarted.state.inputValue.value).toBe('还没有写完\n')
   expect(restarted.state.allMessages.value).toEqual([])
+})
+
+test('输入文字时不重新序列化未变化的附件内容，保存的附件仍然完整', async () => {
+  const host = hostState()
+  const first = start(host)
+  let reads = 0
+  const attachment = { id: 'large', name: 'large.png', type: 'image', size: 3, mimeType: 'image/png' } as Attachment
+  Object.defineProperty(attachment, 'data', { enumerable: true, get: () => { reads++; return 'YWJj' } })
+  first.state.attachments.value.push(attachment)
+  await nextTick()
+  const afterAdding = reads
+  for (const text of ['一', '一二', '一二三']) {
+    first.state.inputValue.value = text
+    await nextTick()
+  }
+  expect(reads).toBe(afterAdding)
+  expect(host.getState().inputDrafts.drafts[0].input).toMatchObject({ inputValue: '一二三', attachments: [{ id: 'large', data: 'YWJj' }] })
 })
 
 test('各对话草稿独立保存，切换期间不会把正文写入另一个对话', async () => {
