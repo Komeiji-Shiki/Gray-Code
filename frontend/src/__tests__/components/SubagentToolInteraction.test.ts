@@ -14,7 +14,8 @@ vi.mock('../../utils/vscode', async importOriginal => ({
   sendToExtension: vi.fn(async () => ({ success: true })),
   showNotification: vi.fn(),
 }))
-beforeEach(() => { setActivePinia(createPinia()); setLanguage('zh-CN'); vi.mocked(sendToExtension).mockClear(); vi.stubGlobal('__GRAYCODE_HOST', {}) })
+beforeEach(() => { setActivePinia(createPinia()); setLanguage('zh-CN'); vi.mocked(sendToExtension).mockClear()
+  vi.stubGlobal('__GRAYCODE_HOST', { postMessage: () => {}, getState: () => undefined, setState: () => {} }) })
 afterEach(() => { setLanguage('auto'); vi.unstubAllGlobals() })
 
 test.each([undefined, { success: true, data: { runId: 'actual-child' } }])('桌面子代理标题只展开；只有详情按钮打开面板（result=%j）', async result => {
