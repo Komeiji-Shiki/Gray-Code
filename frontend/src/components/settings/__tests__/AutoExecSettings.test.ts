@@ -83,6 +83,15 @@ test('单独设置过的工具可以恢复默认，全部恢复默认只处理�
   } finally { wrapper.unmount(); }
 });
 
+test('create_plan 默认不在调用前确认，不标为危险工具', async () => {
+  respond([tool('create_plan', 'risk'), tool('delete_file', 'ask')], { delete_file: false });
+  const wrapper = mount(AutoExecSettings); await flushPromises();
+  try {
+    expect(row(wrapper, 'create_plan').find('.danger-badge').exists()).toBe(false);
+    expect(row(wrapper, 'delete_file').find('.danger-badge').exists()).toBe(true);
+  } finally { wrapper.unmount(); }
+});
+
 test('旧扩展不提供规则时沿用自动执行配置，未配置的工具自动执行', async () => {
   respond([tool('read_file'), tool('delete_file')], { delete_file: false });
   const wrapper = mount(AutoExecSettings); await flushPromises();

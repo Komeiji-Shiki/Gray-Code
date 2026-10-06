@@ -195,9 +195,9 @@ async function disableAllAutoExec() {
   }
 }
 
-// 检查工具是否是危险工具（默认需要确认）
+// 检查工具是否是危险工具（默认需要确认）；create_plan 默认不在调用前确认，计划执行由计划卡片确认
 function isDangerousTool(toolName: string): boolean {
-  const dangerousTools = ['delete_file', 'execute_command', 'create_plan']
+  const dangerousTools = ['delete_file', 'execute_command']
   return dangerousTools.includes(toolName)
 }
 
