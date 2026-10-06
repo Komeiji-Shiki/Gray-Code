@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { StoragePathManager, isSameStoragePath } from '../../modules/settings/StoragePathManager';
 import { ActivityStore, toDateStr } from '../../modules/activity/ActivityStore';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 interface TestStorageConfig {
     customDataPath?: string;
@@ -40,7 +41,7 @@ describe('StoragePathManager', () => {
     });
 
     afterEach(async () => {
-        await fs.rm(tempRoot, { recursive: true, force: true });
+        await fs.rm(tempRoot, TEMP_DIR_REMOVE_OPTIONS);
         jest.restoreAllMocks();
     });
 

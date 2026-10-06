@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { writeConfigAtomic } from '../../modules/memory/configFile';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 const fsPromises = require('fs/promises') as typeof import('fs/promises');
 
@@ -11,7 +12,7 @@ describe('记忆文件初始化与配置写入失败', () => {
     beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-persistence-')); });
     afterEach(() => {
         jest.restoreAllMocks();
-        fs.rmSync(directory, { recursive: true, force: true });
+        fs.rmSync(directory, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test.each(['config', 'LOG.txt'])('初始化不能覆盖另一个实例刚创建的 %s', async name => {

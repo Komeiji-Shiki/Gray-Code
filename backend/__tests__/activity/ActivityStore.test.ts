@@ -6,6 +6,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { ActivityStore, toDateStr } from '../../modules/activity/ActivityStore';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 构造某天本地时区 10:00 的时间戳（避开午夜时区边界） */
 function localTime(date: Date, hour = 10, minute = 0): number {
@@ -25,7 +26,7 @@ describe('ActivityStore', () => {
 
     afterEach(async () => {
         jest.restoreAllMocks();
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     describe('toDateStr', () => {

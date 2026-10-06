@@ -41,6 +41,7 @@ import { ChannelError, ErrorType } from '../../modules/channel/types';
 import { rerollStream } from '../../../webview/handlers/ChatHandlers';
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import type { HandlerContext } from '../../../webview/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -86,7 +87,7 @@ describe('BranchService reroll', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
@@ -677,7 +678,7 @@ describe('webview handler：chat.rerollStream（R6a-FIX H1 取消接线）', () 
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('H1：rerollStream 注册 AbortController、透传 abortSignal、结束清理（isActive 生命周期）', async () => {

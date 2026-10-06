@@ -22,6 +22,7 @@ import type { ConversationHistory } from '../../modules/conversation';
 import { BranchService } from '../../modules/conversation/branch/BranchService';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import { BranchError } from '../../modules/conversation/branch/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -45,7 +46,7 @@ describe('BranchService.bindWorkspaceCheckpoint（BCP-02）', () => {
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史（无 sidecar），返回 [userNodeId, modelNodeId] */

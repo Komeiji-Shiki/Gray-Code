@@ -46,6 +46,7 @@ import { registerChatHandlers, editBranchStream } from '../../../webview/handler
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import { createMessageHandlerRegistry } from '../../../webview/handlers';
 import type { HandlerContext, MessageHandler } from '../../../webview/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user q1) → model(a1) → user(q2) → model(a2)（编辑目标 U2 非根节点） */
 function branchedHistory(): ConversationHistory {
@@ -176,7 +177,7 @@ describe('编辑用户消息分支（编排组合）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [U1, M1, U2, M2] */
@@ -592,7 +593,7 @@ describe('webview handler：chat.editBranchStream', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('注册表包含 chat.editBranchStream', () => {
@@ -848,7 +849,7 @@ describe('keep 模式：原地编辑（保持当前分支）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     async function seedConversation(conversationId: string): Promise<string[]> {

@@ -21,6 +21,7 @@ import {
     startMtimeFallbackScanner,
     startUsageDirectoryWatcher
 } from '../../modules/conversation/usageCache';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
@@ -133,7 +134,7 @@ describe('mtime 快照降级扫描（非递归 watcher 兜底）', () => {
     });
 
     afterEach(() => {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('scanConversationMtimes 收集每个对话的最大 mtime，忽略探针目录', async () => {
@@ -187,7 +188,7 @@ describe('startUsageDirectoryWatcher 递归能力探测', () => {
     });
 
     afterEach(() => {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('probeRecursiveWatchSupport 返回布尔且清理探针目录（真实 fs.watch）', async () => {

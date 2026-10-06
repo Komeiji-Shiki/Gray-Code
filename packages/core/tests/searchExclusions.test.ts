@@ -9,13 +9,14 @@ import { createSearchDeclaration } from '../../../backend/tools/search/declarati
 import { createFindFilesRuntime } from '../../../backend/tools/search/findFilesRuntime';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG, DEFAULT_FIND_FILES_CONFIG } from '../../../backend/modules/settings/types';
 import { createGitIgnoreFilter } from '../../../backend/tools/search/gitIgnoreFilter';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 let directory: string;
 beforeEach(async () => {
   await mkdir('.tmp', { recursive: true });
   directory = await mkdtemp(path.resolve('.tmp', 'search-ignore-'));
 });
-afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); });
 async function put(file: string, text = 'needle') {
   await mkdir(path.dirname(path.join(directory, file)), { recursive: true });
   await writeFile(path.join(directory, file), text);

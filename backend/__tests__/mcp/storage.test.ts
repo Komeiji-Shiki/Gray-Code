@@ -126,6 +126,7 @@ import {
     FileSystemMcpStorageAdapter,
     VSCodeFileSystemMcpStorageAdapter,
 } from '../../modules/mcp/storage';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function makeMemento(initial: Record<string, unknown> = {}) {
     const store = new Map<string, unknown>(Object.entries(initial));
@@ -188,7 +189,7 @@ describe('FileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename 原子写 / �
     });
 
     afterEach(async () => {
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('save 后主文件存在且无 .tmp 残留（原子写落盘）', async () => {

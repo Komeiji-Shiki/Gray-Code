@@ -21,6 +21,7 @@ import {
     CL100K_SPECIAL_TOKENS
 } from '../../modules/tokenizer/converters';
 import { TokenizerResourceManager } from '../../modules/tokenizer/TokenizerResourceManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // ==================== 转换纯函数 ====================
 
@@ -93,7 +94,7 @@ describe('TokenizerResourceManager - 缓存命中', () => {
     });
 
     afterEach(() => {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('缓存文件存在且足够大时直接读取，不触发下载', async () => {
@@ -148,7 +149,7 @@ describe('TokenizerResourceManager - 下载转换', () => {
     });
 
     afterEach(() => {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('cl100k：下载文本 → 转换 → 缓存', async () => {

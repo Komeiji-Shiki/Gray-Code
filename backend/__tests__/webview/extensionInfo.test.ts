@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getExtensionVersion } from '../../../webview/utils/extensionInfo';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('getExtensionVersion', () => {
   let tmpDir: string;
@@ -18,7 +19,7 @@ describe('getExtensionVersion', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, TEMP_DIR_REMOVE_OPTIONS);
   });
 
   test('读取 package.json 中的版本号', () => {

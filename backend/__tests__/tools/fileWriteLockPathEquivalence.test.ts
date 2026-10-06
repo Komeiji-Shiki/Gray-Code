@@ -16,6 +16,7 @@ import {
     resolveLockPath,
     type LockHolder
 } from '../../core/fileWriteLockManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 const holderA: LockHolder = { kind: 'subagent', id: 'run_a', label: 'Agent A' };
 const holderB: LockHolder = { kind: 'subagent', id: 'run_b', label: 'Agent B' };
@@ -237,7 +238,7 @@ describe('锁 key 路径等价 - symlink/junction', () => {
 
     afterEach(() => {
         (vscode.workspace as any).workspaceFolders = [];
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        fs.rmSync(tempRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('链接路径与真实路径指向已存在文件时互斥', () => {

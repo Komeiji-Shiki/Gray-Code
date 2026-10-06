@@ -15,6 +15,7 @@ import {
     type RuntimeWorkspaceRoot
 } from '../../modules/checkpoint';
 import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /**
  * CheckpointRestoreEngine 测试
@@ -153,8 +154,8 @@ describe('CheckpointRestoreEngine', () => {
             // 空目录已重建
             await expect(fs.access(path.join(ctx.workspaceDir, 'docs'))).resolves.toBeUndefined();
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -194,8 +195,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(await readWorkspaceFile(ctx, 'a.txt')).toBe('inc a');
             expect(await readWorkspaceFile(ctx, 'b.txt')).toBe('base b');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -232,8 +233,8 @@ describe('CheckpointRestoreEngine', () => {
             // 受保护文件保留
             await expect(fs.access(path.join(ctx.workspaceDir, 'keep.txt'))).resolves.toBeUndefined();
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -265,8 +266,8 @@ describe('CheckpointRestoreEngine', () => {
                 { path: scoped(ctx, 'ghost.txt'), reason: 'missing_in_chain' }
             ]);
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -299,8 +300,8 @@ describe('CheckpointRestoreEngine', () => {
                 reason: 'hash_mismatch'
             });
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -335,8 +336,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(result.success).toBe(true);
             expect(await readWorkspaceFile(ctx, 'legacy.txt')).toBe('legacy content');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -390,8 +391,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(await readWorkspaceFile(ctx, 'a.txt')).toBe('inc a');
             expect(await readWorkspaceFile(ctx, 'b.txt')).toBe('base b');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -432,10 +433,10 @@ describe('CheckpointRestoreEngine', () => {
             await expect(readWorkspaceFile(ctx, 'a.txt')).resolves.toBe('current');
         } finally {
             if (outsideDir) {
-                await fs.rm(outsideDir, { recursive: true, force: true });
+                await fs.rm(outsideDir, TEMP_DIR_REMOVE_OPTIONS);
             }
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -491,8 +492,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(plan2.toDelete).toEqual([scoped(ctx, 'extra-untracked.txt')]);
             expect(plan2.untrackedToDelete).toEqual([]);
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -552,8 +553,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(planFull.deletedInSnapshot).toEqual([scoped(ctx, 'b.txt')]);
             expect(planFull.untrackedToDelete).toEqual([]);
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -600,8 +601,8 @@ describe('CheckpointRestoreEngine', () => {
             await expect(readWorkspaceFile(ctx, 'a.txt')).resolves.toBe('a-v1');
             await expect(readWorkspaceFile(ctx, 'b.txt')).resolves.toBe('b-v1');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -642,8 +643,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(resultConfirmed.success).toBe(true);
             await expect(fs.access(path.join(ctx.workspaceDir, 'newdir'))).rejects.toBeTruthy();
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -676,8 +677,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(result.success).toBe(true);
             expect(await readWorkspaceFile(ctx, 'a.txt')).toBe('backup content');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -717,8 +718,8 @@ describe('CheckpointRestoreEngine', () => {
             await expect(readWorkspaceFile(ctx, 'ghost.txt')).resolves.toBe('user content');
             await expect(readWorkspaceFile(ctx, 'extra.txt')).resolves.toBe('extra');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -750,8 +751,8 @@ describe('CheckpointRestoreEngine', () => {
             await expect(readWorkspaceFile(ctx, 'a.txt')).resolves.toBe('current a');
             await expect(readWorkspaceFile(ctx, 'b.txt')).resolves.toBe('current b');
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -804,8 +805,8 @@ describe('CheckpointRestoreEngine', () => {
             expect(progressCalls.some(([processed]) => processed > 2)).toBe(true);
             expect(progressCalls[progressCalls.length - 1]).toEqual([expectedTotal, expectedTotal]);
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -854,8 +855,8 @@ describe('CheckpointRestoreEngine', () => {
             // 受保护目录下的空目录同样受前缀保护；其余空目录进入 untrackedEmptyDirs
             expect(plan.untrackedEmptyDirs).toEqual([scoped(ctx, 'other-empty')]);
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -901,8 +902,8 @@ describe('CheckpointRestoreEngine', () => {
             await expect(fs.access(path.join(ctx.workspaceDir, 'orphan-dir'))).rejects.toBeTruthy();
             await expect(fs.access(path.join(ctx.workspaceDir, 'extra.txt'))).rejects.toThrow();
         } finally {
-            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
-            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+            await fs.rm(ctx.workspaceDir, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(ctx.checkpointsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

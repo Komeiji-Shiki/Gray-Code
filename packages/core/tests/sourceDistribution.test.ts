@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { distributionSourceNotice } from '../../../shared/distribution';
 import { parseBotAction } from '../../../apps/server/src/bots/sessions';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 const moduleUrl = (name: string) => JSON.stringify(pathToFileURL(path.resolve(`scripts/${name}.mjs`)).href);
 function node(root: string, code: string) {
@@ -66,7 +67,7 @@ test('真实源码归档可核对版本、排除忽略文件，并检测修改�
       createSourcePackage(process.cwd(), {});`)).toThrow('干净源码');
   } finally {
     if (path.dirname(fixture) !== temporary || !path.basename(fixture).startsWith('source-distribution-')) throw new Error('Unsafe fixture path');
-    await rm(fixture, { recursive: true, force: true });
+    await rm(fixture, TEMP_DIR_REMOVE_OPTIONS);
   }
 });
 

@@ -17,6 +17,7 @@ import type { DayActivityFile } from '../../modules/activity/types';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('buildSessions', () => {
     test('returns empty for no samples', () => {
@@ -182,7 +183,7 @@ describe('getActivityStats range handling', () => {
     });
 
     afterEach(async () => {
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('7d range only includes recent days', async () => {

@@ -21,6 +21,7 @@ jest.mock('fs/promises', () => {
 });
 
 import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /**
  * CheckpointIgnoreResolver 测试
@@ -74,7 +75,7 @@ describe('CheckpointIgnoreResolver', () => {
                 'src/main.rs'
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -92,7 +93,7 @@ describe('CheckpointIgnoreResolver', () => {
                 'nested/target/nested.txt'
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -115,7 +116,7 @@ describe('CheckpointIgnoreResolver', () => {
                 'packages/b/foo.txt'
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -131,7 +132,7 @@ describe('CheckpointIgnoreResolver', () => {
                 'src/app.ts'
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -147,7 +148,7 @@ describe('CheckpointIgnoreResolver', () => {
                 'src/app.ts'
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -163,7 +164,7 @@ describe('CheckpointIgnoreResolver', () => {
                 'target/debug/app.exe'
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -201,7 +202,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(byPath['src/app.pyc']).toMatchObject({ reason: 'default', source: 'caches' });
             expect(byPath['dist']).toMatchObject({ reason: 'default', source: 'buildArtifacts', isDirectory: true });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -223,7 +224,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(tracked).toEqual(['debug.log', 'src/main.ts']);
             expect(excluded).toHaveLength(0);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -245,7 +246,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             const excludedPaths = excluded.map(e => e.path);
             expect(excludedPaths).toEqual(['debug.log']);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -269,7 +270,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(byPath['.git']).toMatchObject({ reason: 'forced', source: 'forced' });
             expect(byPath['node_modules']).toMatchObject({ reason: 'forced', source: 'forced' });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -300,7 +301,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
                 isDirectory: true
             });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -326,7 +327,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(byPath['generated']).toMatchObject({ reason: 'gitignore', source: '.gitignore', rule: 'generated/' });
             expect(byPath['secret.tmp']).toMatchObject({ reason: 'custom', source: 'custom', rule: 'secret.tmp' });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -350,7 +351,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(excludedPaths).toContain('other.log');
             expect(excludedPaths).toContain('packages/a/drop.log');
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -379,7 +380,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             await expect(resolver.isIgnored('debug.log')).resolves.toBe(true);
             await expect(resolver.isIgnored('src/main.ts')).resolves.toBe(false);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -396,7 +397,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             const tracked = await listTrackedPaths(rootDir, ['*.tmp']);
             expect(tracked).toEqual(['nested/.gitignore', 'src/main.ts']);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -413,7 +414,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             const tracked = await listTrackedPaths(rootDir, ['!keep.tmp']);
             expect(tracked).toEqual(['nested/.gitignore', 'nested/keep.tmp', 'src/main.ts']);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -434,7 +435,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(tracked).toEqual([]);
             expect(excluded.some(e => e.path === 'data')).toBe(true);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -457,7 +458,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             expect(tracked).not.toContain('data/drop.txt');
             expect(excluded.some(e => e.path === 'data/drop.txt')).toBe(true);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -477,7 +478,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             const blockedEntry = excluded.find(e => e.path === 'blocked');
             expect(blockedEntry).toMatchObject({ reason: 'unreadable', isDirectory: true });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -504,7 +505,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
                 expect(tracked).toEqual(['.Limcode/checkpoints/cp_x/a.txt']);
             }
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -534,7 +535,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
                 expect(tracked).toEqual(['.GIT/HEAD', 'NODE_MODULES/pkg/index.js', 'src/main.ts']);
             }
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -563,7 +564,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             const symlinkEntry = excluded.find(e => e.path === 'alias');
             expect(symlinkEntry).toMatchObject({ reason: 'unsupported_file_type', source: 'filesystem' });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

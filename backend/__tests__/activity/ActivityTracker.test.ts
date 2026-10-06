@@ -11,6 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ActivityTracker } from '../../modules/activity/ActivityTracker';
 import { ActivityStore, toDateStr } from '../../modules/activity/ActivityStore';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 jest.useFakeTimers();
 
@@ -42,7 +43,7 @@ async function settle(): Promise<void> {
 async function removeDir(dir: string): Promise<void> {
     for (let i = 0; i < 10; i++) {
         try {
-            await fs.rm(dir, { recursive: true, force: true });
+            await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
             return;
         } catch {
             await new Promise((r) => setTimeout(r, 50));

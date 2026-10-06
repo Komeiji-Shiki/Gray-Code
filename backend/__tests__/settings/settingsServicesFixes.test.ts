@@ -11,6 +11,7 @@ import { SettingsCore } from '../../modules/settings/SettingsCore';
 import { ProxySettingsService } from '../../modules/settings/ProxySettingsService';
 import { FileSettingsStorage, MemorySettingsStorage } from '../../modules/settings/storage';
 import { PromptSettingsService } from '../../modules/settings/PromptSettingsService';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('ProxySettingsService.updateProxySettings', () => {
     test('首次只设置 URL 不会隐式启用代理', async () => {
@@ -56,7 +57,7 @@ describe('FileSettingsStorage.load', () => {
     });
 
     afterEach(() => {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('文件不存在返回 null（全新安装）', async () => {

@@ -22,6 +22,7 @@ import {
 import type { CheckpointManifest, CheckpointManifestMeta } from '../../modules/checkpoint/types';
 import type { CheckpointRecord } from '../../modules/checkpoint';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 function makeLegacyRecord(overrides: Partial<CheckpointRecord> = {}): CheckpointRecord {
     return {
         id: 'cp-legacy',
@@ -82,7 +83,7 @@ describe('CheckpointManifestRepository', () => {
     });
 
     afterEach(async () => {
-        await fs.rm(storageRoot, { recursive: true, force: true });
+        await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('writeManifest 原子写入：manifest.json（轻量）+ files.json（重量映射）拆分存储（CPF-LAZY-1）', async () => {
@@ -536,7 +537,7 @@ describe('CheckpointManifestRepository', () => {
 
         // 破坏目录结构：删除存档目录并占位同名文件 → mkdir 失败 → writeManifest 抛错
         const dir = path.join(storageRoot, 'checkpoints', 'cp-fail');
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
         await fs.writeFile(dir, 'not a directory', 'utf-8');
 
         await expect(repo.writeManifest('cp-fail', manifest)).rejects.toThrow();
@@ -644,7 +645,7 @@ describe('CheckpointManifestRepository', () => {
         });
 
         afterEach(async () => {
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         });
 
         const cpDir = () => path.join(storageRoot, 'checkpoints', 'cp-pair');

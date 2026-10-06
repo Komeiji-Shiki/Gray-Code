@@ -11,6 +11,7 @@ import {
 } from '../../modules/prompt/PromptManager'
 import { TabInputText, window, workspace } from '../__mocks__/vscode'
 import type { ResolvedPromptModeSnapshot } from '../../modules/settings/types'
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory'
 
 const pinnedMode: ResolvedPromptModeSnapshot = {
     id: 'pinned',
@@ -76,7 +77,7 @@ describe('PromptManager generatePinnedFilesSection（热路径性能修复）', 
         jest.restoreAllMocks()
         jest.useRealTimers()
         clearGlobalContext()
-        fs.rmSync(root, { recursive: true, force: true })
+        fs.rmSync(root, TEMP_DIR_REMOVE_OPTIONS)
     })
 
     function pinnedFile(rel: string): any {

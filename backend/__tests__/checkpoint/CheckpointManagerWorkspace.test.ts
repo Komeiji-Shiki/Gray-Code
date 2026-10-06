@@ -19,6 +19,7 @@ import '../__fixtures__/diffManagerMock';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
 
 import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -143,9 +144,9 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             await expect(fs.access(path.join(backupRoot, rootIdA, 'a.txt'))).resolves.toBeUndefined();
             await expect(fs.access(path.join(backupRoot, rootIdB, 'b.txt'))).resolves.toBeUndefined();
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -173,9 +174,9 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             await expect(fs.readFile(path.join(rootA, 'a.txt'), 'utf-8')).resolves.toBe('a1\n');
             await expect(fs.readFile(path.join(rootB, 'b.txt'), 'utf-8')).resolves.toBe('b1\n');
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -202,9 +203,9 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             const entries = await fs.readdir(rootB);
             expect(entries).toHaveLength(0);
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -226,7 +227,7 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             expect(keys.some(k => k.includes('.limcode-storage'))).toBe(false);
             expect(keys.some(k => k.endsWith('/app.txt'))).toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -263,9 +264,9 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             expect(result.success).toBe(false);
             expect(result.error).toBeDefined();
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -307,8 +308,8 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'tracked.txt'), 'utf-8')).resolves.toBe('target\n');
             await expect(fs.readFile(path.join(workspaceRoot, 'unbacked.txt'), 'utf-8')).resolves.toBe('keep me\n');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -337,9 +338,9 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             expect(keys.some(k => k.endsWith('/b.txt'))).toBe(true);
             expect(keys.some(k => k.endsWith('/a.txt'))).toBe(false);
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -372,9 +373,9 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             expect(result.success).toBe(false);
             expect(result.error).toBeDefined();
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -414,8 +415,8 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'keep.txt'), 'utf-8')).resolves.toBe('user file\n');
             await expect(fs.readFile(path.join(workspaceRoot, 'restore.txt'), 'utf-8')).resolves.toBe('restored\n');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -456,8 +457,8 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             expect(result.error).toBeDefined();
             expect(result.error!.length).toBeGreaterThan(0);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

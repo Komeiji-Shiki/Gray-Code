@@ -13,6 +13,7 @@ import {
     getGlobalActivityTracker,
     toDateStr
 } from '../../modules/activity';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function localTime(date: Date, hour = 10, minute = 0): number {
     const d = new Date(date);
@@ -47,7 +48,7 @@ describe('get_activity_stats tool', () => {
 
     afterEach(async () => {
         setGlobalActivityTracker(null);
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('returns error when tracker is not initialized', async () => {
@@ -136,7 +137,7 @@ describe('get_activity_stats tool', () => {
             expect(data.today.sessionsOmitted).toBe(6);
         } finally {
             setGlobalActivityTracker({ getStore: () => store } as any);
-            await fs.rm(manyDir, { recursive: true, force: true });
+            await fs.rm(manyDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 

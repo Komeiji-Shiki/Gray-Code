@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SkillsManager } from '../../modules/skills/SkillsManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function writeSkill(dir: string, id: string, description = 'test skill'): string {
     const skillDir = path.join(dir, id);
@@ -35,7 +36,7 @@ describe('SkillsManager.refresh', () => {
     });
 
     afterEach(() => {
-        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(root, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('refresh 后已删除的 skill 不再视为启用，仍存在的保留启用状态', async () => {
@@ -52,7 +53,7 @@ describe('SkillsManager.refresh', () => {
         expect(manager.isSkillEnabled('bar')).toBe(true);
 
         // 磁盘删除 bar 后 refresh
-        fs.rmSync(path.join(projectSkills, 'bar'), { recursive: true, force: true });
+        fs.rmSync(path.join(projectSkills, 'bar'), TEMP_DIR_REMOVE_OPTIONS);
         await manager.refresh();
 
         expect(manager.getSkill('bar')).toBeUndefined();

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { UpdateManager } from 'velopack';
 import { DesktopInstaller, confirmInstalledRecovery } from '../../../apps/desktop/src/installer';
 import { BackupRestoreState } from '../../../apps/server/src/backups/restore';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 jest.mock('velopack', () => ({ UpdateManager: jest.fn() }));
 
@@ -50,7 +51,7 @@ describe('安装版更新与配套数据回退', () => {
     };
     installer = new DesktopInstaller(options);
   });
-  afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  afterEach(async () => { await fs.rm(root, TEMP_DIR_REMOVE_OPTIONS); });
 
   test('校验失败只移除坏的下载缓存，当前安装和数据保持可用', async () => {
     downloadBytes = Buffer.from('corrupt');

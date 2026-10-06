@@ -6,6 +6,7 @@ import type { ToolContext } from '../src/runtime/tools';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { languageTools } from '../../../apps/server/src/development/tools';
 import { createGetSymbolsToolDeclaration } from '../../../backend/tools/lsp/declarations';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 function documentSymbol(name: string, kind: DocumentSymbol['kind'], start: number, end: number, children: DocumentSymbol[] = [], column = 0): DocumentSymbol {
   return { name, kind, range: { start: { line: start - 1, character: column }, end: { line: end - 1, character: column + 1 } },
@@ -30,7 +31,7 @@ beforeEach(async () => {
     workspace: { id: 'project', name: 'project', directory, deviceId: 'local' }, askUser: jest.fn(), progress: jest.fn() };
   provider.mockReset();
 });
-afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); });
 
 test('平台默认简洁提纲只返回顶层；隐藏的子树不是500预算截断', async () => {
   provider.mockResolvedValue([

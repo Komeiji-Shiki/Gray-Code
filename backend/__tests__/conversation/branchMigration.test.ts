@@ -25,6 +25,7 @@ import {
     unregisterBranchMigration,
 } from '../../modules/conversation/branch/BranchMigration';
 import { BranchError, ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function node(id: string, parentId: string | null, overrides: Partial<ConversationBranchNode> = {}): ConversationBranchNode {
     return {
@@ -187,7 +188,7 @@ describe('BranchGraphRepository.migrate 集成', () => {
 
     afterEach(async () => {
         unregisterBranchMigration(1);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('sidecar 版本落后 → 迁移并原子保存（saved=true），重新读取为最新版本', async () => {

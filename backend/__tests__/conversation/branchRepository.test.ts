@@ -12,6 +12,7 @@ import * as path from 'path';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import { createEmptyBranchGraph, insertNode, rerollCandidate } from '../../modules/conversation/branch/BranchGraph';
 import type { ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function node(id: string, parentId: string | null, overrides: Partial<ConversationBranchNode> = {}): ConversationBranchNode {
     return {
@@ -44,7 +45,7 @@ describe('BranchGraphRepository sidecar 读写', () => {
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('路径遵循会话目录约定 conversations/{id}/branches.json', () => {

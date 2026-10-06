@@ -25,6 +25,7 @@ import type { IntegrityReport } from '../../tools/maintenance/integrityCheck';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import { createEmptyBranchGraph, insertNode } from '../../modules/conversation/branch/BranchGraph';
 import type { ConversationBranchNode } from '../../modules/conversation/branch/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // ==================== vscode mock 补齐 ====================
 // backend/__tests__/__mocks__/vscode.ts 只 mock 了 commands.executeCommand，
@@ -143,7 +144,7 @@ describe('registerMaintenanceCommands (MIG-05)', () => {
             expect(all).toContain('结果: 未发现问题');
             disposable.dispose();
         } finally {
-            await fsp.rm(baseDir, { recursive: true, force: true });
+            await fsp.rm(baseDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -179,7 +180,7 @@ describe('registerMaintenanceCommands (MIG-05)', () => {
             await handler(['conv-a']);
             expect(outputChannel.lines.join('\n')).not.toContain('HISTORY_SEGMENT_COUNT_MISMATCH');
         } finally {
-            await fsp.rm(baseDir, { recursive: true, force: true });
+            await fsp.rm(baseDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -221,7 +222,7 @@ describe('registerMaintenanceCommands (MIG-05)', () => {
             await handler();
             expect(branchValidator).toHaveBeenCalledWith('conv-a');
         } finally {
-            await fsp.rm(baseDir, { recursive: true, force: true });
+            await fsp.rm(baseDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

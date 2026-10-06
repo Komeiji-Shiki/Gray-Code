@@ -12,6 +12,7 @@ import { createFindFilesRuntime } from '../../../backend/tools/search/findFilesR
 import { createListFilesTool } from '../../../backend/tools/file/listFilesRuntime';
 import { createReadFileTool } from '../../../backend/tools/file/readFileRuntime';
 import { MAX_LINE_COUNT_FILE_BYTES } from '../../../backend/tools/shared/fileSizeGuards';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 let directory: string;
 let files: WorkspaceFiles;
@@ -37,7 +38,7 @@ beforeEach(async () => {
   host = new NodeFileHost(app, context);
   workspaceFileTool = workspaceTools(files, {} as any, app.changes).find(tool => tool.declaration.name === 'workspace_files')!;
 });
-afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); });
 
 const cases: Array<[string, number, string]> = [
   ['', 1, ''], ['首😀', 1, '首😀'], ['首😀\n', 1, '首😀'], ['\n', 1, ''],

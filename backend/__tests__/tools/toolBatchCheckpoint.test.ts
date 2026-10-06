@@ -25,6 +25,7 @@ import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import { BranchService, setGlobalBranchService } from '../../modules/conversation/branch/BranchService';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import type { ConversationBranchNode } from '../../modules/conversation/branch/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function makeCall(name: string, args: Record<string, unknown> = {}): FunctionCallInfo {
     return { id: `call-${name}-${Math.random()}`, name, args } as FunctionCallInfo;
@@ -206,7 +207,7 @@ describe('工具执行存档绑定（fire-and-forget）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话 + 建图，返回 [userNodeId, modelNodeId, candidateNodeId] */

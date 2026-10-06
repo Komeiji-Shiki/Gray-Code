@@ -2,6 +2,7 @@ import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { DiffStorageManager } from '../../modules/conversation';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('DiffStorageManager deferred global diff persistence', () => {
     let tempDir: string;
@@ -14,7 +15,7 @@ describe('DiffStorageManager deferred global diff persistence', () => {
 
     afterEach(async () => {
         jest.restoreAllMocks();
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('deferred 保存立即提供内存预览，并在后台写入紧凑 JSON', async () => {

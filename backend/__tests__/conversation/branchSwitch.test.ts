@@ -37,6 +37,7 @@ import {
 import { switchBranchCandidate } from '../../../webview/handlers/BranchHandlers';
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import type { HandlerContext } from '../../../webview/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -139,7 +140,7 @@ describe('候选切换全链（handler 编排）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
@@ -566,7 +567,7 @@ describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => 
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     async function seedConversation(conversationId: string): Promise<string[]> {
@@ -678,7 +679,7 @@ describe('切换失败语义（handler 回滚）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('主历史重写失败：图状态回滚到切换前活跃尾，透出明确错误码', async () => {

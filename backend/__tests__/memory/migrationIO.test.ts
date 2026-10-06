@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { pad } from '../../modules/memory/logFormat';
 import { LOG_REC } from '../../modules/memory/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 const fsPromises = require('fs/promises') as typeof import('fs/promises');
 
@@ -12,7 +13,7 @@ describe('旧记忆迁移的部分 IO', () => {
     beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-migration-io-')); });
     afterEach(() => {
         jest.restoreAllMocks();
-        fs.rmSync(directory, { recursive: true, force: true });
+        fs.rmSync(directory, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test.each(['read', 'write'] as const)('文件 %s 只处理部分缓冲区时仍保留全部记录', async operation => {

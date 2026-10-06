@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 test('实际生成安装器 PNG，并将图片路径传给 Velopack', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'graycode-artwork-'));
@@ -18,5 +19,5 @@ test('实际生成安装器 PNG，并将图片路径传给 Velopack', async () =
     `], { cwd: path.resolve(__dirname, '../../..') });
     const png = await readFile(output); expect(png.subarray(1,4).toString()).toBe('PNG');
     expect(png.readUInt32BE(16)).toBe(680); expect(png.readUInt32BE(20)).toBe(360);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); }
 });

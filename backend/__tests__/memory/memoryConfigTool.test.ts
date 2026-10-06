@@ -19,6 +19,7 @@ import {
     DEFAULT_MEMORY_CONFIG,
 } from '../../modules/memory';
 import { createMemoryConfigTool } from '../../tools/memory/memory_config';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function uriOf(fsPath: string): string {
     return 'file:///' + fsPath.replace(/\\/g, '/');
@@ -52,7 +53,7 @@ describe('memory_config 工具作用域路由', () => {
         setWorkspaceMemoryBaseDir(null);
         setGlobalMemoryConfigPath(null);
         for (const dir of [globalDir, wsBaseDir]) {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 

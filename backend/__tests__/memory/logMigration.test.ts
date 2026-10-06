@@ -14,6 +14,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { LOG_REC } from '../../modules/memory/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // 早期固定宽度（LOG_REC=320 时代）
 const OLD_REC = 320;
@@ -95,7 +96,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(parsed.map(e => e.text)).toEqual(texts);
             expect(parsed.map(e => e.id)).toEqual([0, 1, 2]);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -122,7 +123,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
                 renameSpy.mockRestore();
             }
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -137,7 +138,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(buf.length % LOG_REC).toBe(0);
             expect(readNewFormat(dir).map(e => e.text)).toEqual(['a', 'b']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -163,7 +164,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
                 renameSpy.mockRestore();
             }
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -179,7 +180,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(buf.length).toBe(16 * LOG_REC);
             expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -195,7 +196,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             // 文件未被改动
             expect(fs.readFileSync(path.join(dir, 'LOG.txt')).equals(garbage)).toBe(true);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -211,7 +212,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(recall.totalHits).toBe(2);
             expect(recall.lines.map(l => l.split(' ').slice(2).join(' '))).toEqual(['alpha-1', 'alpha-3']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -228,7 +229,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             await mm.deleteEntry(1);
             expect((await mm.listEntries()).map(e => e.text)).toEqual(['A', 'c', 'd']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -246,7 +247,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(buf.length).toBe(3 * LOG_REC);
             expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -262,7 +263,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(buf.length).toBe(4 * LOG_REC);
             expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -277,7 +278,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
             expect(buf.length).toBe(2 * LOG_REC);
             expect(readNewFormat(dir).map(e => e.text)).toEqual(['a', 'b']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

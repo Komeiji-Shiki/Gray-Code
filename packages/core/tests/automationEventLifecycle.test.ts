@@ -5,6 +5,7 @@ import { addAbortSignal, PassThrough } from 'node:stream';
 import type { AutomationRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { AutomationEventSources } from '../../../apps/server/src/automations/events';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 let root: string, source: AutomationEventSources, record: AutomationRecord, fail: jest.Mock, receive: jest.Mock;
@@ -23,7 +24,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await source.close(); jest.restoreAllMocks();
   if (path.dirname(root) !== path.resolve('.tmp') || !path.basename(root).startsWith('automation-events-')) throw new Error('Unsafe fixture cleanup path.');
-  await rm(root, { recursive: true, force: true });
+  await rm(root, TEMP_DIR_REMOVE_OPTIONS);
 });
 
 function delayedRead() {

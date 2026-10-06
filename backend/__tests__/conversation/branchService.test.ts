@@ -41,6 +41,7 @@ import { BranchError } from '../../modules/conversation/branch/types';
 // BCP-06: purge/prune 联动测试（真实 CheckpointManager 作为全局清理器自注册）
 import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import { setGlobalCheckpointRefCountCleaner } from '../../modules/checkpoint/checkpointRefCounts';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -66,7 +67,7 @@ describe('BranchService', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
@@ -1145,9 +1146,9 @@ describe('purge/prune 引用归零存档清理联动', () => {
         setGlobalBranchService(undefined);
         setGlobalCheckpointRefCountCleaner(undefined);
         (vscode.workspace as any).workspaceFolders = [];
-        await fsp.rm(tempDir, { recursive: true, force: true });
-        await fsp.rm(storageRoot, { recursive: true, force: true });
-        await fsp.rm(workspaceRoot, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
+        await fsp.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
+        await fsp.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {

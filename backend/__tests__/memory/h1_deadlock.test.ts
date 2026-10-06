@@ -9,6 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('MemoryManager updateEntry (H1)', () => {
     test('≥2 条记忆时编辑第一条能正常完成（不死锁）', async () => {
@@ -28,7 +29,7 @@ describe('MemoryManager updateEntry (H1)', () => {
             const entries = await mm.listEntries();
             expect(entries[0].text).toBe('edited first memory');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     }, 10000);
 });

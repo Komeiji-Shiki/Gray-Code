@@ -10,6 +10,7 @@ import type { ConversationManager } from '../../modules/conversation/Conversatio
 import type { CheckpointManifestRepository } from '../../modules/checkpoint';
 import type { CheckpointRecord } from '../../modules/checkpoint';
 import { makeRecord } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /**
  * CheckpointQueryService 测试
@@ -221,7 +222,7 @@ describe('CheckpointQueryService', () => {
             // 不写回摘要缓存（越界目录不存在可写回的合法大小）
             expect(manager.updateCustomMetadata).not.toHaveBeenCalled();
         } finally {
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -254,7 +255,7 @@ describe('CheckpointQueryService', () => {
             await fs.mkdir(path.join(checkpointsDir, 'cp_ok'));
             await expect(service.backupDirectoryExists('cp_ok')).resolves.toBe(true); // 合法名正常判定
         } finally {
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -303,7 +304,7 @@ describe('CheckpointQueryService', () => {
             // 外部目录未被触碰
             await expect(fs.readFile(path.join(victimDir, 'secret.txt'), 'utf-8')).resolves.toBe('secret');
         } finally {
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -379,7 +380,7 @@ describe('CheckpointQueryService.removeOrphanBackupDirs（CP-ORPHAN）', () => {
             expect(manager.getCustomMetadata).toHaveBeenCalledWith('conv-1', 'checkpoints');
             expect(manager.getCustomMetadata).toHaveBeenCalledWith('conv-2', 'checkpoints');
         } finally {
-            await fs.rm(root, { recursive: true, force: true });
+            await fs.rm(root, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -405,7 +406,7 @@ describe('CheckpointQueryService.removeOrphanBackupDirs（CP-ORPHAN）', () => {
             const stat = await fs.stat(path.join(root, 'cp_2')).catch(() => null);
             expect(stat?.isDirectory()).toBe(true);
         } finally {
-            await fs.rm(root, { recursive: true, force: true });
+            await fs.rm(root, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -427,7 +428,7 @@ describe('CheckpointQueryService.removeOrphanBackupDirs（CP-ORPHAN）', () => {
             expect(fresh?.isDirectory()).toBe(true);
             await expect(fs.access(path.join(root, 'cp_old'))).rejects.toThrow();
         } finally {
-            await fs.rm(root, { recursive: true, force: true });
+            await fs.rm(root, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

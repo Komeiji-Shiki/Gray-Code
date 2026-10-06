@@ -15,6 +15,7 @@ import {
   isUriInsideWorkspaceRealpath,
   resolveRealpathForComparison
 } from '../../../webview/utils/workspaceRealpath';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('workspaceRealpath：realpath 感知工作区包含性校验', () => {
   let workspaceRoot: string;
@@ -32,8 +33,8 @@ describe('workspaceRealpath：realpath 感知工作区包含性校验', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     (vscode.workspace as any).workspaceFolders = [];
-    fs.rmSync(workspaceRoot, { recursive: true, force: true });
-    fs.rmSync(outsideRoot, { recursive: true, force: true });
+    fs.rmSync(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+    fs.rmSync(outsideRoot, TEMP_DIR_REMOVE_OPTIONS);
   });
 
   test('resolveRealpathForComparison：存在路径返回真实路径，不存在路径降级词法（最近存在祖先）', async () => {

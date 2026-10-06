@@ -48,6 +48,7 @@ import {
 } from '../../../webview/handlers/BranchHandlers';
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import type { HandlerContext } from '../../../webview/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -102,7 +103,7 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     describe('守卫层：isConversationStreaming（真实 StreamAbortManager）', () => {

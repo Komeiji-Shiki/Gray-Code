@@ -16,6 +16,7 @@ import { isSafeCheckpointDirName } from '../../modules/checkpoint/CheckpointMani
 import type { CheckpointManifest } from '../../modules/checkpoint';
 import type { CheckpointRecord } from '../../modules/checkpoint';
 import { createTempDirectory, makeRecord } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -92,7 +93,7 @@ async function createHarness(seed: CheckpointRecord[], maxCheckpoints: number): 
                 deletedIds.push(checkpointId);
                 // 镜像真实行为：记录移除后删除备份目录
                 try {
-                    await fs.rm(path.join(checkpointsDir, cp.backupDir), { recursive: true, force: true });
+                    await fs.rm(path.join(checkpointsDir, cp.backupDir), TEMP_DIR_REMOVE_OPTIONS);
                 } catch {
                     // 目录不存在等：忽略
                 }
@@ -164,7 +165,7 @@ describe('CheckpointRetentionService', () => {
             await expect(fs.access(path.join(harness.checkpointsDir, 'cp-base'))).rejects.toThrow();
             await expect(fs.access(path.join(harness.checkpointsDir, 'cp-s1'))).rejects.toThrow();
         } finally {
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -194,7 +195,7 @@ describe('CheckpointRetentionService', () => {
             await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('do not touch');
             expect(harness.deletedIds()).toEqual(['cp-dep']);
         } finally {
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -220,7 +221,7 @@ describe('CheckpointRetentionService', () => {
             expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-x']);
             expect(harness.deletedIds()).toEqual(['cp-y', 'cp-z']);
         } finally {
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -253,7 +254,7 @@ describe('CheckpointRetentionService', () => {
             const head = harness.stored().find(c => c.id === 'cp-10');
             expect(head!.baseCheckpointId).toBeUndefined();
         } finally {
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -277,7 +278,7 @@ describe('CheckpointRetentionService', () => {
             expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-evil']);
             expect(harness.deletedIds()).toEqual(['cp-mid', 'cp-late']);
         } finally {
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -343,7 +344,7 @@ describe('CheckpointRetentionService', () => {
             ).resolves.toBe(baseContent);
             await expect(fs.access(path.join(harness.checkpointsDir, 'cp-base'))).rejects.toThrow();
         } finally {
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

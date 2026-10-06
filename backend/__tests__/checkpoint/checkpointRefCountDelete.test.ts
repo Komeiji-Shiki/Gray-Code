@@ -29,6 +29,7 @@ import {
     computeForcedKeepIds,
     type CheckpointRecord,
 } from '../../modules/checkpoint/CheckpointManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // jest 环境中 fs/promises 的导出经 TS interop（__importStar/__createBinding）复制后是
 // configurable:false 的 getter，jest.spyOn(fs, 'rm') 无法重定义（Cannot redefine property: rm）；
@@ -231,7 +232,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(harness.records(CONV).map(r => r.id)).toEqual(['cp-kept']);
         await expect(pathExists(path.join(harness.storageRoot, 'checkpoints', 'cp-gone'))).resolves.toBe(false);
         await expect(pathExists(path.join(harness.storageRoot, 'checkpoints', 'cp-kept'))).resolves.toBe(true);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('force 覆盖引用计数闸门（refCount>0 也删；CP-05 链保护仍生效）', async () => {
@@ -251,7 +252,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(result.deletedIds).toEqual(['cp-shared']);
         expect(result.rejectedIds).toEqual([]);
         expect(harness.records(CONV)).toEqual([]);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('referenceCounts 缺省 → 跳过引用计数闸门（退化为 nodeId 清理，仅 CP-05）', async () => {
@@ -266,7 +267,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
 
         expect(result.deletedIds).toEqual(['cp-shared']);
         expect(harness.records(CONV)).toEqual([]);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('旧存档无 messageNodeId → 不误删（候选为空，成功无操作）', async () => {
@@ -283,7 +284,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(result.deletedIds).toEqual([]);
         expect(harness.records(CONV).map(r => r.id)).toEqual(['cp-legacy']);
         await expect(pathExists(path.join(harness.storageRoot, 'checkpoints', 'cp-legacy'))).resolves.toBe(true);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('CP-05 合并：候选 refCount 0 但被保留存档引用为 base → rejected（BCP-07 增量链 base 保护）', async () => {
@@ -310,7 +311,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(result.rejectedIds).toEqual(['cp-base']);
         expect(harness.records(CONV).map(r => r.id)).toEqual(['cp-base', 'cp-tail']);
         await expect(pathExists(path.join(harness.storageRoot, 'checkpoints', 'cp-base'))).resolves.toBe(true);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('同链全部候选 → 整链可删（无保留节点引用 base，闭包不命中）', async () => {
@@ -334,7 +335,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(result.deletedIds.sort()).toEqual(['cp-base', 'cp-tail']);
         expect(result.rejectedIds).toEqual([]);
         expect(harness.records(CONV)).toEqual([]);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('unsafe backupDir 候选 → rejected（CP-DEL-1，绝不删除越界目录）', async () => {
@@ -353,7 +354,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(result.deletedIds).toEqual([]);
         expect(result.rejectedIds).toEqual(['cp-evil']);
         expect(harness.records(CONV).map(r => r.id)).toEqual(['cp-evil']);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('空 nodeIds → 成功且无操作；nodeIds 中无匹配 → 成功无操作', async () => {
@@ -368,7 +369,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(noMatch.success).toBe(true);
         expect(noMatch.deletedIds).toEqual([]);
         expect(harness.records(CONV).map(r => r.id)).toEqual(['cp-1']);
-        await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
     });
     test('fs.rm 抛错被捕获：元数据删除成功，备份目录留孤儿，console.warn 上报', async () => {
         const harness = await createHarness({
@@ -404,7 +405,7 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         } finally {
             rmFailTarget = null;
             warnSpy.mockRestore();
-            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+            await fs.rm(harness.storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

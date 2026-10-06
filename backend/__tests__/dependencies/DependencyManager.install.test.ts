@@ -11,6 +11,7 @@ import {
     DependencyManager,
     NPM_OUTPUT_MAX_BYTES
 } from '../../modules/dependencies/DependencyManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 jest.mock('cross-spawn', () => jest.fn());
 const spawnMock = require('cross-spawn') as jest.Mock;
@@ -89,7 +90,7 @@ describe('DependencyManager managed dependency tree', () => {
     afterEach(() => {
         jest.restoreAllMocks();
         (DependencyManager as any).instance = undefined;
-        fs.rmSync(graycodeDir, { recursive: true, force: true });
+        fs.rmSync(graycodeDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     function createManager(): DependencyManager {

@@ -8,6 +8,7 @@ import type { Worker } from 'node:worker_threads';
 import { TextSearchWorker } from '../../../tools/search/textSearchWorker';
 import { evaluateTextSearch, presentToolMatch, type TextSearchInput } from '../../../../shared/textSearch';
 import { expandReplacementTemplate } from '../../../../shared/regexReplacement';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../../__fixtures__/tempDirectory';
 
 const scan = (source: string, fragments = ['a😀\na😀']): TextSearchInput =>
     ({ kind: 'scan', source, flags: 'gu', fragments, limit: 10, previewChars: 300 });
@@ -61,6 +62,6 @@ test('扩展的 keepNames 构建后，线程入口及片段格式化仍可独立
         expect(JSON.parse(stdout)).toMatchObject({ skipped: 1, seen: 2, matches: [{ fragment: 1, index: 0, text: 'hit', context: '2: hit second' }] });
     } finally {
         if (path.dirname(directory) !== root || !path.basename(directory).startsWith('regex-worker-bundle-')) throw new Error('验证目录不匹配');
-        await rm(directory, { recursive: true, force: true });
+        await rm(directory, TEMP_DIR_REMOVE_OPTIONS);
     }
 });

@@ -7,6 +7,7 @@ import {
     createWorkspaceScopedPath
 } from '../../modules/checkpoint/CheckpointWorkspace';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('CheckpointBackupExecutor', () => {
     test('拒绝复制符号链接路径，不跟随链接目标', async () => {
@@ -41,9 +42,9 @@ describe('CheckpointBackupExecutor', () => {
             expect(result.ok).toBe(false);
             await expect(fs.access(path.join(backupRoot, roots[0].id, 'link.txt'))).rejects.toThrow();
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(outsideRoot, { recursive: true, force: true });
-            await fs.rm(backupRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(outsideRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(backupRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

@@ -18,6 +18,7 @@ import * as path from 'path';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import type { ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
 import { computeCheckpointReferenceCounts } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 构造一个最小合法节点（workspaceCheckpointId 可覆盖） */
 function node(id: string, overrides: Partial<ConversationBranchNode> = {}): ConversationBranchNode {
@@ -57,7 +58,7 @@ describe('computeCheckpointReferenceCounts（BCP-06 引用计数扫描）', () =
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('同一对话多节点引用同一存档 → 计数累加（去重按节点，非按存档唯一）', async () => {

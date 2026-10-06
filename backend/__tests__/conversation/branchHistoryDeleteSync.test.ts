@@ -37,6 +37,7 @@ import type {
     ConversationBranchNode,
 } from '../../modules/conversation/branch/types';
 import { createChatFlowHarness } from '../__fixtures__/harnessFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -112,7 +113,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回消息 id 数组 */

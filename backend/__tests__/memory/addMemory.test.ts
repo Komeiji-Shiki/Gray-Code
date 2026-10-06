@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { LOG_REC } from '../../modules/memory/types';
 import { MAX_ENTRY_CHARS } from '../../modules/memory/logFormat';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 describe('MemoryManager.note 手动新增', () => {
     test('entryChars 可调高到 1280 并写入 1280 字节文本（不再被旧上限 1000 拒绝）', async () => {
@@ -32,7 +33,7 @@ describe('MemoryManager.note 手动新增', () => {
             await expect(mm.updateConfig({ entryChars: MAX_ENTRY_CHARS + 1 }))
                 .rejects.toThrow(/Must be an integer between 1 and \d+/);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
     test('拒绝多行文本', async () => {
@@ -43,7 +44,7 @@ describe('MemoryManager.note 手动新增', () => {
             await expect(mm.note('line1\nline2')).rejects.toThrow('one line');
             expect(await mm.totalEntries()).toBe(0);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -62,7 +63,7 @@ describe('MemoryManager.note 手动新增', () => {
             await mm.note('x'.repeat(200));
             expect(await mm.totalEntries()).toBe(1);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -81,7 +82,7 @@ describe('MemoryManager.updateEntry 容量校验', () => {
             const entries = await mm.listEntries();
             expect(entries[0].text).toBe('short');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -99,7 +100,7 @@ describe('MemoryManager.totalEntries / listEntries(limit)', () => {
             expect((await mm.listEntries(3)).map(e => e.text)).toEqual(['memory-0', 'memory-1', 'memory-2']);
             expect((await mm.listEntries()).length).toBe(10);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -124,7 +125,7 @@ describe('MemoryManager 撕裂尾部记录', () => {
             expect(after.length).toBe(3);
             expect(after.map(e => e.text)).toEqual(['a', 'b', 'c']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -143,7 +144,7 @@ describe('MemoryManager.wake 批量读取', () => {
             expect(result.blocks.map(b => b.text.slice(11))).toEqual(['a', 'b', 'c', 'd', 'e']);
             expect(result.blocks.every(b => b.isRaw)).toBe(true);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

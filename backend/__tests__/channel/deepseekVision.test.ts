@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getCanvas, getDependencyPath, getPdfjs, getSharp } from '../../modules/dependencies/runtime';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 jest.mock('../../modules/dependencies/runtime', () => ({
     getCanvas: jest.fn(),
@@ -80,7 +81,7 @@ describe('DeepSeek Vision preprocessing', () => {
 
     afterEach(() => {
         if (tempPdfjsDir) {
-            fs.rmSync(tempPdfjsDir, { recursive: true, force: true });
+            fs.rmSync(tempPdfjsDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 

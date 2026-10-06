@@ -24,6 +24,7 @@ import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoi
 import { CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint';
 import type { CheckpointManifest } from '../../modules/checkpoint';
 import { createWorkspaceRootId, createWorkspaceSnapshot } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -74,8 +75,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             // buildIgnoreSnapshot 总是展开默认类别（A 的实现语义）
             expect(manifest!.ignoreSnapshot.enabledProfiles.logs).toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -114,8 +115,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             // b.txt 在 cp1 快照中不存在（#29 保护）：未确认删除清单时不被删除
             await expect(fs.access(path.join(workspaceRoot, 'b.txt'))).resolves.toBeUndefined();
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -162,8 +163,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             const stored = harness.storedCheckpoints();
             expect(stored[0].backupBytes).toBe(5);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -226,8 +227,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(restore3.success).toBe(true);
             expect(restore3.excludedNote!.rulesChanged).toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -269,8 +270,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(dirs).toHaveLength(0);
             void phases;
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -282,8 +283,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(harness.manager.getOperationProgress('op-nonexistent')).toBeNull();
             expect(harness.manager.cancelOperation('op-nonexistent')).toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -337,8 +338,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(result[0].totalSize).toBe(100); // 只聚合已知 backupBytes
             expect(result[0].sizeIncomplete).toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -361,8 +362,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
 
             expect(await harness.manager.getManifest('cp-nonexistent')).toBeNull();
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -392,8 +393,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(restore.failures).toBeUndefined();
             await expect(fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf-8')).resolves.toBe('v1');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -514,8 +515,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'legacy.txt'), 'utf-8')).resolves.toBe('legacy content');
             await expect(fs.readFile(path.join(workspaceRoot, 'b.txt'), 'utf-8')).resolves.toBe('new');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -556,8 +557,8 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(restore.error!.length).toBeGreaterThan(0);
             expect(restore.restored).toBe(0);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

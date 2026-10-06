@@ -17,6 +17,7 @@ import {
     UPDATE_CHECK_INTERVAL_MS,
 } from '../../modules/update';
 import * as vscode from 'vscode';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // ─── 纯函数 ──────────────────────────────────────────
 
@@ -417,7 +418,7 @@ describe('UpdateChecker.resetStatus', () => {
 describe('UpdateChecker.downloadAndInstall', () => {
     let tmpDir: string;
     beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-install-')); });
-    afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+    afterEach(() => { fs.rmSync(tmpDir, TEMP_DIR_REMOVE_OPTIONS); });
 
     test('无 vsix 资产时抛错', async () => {
         const { checker } = createChecker();

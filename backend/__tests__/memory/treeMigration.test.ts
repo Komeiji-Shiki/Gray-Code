@@ -15,6 +15,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { TREE_REC } from '../../modules/memory/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 旧 TREE 固定宽度（TREE_REC=288 时代） */
 const LEGACY_TREE_REC = 288;
@@ -74,7 +75,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
             expect(buf.length).toBe(2 * TREE_REC);
             expect(buf.length % LEGACY_TREE_REC).not.toBe(0);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -102,7 +103,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
             expect(renameSpy).toHaveBeenCalledTimes(1);
         } finally {
             renameSpy.mockRestore();
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -123,7 +124,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
             expect(await storeOf(mm2).treeGet(0, 2)).toBe('ab');
             expect(fs.readFileSync(treePath).equals(before)).toBe(true);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -138,7 +139,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
             expect(await storeOf(mm).treeGet(0, 2)).toBe('keep-me');
             expect(fs.statSync(treePath).size).toBe(TREE_REC);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -153,7 +154,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
             // 文件保持原样（fail-open，不丢数据）
             expect(fs.readFileSync(treePath).equals(garbage)).toBe(true);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -176,7 +177,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
             expect(raw.includes('\n')).toBe(true);          // 拼接内容里含记录尾换行
             expect(isValidTreeSummary(raw)).toBe(false);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -211,7 +212,7 @@ describe('MemoryManager TREE 旧宽度迁移', () => {
                 expect(buf.length % LEGACY_TREE_REC).not.toBe(0);
             }
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

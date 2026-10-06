@@ -7,6 +7,7 @@ import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
 import { WorkspaceProcesses, ProcessSessionError, type ProcessResult } from '../../../apps/server/src/workspace/processes';
 import { workspaceTools } from '../../../apps/server/src/workspace/tools';
 import { t } from '../../../backend/i18n';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 let directory: string;
 let workspace: WorkspaceDefinition;
@@ -25,7 +26,7 @@ beforeAll(async () => {
     signal: new AbortController().signal, progress: jest.fn(), askUser: jest.fn() };
   files = new WorkspaceFiles();
 });
-afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
+afterAll(async () => { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); });
 
 function fixture() {
   const processes = {

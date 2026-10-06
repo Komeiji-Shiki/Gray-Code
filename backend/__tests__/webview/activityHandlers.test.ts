@@ -16,6 +16,7 @@ import {
     setGlobalActivityTracker,
     toDateStr
 } from '../../../backend/modules/activity';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function createCtx() {
     const sendResponse = jest.fn();
@@ -42,7 +43,7 @@ describe('ActivityHandlers activity.getStats', () => {
     afterEach(async () => {
         setGlobalActivityTracker(null);
         disposeActivityStatsCache();
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('returns stats with default 7d range', async () => {

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 test('桌面包保留依赖方使用的嵌套版本、传递依赖和工作区本地依赖', async () => {
   const root = await mkdtemp(path.resolve('.tmp/desktop-dependencies-'));
@@ -30,7 +31,7 @@ test('桌面包保留依赖方使用的嵌套版本、传递依赖和工作区�
       'node_modules/alpha/node_modules/shared': '1.0.0', 'node_modules/shared': '2.0.0',
       'node_modules/leaf': '1.0.0', 'node_modules/workspace/node_modules/local': '1.0.0',
     });
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, TEMP_DIR_REMOVE_OPTIONS); }
 });
 
 test('安装器参数把含空格文本和路径绑定到对应选项', () => {
@@ -57,5 +58,5 @@ test('打包保护已经运行过的便携目录，避免覆盖或发行用户�
     const output = execFileSync(process.execPath, ['--input-type=module', '-e', script, root], { encoding: 'utf8', windowsHide: true });
     expect(output).toContain('portable-data 用户配置');
     expect(output).toContain('GRAYCODE_DESKTOP_OUT');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, TEMP_DIR_REMOVE_OPTIONS); }
 });

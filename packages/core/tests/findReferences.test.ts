@@ -7,6 +7,7 @@ import type { PlatformApplication } from '../../../apps/server/src/application';
 import { languageTools } from '../../../apps/server/src/development/tools';
 import { createFindReferencesToolDeclaration } from '../../../backend/tools/lsp/declarations';
 import { MAX_REFERENCE_CONTENT_CHARS } from '../../../backend/tools/lsp/referencePage';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 const provider = jest.fn();
 const actor = jest.fn(() => ({ role: 'owner' }));
@@ -30,7 +31,7 @@ beforeEach(async () => {
     workspace: { id: 'project', name: 'project', directory, deviceId: 'local' }, askUser: jest.fn(), progress: jest.fn() };
   provider.mockReset(); actor.mockClear();
 });
-afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); });
 
 test('平台跨页按路径/行列稳定排序，provider顺序变化不重复或漏掉引用', async () => {
   const locations = [reference('b.ts', 1), reference('a.ts', 10, 2), reference('a.ts', 10, 1), reference('a.ts', 1)];

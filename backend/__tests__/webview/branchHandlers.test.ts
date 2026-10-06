@@ -43,6 +43,7 @@ import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import { createMessageHandlerRegistry } from '../../../webview/handlers';
 import type { HandlerContext, MessageHandler } from '../../../webview/types';
 import { isConversationMutationGated } from '../../../webview/handlers/streamGuard';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -118,7 +119,7 @@ describe('BranchHandlers 行为', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('getBranchGraph：无图返回 { graph: null }，并懒初始化 BranchService（使用有效数据路径）', async () => {
@@ -226,7 +227,7 @@ describe('分支管理处理器（软删/恢复/重命名/修剪/保留期）', 
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话 + 两个 reroll 候选，返回 [user, model, r1, r2] */
@@ -388,7 +389,7 @@ describe('流式期间分支互斥（StreamAbortManager.isActive）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('流式中 createRerollCandidate → BRANCH_BUSY（含明确文案），且不调用 BranchService', async () => {
@@ -642,7 +643,7 @@ describe('切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支
         setGlobalBranchService(undefined);
         (vscode.workspace as any).textDocuments = [];
         (vscode.workspace as any).workspaceFolders = [];
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('BCP-04 getBranchGraph 富化：写工具节点 wroteToWorkspace=true、绑定存档节点 hasWorkspaceState=true', async () => {

@@ -11,6 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function setup(): { mm: MemoryManager; dir: string } {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-delete-entry-'));
@@ -39,7 +40,7 @@ describe('MemoryManager.deleteEntry', () => {
             // 日期保留（非空且与删除前一致）
             expect(entries[1].date).toBeTruthy();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -56,7 +57,7 @@ describe('MemoryManager.deleteEntry', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1]);
             expect(entries.map(e => e.text)).toEqual(['a', 'b']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -70,7 +71,7 @@ describe('MemoryManager.deleteEntry', () => {
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(0);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -86,7 +87,7 @@ describe('MemoryManager.deleteEntry', () => {
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(2);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -106,7 +107,7 @@ describe('MemoryManager.deleteEntry', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
             expect(entries.map(e => e.text)).toEqual(['b', 'c', 'd']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -125,7 +126,7 @@ describe('MemoryManager.deleteEntry', () => {
             const summary = await (mm as any).treeGet(0, 4);
             expect(summary).toBeNull();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -159,7 +160,7 @@ describe('MemoryManager.deleteEntry', () => {
             const entries = await mm.listEntries();
             expect(entries.map(e => e.text)).toEqual(['m1', 'm2', 'm3', 'm5', 'm6']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

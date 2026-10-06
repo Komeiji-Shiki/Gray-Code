@@ -18,6 +18,7 @@ import {
 } from '../../modules/memory';
 import { createMemoryWakeTool } from '../../tools/memory/memory_wake';
 import { createMemoryRecallTool } from '../../tools/memory/memory_recall';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function uriOf(fsPath: string): string {
     return 'file:///' + fsPath.replace(/\\/g, '/');
@@ -66,7 +67,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         setGlobalMemoryManager(null);
         setWorkspaceMemoryBaseDir(null);
         for (const dir of [globalDir, wsBaseDir, wsDir]) {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 

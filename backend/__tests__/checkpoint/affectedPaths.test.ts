@@ -28,6 +28,7 @@ import {
     workspaceUriToFsPath
 } from '../../modules/checkpoint/affectedPaths';
 import type { CheckpointRecord } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -164,7 +165,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             expect(result.fileHashes[createWorkspaceScopedPath(root.id, 'c.ts')]).toBeUndefined();
             expect(result.roots[0]).toMatchObject({ rootId: root.id, fileCount: 2 });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -183,7 +184,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             expect(result.excluded).not.toContainEqual(expect.objectContaining({ path: scoped }));
             expect(result.fileHashes[scoped]).toBeUndefined();
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -207,7 +208,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             expect(result.fileHashes[logScoped]).toBeUndefined();
             expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'src/a.ts')]).toBe(md5('code'));
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -241,7 +242,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             });
             expect(second.fileHashes[scoped]).toBe(fakeHash);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -267,7 +268,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'nonempty/x.txt')]).toBe(md5('x'));
             expect(result.roots[0].fileCount).toBe(1);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -296,8 +297,8 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             expect(statA.fileCount).toBe(1);
             expect(statB.fileCount).toBe(1);
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -316,7 +317,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'a.ts')]).toBe(md5('AAA'));
             expect(result.roots[0].fileCount).toBe(1);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -333,7 +334,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             const emptyAffected = await buildWorkspaceSnapshot({ roots, affectedPaths: [] });
             expect(Object.keys(emptyAffected.fileHashes)).toHaveLength(2);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

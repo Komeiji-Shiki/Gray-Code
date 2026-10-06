@@ -13,6 +13,7 @@ import {
     createWorkspaceScopedPath
 } from '../../modules/checkpoint';
 import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // L-1: 让 bad.txt 的流式哈希失败，构造“真实不可读文件”（跨平台确定，不依赖 chmod）
 jest.mock('fs', () => {
@@ -93,7 +94,7 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(result.sizeExcluded).toHaveLength(0);
             expect(result.unreadable).toHaveLength(0);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -117,8 +118,8 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(result.fileHashes[createWorkspaceScopedPath(rootBInfo.id, 'b.txt')]).toBe(md5('BBB'));
             expect(result.roots).toHaveLength(2);
         } finally {
-            await fs.rm(rootA, { recursive: true, force: true });
-            await fs.rm(rootB, { recursive: true, force: true });
+            await fs.rm(rootA, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(rootB, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -143,7 +144,7 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(Object.keys(result.fileHashes).some(key => key.includes('checkpoints'))).toBe(false);
             expect(Object.keys(result.fileHashes)).toHaveLength(1);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -166,7 +167,7 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(result.excluded).toContainEqual({ path: modelScoped, reason: 'size', size: 100 });
             expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'small.txt')]).toBe(md5('ok'));
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -208,7 +209,7 @@ describe('CheckpointSnapshotBuilder', () => {
             const third = await buildWorkspaceSnapshot({ roots, previous: changedPrevious });
             expect(third.fileHashes[scoped]).toBe(realHash);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -239,7 +240,7 @@ describe('CheckpointSnapshotBuilder', () => {
                 reason: 'unreadable'
             });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -258,7 +259,7 @@ describe('CheckpointSnapshotBuilder', () => {
                 createWorkspaceScopedPath(roots[0].id, 'src/app.ts')
             ]);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -278,7 +279,7 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(sharedHash).toBe(md5('shared hash'));
             expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'src/main.ts')]).toBe(sharedHash);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -305,7 +306,7 @@ describe('CheckpointSnapshotBuilder', () => {
             ]);
             expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'src/app.ts')]).toBe(md5('code'));
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -339,7 +340,7 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(first.byProfile.other.samples.length).toBeGreaterThan(0);
             expect(first.summary.excludedCount).toBe(31); // 30 超限 + 1 日志
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -376,7 +377,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             expect(byPath[createWorkspaceScopedPath(roots[0].id, 'dist')])
                 .toMatchObject({ reason: 'default', source: 'buildArtifacts' });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -401,7 +402,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             const storageEntry = result.excluded.find(e => e.path.includes('.limcode'));
             expect(storageEntry).toMatchObject({ reason: 'forced', source: 'storage' });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -441,7 +442,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             expect(result.ignoreSnapshot.maxFileSizeBytes).toBe(100);
             expect(result.complete).toBe(true);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -472,7 +473,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             // keep.log 被 ! 重新纳入 → 不在排除清单
             expect(byPath[createWorkspaceScopedPath(roots[0].id, 'keep.log')]).toBeUndefined();
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -497,7 +498,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             expect(result.summary.excludedCount).toBe(1);
             expect(result.complete).toBe(false);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -516,7 +517,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             expect(result.summary.excludedCount).toBe(0);
             expect(result.complete).toBe(true);
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -538,7 +539,7 @@ describe('CheckpointSnapshotBuilder - exclusions (EX-01/EX-02/EX-07/EX-09)', () 
             expect(unreadableSamples.length).toBeGreaterThanOrEqual(1);
             expect(result.summary.byReason['unreadable']).toMatchObject({ count: 1 });
         } finally {
-            await fs.rm(rootDir, { recursive: true, force: true });
+            await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

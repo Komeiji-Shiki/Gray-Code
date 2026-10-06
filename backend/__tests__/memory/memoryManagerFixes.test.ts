@@ -9,6 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // 通过 require 拿到底层 CJS 模块对象：`import * as fs from 'fs/promises'`
 // 编译后是 __importStar 命名空间（只读 getter），jest.spyOn 无法直接在其上安装 mock。
@@ -58,7 +59,7 @@ describe('MemoryManager.truncateLog', () => {
         } finally {
             if (!gateReleased) releaseAppend();
             appendSpy.mockRestore();
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     }, 10000);
 });
@@ -89,7 +90,7 @@ describe('MemoryManager.compress', () => {
             expect(again.done).toBe(0);
             expect(again.pendingCompression?.blockId).toBe('0-7');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -98,7 +99,7 @@ describe('MemoryManager.compress', () => {
         try {
             await expect(mm.compress('0-1')).rejects.toThrow('summary is required');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -110,7 +111,7 @@ describe('MemoryManager.compress', () => {
             expect(result.done).toBe(0);
             expect(result.pendingCompression).not.toBeNull();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -126,7 +127,7 @@ describe('MemoryManager.compress', () => {
             expect(result.pendingCompression?.prompt).toContain('Deferred maintenance');
             expect(result.pendingCompression?.prompt).toContain('do not interrupt the current user task');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -148,7 +149,7 @@ describe('MemoryManager 压缩提示节流', () => {
             const third = await mm.note('d');
             expect(third.pendingCompression?.blockId).toBe('0-1');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -165,7 +166,7 @@ describe('MemoryManager 压缩提示节流', () => {
             const next = await mm.note('e');
             expect(next.pendingCompression).toBeUndefined();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -182,7 +183,7 @@ describe('MemoryManager 压缩提示节流', () => {
             const next = await mm.note('c');
             expect(next.pendingCompression).toBeUndefined();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -207,7 +208,7 @@ describe('MemoryManager.wake', () => {
             expect(error.message).not.toContain('Deferred maintenance');
             expect(error.message).not.toContain('Compress memories #2-3');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

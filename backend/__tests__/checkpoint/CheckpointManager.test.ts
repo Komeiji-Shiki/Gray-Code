@@ -16,6 +16,7 @@ import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 import * as snapshotBuilderModule from '../../modules/checkpoint/CheckpointSnapshotBuilder';
 import { createWorkspaceRootId } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /**
  * CheckpointManager restore 测试
@@ -237,8 +238,8 @@ describe('CheckpointManager restore ignore semantics', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'ignored/secret.txt'), 'utf-8')).resolves.toBe('keep current ignored\n');
             await expect(pathExists(path.join(workspaceRoot, 'ignored/empty'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -292,8 +293,8 @@ describe('CheckpointManager restore ignore semantics', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'ignored/secret.txt'), 'utf-8')).resolves.toBe('keep current ignored\n');
             await expect(pathExists(path.join(workspaceRoot, 'ignored/empty'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -358,8 +359,8 @@ describe('CheckpointManager restore ignore semantics', () => {
             expect(result.error).toBeDefined();
             expect(result.error!.length).toBeGreaterThan(0);  // message depends on locale
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -407,8 +408,8 @@ describe('CheckpointManager restore ignore semantics', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'untracked.txt'), 'utf-8')).resolves.toBe('do not delete me\n');
             await expect(fs.readFile(path.join(workspaceRoot, 'tracked.txt'), 'utf-8')).resolves.toBe(trackedContent);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -483,8 +484,8 @@ describe('CheckpointManager restore ignore semantics', () => {
             expect(result.restored).toBe(0);
             await expect(fs.readFile(path.join(workspaceRoot, 'd.txt'), 'utf-8')).resolves.toBe('current d\n');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -547,8 +548,8 @@ describe('CheckpointManager restore ignore semantics', () => {
             expect(result.restored).toBe(1);
             await expect(fs.readFile(path.join(workspaceRoot, 'file.txt'), 'utf-8')).resolves.toBe(targetContent);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -575,8 +576,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             const list = await manager.getCheckpoints(conversationId);
             expect(list.map(c => c.id)).toEqual(['cp-old', 'cp-new']);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -599,8 +600,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             const list = await manager.getCheckpoints(conversationId);
             expect(list.map(c => c.id)).toEqual(['cp-old', 'cp-a', 'cp-b']);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -627,8 +628,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(backupRoot1)).resolves.toBe(false);
             await expect(pathExists(backupRoot2)).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -659,8 +660,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(backupRootBase)).resolves.toBe(true);
             await expect(pathExists(backupRootTarget)).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -685,8 +686,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             expect(list.map(c => c.id)).toEqual(['cp-0']);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-1'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -718,8 +719,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             const list = await manager.getCheckpoints(conversationId);
             expect(list.map(c => c.id)).toEqual(['cp-base', 'cp-target']);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -745,8 +746,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-0'))).resolves.toBe(false);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-1'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -778,8 +779,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 await expect(pathExists(path.join(storageRoot, 'checkpoints', cp.backupDir))).resolves.toBe(false);
             }
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -802,8 +803,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             const list = await manager.getCheckpoints(conversationId);
             expect(list.map(c => c.id)).toEqual(['cp-ok']);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -857,8 +858,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             snapshotMock.mockImplementation(
                 jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
             );
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -903,8 +904,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             snapshotMock.mockImplementation(
                 jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
             );
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -944,8 +945,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             snapshotMock.mockImplementation(
                 jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
             );
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -982,8 +983,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             snapshotMock.mockImplementation(
                 jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
             );
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1022,8 +1023,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-target', 'b.txt'))).resolves.toBe(true);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-base'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1064,8 +1065,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'a-1'))).resolves.toBe(false);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'a-0'))).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1108,8 +1109,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-mid'))).resolves.toBe(false);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-tail'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1144,8 +1145,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             const list = await manager.getCheckpoints(conversationId);
             expect(list.map(c => c.id)).toEqual(['cp-a', 'cp-b', 'cp-c']);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1173,8 +1174,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-0'))).resolves.toBe(false);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-1'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
 
         }
     });
@@ -1201,8 +1202,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(list.map(c => c.id)).toEqual(['cp-evil']);
                 await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1230,8 +1231,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-ok'))).resolves.toBe(false);
                 await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1260,8 +1261,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-ok'))).resolves.toBe(false);
                 await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1292,8 +1293,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-ok'))).resolves.toBe(false);
                 await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1336,8 +1337,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(restore.success).toBe(true);
                 await expect(fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf-8')).resolves.toBe(targetContent);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1379,8 +1380,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(preview.deleted).toBe(1);
                 expect(preview.untrackedPaths).toEqual(['untracked.txt']);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1431,8 +1432,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                     acquireSpy.mockRestore();
                 }
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
     });
@@ -1456,8 +1457,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             const plain = await manager.getCheckpoints(conversationId);
             expect(plain[0].size).toBeUndefined();
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1501,8 +1502,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             // 未备份文件受保护：恢复后仍存在
             await expect(pathExists(path.join(workspaceRoot, 'big.bin'))).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1564,8 +1565,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             expect(resultConfirmed.deleted).toBe(1);
             await expect(pathExists(path.join(workspaceRoot, 'untracked.txt'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1607,8 +1608,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             expect(stale).toMatchObject({ success: false, error: 'STALE_RESTORE_PREVIEW' });
             await expect(pathExists(path.join(workspaceRoot, 'important.txt'))).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1654,8 +1655,8 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(pathExists(path.join(storageRoot, 'checkpoints', orphanDir))).resolves.toBe(false);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', checkpointId))).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -1732,7 +1733,7 @@ describe('CheckpointManager metadata RMW migration', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'dist/bundle.js'), 'utf-8')).resolves.toBe('current dist\n');
             await expect(fs.readFile(path.join(workspaceRoot, 'data/raw.csv'), 'utf-8')).resolves.toBe('current data\n');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -1772,8 +1773,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(summaries[0].messageNodeId).toBe('node-abc');
                 expect(summaries[0].messageIndex).toBe(3);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1800,8 +1801,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(summaries[0].messageNodeId).toBeUndefined();
                 expect(summaries[0].messageIndex).toBe(3);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
     });
@@ -1843,8 +1844,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 const summaries = await manager.getCheckpoints('conv-manual');
                 expect(summaries).toHaveLength(1);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1879,8 +1880,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 await expect(fs.readFile(path.join(workspaceRoot, 'src/app.ts'), 'utf-8')).resolves.toBe('v1');
                 await expect(fs.readFile(path.join(workspaceRoot, 'src/util.ts'), 'utf-8')).resolves.toBe('u1');
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
     });
@@ -1927,8 +1928,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(hashOf(keysB, cpB!, 'b.ts')).toBe(hashOf(keysA, cpA!, 'b.ts'));
                 expect(hashOf(keysB, cpB!, 'c.ts')).toBe(hashOf(keysA, cpA!, 'c.ts'));
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -1962,8 +1963,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpC!.fileCount).toBe(1);
                 expect(Object.keys(cpC!.fileHashes!)).toHaveLength(3);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2011,8 +2012,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 await expect(fs.readFile(path.join(workspaceRoot, 'c.ts'), 'utf-8')).resolves.toBe('c1');
                 await expect(fs.readFile(path.join(workspaceRoot, 'extra.ts'), 'utf-8')).resolves.toBe('x');
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2044,8 +2045,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpB!.unbackedPaths?.some(p => p.endsWith('/a.ts'))).not.toBe(true);
                 expect(cpB!.absentPaths?.some(p => p.endsWith('/a.ts'))).toBe(true);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2082,8 +2083,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpC!.changes![0].path.endsWith('/b.ts')).toBe(true);
                 expect(cpC!.fileCount).toBe(1);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
     });
@@ -2117,8 +2118,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 const records = await manager.getCheckpoints('conv-cp-skip');
                 expect(records).toHaveLength(1);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2145,8 +2146,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpB!.fileHashes![Object.keys(cpB!.fileHashes!).find(k => k.endsWith('/a.ts'))!])
                     .toBe(hashContent('a2'));
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2169,8 +2170,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 });
                 expect(cpB).toBeNull();
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2189,8 +2190,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after', { forceCreate: true });
                 expect(cpB).not.toBeNull();
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2216,8 +2217,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpB).not.toBeNull();
                 expect(cpB!.absentPaths?.some(p => p.endsWith('/a.ts'))).toBe(true);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2243,8 +2244,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpC!.type).toBe('incremental');
                 expect(cpC!.changes).toHaveLength(1);
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
 
@@ -2266,8 +2267,8 @@ describe('CheckpointManager metadata RMW migration', () => {
                 const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after');
                 expect(cpB).not.toBeNull();
             } finally {
-                await fs.rm(workspaceRoot, { recursive: true, force: true });
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
     });
@@ -2282,8 +2283,8 @@ describe('CheckpointManager.checkpointsDir getter', () => {
             // getter 与构造时确定的目录一致：{storageRoot}/checkpoints
             expect(manager.checkpointsDir).toBe(path.join(storageRoot, 'checkpoints'));
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

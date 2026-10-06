@@ -25,6 +25,7 @@ import { createCheckpointManagerHarness } from '../__fixtures__/harnessFixtures'
 
 import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint';
 import type { CheckpointManifest } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -103,8 +104,8 @@ describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', (
             expect(cp2!.fileCount).toBe(1);
             expect(cp1!.fileCount).toBe(2);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -143,14 +144,14 @@ describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', (
 
             // 反证：删除 cp1（base）目录后恢复 cp2 → 恢复被拒绝（base 目录缺失被检出），
             // 证明 b.txt 的确由 base 提供（引用关系真实存在，而非 cp2 自带副本）
-            await fs.rm(path.join(storageRoot, 'checkpoints', cp1!.id), { recursive: true, force: true });
+            await fs.rm(path.join(storageRoot, 'checkpoints', cp1!.id), TEMP_DIR_REMOVE_OPTIONS);
             await fs.rm(path.join(workspaceRoot, 'b.txt'));
             const broken = await harness.manager.restoreCheckpoint('conv-1', cp2!.id);
             expect(broken.success).toBe(false);
             expect(broken.missingBackupDirs?.includes(cp1!.id)).toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -201,8 +202,8 @@ describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', (
             expect(await fs.readFile(path.join(workspaceRoot, 'b.txt'), 'utf-8')).toBe('v2');
             expect(restore.restored).toBe(2);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -234,8 +235,8 @@ describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', (
             expect(restore.failures).toBeUndefined();
             expect(await fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf-8')).toBe('v1');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

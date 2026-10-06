@@ -7,6 +7,7 @@ import { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
 import { createLiteralSearchTool } from '../../../apps/server/src/workspace/literalSearchTool';
 import { createSearchDeclaration } from '../../../backend/tools/search/declarationRuntime';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../backend/modules/settings/types';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 let directory: string;
 beforeEach(async () => {
@@ -18,7 +19,7 @@ beforeEach(async () => {
     writeFile(path.join(directory, 'nested', 'b.ts'), 'other\nhit third\n'),
   ]);
 });
-afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await rm(directory, TEMP_DIR_REMOVE_OPTIONS); });
 
 function tools(maxFindFiles = DEFAULT_SEARCH_IN_FILES_CONFIG.maxFindFiles) {
   const files = new WorkspaceFiles();

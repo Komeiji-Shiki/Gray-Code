@@ -11,6 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function setup(): { mm: MemoryManager; dir: string } {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-delete-range-'));
@@ -35,7 +36,7 @@ describe('MemoryManager.deleteRange', () => {
             expect(entries.map(e => e.text)).toEqual(['a', 'e']);
             expect(entries[1].date).toBeTruthy();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -51,7 +52,7 @@ describe('MemoryManager.deleteRange', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1]);
             expect(entries.map(e => e.text)).toEqual(['a', 'c']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -69,7 +70,7 @@ describe('MemoryManager.deleteRange', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1]);
             expect(entries.map(e => e.text)).toEqual(['d', 'e']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -87,7 +88,7 @@ describe('MemoryManager.deleteRange', () => {
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(3);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -104,7 +105,7 @@ describe('MemoryManager.deleteRange', () => {
             const summary = await (mm as any).treeGet(0, 4);
             expect(summary).toBeNull();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -121,7 +122,7 @@ describe('MemoryManager.deleteRange', () => {
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(2);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -139,7 +140,7 @@ describe('MemoryManager.deleteRange', () => {
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(3);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
@@ -159,7 +160,7 @@ describe('MemoryManager.deleteEntries', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1]);
             expect(entries.map(e => e.text)).toEqual(['a', 'c']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -176,7 +177,7 @@ describe('MemoryManager.deleteEntries', () => {
             const entries = await mm.listEntries();
             expect(entries.map(e => e.text)).toEqual(['a', 'd', 'e']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -189,7 +190,7 @@ describe('MemoryManager.deleteEntries', () => {
             expect(result.removed).toBe(0);
             expect(await mm.listEntries()).toHaveLength(1);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -207,7 +208,7 @@ describe('MemoryManager.deleteEntries', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
             expect(entries.map(e => e.text)).toEqual(['b', 'd', 'e']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

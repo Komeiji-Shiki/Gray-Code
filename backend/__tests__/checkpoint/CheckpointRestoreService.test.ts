@@ -16,6 +16,7 @@ import type { CheckpointManifestRepository } from '../../modules/checkpoint';
 import type { CheckpointQueryService } from '../../modules/checkpoint';
 import type { CheckpointRecord } from '../../modules/checkpoint';
 import { makeRecord } from '../__fixtures__/checkpointFixtures';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 只测链构建/越界守卫，不触碰恢复引擎：其余依赖用空桩 */
 function createService(checkpointsDir: string): CheckpointRestoreService {
@@ -112,7 +113,7 @@ describe('CheckpointRestoreService', () => {
                 // 受害者文件未被读取/修改
                 await expect(fs.readFile(victimFile, 'utf-8')).resolves.toBe('secret-data');
             } finally {
-                await fs.rm(storageRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
             }
         });
     });

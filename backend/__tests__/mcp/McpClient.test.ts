@@ -4,6 +4,7 @@ import path from 'node:path';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import { McpClient, McpInputRequiredError, McpExecutionUnknownError } from '../../modules/mcp/McpClient';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 const { handler } = require('./fixtures/server.cjs') as { handler: (mode: string, send: (message: any) => void) => (request: any) => void };
 const script = path.resolve(__dirname, 'fixtures/server.cjs');
@@ -145,6 +146,6 @@ describe('SDK MCP client', () => {
             await client.disconnect(); await rejected;
             expect(Date.now() - started).toBeLessThan(3000);
             expect(() => process.kill(pid, 0)).toThrow();
-        } finally { await client.disconnect(); await rm(dir, { recursive: true, force: true }); }
+        } finally { await client.disconnect(); await rm(dir, TEMP_DIR_REMOVE_OPTIONS); }
     });
 });

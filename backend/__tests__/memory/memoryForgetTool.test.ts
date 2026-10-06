@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager, setGlobalMemoryManager } from '../../modules/memory';
 import { createMemoryForgetTool } from '../../tools/memory/memory_forget';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function setup(): { mm: MemoryManager; dir: string } {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-tool-forget-'));
@@ -45,7 +46,7 @@ describe('memory_forget 工具', () => {
             expect(entries.map(e => e.text)).toEqual(['a', 'c', 'd']);
             expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -65,7 +66,7 @@ describe('memory_forget 工具', () => {
             const entries = await mm.listEntries();
             expect(entries.map(e => e.text)).toEqual(['a', 'e']);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -88,7 +89,7 @@ describe('memory_forget 工具', () => {
             // 摘要已丢
             expect(await (mm as any).treeGet(0, 4)).toBeNull();
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -109,7 +110,7 @@ describe('memory_forget 工具', () => {
             expect(result.success).toBe(false);
             expect(result.error).toContain('No memory at index');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -128,7 +129,7 @@ describe('memory_forget 工具', () => {
             // 数据未变
             expect(await mm.listEntries()).toHaveLength(2);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -144,7 +145,7 @@ describe('memory_forget 工具', () => {
             expect(result.success).toBe(true);
             expect(result.data.message).toContain('renumbered');
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });

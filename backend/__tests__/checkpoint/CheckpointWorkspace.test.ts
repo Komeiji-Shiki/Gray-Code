@@ -13,6 +13,7 @@ import {
     resolveSafePathInsideRoot,
     validateWorkspaceSnapshot
 } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /**
  * CheckpointWorkspace 测试
@@ -212,7 +213,7 @@ describe('resolveSafePathInsideRoot (real filesystem)', () => {
     });
 
     afterEach(async () => {
-        await fs.rm(rootDir, { recursive: true, force: true });
+        await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     async function writeFile(relativePath: string, content: string = ''): Promise<void> {
@@ -250,7 +251,7 @@ describe('resolveSafePathInsideRoot (real filesystem)', () => {
                 .rejects
                 .toMatchObject({ code: 'CHECKPOINT_PATH_SYMLINK' });
         } finally {
-            await fs.rm(outsideDir, { recursive: true, force: true });
+            await fs.rm(outsideDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 

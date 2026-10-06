@@ -7,6 +7,7 @@ import {
     getIgnoreRegexCacheStats,
     getWorkspaceFileTree
 } from '../../modules/prompt/fileTree'
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory'
 
 describe('fileTree buildFileTree', () => {
     let root: string
@@ -23,7 +24,7 @@ describe('fileTree buildFileTree', () => {
 
     afterEach(() => {
         workspace.workspaceFolders = originalFolders
-        fs.rmSync(root, { recursive: true, force: true })
+        fs.rmSync(root, TEMP_DIR_REMOVE_OPTIONS)
     })
 
     function write(rel: string, content: string = ''): void {

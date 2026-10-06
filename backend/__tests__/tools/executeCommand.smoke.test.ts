@@ -63,6 +63,7 @@ import { killTerminalProcess, getActiveTerminalProcesses, type TerminalProcess }
 import { createTerminalRuntime } from '../../tools/terminal/processRunnerRuntime';
 import { TaskManager } from '../../tools/taskManager';
 import type { ProcessRecord } from '../../tools/terminal/processTree';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 const spawnMock = jest.mocked(cp.spawn);
 const osModule = require('os') as typeof os;
@@ -114,7 +115,7 @@ beforeAll(() => {
 
 afterAll(() => {
     (vscode.workspace as any).workspaceFolders = [];
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, TEMP_DIR_REMOVE_OPTIONS);
 });
 
 beforeEach(() => {

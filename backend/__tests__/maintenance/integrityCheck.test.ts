@@ -33,6 +33,7 @@ import {
     readHistoryIdsFromSegments,
     runIntegrityCheck,
 } from '../../tools/maintenance/integrityCheck';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 // ==================== 测试数据构建 ====================
 
@@ -172,7 +173,7 @@ describe('checkHistoryIntegrity', () => {
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('健康分段索引（200 条边界内）→ 无问题', async () => {
@@ -279,7 +280,7 @@ describe('checkCheckpointIntegrity', () => {
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('健康：backupDir 存在 + manifest 可解析 + 增量链 base 存在 → 无问题', async () => {
@@ -486,7 +487,7 @@ describe('checkBranchIntegrity', () => {
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('无 branches.json（线性模式）→ checked=0 不报告', async () => {
@@ -615,7 +616,7 @@ describe('runIntegrityCheck / 辅助函数', () => {
     });
 
     afterEach(async () => {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     test('listConversationIds 只返回目录（会话目录）', async () => {

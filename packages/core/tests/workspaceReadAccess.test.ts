@@ -6,6 +6,7 @@ import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { FileReadAccess } from '../../../apps/server/src/workspace/readAccess';
 import { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
+import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
 
 let root: string, actual: string, linked: string, outside: string;
 beforeEach(async () => {
@@ -19,7 +20,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   if (path.dirname(root) !== path.resolve('.tmp') || !path.basename(root).startsWith('read-access-')) throw new Error('Unsafe fixture cleanup path.');
-  await rm(root, { recursive: true, force: true });
+  await rm(root, TEMP_DIR_REMOVE_OPTIONS);
 });
 
 test.each(['owner', 'member'] as const)('通过目录联接登记的工作区允许 %s 读取，实际越界仍拒绝', async role => {

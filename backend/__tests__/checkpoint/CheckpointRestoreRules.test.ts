@@ -22,6 +22,7 @@ import { createCheckpointManagerHarness } from '../__fixtures__/harnessFixtures'
 
 import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint';
 import type { CheckpointManifest } from '../../modules/checkpoint';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -89,8 +90,8 @@ describe('checkpoint restore rules (R5a)', () => {
             // 不带 operationId 查询：不得把早退操作当“最近进行中操作”返回（修复前为 scanning 死记录）
             expect(harness.manager.getOperationProgress()).toBeNull();
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -126,8 +127,8 @@ describe('checkpoint restore rules (R5a)', () => {
             const content = await fs.readFile(path.join(workspaceRoot, 'data.bin'), 'utf-8');
             expect(content).toBe('v2');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -174,8 +175,8 @@ describe('checkpoint restore rules (R5a)', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'large.bin'), 'utf-8'))
                 .resolves.toBe('current content');
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -233,8 +234,8 @@ describe('checkpoint restore rules (R5a)', () => {
             await expect(pathExists(path.join(workspaceRoot, 'movie.mp4'))).resolves.toBe(true);
             await expect(pathExists(path.join(workspaceRoot, 'gitignored.tmp'))).resolves.toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -281,8 +282,8 @@ describe('checkpoint restore rules (R5a)', () => {
             expect(restore2.excludedNote).toBeDefined();
             expect(restore2.excludedNote!.rulesChanged).toBe(true);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -305,8 +306,8 @@ describe('checkpoint restore rules (R5a)', () => {
             expect(lastCall[0]).toContain('已恢复');
             expect(lastCall[1]).toBe(5000);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -361,8 +362,8 @@ describe('checkpoint restore rules (R5a)', () => {
             await expect(pathExists(path.join(workspaceRoot, 'dist/sub/deep.js'))).resolves.toBe(true);
             await expect(pathExists(path.join(workspaceRoot, 'new.txt'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 
@@ -407,8 +408,8 @@ describe('checkpoint restore rules (R5a)', () => {
             await expect(pathExists(path.join(workspaceRoot, 'keep.log'))).resolves.toBe(true);
             await expect(pathExists(path.join(workspaceRoot, 'keep.log.bak'))).resolves.toBe(false);
         } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
+            await fs.rm(workspaceRoot, TEMP_DIR_REMOVE_OPTIONS);
+            await fs.rm(storageRoot, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
 });
