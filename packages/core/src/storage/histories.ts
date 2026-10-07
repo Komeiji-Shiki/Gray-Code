@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SqliteConnection } from './schema';
 import type { PlatformMessage, PageOptions, RuntimeHistoryCursor } from '@graycode/contracts';
-import { ObjectStore } from './objects';
+import { ObjectStore, type ValueProjection } from './objects';
 import { assertIdentifier, invalid, PlatformStorageError } from '../errors';
 
 const SEGMENT_ENTRIES = 128;
@@ -11,6 +11,18 @@ const BODY_CACHE_ENTRY_BYTES = 2 * 1024 * 1024;
 /** 导航摘要按历史保留少量快照：切换标签时来回读取的几个会话都能增量复用。 */
 const OUTLINE_SNAPSHOTS = 4;
 const OUTLINE_FIELDS = ['parentId', 'runId', 'isFunctionResponse', 'parts'] as const;
+
+function outlineProjection(includePreview: boolean): ValueProjection {
+  return { fields: OUTLINE_FIELDS, omitBinary: true, properties: { parts: { items: {
+    fields: includePreview ? ['text', 'functionCall', 'functionResponse'] : ['functionCall', 'functionResponse'],
+    properties: {
+      functionCall: { fields: ['id', 'name', 'rejected'] },
+      functionResponse: { fields: ['id', 'response'], properties: { response: { fields: ['rejected', 'cancelled', 'code'] } } },
+    },
+  } } } };
+}
+const OUTLINE_PROJECTION = outlineProjection(false);
+const USER_OUTLINE_PROJECTION = outlineProjection(true);
 
 /**
  * 导航标记、楼层与读取修复扫描只需要的消息摘要。正文、工具载荷与附件留在存储线程，
@@ -209,7 +221,7 @@ export class HistoryStore {
         const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
         const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
         if (owner.runId !== runId) continue;
-        const body = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['parts'], omitBinary: true });
+        const body = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { ...OUTLINE_PROJECTION, fields: ['parts'] });
         for (const part of body.parts as PlatformMessage['parts']) {
           const call = part.functionCall as { id: string; name: string } | undefined;
           const response = part.functionResponse as { id: string } | undefined;
@@ -264,7 +276,7 @@ export class HistoryStore {
       for (const row of rows) {
         // 已缓存的完整正文直接复用；否则只投影摘要字段，附件不解码，也不挤占正文缓存。
         const body = this.bodies.get(row.body_hash.toString('hex'))?.body
-          ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: OUTLINE_FIELDS, omitBinary: true });
+          ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, row.role === 'user' ? USER_OUTLINE_PROJECTION : OUTLINE_PROJECTION);
         entries.push(outlineEntry(row, body));
       }
       this.outlineSnapshots.set(id, { revision: info.revision, spans, entries });

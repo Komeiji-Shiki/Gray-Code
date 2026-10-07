@@ -87,6 +87,32 @@ describe('independent SQLite storage worker', () => {
     expect(await f.store.getRecord('snapshot', 'two')).toEqual(value);
   });
 
+  test('嵌套字段投影保留数组、共享字典与既有路径统计的语义', async () => {
+    const payload = '不用于摘要的正文'.repeat(3000);
+    // 超过现有大字典阈值，确保嵌套投影经过共享值引用的读取路径。
+    const manifest = Object.fromEntries(Array.from({ length: 130 }, (_, index) => [`file-${index}`, { size: index, payload }]));
+    const value = { parts: [{ text: payload, functionCall: { id: 'call', name: 'read', args: { payload } } },
+      { functionResponse: { id: 'call', response: { success: true, code: 'OK', data: payload } } }],
+      manifest, binary: new Uint8Array([1, 2, 3]) };
+    await f.store.putRecord({ namespace: 'projection', id: 'nested', value });
+    const projected = await f.store.getVersionedRecord('projection', 'nested', {
+      fields: ['parts', 'manifest', 'binary'], omitBinary: true,
+      properties: {
+        parts: { items: { fields: ['functionCall', 'functionResponse'], properties: {
+          functionCall: { fields: ['id'] },
+          functionResponse: { fields: ['id', 'response'], properties: { response: { fields: ['code'] } } },
+        } } },
+        manifest: { fields: ['file-0'], properties: { 'file-0': { fields: ['size'] } } },
+      },
+      paths: { firstSize: ['manifest', 'file-0', 'size'] },
+      mapStats: { manifestStats: { path: ['manifest'], sumFields: ['size'] } },
+    });
+    expect(projected.value).toEqual({ parts: [{ functionCall: { id: 'call' } },
+      { functionResponse: { id: 'call', response: { code: 'OK' } } }], manifest: { 'file-0': { size: 0 } },
+      binary: new Uint8Array(), firstSize: 0, manifestStats: { count: 130, size: 8385 } });
+    expect(await f.store.getRecord('projection', 'nested')).toEqual(value);
+  });
+
   test('detects corrupted external content instead of returning an empty attachment', async () => {
     await f.store.createConversation(metadata('a'));
     const binary = randomBytes(1_200_000).toString('base64');

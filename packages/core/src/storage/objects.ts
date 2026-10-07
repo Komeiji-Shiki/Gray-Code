@@ -23,8 +23,14 @@ function digest(bytes: Uint8Array): Buffer {
   return createHash('sha256').update(bytes).digest();
 }
 
-export interface ValueProjection {
+export interface ValueSelection {
   fields?: readonly string[];
+  /** 只还原指定子字段，避免为了摘要解码工具载荷等大型引用。 */
+  properties?: Record<string, ValueSelection>;
+  items?: ValueSelection;
+}
+
+export interface ValueProjection extends ValueSelection {
   omitBinary?: boolean;
   paths?: Record<string, readonly string[]>;
   mapStats?: Record<string, { path: readonly string[]; sumFields?: readonly string[] }>;
@@ -172,7 +178,7 @@ export class ObjectStore {
   }
 
   getValue<T = unknown>(hash: Buffer, projection?: ValueProjection): T {
-    const restore = (value: unknown, depth = 0): unknown => {
+    const restore = (value: unknown, depth = 0, selection?: ValueSelection): unknown => {
       if (depth > 128) throw new PlatformStorageError('CORRUPT_DATA', 'Stored value nesting exceeds 128 levels.');
       if (value instanceof Uint8Array) return projection?.omitBinary ? new Uint8Array() : value;
       if (value instanceof ExtData) {
@@ -183,8 +189,8 @@ export class ObjectStore {
             if (!Array.isArray(pair) || pair.length !== 2) throw new PlatformStorageError('CORRUPT_DATA', 'Invalid dictionary entry.');
             const key = restore(pair[0], depth + 1);
             if (typeof key !== 'string') throw new PlatformStorageError('CORRUPT_DATA', 'Invalid dictionary key.');
-            if (depth === 0 && projection?.fields && !projection.fields.includes(key)) return [];
-            return [[key, restore(pair[1], depth + 1)]];
+            if (selection?.fields && !selection.fields.includes(key)) return [];
+            return [[key, restore(pair[1], depth + 1, selection?.properties?.[key])]];
           }));
         }
         if (![ATTACHMENT_REFERENCE, UTF8_REFERENCE, UTF16_REFERENCE, BINARY_REFERENCE, VALUE_REFERENCE].includes(value.type) || typeof value.data === 'function' || value.data.length !== 32) {
@@ -193,14 +199,14 @@ export class ObjectStore {
         if (projection?.omitBinary && value.type === ATTACHMENT_REFERENCE) return '';
         if (projection?.omitBinary && value.type === BINARY_REFERENCE) return new Uint8Array();
         const content = this.get(Buffer.from(value.data));
-        if (value.type === VALUE_REFERENCE) return restore(unpack(content), depth);
+        if (value.type === VALUE_REFERENCE) return restore(unpack(content), depth, selection);
         if (value.type === BINARY_REFERENCE) return new Uint8Array(content);
         return content.toString(value.type === ATTACHMENT_REFERENCE ? 'base64' : value.type === UTF16_REFERENCE ? 'utf16le' : 'utf8');
       }
-      if (Array.isArray(value)) return value.map(item => restore(item, depth + 1));
+      if (Array.isArray(value)) return value.map(item => restore(item, depth + 1, selection?.items));
       if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
-        .filter(([key]) => depth !== 0 || !projection?.fields || projection.fields.includes(key))
-        .map(([key, item]) => [key, restore(item, depth + 1)]));
+        .filter(([key]) => !selection?.fields || selection.fields.includes(key))
+        .map(([key, item]) => [key, restore(item, depth + 1, selection?.properties?.[key])]));
       return value;
     };
     const unpack = (bytes: Uint8Array) => decode(bytes, {
@@ -209,7 +215,7 @@ export class ObjectStore {
       });
     try {
       const stored = unpack(this.get(hash));
-      const projected = restore(stored);
+      const projected = restore(stored, 0, projection);
       if (!projection?.paths && !projection?.mapStats) return projected as T;
       // 在存储线程内聚合旧记录的大型字典，列表只接收统计值，不复制整份文件清单。
       const expandStoredValue = (input: unknown): unknown => {
