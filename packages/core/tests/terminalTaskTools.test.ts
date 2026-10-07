@@ -74,6 +74,34 @@ test('停止仅作用于受管任务，输出可以继续读，未知和跨工�
   expect(await task({ action: 'stop', taskId: id })).toMatchObject({ success: true, data: { running: false } });
 }, 25000);
 
+test('后台通知等待时，其他终端仍能启动、读取并停止', async () => {
+  let entered!: () => void, release!: () => void;
+  const delivering = new Promise<void>(resolve => { entered = resolve; });
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const feedback = jest.spyOn(app.subagents.feedback, 'enqueueMessage').mockImplementationOnce(async () => {
+    entered(); await blocked;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let other: Promise<void> | undefined;
+  try {
+    await start("console.log('completed');");
+    await delivering;
+    other = (async () => {
+      const id = await start("console.log('ready'); setInterval(() => {}, 1000);");
+      await waitFor(id, data => data.output.includes('ready'));
+      expect(await task({ action: 'stop', taskId: id })).toMatchObject({ success: true, data: { running: false } });
+      expect((await task({ action: 'read', taskId: id })).data.output).toContain('ready');
+    })();
+    await Promise.race([other, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('无关的后台通知阻塞了终端操作')), 10000);
+    })]);
+  } finally {
+    clearTimeout(timer); release();
+    await other;
+    feedback.mockRestore();
+  }
+}, 25000);
+
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 // 实机复现启动器场景：启动器拉起继承标准输出的子进程后退出，Shell 随之结束，子进程的父进程已不存在。
 (process.platform === 'win32' ? test : test.skip)('前台命令中断时终止父进程已退出的后代，并说明原因与清理结果', async () => {

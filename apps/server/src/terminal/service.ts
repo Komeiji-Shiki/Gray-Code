@@ -24,11 +24,16 @@ interface TerminalRecord {
   nativeCallId?: string;
 }
 type Runner = ReturnType<typeof createTerminalRuntime>;
+interface ActiveTerminal {
+  record: TerminalRecord;
+  runner: Runner;
+  events: Promise<void>;
+  outputSave?: ReturnType<typeof setTimeout>;
+}
 
 /** 独立宿主保存任务归属和终态；Shell 与进程处理复用原运行器。 */
 export class PlatformTerminals {
-  private readonly active = new Map<string, { record: TerminalRecord; runner: Runner; outputSave?: ReturnType<typeof setTimeout> }>();
-  private events: Promise<void> = Promise.resolve();
+  private readonly active = new Map<string, ActiveTerminal>();
   private closing = false;
   constructor(private readonly app: PlatformApplication, private readonly processTree = windowsProcessTreePort()) {}
 
@@ -80,7 +85,8 @@ export class PlatformTerminals {
       data: { command: args.command, cwd, shell: args.shell ?? 'default', background: args.background === true },
       outputBuffer: { output: '', outputOffset: 0, truncated: false } };
     if (context.nativeAsync && args.background === true && context.toolCallId) record.nativeCallId = context.toolCallId;
-    const tasks = new TerminalTaskPort(event => this.queue(record, event));
+    let task!: ActiveTerminal;
+    const tasks = new TerminalTaskPort(event => this.queue(task, event));
     const runner = this.runtime(config, tasks, context.workspace.directory);
     // terminal_task read 把缓冲交给模型，去掉颜色序列；stdout/stderr 各自保留未完成的序列尾部。
     const strippers = { output: new AnsiStreamStripper(), error: new AnsiStreamStripper() };
@@ -95,7 +101,7 @@ export class PlatformTerminals {
         if (active && !active.outputSave) {
           active.outputSave = setTimeout(() => {
             active.outputSave = undefined;
-            if (this.active.has(id)) this.queue(record, { taskId: id, taskType: 'terminal', type: 'progress', data: {} });
+            if (this.active.has(id)) this.queue(task, { taskId: id, taskType: 'terminal', type: 'progress', data: {} });
           }, 1000);
           active.outputSave.unref();
         }
@@ -105,14 +111,15 @@ export class PlatformTerminals {
       }
       if (event.data) context.progress({ terminalId: id, text: event.data });
     });
-    this.active.set(id, { record, runner });
+    task = { record, runner, events: Promise.resolve() };
+    this.active.set(id, task);
     try {
       await this.save(record, true);
       context.signal.throwIfAborted();
       if (this.closing) throw new Error('宿主正在关闭，不能启动新命令。');
       const result = await runner.createExecuteCommandTool(declaration).handler({ ...args, cwd },
         { toolId: id, conversationId: context.conversationId, abortSignal: context.signal });
-      await this.events;
+      await task.events;
       if (!result.data?.background && this.active.has(id)) {
         record.status = result.cancelled ? 'cancelled' : result.success ? 'completed' : 'error';
         record.data = { ...record.data, ...result.data, error: result.error };
@@ -139,8 +146,10 @@ export class PlatformTerminals {
     }
   }
 
-  private queue(record: TerminalRecord, event: TaskEvent) {
-    this.events = this.events.catch(() => {}).then(async () => {
+  private queue(task: ActiveTerminal, event: TaskEvent) {
+    const { record } = task;
+    // 同一任务保留事件顺序，后台通知的等待不能拖住其他终端的启动、读取或停止。
+    task.events = task.events.catch(() => {}).then(async () => {
       if ((event.type === 'start' || event.type === 'progress') && !this.active.has(record.id)) return;
       record.data = { ...record.data, ...event.data };
       record.updatedAt = Date.now();
@@ -153,7 +162,7 @@ export class PlatformTerminals {
       this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'taskEvent',
         data: { ...event, data: { ...record.data, conversationId: record.conversationId, delivery: 'platform_history' } } } });
     });
-    void this.events.catch(error => {
+    void task.events.catch(error => {
       const message = `终端结果同步失败：${error instanceof Error ? error.message : String(error)}。请从输出卡片查看命令结果。`;
       record.data.deliveryError = message;
       this.app.publish({ type: 'notification', severity: 'error', message });
@@ -242,14 +251,15 @@ export class PlatformTerminals {
   }
   async kill(actorId: string, id: string) {
     await this.accessible(actorId, id);
-    const runner = this.active.get(id)?.runner;
+    const task = this.active.get(id);
+    const runner = task?.runner;
     let interruption: Record<string, unknown> | undefined;
     if (runner) {
       const result = await runner.killTerminalProcess(id, 'stopped');
       if (!result.success && this.active.has(id)) return result;
       interruption = result.interruption;
     }
-    await this.events;
+    await task?.events;
     return { ...await this.output(actorId, id), ...(interruption ? { interruption } : {}) };
   }
   private taskSummary(record: TerminalRecord) {
@@ -282,10 +292,12 @@ export class PlatformTerminals {
     const run = await this.app.storage.getRun(context.runId);
     if (!run || run.actorId !== context.actorId || run.conversationId !== context.conversationId) throw new ProcessSessionError('FORBIDDEN', '终端管理需要有效的当前运行身份。');
     const owned = (record: TerminalRecord) => record.actorId === context.actorId && record.conversationId === context.conversationId && record.workspaceId === context.workspace!.id;
-    await this.events; context.signal.throwIfAborted();
+    context.signal.throwIfAborted();
     if (args.action === 'list') {
       const offset = args.offset ?? 0, limit = args.limit ?? 20;
       if (!Number.isSafeInteger(offset) || Number(offset) < 0 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 100) throw new Error('offset/limit 无效。');
+      await Promise.all([...this.active.values()].filter(task => owned(task.record)).map(task => task.events));
+      context.signal.throwIfAborted();
       const records: TerminalRecord[] = [];
       for (const id of await this.app.storage.listRecords('terminal-records', context.conversationId)) {
         context.signal.throwIfAborted();
@@ -299,7 +311,8 @@ export class PlatformTerminals {
         ...(nextOffset !== undefined ? { nextActions: [{ tool: 'terminal_task', args: { action: 'list', offset: nextOffset, limit }, when: t('tools.terminal.nextActions.terminalNextPage') }] } : {}) } };
     }
     if (typeof args.taskId !== 'string' || !args.taskId) throw new Error('需要 execute_command 返回的 taskId。');
-    const record = this.active.get(args.taskId)?.record ?? await this.app.storage.getRecord('terminal-records', args.taskId) as TerminalRecord | null;
+    const task = this.active.get(args.taskId);
+    const record = task?.record ?? await this.app.storage.getRecord('terminal-records', args.taskId) as TerminalRecord | null;
     if (!record) throw new ProcessSessionError('NOT_FOUND', '终端任务不存在。');
     if (!owned(record)) throw new ProcessSessionError('FORBIDDEN', '只能管理同一账号、会话和工作区的终端任务。');
     if (!['status', 'read', 'stop'].includes(String(args.action))) throw new Error('不支持的终端管理动作。');
@@ -309,6 +322,9 @@ export class PlatformTerminals {
       if (!stopped.success) return { success: false, code: 'STOP_FAILED', error: String(stopped.error ?? '终端进程停止失败。'), data: this.withNextActions(this.taskSummary(record)) };
       // 停止结果说明子进程是否已清理，模型不必再用命令查进程。
       if ('interruption' in stopped && stopped.interruption) return { success: true, data: this.withNextActions({ ...this.taskSummary(record), interruption: stopped.interruption }) };
+    } else {
+      await task?.events;
+      context.signal.throwIfAborted();
     }
     const summary = this.taskSummary(record);
     const data = args.action === 'read' ? { ...summary, ...readProcessOutput(record.outputBuffer ?? {
@@ -320,24 +336,27 @@ export class PlatformTerminals {
   async detach(actorId: string, conversationId: string) {
     await this.app.conversation(actorId, conversationId);
     const detached: string[] = [];
-    for (const { record, runner } of this.active.values()) if (record.conversationId === conversationId)
+    const entries = [...this.active.values()].filter(task => task.record.conversationId === conversationId);
+    for (const { runner } of entries)
       detached.push(...runner.detachRunningTerminalsToBackground(conversationId).detached);
-    await this.events;
+    await Promise.all(entries.map(task => task.events));
     return { success: true, detached };
   }
   async removeConversation(conversationId: string) {
-    for (const { record, runner } of this.active.values()) if (record.conversationId === conversationId)
+    const entries = [...this.active.values()].filter(task => task.record.conversationId === conversationId);
+    for (const { record, runner } of entries)
       await runner.killTerminalProcess(record.id, 'conversation_removed');
-    await this.events;
+    await Promise.all(entries.map(task => task.events));
   }
   async close() {
     this.closing = true;
     const entries = [...this.active.values()];
     const results = await Promise.allSettled(entries.map(({ record, runner }) => runner.killTerminalProcess(record.id, 'host_closing')));
-    await this.events;
-    const failures = results.flatMap((result, index) => result.status === 'rejected' ? [result.reason]
+    const events = await Promise.allSettled(entries.map(task => task.events));
+    const failures = [...results.flatMap((result, index) => result.status === 'rejected' ? [result.reason]
       // runner 用结构化结果报告停止失败；终态事件可能已移除自然结束的任务，不能把它误报为失败。
-      : !result.value.success && this.active.has(entries[index].record.id) ? [new Error(result.value.error)] : []);
+      : !result.value.success && this.active.has(entries[index].record.id) ? [new Error(result.value.error)] : []),
+      ...events.flatMap(result => result.status === 'rejected' ? [result.reason] : [])];
     if (failures.length) throw new AggregateError(failures, `终端任务关闭失败：${failures.map(String).join('；')}`);
   }
 }
