@@ -102,7 +102,7 @@ export function attributeProcessTree(records: Iterable<ProcessRecord>, rootPid: 
 
 export class ProcessTreeTracker {
     private readonly records = new Map<string, ProcessRecord>();
-    private readonly timers: NodeJS.Timeout[] = [];
+    private timer?: NodeJS.Timeout;
     private sampling?: Promise<void>;
     private stopped = false;
     private rootExitedAt?: number;
@@ -121,14 +121,14 @@ export class ProcessTreeTracker {
     start(): void {
         const schedule = (index: number) => {
             if (this.stopped) return;
-            const timer = setTimeout(() => { void this.sample(); schedule(index + 1); }, SAMPLE_DELAYS_MS[index] ?? SAMPLE_INTERVAL_MS);
-            timer.unref?.(); this.timers.push(timer);
+            this.timer = setTimeout(() => { void this.sample(); schedule(index + 1); }, SAMPLE_DELAYS_MS[index] ?? SAMPLE_INTERVAL_MS);
+            this.timer.unref?.();
         };
         schedule(0);
     }
     /** Shell 退出而管道未关闭时立即采样：此时它的直接子进程仍可通过 ParentProcessId 关联。 */
     rootExited(): void { this.rootExitedAt = Date.now(); void this.sample(); }
-    stop(): void { this.stopped = true; for (const timer of this.timers) clearTimeout(timer); this.timers.length = 0; }
+    stop(): void { this.stopped = true; clearTimeout(this.timer); this.timer = undefined; }
     members(): ProcessRecord[] { return attributeProcessTree(this.records.values(), this.rootPid, this.spawnedAt, this.rootExitedAt); }
 
     /**
@@ -136,9 +136,10 @@ export class ProcessTreeTracker {
      * pipeHeld 在核实后求值：这时输出管道仍未关闭，说明还有进程占用它，额外报告无法证明归属的同期孤儿。
      */
     async cleanup(options: { pipeHeld?: () => boolean } = {}): Promise<ProcessTreeReport> {
+        this.stop();
         try {
-            await this.sampling;
-            const current = await this.port.snapshot();
+            // 旧采样保留父子链，当前快照核实存活身份；同时读取，避免停止时串行等待两次 CIM。
+            const [, current] = await Promise.all([this.sampling, this.port.snapshot()]);
             this.remember(current);
             const members = this.members();
             const alive = (list: ProcessRecord[]) => members.filter(member => list.some(record => record.pid === member.pid && (member.ppid === -1
@@ -163,7 +164,7 @@ export class ProcessTreeTracker {
             return report;
         } catch (error) {
             return { verified: false, cleaned: false, observed: 0, detached: [], error: String(error) };
-        } finally { this.stop(); }
+        }
     }
 }
 

@@ -50,6 +50,24 @@ describe('中断清理', () => {
         expect(describeProcessTree(report)).toContain('game-wow64.exe (PID 300)');
     });
 
+    test('清理期间并行取得当前快照，仍等待旧采样补齐脱链后代的归属', async () => {
+        let sampled!: (records: ProcessRecord[]) => void;
+        const first = new Promise<ProcessRecord[]>(resolve => { sampled = resolve; });
+        const child = record(300, 200, at + 80, 'child.exe');
+        const fake: ProcessTreePort = {
+            snapshot: jest.fn().mockReturnValueOnce(first).mockResolvedValueOnce([child]).mockResolvedValueOnce([]),
+            terminate: jest.fn(async () => {}),
+        };
+        const tracker = new ProcessTreeTracker(fake, 100, at);
+        void tracker.sample();
+        const cleanup = tracker.cleanup();
+        expect(fake.snapshot).toHaveBeenCalledTimes(2);
+        sampled([record(100, 1, at), record(200, 100, at + 50), child]);
+        expect(await cleanup).toMatchObject({ verified: true, cleaned: true, observed: 3,
+            detached: [{ pid: 300, name: 'child.exe' }] });
+        expect(fake.terminate).toHaveBeenCalledWith([300]);
+    });
+
     test('终止后仍存活的进程如实报告；管道仍被占用时列出无法证明归属的同期孤儿但不终止', async () => {
         const stray = record(700, 650, at + 40, 'stray.exe');
         const fake = port([
