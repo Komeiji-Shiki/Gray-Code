@@ -80,6 +80,27 @@ test('输入等待管道写入完成，异步写入失败会返回给调用方',
   await processes.close();
 });
 
+test('取消输入写入等待时保留进程和输出，迟到的管道错误仍被处理', async () => {
+  const { processes, child, result } = await running(modelOwner);
+  jest.useRealTimers();
+  const controller = new AbortController();
+  let acknowledge!: (error?: Error | null) => void;
+  let entered!: () => void;
+  const writing = new Promise<void>(resolve => { entered = resolve; });
+  child.stdin._write = (_chunk, _encoding, callback) => { acknowledge = callback; entered(); };
+  child.stdout!.emit('data', Buffer.from('已有输出'));
+  const pending = processes.input(result.id, modelOwner, 'hello', controller.signal);
+  await writing;
+  const reason = new Error('Cancelled by user.');
+  controller.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  acknowledge(new Error('EPIPE: late failure'));
+  await new Promise(resolve => setImmediate(resolve));
+  expect(await processes.read(result.id, modelOwner)).toMatchObject({ running: true, output: '已有输出' });
+  child.emit('close', 0);
+  await processes.close();
+});
+
 test('进程仍在运行但输入管道已关闭时拒绝输入，管道错误不会成为未处理异常', async () => {
   const { processes, child, result } = await running(modelOwner);
   expect(() => child.stdin.emit('error', new Error('EPIPE: pipe closed'))).not.toThrow();

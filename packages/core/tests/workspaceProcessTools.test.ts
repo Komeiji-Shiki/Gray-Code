@@ -51,6 +51,20 @@ test.each([undefined, 'sub dir', 'internal-link'])('run_command 将授权后的�
   expect(context.progress).toHaveBeenCalledWith({ text: 'progress' });
 });
 
+test('目录授权期间取消后不再启动命令', async () => {
+  const { run, processes } = fixture();
+  const controller = new AbortController();
+  const reason = new Error('Cancelled by user.');
+  const resolving = jest.spyOn(files, 'resolve').mockImplementationOnce(async () => {
+    controller.abort(reason);
+    return workspace.directory;
+  });
+  try {
+    await expect(run.execute({ command: 'fixture', args: [] }, { ...context, signal: controller.signal })).rejects.toBe(reason);
+    expect(processes.start).not.toHaveBeenCalled();
+  } finally { resolving.mockRestore(); }
+});
+
 // 默认启动目录沿用旧行为；多根工作区的非默认路径仍使用文件工具的显式根前缀。
 test.each([undefined, '', '.', '@main', '@main/sub dir', '@other'])('多根工作区 cwd=%s 保留默认主根并支持显式根', async cwd => {
   const { run, processes } = fixture();
@@ -96,7 +110,7 @@ test('input 必须等待异步授权和写入成功才 read；stop 使用同一�
   let resolve!: () => void;
   processes.input.mockImplementation(() => new Promise<void>(done => { resolve = done; }));
   const pending = session.execute({ action: 'input', id: 'session', text: 'raw\n', cursor: 100 }, context);
-  expect(processes.input).toHaveBeenCalledWith('session', owner, 'raw\n');
+  expect(processes.input).toHaveBeenCalledWith('session', owner, 'raw\n', context.signal);
   expect(processes.read).not.toHaveBeenCalled();
   resolve(); await pending;
   expect(processes.read).toHaveBeenCalledWith('session', owner, undefined);

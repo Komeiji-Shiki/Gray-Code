@@ -206,8 +206,10 @@ export class WorkspaceProcesses {
     if ('done' in entry && !entry.running) await entry.done;
     return this.result(entry, options);
   }
-  async input(id: string, owner: ProcessOwner, text: string): Promise<void> {
+  async input(id: string, owner: ProcessOwner, text: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const entry = await this.get(id, owner);
+    signal?.throwIfAborted();
     // 完成记录先授权再报告退出；不能把本任务已完成的命令误报为不存在或无权限。
     if (!entry.running || !('child' in entry) || !entry.child || entry.child.exitCode !== null || entry.child.signalCode !== null)
       throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
@@ -215,11 +217,19 @@ export class WorkspaceProcesses {
     if (entry.inputError || !input || input.destroyed || input.writableEnded || !input.writable)
       throw new ProcessSessionError('INPUT_CLOSED', '命令输入管道已关闭，进程输出仍可读取。');
     // 等待实际写入回调，避免提前报告成功；检查之后关闭管道的竞态也必须回到工具回执。
-    await new Promise<void>((resolve, reject) => {
-      input.write(text, error => error
-        ? reject(new ProcessSessionError('INPUT_CLOSED', `命令输入写入失败：${error.message}`))
-        : resolve());
-    });
+    let abort: (() => void) | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        // 子进程可能一直不读取 stdin；取消只结束本次等待，已提交的输入不能撤回。
+        abort = () => reject(signal!.reason);
+        signal?.addEventListener('abort', abort, { once: true });
+        input.write(text, error => error
+          ? reject(new ProcessSessionError('INPUT_CLOSED', `命令输入写入失败：${error.message}`))
+          : resolve());
+      });
+    } finally {
+      if (abort) signal?.removeEventListener('abort', abort);
+    }
   }
   async stop(id: string, owner: ProcessOwner): Promise<void> {
     const entry = await this.get(id, owner);

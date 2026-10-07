@@ -175,6 +175,7 @@ export function workspaceTools(
       },
       effects: commandEffects,
       execute: async (args, context) => {
+        context.signal.throwIfAborted();
         const target = workspace(context);
         // 与文件工具共用真实路径授权，不能仅拼接 cwd 后交给 spawn；文件路径也不能当目录启动。
         // 多根的相对路径必须带根前缀，但默认启动位置仍沿用旧版 workspace.directory。
@@ -182,6 +183,8 @@ export function workspaceTools(
         const requestedCwd = String(args.cwd ?? '');
         const cwd = await files.resolve(target, requestedCwd === '' || requestedCwd === '.' ? target.directory : requestedCwd);
         if (!(await stat(cwd)).isDirectory()) throw new Error('cwd must be a directory within the workspace.');
+        // 路径授权和目录读取期间也可能取消，启动前必须再次检查。
+        context.signal.throwIfAborted();
         return processOutcome(await processes.start(target, processOwner(context), String(args.command), args.args as string[],
           (text) => context.progress({ text }), { cwd }));
       },
@@ -217,7 +220,7 @@ export function workspaceTools(
           if (args.action === "input") {
             if (typeof args.text !== "string") throw new Error("Supply process input.");
             // 授权可能查询旧运行记录，必须等待 input 完成，不能把异步拒绝丢到工具结果之后。
-            await processes.input(String(args.id), owner, args.text);
+            await processes.input(String(args.id), owner, args.text, context.signal);
           }
           if (args.action === "stop") await processes.stop(String(args.id), owner);
           return processOutcome(await processes.read(String(args.id), owner, args.action === 'read'
