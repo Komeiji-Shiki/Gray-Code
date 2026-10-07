@@ -3,7 +3,10 @@ export function normalizeToolArguments(value: Record<string, unknown>, schema: R
   const acceptsNull = (shape: Record<string, unknown>): boolean => shape.type === 'null'
     || (Array.isArray(shape.type) && shape.type.includes('null'))
     || (Array.isArray(shape.enum) && shape.enum.includes(null))
-    || (Array.isArray(shape.anyOf) && shape.anyOf.some(item => item && typeof item === 'object' && acceptsNull(item as Record<string, unknown>)));
+    || shape.const === null
+    // 组合分支显式允许的空值必须保留，分支是否唯一匹配继续交给正式 Schema 校验。
+    || [shape.anyOf, shape.oneOf].some(branches => Array.isArray(branches)
+      && branches.some(item => item && typeof item === 'object' && acceptsNull(item as Record<string, unknown>)));
   function visit(input: unknown, shape: Record<string, unknown>): unknown {
     if (Array.isArray(input) && shape.items && typeof shape.items === 'object') return input.map(item => visit(item, shape.items as Record<string, unknown>));
     if (!input || typeof input !== 'object' || Array.isArray(input) || !shape.properties || typeof shape.properties !== 'object') return input;

@@ -113,6 +113,23 @@ describe('运行器启动、关闭和工具准备的取消边界', () => {
     } finally { release.resolve(); await runtime.wait(run.id); }
   });
 
+  test('组合可空参数原样交给工具，接口补齐的非空可选字段仍会移除', async () => {
+    const execute = jest.fn(async () => ({ success: true }));
+    const properties = { clear: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+      constant: { const: null }, optional: { type: 'string' } };
+    services.tools = new RuntimeToolRegistry();
+    services.tools.register({ declaration: { name: 'read', description: '读取', parameters: { type: 'object',
+      properties: { ...properties, nested: { type: 'object', properties } } } },
+      effects: () => ['public_read'], execute });
+    services.models.generate = async request => request.messages.some(message => message.role === 'model')
+      ? { role: 'model', parts: [{ text: '完成' }] }
+      : { role: 'model', parts: [{ functionCall: { id: 'nullable', name: 'read',
+        args: { clear: null, constant: null, optional: null, nested: { clear: null, constant: null, optional: null } } } }] };
+    const run = await runtime.start(input);
+    expect((await runtime.wait(run.id))?.status).toBe('completed');
+    expect(execute).toHaveBeenCalledWith({ clear: null, constant: null, nested: { clear: null, constant: null } }, expect.anything());
+  });
+
   test('工具准备期间取消只结算该调用，不执行尚未开始的工具', async () => {
     const entered = deferred(), release = deferred();
     const execute = jest.fn(async () => ({ success: true }));
