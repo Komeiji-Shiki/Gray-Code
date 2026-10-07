@@ -66,7 +66,10 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
   | { type: 'model.delta'; runId: string; parts: Record<string, unknown>[] }
   | { type: 'model.retrying'; runId: string; attempt: number; maxAttempts: number; error: string; nextRetryIn: number }
   | { type: 'tool.progress'; runId: string; toolCallId: string; payload: Record<string, unknown> };
-interface ActiveRun { conversationId: string; actorId: string; controller: AbortController; done: Promise<void> }
+interface ActiveRun {
+  conversationId: string; actorId: string; controller: AbortController; done: Promise<void>;
+  pendingTools: Map<string, Pick<ModelToolCall, 'id' | 'name'>>;
+}
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
 interface FunctionCall extends ModelToolCall {}
 export interface PreparedConversationChange {
@@ -129,6 +132,17 @@ export class PlatformRuntime {
   }
   private notify(event: RuntimeNotification): void {
     for (const listener of this.listeners) { try { listener(event); } catch { /* A broken subscriber cannot abort a task. */ } }
+  }
+  /** 只在消息已提交后更新本轮配对集合，取消无需重新读取整段历史。 */
+  private trackToolPairing(runId: string, message: PlatformMessage): void {
+    const pending = this.active.get(runId)?.pendingTools;
+    if (!pending || message.runId !== runId) return;
+    for (const part of message.parts) {
+      const call = part.functionCall as FunctionCall | undefined;
+      const response = part.functionResponse as { id: string } | undefined;
+      if (call && message.role === 'model') pending.set(call.id, { id: call.id, name: call.name });
+      if (response) pending.delete(response.id);
+    }
   }
   private async event(runId: string, type: RunEvent['type'], payload: Record<string, unknown>, update?: { status?: RunRecord['status']; iteration?: number; error?: string }): Promise<void> {
     const event = await this.services.storage.appendRunEvent({ runId, type, payload, update });
@@ -297,7 +311,7 @@ export class PlatformRuntime {
     const execute = () => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection);
     const done = Promise.resolve().then(() => this.services.runInScope ? this.services.runInScope(run, execute) : execute())
       .finally(() => { scope?.signal?.removeEventListener('abort', abort); this.active.delete(run.id); this.questions.clear(run.id); });
-    this.active.set(run.id, { conversationId: run.conversationId, actorId: run.actorId, controller, done });
+    this.active.set(run.id, { conversationId: run.conversationId, actorId: run.actorId, controller, done, pendingTools: new Map() });
     // 对话事务和取消句柄都已建立，界面才开始订阅这一轮任务。
     this.notify({ type: 'run.created', runId: run.id, run: structuredClone(run), ...(message ? { message: structuredClone(message) } : {}) });
     void done.catch(() => undefined);
@@ -378,6 +392,9 @@ export class PlatformRuntime {
         const incoming = state.history;
         historyMessages = [...historyMessages.slice(0, incoming.startIndex), ...incoming.messages];
         historyRevision = incoming.revision;
+        // 历史可能经过总结或分支替换；复用本次已读取的内容同步配对状态，不另发存储请求。
+        this.active.get(run.id)!.pendingTools.clear();
+        for (const message of historyMessages) this.trackToolPairing(run.id, message);
         state = { ...state, history: { ...incoming, startIndex: 0, messages: historyMessages } };
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
@@ -481,6 +498,7 @@ export class PlatformRuntime {
             // 沿用来源标注钩子，使记忆遗忘与角色会话仍能追溯这段输出的依据。
             if (this.services.transformOutput) partial = await this.services.transformOutput({ run, message: partial, request });
             await this.services.storage.appendHistory(run.conversationId, [partial], { expectedRevision: page.revision });
+            this.trackToolPairing(run.id, partial);
             await this.nativeTools.publish(run.id, [...early.values()].map(value => value.call));
             this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(partial) });
             await this.event(run.id, 'message.saved', { messageId: partial.id, incompleteReason: partial.incompleteReason, streaming: deltas.statistics() }, { iteration });
@@ -493,6 +511,7 @@ export class PlatformRuntime {
         if (this.services.transformOutput) content = await this.services.transformOutput({ run, message: content, request });
         const calls = this.calls(content);
         await this.services.storage.appendHistory(run.conversationId, [content], { expectedRevision: page.revision });
+        this.trackToolPairing(run.id, content);
         await this.nativeTools.publish(run.id, calls);
         this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(content) });
         await this.event(run.id, 'message.saved', { messageId: content.id, streaming: deltas.statistics() }, { iteration });
@@ -729,6 +748,7 @@ export class PlatformRuntime {
         ...(attachments ?? []).map(attachment => ({ inlineData: { mimeType: attachment.mimeType, data: attachment.data },
           ...(attachment.name ? { displayName: attachment.name } : {}) }))] };
     await this.services.storage.appendHistory(run.conversationId, [message], { expectedRevision: page.revision });
+    this.trackToolPairing(run.id, message);
     this.notify({ type: 'message.persisted', runId: run.id, content: structuredClone(message) });
     await this.event(run.id, 'tool.completed', { toolCallId: call.id, toolName: call.name, messageId: message.id, success: outcome.success, code: outcome.code });
   }
@@ -748,7 +768,8 @@ export class PlatformRuntime {
   }
 
   private async settleInterrupted(run: RunRecord, code = 'INTERRUPTED', detached: string[] = []): Promise<void> {
-    const pending = await this.services.storage.readPendingToolCalls(run.conversationId, run.id);
+    const active = this.active.get(run.id);
+    const pending = active ? [...active.pendingTools.values()] : await this.services.storage.readPendingToolCalls(run.conversationId, run.id);
     for (const call of pending) if (!detached.includes(call.id)) await this.saveToolResult(run, call, { success: false, code, error: 'Execution was interrupted; side effects are not automatically retried.' });
   }
 

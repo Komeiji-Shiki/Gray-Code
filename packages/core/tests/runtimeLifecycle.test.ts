@@ -130,23 +130,31 @@ describe('运行器启动、关闭和工具准备的取消边界', () => {
     expect(execute).toHaveBeenCalledWith({ clear: null, constant: null, nested: { clear: null, constant: null } }, expect.anything());
   });
 
-  test('工具准备期间取消只结算该调用，不执行尚未开始的工具', async () => {
+  test('工具准备期间取消只结算本轮调用，不执行尚未开始的工具', async () => {
     const entered = deferred(), release = deferred();
     const execute = jest.fn(async () => ({ success: true }));
     services.tools = new RuntimeToolRegistry();
     services.tools.register({ declaration: { name: 'read', description: '读取', parameters: { type: 'object', properties: {} } },
       effects: () => ['public_read'], execute });
-    services.models.generate = async () => ({ role: 'model', parts: [{ functionCall: { id: 'call', name: 'read', args: {} } }] });
+    services.models.generate = async () => ({ role: 'model', parts: [
+      { functionCall: { id: 'call', name: 'read', args: {} } },
+      { functionCall: { id: 'not-started', name: 'read', args: {} } },
+    ] });
     services.beforeTool = async () => { entered.resolve(); await release.promise; };
     const run = await runtime.start(input); await entered.promise;
     const fullHistory = jest.spyOn(f.store, 'readFullHistory');
+    const pendingCalls = jest.spyOn(f.store, 'readPendingToolCalls');
     await runtime.cancel(run.id, 'owner'); release.resolve();
     expect((await runtime.wait(run.id))?.status).toBe('cancelled');
     expect(execute).not.toHaveBeenCalled();
     expect(fullHistory).not.toHaveBeenCalled();
+    expect(pendingCalls).not.toHaveBeenCalled();
     fullHistory.mockRestore();
+    pendingCalls.mockRestore();
     const responses = (await f.store.readFullHistory(input.conversationId)).messages.flatMap(message => message.parts)
       .filter(part => part.functionResponse);
-    expect(responses).toEqual([{ functionResponse: expect.objectContaining({ id: 'call', response: expect.objectContaining({ code: 'CANCELLED' }) }) }]);
+    expect(responses).toEqual(['call', 'not-started'].map(id => ({ functionResponse: expect.objectContaining({
+      id, response: expect.objectContaining({ code: 'CANCELLED' }),
+    }) })));
   });
 });
