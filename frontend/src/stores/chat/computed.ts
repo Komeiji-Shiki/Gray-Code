@@ -50,9 +50,8 @@ function scanUsedTokensRange(
 }
 
 /**
- * usedTokens 增量缓存：缓存 [0, scannedCount) 的扫描结果 + 该前缀的消息引用快照。
- * 前缀引用逐元素相等且窗口只增不减时，仅扫描尾部新增消息（含上次未缓存的旧尾消息，
- * 它的 metadata.usageMetadata 会在流式 done 时原地写入）；其余结构变更自动回退全量重扫。
+ * usedTokens 只缓存 [0, scannedCount) 的固定前缀，不包含仍可能改写的尾消息。
+ * 数组身份和响应式结构版本不变时，只扫描新进入前缀的消息与当前尾消息。
  */
 interface UsedTokensScanCache {
   scannedCount: number
@@ -61,6 +60,16 @@ interface UsedTokensScanCache {
   latestSummaryEstimate: { timestamp: number; tokens: number } | undefined
   /** 缓存时的消息数组结构版本（state.ts 维护）：非纯尾部 splice/删除/整体替换会递增 */
   version: number
+}
+
+/** 助手用量按数组位置取最后一条；总结按时间取最新，并列保留较早的位置。 */
+function mergeUsedTokensScan(prefix: UsedTokensScanOutput, suffix: UsedTokensScanOutput): UsedTokensScanOutput {
+  const before = prefix.latestSummaryEstimate
+  const after = suffix.latestSummaryEstimate
+  return {
+    lastAssistantUsage: suffix.lastAssistantUsage ?? prefix.lastAssistantUsage,
+    latestSummaryEstimate: before && (!after || before.timestamp >= after.timestamp) ? before : after
+  }
 }
 
 /**
@@ -123,59 +132,28 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
       return 0
     }
 
-    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量。
-    // 注意：messagesRef 与 messages 是同一个响应式数组代理，原地 splice（中间插入/删除）
-    // 无法被逐元素引用比较感知；结构版本号（state.ts 在非纯尾部变更时递增）作为补充指纹，
-    // 版本不一致一律回退全量重扫。
-    let scanCache = usedTokensScanCache
-    let prefixOk = false
-    if (
-      scanCache !== null &&
-      scanCache.messagesRef.length <= len &&
-      scanCache.version === getMessagesStructuralVersion(state)
-    ) {
-      prefixOk = true
-      for (let i = 0; i < scanCache.scannedCount; i++) {
-        if (messages[i] !== scanCache.messagesRef[i]) {
-          prefixOk = false
-          break
-        }
-      }
-    }
-
-    const out: UsedTokensScanOutput = {
+    const prefixCount = Math.max(0, len - 1)
+    const version = getMessagesStructuralVersion(state)
+    const scanCache = usedTokensScanCache
+    const prefixOk = scanCache !== null && scanCache.messagesRef === messages
+      && scanCache.scannedCount <= prefixCount && scanCache.version === version
+    let prefix: UsedTokensScanOutput = {
       lastAssistantUsage: undefined,
       latestSummaryEstimate: undefined
     }
-    if (prefixOk && scanCache !== null) {
-      // 尾区间独立逆序扫描后与缓存合并（与全量单趟语义一致：总结取 timestamp 最大者，
-      // 并列取数组更靠前者；助手 usage 取数组中最后一条）：
-      // - lastAssistantUsage：尾区间有命中即取代缓存（位置必然更靠后）
-      // - latestSummaryEstimate：仅当尾区间最大值严格大于缓存时才取代（并列取更早的缓存）
-      scanUsedTokensRange(messages, scanCache.scannedCount, len, out)
-      if (out.lastAssistantUsage === undefined) {
-        out.lastAssistantUsage = scanCache.lastAssistantUsage
-      }
-      if (out.latestSummaryEstimate === undefined) {
-        out.latestSummaryEstimate = scanCache.latestSummaryEstimate
-      } else if (
-        scanCache.latestSummaryEstimate !== undefined &&
-        out.latestSummaryEstimate.timestamp <= scanCache.latestSummaryEstimate.timestamp
-      ) {
-        out.latestSummaryEstimate = scanCache.latestSummaryEstimate
-      }
-    } else {
-      scanUsedTokensRange(messages, 0, len, out)
+    scanUsedTokensRange(messages, prefixOk ? scanCache!.scannedCount : 0, prefixCount, prefix)
+    if (prefixOk) prefix = mergeUsedTokensScan(scanCache!, prefix)
+
+    usedTokensScanCache = {
+      scannedCount: prefixCount,
+      messagesRef: messages,
+      ...prefix,
+      version
     }
 
-    // 尾消息可能在流式期间原地更新（usageMetadata 在 done 分支写入），始终不纳入缓存
-    usedTokensScanCache = {
-      scannedCount: Math.max(0, len - 1),
-      messagesRef: messages,
-      lastAssistantUsage: out.lastAssistantUsage,
-      latestSummaryEstimate: out.latestSummaryEstimate,
-      version: getMessagesStructuralVersion(state)
-    }
+    const tail: UsedTokensScanOutput = { lastAssistantUsage: undefined, latestSummaryEstimate: undefined }
+    scanUsedTokensRange(messages, prefixCount, len, tail)
+    const out = mergeUsedTokensScan(prefix, tail)
 
     if (!out.lastAssistantUsage) return 0
     // 总结消息会插入到被压缩范围的末尾，数组位置早于保留消息；用 timestamp 判断

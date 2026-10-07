@@ -1,7 +1,7 @@
 import type { ChatStoreState } from './types'
 import type { Message } from '../../types'
 import { perfLog } from '../../utils/perf'
-import { replaceAllMessages } from './state'
+import { getMessagesStructuralVersion, replaceAllMessages } from './state'
 
 /** 默认消息窗口上限（按可见消息预算计算，保留完整轮次） */
 export const MAX_WINDOW_MESSAGES = 800
@@ -44,6 +44,8 @@ interface VisibleMessagesCacheEntry {
 const visibleMessagesCache = new WeakMap<ChatStoreState, VisibleMessagesCacheEntry>()
 
 export function getVisibleChatMessagesCached(state: ChatStoreState): Message[] {
+  // 快路径只读取首尾元素；结构版本负责让中间位置的替换及时触发 computed。
+  getMessagesStructuralVersion(state)
   const source = state.allMessages.value
   const cached = visibleMessagesCache.get(state)
 

@@ -3,6 +3,7 @@
  */
 
 import { reactive, ref, toRaw, triggerRef } from 'vue'
+import type { Ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointSummary } from '../../types'
 import type { Attachment } from '../../types'
@@ -131,14 +132,21 @@ export function rebuildMessageIndexById(state: MessageIndexLookupState): void {
  * getMessagesStructuralVersion 供缓存读取校验；bumpMessagesStructuralVersion 供 state.ts 之外的
  * 原地结构变更方显式递增（如 chunkSummary 窗口外 backendIndex 偏移）。
  */
-const messagesStructuralVersions = new WeakMap<object, number>()
+const messagesStructuralVersions = new WeakMap<object, Ref<number>>()
 
 export function getMessagesStructuralVersion(state: MessageIndexLookupState): number {
-  return messagesStructuralVersions.get(state) ?? 0
+  let version = messagesStructuralVersions.get(state)
+  if (!version) {
+    version = ref(0)
+    messagesStructuralVersions.set(state, version)
+  }
+  return version.value
 }
 
 export function bumpMessagesStructuralVersion(state: MessageIndexLookupState): void {
-  messagesStructuralVersions.set(state, (messagesStructuralVersions.get(state) ?? 0) + 1)
+  const version = messagesStructuralVersions.get(state)
+  if (version) version.value++
+  else messagesStructuralVersions.set(state, ref(1))
 }
 
 export function replaceAllMessages(state: MessageIndexLookupState, messages: Message[]): void {

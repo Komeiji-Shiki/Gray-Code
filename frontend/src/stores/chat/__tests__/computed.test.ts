@@ -13,6 +13,7 @@ import { ref } from 'vue'
 import type { Message } from '../../../types'
 import type { ChatStoreState } from '../types'
 import { createChatComputed } from '../computed'
+import { replaceMessageAt } from '../state'
 
 function makeMessage(id: string, overrides: Partial<Message> = {}): Message {
   return {
@@ -39,6 +40,58 @@ function makeSummaryStats(tokens: number) {
 }
 
 describe('usedTokens', () => {
+  test('尾消息改写后不保留旧用量或总结估算', () => {
+    const state = { allMessages: ref([
+      makeMessage('prefix', { role: 'assistant', metadata: { usageMetadata: { totalTokenCount: 100 } } }),
+      makeMessage('tail', { role: 'assistant', timestamp: 2000, metadata: { usageMetadata: { totalTokenCount: 200 } } })
+    ]) } as unknown as ChatStoreState
+    const usedTokens = createChatComputed(state).usedTokens
+    expect(usedTokens.value).toBe(200)
+    replaceMessageAt(state, 1, makeMessage('tail', { role: 'assistant', timestamp: 2000 }))
+    expect(usedTokens.value).toBe(100)
+    replaceMessageAt(state, 1, makeMessage('tail', { role: 'assistant', timestamp: 3000,
+      isSummary: true, summaryTokenStats: makeSummaryStats(500) }))
+    expect(usedTokens.value).toBe(500)
+    replaceMessageAt(state, 1, makeMessage('tail', { role: 'assistant', timestamp: 3000 }))
+    expect(usedTokens.value).toBe(100)
+  })
+
+  test('尾部增量更新后，中间消息的替换立即刷新统计与可见列表', () => {
+    const state = { allMessages: ref([
+      makeMessage('first'),
+      makeMessage('middle', { role: 'assistant', metadata: { usageMetadata: { totalTokenCount: 100 } } }),
+      makeMessage('tail')
+    ]) } as unknown as ChatStoreState
+    const computed = createChatComputed(state)
+    expect(computed.usedTokens.value).toBe(100)
+    expect(computed.messages.value[1].content).toBe('middle')
+    replaceMessageAt(state, 2, makeMessage('tail', { content: '尾部更新' }))
+    expect(computed.usedTokens.value).toBe(100)
+    expect(computed.messages.value[2].content).toBe('尾部更新')
+    replaceMessageAt(state, 1, makeMessage('middle', { role: 'assistant', content: '中间更新',
+      metadata: { usageMetadata: { totalTokenCount: 333 } } }))
+    expect(computed.usedTokens.value).toBe(333)
+    expect(computed.messages.value[1].content).toBe('中间更新')
+  })
+
+  test('长窗口的尾部更新不逐条访问固定前缀', () => {
+    let indexedReads = 0
+    const messages = new Proxy(Array.from({ length: 600 }, (_, index) => makeMessage(`m${index}`, index === 0
+      ? { role: 'assistant', metadata: { usageMetadata: { totalTokenCount: 100 } } } : {})), {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) indexedReads++
+        return Reflect.get(target, key, receiver)
+      }
+    })
+    const state = { allMessages: ref(messages) } as unknown as ChatStoreState
+    const usedTokens = createChatComputed(state).usedTokens
+    expect(usedTokens.value).toBe(100)
+    indexedReads = 0
+    replaceMessageAt(state, 599, makeMessage('m599', { content: '流式更新' }))
+    expect(usedTokens.value).toBe(100)
+    expect(indexedReads).toBeLessThan(20)
+  })
+
   test('最后一条带 usage 的助手消息：返回 totalTokenCount', () => {
     const usedTokens = makeComputed([
       makeMessage('u1'),
