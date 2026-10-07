@@ -198,6 +198,29 @@ export class HistoryStore {
     return { total: info.message_count, startIndex: start, revision: info.revision, messages: rows.map(row => this.decode(row)) };
   }
 
+  /** 中断结算只需本轮未配对的调用身份；旧消息仅投影 runId，不读取正文或附件。 */
+  pendingToolCalls(id: string, runId: string): Array<{ id: string; name: string }> {
+    return this.db.transaction(() => {
+      const info = this.info(id);
+      const rows = this.rows(id, 0, info.message_count);
+      if (rows.length !== info.message_count) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+      const pending = new Map<string, { id: string; name: string }>();
+      for (const row of rows) {
+        const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
+        const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
+        if (owner.runId !== runId) continue;
+        const body = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['parts'], omitBinary: true });
+        for (const part of body.parts as PlatformMessage['parts']) {
+          const call = part.functionCall as { id: string; name: string } | undefined;
+          const response = part.functionResponse as { id: string } | undefined;
+          if (call && row.role === 'model') pending.set(call.id, { id: call.id, name: call.name });
+          if (response) pending.delete(response.id);
+        }
+      }
+      return [...pending.values()];
+    })();
+  }
+
   /** A bounded page and its global floor metadata share one snapshot. No options means metadata only. */
   pageWithFloors(id: string, options?: PageOptions) {
     return this.db.transaction(() => {

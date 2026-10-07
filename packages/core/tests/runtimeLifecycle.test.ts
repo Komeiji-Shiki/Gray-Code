@@ -122,9 +122,12 @@ describe('运行器启动、关闭和工具准备的取消边界', () => {
     services.models.generate = async () => ({ role: 'model', parts: [{ functionCall: { id: 'call', name: 'read', args: {} } }] });
     services.beforeTool = async () => { entered.resolve(); await release.promise; };
     const run = await runtime.start(input); await entered.promise;
+    const fullHistory = jest.spyOn(f.store, 'readFullHistory');
     await runtime.cancel(run.id, 'owner'); release.resolve();
     expect((await runtime.wait(run.id))?.status).toBe('cancelled');
     expect(execute).not.toHaveBeenCalled();
+    expect(fullHistory).not.toHaveBeenCalled();
+    fullHistory.mockRestore();
     const responses = (await f.store.readFullHistory(input.conversationId)).messages.flatMap(message => message.parts)
       .filter(part => part.functionResponse);
     expect(responses).toEqual([{ functionResponse: expect.objectContaining({ id: 'call', response: expect.objectContaining({ code: 'CANCELLED' }) }) }]);

@@ -35,6 +35,30 @@ describe('历史导航摘要', () => {
     expect(JSON.stringify(outline)).not.toMatch(/TOOL_ARGUMENT|TOOL_PAYLOAD|aGVsbG8/);
   });
 
+  test('中断结算只返回指定运行中尚未配对的工具身份', async () => {
+    await f.store.appendHistory('outline', [
+      { id: 'current-calls', role: 'model', runId: 'current', parts: [
+        { functionCall: { id: 'finished', name: 'read_file', args: { path: 'TOOL_ARGUMENT' } } },
+        { functionCall: { id: 'waiting', name: 'execute_command', args: { command: 'TOOL_ARGUMENT' } } },
+      ] },
+      { id: 'current-result', role: 'user', runId: 'current', isFunctionResponse: true, parts: [
+        { functionResponse: { id: 'finished', name: 'read_file', response: { success: true, data: 'TOOL_PAYLOAD' } } },
+      ] },
+      { id: 'other-call', role: 'model', runId: 'other', parts: [
+        { functionCall: { id: 'other-pending', name: 'write_file', args: {} } },
+      ] },
+      { id: 'other-result', role: 'user', runId: 'other', isFunctionResponse: true, parts: [
+        { functionResponse: { id: 'waiting', name: 'execute_command', response: { success: true } } },
+      ] },
+    ]);
+    expect(await f.store.readPendingToolCalls('outline', 'current')).toEqual([{ id: 'waiting', name: 'execute_command' }]);
+    await f.store.appendHistory('outline', [{ role: 'user', runId: 'current', isFunctionResponse: true, parts: [
+      { functionResponse: { id: 'waiting', name: 'execute_command', response: { success: false, code: 'CANCELLED' } } },
+    ] }]);
+    expect(await f.store.readPendingToolCalls('outline', 'current')).toEqual([]);
+    expect(await f.store.readPendingToolCalls('outline', 'other')).toEqual([{ id: 'other-pending', name: 'write_file' }]);
+  });
+
   test('追加、截断替换与分叉后结果与完整读取一致', async () => {
     await f.store.readHistoryOutline('outline');
     await f.store.appendHistory('outline', [{ id: 'm-5', parentId: 'u-4', role: 'model', parts: [

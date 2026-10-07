@@ -720,7 +720,7 @@ export class PlatformRuntime {
     } finally { signal.removeEventListener('abort', abort); this.approvals.delete(request.id); }
   }
 
-  private async saveToolResult(run: RunRecord, call: FunctionCall, outcome: ToolOutcome): Promise<void> {
+  private async saveToolResult(run: RunRecord, call: Pick<FunctionCall, 'id' | 'name'>, outcome: ToolOutcome): Promise<void> {
     const { attachments, ...response } = outcome;
     const page = await this.services.storage.readHistory(run.conversationId, { limit: 1 });
     const message: PlatformMessage = { id: randomUUID(), role: 'user', runId: run.id, isFunctionResponse: true,
@@ -748,18 +748,8 @@ export class PlatformRuntime {
   }
 
   private async settleInterrupted(run: RunRecord, code = 'INTERRUPTED', detached: string[] = []): Promise<void> {
-    const page = await this.services.storage.readFullHistory(run.conversationId);
-    const pending = new Map<string, FunctionCall>();
-    for (const message of page.messages) {
-      if (message.runId !== run.id) continue;
-      for (const part of message.parts) {
-        const call = part.functionCall as FunctionCall | undefined;
-        const response = part.functionResponse as { id: string } | undefined;
-        if (call && message.role === 'model') pending.set(call.id, call);
-        if (response) pending.delete(response.id);
-      }
-    }
-    for (const call of pending.values()) if (!detached.includes(call.id)) await this.saveToolResult(run, call, { success: false, code, error: 'Execution was interrupted; side effects are not automatically retried.' });
+    const pending = await this.services.storage.readPendingToolCalls(run.conversationId, run.id);
+    for (const call of pending) if (!detached.includes(call.id)) await this.saveToolResult(run, call, { success: false, code, error: 'Execution was interrupted; side effects are not automatically retried.' });
   }
 
   private async drainFeedback(run: RunRecord): Promise<void> {

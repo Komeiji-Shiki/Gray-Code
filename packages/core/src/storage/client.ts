@@ -116,6 +116,7 @@ export class PlatformStorage {
   readHistoryWithFloors(id: string, options?: PageOptions) { return this.request('readHistoryWithFloors', { id, options }); }
   /** 整段历史的导航摘要（角色、ID、工具配对标记与用户预览），不含正文与附件。 */
   readHistoryOutline(id: string) { return this.request('readHistoryOutline', { id }); }
+  readPendingToolCalls(id: string, runId: string) { return this.request('readPendingToolCalls', { id, runId }); }
   historyInfo(id: string) { return this.request('historyInfo', { id }); }
   /** Explicit full reads use one worker operation; UI callers should use readHistory pages. */
   readUsageState(id: string, records: StorageOperations['readUsageState']['input']['records'] = [], since?: string) { return this.request('readUsageState', { id, records, since }); }
