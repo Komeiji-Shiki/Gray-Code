@@ -60,12 +60,15 @@ function streamRendererWorkload(body, response) {
 async function measureCommandCancellation(options) {
   const diagnostics = require('node:diagnostics_channel'), processSteps = [];
   const observe = ({ process: child }) => {
-    const command = (child.spawnargs ?? []).join(' ');
-    const kind = /Get-CimInstance\s+Win32_Process/i.test(command) ? 'process-snapshot'
-      : /\btaskkill(?:\.exe)?\b/i.test(command) ? 'taskkill' : undefined;
-    if (!kind) return;
     const startedAt = performance.now();
-    child.once('close', (exitCode, signal) => processSteps.push({ kind, startedAt, durationMilliseconds: performance.now() - startedAt, exitCode, signal }));
+    // 诊断事件在构造进程对象时触发，spawn 后才有真实命令参数。
+    child.once('spawn', () => {
+      const command = (child.spawnargs ?? []).join(' ');
+      const kind = /Get-CimInstance\s+Win32_Process/i.test(command) ? 'process-snapshot'
+        : /\btaskkill(?:\.exe)?\b/i.test(command) ? 'taskkill' : undefined;
+      if (!kind) return;
+      child.once('close', (exitCode, signal) => processSteps.push({ kind, startedAt, durationMilliseconds: performance.now() - startedAt, exitCode, signal }));
+    });
   };
   diagnostics.subscribe('child_process', observe);
   try {
