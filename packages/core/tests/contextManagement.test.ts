@@ -235,7 +235,10 @@ describe('完整前缀总结与持久笔记换窗口', () => {
   });
 
   test('历史搜索围绕命中预览并可直接按偏移读取，笔记读取提供续查游标', async () => {
-    await app.storage.appendHistory('compaction', [{ id: 'long-evidence', role: 'model', parts: [{ text: '前'.repeat(8000) + 'NEEDLE_TAG' + '后'.repeat(1000) }] }]);
+    const attachment = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=' };
+    await app.storage.appendHistory('compaction', [{ id: 'long-evidence', role: 'model', parts: [
+      { text: '前'.repeat(8000) + 'NEEDLE_TAG' + '后'.repeat(1000) }, { inlineData: attachment },
+    ] }]);
     const run = await start('history-test'); await app.runtime.wait(run.id);
     const context = { actorId: 'owner', runId: run.id, conversationId: 'compaction', signal: new AbortController().signal, progress: () => {}, askUser: jest.fn() };
     const tools = app.tools.catalog(['context_history', 'context_notes']).entries;
@@ -244,7 +247,12 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     const hit = found.items[0];
     expect(hit).toMatchObject({ messageId: 'long-evidence', matchOffset: 8000, matchLength: 10, textTruncated: true });
     expect(hit.text).toContain('NEEDLE_TAG');
-    expect(await history.execute({ action: 'read', messageId: hit.messageId, offset: hit.matchOffset, limit: 10 }, context)).toMatchObject({ text: 'NEEDLE_TAG', nextOffset: 8010 });
+    const fullReads = jest.spyOn(app.storage, 'readFullHistory');
+    expect(await history.execute({ action: 'read', messageId: hit.messageId, offset: hit.matchOffset, limit: 10, includeAttachments: true }, context))
+      .toMatchObject({ text: 'NEEDLE_TAG', nextOffset: 8010, attachmentCount: 1, attachments: [attachment] });
+    expect(await history.execute({ action: 'windows' }, context)).toMatchObject({ success: true });
+    expect(await history.execute({ action: 'list', limit: 1 }, context)).toMatchObject({ success: true, items: [expect.any(Object)] });
+    expect(fullReads).not.toHaveBeenCalled(); fullReads.mockRestore();
     await tools.get('context_notes')!.tool.execute({ action: 'write', name: 'paged', text: '123456' }, context);
     expect(await tools.get('context_notes')!.tool.execute({ action: 'read', name: 'paged', limit: 2 }, context)).toMatchObject({ text: '12', nextOffset: 2, truncated: true });
     await expect(history.execute({ action: 'read', messageId: hit.messageId, offset: -1 }, context)).rejects.toThrow('offset');

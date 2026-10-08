@@ -66,9 +66,13 @@ describe('历史导航摘要', () => {
       { id: 'current-output', role: 'model', runId: 'current', parts: [{ text: '本次完成' }] },
     ];
     await f.store.appendHistory('outline', current);
-    expect(await f.store.readRunHistory('outline', ['current', 'done-run', 'current'])).toEqual([source[1], current[0], current[2]]);
-    expect(await f.store.readRunHistory('outline', [])).toEqual([]);
-    expect(await f.store.readRunHistory('outline', ['missing-run'])).toEqual([]);
+    expect((await f.store.readHistorySelection('outline', { runIds: ['current', 'done-run', 'current'] })).messages).toEqual([source[1], current[0], current[2]]);
+    expect((await f.store.readHistorySelection('outline', { runIds: [] })).messages).toEqual([]);
+    expect((await f.store.readHistorySelection('outline', { runIds: ['missing-run'] })).messages).toEqual([]);
+    const selected = await f.store.readHistorySelection('outline', { indices: [7, 5, 5], projection: { fields: ['runId'] } });
+    expect(selected.messages).toEqual([{ id: 'current-input', role: 'user', runId: 'current' }, { id: 'current-output', role: 'model', runId: 'current' }]);
+    await f.store.appendHistory('outline', [{ role: 'user', parts: [{ text: '读取途中变化' }] }]);
+    await expect(f.store.readHistorySelection('outline', { indices: [5], expectedRevision: selected.revision })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
   });
 
   test('追加、截断替换与分叉后结果与完整读取一致', async () => {

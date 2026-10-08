@@ -3,6 +3,18 @@ import type { PlatformApplication } from '../../application';
 import { BOT_CHANNEL_ACCESS, type BotChannelAccess } from '../../bots/channelAccess';
 
 export interface MemoryRecordReference {scopeId:string;id:string;version:number}
+/** 删除判定仍覆盖整段依赖链，恢复单条正文时只需先读取这些来源与配对字段。 */
+export const MEMORY_HISTORY_PROJECTION = {
+  fields: ['contextWindowId', 'isUserInput', 'userFeedback', 'longMemoryReferences', 'longMemoryInputIds', 'longMemoryInputBase', 'summarizedMessageIds', 'parts'],
+  properties: { parts: { items: {
+    fields: ['functionCall', 'functionResponse'],
+    properties: {
+      functionCall: { fields: ['id', 'name'] },
+      functionResponse: { fields: ['id', 'name', 'response'], properties: { response: { fields: ['memoryReferences', 'memoryScopeVersions'] } } },
+    },
+  } } },
+  omitBinary: true,
+};
 const referenceKey=(value:{scopeId:string;id:string})=>JSON.stringify([value.scopeId,value.id]);
 export function memoryReferences(message:PlatformMessage):MemoryRecordReference[]{
   const result=Array.isArray(message.longMemoryReferences)?message.longMemoryReferences as MemoryRecordReference[]:[];

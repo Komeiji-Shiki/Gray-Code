@@ -1,5 +1,5 @@
 import type { ValueProjection } from './objects';
-import type { HistoryOutlineEntry } from './histories';
+import type { HistoryOutlineEntry, HistorySelection } from './histories';
 import type { LongMemoryGraph } from '@graycode/contracts';
 import type {
   ConversationSummary, HistoryPage, HistoryWriteOptions, PageOptions,
@@ -93,7 +93,7 @@ export interface StorageOperations {
   readHistoryWithFloors: { input: { id: string; options?: PageOptions }; output: HistoryPage & { floorIndices: number[] } };
   readHistoryOutline: { input: { id: string }; output: HistoryOutline };
   readPendingToolCalls: { input: { id: string; runId: string }; output: Array<{ id: string; name: string }> };
-  readRunHistory: { input: { id: string; runIds: string[] }; output: PlatformMessage[] };
+  readHistorySelection: { input: { id: string; options: HistorySelection }; output: Omit<HistoryPage, 'startIndex'> };
   historyInfo: { input: { id: string }; output: HistoryWriteResult };
   /** since 为上次的 token 时 messages 只含共享前缀之后的 model 消息，keep 为前缀中仍有效的 model 条数；缺省或令牌失效时 keep=0、返回全部。 */
   readUsageState: { input: { id: string; records?: { namespace: string; id: string; projection?: ValueProjection }[]; since?: string }; output: { revision: number; messages: PlatformMessage[]; token: string; keep: number; records: { namespace: string; id: string; record: VersionedRecord }[] } };

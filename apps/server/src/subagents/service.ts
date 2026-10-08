@@ -487,7 +487,8 @@ export class SubagentExecutionService {
   }
   private async output(record: PlatformSubagent, coreRunId: string | undefined, taskRunIds = coreRunId ? [coreRunId] : []): Promise<string> {
     if (!coreRunId || !await this.app.storage.getConversation(record.conversationId)) return record.error || '子代理本次运行没有返回正文。';
-    const history = await this.app.storage.readRunHistory(record.conversationId, record.status === 'completed' ? [coreRunId] : [coreRunId, ...taskRunIds]);
+    const { messages: history } = await this.app.storage.readHistorySelection(record.conversationId,
+      { runIds: record.status === 'completed' ? [coreRunId] : [coreRunId, ...taskRunIds] });
     const taskRuns = new Set(taskRunIds);
     // 接续会话含以往交付；失败/超时只能报告本次执行，不能拿上一轮成功报告冒充本次结果。
     let last: PlatformMessage | undefined;

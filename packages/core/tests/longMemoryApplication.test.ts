@@ -72,6 +72,8 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     const context={actorId:'owner',conversationId:'memory-chat',runId:active!.id,toolCallId:'history-check',signal:new AbortController().signal} as any;
     const read=await tools.get('context_history')!.tool.execute({action:'read',messageId:source.id},context);
     expect(JSON.stringify(read)).not.toContain('青桐-173');
+    const listed=await tools.get('context_history')!.tool.execute({action:'list',limit:50},context);
+    expect(JSON.stringify(listed)).not.toContain('青桐-173');
   });
 
   test('工具循环固定选择，普通新增不会重新排序，明确修订会刷新当前依据',async()=>{

@@ -43,6 +43,13 @@ export interface HistoryOutlineEntry {
   preview?: string;
 }
 
+export interface HistorySelection {
+  runIds?: string[];
+  indices?: number[];
+  projection?: ValueProjection;
+  expectedRevision?: number;
+}
+
 function outlineEntry(row: EntryRow, body: Record<string, unknown>): HistoryOutlineEntry {
   const entry: HistoryOutlineEntry = { role: row.role, hasParentId: body.parentId !== undefined };
   if (row.message_id !== null) entry.id = row.message_id;
@@ -235,22 +242,29 @@ export class HistoryStore {
     })();
   }
 
-  /** 交付本轮结果时在存储线程内筛选，旧轮次的大型正文和附件不必解码或跨线程复制。 */
-  forRuns(id: string, runIds: string[]): PlatformMessage[] {
-    if (runIds.some(runId => typeof runId !== 'string' || !runId)) invalid('Run IDs must be nonempty strings.');
-    const selected = new Set(runIds);
+  /** 按运行、位置或字段读取同一版本的历史，未选中的大型正文和附件留在存储线程。 */
+  select(id: string, options: HistorySelection) {
+    if (options.runIds?.some(runId => typeof runId !== 'string' || !runId)) invalid('Run IDs must be nonempty strings.');
+    if (options.indices?.some(index => !Number.isSafeInteger(index) || index < 0)) invalid('Message indices must be nonnegative integers.');
+    const runs = options.runIds ? new Set(options.runIds) : undefined;
+    const indices = options.indices ? new Set(options.indices) : undefined;
     return this.db.transaction(() => {
-      const info = this.info(id);
-      if (!selected.size) return [];
+      const info = this.checkRevision(id, options.expectedRevision);
+      const result = { total: info.message_count, revision: info.revision, messages: [] as PlatformMessage[] };
+      if (runs?.size === 0 || indices?.size === 0) return result;
       const rows = this.rows(id, 0, info.message_count);
       if (rows.length !== info.message_count) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
-      const messages: PlatformMessage[] = [];
-      for (const row of rows) {
-        const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
-        const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
-        if (typeof owner.runId === 'string' && selected.has(owner.runId)) messages.push(this.decode(row));
+      for (let index = 0; index < rows.length; index++) {
+        if (indices && !indices.has(index)) continue;
+        const row = rows[index];
+        if (runs) {
+          const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
+          const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
+          if (typeof owner.runId !== 'string' || !runs.has(owner.runId)) continue;
+        }
+        result.messages.push(this.decode(row, options.projection));
       }
-      return messages;
+      return result;
     })();
   }
 
@@ -524,8 +538,8 @@ export class HistoryStore {
     return body;
   }
 
-  private decode(row: EntryRow): PlatformMessage {
-    const body = this.body(row.body_hash);
+  private decode(row: EntryRow, projection?: ValueProjection): PlatformMessage {
+    const body = projection ? this.objects.getValue<Record<string, unknown>>(row.body_hash, projection) : this.body(row.body_hash);
     const message = { ...body, role: row.role } as PlatformMessage;
     if (row.message_id !== null) message.id = row.message_id;
     if (row.timestamp !== null) message.timestamp = row.timestamp;

@@ -4,6 +4,7 @@ import { contextStatus } from './status';
 import { contextMessageText, historyPreview, textPage } from './textPage';
 import { NOTE_GRAPH_PROPERTIES, runNoteGraphTool } from './noteTool';
 import { activeContextHistory, type ModelPrefix } from './compaction';
+import { MEMORY_HISTORY_PROJECTION } from '../memory/longTerm/history';
 
 interface WorkingNote { text: string; updatedAt: number; sourceMessageId?: string }
 const noteKey = (id: string, name: string) => JSON.stringify([id, name]);
@@ -84,12 +85,23 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
       parallelRead: true,
       effects: () => [],
       execute: async (args, context) => {
-        const { state,view } = await scope(context);
+        const id = await authorizeContext(context);
+        const history = args.action === 'search' ? await app.storage.readFullHistory(id)
+          : await app.storage.readHistorySelection(id, { projection: MEMORY_HISTORY_PROJECTION });
+        const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, history.messages);
+        context.signal.throwIfAborted();
         let windowId = 'initial';
-        const items = view.messages.map(message => {
+        const items = view.messages.map((message, index) => {
           if (typeof message.contextWindowId === 'string') windowId = message.contextWindowId;
-          return { message, windowId };
+          return { message, windowId, index };
         });
+        const expand = async (selected: typeof items): Promise<typeof items> => {
+          if (args.action === 'search' || !selected.length) return selected;
+          const page = await app.storage.readHistorySelection(id, { indices: selected.map(item => item.index), expectedRevision: history.revision });
+          context.signal.throwIfAborted();
+          const messages = view.filter(page.messages);
+          return selected.map((item, index) => ({ ...item, message: messages[index] }));
+        };
         if (args.action === 'windows') {
           const windows = new Map<string, { windowId: string; firstMessageId: string; count: number }>();
           for (const item of items) {
@@ -99,8 +111,9 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
           return { success: true, windows: [...windows.values()] };
         }
         if (args.action === 'read') {
-          const item = items.find(item => item.message.id === args.messageId && (!args.windowId || item.windowId === args.windowId));
-          if (!item) throw new Error('当前会话中没有这条历史消息。');
+          const selected = items.find(item => item.message.id === args.messageId && (!args.windowId || item.windowId === args.windowId));
+          if (!selected) throw new Error('当前会话中没有这条历史消息。');
+          const [item] = await expand([selected]);
           const text = contextMessageText(item.message);
           const attachments = item.message.parts.flatMap(part => {
             const data = part.inlineData as { mimeType?: string; data?: string; displayName?: string } | undefined;
@@ -116,7 +129,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         if (before < 0) throw new Error('历史分页位置已变化。');
         const matches = items.slice(0, before).filter(item => (!args.windowId || item.windowId === args.windowId)
           && (args.action !== 'search' || contextMessageText(item.message).includes(args.query as string)));
-        const selected = matches.slice(-Math.min(50, Number(args.limit ?? 15)));
+        const selected = await expand(matches.slice(-Math.min(50, Number(args.limit ?? 15))));
         return { success: true, total: matches.length, nextBeforeId: matches.length > selected.length ? selected[0]?.message.id : undefined,
           items: selected.map(item => ({ messageId: item.message.id, windowId: item.windowId, role: item.message.role,
             ...historyPreview(contextMessageText(item.message), args.action === 'search' ? args.query as string : undefined) })) };
