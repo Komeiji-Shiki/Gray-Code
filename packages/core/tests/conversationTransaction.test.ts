@@ -2,6 +2,7 @@ import type { RunRecord } from '@graycode/contracts';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { conversationTools } from '../../../apps/server/src/conversations/tools';
+import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
 import { fixture, metadata } from './fixtures';
 
 test('后缀追加与交付记录原子提交，冲突回滚并保留历史原文', async () => {
@@ -28,6 +29,41 @@ test('后缀追加与交付记录原子提交，冲突回滚并保留历史原�
     expect(await f.store.getRecord('pending', 'new')).toBeNull();
     await expect(f.store.commitConversation(mutation)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
   } finally { await f.cleanup(); }
+});
+
+test('交付积压分批提交，后续冲突重试保留先前进度和父节点顺序', async () => {
+  const f = await fixture();
+  try {
+    const id = 'feedback-batches';
+    await f.store.createConversation(metadata(id));
+    await f.store.appendHistory(id, [{ id: 'original', role: 'user', parts: [{ text: '原有消息' }] }]);
+    const pending = Array.from({ length: 130 }, (_, index) => {
+      const messageId = `feedback-${String(130 - index).padStart(3, '0')}`;
+      return { id: messageId, conversationId: id, actorId: 'owner', sequence: index + 1, displayOnly: index > 0,
+        message: { id: messageId, role: 'user', timestamp: 42, parts: [{ text: messageId }] } };
+    });
+    await f.store.commitRecords(pending.map(value => ({ namespace: 'subagent-feedback', id: value.id, ownerId: id, value })));
+    const app = { storage: f.store, subagents: { isChildConversation: () => false },
+      productUi: { conversations: { clearMetadataCache: jest.fn() } }, publish: jest.fn() } as unknown as PlatformApplication;
+    const feedback = new SubagentFeedback(app);
+    const commit = f.store.commitConversation.bind(f.store);
+    let attempts = 0;
+    const writes = jest.spyOn(f.store, 'commitConversation').mockImplementation(async value => {
+      if (++attempts === 2) await f.store.saveMetadata({ ...(await f.store.getConversation(id))!, title: '交付期间的并发标题' });
+      return commit(value);
+    });
+    expect(await feedback.flush(id)).toBe(true);
+    expect(writes.mock.calls.length).toBeGreaterThan(2);
+    expect(writes.mock.calls.every(([value]) => value.records!.length <= 256)).toBe(true);
+    const history = (await f.store.readFullHistory(id)).messages;
+    expect(history.map(message => message.id)).toEqual(['original', ...pending.map(value => value.id)]);
+    expect(history.slice(1).map(message => message.parentId)).toEqual(history.slice(0, -1).map(message => message.id));
+    expect(await feedback.pendingIds(id)).toEqual([]);
+    expect(await f.store.listRecords('subagent-deliveries', id)).toHaveLength(130);
+    expect(await f.store.listRecords('background-followups', id)).toEqual([pending[0].id]);
+    expect((await f.store.getConversation(id))?.title).toBe('交付期间的并发标题');
+    expect(await feedback.flush(id)).toBe(false);
+  } finally { jest.restoreAllMocks(); await f.cleanup(); }
 });
 
 test('待办和活动工具跳过历史正文，元数据并发变更仍拒绝覆盖', async () => {

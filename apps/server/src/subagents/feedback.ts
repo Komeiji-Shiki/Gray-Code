@@ -6,6 +6,9 @@ import type { PlatformSubagent, SubagentParentConfiguration } from './types';
 import { PUSH_MESSAGE_NAMES } from '../../../../shared/protocol';
 export interface PendingFeedback { id: string; conversationId: string; actorId: string; sequence?: number; sourceRunId?: string; message: PlatformMessage; modelReceived?: boolean; displayOnly?: boolean; parentConfiguration?: SubagentParentConfiguration }
 
+// 每条交付最多写四条记录，单批保持在存储事务的 256 条上限内。
+const MAX_FEEDBACK_BATCH = 64;
+
 /** 后台结果先保存到队列，只在主任务模型边界或空闲时追加历史。 */
 export class SubagentFeedback {
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -54,26 +57,27 @@ export class SubagentFeedback {
     return queued;
   }
   private async deliverCurrent(conversationId: string, activeRun?: RunRecord): Promise<boolean> {
-    try { return await this.deliver(conversationId, activeRun); }
+    const progress = { delivered: false };
+    try { await this.deliver(conversationId, progress, activeRun); }
     catch (error) {
       const code = (error as { code?: string }).code;
       // 只重读一次并发修改后的历史。磁盘、编码或数据库故障直接交给调用者报告。
-      if (code === 'REVISION_CONFLICT') return this.deliver(conversationId, activeRun);
-      if (code === 'STORAGE_BUSY' && !activeRun &&
-        (await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 })).length) return false;
-      throw error;
+      if (code === 'REVISION_CONFLICT') await this.deliver(conversationId, progress, activeRun);
+      else if (code !== 'STORAGE_BUSY' || activeRun ||
+        !(await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 })).length) throw error;
     }
+    return progress.delivered;
   }
-  private async deliver(conversationId: string, activeRun?: RunRecord): Promise<boolean> {
+  private async deliver(conversationId: string, progress: { delivered: boolean }, activeRun?: RunRecord): Promise<void> {
     // 子代理的启动和继续均由其执行服务管理，包含并发席位、暂停和失败策略。
-    if (!activeRun && this.app.subagents.isChildConversation(conversationId)) return false;
-    if (!activeRun && (await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 })).length) return false;
+    if (!activeRun && this.app.subagents.isChildConversation(conversationId)) return;
+    if (!activeRun && (await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 })).length) return;
     const pending: Array<{ record: VersionedRecord; value: PendingFeedback }> = [];
     for (const id of await this.app.storage.listRecords('subagent-feedback', conversationId)) {
       const record = await this.app.storage.getVersionedRecord('subagent-feedback', id);
       if (record.value) pending.push({ record, value: record.value as PendingFeedback });
     }
-    if (!pending.length) return false;
+    if (!pending.length) return;
     // 新消息使用提交时分配的持久序号；旧存档的原顺序无法补造，排在新增消息之前。
     pending.sort((a, b) => a.value.sequence !== undefined && b.value.sequence !== undefined ? a.value.sequence - b.value.sequence
       : a.value.sequence !== undefined ? 1 : b.value.sequence !== undefined ? -1
@@ -85,26 +89,31 @@ export class SubagentFeedback {
     });
     const seen = new Set(history.messages.map(message => message.id));
     let parentId = history.messages.at(-1)?.id ?? null;
-    const appended: PlatformMessage[] = [];
-    for (const { value } of pending) {
-      if (seen.has(value.id)) continue;
-      const message = { ...value.message, parentId, ...(activeRun ? { runId: activeRun.id } : {}) };
-      seen.add(message.id); parentId = message.id ?? null; appended.push(message);
+    let expectedRevision = state.historyRevision, expectedMetadataToken = state.metadataToken;
+    for (let offset = 0; offset < pending.length; offset += MAX_FEEDBACK_BATCH) {
+      const batch = pending.slice(offset, offset + MAX_FEEDBACK_BATCH);
+      const appended: PlatformMessage[] = [];
+      for (const { value } of batch) {
+        if (seen.has(value.id)) continue;
+        const message = { ...value.message, parentId, ...(activeRun ? { runId: activeRun.id } : {}) };
+        seen.add(message.id); parentId = message.id ?? null; appended.push(message);
+      }
+      const committed = await this.app.storage.commitConversation({ conversationId, expectedRevision, expectedMetadataToken,
+        ...(activeRun ? { activeRunId: activeRun.id } : {}), appendMessages: appended,
+        records: batch.flatMap(({ record, value }) => [
+          { namespace: 'subagent-feedback', id: value.id, expectedRevision: record.revision, delete: true },
+          { namespace: 'subagent-deliveries', id: value.id, ownerId: conversationId, value: { deliveredAt: Date.now(), sequence: value.sequence } },
+          ...(!activeRun && !value.displayOnly ? [{ namespace: 'background-followup-pending', id: value.id, ownerId: conversationId, value: { id: value.id } }, { namespace: 'background-followups', id: value.id, ownerId: conversationId, value: {
+            id: value.id, conversationId, actorId: value.actorId, sourceRunId: value.sourceRunId, parentConfiguration: value.parentConfiguration, status: 'pending', createdAt: Date.now(),
+          } satisfies BackgroundFollowup }] : []),
+        ]) });
+      expectedRevision = committed.revision; expectedMetadataToken = committed.metadataToken;
+      progress.delivered ||= appended.some(message => batch.some(item => item.value.id === message.id && !item.value.displayOnly));
+      this.app.productUi.conversations.clearMetadataCache();
+      if (activeRun) for (const content of appended) this.app.publish({ type: 'message.persisted', runId: activeRun.id, content });
+      if (batch.some(item => item.value.message.source === 'user')) this.app.publish({ type: 'ui.message',
+        message: { type: PUSH_MESSAGE_NAMES.command, command: PUSH_MESSAGE_NAMES['chat.pendingUserInputsChanged'], data: { conversationId } } });
+      this.app.publish({ type: 'conversation.changed', conversationId });
     }
-    await this.app.storage.commitConversation({ conversationId, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken,
-      ...(activeRun ? { activeRunId: activeRun.id } : {}), appendMessages: appended,
-      records: pending.flatMap(({ record, value }) => [
-        { namespace: 'subagent-feedback', id: value.id, expectedRevision: record.revision, delete: true },
-        { namespace: 'subagent-deliveries', id: value.id, ownerId: conversationId, value: { deliveredAt: Date.now(), sequence: value.sequence } },
-        ...(!activeRun && !value.displayOnly ? [{ namespace: 'background-followup-pending', id: value.id, ownerId: conversationId, value: { id: value.id } }, { namespace: 'background-followups', id: value.id, ownerId: conversationId, value: {
-          id: value.id, conversationId, actorId: value.actorId, sourceRunId: value.sourceRunId, parentConfiguration: value.parentConfiguration, status: 'pending', createdAt: Date.now(),
-        } satisfies BackgroundFollowup }] : []),
-      ]) });
-    this.app.productUi.conversations.clearMetadataCache();
-    if (activeRun) for (const content of appended) this.app.publish({ type: 'message.persisted', runId: activeRun.id, content });
-    if (pending.some(item => item.value.message.source === 'user')) this.app.publish({ type: 'ui.message',
-      message: { type: PUSH_MESSAGE_NAMES.command, command: PUSH_MESSAGE_NAMES['chat.pendingUserInputsChanged'], data: { conversationId } } });
-    this.app.publish({ type: 'conversation.changed', conversationId });
-    return appended.some(message => pending.some(item => item.value.id === message.id && !item.value.displayOnly));
   }
 }
