@@ -57,7 +57,24 @@ function streamRendererWorkload(body, response) {
   return true;
 }
 
-async function measureCommandCancellation({ rpc, ui, chat, until }) {
+async function measureCommandCancellation(options) {
+  const diagnostics = require('node:diagnostics_channel'), processSteps = [];
+  const observe = ({ process: child }) => {
+    const command = (child.spawnargs ?? []).join(' ');
+    const kind = /Get-CimInstance\s+Win32_Process/i.test(command) ? 'process-snapshot'
+      : /\btaskkill(?:\.exe)?\b/i.test(command) ? 'taskkill' : undefined;
+    if (!kind) return;
+    const startedAt = performance.now();
+    child.once('close', (exitCode, signal) => processSteps.push({ kind, startedAt, durationMilliseconds: performance.now() - startedAt, exitCode, signal }));
+  };
+  diagnostics.subscribe('child_process', observe);
+  try {
+    const { cancelStartedAt, ...result } = await runCommandCancellation(options);
+    return { ...result, processSteps: processSteps.map(({ startedAt, ...step }) => ({ ...step, startAfterCancelMilliseconds: startedAt - cancelStartedAt })) };
+  } finally { diagnostics.unsubscribe('child_process', observe); }
+}
+
+async function runCommandCancellation({ rpc, ui, chat, until }) {
   const conversationId = 'renderer-command-cancel-5000';
   await ui('tools.setToolAutoExec', { toolName: 'execute_command', autoExec: true });
   await ui('ui.settings.save');
@@ -97,7 +114,7 @@ async function measureCommandCancellation({ rpc, ui, chat, until }) {
   const [frontend, terminal, runtime, processExitMilliseconds] = await Promise.all([feedback, stopped, settled, exited]);
   assert.equal(runtime.run.status, 'cancelled');
   assert(terminal.result.output.includes('renderer-command-ready'), '取消后应保留已经产生的命令输出');
-  return { messages: 5000, frontendFeedbackMilliseconds: frontend.milliseconds, frontendFeedbackState: frontend.state, terminalStoppedMilliseconds: terminal.milliseconds,
+  return { cancelStartedAt: started, messages: 5000, frontendFeedbackMilliseconds: frontend.milliseconds, frontendFeedbackState: frontend.state, terminalStoppedMilliseconds: terminal.milliseconds,
     runSettledMilliseconds: runtime.milliseconds, processExitMilliseconds, runStatus: runtime.run.status, outputRetained: true,
     killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: 100 };
 }
