@@ -90,6 +90,25 @@ function createStreamingPlaceholder(id: string): Message {
 }
 
 describe('content-less complete 不跳过前序增量（H3）', () => {
+  test('当前流的完整快照不会丢弃同批其他会话的文字', () => {
+    const state = createState({
+      allMessages: ref([createStreamingPlaceholder('msg_1')]), streamingMessageId: ref('msg_1'),
+      activeStreamId: ref('stream_1'), isStreaming: ref(true), isWaitingForResponse: ref(true),
+      openTabs: ref([{ id: 'tab_1', conversationId: 'conv_1', title: 'A', isStreaming: true },
+        { id: 'tab_2', conversationId: 'conv_2', title: 'B', isStreaming: true }])
+    })
+    const background = { type: 'chunk', conversationId: 'conv_2', streamId: 'stream_2',
+      chunk: { delta: [{ text: '后台会话仍需保留的文字' }], done: false } } as any
+    handleStreamChunkBatch([
+      background,
+      { type: 'chunk', conversationId: 'conv_1', streamId: 'stream_1', chunk: { delta: [{ text: '旧增量' }] } } as any,
+      { type: 'complete', conversationId: 'conv_1', streamId: 'stream_1',
+        content: { role: 'model', parts: [{ text: '完整回复' }], timestamp: 2000 } } as any
+    ], createCtx(state))
+    expect(state.allMessages.value[0].content).toBe('完整回复')
+    expect(state.backgroundStreamBuffers.value.get('conv_2')).toEqual([background])
+  })
+
   test('content-less complete + 前序文本增量：增量保留，消息不空白', () => {
     const placeholder = createStreamingPlaceholder('msg_1')
     const state = createState({

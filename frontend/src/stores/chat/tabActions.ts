@@ -7,7 +7,7 @@
 import type { ChatStoreState, ConversationSessionSnapshot, TabInfo } from './types'
 import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
-import { handleStreamChunk } from './streamHandler'
+import { handleStreamChunkBatch } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 import { clearAllSmoothForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
@@ -345,9 +345,7 @@ export function switchTab(
   if (convId && streamHandlerCtx && state.backgroundStreamBuffers.value.has(convId)) {
     const buffered = state.backgroundStreamBuffers.value.get(convId)!
     state.backgroundStreamBuffers.value.delete(convId)
-    for (const chunk of buffered) {
-      handleStreamChunk(chunk, streamHandlerCtx)
-    }
+    handleStreamChunkBatch(buffered, streamHandlerCtx)
   }
 
   // 4. 更新激活标签页 ID

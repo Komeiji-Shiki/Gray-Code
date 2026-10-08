@@ -421,12 +421,15 @@ export function handleStreamChunkBatch(
     }
   }
 
+  let discardedTokenEstimate = false
   let i = 0
   while (i < chunks.length) {
     const chunk = chunks[i]
 
     // 跳过终结事件之前的 chunk 类型（增量解析即将被覆盖，纯属浪费）
-    if (chunk.type === 'chunk' && i < skipChunksBefore) {
+    if (chunk.type === 'chunk' && i < skipChunksBefore && isChunkForCurrentActiveStream(chunk)) {
+      // 本轮有增量被权威快照替代，残留的部分估算不能与下一次模型调用的用量校准。
+      if (!discardedTokenEstimate) { resetTurnBaseTokenEstimate(state); discardedTokenEstimate = true }
       i++
       continue
     }
