@@ -230,11 +230,18 @@ test('日志游标只读取新增记录，缓冲丢失和条数限制均报告�
   const f = fixture([]);
   for (let index = 0; index < 80; index++) f.page.log('console', `记录 ${index}`);
   const first = f.page.logs(); expect(first.entries).toHaveLength(50); expect(first.truncated).toBe(true);
+  const page = f.page.logs({ since: 0, maxEntries: 30 });
+  expect(page.entries.map(entry => entry.cursor)).toEqual(Array.from({ length: 30 }, (_, index) => index + 1));
+  expect(page).toMatchObject({ nextCursor: 30, hasMore: true, outputLost: false });
+  const middle = f.page.logs({ since: page.nextCursor, maxEntries: 30 });
+  const tail = f.page.logs({ since: middle.nextCursor, maxEntries: 30 });
+  expect([...page.entries, ...middle.entries, ...tail.entries].map(entry => entry.cursor)).toEqual(Array.from({ length: 80 }, (_, index) => index + 1));
+  expect(tail).toMatchObject({ nextCursor: 80, hasMore: false, outputLost: false, truncated: false });
   f.page.log('network', '新的响应');
   expect(f.page.logs({ since: first.nextCursor })).toMatchObject({ entries: [{ text: '新的响应' }], truncated: false });
   expect(f.page.logs({ since: 81 }).entries).toEqual([]);
   for (let index = 0; index < 200; index++) f.page.log('console', index);
-  expect(f.page.logs({ since: 0, maxEntries: 200 }).truncated).toBe(true);
+  expect(f.page.logs({ since: 0, maxEntries: 200 })).toMatchObject({ truncated: true, outputLost: true, hasMore: false });
 });
 
 // 不只验证错误码：同一“截图超时”必须说明卡在绘制同步还是 native capture，且不要求 reload。

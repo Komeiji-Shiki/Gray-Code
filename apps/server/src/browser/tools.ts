@@ -18,7 +18,8 @@ export function browserTools(host?: BrowserHost): RuntimeTool[] {
         state: { type: 'string', enum: ['present', 'absent'], description: 'wait 的条件：present 等待文字出现（默认），absent 等待文字消失。' },
         timeoutMs: { type: 'integer', minimum: 100, maximum: 30000, description: 'wait 最长等待的毫秒数，默认 10000；等待期间可被取消或由用户接管。' },
         maxImageDimension: { type: 'integer', minimum: 320, maximum: 2560, description: '截图最长边像素，默认 1280；小字可提高至 2560。' },
-        since: { type: 'integer', minimum: 0 }, maxEntries: { type: 'integer', minimum: 1, maximum: 200, description: '返回的日志条数，默认最近 50 条。' } }, required: ['action', 'tabId'], additionalProperties: false } },
+        since: { type: 'integer', minimum: 0, description: 'logs 的排他游标，填上次 nextCursor；有 hasMore 时继续读取。提供后按时间顺序分页，不跳过尚未返回的记录；outputLost 表示更早的记录已被缓冲淘汰。' },
+        maxEntries: { type: 'integer', minimum: 1, maximum: 200, description: '日志单页条数，默认 50；未提供 since 时返回最近的日志。' } }, required: ['action', 'tabId'], additionalProperties: false } },
     { name: 'browser_action', description: '在内置浏览器中操作网页。定位目标有两种方式：用最近一次截图的 observationId 加图片像素坐标，或用 snapshot 返回的 ref。\n'
       + 'hover 展开悬停菜单；fill 按 ref 替换输入框文字，空字符串表示清空，日期按页面要求的原生格式填写；type 在当前焦点或 ref 处输入；select 按 ref 设置原生下拉框的选项；check 按 ref 把复选框或开关设为目标状态，已是目标状态时不会再点击。自定义菜单用 click 或 press，复杂画布用坐标或 drag。\n'
       + '动作后默认返回新截图，可用 after 改为返回快照或两者都返回。异步产生的结果用 browser_read 的 wait 确认。\n'

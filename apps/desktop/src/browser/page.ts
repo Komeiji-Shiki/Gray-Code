@@ -95,8 +95,11 @@ export class BrowserPage {
   logs(options: { since?: number; maxEntries?: number } = {}) {
     const entries = this.records.filter(record => options.since === undefined || record.cursor > options.since);
     const maximum = options.maxEntries ?? 50;
-    return { entries: entries.slice(-maximum), nextCursor: this.logCursor, capacity: 200,
-      truncated: entries.length > maximum || options.since !== undefined && options.since < (this.records[0]?.cursor ?? 1) - 1 };
+    const page = options.since === undefined ? entries.slice(-maximum) : entries.slice(0, maximum);
+    const outputLost = options.since !== undefined && options.since < (this.records[0]?.cursor ?? 1) - 1;
+    return { entries: page, nextCursor: page.at(-1)?.cursor ?? this.logCursor, capacity: 200,
+      hasMore: options.since !== undefined && entries.length > maximum, outputLost,
+      truncated: entries.length > maximum || outputLost };
   }
   private async enable(sessionId?: string): Promise<void> {
     for (const method of ['Page.enable', 'Runtime.enable', 'Network.enable', 'Accessibility.enable']) await this.contents.debugger.sendCommand(method, {}, sessionId);
