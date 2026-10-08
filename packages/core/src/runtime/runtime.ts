@@ -380,7 +380,7 @@ export class PlatformRuntime {
       for (let iteration = 1; agent.maxIterations === -1 || iteration <= agent.maxIterations; iteration++) {
         signal.throwIfAborted();
         if (this.nativeTools.pendingIds(run.conversationId).length)
-          await this.nativeTools.reconcile(run.conversationId, (await this.services.storage.readFullHistory(run.conversationId)).messages);
+          await this.nativeTools.reconcile(run.conversationId);
         await this.nativeTools.flush(run.conversationId);
         await this.services.deliverFeedback?.(run);
         await this.drainFeedback(run);

@@ -65,14 +65,45 @@ test('跨多轮继续工作，只等待指定任务，完成结果只交付一�
     }
     return { role: 'model', parts: [{ functionCall: { id: 'wait-invalid', name: 'wait_for_tasks', args: { task_handles: ['fast'] } } }] };
   } }, async () => { const index = executions++; await (index === 0 ? slow.promise : fast.promise); return { success: true }; });
+  const fullReads = jest.spyOn(context.f.store, 'readFullHistory');
   try {
     const run = await context.start(); expect((await context.runtime.wait(run.id))?.status).toBe('completed');
     expect(executions).toBe(2);
+    expect(fullReads).not.toHaveBeenCalled(); fullReads.mockRestore();
     const results = (await context.f.store.readFullHistory('native')).messages.flatMap(message => message.parts)
       .flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
     expect(results.filter(value => value.id === 'slow')).toHaveLength(1); expect(results.filter(value => value.id === 'fast')).toHaveLength(1);
     expect(await context.f.store.listRecords('native-tool-calls')).toEqual([]);
   } finally { slow.resolve(); fast.resolve(); await context.runtime.close(); await context.f.cleanup(); }
+});
+
+test('等待旧历史的异步句柄只校验摘要，普通调用的同名参数不能冒充句柄', async () => {
+  let generations = 0;
+  const execute = jest.fn(async () => ({ success: true }));
+  const context = await setup({ generate: async () => {
+    if (++generations <= 2) return { role: 'model', parts: [{ functionCall: {
+      id: `wait-${generations}`, name: 'wait_for_tasks', args: { task_handles: [generations === 1 ? 'already-done' : 'not-native'] },
+    } }] };
+    return { role: 'model', parts: [{ text: 'done' }] };
+  } }, execute);
+  try {
+    await context.f.store.appendHistory('native', [
+      { role: 'model', runId: 'old-run', parts: [
+        { functionCall: { ...call, id: 'old-async', args: { task_handle: 'already-done' } } },
+        { functionCall: { id: 'ordinary', name: 'read', args: { task_handle: 'not-native' } } },
+      ] },
+      { role: 'user', runId: 'old-run', isFunctionResponse: true, parts: ['old-async', 'ordinary'].map(id => ({
+        functionResponse: { id, name: 'read', response: { success: true, data: '历史工具正文'.repeat(1000) } },
+      })) },
+    ]);
+    const fullReads = jest.spyOn(context.f.store, 'readFullHistory');
+    const run = await context.start(); expect((await context.runtime.wait(run.id))?.status).toBe('completed');
+    expect(execute).not.toHaveBeenCalled(); expect(fullReads).not.toHaveBeenCalled(); fullReads.mockRestore();
+    const responses = (await context.f.store.readFullHistory('native')).messages.flatMap(message => message.parts)
+      .flatMap(part => part.functionResponse ? [part.functionResponse as any] : []);
+    expect(responses.find(response => response.id === 'wait-1')?.response).toMatchObject({ success: true, data: { completed_task_handles: ['already-done'] } });
+    expect(responses.find(response => response.id === 'wait-2')?.response).toMatchObject({ success: false, code: 'UNKNOWN_TASK_HANDLE' });
+  } finally { await context.runtime.close(); await context.f.cleanup(); }
 });
 
 test('stream failure cancels an issued read and preserves a paired history for the next task', async () => {

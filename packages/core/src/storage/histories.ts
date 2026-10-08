@@ -16,7 +16,7 @@ function outlineProjection(includePreview: boolean): ValueProjection {
   return { fields: OUTLINE_FIELDS, omitBinary: true, properties: { parts: { items: {
     fields: includePreview ? ['text', 'functionCall', 'functionResponse'] : ['functionCall', 'functionResponse'],
     properties: {
-      functionCall: { fields: ['id', 'name', 'rejected'] },
+      functionCall: { fields: ['id', 'name', 'rejected', 'async', 'args'], properties: { args: { fields: ['task_handle'] } } },
       functionResponse: { fields: ['id', 'response'], properties: { response: { fields: ['rejected', 'cancelled', 'code'] } } },
     },
   } } } };
@@ -35,8 +35,8 @@ export interface HistoryOutlineEntry {
   hasParentId: boolean;
   runId?: string;
   isFunctionResponse?: boolean;
-  /** 带 ID 的工具调用，保持 parts 中的原始顺序。 */
-  calls?: { id: string; rejected?: true }[];
+  /** 带 ID 的工具调用，保持原始顺序；异步句柄用于等待旧任务，避免再读完整参数。 */
+  calls?: { id: string; rejected?: true; taskHandle?: string }[];
   /** 带 ID 的工具响应，只保留判断占位响应所需的结构标记。 */
   responses?: { id: string; rejected?: true; cancelled?: true; code?: string }[];
   /** 用户输入（非工具响应）的文字预览，口径与导航标记一致。 */
@@ -51,7 +51,9 @@ function outlineEntry(row: EntryRow, body: Record<string, unknown>): HistoryOutl
   const parts = Array.isArray(body.parts) ? body.parts as Array<Record<string, any> | null> : [];
   for (const part of parts) {
     const call = part?.functionCall;
-    if (call && typeof call.id === 'string' && call.id) (entry.calls ??= []).push(call.rejected ? { id: call.id, rejected: true } : { id: call.id });
+    if (call && typeof call.id === 'string' && call.id) (entry.calls ??= []).push({ id: call.id,
+      ...(call.rejected ? { rejected: true as const } : {}),
+      ...(call.async === true && typeof call.args?.task_handle === 'string' ? { taskHandle: call.args.task_handle } : {}) });
     const response = part?.functionResponse;
     if (response && typeof response.id === 'string' && response.id) {
       const value = response.response && typeof response.response === 'object' && !Array.isArray(response.response) ? response.response : {};

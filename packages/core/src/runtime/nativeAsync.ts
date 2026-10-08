@@ -130,11 +130,10 @@ export class NativeAsyncTools {
     return this.storage.putRecord({ namespace: NATIVE_ASYNC_NAMESPACE, id: this.key(value.record.run.id, value.record.call.id),
       ownerId: value.record.run.conversationId, value: structuredClone(value.record) });
   }
-  async reconcile(conversationId: string, history: PlatformMessage[]) {
-    const calls = new Set(history.flatMap(message => message.parts.flatMap(part => part.functionCall
-      ? [(part.functionCall as ModelToolCall).id] : [])));
-    const results = new Set(history.flatMap(message => message.parts.flatMap(part => part.functionResponse
-      ? [(part.functionResponse as { id: string }).id] : [])));
+  async reconcile(conversationId: string) {
+    const history = await this.storage.readHistoryOutline(conversationId);
+    const calls = new Set(history.entries.flatMap(message => (message.calls ?? []).map(call => call.id)));
+    const results = new Set(history.entries.flatMap(message => (message.responses ?? []).map(response => response.id)));
     for (const value of this.pending(conversationId)) if (!calls.has(value.record.call.id) || results.has(value.record.call.id)) {
       value.delivered = true;
       await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(value.record.run.id, value.record.call.id));
@@ -147,13 +146,12 @@ export class NativeAsyncTools {
     const selected = handles.map(handle => [...this.calls.values()].find(value =>
       value.record.run.conversationId === conversationId && value.record.handle === handle));
     if (selected.some(value => !value)) {
-      const history = (await this.storage.readFullHistory(conversationId)).messages;
-      const responded = new Set(history.flatMap(message => message.parts.flatMap(part => part.functionResponse
-        ? [(part.functionResponse as { id?: string }).id] : [])));
-      if (handles.some((handle, index) => !selected[index] && !history.some(message => message.parts.some(part => {
-        const call = part.functionCall as ModelToolCall | undefined;
-        return call?.async === true && call.args.task_handle === handle && responded.has(call.id);
-      })))) return { success: false, code: 'UNKNOWN_TASK_HANDLE', error: '指定的异步任务不存在。' };
+      const history = await this.storage.readHistoryOutline(conversationId);
+      const responded = new Set(history.entries.flatMap(message => (message.responses ?? []).map(response => response.id)));
+      const completed = new Set(history.entries.flatMap(message => (message.calls ?? []).flatMap(call =>
+        typeof call.taskHandle === 'string' && responded.has(call.id) ? [call.taskHandle] : [])));
+      if (handles.some((handle, index) => !selected[index] && !completed.has(handle)))
+        return { success: false, code: 'UNKNOWN_TASK_HANDLE', error: '指定的异步任务不存在。' };
     }
     await this.abortable(Promise.all(selected.flatMap(value => value ? [value.done] : [])), signal);
     await this.flush(conversationId);
