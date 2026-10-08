@@ -8,20 +8,44 @@ describe('跨入口的对话实时输出', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication; let router: ApplicationRouter;
   let inputReady: ReturnType<typeof deferred<ModelInput>>; let finish: ReturnType<typeof deferred<void>>; let events: Record<string, any>[];
   let modelError: Error | undefined; let streamedParts: PlatformMessage['parts'];
+  let completedMessages: PlatformMessage[];
   const owner = { actorId: 'owner', clientId: 'desktop-first' }; const observer = { actorId: 'owner', clientId: 'desktop-second' };
   beforeEach(async () => {
     f = await fixture(); await f.store.close(); inputReady = deferred<ModelInput>(); finish = deferred<void>(); events = [];
     modelError = undefined; streamedParts = [{ text: '已经生成的内容' }];
+    completedMessages = [{ role: 'model', parts: [{ text: '已经生成的内容，完整回复。' }] }];
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async input => {
       input.onDelta?.(streamedParts); inputReady.resolve(input);
       await Promise.race([finish.promise, new Promise<void>(resolve => input.signal.addEventListener('abort', () => resolve(), { once: true }))]);
       if (modelError) throw modelError;
-      return { role: 'model', parts: [{ text: '已经生成的内容，完整回复。' }] };
+      return completedMessages.shift() ?? { role: 'model', parts: [{ text: '结束' }] };
     } } });
     router = new ApplicationRouter(app); app.subscribe(event => { if (event.type === 'ui.message') events.push(event); });
   });
   afterEach(async () => { finish.resolve(); await app.close(); await f.cleanup(); });
   async function received(client: typeof owner) { return (await Promise.all(events.map(async event => await router.mayReceive(client, event) ? event.message.data : null))).filter(item => item !== null); }
+
+  test.each([false, true])('平台模型完成后逐轮发送准确用量结束片段，含工具=%s', async withTool => {
+    const execute = jest.fn(async () => ({ success: true }));
+    app.tools.register({ declaration: { name: 'model_done_fixture', description: '用量边界夹具', parameters: { type: 'object', properties: {} } },
+      effects: () => ['public_read'], execute });
+    const usage = { promptTokenCount: 20, candidatesTokenCount: 80, thoughtsTokenCount: 10, totalTokenCount: 100 };
+    completedMessages = [{ role: 'model', usageMetadata: usage, parts: withTool
+      ? [{ functionCall: { id: 'done-tool', name: 'model_done_fixture', args: {} } }] : [{ text: '完成' }] },
+      { role: 'model', usageMetadata: { promptTokenCount: 30, candidatesTokenCount: 20, totalTokenCount: 50 }, parts: [{ text: '工具后完成' }] }];
+    const conversation = await app.createConversation('owner', '逐轮用量');
+    const result = await app.productUi.chat.start(owner, { conversationId: conversation.id, streamId: 'usage-stream', configId: 'fixture', message: '开始' }, await app.product.draft()) as { runId: string };
+    await inputReady.promise; finish.resolve();
+    expect((await app.runtime.wait(result.runId))?.status).toBe('completed');
+    expect(execute).toHaveBeenCalledTimes(withTool ? 1 : 0);
+    for (const client of [owner, observer]) {
+      const chunks = await received(client);
+      const done = chunks.filter(item => item.type === 'chunk' && item.chunk?.done);
+      expect(done.map(item => item.chunk.usage?.candidatesTokenCount)).toEqual(withTool ? [80, 20] : [80]);
+      expect(done[0].chunk).toEqual({ delta: [], done: true, usage });
+      expect(chunks.indexOf(done[0])).toBeLessThan(chunks.findIndex(item => item.type === (withTool ? 'toolsExecuting' : 'complete')));
+    }
+  });
 
   test.each([true, false])('流式错误向所有客户端携带已保存内容，刷新后仍存在，含正文=%s', async hasText => {
     streamedParts = [{ text: '已经生成的思考', thought: true }, ...(hasText ? [{ text: '已经生成的正文' }] : [])];

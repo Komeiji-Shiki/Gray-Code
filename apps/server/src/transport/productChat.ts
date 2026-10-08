@@ -358,6 +358,8 @@ export class ProductChat {
       const content = displayCharacterContent(notification.content as PlatformMessage);
       if (content.role === 'model') {
         stream.content = content;
+        // 持久化标记每次模型调用结束，补齐共享聊天协议的用量结算边界。
+        if (!content.incompleteReason) this.emit(stream, { type: 'chunk', chunk: { delta: [], done: true, usage: content.usageMetadata } });
         stream.phase = 'tools';
         stream.remaining = new Set(content.parts.flatMap(part => part.functionCall ? [(part.functionCall as { id: string }).id] : []));
         stream.results = [];
