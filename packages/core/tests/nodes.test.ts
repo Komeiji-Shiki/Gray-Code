@@ -1,11 +1,13 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { ExecutionNodeStatus, ModelInput, NodeGrant, PlatformMessage, RunRecord } from '@graycode/contracts';
+import type { ExecutionNodeStatus, ModelInput, NodeGrant, PlatformMessage, RunEvent, RunRecord } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { nodeHash, parseInvitation } from '../../../apps/server/src/nodes/identity';
 import { openNodeSocket, postPair } from '../../../apps/server/src/nodes/transport';
+import { NodeClients } from '../../../apps/server/src/nodes/client';
+import type { NodePeer, NodeRegistry } from '../../../apps/server/src/nodes/registry';
 import type { ComputerNativePort, NativeComputerStatus } from '../../../apps/server/src/computer/port';
 import { ApplicationBackups } from '../../../apps/server/src/backups/service';
 import { preserveNodeRevocations } from '../../../apps/server/src/backups/nodeRevocations';
@@ -45,6 +47,38 @@ class NodeNativeFixture implements ComputerNativePort {
   async stop(reason: string) { this.state = { active: false, reason, generation: this.state.generation + 1 }; this.emit(); }
   async close() { await this.stop('host_closed'); }
 }
+
+test('慢设备补取事件时，其他设备仍可更新且原设备保持顺序', async () => {
+  const records = new Map<string, { sequence: number }>();
+  const publish = jest.fn();
+  const app = { publish, storage: {
+    getRecord: async (_namespace: string, id: string) => records.get(id) ?? null,
+    putRecord: async (record: { id: string; value: { sequence: number } }) => { records.set(record.id, record.value); },
+  } } as unknown as PlatformApplication;
+  const registry = { peers: new Map() } as NodeRegistry;
+  const clients = new NodeClients(app, registry, () => {});
+  const peer = (id: string): NodePeer => ({ id, nodeId: id, name: id, direction: 'outgoing', createdAt: 1,
+    credentialRef: id, grant: { actorId: 'owner', workspaceIds: [], tasks: true, computer: false } });
+  const slow = peer('slow'), fast = peer('fast');
+  const event = (runId: string, sequence: number): RunEvent => ({ runId, sequence, timestamp: sequence, type: 'tool.completed', payload: {} });
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const requested = new Promise<void>(resolve => { entered = resolve; });
+  jest.spyOn(clients, 'request').mockImplementation(async () => { entered(); await held; return [event('slow-run', 1), event('slow-run', 2)]; });
+  // 在已认证连接的事件入口注入通知，单独控制缺失事件补取的等待。
+  const receiver = clients as unknown as { receive(peer: NodePeer, value: Record<string, unknown>): void };
+  try {
+    receiver.receive(slow, { type: 'event', event: event('slow-run', 2) });
+    await requested;
+    receiver.receive(slow, { type: 'event', event: event('slow-run', 3) });
+    receiver.receive(fast, { type: 'event', event: event('fast-run', 1) });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(publish.mock.calls.map(([value]) => value.peerId)).toEqual(['fast']);
+    release(); await clients.close();
+    expect(publish.mock.calls.filter(([value]) => value.peerId === 'slow').map(([value]) => value.notification.event.sequence)).toEqual([1, 2, 3]);
+    expect(records.get(nodeHash('slow:slow-run'))?.sequence).toBe(3);
+  } finally { release(); await clients.close(); jest.restoreAllMocks(); }
+});
 
 describe('执行节点配对、运行与恢复', () => {
   let fa: Awaited<ReturnType<typeof fixture>>, fb: Awaited<ReturnType<typeof fixture>>;

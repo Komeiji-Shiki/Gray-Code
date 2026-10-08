@@ -9,6 +9,7 @@ interface PeerConnection {
   state: NodePeerSummary['state']; wire?: NodeWire; connecting?: Promise<void>; capabilities?: NodeCapabilities;
   error?: string; lastSeenAt?: number; attempts: number; retry?: ReturnType<typeof setTimeout>; generation: number;
   connectController?: AbortController;
+  eventQueue: Promise<unknown>;
 }
 interface SavedDispatch extends NodeTaskDispatch { input: NodeTaskInput; fingerprint: string }
 /** 控制端保留派发记录与事件游标。连接恢复只查询原任务，派发重试由用户使用原标识触发。 */
@@ -17,12 +18,11 @@ export class NodeClients {
   private readonly cursors = new Map<string, number>();
   private readonly dispatching = new Map<string, Promise<RunRecord>>();
   private readonly recovering = new Map<string, Promise<void>>();
-  private eventQueue: Promise<unknown> = Promise.resolve();
   private closed = false;
   constructor(private readonly app: PlatformApplication, private readonly registry: NodeRegistry, private readonly changed: () => void) {}
   private state(id: string) {
     let state = this.connections.get(id);
-    if (!state) { state = { state: 'offline', attempts: 0, generation: 0 }; this.connections.set(id, state); } return state;
+    if (!state) { state = { state: 'offline', attempts: 0, generation: 0, eventQueue: Promise.resolve() }; this.connections.set(id, state); } return state;
   }
   summaries(peer: NodePeer): Partial<NodePeerSummary> {
     const value = this.state(peer.id);
@@ -86,7 +86,7 @@ export class NodeClients {
     if (value.type === 'event') {
       const event = value.event as RunEvent;
       if (!event || typeof event.runId !== 'string' || !Number.isSafeInteger(event.sequence)) return;
-      const next = this.eventQueue.then(() => this.acceptEvent(peer, event)); this.eventQueue = next.catch(() => {});
+      const next = state.eventQueue.then(() => this.acceptEvent(peer, event)); state.eventQueue = next.catch(() => {});
       void next.catch(error => { state.error = (error as Error).message; this.changed(); });
     } else if (['model.delta', 'message.persisted', 'run.created', 'tool.progress', 'computer.changed', 'tasks.changed'].includes(value.type)) {
       this.app.publish({ type: 'nodes.event', peerId: peer.id, nodeId: peer.nodeId, notification: value });
@@ -121,9 +121,10 @@ export class NodeClients {
     const pending = this.recovering.get(peer.id); if (pending) return pending;
     const next = (async () => {
       const runs = await this.request<RunRecord[]>(peer.id, 'tasks.list');
-      // 与实时事件共用队列，补取期间到达的新事件不会覆盖较新的游标。
-      const recovery = this.eventQueue.then(async () => { for (const run of runs) await this.events(peer, run.id); });
-      this.eventQueue = recovery.catch(() => {}); await recovery;
+      // 同一设备的补取与实时事件共用队列，避免游标回退；慢设备不阻塞其他连接。
+      const state = this.state(peer.id);
+      const recovery = state.eventQueue.then(async () => { for (const run of runs) await this.events(peer, run.id); });
+      state.eventQueue = recovery.catch(() => {}); await recovery;
       for (const dispatch of await this.list(peer.id)) {
         const run = runs.find(value => value.requestKey === `node-${nodeHash(`${peer.id}:${dispatch.requestKey}`)}`);
         if (run) await this.app.storage.putRecord({ namespace: 'node-dispatches', id: dispatch.id, ownerId: peer.id, value: { ...dispatch, state: 'accepted', run, error: undefined } });
@@ -175,6 +176,6 @@ export class NodeClients {
       const state = this.state(id); state.generation++; state.connectController?.abort(); clearTimeout(state.retry); state.retry = undefined; state.wire?.close('应用正在退出。');
       await state.connecting?.catch(() => {});
     }));
-    await Promise.allSettled([...this.dispatching.values(), ...this.recovering.values(), this.eventQueue]);
+    await Promise.allSettled([...this.dispatching.values(), ...this.recovering.values(), ...[...this.connections.values()].map(state => state.eventQueue)]);
   }
 }
