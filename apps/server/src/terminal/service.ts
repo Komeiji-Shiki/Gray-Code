@@ -11,6 +11,7 @@ import { windowsProcessTreePort } from '../../../../backend/tools/terminal/proce
 import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
+import { TerminalOutputBuffer } from './output';
 import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../workspace/processes';
 import { getActualLanguage, t } from '../../../../backend/i18n';
 import { AnsiStreamStripper } from '../../../../shared/ansi';
@@ -90,9 +91,12 @@ export class PlatformTerminals {
     const runner = this.runtime(config, tasks, context.workspace.directory);
     // terminal_task read 把缓冲交给模型，去掉颜色序列；stdout/stderr 各自保留未完成的序列尾部。
     const strippers = { output: new AnsiStreamStripper(), error: new AnsiStreamStripper() };
-    const unsubscribe = runner.onTerminalOutput(event => {
+    const output = new TerminalOutputBuffer(event => {
       this.app.publish({ type: 'ui.message', message: { type: 'command', command: 'terminalOutput',
         data: { ...event, toolId: context.toolCallId, conversationId: context.conversationId } } });
+      if (event.data) context.progress({ terminalId: id, text: event.data });
+    });
+    const unsubscribe = runner.onTerminalOutput(event => {
       if (event.data && (event.type === 'output' || event.type === 'error')) {
         const text = strippers[event.type].push(event.data);
         if (text) appendProcessOutput(record.outputBuffer!, text);
@@ -109,7 +113,7 @@ export class PlatformTerminals {
       if (event.type === 'exit') for (const stripper of Object.values(strippers)) {
         const rest = stripper.flush(); if (rest) appendProcessOutput(record.outputBuffer!, rest);
       }
-      if (event.data) context.progress({ terminalId: id, text: event.data });
+      output.push(event);
       // 后台任务的完成通知早于 exit，必须等输出终态送达后再释放监听。
       if (event.type === 'exit') unsubscribe();
     });
@@ -143,7 +147,7 @@ export class PlatformTerminals {
       }
       throw error;
     } finally {
-      if (!this.active.has(id)) unsubscribe();
+      if (!this.active.has(id)) { output.flush(); unsubscribe(); }
     }
   }
 
