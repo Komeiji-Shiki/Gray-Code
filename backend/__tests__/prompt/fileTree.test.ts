@@ -51,6 +51,33 @@ describe('fileTree buildFileTree', () => {
         expect(FILE_TREE_MAX_NODES).toBeGreaterThan(0)
     })
 
+    test('子目录增删在 TTL 内复用缓存，到期后即使根目录未变化也刷新', () => {
+        write('src/old.txt')
+        const rootMtimeMs = fs.statSync(root).mtimeMs
+        const clock = jest.spyOn(Date, 'now').mockReturnValue(10000)
+        const reads = jest.spyOn(jest.requireActual<typeof fs>('fs'), 'readdirSync')
+        try {
+            const initial = getWorkspaceFileTree(2)
+            const initialReads = reads.mock.calls.length
+            fs.unlinkSync(path.join(root, 'src', 'old.txt'))
+            write('src/new.txt')
+            expect(fs.statSync(root).mtimeMs).toBe(rootMtimeMs)
+
+            clock.mockReturnValue(14999)
+            expect(getWorkspaceFileTree(2)).toBe(initial)
+            expect(reads.mock.calls).toHaveLength(initialReads)
+
+            clock.mockReturnValue(15000)
+            const refreshed = getWorkspaceFileTree(2)
+            expect(refreshed).toContain('new.txt')
+            expect(refreshed).not.toContain('old.txt')
+            expect(reads.mock.calls.length).toBeGreaterThan(initialReads)
+        } finally {
+            clock.mockRestore()
+            reads.mockRestore()
+        }
+    })
+
     test('! 否定：.gitignore 的 !keep.log 重新包含被排除的文件', () => {
         write('.gitignore', '*.log\n!keep.log\n')
         write('a.log', 'a')

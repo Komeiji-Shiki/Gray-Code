@@ -345,23 +345,13 @@ function treeToLines(nodes: FileTreeNode[], prefix: string = ''): string[] {
 }
 
 /**
- * 文件树生成结果缓存：key=工作区路径+生成参数；TTL + 根目录 mtime + .gitignore mtime 三失效。
- * 每条消息都会同步 readdirSync 遍历整棵目录树，相同参数下 TTL 内零磁盘 I/O；
- * TTL 过期后 stat 根目录与 .gitignore 的 mtime，均未变化则复用缓存结果（与 pinnedFileCache 同模式）。
- *
- * .gitignore 自身 mtime 单独记录：修改忽略规则会改写 .gitignore 的 mtime，
- * 可在 TTL 过期校验时即时发现，无需等待整树重建。
- *
- * 设计局限：子目录内文件增删只反映在子目录 mtime 上，根目录 mtime 不更新，
- * 此类变化只能依赖 TTL 兜底失效（最多滞后 FILE_TREE_CACHE_TTL_MS），
- * 文件树内容可能短暂滞后于磁盘状态，属 TTL 缓存的固有取舍。
+ * 文件树生成结果缓存：key=工作区路径+生成参数；相同参数在 TTL 内零磁盘 I/O。
+ * 子目录内文件增删不会更新根目录 mtime，不能只凭根目录未变化延长缓存有效期。
+ * 到期后按原深度和节点预算重建，保证文件树与忽略规则最多滞后 FILE_TREE_CACHE_TTL_MS。
  */
 interface FileTreeCacheEntry {
     result: string
     generatedAt: number
-    rootMtimeMs: number
-    /** .gitignore 自身 mtime（毫秒）；无 .gitignore 或不可访问时为 0 */
-    gitignoreMtimeMs: number
 }
 
 /** 文件树生成结果缓存 TTL（毫秒） */
@@ -384,32 +374,8 @@ export function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: numb
     const now = Date.now()
     const gitignorePath = path.join(workspacePath, '.gitignore')
     const cached = fileTreeCache.get(cacheKey)
-    if (cached) {
-        if (now - cached.generatedAt < FILE_TREE_CACHE_TTL_MS) {
-            // TTL 内：零磁盘 I/O，直接复用缓存
-            return cached.result
-        }
-        // TTL 过期：stat 根目录 mtime 与 .gitignore 自身 mtime，均未变化则复用并刷新时间戳。
-        // .gitignore 内容变化会改写其自身 mtime（与 parseGitignore 的 mtime 复用判断同粒度），
-        // 单独校验后改忽略规则可立即失效缓存，不必等下一次整树重建。
-        // 注：子目录内文件增删只改子目录 mtime，根目录 mtime 不变，依赖 TTL 兜底失效
-        // （最多滞后 FILE_TREE_CACHE_TTL_MS），属设计局限，见 FileTreeCacheEntry 注释。
-        try {
-            const rootMtimeMs = fs.statSync(workspacePath).mtimeMs
-            let gitignoreMtimeMs: number
-            try {
-                gitignoreMtimeMs = fs.statSync(gitignorePath).mtimeMs
-            } catch {
-                // .gitignore 不可访问（如缓存后被删除）：mtime 记 0，与缓存值不一致即失效
-                gitignoreMtimeMs = 0
-            }
-            if (rootMtimeMs === cached.rootMtimeMs && gitignoreMtimeMs === cached.gitignoreMtimeMs) {
-                cached.generatedAt = now
-                return cached.result
-            }
-        } catch {
-            // 根目录不可访问：走重建路径（重建同样会失败并返回空树）
-        }
+    if (cached && now - cached.generatedAt < FILE_TREE_CACHE_TTL_MS) {
+        return cached.result
     }
 
     // 解析 .gitignore
@@ -426,21 +392,9 @@ export function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: numb
     }
     
     const result = lines.join('\n')
-    let rootMtimeMs = 0
-    try {
-        rootMtimeMs = fs.statSync(workspacePath).mtimeMs
-    } catch {
-        // 忽略：根目录不可访问时缓存仅按 TTL 失效
-    }
-    let gitignoreMtimeMs = 0
-    try {
-        gitignoreMtimeMs = fs.statSync(gitignorePath).mtimeMs
-    } catch {
-        // 忽略：无 .gitignore（或不可访问）时按 0 记录，出现/消失即与缓存值不一致而失效
-    }
     if (fileTreeCache.size >= FILE_TREE_CACHE_MAX_ENTRIES) {
         fileTreeCache.clear()
     }
-    fileTreeCache.set(cacheKey, { result, generatedAt: now, rootMtimeMs, gitignoreMtimeMs })
+    fileTreeCache.set(cacheKey, { result, generatedAt: now })
     return result
 }
