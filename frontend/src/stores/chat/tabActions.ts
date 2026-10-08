@@ -10,7 +10,7 @@ import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
-import { clearAllSmoothForState } from './streamChunkHandlers'
+import { clearAllSmoothForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
 import { t } from '../../composables/useI18n'
 
@@ -227,6 +227,7 @@ export function closeTab(
 
   // 清理该标签页对话的流式缓冲区
   if (tab.conversationId) {
+    resetTurnBaseTokenEstimate(state, tab.conversationId)
     state.backgroundStreamBuffers.value.delete(tab.conversationId)
     // 取消该会话仍在进行的流，避免后续 chunk 为已关闭会话重建缓冲区（M20）
     if (cancelStreamByConversationId) {

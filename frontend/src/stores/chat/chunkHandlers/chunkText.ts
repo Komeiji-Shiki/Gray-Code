@@ -4,9 +4,8 @@
  * 拆分自 streamChunkHandlers.ts（模块化重构第 4 批，纯移动、逻辑不改）。
  *
  * 本文件持有本组模块级状态（单例，禁止在文件间复制）：
- * - fcSeenBodies：工具调用参数的 TPS 已计文本跟踪
  * - smoothBaseCache：平滑基线缓存
- * - activeTokenTurn：当前轮次的异步 TPS 校准上下文
+ * - activeTokenTurns：各会话当前轮次的异步 TPS 校准与工具参数计数
  * chunkTools / chunkTerminal 通过本文件导出复用这些状态与共享辅助函数。
  */
 
@@ -27,7 +26,6 @@ import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFac
  * ② 工具参数也按真实 tokenizer 计数（JSON 标点密集，字符粗估会把 1 token 估成 ~2）。
  * 有界：流结束（done）时清空；容量超限时整体清空兜底。
  */
-export const fcSeenBodies = new Map<string, string>()
 const MAX_FC_SEEN_TRACKED = 200
 
 /**
@@ -40,23 +38,27 @@ const smoothBaseCache = new Map<string, string>()
 const MAX_SMOOTH_BASE_TRACKED = 200
 
 interface TokenTurnEstimate {
+  streamId: string | null
   modelKey: string
+  fcSeenBodies: Map<string, string>
   factor: number
   baseTokens: number
   pending: number
   finalTokens: number | null
   cancelled: boolean
 }
-let activeTokenTurn: TokenTurnEstimate | null = null
+const activeTokenTurns = new WeakMap<ChatStoreState, Map<string, TokenTurnEstimate>>()
 
 /**
  * 清空本轮 base 估算（本地取消路径使用）：后端此后可能不发任何终结 chunk（挂死/断网），
  * 残留估算会混入下一轮流（realTokens 是新流真值、base 混入旧流字符）拉偏校准因子。
  * handleCancelled/handleError 的终结路径同样调用本函数清空（拆分后位于 chunkTerminal）。
  */
-export function resetTurnBaseTokenEstimate(): void {
-  if (activeTokenTurn) activeTokenTurn.cancelled = true
-  activeTokenTurn = null
+export function resetTurnBaseTokenEstimate(state: ChatStoreState, conversationId = state.currentConversationId.value): void {
+  const turns = activeTokenTurns.get(state)
+  const turn = turns?.get(conversationId ?? '')
+  if (turn) turn.cancelled = true
+  turns?.delete(conversationId ?? '')
 }
 
 /** 从会话状态解析当前模型 key（与 checkpointActions 的 resolveConversationModelOverride 同口径） */
@@ -70,11 +72,18 @@ function resolveModelKey(state: ChatStoreState): string {
 /** 每轮固定模型与校准因子，异步回执不再依赖下一轮的可变全局状态。 */
 function syncModelContext(state: ChatStoreState): TokenTurnEstimate {
   const modelKey = resolveModelKey(state)
-  if (activeTokenTurn?.modelKey === modelKey) return activeTokenTurn
-  resetTurnBaseTokenEstimate()
-  activeTokenTurn = { modelKey, factor: getCalibrationFactor(modelKey), baseTokens: 0, pending: 0, finalTokens: null, cancelled: false }
+  const conversationId = state.currentConversationId.value ?? ''
+  const streamId = state.activeStreamId.value
+  let turns = activeTokenTurns.get(state)
+  const current = turns?.get(conversationId)
+  if (current && current.streamId === streamId && current.modelKey === modelKey) return current
+  resetTurnBaseTokenEstimate(state)
+  if (!turns) { turns = new Map(); activeTokenTurns.set(state, turns) }
+  const turn = { streamId, modelKey, fcSeenBodies: new Map<string, string>(), factor: getCalibrationFactor(modelKey),
+    baseTokens: 0, pending: 0, finalTokens: null, cancelled: false }
+  turns.set(conversationId, turn)
   void ensureTokenCounterLoaded(modelKey)
-  return activeTokenTurn
+  return turn
 }
 
 function calibrateFinishedTokenTurn(turn: TokenTurnEstimate): void {
@@ -350,6 +359,7 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     return
   }
   const tokenTurn = syncModelContext(state)
+  const fcSeenBodies = tokenTurn.fcSeenBodies
 
   const snapshotContent = chunk.chunk.contentSnapshot
   if (snapshotContent) {
@@ -463,7 +473,9 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
       // thoughtsTokenCount（剔除会让真值偏小、校准因子被压低，TPS 显示反而偏低）。
       const finalUsage = chunk.chunk.usage
       tokenTurn.finalTokens = typeof finalUsage?.candidatesTokenCount === 'number' ? finalUsage.candidatesTokenCount : 0
-      if (activeTokenTurn === tokenTurn) activeTokenTurn = null
+      const turns = activeTokenTurns.get(state)
+      const conversationId = state.currentConversationId.value ?? ''
+      if (turns?.get(conversationId) === tokenTurn) turns.delete(conversationId)
       calibrateFinishedTokenTurn(tokenTurn)
       // 兜底：AI 输出结束，所有 streaming 工具应已完成参数输出
       if (nextMessage.tools) {

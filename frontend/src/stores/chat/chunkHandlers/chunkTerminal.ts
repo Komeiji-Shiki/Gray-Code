@@ -3,8 +3,7 @@
  *
  * 拆分自 streamChunkHandlers.ts（模块化重构第 4 批，纯移动、逻辑不改）。
  * 共享状态与辅助函数从 ./chunkText 导入，保持模块级单例：
- * - fcSeenBodies：随流终结清空（done 分支同款），避免旧轮参数体污染下一轮流
- * - resetTurnBaseTokenEstimate：清空本轮 base 估算（替代原内联的 turnBaseTokens = 0）
+ * - resetTurnBaseTokenEstimate：只清理当前会话的估算与参数增量，不干扰后台会话
  * - contentToPersistedMessage / finishSmoothStreamForState / migrateSmoothStreamForState
  */
 
@@ -16,7 +15,6 @@ import {
   contentToPersistedMessage,
   finishSmoothStreamForState,
   migrateSmoothStreamForState,
-  fcSeenBodies,
   resetTurnBaseTokenEstimate
 } from './chunkText'
 
@@ -145,7 +143,7 @@ export function handleComplete(
   }
   // 工具参数增量计数跟踪随流终结清空（与 cancelled/error 终结路径统一），
   // 覆盖“无 done-delta 直接 complete”的场景，避免旧轮参数体污染下一轮流
-  fcSeenBodies.clear()
+  resetTurnBaseTokenEstimate(state)
   
   // 流式完成后更新对话元数据
   updateConversationAfterMessage()
@@ -320,9 +318,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   // 本轮 base 估算不参与下轮校准：被中止的流累计的字符混入下一次流的 realTokens 会拉偏因子
-  resetTurnBaseTokenEstimate()
-  // 工具参数增量计数跟踪随流终结清空（与 done 分支同款），避免残留跨流污染
-  fcSeenBodies.clear()
+  resetTurnBaseTokenEstimate(state)
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state.pendingConfigIdOverride.value = null
@@ -433,9 +429,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.pendingModelOverride.value = null
   state.pendingConfigIdOverride.value = null
   // 与 handleCancelled 一致：本轮 base 估算不参与下轮校准（中止流的字符混入会拉偏因子）
-  resetTurnBaseTokenEstimate()
-  // 工具参数增量计数跟踪随流终结清空（与 done 分支同款），避免残留跨流污染
-  fcSeenBodies.clear()
+  resetTurnBaseTokenEstimate(state)
   state._lastApprovalGatedStreamId.value = null
   // 只清理「属于当前会话」的取消标记（跨会话标记保留，见 handleComplete 说明）
   if (state._lastCancelledStreamId.value?.conversationId === state.currentConversationId.value) {

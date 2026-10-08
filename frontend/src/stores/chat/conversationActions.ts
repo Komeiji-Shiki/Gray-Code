@@ -22,6 +22,7 @@ import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
 import { resetConversationState, createTab } from './tabActions'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
+import { resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 import { t } from '../../composables/useI18n'
 
 // ============ 对话列表分页加载配置 ============
@@ -1001,6 +1002,7 @@ export async function deleteConversation(
       state.sessionSnapshots.value.delete(tab.id)
     }
     state.backgroundStreamBuffers.value.delete(id)
+    resetTurnBaseTokenEstimate(state, id)
     state.openTabs.value = state.openTabs.value.filter(t => t.conversationId !== id)
 
     // 已删会话占用当前激活标签页（常规即「删除的是当前对话」）：激活标签页已随上方移除，

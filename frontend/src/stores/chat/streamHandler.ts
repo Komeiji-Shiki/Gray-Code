@@ -26,7 +26,8 @@ import {
   handleAutoSummary,
   handleCancelled,
   handleError,
-  finishSmoothStreamForState
+  finishSmoothStreamForState,
+  resetTurnBaseTokenEstimate
 } from './streamChunkHandlers'
 import { loadBranchGraph } from './branchActions'
 import { appendPersistedToolContents, insertUserFeedback } from './chunkHandlers/persistedContent'
@@ -64,6 +65,7 @@ export interface StreamHandlerContext {
  * 界面会一直卡在“等待响应”。
  */
 function resetTerminalStreamState(state: ChatStoreState): void {
+  resetTurnBaseTokenEstimate(state)
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isStreaming.value = false
