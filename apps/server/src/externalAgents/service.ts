@@ -83,9 +83,12 @@ export class ExternalAgents {
       const live = await this.owned(String(args.sessionId), context, false);
       const after = Number(args.afterSequence ?? 0);
       if (!Number.isSafeInteger(after) || after < 0) throw new Error('事件位置必须是非负整数。');
-      const events = await Promise.all(Array.from({ length: Math.min(100, Math.max(0, live.record.lastEvent - after)) }, (_, i) =>
+      // 序号先分配再排队保存；固定本页范围后等待已有写入，避免读出空记录或追赶后续事件。
+      const session = this.summary(live.record);
+      await live.active?.writes;
+      const events = await Promise.all(Array.from({ length: Math.min(100, Math.max(0, session.lastEvent - after)) }, (_, i) =>
         this.app.storage.getRecord(eventsNamespace, `${live.record.id}:${String(after + i + 1).padStart(12, '0')}`)));
-      return { success: true, data: { session: this.summary(live.record), events, hasMore: after + events.length < live.record.lastEvent } };
+      return { success: true, data: { session, events, hasMore: after + events.length < session.lastEvent } };
     }
     if (!context.conversationId || !context.workspace || !context.toolCallId) throw new Error('编码代理操作需要工作区和完整任务调用身份。');
     const id = createHash('sha256').update(JSON.stringify([context.runId, context.iteration, context.toolCallId])).digest('hex');

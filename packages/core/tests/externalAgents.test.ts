@@ -93,6 +93,44 @@ test('ACP runs in the task workspace, preserves permission choices, appends imag
   } finally { await app.close(); await f.cleanup(); }
 }, 35000);
 
+test('ACP 事件读取等待已分配序号保存完成，只返回读取开始时的范围', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  let release = () => {};
+  let pending: Promise<unknown> | undefined;
+  let page: Promise<any> | undefined;
+  try {
+    const { chat, context } = await configure(app, f.source);
+    const created = await app.externalAgents.execute({ action: 'create' }, context()) as any;
+    expect(created.success).toBe(true);
+    const sessionId = created.data.session.id;
+    const conversation = await app.conversation('owner', chat.id);
+    jest.spyOn(app, 'conversation').mockResolvedValue(conversation);
+    let entered!: () => void;
+    const writing = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async records => {
+      if (records.some(record => record.namespace === 'external-agent-events')) { entered(); await held; }
+      return commit(records);
+    });
+    pending = app.externalAgents.execute({ action: 'prompt', sessionId, prompt: 'event page' }, context());
+    await writing;
+    const reads = jest.spyOn(app.storage, 'getRecord');
+    page = app.externalAgents.execute({ action: 'events', sessionId }, context());
+    // 所有权检查已经就绪，给读取继续执行的机会；事件保存仍明确阻塞。
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(reads.mock.calls.filter(([namespace]) => namespace === 'external-agent-events')).toEqual([]);
+    release();
+    expect((await page).data).toMatchObject({ session: { lastEvent: 1 }, hasMore: false,
+      events: [{ sequence: 1, type: 'user_prompt' }] });
+    expect(await pending).toMatchObject({ success: true });
+  } finally {
+    release(); await Promise.allSettled([pending, page]);
+    jest.restoreAllMocks(); await app.close(); await f.cleanup();
+  }
+});
+
 test('ACP cancellation releases owned processes and uncertain operations are not repeated after restart', async () => {
   const f = await fixture(); await f.store.close();
   let app = await PlatformApplication.open({ dataDirectory: f.data });
