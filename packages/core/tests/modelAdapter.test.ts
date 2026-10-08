@@ -95,6 +95,18 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     expect(request.messages[2].parts[0].text).toBe('只有思考');
   });
 
+  test('渠道读取期间取消后不再整理历史或发起请求', async () => {
+    const controller = new AbortController(), reason = new Error('准备期间取消');
+    const request = input(), messages = request.messages;
+    request.signal = controller.signal;
+    const readHistory = jest.fn(() => messages);
+    Object.defineProperty(request, 'messages', { get: readHistory });
+    adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => '',
+      channel: async () => { controller.abort(reason); return undefined; } });
+    await expect(adapter.generate(request)).rejects.toBe(reason);
+    expect(readHistory).not.toHaveBeenCalled(); expect(requests).toEqual([]);
+  });
+
   test('发送前预览与实际 HTTP 正文一致，预览本身不读凭据或请求网络', async () => {
     profile.credentialRef = 'fixture-secret';
     const credential = jest.fn(async () => 'fixture-only');

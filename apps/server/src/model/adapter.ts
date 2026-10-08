@@ -80,6 +80,7 @@ export class ProviderModelAdapter implements ModelProvider {
   private async prepare(input: ModelInput, authenticate: boolean) {
     input.signal.throwIfAborted();
     let profile = await this.services.profile(input.providerId);
+    input.signal.throwIfAborted();
     if (!profile) throw new Error("Provider is not configured.");
     if(input.maxOutputTokens!==undefined){
       if(!Number.isSafeInteger(input.maxOutputTokens)||input.maxOutputTokens<1)throw new Error('请求输出预算无效。');
@@ -92,9 +93,12 @@ export class ProviderModelAdapter implements ModelProvider {
     const secret = subscriptionCredential ? subscriptionCredential.token : authenticate && profile.credentialRef
       ? await this.services.credential(profile.credentialRef)
       : "";
+    input.signal.throwIfAborted();
     if (secret === null)
       throw new Error("The provider credential is unavailable.");
     const channel = await this.services.channel?.(input.providerId);
+    // 配置和凭据等待期间的取消，必须先于长历史整理与协议格式化生效。
+    input.signal.throwIfAborted();
     const overrides = buildChannelConfig(profile, input, secret);
     const config = channel ? { ...channel, apiKey: secret, model: input.modelOverride ?? channel.model,
       systemInstruction: input.systemPrompt,
@@ -124,6 +128,7 @@ export class ProviderModelAdapter implements ModelProvider {
           "DeepSeek Vision preprocessing is enabled but its media processor is not installed.",
         );
       history = await this.services.prepareVision(history, config.model, input.signal);
+      input.signal.throwIfAborted();
     }
     // 发送前自愈：历史里同一工具调用的重复响应（读取补齐占位与迟到的真实结果并存）会让请求
     // 被完整性校验拒绝。这里在只影响本次请求的副本上清理，保证请求可用；存储由对话读取路径修复。

@@ -81,6 +81,8 @@ export class ChannelHttpExecutor {
      * @returns HTTP 响应
      */
     async executeRequest(options: HttpRequestOptions, externalSignal?: AbortSignal): Promise<HttpResponse> {
+        // 已取消的调用直接沿用原取消回执，避免再遍历和序列化大型正文。
+        if (externalSignal?.aborted) throw new ChannelError(ErrorType.CANCELLED_ERROR, t('modules.channel.errors.requestCancelled'));
         const { url, method, headers, body, timeout = 60000 } = options;
         const diagnostic = logResponsesRequest(url, body);
         const proxyUrl = this.getProxyUrl();
@@ -168,6 +170,7 @@ export class ChannelHttpExecutor {
         options: HttpRequestOptions,
         externalSignal?: AbortSignal
     ): AsyncGenerator<any> {
+        if (externalSignal?.aborted) throw new ChannelError(ErrorType.CANCELLED_ERROR, t('modules.channel.errors.requestCancelled'));
         const { url, method, headers, body, timeout = 120000 } = options;
         const diagnostic = logResponsesRequest(url, body);
         const proxyUrl = this.getProxyUrl();

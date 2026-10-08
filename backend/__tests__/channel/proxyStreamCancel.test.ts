@@ -94,6 +94,17 @@ beforeEach(() => {
 });
 
 describe('executeStreamRequest（代理模式）取消行为', () => {
+    test.each([false, true])('请求执行前已取消时不序列化正文（stream=%s）', async stream => {
+        const manager = createManager(), controller = new AbortController();
+        const serialize = jest.fn(() => STREAM_OPTIONS.body);
+        controller.abort();
+        const options = { ...STREAM_OPTIONS, body: { toJSON: serialize } };
+        const result = stream ? manager.executeStreamRequest(options, controller.signal).next()
+            : manager.executeRequest(options, controller.signal);
+        await expect(result).rejects.toMatchObject({ name: 'ChannelError', type: ErrorType.CANCELLED_ERROR });
+        expect(serialize).not.toHaveBeenCalled(); expect(mockProxyStreamFetch).not.toHaveBeenCalled();
+    });
+
     test('流中途 abort → 抛 CANCELLED_ERROR（不再被吞掉当成正常结束）', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
             'data: {"id":"1"}\n\n',
