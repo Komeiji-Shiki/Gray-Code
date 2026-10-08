@@ -108,15 +108,16 @@ export function repairFunctionCallPairsAfterDelete(
 }
 
 export function truncateFrom(contents: Content[], contentIndex: number): Content[] {
-    const cloned = cloneContents(contents);
-    if (contentIndex < 0 || contentIndex > cloned.length) {
+    const original = contents || [];
+    if (contentIndex < 0 || contentIndex > original.length) {
         throw new Error(`Transcript content index out of bounds: ${contentIndex}`);
     }
 
     // 重试语义是从目标位置开始删除后续上下文。若被删后缀包含保留区间中某个
     // functionCall 的响应，则把该调用标记为 rejected，避免截断制造孤儿调用。
-    const remaining = cloned.slice(0, contentIndex);
-    const deleted = cloned.slice(contentIndex);
+    // 被删除内容只用于读取配对身份；只复制保留区间，避免序列化随后丢弃的长正文和附件。
+    const remaining = cloneContents(original.slice(0, contentIndex));
+    const deleted = original.slice(contentIndex);
     repairFunctionCallPairsAfterDelete(remaining, deleted);
     return normalizeIndexes(remaining);
 }
@@ -204,12 +205,12 @@ export function repairParentChainAfterInsert(
 }
 
 export function deleteLogicalMessage(contents: Content[], contentIndex: number): Content[] {
-    const cloned = cloneContents(contents);
-    if (contentIndex < 0 || contentIndex >= cloned.length) {
+    const original = contents || [];
+    if (contentIndex < 0 || contentIndex >= original.length) {
         throw new Error(`Transcript content index out of bounds: ${contentIndex}`);
     }
 
-    const target = cloned[contentIndex];
+    const target = original[contentIndex];
     const functionCallIds = getFunctionCallIds(target);
     const indexesToDelete = new Set<number>([contentIndex]);
 
@@ -217,15 +218,15 @@ export function deleteLogicalMessage(contents: Content[], contentIndex: number):
         // 修改原因：删除包含工具调用的模型消息时，如果保留配对 functionResponse，会在后续请求中形成孤儿工具结果。
         // 修改方式：扫描目标消息之后的 Content，删除含有匹配 functionResponse.id 的消息。
         // 修改目的：保持 provider 要求的 functionCall/functionResponse 配对完整性，避免重试时报历史结构错误。
-        for (let index = contentIndex + 1; index < cloned.length; index++) {
-            if (hasMatchingFunctionResponse(cloned[index], functionCallIds)) {
+        for (let index = contentIndex + 1; index < original.length; index++) {
+            if (hasMatchingFunctionResponse(original[index], functionCallIds)) {
                 indexesToDelete.add(index);
             }
         }
     }
 
-    const deletedMessages = cloned.filter((_, index) => indexesToDelete.has(index));
-    const next = cloned.filter((_, index) => !indexesToDelete.has(index));
+    const deletedMessages = original.filter((_, index) => indexesToDelete.has(index));
+    const next = cloneContents(original.filter((_, index) => !indexesToDelete.has(index)));
     // 删除 functionResponse 本身时，其 functionCall 可能仍保留；统一修复配对，避免孤儿调用。
     repairFunctionCallPairsAfterDelete(next, deletedMessages);
     // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继重链到被删消息的 parent）

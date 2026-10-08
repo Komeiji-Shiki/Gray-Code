@@ -66,14 +66,18 @@ export class ArtifactApproval {
     if (!gate || !requirement || gate.id !== requirement.approvalId || gate.sourceToolCallId !== hidden.id || gate.sourceToolName !== hidden.name || gate.continuationIntent !== requirement.intent)
       throw new Error('文档确认已失效，请重新打开当前请求。');
     if ((await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 })).length) throw new Error('请等待当前任务完成后确认文档。');
-    const messages: PlatformMessage[] = structuredClone(state.history.messages);
     let matched = false;
-    for (const message of messages) for (const part of message.parts) {
-      const response = part.functionResponse as { id?: string; name?: string; response?: Record<string, unknown> } | undefined;
-      if (response?.id === gate.sourceToolCallId && response.name === gate.sourceToolName) {
-        response.response = { ...response.response, ...structuredClone(hidden.response) }; matched = true;
+    const messages: PlatformMessage[] = state.history.messages.map(message => {
+      let parts: PlatformMessage['parts'] | undefined;
+      for (const [index, part] of message.parts.entries()) {
+        const response = part.functionResponse as { id?: string; name?: string; response?: Record<string, unknown> } | undefined;
+        if (response?.id !== gate.sourceToolCallId || response.name !== gate.sourceToolName) continue;
+        parts ??= [...message.parts];
+        parts[index] = { ...part, functionResponse: { ...response, response: { ...response.response, ...structuredClone(hidden.response) } } };
+        matched = true;
       }
-    }
+      return parts ? { ...message, parts } : message;
+    });
     if (!matched) throw new Error('确认请求对应的工具结果已不在当前分支。');
     const metadata = structuredClone(state.metadata);
     metadata.custom = { ...metadata.custom as Record<string, unknown>, pendingApprovalGate: null,
