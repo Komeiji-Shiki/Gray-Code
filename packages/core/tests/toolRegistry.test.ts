@@ -6,6 +6,46 @@ function tool(type = 'string'): RuntimeTool {
     effects: () => ['public_read'], execute: async () => ({ success: true }) };
 }
 
+test.each([undefined, 'https://json-schema.org/draft/2020-12/schema'])('组合和引用 Schema 的合法空值不会被当作可选占位删除：%s', dialect => {
+  const registry = new RuntimeToolRegistry();
+  const input = tool();
+  input.declaration.parameters = { type: 'object', properties: { byRef: { type: 'string' }, omitted: { type: 'string' } } };
+  input.validationSchema = { $id: 'https://example.test/nullable-tool.json', ...(dialect ? { $schema: dialect } : {}), type: 'object',
+    $defs: { nullable: { type: ['string', 'null'] } },
+    properties: {
+      byRef: { $ref: '#/$defs/nullable' }, later: { $ref: '#/$defs/nullable' },
+      combined: { allOf: [{ $ref: '#/$defs/nullable' }, { not: { const: 'excluded' } }] },
+      unconstrained: {}, omitted: { type: 'string' },
+      nested: { type: 'object', properties: { 'a/b~c': { $ref: '#/$defs/nullable' }, omitted: { type: 'number' } } },
+      list: { type: 'array', items: { type: 'object', properties: { value: { $ref: '#/$defs/nullable' }, omitted: { type: 'string' } } } },
+      ambiguous: { oneOf: [{ type: 'null' }, { const: null }] },
+    } };
+  registry.register(input);
+  const old = registry.catalog(['mcp__sample']).entries.get('mcp__sample')!;
+  const args = { byRef: null, combined: null, unconstrained: null, omitted: null,
+    nested: { 'a/b~c': null, omitted: null }, list: [{ value: null, omitted: null }] };
+  const normalized = old.normalizeArguments(args);
+  expect(normalized).toEqual({ byRef: null, combined: null, unconstrained: null, nested: { 'a/b~c': null }, list: [{ value: null }] });
+  expect(args.nested.omitted).toBeNull();
+  expect(old.validate(normalized)).toBe(true);
+  expect(old.normalizeArguments({ ambiguous: null })).toEqual({ ambiguous: null });
+  expect(old.validate({ ambiguous: null })).toBe(false);
+  expect(registry.catalog(['mcp__sample']).entries.get('mcp__sample')!.normalizeArguments).toBe(old.normalizeArguments);
+  input.validationSchema.$defs = { nullable: { type: 'string' } };
+  registry.replaceNamespace('mcp__', [input]);
+  const current = registry.catalog(['mcp__sample']).entries.get('mcp__sample')!;
+  expect(current.normalizeArguments({ later: null })).toEqual({});
+  // 旧目录首次解析另一条引用路径时，也必须继续使用捕获的旧 Schema。
+  expect(old.normalizeArguments({ later: null })).toEqual({ later: null });
+});
+
+test('同步工具入口拒绝把异步 Schema 的 Promise 当作校验成功', () => {
+  const registry = new RuntimeToolRegistry();
+  const input = tool(); input.validationSchema = { ...input.declaration.parameters, $async: true };
+  registry.register(input);
+  expect(() => registry.catalog(['mcp__sample'])).toThrow('不支持异步 Schema');
+});
+
 test('重复捕获相同工具目录复用校验器，并保持声明和版本稳定', () => {
   const registry = new RuntimeToolRegistry(); registry.register(tool());
   const original = registry.catalog(['mcp__sample']);

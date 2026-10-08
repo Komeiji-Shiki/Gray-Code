@@ -7,7 +7,6 @@ import type {
 import { PlatformStorage } from '../storage/client';
 import { RuntimeToolRegistry, authorizeEffects, needsApproval, type ToolCatalog, type ToolContext } from './tools';
 import { QuestionBroker } from './questions';
-import { normalizeToolArguments } from './toolArguments';
 import { DeltaCoalescer } from './deltas';
 import { NativeAsyncTools, NATIVE_ASYNC_NAMESPACE, WAIT_FOR_TASKS, nativeToolDeclaration, waitForTasksDeclaration, type NativeToolRecord } from './nativeAsync';
 
@@ -625,7 +624,7 @@ export class PlatformRuntime {
     const entry = catalog.entries.get(call.name);
     if (!entry || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
     try {
-      const args = normalizeToolArguments(call.args, entry.tool.declaration.parameters);
+      const args = entry.normalizeArguments(call.args);
       const preparedArgs = entry.tool.normalizeArgs?.(args).args ?? args;
       const readOnly = typeof entry.tool.parallelRead === 'function' ? entry.tool.parallelRead(preparedArgs) : entry.tool.parallelRead;
       if (!readOnly) return false;
@@ -644,7 +643,7 @@ export class PlatformRuntime {
       const entry = catalog.entries.get(call.name);
       if (!entry) return { success: false, code: 'UNKNOWN_TOOL', error: 'Tool is absent from the configured catalog.' };
       const { task_handle: _handle, ...nativeArgs } = call.args;
-      call = { ...call, args: normalizeToolArguments(nativeAsync ? nativeArgs : call.args, entry.tool.declaration.parameters) };
+      call = { ...call, args: entry.normalizeArguments(nativeAsync ? nativeArgs : call.args) };
       if (entry.tool.normalizeArgs) {
         const prepared = entry.tool.normalizeArgs(call.args);
         call = { ...call, args: prepared.args };

@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ValidateFunction } from 'ajv';
-import { ToolSchemaValidators } from './toolSchemaValidation';
+import { ToolSchemaValidators, type CompiledToolSchema } from './toolSchemaValidation';
 import type { ActorIdentity, AgentDefinition, ToolDeclaration, ToolEffect, ToolOutcome, WorkspaceDefinition, UserQuestion, QuestionRequest, ModelInput, ApprovalChoice, ApprovalDecision } from '@graycode/contracts';
 
 export interface ToolContext {
@@ -53,7 +52,7 @@ export interface RuntimeTool {
 export interface ToolCatalog {
   version: string;
   declarations: ToolDeclaration[];
-  entries: ReadonlyMap<string, { tool: RuntimeTool; validate: ValidateFunction }>;
+  entries: ReadonlyMap<string, { tool: RuntimeTool } & CompiledToolSchema>;
 }
 
 function canonical(value: unknown): unknown {
@@ -72,7 +71,7 @@ function validationParameters(tool: RuntimeTool, declaration?: ToolDeclaration):
 export class RuntimeToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
   private readonly schemaValidators = new ToolSchemaValidators();
-  private readonly validators = new Map<string, { schema: string; validate: ValidateFunction }>();
+  private readonly validators = new Map<string, { schema: string } & CompiledToolSchema>();
 
   /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
   constructor(private readonly decorate?: (tool: RuntimeTool) => RuntimeTool) {}
@@ -88,7 +87,7 @@ export class RuntimeToolRegistry {
   catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>): ToolCatalog {
     const declarations: ToolDeclaration[] = [];
     const validationSchemas: Record<string, unknown> = {};
-    const entries = new Map<string, { tool: RuntimeTool; validate: ValidateFunction }>();
+    const entries = new Map<string, { tool: RuntimeTool } & CompiledToolSchema>();
     for (const name of [...new Set(names)].sort()) {
       const override = overrides?.get(name);
       const tool = override ? this.decorate?.(override) ?? override : this.tools.get(name);
@@ -101,13 +100,13 @@ export class RuntimeToolRegistry {
       const schema = JSON.stringify(parameters);
       let cached = this.validators.get(name);
       if (cached?.schema !== schema) {
-        let validate: ValidateFunction;
-        try { validate = this.schemaValidators.compile(parameters); }
+        let compiled: CompiledToolSchema;
+        try { compiled = this.schemaValidators.compile(parameters); }
         catch (error) { throw new Error(`${name} 的参数声明无效：${error instanceof Error ? error.message : String(error)}`); }
-        cached = { schema, validate };
+        cached = { schema, ...compiled };
         this.validators.set(name, cached);
       }
-      entries.set(name, { tool, validate: cached.validate });
+      entries.set(name, { tool, validate: cached.validate, normalizeArguments: cached.normalizeArguments });
     }
     const fingerprint = Object.keys(validationSchemas).length ? { declarations, validationSchemas } : declarations;
     return { declarations, entries, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex') };
