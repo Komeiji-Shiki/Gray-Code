@@ -45,6 +45,32 @@ describe('独立代理消息的持久化与调度', () => {
   });
   afterEach(async () => { for (const gate of gates.splice(0)) gate.resolve(); await app.close(); jest.restoreAllMocks(); await f.cleanup(); });
 
+  test('超过事务容量的后台结果只启动一次续跑，模型收到全部结果', async () => {
+    const conversation = await app.createConversation('owner', '大量后台交付');
+    const parent = await start(conversation.id); await app.runtime.wait(parent.id);
+    const pending = Array.from({ length: 130 }, (_, index) => {
+      const id = `bulk-result-${String(index).padStart(3, '0')}`;
+      return { id, conversationId: conversation.id, actorId: 'owner', sourceRunId: parent.id,
+        message: { id, role: 'user', timestamp: 42, parts: [{ text: id }], isUserInput: false, source: 'background_task' } };
+    });
+    for (let offset = 0; offset < pending.length; offset += 30) await app.subagents.feedback.enqueueMessages(pending.slice(offset, offset + 30));
+    const received: string[][] = [];
+    generate = async input => {
+      received.push(input.messages.filter(message => message.id?.startsWith('bulk-result-')).map(message => message.id!));
+      return answer('已收到全部后台结果');
+    };
+    await app.subagents.feedback.flush(conversation.id); await idle();
+    expect(received).toEqual([pending.map(value => value.id)]);
+    const runs = await app.storage.listRuns({ conversationId: conversation.id });
+    expect(runs).toHaveLength(2);
+    expect(runs.every(run => run.status === 'completed')).toBe(true);
+    expect(await app.storage.listRecords('background-followup-pending', conversation.id)).toEqual([]);
+    expect(await app.storage.listRecords('background-followup-claims', conversation.id)).toEqual([]);
+    const first = await app.storage.getRecord('background-followups', pending[0].id) as { requestKey: string; status: string };
+    const last = await app.storage.getRecord('background-followups', pending.at(-1)!.id) as { requestKey: string; status: string };
+    expect(first.status).toBe('started'); expect(last.requestKey).toBe(first.requestKey);
+  });
+
   test('默认 Agent 自动包含新增内置工具，自定义范围与显式禁用保持有效', async () => {
     const original = app.settings.snapshot().settings.agents[0];
     expect(configuredAgent(app, original).toolNames).toContain('agent_send_message');

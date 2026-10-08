@@ -1,8 +1,9 @@
 import type { RunRecord } from '@graycode/contracts';
-import type { ToolContext } from '@graycode/core';
+import { PlatformStorage, type ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { conversationTools } from '../../../apps/server/src/conversations/tools';
 import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
+import { BackgroundContinuation } from '../../../apps/server/src/subagents/continuation';
 import { fixture, metadata } from './fixtures';
 
 test('后缀追加与交付记录原子提交，冲突回滚并保留历史原文', async () => {
@@ -63,6 +64,51 @@ test('交付积压分批提交，后续冲突重试保留先前进度和父节�
     expect(await f.store.listRecords('background-followups', id)).toEqual([pending[0].id]);
     expect((await f.store.getConversation(id))?.title).toBe('交付期间的并发标题');
     expect(await feedback.flush(id)).toBe(false);
+  } finally { jest.restoreAllMocks(); await f.cleanup(); }
+});
+
+test('续跑消费分批中断后恢复认领进度，不重发已经认领的模型任务', async () => {
+  const f = await fixture();
+  try {
+    const id = 'followup-recovery';
+    await f.store.createConversation(metadata(id));
+    const pending = Array.from({ length: 130 }, (_, index) => ({ id: `result-${String(index).padStart(3, '0')}`,
+      conversationId: id, actorId: 'owner', status: 'pending', createdAt: index,
+      parentConfiguration: { agentId: 'fixture', configuration: { providerId: 'fixture' } } }));
+    await f.store.appendHistory(id, pending.slice(0, -1).map(value => ({ id: value.id, role: 'user', parts: [{ text: value.id }] })));
+    for (let offset = 0; offset < pending.length; offset += 100) await f.store.commitRecords(pending.slice(offset, offset + 100).flatMap(value => [
+      { namespace: 'background-followups', id: value.id, ownerId: id, value },
+      { namespace: 'background-followup-pending', id: value.id, ownerId: id, value: { id: value.id } },
+    ]));
+    const run: RunRecord = { id: 'reserved-run', requestKey: 'already-reserved', conversationId: id, actorId: 'owner', agentId: 'fixture',
+      catalogVersion: 'fixture', iteration: 0, status: 'queued', createdAt: Date.now(), updatedAt: Date.now() };
+    await f.store.commitConversation({ conversationId: id, expectedRevision: 1, startRun: { run } });
+    const app = { storage: f.store, runtime: { continue: jest.fn(async () => { throw new Error('不得重复发起模型'); }) }, publish: jest.fn() } as unknown as PlatformApplication;
+    const continuation = new BackgroundContinuation(app);
+    const full = jest.spyOn(f.store, 'readConversationState');
+    const commit = f.store.commitRecords.bind(f.store);
+    let batches = 0;
+    const writes = jest.spyOn(f.store, 'commitRecords').mockImplementation(async records => {
+      if (++batches === 2) throw new Error('模拟第二批写入中断');
+      return commit(records);
+    });
+    await expect(continuation.consume(run)).rejects.toThrow('模拟第二批写入中断');
+    expect(full).not.toHaveBeenCalled();
+    expect(writes.mock.calls.every(([records]) => records.length <= 256)).toBe(true);
+    expect(await f.store.getRecord('background-followup-claims', id)).toMatchObject({ completed: 127 });
+    expect(await f.store.listRecords('background-followup-pending', id)).toHaveLength(3);
+    await continuation.close();
+    jest.restoreAllMocks(); await f.store.close();
+    f.store = await PlatformStorage.open(f.data);
+    await f.store.appendRunEvent({ runId: run.id, type: 'run.interrupted', payload: {}, update: { status: 'interrupted' } });
+    const recovered = new BackgroundContinuation({ storage: f.store, runtime: app.runtime, publish: app.publish } as PlatformApplication);
+    await recovered.initialize(); await recovered.close();
+    expect(app.runtime.continue).not.toHaveBeenCalled();
+    expect(await f.store.getRecord('background-followup-claims', id)).toBeNull();
+    expect(await f.store.listRecords('background-followup-pending', id)).toEqual([]);
+    expect(await f.store.getRecord('background-followups', pending[0].id)).toMatchObject({ status: 'delivered', runId: run.id });
+    expect(await f.store.getRecord('background-followups', pending.at(-2)!.id)).toMatchObject({ status: 'delivered', runId: run.id });
+    expect(await f.store.getRecord('background-followups', pending.at(-1)!.id)).toMatchObject({ status: 'obsolete', runId: run.id });
   } finally { jest.restoreAllMocks(); await f.cleanup(); }
 });
 
