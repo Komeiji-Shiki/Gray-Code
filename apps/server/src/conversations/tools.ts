@@ -24,14 +24,25 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
       await app.conversation(context.actorId, id);
       const run = await app.storage.getRun(context.runId);
       if (run?.conversationId !== id || run.actorId !== context.actorId) throw new Error('工具调用不属于当前对话。');
-      const state = await app.storage.readConversationState(id);
+      let pendingState: ReturnType<typeof app.storage.getConversationInfo> | undefined;
+      const snapshot = async () => {
+        const state = await (pendingState ??= app.storage.getConversationInfo(id));
+        if (!state) throw new Error('当前对话已删除。');
+        return state;
+      };
       let changed = false;
       const requireId = (requested: string) => { if (requested !== id) throw new Error('不能访问其他对话。'); context.signal.throwIfAborted(); };
       const conversationStore: NonNullable<LegacyToolContext['conversationStore']> = {
-        getHistory: async requested => { requireId(requested); return structuredClone((await app.longMemoryPrompt.history.prepare(context.actorId,id,state.history.messages)).messages); },
-        getCustomMetadata: async (requested, key) => { requireId(requested); return structuredClone((state.metadata.custom as Record<string, unknown> | undefined)?.[key]); },
+        getHistory: async requested => {
+          requireId(requested);
+          const state = await snapshot();
+          const history = await app.storage.readHistorySelection(id, { expectedRevision: state.historyRevision });
+          return structuredClone((await app.longMemoryPrompt.history.prepare(context.actorId, id, history.messages)).messages);
+        },
+        getCustomMetadata: async (requested, key) => { requireId(requested); return structuredClone(((await snapshot()).metadata.custom as Record<string, unknown> | undefined)?.[key]); },
         setCustomMetadata: async (requested, key, value) => {
           requireId(requested);
+          const state = await snapshot();
           state.metadata.custom = { ...state.metadata.custom as Record<string, unknown>, [key]: structuredClone(value) };
           changed = true;
         },
@@ -40,7 +51,8 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
         abortSignal: context.signal, conversationStore, actorId: context.actorId });
       context.signal.throwIfAborted();
       if (changed && result.success) {
-        await app.storage.commitConversation({ conversationId: id, expectedRevision: state.history.revision,
+        const state = await snapshot();
+        await app.storage.commitConversation({ conversationId: id, expectedRevision: state.historyRevision,
           expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
         app.productUi.conversations.clearMetadataCache();
         app.publish({ type: 'conversation.changed', conversationId: id });

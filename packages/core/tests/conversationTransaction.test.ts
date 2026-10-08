@@ -1,5 +1,46 @@
 import type { RunRecord } from '@graycode/contracts';
+import type { ToolContext } from '@graycode/core';
+import type { PlatformApplication } from '../../../apps/server/src/application';
+import { conversationTools } from '../../../apps/server/src/conversations/tools';
 import { fixture, metadata } from './fixtures';
+
+test('待办和活动工具跳过历史正文，元数据并发变更仍拒绝覆盖', async () => {
+  const f = await fixture();
+  try {
+    await f.store.createConversation(metadata('tool-metadata'));
+    await f.store.appendHistory('tool-metadata', [{ id: 'original', role: 'user', parts: [{ text: '原始历史保留' }] }]);
+    const run: RunRecord = { id: 'tool-run', requestKey: 'tool-request', conversationId: 'tool-metadata', actorId: 'owner', agentId: 'default',
+      catalogVersion: 'fixture', iteration: 0, status: 'queued', createdAt: Date.now(), updatedAt: Date.now() };
+    await f.store.commitConversation({ conversationId: run.conversationId, expectedRevision: 1, startRun: { run } });
+    const app = { storage: f.store, conversation: async (_actor: string, id: string) => f.store.getConversation(id),
+      productUi: { conversations: { clearMetadataCache: jest.fn() } }, publish: jest.fn(),
+      activity: { stats: async () => ({ generatedAt: Date.now(), today: null, currentSession: { active: false, startedAt: null, minutes: 0 },
+        daily: [], hourlyHeatmap: [], monthly: [] }) },
+    } as unknown as PlatformApplication;
+    const tools = new Map(conversationTools(app).map(tool => [tool.declaration.name, tool]));
+    const context: ToolContext = { runId: run.id, conversationId: run.conversationId, actorId: 'owner',
+      signal: new AbortController().signal, progress: () => {}, askUser: jest.fn() };
+    const full = jest.spyOn(f.store, 'readConversationState'), selected = jest.spyOn(f.store, 'readHistorySelection');
+    const info = jest.spyOn(f.store, 'getConversationInfo');
+    expect(await tools.get('todo_write')!.execute({ todos: [{ id: 'first', content: '第一步', status: 'pending' }] }, context)).toMatchObject({ success: true });
+    expect(await tools.get('todo_update')!.execute({ ops: [{ op: 'set_status', id: 'first', status: 'completed' }] }, context)).toMatchObject({ success: true });
+    expect(info).toHaveBeenCalledTimes(2);
+    expect(await tools.get('get_activity_stats')!.execute({}, context)).toMatchObject({ success: true });
+    expect(info).toHaveBeenCalledTimes(2); expect(full).not.toHaveBeenCalled(); expect(selected).not.toHaveBeenCalled();
+    expect((await f.store.getConversation(run.conversationId))?.custom).toMatchObject({ unknownFutureField: '保留',
+      todoList: [{ id: 'first', content: '第一步', status: 'completed' }] });
+    const commit = f.store.commitConversation.bind(f.store);
+    jest.spyOn(f.store, 'commitConversation').mockImplementationOnce(async value => {
+      const current = (await f.store.getConversation(run.conversationId))!;
+      await f.store.saveMetadata({ ...current, title: '并发修改标题' });
+      return commit(value);
+    });
+    await expect(tools.get('todo_update')!.execute({ ops: [{ op: 'set_content', id: 'first', content: '过期修改' }] }, context))
+      .rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(await f.store.getConversation(run.conversationId)).toMatchObject({ title: '并发修改标题',
+      custom: { todoList: [{ content: '第一步' }] } });
+  } finally { jest.restoreAllMocks(); await f.cleanup(); }
+});
 
 test('conversation transaction rolls back history, metadata, snapshots, records and run reservation together', async () => {
   const f = await fixture();
