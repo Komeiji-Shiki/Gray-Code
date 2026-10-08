@@ -4,7 +4,7 @@ import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../modules/settings/types'
 import { serializeToolResultForLLM } from '../../../modules/channel/formatters/toolResponseFormatter';
 
 // 顺序故意不按字母排列：分页必须跳过发现序列，不能为添加游标而改变旧首批结果。
-function fixture(filesByRoot: Record<string, string[]>, excludes?: string[]) {
+function fixture(filesByRoot: Record<string, string[]>, excludes?: string[], streaming = false) {
     const location = (fsPath: string): FileLocation => ({ fsPath, scheme: 'file' });
     const roots = Object.keys(filesByRoot).map(name => ({ name, uri: location(`/${name}`) }));
     const host: SearchFileHost = {
@@ -24,6 +24,7 @@ function fixture(filesByRoot: Record<string, string[]>, excludes?: string[]) {
         checkAccess: () => null,
         review: jest.fn()
     };
+    if (streaming) host.iterateFiles = async function* (...args) { yield* await host.findFiles(...args); };
     return { host, tool: createFindFilesRuntime(host).createFindFilesTool() };
 }
 
@@ -46,8 +47,8 @@ describe('find_files 续查和实际排除策略', () => {
         expect(beyond.data.results[0].nextOffset).toBeUndefined();
     });
 
-    test('跨根累计 offset，且每个 pattern 独立计数，不按排序后的根名跳过', async () => {
-        const { tool, host } = fixture({ z: ['a.ts', 'b.ts'], a: ['c.ts', 'd.ts'], empty: [] });
+    test.each([false, true])('跨根累计 offset，且每个 pattern 独立计数，不按排序后的根名跳过（流式：%s）', async streaming => {
+        const { tool, host } = fixture({ z: ['a.ts', 'b.ts'], a: ['c.ts', 'd.ts'], empty: [] }, undefined, streaming);
         const result = await tool.handler({ patterns: ['**/*.ts', '**/*'], maxResults: 1, offset: 2 });
         for (const found of result.data.results) {
             expect(found).toMatchObject({ files: ['@a/c.ts'], offset: 2, nextOffset: 3, truncated: true });

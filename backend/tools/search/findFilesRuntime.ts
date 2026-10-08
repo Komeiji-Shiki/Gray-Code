@@ -56,11 +56,25 @@ async function findInWorkspace(
         // 否则会改变首批结果与已有遍历预算。只统计本页行数，不重读已跳过文件。
         // 多取 1 个仅用于精确判定截断，跨工作区共享剩余 offset。
         const skip = page.remaining;
-        const files = await host.findFiles(workspace.uri, pattern, exclude, skip + maxResults + 1, { includeIgnored });
+        let remaining = skip;
+        let truncated = false;
+        let cappedFiles: FileLocation[] = [];
+        if (host.iterateFiles) {
+            // 深分页只保留当前页；此前的路径逐项跳过，内存不随 offset 增长。
+            for await (const file of host.iterateFiles(workspace.uri, pattern, exclude, skip + maxResults + 1, { includeIgnored })) {
+                signal?.throwIfAborted();
+                if (remaining > 0) { remaining--; continue; }
+                if (cappedFiles.length >= maxResults) { truncated = true; break; }
+                cappedFiles.push(file);
+            }
+        } else {
+            const files = await host.findFiles(workspace.uri, pattern, exclude, skip + maxResults + 1, { includeIgnored });
+            remaining = Math.max(0, skip - files.length);
+            truncated = files.length > skip + maxResults;
+            cappedFiles = files.slice(skip, skip + maxResults);
+        }
         signal?.throwIfAborted();
-        page.remaining = Math.max(0, skip - files.length);
-        const truncated = files.length > skip + maxResults;
-        const cappedFiles = files.slice(skip, skip + maxResults);
+        page.remaining = remaining;
         
         // 受控并发：以前用裸 Promise.all 对最多 500 个文件无上限并发全量读取，
         // 同时打开数百文件句柄且内存峰值不可控；行数统计本身也已改为字节流。
