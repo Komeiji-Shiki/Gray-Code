@@ -1,7 +1,7 @@
 import { watch } from 'vue';
 import type { ChatStoreState } from './types';
 import { sendToExtension } from '../../utils/vscode';
-import { clearAllSmoothForState } from './streamChunkHandlers';
+import { clearAllSmoothForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers';
 import { loadCheckpoints, loadHistory } from './conversationActions';
 import { loadBranchGraph } from './branchActions';
 
@@ -9,6 +9,7 @@ import { loadBranchGraph } from './branchActions';
 export async function synchronizeRemoteConversation(state: ChatStoreState, conversationId: string): Promise<boolean> {
   if (state.currentConversationId.value !== conversationId) return false;
   clearAllSmoothForState(state);
+  resetTurnBaseTokenEstimate(state, conversationId);
   state.isLoading.value = true; state.isStreaming.value = false; state.isWaitingForResponse.value = false;
   state.streamingMessageId.value = null; state.activeStreamId.value = null; state._lastCancelledStreamId.value = null;
   state.toolResponseCache.value = new Map();

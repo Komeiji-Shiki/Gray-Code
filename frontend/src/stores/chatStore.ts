@@ -686,7 +686,11 @@ export const useChatStore = defineStore('chat', () => {
     addCheckpoint,
     updateConversationAfterMessage: () => updateConversationAfterMessage(state),
     processQueue,
-    processQueueAfterAction
+    processQueueAfterAction,
+    requestConversationResync: conversationId => {
+      staleRemoteViews.add(conversationId)
+      void restoreRemoteView(conversationId)
+    }
   }
   
   function handleStreamChunkWrapper(chunk: StreamChunk): void {
@@ -720,6 +724,7 @@ export const useChatStore = defineStore('chat', () => {
    * 关闭标签页
    */
   function closeTabWrapped(tabId: string): void {
+    const conversationId = state.openTabs.value.find(tab => tab.id === tabId)?.conversationId
     closeTabAction(
       state,
       tabId,
@@ -733,6 +738,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
     )
+    if (conversationId && !state.openTabs.value.some(tab => tab.conversationId === conversationId)) staleRemoteViews.delete(conversationId)
   }
 
   /**

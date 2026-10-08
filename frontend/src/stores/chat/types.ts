@@ -442,6 +442,8 @@ export interface ConversationSessionSnapshot {
   streamingMessageId: string | null
   /** 当前流式请求 ID */
   activeStreamId: string | null
+  /** 后台增量不再完整，切回时从已保存历史与运行快照接续。 */
+  needsStreamResync?: boolean
   /** 是否等待响应 */
   isWaitingForResponse: boolean
   /** 检查点列表 */

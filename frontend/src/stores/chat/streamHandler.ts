@@ -54,6 +54,8 @@ export interface StreamHandlerContext {
    * 不再等待整个回合完整结束（P1 排队消息提前发出）。
    */
   processQueueAfterAction: () => Promise<void>
+  /** 后台缓冲失去连续性时复用宿主的显示状态同步。 */
+  requestConversationResync?: (conversationId: string) => void
 }
 
 /**

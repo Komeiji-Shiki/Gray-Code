@@ -317,6 +317,7 @@ export function switchTab(
 
   // 2. 恢复目标标签页状态
   const targetSnapshot = state.sessionSnapshots.value.get(targetTabId)
+  const needsResync = targetSnapshot?.needsStreamResync === true
   if (targetSnapshot) {
     restoreSessionFromSnapshot(state, targetSnapshot)
     state.sessionSnapshots.value.delete(targetTabId)
@@ -345,11 +346,12 @@ export function switchTab(
   if (convId && streamHandlerCtx && state.backgroundStreamBuffers.value.has(convId)) {
     const buffered = state.backgroundStreamBuffers.value.get(convId)!
     state.backgroundStreamBuffers.value.delete(convId)
-    handleStreamChunkBatch(buffered, streamHandlerCtx)
+    if (!needsResync) handleStreamChunkBatch(buffered, streamHandlerCtx)
   }
 
   // 4. 更新激活标签页 ID
   state.activeTabId.value = targetTabId
+  if (needsResync && convId) streamHandlerCtx?.requestConversationResync?.(convId)
 }
 
 /**
@@ -383,6 +385,14 @@ export function bufferBackgroundChunk(
   // 而用户停留在其它标签页正是总结完成后才启动的常见场景（缓冲路径的本职）。
   const isSummaryType = chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus'
 
+  // 后台续跑是服务端已受理的新运行；原运行已结束时更新归属，切回后统一读取完整历史。
+  if (window.__GRAYCODE_HOST && snapshot && chunk.backgroundRun && chunk.streamId && !isSummaryType
+    && chunk.streamId !== snapshot.activeStreamId && !snapshot.isStreaming && !snapshot.isWaitingForResponse
+    && !['complete', 'error', 'cancelled'].includes(chunk.type)) {
+    snapshot.activeStreamId = chunk.streamId
+    snapshot.needsStreamResync = true
+  }
+
   // 若快照已绑定 activeStreamId，则过滤掉旧流的迟到 chunk
   if (
     !isSummaryType &&
@@ -413,15 +423,15 @@ export function bufferBackgroundChunk(
   }
 
   const buffer = buffers.get(convId)!
-  buffer.push(chunk)
-
-  // 缓冲上限保护：用户停留在其他标签页期间，长工具循环/长文本流会逐 chunk 累积。
-  // 超过上限时丢弃最旧 chunk，避免切回标签页时全量同步回放导致 UI 卡死。
-  // 丢弃最旧 chunk 是安全的：终结事件（complete/toolIteration 等）携带完整内容快照，
-  // 回放时仍能重建最终消息状态。
-  if (buffer.length > MAX_BACKGROUND_BUFFER_CHUNKS) {
-    buffer.splice(0, buffer.length - MAX_BACKGROUND_BUFFER_CHUNKS)
+  if (!snapshot?.needsStreamResync) {
+    buffer.push(chunk)
+    if (buffer.length > MAX_BACKGROUND_BUFFER_CHUNKS) {
+      if (window.__GRAYCODE_HOST && snapshot) snapshot.needsStreamResync = true
+      else buffer.splice(0, buffer.length - MAX_BACKGROUND_BUFFER_CHUNKS)
+    }
   }
+  // 丢失的前缀不能靠未来不一定携带完整正文的结束事件补齐；停止积累并在切回时接续权威快照。
+  if (snapshot?.needsStreamResync && buffer.length) buffer.length = 0
 
   if (snapshot) {
     switch (chunk.type) {
