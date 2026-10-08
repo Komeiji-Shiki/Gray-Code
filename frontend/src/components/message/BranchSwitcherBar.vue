@@ -66,7 +66,7 @@ const pendingWorkspaceSwitchNodeId = ref<string | null>(null)
 const showWorkspaceConfirm = ref(false)
 
 /** 该消息节点所属的候选组（null = 无图 / 无候选 / 单候选 / 非活跃成员） */
-const group = computed(() => buildCandidateGroupForNode(chatStore.branchGraph, props.nodeId))
+const group = computed(() => buildCandidateGroupForNode(chatStore.branchGraph, props.nodeId, chatStore.branchCandidateGroups))
 
 /** 无当前对话 / 无候选组时隐藏 */
 const visible = computed(() => {

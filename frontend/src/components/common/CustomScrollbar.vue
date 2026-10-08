@@ -2,6 +2,7 @@
 import { useScrollbarStyles } from './useScrollbarStyles'
 import { useScrollbarGeometry } from './useScrollbarGeometry'
 import { projectVirtualScrollbarMarkers } from './virtualScrollbarMarkers'
+import CustomScrollbarMarkers, { type MarkerItem } from './CustomScrollbarMarkers.vue'
 import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import { t } from '../../i18n'
 
@@ -9,24 +10,6 @@ import { t } from '../../i18n'
  * 自定义滚动条组件 - 方角、始终可见、悬浮式
  * 支持在轨道上渲染 marker 节点（如用户消息标记），点击可快速跳转
  */
-
-// ==================== Marker 类型定义 ====================
-interface MarkerItem {
-  /** marker 在轨道上的垂直像素偏移 */
-  top: number
-  /** marker 对应的内容预览文本（从 data-preview 读取） */
-  contentPreview: string
-  /** 对应的 DOM 元素（用于点击跳转） */
-  element?: HTMLElement
-  /** 虚拟轨道 marker 对应的全局消息索引（0-based） */
-  targetIndex?: number
-  /** marker 的索引序号（用于 tooltip 显示） */
-  index: number
-  /** marker 颜色（从 data-marker-color 读取，缺省用 props.markerColor） */
-  color: string
-  /** tooltip 前缀（从 data-marker-tooltip-prefix 读取，缺省用 props.markerTooltipPrefix） */
-  tooltipPrefix: string
-}
 
 const props = defineProps({
   /** 滚动条宽度（px） */
@@ -1094,20 +1077,14 @@ defineExpose({
         @click="handleTrackClick"
       >
         <!-- Marker 节点：渲染在轨道内，位于 thumb 之上 -->
-        <div
-          v-for="marker in markerPositions"
-          :key="`${marker.index}:${marker.contentPreview}`"
-          v-memo="[marker, markerHeight, markerBaseColor, markerOpacity]"
-          class="scroll-marker"
-          :style="{
-            top: `${marker.top}px`,
-            height: `${markerHeight}px`,
-            background: marker.color || markerBaseColor,
-            opacity: markerOpacity,
-          }"
-          @click.stop="handleMarkerClick(marker, $event)"
-          @mouseenter="handleMarkerMouseEnter(marker, $event)"
-          @mouseleave="handleMarkerMouseLeave"
+        <CustomScrollbarMarkers
+          :markers="markerPositions"
+          :height="markerHeight"
+          :base-color="markerBaseColor"
+          :opacity="markerOpacity"
+          @click="handleMarkerClick"
+          @enter="handleMarkerMouseEnter"
+          @leave="handleMarkerMouseLeave"
         />
 
         <div

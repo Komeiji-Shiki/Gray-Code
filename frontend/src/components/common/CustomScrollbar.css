@@ -155,24 +155,6 @@
   background: var(--gc-scrollbar-hover);
 }
 
-/* ==================== Marker 样式 ==================== */
-.scroll-marker {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  border-radius: 0;
-  cursor: pointer;
-  z-index: 3;
-  transition: opacity 0.18s ease, box-shadow 0.18s ease;
-  /* 允许指针事件穿透到轨道（除了 marker 自身） */
-  pointer-events: auto;
-}
-
-.scroll-marker:hover {
-  opacity: 1 !important;
-  box-shadow: 0 0 3px rgba(100, 160, 255, 0.6);
-}
-
 /* ==================== Marker Tooltip 样式 ==================== */
 .marker-tooltip {
   position: absolute;
@@ -254,7 +236,6 @@
   .scroll-track-h,
   .scroll-thumb-v,
   .scroll-thumb-h,
-  .scroll-marker,
   .marker-tooltip,
   .marker-tooltip-enter-active,
   .marker-tooltip-leave-active {

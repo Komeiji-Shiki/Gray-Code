@@ -11,13 +11,14 @@
  * - BRANCH_BUSY：流式中切换/删除被前端拦截，不发 IPC
  * - deleteBranchCandidate：成功后仅刷新分支图
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { vi, describe, expect, beforeEach } from 'vitest'
 import type { ChatStoreState, BranchGraphData, BranchNodeData } from '../types'
 import {
   loadBranchGraph,
   refreshBranchGraph,
   buildCandidateGroupAt,
+  buildCandidateGroupIndex,
   buildCandidateGroupForNode,
   buildActivePathIds,
   buildChildrenIndex,
@@ -177,6 +178,26 @@ describe('loadBranchGraph / refreshBranchGraph（TREE-10 数据源）', () => {
 })
 
 describe('buildCandidateGroupAt（按父节点推导候选组）', () => {
+  test('候选索引在消息间复用，图的删除、活跃路径和整体替换立即刷新', () => {
+    const graph = ref(makeGraph({
+      u1: makeNode('u1', null, { role: 'user', activeChildId: 'z' }),
+      z: makeNode('z', 'u1', { createdAt: 100 }),
+      a: makeNode('a', 'u1', { createdAt: 100 })
+    }, 'z'))
+    const build = vi.fn(() => buildCandidateGroupIndex(graph.value))
+    const groups = computed(build)
+    expect(buildCandidateGroupForNode(graph.value, 'z', groups.value)?.candidates.map(node => node.id)).toEqual(['z', 'a'])
+    expect(buildCandidateGroupForNode(graph.value, 'a', groups.value)).toBeNull()
+    expect(build).toHaveBeenCalledTimes(1)
+    graph.value.nodes.u1.activeChildId = 'a'
+    graph.value.activeTailNodeId = 'a'
+    expect(buildCandidateGroupForNode(graph.value, 'a', groups.value)?.activeIndex).toBe(1)
+    graph.value.nodes.z.deleted = true
+    expect(buildCandidateGroupForNode(graph.value, 'a', groups.value)).toBeNull()
+    graph.value = makeThreeNodeGraph('a2')
+    expect(buildCandidateGroupForNode(graph.value, 'a2', groups.value)?.candidates.map(node => node.id)).toEqual(['a1', 'a2', 'a3'])
+  })
+
   test('null 图 → null', () => {
     expect(buildCandidateGroupAt(null, 'u1')).toBeNull()
   })

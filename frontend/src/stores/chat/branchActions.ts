@@ -101,25 +101,23 @@ export function buildCandidateGroupAt(
   graph: BranchGraphData | null,
   parentNodeId: string
 ): BranchCandidateGroup | null {
-  if (!graph || !graph.nodes || !parentNodeId) return null
+  if (!parentNodeId) return null
+  return buildCandidateGroupIndex(graph).get(parentNodeId) ?? null
+}
 
-  const candidates = Object.values(graph.nodes)
-    .filter(node => node && !node.deleted && node.parentId === parentNodeId)
-    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
-
-  // 切换器只在有 ≥2 个候选的分支点显示（重 roll / 编辑过才出现切换入口）
-  if (candidates.length < 2) return null
-
-  // 活跃下标：活跃路径上经过该父节点的子候选（父节点在活跃路径上时必恰好命中一个）
+/** 会话内共用候选索引，避免每条消息各自遍历整张图和活跃路径。 */
+export function buildCandidateGroupIndex(graph: BranchGraphData | null): Map<string, BranchCandidateGroup> {
+  const groups = new Map<string, BranchCandidateGroup>()
   const activeSet = new Set(buildActivePathIds(graph))
-  const activeIndex = candidates.findIndex(candidate => activeSet.has(candidate.id))
-  if (activeIndex < 0) return null
-
-  return {
-    parentNodeId,
-    candidates,
-    activeIndex
+  for (const [parentNodeId, children] of collectChildrenByParent(graph)) {
+    const candidates = children.filter(node => !node.deleted)
+    if (candidates.length < 2) continue
+    // 候选切换器同毫秒时沿用图中的顺序；树面板仍按自己的 ID 次序展示。
+    candidates.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+    const activeIndex = candidates.findIndex(candidate => activeSet.has(candidate.id))
+    if (activeIndex >= 0) groups.set(parentNodeId, { parentNodeId, candidates, activeIndex })
   }
+  return groups
 }
 
 /**
@@ -140,13 +138,14 @@ export function buildCandidateGroupAt(
  */
 export function buildCandidateGroupForNode(
   graph: BranchGraphData | null,
-  nodeId: string
+  nodeId: string,
+  groups?: ReadonlyMap<string, BranchCandidateGroup>
 ): BranchCandidateGroup | null {
   if (!graph?.nodes || !nodeId) return null
   const node = graph.nodes[nodeId]
   if (!node || node.deleted || node.parentId === null) return null
 
-  const group = buildCandidateGroupAt(graph, node.parentId)
+  const group = (groups ?? buildCandidateGroupIndex(graph)).get(node.parentId)
   if (!group || group.activeIndex < 0) return null
 
   const active = group.candidates[group.activeIndex]
@@ -174,6 +173,7 @@ export function alignWindowUserMessageIdsToGraph(
   if (messages.length === 0) return
 
   const activeIds = new Set(buildActivePathIds(graph))
+  const groups = buildCandidateGroupIndex(graph)
   const seenIds = new Set(messages.map(m => m.id))
   let changed = false
 
@@ -181,7 +181,7 @@ export function alignWindowUserMessageIdsToGraph(
     if (msg.role !== 'user' || activeIds.has(msg.id)) return msg
     const node = graph.nodes[msg.id]
     if (!node || node.deleted || node.parentId === null) return msg
-    const group = buildCandidateGroupAt(graph, node.parentId)
+    const group = groups.get(node.parentId)
     if (!group || group.activeIndex < 0) return msg
     const activeId = group.candidates[group.activeIndex].id
     if (activeId === msg.id || seenIds.has(activeId)) return msg
@@ -204,6 +204,19 @@ export function alignWindowUserMessageIdsToGraph(
 export function buildChildrenIndex(
   graph: BranchGraphData | null
 ): Map<string, BranchNodeData[]> {
+  const index = collectChildrenByParent(graph)
+  for (const list of index.values()) {
+    list.sort((a, b) => {
+      const ca = a.createdAt ?? 0
+      const cb = b.createdAt ?? 0
+      if (ca !== cb) return ca - cb
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    })
+  }
+  return index
+}
+
+function collectChildrenByParent(graph: BranchGraphData | null): Map<string, BranchNodeData[]> {
   const index = new Map<string, BranchNodeData[]>()
   if (!graph?.nodes) return index
 
@@ -215,14 +228,6 @@ export function buildChildrenIndex(
     } else {
       index.set(node.parentId, [node])
     }
-  }
-  for (const list of index.values()) {
-    list.sort((a, b) => {
-      const ca = a.createdAt ?? 0
-      const cb = b.createdAt ?? 0
-      if (ca !== cb) return ca - cb
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-    })
   }
   return index
 }

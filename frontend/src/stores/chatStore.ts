@@ -121,6 +121,7 @@ import type { SendMessageOptions } from './chat/messageActions'
 import type { BuildSession, QueuedMessage } from './chat/types'
 
 import {
+  buildCandidateGroupIndex,
   loadBranchGraph as loadBranchGraphAction,
   refreshBranchGraph as refreshBranchGraphAction,
   switchBranchCandidate as switchBranchCandidateAction,
@@ -184,6 +185,7 @@ export const useChatStore = defineStore('chat', () => {
   
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
+  const branchCandidateGroups = vueComputed(() => buildCandidateGroupIndex(state.branchGraph.value))
 
   /** 是否还有更多历史对话可加载（分页） */
   const hasMoreConversations = vueComputed(
@@ -1006,6 +1008,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // 分支（TREE-07 / TREE-10 / TREE-11）
     branchGraph: state.branchGraph,
+    branchCandidateGroups,
     branchGraphLoading: state.branchGraphLoading,
     isSwitchingBranch: state.isSwitchingBranch,
     loadBranchGraph,
