@@ -22,6 +22,23 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
   afterEach(async()=>{await app.close();await f.cleanup();});
   const personal=async()=>((await router.call(session,'memory.options',{conversationId:'memory-chat'})) as {scopes:LongMemoryScope[]}).scopes.find(scope=>scope.kind==='personal'&&scope.realm==='real')!;
 
+  test('超过一千条消息仍可按 ID 引用旧来源，删除后不能再次保存，也不加载其余正文',async()=>{
+    const text='早期记录的测试代号是青竹-529。';
+    await app.storage.appendHistory('memory-chat',[{id:'early-source',role:'user',actorId:'owner',isUserInput:true,parts:[{text}]},
+      ...Array.from({length:1001},(_,index):PlatformMessage=>({id:'later-'+index,role:'model',parts:[{text:'后续消息'}]}))]);
+    const scope=await personal(),access=await app.longMemory.access('owner',{conversationId:'memory-chat'});
+    const reads=jest.spyOn(app.storage,'readHistory'),fullReads=jest.spyOn(app.storage,'readFullHistory');
+    const context={actorId:'owner',conversationId:'memory-chat',runId:'source-check',signal:new AbortController().signal} as any;
+    const input={scopeId:scope.id,sourceMessageId:'early-source',text,quote:text};
+    const saved=await app.longMemory.remember(access,input,context);
+    expect(saved.sources[0]).toMatchObject({text,origin:'user',reference:{conversationId:'memory-chat',messageId:'early-source'}});
+    const record=saved.records[0];
+    await app.longMemory.remove(access,{scopeId:scope.id,id:record.id,expectedVersion:record.version,action:'delete'});
+    await expect(app.longMemory.remember(access,input,context)).rejects.toThrow('已依赖被删除的记忆');
+    expect(reads).not.toHaveBeenCalled();expect(fullReads).not.toHaveBeenCalled();
+    reads.mockRestore();fullReads.mockRestore();
+  });
+
   test('精确替换和追加保留其他正文及修订历史，拒绝歧义和旧版本', async () => {
     const scope = await personal(), access = await app.longMemory.access('owner', { conversationId: 'memory-chat' });
     const original = (await app.longMemory.remember(access, { scopeId: scope.id, text: '编辑器：暗色。\n默认端口：4300。\n项目使用 TypeScript。', kind: 'project', topic: ['项目', '配置'] })).records[0];

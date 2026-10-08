@@ -76,11 +76,11 @@ export class PlatformLongMemory {
   }
   private async messageSource(access:MemoryAccess,context?:ToolContext,referenceId?:string,quote?:string):Promise<LongMemorySourceInput&{memoryReferences?:MemoryRecordReference[]}>{
     if(!access.conversation||!context)throw new Error('模型写入必须引用当前会话中的真实消息。');
-    const history=await this.app.storage.readHistory(access.conversation.id,{limit:1000});
-    const view=await this.app.longMemoryPrompt.history.prepare(context.actorId,access.conversation.id,history.messages);
-    const original=referenceId==='last_assistant'?[...view.messages].reverse().find(message=>message.role==='model'):
-      referenceId?view.messages.find(message=>message.id===referenceId):[...view.messages].reverse().find(message=>message.isUserInput&&!message.userFeedback&&message.actorId===context.actorId);
-    if(!original?.id)throw new Error('找不到指定来源消息，请先读取来源。');
+    const view=await this.app.longMemoryPrompt.history.readSources(context.actorId,access.conversation.id,context.signal);
+    const index=referenceId==='last_assistant'?view.messages.findLastIndex(message=>message.role==='model'):
+      referenceId?view.messages.findIndex(message=>message.id===referenceId):view.messages.findLastIndex(message=>message.isUserInput&&!message.userFeedback&&message.actorId===context.actorId);
+    if(!view.messages[index]?.id)throw new Error('找不到指定来源消息，请先读取来源。');
+    const [original]=await view.expand([index]);
     if(original.memoryRedacted)throw new Error('这条来源已依赖被删除的记忆，不能再次保存。');
     let full=sourceMessageText(original);
     if(quote&&!full.includes(quote)&&Array.isArray(original.characterOriginalParts)){

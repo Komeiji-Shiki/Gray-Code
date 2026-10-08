@@ -51,15 +51,19 @@ export class MemoryBackground {
     const scope=this.service.select(access,scopeId)[0],policy=(await this.service.policies.get(scope.actorId)).value;
     if(automatic&&(scope.kind==='library'||!policy.automaticExtraction||!policy.automaticScopes?.includes(scope.kind)))return null;
     if(!policy.providerId)throw new Error('请先在记忆设置中选择整理渠道和模型。');
-    const history=await app.storage.readFullHistory(conversationId);
-    const view=await app.longMemoryPrompt.history.prepare(actorId,conversationId,history.messages);
+    const view=await app.longMemoryPrompt.history.readSources(actorId,conversationId);
     const end=sourceRunId?view.messages.findLastIndex(message=>message.runId===sourceRunId)+1:view.messages.length;
-    const captured=view.messages.slice(0,end);
-    const message=[...captured].reverse().find(message=>message.isUserInput&&!message.userFeedback&&!message.memoryRedacted&&message.actorId===actorId);
-    if(!message?.id||!messageText(message).trim())return null;
+    let start=end-1;
+    while(start>=0){const message=view.messages[start];if(message.isUserInput&&!message.userFeedback&&!message.memoryRedacted&&message.actorId===actorId)break;start--;}
+    if(!view.messages[start]?.id)return null;
     // 自动整理采用直接用户陈述与实际工具结果，避免把模型复述的旧记忆反复当成新证据。
-    const candidates=captured.slice(captured.indexOf(message)).filter(item=>!item.memoryRedacted&&item.role!=='model'
-      &&(item.isUserInput||item.parts.some(part=>part.functionResponse&&!String((part.functionResponse as {name?:string}).name).startsWith('memory_'))));
+    const candidate=(item:PlatformMessage)=>!item.memoryRedacted&&item.role!=='model'
+      &&(item.isUserInput||item.parts.some(part=>part.functionResponse&&!String((part.functionResponse as {name?:string}).name).startsWith('memory_')));
+    const indices:number[]=[];
+    for(let index=start;index<end;index++)if(index===start||candidate(view.messages[index]))indices.push(index);
+    const selected=await view.expand(indices);
+    if(!messageText(view.messages[start]).trim())return null;
+    const candidates=selected.filter(candidate);
     const sources:LongMemorySourceInput[]=[];let characters=0;
     for(const item of candidates){
       const origin=sourceMessageOrigin(item,view.messages);

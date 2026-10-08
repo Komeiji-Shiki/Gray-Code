@@ -39,6 +39,28 @@ export class MemoryHistoryView {
     }
     return scopes;
   }
+  /** 来源定位覆盖完整依赖和角色回合，正文只在选定后按相同版本恢复。 */
+  async readSources(actorId:string,conversationId:string,signal?:AbortSignal){
+    signal?.throwIfAborted();
+    const history=await this.app.storage.readHistorySelection(conversationId,{projection:{
+      ...MEMORY_HISTORY_PROJECTION,
+      fields:[...MEMORY_HISTORY_PROJECTION.fields,'runId','actorId','memoryRedacted','characterTurn','characterMode','characterGreeting','turnPlatformMode'],
+      properties:{...MEMORY_HISTORY_PROJECTION.properties,characterTurn:{fields:[]}},
+    }});
+    signal?.throwIfAborted();
+    const view=await this.prepare(actorId,conversationId,history.messages);
+    signal?.throwIfAborted();
+    return {messages:view.messages,expand:async(indices:number[])=>{
+      signal?.throwIfAborted();
+      const positions=[...new Set(indices)].sort((left,right)=>left-right);
+      const page=await this.app.storage.readHistorySelection(conversationId,{indices:positions,expectedRevision:history.revision});
+      signal?.throwIfAborted();
+      const messages=view.filter(page.messages);
+      // 替换原位置，保留来源归属判断所需的前序用户输入与对象身份。
+      positions.forEach((position,index)=>{view.messages[position]=messages[index];});
+      return messages;
+    }};
+  }
   async prepare(actorId:string,conversationId:string,original:PlatformMessage[],capturedConversation?:PlatformConversation){
     const scopes=await this.scopes(actorId,conversationId,capturedConversation),tombstones:LongMemoryTombstone[]=[];
     for(const scope of scopes){
