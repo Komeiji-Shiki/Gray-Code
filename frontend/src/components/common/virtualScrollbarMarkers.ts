@@ -9,7 +9,8 @@ export function projectVirtualScrollbarMarkers(markers: readonly { index: number
     positions.push({
       top: ((targetIndex + 0.5) / total) * trackHeight,
       targetIndex,
-      index: positions.length + 1,
+      // 采样只减少绘制数量，提示仍使用原用户消息序号。
+      index: index + 1,
       contentPreview: marker.preview || '',
       color: '',
       tooltipPrefix: ''
