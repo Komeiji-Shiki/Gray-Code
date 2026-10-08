@@ -237,7 +237,7 @@ export class PlatformRuntime {
     const history = change?.commit.messages ?? state.history.messages;
     if (!source && (!history.length || !('expectedRevision' in input) || input.expectedRevision !== state.history.revision))
       throw new Error('Continuation requires nonempty history at the requested revision.');
-    const previousTurn = source ? undefined : [...history].reverse().find(message => message.isUserInput && !message.userFeedback);
+    const previousTurn = source ? undefined : history.findLast(message => message.isUserInput && !message.userFeedback);
     if (!source && actor.role !== 'owner' && conversation.actorId !== actor.id && previousTurn?.actorId !== actor.id)
       throw new Error('不能继续其他成员发起的回合，请发送自己的新消息。');
     const modelSelection = scope?.modelSelection ?? { providerId: input.providerId ?? agent.providerId, modelOverride: input.modelOverride ?? agent.modelId, reasoningEffort: input.reasoningEffort };
@@ -268,9 +268,9 @@ export class PlatformRuntime {
   async preview(input: StartRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope) {
     const turn = await this.prepareRun(structuredClone(input), change, captureRunScope(scope));
     const { actor, workspace, catalog, run, message, selection, configuredAgent } = turn;
-    const state = structuredClone(turn.state);
-    state.metadata = structuredClone(change?.commit.metadata ?? state.metadata);
-    state.history.messages = structuredClone(change?.commit.messages ?? state.history.messages);
+    // 先选择预览内容再一次性复制，保留独立快照，避免长历史被重复深拷贝。
+    const state = structuredClone({ ...turn.state, metadata: change?.commit.metadata ?? turn.state.metadata,
+      history: { ...turn.state.history, messages: change?.commit.messages ?? turn.state.history.messages } });
     if (message) state.history.messages.push(message);
     state.history.total = state.history.messages.length;
     const request = this.modelInput(run, configuredAgent, workspace ?? undefined, actor, catalog, state.history.messages, selection, new AbortController().signal);
