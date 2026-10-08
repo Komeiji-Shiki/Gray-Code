@@ -174,7 +174,8 @@ export class ExternalAgents {
           }
         }
         if (action === 'prompt' || action === 'create' && args.prompt !== undefined) {
-          const prompt = await this.promptContent(args, context, client);
+          const prompt = await this.promptContent(args, context, client, active.signal);
+          active.signal.throwIfAborted();
           this.event(live, 'user_prompt', prompt);
           await active.writes;
           const result = await this.request(live, active, 'session/prompt', { sessionId, prompt });
@@ -242,7 +243,8 @@ export class ExternalAgents {
     }
     return client;
   }
-  private async promptContent(args: Record<string, unknown>, context: ToolContext, client: AcpClient): Promise<ContentBlock[]> {
+  private async promptContent(args: Record<string, unknown>, context: ToolContext, client: AcpClient, signal: AbortSignal): Promise<ContentBlock[]> {
+    signal.throwIfAborted();
     const content: ContentBlock[] = [{ type: 'text', text: args.prompt as string }];
     const files = args.images as string[] | undefined;
     if (files?.length && !client.info.agentCapabilities?.promptCapabilities?.image) throw new Error('这个代理未声明图片输入能力。');
@@ -251,10 +253,14 @@ export class ExternalAgents {
       const path = await import('node:path');
       const types: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
       for (const file of files) {
+        signal.throwIfAborted();
         const absolute = await this.app.files.resolve(context.workspace!, file);
+        signal.throwIfAborted();
         const mimeType = types[path.extname(absolute).toLowerCase()];
         if (!mimeType) throw new Error('代理图片输入支持 PNG、JPEG、WebP 和 GIF 文件。');
-        content.push({ type: 'image', mimeType, data: (await readFile(absolute)).toString('base64') });
+        const bytes = await readFile(absolute, { signal });
+        signal.throwIfAborted();
+        content.push({ type: 'image', mimeType, data: bytes.toString('base64') });
       }
     }
     return content;
