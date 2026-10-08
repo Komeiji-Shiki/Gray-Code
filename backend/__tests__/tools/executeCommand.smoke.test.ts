@@ -452,7 +452,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         const wow64: ProcessRecord = { pid: 5001, ppid: 5000, createdAt: now + 40, name: 'gm8emulator-wow64.exe', sessionId: 1 };
         // 采样时还能看到启动器；中断时只剩孙进程，补杀后全部退出
         const snapshots = [[shellRecord, launcher, wow64], [wow64], []];
-        const processTree = { snapshot: jest.fn(async () => snapshots.length > 1 ? snapshots.shift()! : snapshots[0]), terminate: jest.fn(async () => {}) };
+        const processTree = { snapshot: jest.fn(async () => ({ records: snapshots.length > 1 ? snapshots.shift()! : snapshots[0], unresolved: [] })), terminate: jest.fn(async () => {}) };
         const treeKillMock = require('tree-kill') as jest.Mock;
         const runtime = createTerminalRuntime({ getConfig: () => WINDOWS_EXEC_CONFIG as any, shells: shellModule as any, output: outputModule as any, prompts: promptModule as any,
             tasks: TaskManager, getAllWorkspaces: () => [{ name: 'test-ws', fsPath: tmpDir }], parseWorkspacePath: value => ({ workspace: { name: 'test-ws', fsPath: tmpDir }, relativePath: value }), processTree });
