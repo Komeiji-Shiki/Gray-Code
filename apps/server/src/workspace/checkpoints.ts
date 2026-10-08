@@ -1,7 +1,8 @@
 import { workspaceFilePath, workspaceSnapshotRoots } from './paths';
 import type { CheckpointOperationControl } from './checkpointOperations';
 import { branchNamespace, branchMutation, readBranches, type BranchState } from '../conversations/branches';
-import { validate } from '../../../../backend/modules/conversation/branch/BranchGraph';
+import { isFunctionResponseMessage, validate } from '../../../../backend/modules/conversation/branch/BranchGraph';
+import type { Content } from '../../../../backend/modules/conversation/types';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -158,7 +159,11 @@ export class WorkspaceCheckpoints {
     if (workspace.id !== current.id) throw new Error('检查点与任务的工作区不一致。');
     const created = await this.app.files.transaction(workspace, async () => {
       signal?.throwIfAborted();
-      const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
+      // 这里只同步分支拓扑及检查点绑定，当前完整正文仍由主历史保存，候选正文沿用原分支记录。
+      const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }], {
+        historyProjection: { fields: ['id', 'parentId', 'role', 'timestamp', 'modelVersion', 'usageMetadataPartial', 'requestKey', 'isFunctionResponse', 'parts'],
+          properties: { parts: { items: { fields: ['functionResponse'], properties: { functionResponse: { fields: [] } } } } }, omitBinary: true },
+      });
       options.operation?.update('scanning');
       const snapshot = await this.scan(workspace, signal, options.affectedPaths, await this.base(actorId, conversationId, workspace, signal));
       const beforeFutureModel = options.toolName === 'model_message' && options.phase === 'before' && !options.messageId;
@@ -170,7 +175,7 @@ export class WorkspaceCheckpoints {
       const branches = readBranches(state);
       // 工具结果属于前一条模型节点；检查点与分支绑定在发布清单的同一事务提交。
       let position = checkpoint.messageIndex;
-      while (position >= 0 && state.history.messages[position]?.isFunctionResponse) position--;
+      while (position >= 0 && state.history.messages[position] && isFunctionResponseMessage(state.history.messages[position] as Content)) position--;
       const node = branches.graph.nodes[state.history.messages[position]?.id ?? ''];
       if (node) {
         checkpoint.messageNodeId = node.id; checkpoint.messageIndex = position;
@@ -318,7 +323,8 @@ export class WorkspaceCheckpoints {
     }
   }
   private async checkpointReferences(conversationId: string) {
-    const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId }]);
+    const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId, projection: { fields: ['graph'] } }],
+      { historyProjection: { fields: ['id'] } });
     const branch = state.records.find(item => item.namespace === branchNamespace)?.record.value as BranchState | undefined;
     if (branch && !validate(branch.graph).valid) throw new Error('分支记录损坏，无法确认检查点引用，未删除。');
     const nodes = Object.values(branch?.graph.nodes ?? {});

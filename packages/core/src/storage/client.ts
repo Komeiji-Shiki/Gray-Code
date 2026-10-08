@@ -61,9 +61,10 @@ export class PlatformStorage {
   initializeConversation(metadata: PlatformConversation, messages: PlatformMessage[] = [], records: RecordMutation[] = []) {
     return this.request('initializeConversation', { metadata, messages, records });
   }
-  /** cursor 仅用于模型循环；返回的 startIndex 以前复用该运行已读取的原始消息。 */
-  readConversationState(id: string, records?: { namespace: string; id: string }[], cursor?: import('@graycode/contracts').RuntimeHistoryCursor) {
-    return this.request('readConversationState', { id, records, cursor });
+  /** cursor 仅用于模型循环；字段投影用于只更新附属记录的操作，不可把投影结果替换回主历史。 */
+  readConversationState(id: string, records?: StorageOperations['readConversationState']['input']['records'],
+    options: Pick<StorageOperations['readConversationState']['input'], 'cursor' | 'historyProjection'> = {}) {
+    return this.request('readConversationState', { id, records, ...options });
   }
   commitConversation(value: ConversationCommit) { return this.request('commitConversation', value); }
   createRun(run: RunRecord, message: PlatformMessage, expectedRevision?: number) { return this.request('createRun', { run, message, expectedRevision }); }

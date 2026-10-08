@@ -120,11 +120,14 @@ export class PlatformDatabase {
       memorySummaries: ({ scope, lo, hi, expectedRevision }) => this.memories.summaries(scope, lo, hi, expectedRevision),
       memoryRevisions: ({ scope, before }) => this.memories.revisions(scope, before),
       memoryWrite: input => this.memories.write(input),
-      readConversationState: ({ id, records = [], cursor }) => {
+      readConversationState: ({ id, records = [], cursor, historyProjection }) => {
         const row = this.conversation(id);
         if (records.length > 256) invalid('Too many conversation state records.');
+        if (cursor && historyProjection) invalid('Incremental history and field projection cannot be combined.');
         return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
-          history: cursor ? { conversationId: id, ...this.histories.readIncremental(row.history_id, cursor) } : this.execute('readFullHistory', { id }),
+          history: cursor ? { conversationId: id, ...this.histories.readIncremental(row.history_id, cursor) }
+            : historyProjection ? { conversationId: id, startIndex: 0, ...this.histories.select(row.history_id, { projection: historyProjection }) }
+            : this.execute('readFullHistory', { id }),
           records: records.map(ref => ({ ...ref, record: this.execute('getVersionedRecord', ref) })) };
       },
       commitConversation: value => this.commitConversation(value),

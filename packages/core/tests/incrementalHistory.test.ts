@@ -12,16 +12,16 @@ describe('模型历史增量读取与局部更新', () => {
     const original = Array.from({ length: 400 }, (_, index) => message(index));
     original[0].parts.push({ inlineData: { mimeType: 'image/png', data: Buffer.from('原图片').toString('base64') } });
     await f.store.appendHistory('delta', original);
-    let snapshot = await f.store.readConversationState('delta', undefined, { runId: 'reader' });
+    let snapshot = await f.store.readConversationState('delta', undefined, { cursor: { runId: 'reader' } });
     let reconstructed = snapshot.history.messages;
     await f.store.appendHistory('delta', [message(400), message(401)]);
-    let delta = await f.store.readConversationState('delta', undefined, { runId: 'reader', revision: snapshot.history.revision });
+    let delta = await f.store.readConversationState('delta', undefined, { cursor: { runId: 'reader', revision: snapshot.history.revision } });
     expect(delta.history.startIndex).toBe(400); expect(delta.history.messages).toHaveLength(2);
     reconstructed = [...reconstructed.slice(0, delta.history.startIndex), ...delta.history.messages]; snapshot = delta;
     await f.store.forkConversation('delta', metadata('fork'));
     const updated = { ...message(127), parts: [{ text: '局部修订' }], futureMetadata: { kept: true } };
     await f.store.commitConversation({ conversationId: 'delta', expectedRevision: snapshot.history.revision, messageUpdates: [{ index: 127, message: updated }] });
-    delta = await f.store.readConversationState('delta', undefined, { runId: 'reader', revision: snapshot.history.revision });
+    delta = await f.store.readConversationState('delta', undefined, { cursor: { runId: 'reader', revision: snapshot.history.revision } });
     expect(delta.history.startIndex).toBe(127);
     reconstructed = [...reconstructed.slice(0, delta.history.startIndex), ...delta.history.messages];
     expect(reconstructed).toEqual((await f.store.readFullHistory('delta')).messages);
@@ -29,7 +29,7 @@ describe('模型历史增量读取与局部更新', () => {
     expect((await f.store.readHistory('fork', { offset: 127, limit: 1 })).messages[0]).toEqual(message(127));
     const unchanged = await f.store.commitConversation({ conversationId: 'delta', expectedRevision: delta.history.revision, messageUpdates: [{ index: 127, message: updated }] });
     expect(unchanged.revision).toBe(delta.history.revision);
-    const empty = await f.store.readConversationState('delta', undefined, { runId: 'reader', revision: delta.history.revision });
+    const empty = await f.store.readConversationState('delta', undefined, { cursor: { runId: 'reader', revision: delta.history.revision } });
     expect(empty.history.startIndex).toBe(402); expect(empty.history.messages).toEqual([]);
   });
 
@@ -39,11 +39,11 @@ describe('模型历史增量读取与局部更新', () => {
       status: 'queued' as const, createdAt: 1, updatedAt: 1, iteration: 0, catalogVersion: 'test' };
     await f.store.createRun(run, message(0));
     await f.store.appendRunEvent({ runId: run.id, type: 'run.started', payload: {}, update: { status: 'running' } });
-    let state = await f.store.readConversationState('reset', undefined, { runId: run.id });
-    const read = () => f.store.readConversationState('reset', undefined, { runId: run.id, revision: state.history.revision });
+    let state = await f.store.readConversationState('reset', undefined, { cursor: { runId: run.id } });
+    const read = () => f.store.readConversationState('reset', undefined, { cursor: { runId: run.id, revision: state.history.revision } });
     expect((await read()).history.messages).toEqual([]);
     await f.store.collectGarbage(); expect((await read()).history.messages).toEqual([message(0)]);
-    expect((await f.store.readConversationState('reset', undefined, { runId: run.id, revision: -1 })).history.startIndex).toBe(0);
+    expect((await f.store.readConversationState('reset', undefined, { cursor: { runId: run.id, revision: -1 } })).history.startIndex).toBe(0);
     await f.store.appendRunEvent({ runId: run.id, type: 'run.completed', payload: {}, update: { status: 'completed' } });
     state = await read(); expect(state.history.startIndex).toBe(0); expect(state.history.messages).toEqual([message(0)]);
   });

@@ -391,7 +391,7 @@ export class PlatformRuntime {
         if (!actor || actor.revoked) throw new Error('Run account was revoked.');
         const access = authorizeEffects(actor, [], workspace);
         if (access) throw new Error(access);
-        let state = await this.services.storage.readConversationState(run.conversationId, undefined, { runId: run.id, revision: historyRevision });
+        let state = await this.services.storage.readConversationState(run.conversationId, undefined, { cursor: { runId: run.id, revision: historyRevision } });
         const incoming = state.history;
         historyMessages = [...historyMessages.slice(0, incoming.startIndex), ...incoming.messages];
         historyRevision = incoming.revision;

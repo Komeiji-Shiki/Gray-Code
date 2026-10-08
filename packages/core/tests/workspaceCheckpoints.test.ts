@@ -135,6 +135,44 @@ describe('workspace checkpoints application contract', () => {
     expect(await app.checkpoints.list('owner', 'protected')).toHaveLength(0);
   });
 
+  test('检查点投影保留候选正文与附件，旧工具结果仍绑定所属模型', async () => {
+    const id = 'projected-branch';
+    await createConversation(id);
+    const original = [
+      { ...message(0), id: 'root', role: 'user' as const },
+      { ...message(1), id: 'model', role: 'model' as const, parts: [
+        { text: '需要完整保留的候选正文' },
+        { inlineData: { mimeType: 'image/png', data: Buffer.from('候选图片').toString('base64') } },
+        { functionCall: { id: 'call', name: 'fixture', args: { note: '原始参数' } }, thoughtSignature: '原始签名' }
+      ], futureMetadata: { keep: '原始元数据' } },
+      { ...message(2), id: 'response', role: 'user' as const, parts: [
+        { functionResponse: { id: 'call', name: 'fixture', response: { text: '原始结果' } } }
+      ] }
+    ];
+    await app.storage.appendHistory(id, original);
+    await app.conversations.commit(await app.conversations.reroll('owner', id, 'model', 'reroll'));
+    const replacement = [
+      { ...message(1), id: 'new-model', role: 'model' as const, requestKey: 'reroll', parts: [
+        { functionCall: { id: 'new-call', name: 'fixture', args: { note: '新参数' } }, thoughtSignature: '新签名' }
+      ] },
+      { ...message(2), id: 'new-response', role: 'user' as const, parts: [
+        { functionResponse: { id: 'new-call', name: 'fixture', response: { text: '新结果' } } }
+      ] }
+    ];
+    await app.storage.appendHistory(id, replacement);
+    const checkpoint = await app.checkpoints.create('owner', id, { messageId: 'new-response' });
+    expect(checkpoint).toMatchObject({ messageNodeId: 'new-model', messageIndex: 1 });
+    const branches = await app.storage.getRecord('conversation-branches', id) as any;
+    expect(branches.graph.nodes['new-model']).toMatchObject({ kind: 'reroll', workspaceCheckpointId: checkpoint.id });
+    expect(Object.keys(branches.groups)).toEqual(['model']);
+    await app.conversations.switch('owner', id, 'model', 'chat-only');
+    expect((await app.storage.readFullHistory(id)).messages.map(value => value.parts)).toEqual(original.map(value => value.parts));
+    expect((await app.storage.readFullHistory(id)).messages[1].futureMetadata).toEqual({ keep: '原始元数据' });
+    await app.conversations.switch('owner', id, 'new-model', 'chat-only');
+    expect((await app.storage.readFullHistory(id)).messages.slice(1).map(value => value.parts)).toEqual(replacement.map(value => value.parts));
+    await expect(app.checkpoints.delete('owner', id, checkpoint.id)).rejects.toThrow('仍被历史或分支引用');
+  });
+
   test('模型消息前存档关联即将写入的模型消息，并纠正旧存档的上一条消息绑定', async () => {
     await createConversation('model-before');
     await app.storage.appendHistory('model-before', [{ ...message(0), runId: 'run-one' }]);
