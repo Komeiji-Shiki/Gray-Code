@@ -157,6 +157,8 @@ export interface ReplayTodoOptions {
   stopAtBackendIndex?: number
   /** 增量重放：仅处理 fromIndex（含）之后的消息；此前状态由 initial* 提供 */
   fromIndex?: number
+  /** 仅处理此位置之前的消息，用于缓存不包含可变尾消息的固定前缀。 */
+  beforeIndex?: number
   initialTodos?: TodoItem[] | null
   initialAnchorBackendIndex?: number | null
   initialTouched?: boolean
@@ -174,6 +176,8 @@ export function replayTodoStateFromMessages(
     typeof options?.fromIndex === 'number' && Number.isFinite(options.fromIndex) && options.fromIndex > 0
       ? Math.min(options.fromIndex, messages.length)
       : 0
+  const endIndex = typeof options?.beforeIndex === 'number' && Number.isFinite(options.beforeIndex)
+    ? Math.max(0, Math.min(messages.length, options.beforeIndex)) : messages.length
   const stopAtToolId = typeof options?.stopAtToolId === 'string' ? options.stopAtToolId.trim() : ''
   const stopAtBackendIndex =
     typeof options?.stopAtBackendIndex === 'number' && Number.isFinite(options.stopAtBackendIndex)
@@ -182,7 +186,7 @@ export function replayTodoStateFromMessages(
   let stopped = false
   let lastReadIndex = fromIndex - 1
 
-  for (let i = fromIndex; i < messages.length; i++) {
+  for (let i = fromIndex; i < endIndex; i++) {
     const msg = messages[i]
     if (stopped) break
     lastReadIndex = i

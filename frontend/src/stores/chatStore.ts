@@ -33,7 +33,7 @@ import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../type
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { t } from '../composables/useI18n'
 import { messageListUiStateByTab } from '../components/message/messageListUiState'
-import { replayTodoStateFromMessages, type ReplayTodoState, type TodoItem } from '../utils/todoList'
+import { replayTodoStateFromMessages, type ReplayTodoState } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
@@ -243,35 +243,35 @@ export const useChatStore = defineStore('chat', () => {
   let todoReplayCache: {
     scannedCount: number
     input: TodoReplayFingerprint
-    list: TodoItem[] | null
-    anchorBackendIndex: number | null
+    result: ReplayTodoState
   } | null = null
 
   const todoSnapshot = vueComputed(() => {
     const allMessages = state.allMessages.value
     const len = allMessages.length
+    const prefixCount = Math.max(0, len - 1)
     const input = todoReplayFingerprint()
     const cache = todoReplayCache
-    const incremental = cache !== null && cache.scannedCount <= len && sameTodoReplayInput(cache.input, input)
+    const incremental = cache !== null && cache.scannedCount <= prefixCount && sameTodoReplayInput(cache.input, input)
 
-    const result = incremental
-      ? replayTodoStateFromMessages(allMessages, {
+    const prefix = incremental && cache.scannedCount === prefixCount ? cache.result
+      : replayTodoStateFromMessages(allMessages, {
           resolveToolResponseById: resolveTodoToolResponse,
-          fromIndex: cache.scannedCount,
-          initialTodos: cache.list,
-          initialAnchorBackendIndex: cache.anchorBackendIndex,
-          initialTouched: cache.list !== null
+          fromIndex: incremental ? cache.scannedCount : 0,
+          beforeIndex: prefixCount,
+          initialTodos: incremental ? cache.result.todos : null,
+          initialAnchorBackendIndex: incremental ? cache.result.anchorBackendIndex : null,
+          initialTouched: incremental && cache.result.todos !== null
         })
-      : replayTodoStateFromMessages(allMessages, { resolveToolResponseById: resolveTodoToolResponse })
 
-    // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
+    // 缓存结果必须与扫描边界一致；尾工具消失时从固定前缀重新计算，不能沿用旧尾的待办。
     todoReplayCache = {
-      scannedCount: Math.max(0, len - 1),
+      scannedCount: prefixCount,
       input,
-      list: result.todos,
-      anchorBackendIndex: result.anchorBackendIndex
+      result: prefix
     }
-    return result
+    return replayTodoStateFromMessages(allMessages, { resolveToolResponseById: resolveTodoToolResponse, fromIndex: prefixCount,
+      initialTodos: prefix.todos, initialAnchorBackendIndex: prefix.anchorBackendIndex, initialTouched: prefix.todos !== null })
   })
 
   /**
@@ -944,6 +944,7 @@ export const useChatStore = defineStore('chat', () => {
     foldedMessageCount: state.foldedMessageCount,
     messages: computed.messages,
     messagesStructuralVersion: computed.messagesStructuralVersion,
+    toolResponseCacheRevision: vueComputed(() => getToolResponseCacheRevision(state)),
     configId: state.configId,
     currentConfig: state.currentConfig,
     selectedModelId: state.selectedModelId,

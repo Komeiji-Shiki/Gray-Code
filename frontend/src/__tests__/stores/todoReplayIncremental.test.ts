@@ -9,6 +9,7 @@
  */
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { computed, effectScope, reactive } from 'vue'
 import type { Message } from '../../types'
 
 vi.mock('../../utils/vscode', () => ({
@@ -24,6 +25,9 @@ vi.mock('../../utils/todoList', async (importOriginal) => {
 
 import { replayTodoStateFromMessages } from '../../utils/todoList'
 import { useChatStore } from '../../stores/chatStore'
+import { createChatState, replaceMessageAt, removeMessageAt } from '../../stores/chat/state'
+import { createChatComputed } from '../../stores/chat/computed'
+import { useBuildPanel, type UseBuildPanelOptions } from '../../components/message/useBuildPanel'
 
 const replay = vi.mocked(replayTodoStateFromMessages)
 
@@ -98,5 +102,32 @@ describe('TODO 重放增量缓存', () => {
     expect(store.todoSnapshot.todos?.map(todo => todo.content)).toEqual(['b', 'c'])
     expect(replay).toHaveBeenCalledTimes(1)
     expect(replay.mock.calls[0][1]).toMatchObject({ fromIndex: 3 })
+
+    store.allMessages[3] = streaming(3, '工具已取消')
+    expect(store.todoSnapshot.todos?.map(todo => todo.content)).toEqual(['a'])
+  })
+
+  test('计划同步不缓存尾工具结果，中间替换与删除按结构版本重新计算', () => {
+    const state = createChatState()
+    const plan = (index: number, content: string): Message => ({ ...streaming(index, ''), tools: [{ id: `plan-${index}`,
+      name: 'update_plan', status: 'success', args: { path: 'plan.md', updateMode: 'progress_sync' },
+      result: { success: true, data: { path: 'plan.md', updateMode: 'progress_sync', content } } }] } as Message)
+    state.allMessages.value = [user(0), plan(1, '固定前缀'), user(2), plan(3, '可变尾部')]
+    state.activeBuild.value = { id: 'build', status: 'running', title: '计划', planPath: 'plan.md', startedAt: 0, anchorBackendIndex: 0 } as any
+    state.isWaitingForResponse.value = true
+    const store = reactive({ ...state, ...createChatComputed(state), todoSnapshot: { todos: null }, toolResponseCacheRevision: 0,
+      setActiveBuild: vi.fn(async () => {}) }) as unknown as UseBuildPanelOptions['chatStore']
+    const scope = effectScope()
+    try {
+      const panel = scope.run(() => useBuildPanel({ chatStore: store, getMergedToolResult: tool => tool.result ?? {},
+        allMessageIndexBounds: computed(() => ({ firstIndexed: 0, lastIndexed: 3, nextFallbackIndex: 4 })) }))!
+      expect(panel.activeBuildPlanSync.value?.content).toBe('可变尾部')
+      replaceMessageAt(state, 3, streaming(3, '工具已取消'))
+      expect(panel.activeBuildPlanSync.value?.content).toBe('固定前缀')
+      replaceMessageAt(state, 1, plan(1, '修改后的前缀'))
+      expect(panel.activeBuildPlanSync.value?.content).toBe('修改后的前缀')
+      removeMessageAt(state, 1)
+      expect(panel.activeBuildPlanSync.value).toBeNull()
+    } finally { scope.stop() }
   })
 })

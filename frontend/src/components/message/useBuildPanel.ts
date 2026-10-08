@@ -127,14 +127,16 @@ export function useBuildPanel(options: UseBuildPanelOptions) {
   })
 
   /**
-   * activeBuildPlanSync 增量缓存：以 build 对象引用 + 前缀消息引用快照作指纹。
+   * activeBuildPlanSync 增量缓存：用窗口结构和工具回执版本判断固定前缀是否仍然有效。
    * 指纹不变时仅扫描尾部新增消息（含旧尾消息——流式期间其 tools 会被原地改写），
-   * 其余结构变更/build 变更自动回退全量扫描。chatStore 是单例，模块级缓存跨实例共享安全。
+   * 其余结构变更/build 变更自动回退全量扫描，尾消息的结果不写入前缀缓存。
    */
   let activeBuildPlanSyncCache: {
     build: unknown
     scannedCount: number
     messagesRef: Message[]
+    structure: number
+    responses: number
     latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null
   } | null = null
 
@@ -154,25 +156,21 @@ export function useBuildPanel(options: UseBuildPanelOptions) {
 
     const messages = chatStore.allMessages
     const len = messages.length
+    const prefixCount = Math.max(0, len - 1)
+    const structure = chatStore.messagesStructuralVersion
+    const responses = chatStore.toolResponseCacheRevision
     let fromIndex = 0
 
-    // 前缀引用校验：同一 build 且缓存窗口是当前窗口的前缀（含尾消息原地替换）时只扫尾部
     const cache = activeBuildPlanSyncCache
-    if (cache !== null && cache.build === build && cache.messagesRef.length <= len) {
-      let prefixOk = true
-      for (let i = 0; i < cache.scannedCount; i++) {
-        if (messages[i] !== cache.messagesRef[i]) {
-          prefixOk = false
-          break
-        }
-      }
-      if (prefixOk) {
-        latest = cache.latest
-        fromIndex = cache.scannedCount
-      }
+    if (cache !== null && cache.build === build && cache.messagesRef === messages && cache.scannedCount <= prefixCount
+      && cache.structure === structure && cache.responses === responses) {
+      latest = cache.latest
+      fromIndex = cache.scannedCount
     }
 
+    let prefixLatest = latest
     for (let i = fromIndex; i < len; i++) {
+      if (i === prefixCount) prefixLatest = latest
       const msg = messages[i]
       if (msg.role !== 'assistant' || !Array.isArray(msg.tools) || msg.tools.length === 0) continue
 
@@ -214,9 +212,11 @@ export function useBuildPanel(options: UseBuildPanelOptions) {
     // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
     activeBuildPlanSyncCache = {
       build,
-      scannedCount: Math.max(0, len - 1),
+      scannedCount: prefixCount,
       messagesRef: messages,
-      latest
+      structure,
+      responses,
+      latest: prefixLatest
     }
 
     if (!latest) return null
