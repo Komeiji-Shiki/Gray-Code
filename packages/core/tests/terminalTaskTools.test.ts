@@ -52,6 +52,7 @@ test('真实后台命令保留自动通知与非零终态，查询支持增量�
   const outputEvents = publish.mock.calls.map(([event]) => event as any).filter(event => event.message?.command === 'terminalOutput');
   expect(outputEvents.length).toBeGreaterThan(2);
   for (const event of outputEvents) expect(event.message.data).toMatchObject({ terminalId: id, toolId: 'terminal-call', conversationId: 'terminal-chat' });
+  expect(outputEvents.at(-1).message.data).toMatchObject({ type: 'exit', exitCode: 7 });
   const next = await task({ action: 'read', taskId: id, cursor: first.nextCursor });
   expect(next).toMatchObject({ success: true, data: { output: 'second\n', nextCursor: final.nextCursor, cursorOriginKnown: true } });
   expect(await task({ action: 'status', taskId: id })).toMatchObject({ success: true, data: { running: false, exitCode: 7, status: 'error' } });

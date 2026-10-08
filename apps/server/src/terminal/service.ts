@@ -110,6 +110,8 @@ export class PlatformTerminals {
         const rest = stripper.flush(); if (rest) appendProcessOutput(record.outputBuffer!, rest);
       }
       if (event.data) context.progress({ terminalId: id, text: event.data });
+      // 后台任务的完成通知早于 exit，必须等输出终态送达后再释放监听。
+      if (event.type === 'exit') unsubscribe();
     });
     task = { record, runner, events: Promise.resolve() };
     this.active.set(id, task);
@@ -142,7 +144,6 @@ export class PlatformTerminals {
       throw error;
     } finally {
       if (!this.active.has(id)) unsubscribe();
-      else tasks.onTaskEventByType('terminal', event => { if (event.type !== 'start' && event.type !== 'progress') unsubscribe(); });
     }
   }
 
