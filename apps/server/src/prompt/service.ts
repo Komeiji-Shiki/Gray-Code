@@ -124,7 +124,7 @@ export class PlatformPromptService {
     const previous = input.history.findLast(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
     const cache = previous ? deserializePromptContextCache(previous.turnDynamicContext as string) : undefined;
     const skills = input.agent.toolNames.includes('read_skill') && (input.actor.role === 'owner' || input.actor.effects.includes('workspace_read'))
-      ? (await this.app.skills.items(input.actor.id, conversation.id, workspace?.id, undefined, { workspace, actor: input.actor })).filter(skill => skill.enabled)
+      ? (await this.app.skills.items(input.actor.id, conversation.id, workspace?.id, undefined, { workspace, actor: input.actor, signal: input.signal })).filter(skill => skill.enabled)
           .map(({ id, name, description }) => ({ id, name, description })) : [];
     input.signal?.throwIfAborted();
     const context = { characterModules: characterTurn?.modules, characterMacros: characterTurn?.macros, characterInjections: characterTurn?.injections as import('../../../../backend/modules/conversation/types').Content[] | undefined, characterOutlets: characterTurn?.outlets, todoList: runtime.todoList, pinnedFiles: runtime.inputPinnedFiles, skills,

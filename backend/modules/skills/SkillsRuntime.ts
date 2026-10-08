@@ -60,7 +60,11 @@ export class SkillsRuntime {
     /** name -> id 索引（getSkillByName 用，避免全量线性扫描） */
     private nameToId: Map<string, string> = new Map();
     
-    constructor(private readonly options: { workspacePath?: string; globalStoragePath: string; host?: SkillsHost; includeUserSkills?: boolean }) {
+    constructor(private readonly options: {
+        workspacePath?: string; globalStoragePath: string; host?: SkillsHost; includeUserSkills?: boolean;
+        /** 绑定本次任务创建的扫描实例，不影响扩展复用的全局管理器。 */
+        signal?: AbortSignal;
+    }) {
         this.legacySkillsDir = path.join(options.globalStoragePath, 'skills');
         this.explicitWorkspacePaths = options.workspacePath ? [options.workspacePath] : [];
         this.scanDirs = this.buildScanDirsForPaths(this.explicitWorkspacePaths);
@@ -250,6 +254,7 @@ ${content}
      * 不一致（扫描窗口内切换/增删工作区根）则再触发一轮，避免变更被合并吞掉（04 批 LOW）。
      */
     async refresh(): Promise<void> {
+        this.options.signal?.throwIfAborted();
         if (this.refreshPromise) {
             return this.refreshPromise;
         }
@@ -276,6 +281,7 @@ ${content}
      * （由 refresh 链式 .then 触发，此时并发合并已结束），否则会复用进行中的任务。
      */
     private async refreshIfFoldersChanged(foldersSnapshot: string[]): Promise<void> {
+        this.options.signal?.throwIfAborted();
         if (!this.sameWorkspacePaths(foldersSnapshot, this.getWorkspacePathsForScan())) {
             await this.refresh();
         }
@@ -306,8 +312,10 @@ ${content}
         const nextNameToId = new Map<string, string>();
 
         for (const dirInfo of this.scanDirs) {
+            this.options.signal?.throwIfAborted();
             await this.scanDirectory(dirInfo.path, dirInfo.source, nextSkills, nextNameToId);
         }
+        this.options.signal?.throwIfAborted();
         
         // 基于新扫描结果重建启用状态：磁盘上已删除的 skill 不再视为启用，
         // 仍存在的 skill 保留其启用状态。
@@ -340,12 +348,15 @@ ${content}
         targetNameToId: Map<string, string>
     ): Promise<void> {
         try {
+            this.options.signal?.throwIfAborted();
             if (this.options.host?.resolvePath) dirPath = await this.options.host.resolvePath(dirPath);
+            this.options.signal?.throwIfAborted();
             if (!fs.existsSync(dirPath)) {
                 return;
             }
             
             const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+            this.options.signal?.throwIfAborted();
             
             // 收集目录条目：符号链接用 fs.stat 跟随判断是否指向目录，
             // 否则 symlink 的 isDirectory() 恒为 false，符号链接 skill 目录永不被加载。
@@ -353,6 +364,7 @@ ${content}
             // 防止 symlink 逃逸扫描根（04 批 LOW；第五轮确认接受「仅扫描根内」语义）。
             const dirs: Array<{ name: string; fullPath: string }> = [];
             for (const entry of entries) {
+                this.options.signal?.throwIfAborted();
                 if (entry.isDirectory()) {
                     dirs.push({ name: entry.name, fullPath: path.join(dirPath, entry.name) });
                 } else if (entry.isSymbolicLink()) {
@@ -379,6 +391,7 @@ ${content}
                             dirs.push({ name: entry.name, fullPath });
                         }
                     } catch {
+                        this.options.signal?.throwIfAborted();
                         // 悬空符号链接：跳过
                     }
                 }
@@ -387,6 +400,7 @@ ${content}
             // 并发放置加载：readdir 收集后 Promise.all（同一目录内条目名唯一，
             // has 检查 + set 无竞态；跨目录优先级由外层 scanDirs 串行顺序保证）
             await Promise.all(dirs.map(async ({ name, fullPath }) => {
+                this.options.signal?.throwIfAborted();
                 // 如果已存在同名 Skill (id 相同)，由于 scanDirs 顺序决定了优先级，后扫到的跳过
                 if (targetSkills.has(name)) {
                     return;
@@ -395,6 +409,7 @@ ${content}
                 try {
                     const requestedFile = path.join(fullPath, 'SKILL.md');
                     const skillFile = this.options.host?.resolvePath ? await this.options.host.resolvePath(requestedFile) : requestedFile;
+                    this.options.signal?.throwIfAborted();
                     if (!fs.existsSync(skillFile)) return;
                     const skill = await this.loadSkill(name, skillFile, source);
                     if (skill) {
@@ -402,10 +417,12 @@ ${content}
                         targetNameToId.set(skill.name, skill.id);
                     }
                 } catch (error) {
+                    this.options.signal?.throwIfAborted();
                     console.warn(`[SkillsManager] Failed to load skill ${name} from ${source}:`, error);
                 }
             }));
         } catch (error) {
+            this.options.signal?.throwIfAborted();
             console.error(`[SkillsManager] Failed to scan directory ${dirPath}:`, error);
         }
     }
@@ -440,9 +457,11 @@ ${content}
         try {
             // 剥离 UTF-8 BOM：BOM 会让 content.startsWith('---') 为 false，
             // frontmatter 完全不解析，报误导性「missing required frontmatter fields」
-            const raw = await fs.promises.readFile(filePath, 'utf-8');
+            const raw = await fs.promises.readFile(filePath, { encoding: 'utf-8', signal: this.options.signal });
+            this.options.signal?.throwIfAborted();
             return this.parseSkillText(id, raw, filePath, source);
         } catch (error) {
+            this.options.signal?.throwIfAborted();
             console.error(`[SkillsManager] Failed to load skill ${id}:`, error);
             return null;
         }

@@ -22,17 +22,19 @@ export class PlatformSkills {
   readonly bundles: SkillBundleStore;
   constructor(private readonly app: PlatformApplication) { this.bundles = new SkillBundleStore(app); }
   directory() { return path.join(os.homedir(), '.graycode', 'skills'); }
-  private async scan(actor: ActorIdentity, workspace?: WorkspaceDefinition): Promise<Skill[]> {
+  private async scan(actor: ActorIdentity, workspace?: WorkspaceDefinition, signal?: AbortSignal): Promise<Skill[]> {
+    signal?.throwIfAborted();
     if (actor.role !== 'owner' && !actor.effects.includes('workspace_read')) return [];
     const manager = new SkillsRuntime({ workspacePath: workspace?.directory, globalStoragePath: this.app.storage.directory,
-      includeUserSkills: actor.role === 'owner', host: { workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [],
+      includeUserSkills: actor.role === 'owner', signal, host: { workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [],
         ...(actor.role !== 'owner' && workspace ? { resolvePath: (file: string) => this.app.files.resolve(workspace, file) } : {}) } });
     // 只扫描已存在的技能，不因模型读取而创建目录或示例文件。
     await manager.refresh();
     return manager.getAllSkills();
   }
   async items(actorId: string, conversationId?: string, workspaceId?: string, draft?: ProductSettingsDraft,
-    captured?: { workspace?: WorkspaceDefinition; actor?: ActorIdentity }) {
+    captured?: { workspace?: WorkspaceDefinition; actor?: ActorIdentity; signal?: AbortSignal }) {
+    captured?.signal?.throwIfAborted();
     const actor = captured?.actor ?? this.app.actor(actorId);
     if (!actor) throw new Error('账号不可用。');
     const conversation = conversationId ? captured ? await this.app.storage.getConversation(conversationId) : await this.app.conversation(actorId, conversationId) : undefined;
@@ -41,7 +43,7 @@ export class PlatformSkills {
     const baseConfig = draft?.settings.getSkills() ?? this.app.product.runtimeSettings().getSkills();
     const effective = configs((conversation?.custom as Record<string, unknown> | undefined)?.inputSkills) ?? baseConfig;
     const state = new Map(effective.map(item => [item.id, item]));
-    const found = await this.scan(actor, workspace);
+    const found = await this.scan(actor, workspace, captured?.signal);
     if (actor.role === 'owner') {
       for (const saved of draft?.value.importedSkills ?? this.app.product.importedSkills) {
         if (found.some(skill => skill.id === saved.id)) continue;
@@ -85,7 +87,7 @@ export class PlatformSkills {
       '按名称读取当前任务可用技能的完整正文。name 为空字符串时列出可用技能名称和说明；匹配任务时按需读取。技能范围由当前工作区、账号和对话配置决定。',
       parameters: { ...legacy.parameters, properties: { name: { type: 'string', description: '技能名称；空字符串表示列出当前可用技能。' } } } };
     return { declaration, effects: () => ['workspace_read'], execute: async (args, context) => {
-      const skills = await this.items(context.actorId, context.conversationId, context.workspace?.id, undefined, { workspace: context.workspace, actor: context.actor });
+      const skills = await this.items(context.actorId, context.conversationId, context.workspace?.id, undefined, { workspace: context.workspace, actor: context.actor, signal: context.signal });
       if (args.name === '') return { success: true, data: { skills: skills.filter(skill => skill.enabled)
         .map(({ name, description }) => ({ name, description })) } };
       const selected = skills.find(skill => skill.name === args.name && skill.enabled);
