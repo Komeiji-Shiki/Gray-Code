@@ -94,12 +94,17 @@ async function runCommandCancellation({ rpc, ui, chat, until }) {
   }, 'foreground command output');
   const pid = Number(/renderer-command-ready:(\d+)/.exec(running.output)?.[1]);
   assert(Number.isSafeInteger(pid) && pid > 0, '受控命令必须报告自己的进程 ID');
-  const started = performance.now();
+  const started = performance.now(), cancelWallTime = Date.now();
   const feedback = chat(`new Promise((resolve,reject)=>{
     const button=document.querySelector('.stop-icon')?.closest('button');if(!button){reject(new Error('Missing stop button'));return;}
-    const start=performance.now();button.click();
-    const frame=()=>{const current=document.querySelector('.stop-icon')?.closest('button');const state=!current?'idle':current.dataset.cancelling==='true'?'stopping':undefined;
-      if(state)resolve({milliseconds:performance.now()-start,state});else if(performance.now()-start>10000)reject(new Error('Stop button showed no feedback'));else requestAnimationFrame(frame);};
+    const start=performance.now(),tasks=[],frames=[];let previous=start,ack;
+    const observer=new PerformanceObserver(list=>tasks.push(...list.getEntries().map(entry=>entry.duration)));observer.observe({type:'longtask',buffered:false});
+    button.click();
+    const finish=()=>{tasks.push(...observer.takeRecords().map(entry=>entry.duration));observer.disconnect();};
+    const frame=now=>{frames.push(now-previous);previous=now;const current=document.querySelector('.stop-icon')?.closest('button');const state=!current?'idle':current.dataset.cancelling==='true'?'stopping':undefined;
+      if(state&&!ack)ack={milliseconds:performance.now()-start,state};
+      if(state==='idle'){finish();resolve({...ack,idleMilliseconds:performance.now()-start,longTasks:tasks.length,longTaskMax:Math.max(0,...tasks),frameMaxGap:Math.max(0,...frames)});}
+      else if(performance.now()-start>10000){finish();reject(new Error('Stop button did not settle'));}else requestAnimationFrame(frame);};
     requestAnimationFrame(frame);
   })`);
   const stopped = until(async () => {
@@ -117,8 +122,11 @@ async function runCommandCancellation({ rpc, ui, chat, until }) {
   const [frontend, terminal, runtime, processExitMilliseconds] = await Promise.all([feedback, stopped, settled, exited]);
   assert.equal(runtime.run.status, 'cancelled');
   assert(terminal.result.output.includes('renderer-command-ready'), '取消后应保留已经产生的命令输出');
+  const events = await rpc('runs.events', { id: runId });
   return { cancelStartedAt: started, messages: 5000, frontendFeedbackMilliseconds: frontend.milliseconds, frontendFeedbackState: frontend.state, terminalStoppedMilliseconds: terminal.milliseconds,
     runSettledMilliseconds: runtime.milliseconds, processExitMilliseconds, runStatus: runtime.run.status, outputRetained: true,
+    frontendIdleMilliseconds: frontend.idleMilliseconds, frontendLongTasks: frontend.longTasks, frontendLongTaskMax: frontend.longTaskMax, frontendFrameMaxGap: frontend.frameMaxGap,
+    runEvents: events.map(event => ({ type: event.type, afterCancelMilliseconds: event.timestamp - cancelWallTime })),
     killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: 100 };
 }
 
