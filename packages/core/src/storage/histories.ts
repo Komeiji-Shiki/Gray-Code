@@ -522,12 +522,13 @@ export class HistoryStore {
     return { body_hash: this.objects.putValue(body), message_id: id ?? null, role, timestamp };
   }
 
-  private body(hash: Buffer): Record<string, unknown> {
-    const key = hash.toString('hex');
+  private body(hash: Buffer, projection?: ValueProjection): Record<string, unknown> {
+    // 投影与完整正文共用原有容量和淘汰规则；内容及投影相同才复用，避免每次检查点重新解码旧消息。
+    const key = hash.toString('hex') + (projection ? `:${JSON.stringify(projection)}` : '');
     const cached = this.bodies.get(key);
     if (cached) { this.bodies.delete(key); this.bodies.set(key, cached); return cached.body; }
-    const body = this.objects.getValue<Record<string, unknown>>(hash);
-    const bytes = estimatedBytes(body, BODY_CACHE_ENTRY_BYTES);
+    const body = this.objects.getValue<Record<string, unknown>>(hash, projection);
+    const bytes = estimatedBytes(body, BODY_CACHE_ENTRY_BYTES) + key.length * 2;
     if (bytes <= BODY_CACHE_ENTRY_BYTES) {
       this.bodies.set(key, { body, bytes }); this.bodyBytes += bytes;
       for (const [oldest, entry] of this.bodies) {
@@ -539,7 +540,7 @@ export class HistoryStore {
   }
 
   private decode(row: EntryRow, projection?: ValueProjection): PlatformMessage {
-    const body = projection ? this.objects.getValue<Record<string, unknown>>(row.body_hash, projection) : this.body(row.body_hash);
+    const body = this.body(row.body_hash, projection);
     const message = { ...body, role: row.role } as PlatformMessage;
     if (row.message_id !== null) message.id = row.message_id;
     if (row.timestamp !== null) message.timestamp = row.timestamp;

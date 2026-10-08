@@ -71,6 +71,10 @@ describe('历史导航摘要', () => {
     expect((await f.store.readHistorySelection('outline', { runIds: ['missing-run'] })).messages).toEqual([]);
     const selected = await f.store.readHistorySelection('outline', { indices: [7, 5, 5], projection: { fields: ['runId'] } });
     expect(selected.messages).toEqual([{ id: 'current-input', role: 'user', runId: 'current' }, { id: 'current-output', role: 'model', runId: 'current' }]);
+    selected.messages[0].runId = '仅调用方修改';
+    expect((await f.store.readHistorySelection('outline', { indices: [5], projection: { fields: ['runId'] } })).messages[0].runId).toBe('current');
+    expect((await f.store.readHistorySelection('outline', { indices: [5], projection: { fields: ['parts'] } })).messages[0].parts).toEqual(current[0].parts);
+    expect((await f.store.readHistorySelection('outline', { indices: [5] })).messages[0]).toEqual(current[0]);
     await f.store.appendHistory('outline', [{ role: 'user', parts: [{ text: '读取途中变化' }] }]);
     await expect(f.store.readHistorySelection('outline', { indices: [5], expectedRevision: selected.revision })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
   });
