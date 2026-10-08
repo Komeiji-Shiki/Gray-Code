@@ -22,9 +22,8 @@ export async function migrationWorkspaceRoots(app: PlatformApplication, actorId:
 export async function bindMigrationWorkspace(app: PlatformApplication, actorId: string, conversationId: string, workspaceId: string,
   mapping?: Record<string, string>) {
   app.requireOwner(actorId);
-  await app.conversations.idle(actorId, conversationId);
+  const state = await app.conversations.idle(actorId, conversationId);
   const workspace = app.workspace(actorId, workspaceId, ['workspace_read']);
-  const state = await app.storage.readConversationState(conversationId);
   if (!state.metadata.legacySource) throw new Error('只有已迁入的旧对话可以在此绑定工作区。');
   const targets = workspaceSnapshotRoots(workspace);
   const originals = (await migrationWorkspaceRoots(app, actorId, conversationId)).roots;

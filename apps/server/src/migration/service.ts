@@ -601,9 +601,10 @@ export class MigrationService {
     for (const [index, id] of conversations.entries()) {
       operation.controller.signal.throwIfAborted();
       update({ phase: 'finalizing', detail: '保存迁入对话归属', currentItem: id, completed: index, total: conversations.length, unit: '个对话' });
-      const state = await this.app.storage.readConversationState(id);
+      const state = await this.app.storage.getConversationInfo(id);
+      if (!state) throw new Error('迁入的对话已删除。');
       if (state.metadata.actorId === actorId && state.metadata.legacySource === root) continue;
-      await this.app.storage.commitConversation({ conversationId: id, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
+      await this.app.storage.commitConversation({ conversationId: id, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken,
         metadata: { ...state.metadata, actorId, legacySource: root } });
     }
     const result = this.configurations.complete({ ...report, operationId: operation.id, configurationFiles, ...(runtimeAssets ? { runtimeAssets: { imported: runtimeAssets.imported, skipped: runtimeAssets.skipped } } : {}), ...(activity ? { activity: { imported: activity.imported, skipped: activity.skipped } } : {}), ...(skills ? { skills: { imported: skills.imported, skipped: skills.skipped } } : {}), ...(memory ? { memory: { imported: memory.imported, skipped: memory.skipped } } : {}) });

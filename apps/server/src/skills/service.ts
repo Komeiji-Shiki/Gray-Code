@@ -70,11 +70,12 @@ export class PlatformSkills {
     if (conversationId) {
       // 只更新输入配置；运行中的历史和已捕获提示词保持原样。
       const active = (await this.app.storage.listRuns({ conversationId, activeOnly: true, limit: 1 }))[0];
-      const state = await this.app.storage.readConversationState(conversationId);
+      const state = await this.app.storage.getConversationInfo(conversationId);
+      if (!state) throw new Error('当前对话已删除。');
       const values = all.filter(item => enabled !== undefined || item.id !== id).map(item => ({ id: item.id, name: item.name,
         description: item.description, enabled: item.id === id ? enabled! : item.enabled, sendContent: item.sendContent }));
       const metadata = { ...state.metadata, custom: { ...(state.metadata.custom as Record<string, unknown> ?? {}), inputSkills: values } };
-      await this.app.storage.commitConversation({ conversationId, expectedRevision: state.history.revision,
+      await this.app.storage.commitConversation({ conversationId, expectedRevision: state.historyRevision,
         expectedMetadataToken: state.metadataToken, metadata, ...(active ? { activeRunId: active.id } : {}) });
       this.app.productUi.conversations.clearMetadataCache();
     } else if (enabled === undefined) await draft.settings.removeSkillConfig(id);

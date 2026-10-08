@@ -418,12 +418,13 @@ export class ProductUi {
         if (data.conversationId) {
           await this.app.conversation(client.actorId, data.conversationId);
           if ((await this.app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true, limit: 1 })).length) throw new Error('请等待当前任务结束后切换对话模式。');
-          const state = await this.app.storage.readConversationState(data.conversationId);
+          const state = await this.app.storage.getConversationInfo(data.conversationId);
+          if (!state) throw new Error('当前对话已删除。');
           workspaceId = typeof state.metadata.workspaceId === 'string' ? state.metadata.workspaceId : undefined;
           const workspace = !workspaceId && data.mode === 'code' && data.workspaceId ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
           workspaceId ??= workspace?.id;
           const metadata = { ...state.metadata, ...(workspace ? { workspaceId: workspace.id, workspaceUri: pathToFileURL(workspace.directory).toString() } : {}), custom: { ...state.metadata.custom as Record<string, unknown>, platformMode: data.mode, promptModeConfig: { modeId: preset } } };
-          await this.app.storage.commitConversation({ conversationId: data.conversationId, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, metadata });
+          await this.app.storage.commitConversation({ conversationId: data.conversationId, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken, metadata });
           this.conversations.clearMetadataCache();
         }
         ui.mode = data.mode;
