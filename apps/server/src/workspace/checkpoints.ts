@@ -110,9 +110,11 @@ export class WorkspaceCheckpoints {
   }
   async summaries(actorId: string, conversationId: string, includeInactive = false) {
     const checkpoints = await this.listMetadata(actorId, conversationId);
-    // 没有存档点时不必读取完整历史来定位消息，长会话切换时这是一次完整读取。
+    // 定位存档只需要消息身份和时间，正文与附件留在存储线程。
     if (!checkpoints.length) return { checkpoints: [] };
-    const history = await this.app.storage.readFullHistory(conversationId);
+    const history = await this.app.storage.readHistorySelection(conversationId, {
+      projection: { fields: ['id', 'role', 'runId', 'timestamp'], omitBinary: true },
+    });
     const positions = new Map(history.messages.map((message, index) => [message.id, index]));
     const modelBeforeByRun = new Map<string, WorkspaceCheckpointMetadata[]>();
     for (const checkpoint of checkpoints) {

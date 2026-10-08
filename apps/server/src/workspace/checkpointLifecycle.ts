@@ -22,8 +22,10 @@ export class CheckpointLifecycle {
     const phases = (['before', 'after'] as const).filter(phase =>
       config.messageCheckpoint?.[phase === 'before' ? 'beforeMessages' : 'afterMessages'].includes('user'));
     if (!phases.length) return;
-    const page = await this.app.storage.readFullHistory(run.conversationId);
-    const input = page.messages.find(message => message.runId === run.id && message.isUserInput);
+    const page = await this.app.storage.readHistorySelection(run.conversationId, {
+      runIds: [run.id], projection: { fields: ['id', 'isUserInput'], omitBinary: true },
+    });
+    const input = page.messages.find(message => message.isUserInput);
     if (!input) return;
     for (const phase of phases)
       await this.capture(run, { phase, toolName: 'user_message', messageId: input.id, signal, capturedWorkspace: workspace });
@@ -44,10 +46,14 @@ export class CheckpointLifecycle {
     executed.add(canonicalName); this.executed.set(context.runId, executed);
     if (this.beforeAttempted.has(context.runId) || !config.beforeTools.includes(canonicalName)) return;
     this.beforeAttempted.add(context.runId);
-    const page = await this.app.storage.readFullHistory(context.conversationId);
-    const message = [...page.messages].reverse().find(item => item.parts.some(part => (part.functionCall as { id?: string } | undefined)?.id === context.toolCallId));
+    const history = await this.app.storage.readHistoryOutline(context.conversationId);
+    let messageId: string | undefined;
+    for (let index = history.entries.length - 1; index >= 0; index--) {
+      if (!history.entries[index].calls?.some(call => call.id === context.toolCallId)) continue;
+      messageId = history.entries[index].id; break;
+    }
     await this.capture({ id: context.runId, actorId: context.actorId, conversationId: context.conversationId },
-      { phase: 'before', toolName: 'tool_batch', messageId: message?.id, signal: context.signal, capturedWorkspace: context.workspace });
+      { phase: 'before', toolName: 'tool_batch', messageId, signal: context.signal, capturedWorkspace: context.workspace });
   }
   async afterTools(run: RunRecord, workspace: WorkspaceDefinition | undefined, signal: AbortSignal, message: PlatformMessage) {
     const names = this.executed.get(run.id); this.executed.delete(run.id);

@@ -149,8 +149,11 @@ describe('workspace checkpoints application contract', () => {
     await app.storage.putRecord({ namespace: 'workspace-checkpoints', id: before.id,
       ownerId: 'model-before', value: { ...before, runId: 'run-one', messageIndex: 0, messageNodeId: 'message_0' } });
     await app.storage.appendHistory('model-before', [{ ...message(1), runId: 'run-one', timestamp: before.timestamp + 1 }]);
+    const reads = jest.spyOn(app.storage, 'readFullHistory');
     const [summary] = (await app.checkpoints.summaries('owner', 'model-before')).checkpoints;
     expect(summary).toMatchObject({ id: before.id, messageIndex: 1 });
+    expect(reads).not.toHaveBeenCalled();
+    reads.mockRestore();
   });
 
   test('后续检查点沿用未变化文件的内容，删除旧检查点后共享内容仍可恢复', async () => {
