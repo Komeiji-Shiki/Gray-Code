@@ -167,6 +167,7 @@ export class PlatformDatabase {
       readHistoryWithFloors: ({ id, options }) => ({ conversationId: id, ...this.histories.pageWithFloors(this.conversation(id).history_id, options) }),
       readHistoryOutline: ({ id }) => ({ conversationId: id, ...this.histories.outline(this.conversation(id).history_id) }),
       readPendingToolCalls: ({ id, runId }) => this.histories.pendingToolCalls(this.conversation(id).history_id, runId),
+      readRunHistory: ({ id, runIds }) => this.histories.forRuns(this.conversation(id).history_id, runIds),
       historyInfo: ({ id }) => {
         const info = this.histories.info(this.conversation(id).history_id);
         return { total: info.message_count, revision: info.revision };

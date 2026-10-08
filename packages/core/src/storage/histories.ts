@@ -235,6 +235,25 @@ export class HistoryStore {
     })();
   }
 
+  /** 交付本轮结果时在存储线程内筛选，旧轮次的大型正文和附件不必解码或跨线程复制。 */
+  forRuns(id: string, runIds: string[]): PlatformMessage[] {
+    if (runIds.some(runId => typeof runId !== 'string' || !runId)) invalid('Run IDs must be nonempty strings.');
+    const selected = new Set(runIds);
+    return this.db.transaction(() => {
+      const info = this.info(id);
+      if (!selected.size) return [];
+      const rows = this.rows(id, 0, info.message_count);
+      if (rows.length !== info.message_count) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+      const messages: PlatformMessage[] = [];
+      for (const row of rows) {
+        const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
+        const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
+        if (typeof owner.runId === 'string' && selected.has(owner.runId)) messages.push(this.decode(row));
+      }
+      return messages;
+    })();
+  }
+
   /** A bounded page and its global floor metadata share one snapshot. No options means metadata only. */
   pageWithFloors(id: string, options?: PageOptions) {
     return this.db.transaction(() => {

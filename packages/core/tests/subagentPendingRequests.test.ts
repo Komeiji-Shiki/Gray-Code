@@ -136,6 +136,7 @@ describe('主对话处理子代理等待的审批', () => {
     await waitUntil(() => app.subagents.activeIds().length === 0);
   });
   test.each(['recover', 'no_retry', 'resume_exhausted'])('限流接续不重复工具，最终交付保留已完成结果（%s）', async mode => {
+    const resultReads = jest.spyOn(app.storage, 'readRunHistory');
     const recover = mode !== 'no_retry';
     let previews = 0, childCalls = 0; let received: any;
     app.tools.register({ declaration: { name: 'preview_fixture', description: 'local preview', parameters: { type: 'object', properties: {} } },
@@ -165,6 +166,7 @@ describe('主对话处理子代理等待的审批', () => {
     const run = await app.runtime.start({ actorId: 'owner', conversationId: root.id, agentId: agent.id, requestKey: `rate-limit:${recover}`,
       message: { role: 'user', parts: [{ text: 'preview' }] } });
     expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(previews).toBe(1);
+    expect(resultReads).toHaveBeenCalled();
     if (mode === 'recover') { expect(childCalls).toBe(3); expect(received.data.response).toContain('preview recovered'); }
     else { expect(childCalls).toBe(recover ? 3 : 2); expect(received.success).toBe(false); expect(received.data.response).toContain('preview.html');
       expect(received.data.response).toContain('continueFromRunId'); expect(received.data.response).toContain('preview details already collected'); }

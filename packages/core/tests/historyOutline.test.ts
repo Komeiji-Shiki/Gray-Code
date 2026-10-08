@@ -59,6 +59,18 @@ describe('历史导航摘要', () => {
     expect(await f.store.readPendingToolCalls('outline', 'other')).toEqual([{ id: 'other-pending', name: 'write_file' }]);
   });
 
+  test('运行历史只读取选中轮次并保留消息顺序、正文和附件', async () => {
+    const current: PlatformMessage[] = [
+      { id: 'current-input', role: 'user', runId: 'current', parts: [{ text: '本次任务' }, { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }] },
+      { id: 'other-output', role: 'model', runId: 'other', parts: [{ text: '另一个运行的报告' }] },
+      { id: 'current-output', role: 'model', runId: 'current', parts: [{ text: '本次完成' }] },
+    ];
+    await f.store.appendHistory('outline', current);
+    expect(await f.store.readRunHistory('outline', ['current', 'done-run', 'current'])).toEqual([source[1], current[0], current[2]]);
+    expect(await f.store.readRunHistory('outline', [])).toEqual([]);
+    expect(await f.store.readRunHistory('outline', ['missing-run'])).toEqual([]);
+  });
+
   test('追加、截断替换与分叉后结果与完整读取一致', async () => {
     await f.store.readHistoryOutline('outline');
     await f.store.appendHistory('outline', [{ id: 'm-5', parentId: 'u-4', role: 'model', parts: [

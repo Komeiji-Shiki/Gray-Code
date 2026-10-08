@@ -487,14 +487,18 @@ export class SubagentExecutionService {
   }
   private async output(record: PlatformSubagent, coreRunId: string | undefined, taskRunIds = coreRunId ? [coreRunId] : []): Promise<string> {
     if (!coreRunId || !await this.app.storage.getConversation(record.conversationId)) return record.error || '子代理本次运行没有返回正文。';
-    const history = await this.app.storage.readFullHistory(record.conversationId);
+    const history = await this.app.storage.readRunHistory(record.conversationId, record.status === 'completed' ? [coreRunId] : [coreRunId, ...taskRunIds]);
+    const taskRuns = new Set(taskRunIds);
     // 接续会话含以往交付；失败/超时只能报告本次执行，不能拿上一轮成功报告冒充本次结果。
-    const last = [...history.messages].reverse().find(message => (message.runId === coreRunId
-      || record.status !== 'completed' && typeof message.runId === 'string' && taskRunIds.includes(message.runId)) && message.role === 'model'
-      && message.parts.some(part => typeof part.text === 'string' && !part.thought));
+    let last: PlatformMessage | undefined;
+    for (let index = history.length - 1; index >= 0; index--) {
+      const message = history[index];
+      if ((message.runId === coreRunId || record.status !== 'completed' && typeof message.runId === 'string' && taskRuns.has(message.runId))
+        && message.role === 'model' && message.parts.some(part => typeof part.text === 'string' && !part.thought)) { last = message; break; }
+    }
     const text = last?.parts.filter(part => !part.thought).map(part => typeof part.text === 'string' ? part.text : '').join('');
     if (record.status === 'completed') return text || '子代理没有返回正文。';
-    const messages = history.messages.filter(message => typeof message.runId === 'string' && taskRunIds.includes(message.runId));
+    const messages = history.filter(message => typeof message.runId === 'string' && taskRuns.has(message.runId));
     const steps = messages.flatMap(message => message.parts.flatMap(part => {
       const step = part.functionResponse as { name?: string; id?: string; response?: Record<string, unknown> } | undefined;
       return step && typeof step.name === 'string' ? [{ name: step.name, id: step.id, response: step.response }] : [];
