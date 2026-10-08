@@ -25,8 +25,9 @@ import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm
 export class PlatformPromptService {
   constructor(private readonly app: PlatformApplication) {}
   async prepare(input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
-    history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string;
+    history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; signal?: AbortSignal;
     settingsOverride?: ReturnType<PlatformApplication['product']['runtimeSettings']>; preview?: boolean }) {
+    input.signal?.throwIfAborted();
     if (!('message' in input.request) && normalizePendingApprovalGate((input.conversation.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) throw new Error('请先确认当前设计、评审或计划文档。');
     const conversation = input.conversation;
     const runtime = (conversation.custom ?? {}) as Record<string, unknown>;
@@ -39,6 +40,7 @@ export class PlatformPromptService {
     const failureSnapshot = failure ? [{ role: 'user' as const, parts: [{ text: failure }] }] : [];
     const failureMessage: PlatformMessage[] = failureSnapshot.map(message => ({ ...message, contextControl: 'run_failure' }));
     const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
+    input.signal?.throwIfAborted();
     const contextSettings = this.app.context.configuration(input.conversation, contextChannel ?? undefined);
     const contextManagementMethod = contextSettings.method;
     const contextUserMessageRetention = contextSettings.userMessageRetention;
@@ -73,12 +75,14 @@ export class PlatformPromptService {
     if (workspace) {
       const pins = runtime.inputPinnedFiles !== undefined ? normalizePinnedFiles(runtime.inputPinnedFiles) : settings.getEnabledPinnedFiles();
       for (const pin of pins) {
+        input.signal?.throwIfAborted();
         if (!pin.enabled || bytes >= PINNED_FILE_MAX_TOTAL_BYTES) continue;
         try {
           const location = pinnedFileLocation(workspace, pin);
           if (!location) continue;
           const absolute = await this.app.files.resolve(workspace, location.absolute);
           const info = await stat(absolute);
+          input.signal?.throwIfAborted();
           if (!info.isFile()) continue;
           const file = readPinnedFileCapped(absolute, info.size);
           const text = `File: ${location.path}\n${file.content}${file.truncated ? '\n[File truncated]' : ''}`;
@@ -86,15 +90,17 @@ export class PlatformPromptService {
           if (bytes + size > PINNED_FILE_MAX_TOTAL_BYTES) continue;
           pinnedFiles.push(text); bytes += size;
         } catch (error) {
+          input.signal?.throwIfAborted();
           pinnedFiles.push(`File: ${pin.path}\n[Unavailable: ${(error as Error).message}]`);
         }
       }
     }
     const source = 'message' in input.request ? input.request.message : undefined;
-    const characterTurn = await this.app.characterPipeline.capture(conversation, input.history, source, input.previousTurn);
+    const characterTurn = await this.app.characterPipeline.capture(conversation, input.history, source, input.previousTurn, input.signal);
     const companionTurn = await this.app.companion.capture(input.actor.id, conversation, input.previousTurn);
-    const characterSource = source && characterTurn ? await this.app.characterPipeline.transformParts(source.parts, characterTurn, 1, 'source') : undefined;
-    const characterDisplay = characterSource && characterTurn ? await this.app.characterPipeline.transformParts(characterSource.parts, characterTurn, 1, 'display') : undefined;
+    input.signal?.throwIfAborted();
+    const characterSource = source && characterTurn ? await this.app.characterPipeline.transformParts(source.parts, characterTurn, 1, 'source', input.signal) : undefined;
+    const characterDisplay = characterSource && characterTurn ? await this.app.characterPipeline.transformParts(characterSource.parts, characterTurn, 1, 'display', input.signal) : undefined;
     const language = settings.getUISettings().language;
     const locale = language && language !== 'auto' ? language : Intl.DateTimeFormat().resolvedOptions().locale;
     const sections: PromptAssemblyHost['sections'] = {
@@ -120,6 +126,7 @@ export class PlatformPromptService {
     const skills = input.agent.toolNames.includes('read_skill') && (input.actor.role === 'owner' || input.actor.effects.includes('workspace_read'))
       ? (await this.app.skills.items(input.actor.id, conversation.id, workspace?.id, undefined, { workspace, actor: input.actor })).filter(skill => skill.enabled)
           .map(({ id, name, description }) => ({ id, name, description })) : [];
+    input.signal?.throwIfAborted();
     const context = { characterModules: characterTurn?.modules, characterMacros: characterTurn?.macros, characterInjections: characterTurn?.injections as import('../../../../backend/modules/conversation/types').Content[] | undefined, characterOutlets: characterTurn?.outlets, todoList: runtime.todoList, pinnedFiles: runtime.inputPinnedFiles, skills,
       workspaceUri: workspace ? pathToFileURL(workspace.directory).toString() : undefined };
     const bundle = assembler.getPromptContextBundle(mode, context, { diffBase: cache ? { sectionValues: cache.sectionValues, templateFingerprint: cache.dynamicTemplateFingerprint } : undefined });

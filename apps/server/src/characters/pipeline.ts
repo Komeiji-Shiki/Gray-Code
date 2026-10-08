@@ -48,14 +48,17 @@ export class CharacterPipeline {
     return { id: randomUUID(), parentId: null, role: 'model', parts: source.parts, timestamp: Date.now(), characterGreeting: true,
       characterMode: true, characterOriginalParts: original, characterDisplayParts: display.parts, characterStages: source.stages, characterDisplayStages: display.stages };
   }
-  async capture(conversation: PlatformConversation, history: PlatformMessage[], source?: PlatformMessage, previousTurn?: PlatformMessage): Promise<CharacterTurn | undefined> {
+  async capture(conversation: PlatformConversation, history: PlatformMessage[], source?: PlatformMessage, previousTurn?: PlatformMessage, signal?: AbortSignal): Promise<CharacterTurn | undefined> {
+    signal?.throwIfAborted();
     if (previousTurn?.characterTurn) return structuredClone(previousTurn.characterTurn) as CharacterTurn;
     const custom = conversation.custom as Record<string, unknown> | undefined;
     const config = (custom?.characterConfig as CharacterChatConfig | undefined) ?? { kind: 'character', userName: '', persona: '', worldbookIds: [], regexIds: [], scanDepth: 2 } as CharacterChatConfig;
     if (custom?.platformMode !== 'character') return undefined;
     const resources: CharacterTurn['resources'] = [];
     const read = async (id: string) => {
+      signal?.throwIfAborted();
       const value = await this.app.characters.get(id);
+      signal?.throwIfAborted();
       resources.push({ id, revision: value.revision, sha256: value.resource.source.sha256 }); return value.resource;
     };
     const character = config.characterId ? await read(config.characterId) : undefined;
@@ -75,7 +78,7 @@ export class CharacterPipeline {
       const resource = await read(id);
       rules.push(...readRegexRules(resource.raw).map(rule => ({ ...rule, id: `${id}/${rule.id}` })));
     }
-    const sourceForWorld: PlatformMessage | undefined = source ? { ...source, role: 'user', parts: (await this.transformParts(source.parts, { macros, rules }, 1, 'source')).parts } : undefined;
+    const sourceForWorld: PlatformMessage | undefined = source ? { ...source, role: 'user', parts: (await this.transformParts(source.parts, { macros, rules }, 1, 'source', signal)).parts } : undefined;
     const books: WorldbookDefinition[] = [];
     for (const id of new Set([...(character?.bindings.worldbookIds ?? []), ...config.worldbookIds])) {
       const resource = await read(id); books.push(readWorldbook(resource.raw, id));
@@ -89,9 +92,9 @@ export class CharacterPipeline {
       const worldEntries = books.flatMap(book => book.entries.map(entry => ({ bookId: book.id, entry })));
       const worldRules = rules.filter(rule => rule.placements.includes(5));
       const sourceText = await this.engine.transformBatch(worldEntries.map(item => ({ text: expand(item.entry.content),
-        context: { placement: 5, phase: 'source' as const, macros } })), worldRules);
+        context: { placement: 5, phase: 'source' as const, macros } })), worldRules, signal);
       const promptText = await this.engine.transformBatch(sourceText.map(item => ({ text: item.text,
-        context: { placement: 5, phase: 'prompt' as const, macros } })), worldRules);
+        context: { placement: 5, phase: 'prompt' as const, macros } })), worldRules, signal);
       const renderedWorld = new Map(worldEntries.map((item, index) => [`${item.bookId}/${item.entry.id}`, promptText[index].text]));
       for (const book of books) for (const entry of book.entries) {
         const key = `${book.id}/${entry.id}`;
@@ -108,7 +111,7 @@ export class CharacterPipeline {
         scanDepth: config.scanDepth, tokenBudget: config.worldTokenBudget, macros, tokenCosts, randomValues,
         messageCount: messagePosition, timedEffects: prior?.activation.timedEffects, recursive: config.recursiveScan, maxRecursionSteps: config.maxRecursionSteps,
         additionalSources: { matchPersonaDescription: config.persona, matchCharacterDescription: definition?.description ?? '', matchCharacterPersonality: definition?.personality ?? '',
-          matchCharacterDepthPrompt: definition?.postHistory ?? '', matchScenario: definition?.scenario ?? '', matchCreatorNotes: definition?.creatorNotes ?? '' } });
+          matchCharacterDepthPrompt: definition?.postHistory ?? '', matchScenario: definition?.scenario ?? '', matchCreatorNotes: definition?.creatorNotes ?? '' } }, signal);
       activation.regexErrors = [...new Map([...sourceText, ...promptText].flatMap(result => result.errors).map(error => [error.id + error.message, error])).values()];
       for (let index = 0; index < activation.entries.length; index++) {
         const item = activation.entries[index]; item.text = renderedWorld.get(`${item.bookId}/${item.entry.id}`) ?? item.text;

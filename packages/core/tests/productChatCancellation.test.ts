@@ -1,5 +1,6 @@
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
+import { CharacterEngine } from '@graycode/core';
 import { fixture } from './fixtures';
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
@@ -16,6 +17,37 @@ describe('独立桌面输入准备和运行释放的取消边界', () => {
   });
   afterEach(async () => { jest.restoreAllMocks(); await app.close(); await f.cleanup(); });
   const data = (id: string, streamId: string) => ({ conversationId: id, streamId, configId: 'fixture', message: '开始' });
+
+  test('准备阶段角色处理中停止会传入取消信号，不提交任务或输入', async () => {
+    const state = await app.storage.readConversationState(conversationId);
+    await app.storage.commitConversation({ conversationId, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
+      metadata: { ...state.metadata, custom: { ...state.metadata.custom as object, platformMode: 'character' } } });
+    const entered = deferred(), release = deferred();
+    let receivedSignal: AbortSignal | undefined;
+    jest.spyOn(CharacterEngine.prototype, 'transformBatch').mockImplementationOnce(async (items, _rules, signal) => {
+      receivedSignal = signal; entered.resolve();
+      const result = () => items.map(item => ({ text: item.text, applied: [], errors: [] }));
+      if (!signal) { await release.promise; return result(); }
+      signal.throwIfAborted();
+      return new Promise((resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+        void release.promise.then(() => { signal.removeEventListener('abort', abort); resolve(result()); });
+      });
+    });
+    const started = app.productUi.chat.start(owner, data(conversationId, 'character-prepare'), await app.product.draft());
+    const outcome = started.then(() => undefined, error => error);
+    try {
+      await entered.promise;
+      expect(receivedSignal).toBeDefined();
+      expect(await app.productUi.chat.cancel(owner, conversationId)).toEqual({ success: true });
+      expect(receivedSignal!.aborted).toBe(true);
+      expect(await outcome).toMatchObject({ code: 'CANCELLED_ERROR' });
+      expect(generate).not.toHaveBeenCalled();
+      expect(await app.storage.listRuns({ conversationId })).toEqual([]);
+      expect((await app.storage.readHistory(conversationId)).messages).toEqual([]);
+    } finally { release.resolve(); await outcome; }
+  });
 
   test('提示词尚未准备完时停止等待真实释放，取消不生成任务或用户历史', async () => {
     const entered = deferred(), release = deferred(), aborted = deferred(), authorization = deferred(), releaseAuthorization = deferred();
