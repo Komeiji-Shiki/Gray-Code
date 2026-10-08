@@ -439,8 +439,9 @@ function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
                         terminalProcess.tracker = new ProcessTreeTracker(host.processTree, proc.pid, spawnedAt);
                         terminalProcess.tracker.start();
                         proc.once('exit', () => {
+                            terminalProcess.tracker?.rootExited();
                             // Shell 先退出而管道仍被后代占用时，趁它们的 ParentProcessId 还能关联到 Shell 采样一次。
-                            const timer = setTimeout(() => { if (terminalProcess.endTime === undefined) terminalProcess.tracker?.rootExited(); }, 300);
+                            const timer = setTimeout(() => { if (terminalProcess.endTime === undefined) void terminalProcess.tracker?.sample(); }, 300);
                             timer.unref?.();
                         });
                         proc.once('close', () => { if (!terminalProcess.cleanup) terminalProcess.tracker?.stop(); });

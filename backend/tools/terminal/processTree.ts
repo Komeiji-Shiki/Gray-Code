@@ -80,12 +80,14 @@ export function attributeProcessTree(records: Iterable<ProcessRecord>, rootPid: 
         (children.get(record.ppid) ?? children.set(record.ppid, []).get(record.ppid)!).push(record);
     }
     for (const list of byPid.values()) list.sort((a, b) => a.createdAt - b.createdAt);
-    const root = byPid.get(rootPid)?.find(record => Math.abs(record.createdAt - spawnedAt) <= SPAWN_SLACK_MS)
+    const root = byPid.get(rootPid)?.find(record => Math.abs(record.createdAt - spawnedAt) <= SPAWN_SLACK_MS
+        && (rootExitedAt === undefined || record.createdAt < rootExitedAt))
         ?? { pid: rootPid, ppid: -1, createdAt: spawnedAt - SPAWN_SLACK_MS, name: '' };
     /** 同一 PID 下一个进程出现前，才可能是该成员创建的子进程。 */
     const validUntil = (member: ProcessRecord) => {
         const next = byPid.get(member.pid)?.find(record => record.createdAt > member.createdAt)?.createdAt ?? Infinity;
-        return member === root && rootExitedAt !== undefined ? Math.min(next, rootExitedAt + SPAWN_SLACK_MS) : next;
+        // spawn 的比较余量不能延长已知的生存期，否则退出后复用根 PID 的新进程会被误认。
+        return member === root && rootExitedAt !== undefined ? Math.min(next, rootExitedAt) : next;
     };
     const members = new Map<string, ProcessRecord>([[key(root), root]]);
     const queue = [root];
@@ -126,8 +128,8 @@ export class ProcessTreeTracker {
         };
         schedule(0);
     }
-    /** Shell 退出而管道未关闭时立即采样：此时它的直接子进程仍可通过 ParentProcessId 关联。 */
-    rootExited(): void { this.rootExitedAt = Date.now(); void this.sample(); }
+    /** 退出事件立即确定身份上限；是否补采样由运行器按管道关闭情况决定。 */
+    rootExited(): void { this.rootExitedAt ??= Date.now(); }
     stop(): void { this.stopped = true; clearTimeout(this.timer); this.timer = undefined; }
     members(): ProcessRecord[] { return attributeProcessTree(this.records.values(), this.rootPid, this.spawnedAt, this.rootExitedAt); }
 
@@ -142,7 +144,8 @@ export class ProcessTreeTracker {
             const [, current] = await Promise.all([this.sampling, this.port.snapshot()]);
             this.remember(current);
             const members = this.members();
-            const alive = (list: ProcessRecord[]) => members.filter(member => list.some(record => record.pid === member.pid && (member.ppid === -1
+            const alive = (list: ProcessRecord[]) => members.filter(member => !(member.pid === this.rootPid && this.rootExitedAt !== undefined)
+                && list.some(record => record.pid === member.pid && (member.ppid === -1
                 ? Math.abs(record.createdAt - this.spawnedAt) <= SPAWN_SLACK_MS : record.createdAt === member.createdAt)));
             const survivors = alive(current);
             if (survivors.length) await this.port.terminate(survivors.map(record => record.pid));

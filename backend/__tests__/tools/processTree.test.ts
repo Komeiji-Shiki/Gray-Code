@@ -36,6 +36,20 @@ describe('中断清理', () => {
         return { terminated, snapshot: jest.fn(async () => snapshots.shift() ?? []), terminate: jest.fn(async pids => { terminated.push(pids); }) };
     }
 
+    test.each([false, true])('根进程退出后很快复用 PID 时不终止新进程，原后代仍可清理（已采样根=%s）', async sampledRoot => {
+        const child = record(200, 100, at + 50), grandchild = record(300, 200, at + 200);
+        const unrelated = [record(100, 999, at + 150), record(400, 100, at + 180)];
+        const fake = port([...(sampledRoot ? [[record(100, 1, at), child]] : []), [child, grandchild, ...unrelated], unrelated]);
+        const tracker = new ProcessTreeTracker(fake, 100, at);
+        if (sampledRoot) await tracker.sample();
+        const now = jest.spyOn(Date, 'now').mockReturnValue(at + 100);
+        try {
+            tracker.rootExited();
+            expect(await tracker.cleanup()).toMatchObject({ verified: true, cleaned: true, observed: 3 });
+            expect(fake.terminated).toEqual([[200, 300]]);
+        } finally { now.mockRestore(); }
+    });
+
     test('补终止脱链后代并用快照核实，报告清理完成', async () => {
         const fake = port([
             [record(100, 1, at), record(200, 100, at + 50, 'launcher.exe'), record(300, 200, at + 80, 'game-wow64.exe')],
