@@ -237,7 +237,11 @@ export class PlatformRuntime {
     const history = change?.commit.messages ?? state.history.messages;
     if (!source && (!history.length || !('expectedRevision' in input) || input.expectedRevision !== state.history.revision))
       throw new Error('Continuation requires nonempty history at the requested revision.');
-    const previousTurn = source ? undefined : history.findLast(message => message.isUserInput && !message.userFeedback);
+    let previousTurn: PlatformMessage | undefined;
+    if (!source) for (let index = history.length - 1; index >= 0; index--) {
+      const candidate = history[index];
+      if (candidate.isUserInput && !candidate.userFeedback) { previousTurn = candidate; break; }
+    }
     if (!source && actor.role !== 'owner' && conversation.actorId !== actor.id && previousTurn?.actorId !== actor.id)
       throw new Error('不能继续其他成员发起的回合，请发送自己的新消息。');
     const modelSelection = scope?.modelSelection ?? { providerId: input.providerId ?? agent.providerId, modelOverride: input.modelOverride ?? agent.modelId, reasoningEffort: input.reasoningEffort };
