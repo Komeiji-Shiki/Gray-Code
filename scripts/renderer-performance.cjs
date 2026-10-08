@@ -7,7 +7,8 @@ const assert = require('node:assert/strict');
 async function seedRendererWorkload(directory) {
   const storage = await PlatformStorage.open(directory);
   try {
-    for (const count of [1000, 5000]) {
+    const cancellationOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'cancel';
+    for (const count of cancellationOnly ? [5000] : [1000, 5000]) {
       const id = `renderer-benchmark-${count}`;
       await storage.createConversation({ id, actorId: 'owner', title: `Renderer benchmark ${count}`, createdAt: Date.now(), updatedAt: Date.now(), custom: { platformMode: 'chat' } });
       for (let start = 0; start < count; start += 100) {
@@ -21,11 +22,28 @@ async function seedRendererWorkload(directory) {
         }));
       }
     }
+    if (cancellationOnly) {
+      await storage.forkConversation('renderer-benchmark-5000', { id: 'renderer-command-cancel-5000', actorId: 'owner',
+        workspaceId: 'smoke', title: 'Command cancellation benchmark 5000', createdAt: Date.now(), updatedAt: Date.now(), custom: { platformMode: 'code' } }, { beforeIndex: 4999 });
+      await storage.appendHistory('renderer-command-cancel-5000', [{ id: 'renderer-cancel-history-ready', parentId: 'renderer-benchmark-5000-4998',
+        role: 'model', parts: [{ text: 'RENDERER-CANCEL-HISTORY-READY' }], timestamp: Date.now() }]);
+    }
   } finally { await storage.close(); }
 }
 
 function streamRendererWorkload(body, response) {
-  if (!body.stream || !JSON.stringify(body.messages ?? []).includes('renderer benchmark streaming')) return false;
+  const messages = JSON.stringify(body.messages ?? []);
+  if (messages.includes('renderer benchmark command cancellation')) {
+    const completed = (body.messages ?? []).some(message => message.role === 'tool' && message.tool_call_id === 'renderer-cancel-command');
+    const message = completed ? { role: 'assistant', content: 'renderer command unexpectedly completed' }
+      : { role: 'assistant', content: null, tool_calls: [{ id: 'renderer-cancel-command', type: 'function', function: {
+        name: 'execute_command', arguments: JSON.stringify({ command: "Write-Output ('renderer-command-ready:' + $PID); Start-Sleep -Seconds 30", shell: 'powershell', timeout: 45000, background: false }),
+      } }] };
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ choices: [{ message, finish_reason: completed ? 'stop' : 'tool_calls' }] }));
+    return true;
+  }
+  if (!body.stream || !messages.includes('renderer benchmark streaming')) return false;
   response.setHeader('Content-Type', 'text/event-stream');
   let index = 0;
   const started = performance.now();
@@ -39,11 +57,55 @@ function streamRendererWorkload(body, response) {
   return true;
 }
 
+async function measureCommandCancellation({ rpc, ui, chat, until }) {
+  const conversationId = 'renderer-command-cancel-5000';
+  await ui('tools.setToolAutoExec', { toolName: 'execute_command', autoExec: true });
+  await ui('ui.settings.save');
+  await rpc('ui.command', { command: 'platform.openModeConversation', data: { conversationId } });
+  await until(() => chat('document.body.innerText.includes("RENDERER-CANCEL-HISTORY-READY")'), 'cancellation history');
+  await chat('const editor=document.querySelector(".input-editor"); editor.focus(); editor.textContent="renderer benchmark command cancellation"; editor.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:editor.textContent}));');
+  await until(() => chat('!!document.querySelector(".send-button:not(.preserve-send-button):not(:disabled)")'), 'cancellation input');
+  await chat('document.querySelector(".send-button:not(.preserve-send-button)").click()');
+  const task = await until(async () => (await ui('task.getAll')).tasks.find(value => value.type === 'terminal' && value.metadata?.conversationId === conversationId), 'foreground command');
+  const runId = task.metadata.runId;
+  const running = await until(async () => {
+    const result = await ui('terminal.getOutput', { terminalId: task.id });
+    return result.output?.includes('renderer-command-ready:') ? result : false;
+  }, 'foreground command output');
+  const pid = Number(/renderer-command-ready:(\d+)/.exec(running.output)?.[1]);
+  assert(Number.isSafeInteger(pid) && pid > 0, '受控命令必须报告自己的进程 ID');
+  const started = performance.now();
+  const feedback = chat(`new Promise((resolve,reject)=>{
+    const button=document.querySelector('.stop-icon')?.closest('button');if(!button){reject(new Error('Missing stop button'));return;}
+    const start=performance.now();button.click();
+    const frame=()=>{if(!document.querySelector('.stop-icon'))resolve(performance.now()-start);else if(performance.now()-start>10000)reject(new Error('Stop button remained busy'));else requestAnimationFrame(frame);};
+    requestAnimationFrame(frame);
+  })`);
+  const stopped = until(async () => {
+    const result = await ui('terminal.getOutput', { terminalId: task.id });
+    return result.running === false ? { result, milliseconds: performance.now() - started } : false;
+  }, 'foreground command stopped');
+  const [frontendFeedbackMilliseconds, terminal] = await Promise.all([feedback, stopped]);
+  const run = await until(async () => {
+    const current = (await rpc('runs.list', { conversationId })).find(value => value.id === runId);
+    return current && ['completed', 'failed', 'cancelled', 'interrupted'].includes(current.status) ? current : false;
+  }, 'cancelled run settled');
+  const runSettledMilliseconds = performance.now() - started;
+  assert.equal(run.status, 'cancelled');
+  assert(terminal.result.output.includes('renderer-command-ready'), '取消后应保留已经产生的命令输出');
+  // 只探测夹具自己报告的 PID 是否仍存在，不终止或枚举其他进程。
+  await until(() => { try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; } }, 'owned foreground process exited');
+  return { messages: 5000, frontendFeedbackMilliseconds, terminalStoppedMilliseconds: terminal.milliseconds,
+    runSettledMilliseconds, processExitMilliseconds: performance.now() - started, runStatus: run.status, outputRetained: true,
+    killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: 100 };
+}
+
 async function measureRendererSamples({ rpc, ui, chat, until, output, configId }) {
   const samples = [];
-  await ui('config.updateConfig', { configId, updates: { preferStream: true, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
+  const cancellationOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'cancel';
+  await ui('config.updateConfig', { configId, updates: { preferStream: !cancellationOnly, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
   await ui('ui.settings.save');
-  for (const count of [1000, 5000]) {
+  for (const count of cancellationOnly ? [] : [1000, 5000]) {
     const start = performance.now();
     await rpc('ui.command', { command: 'platform.openModeConversation', data: { conversationId: `renderer-benchmark-${count}` } });
     await until(() => chat(`document.body.innerText.includes('BENCH-${count}-${count - 1}')`), `history ${count}`, 60_000).catch(async error => {
@@ -78,11 +140,14 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId }
   }
   await ui('config.updateConfig', { configId, updates: { preferStream: false } });
   await ui('ui.settings.save');
+  const cancellation = cancellationOnly ? await measureCommandCancellation({ rpc, ui, chat, until }) : undefined;
   const os = require('node:os'), cpus = os.cpus();
-  const report = { generatedAt: new Date().toISOString(), environment: 'Electron offscreen, synthetic history and local SSE, single machine',
+  const report = { generatedAt: new Date().toISOString(), environment: cancellationOnly
+    ? 'Electron offscreen, synthetic history and owned foreground command, single machine'
+    : 'Electron offscreen, synthetic history and local SSE, single machine',
     runtime: { electron: process.versions.electron, node: process.versions.node, platform: process.platform, arch: process.arch,
       cpuModel: cpus[0]?.model, cpuCount: cpus.length, memoryGiB: Math.round(os.totalmem() / 1024 ** 3), sourceCommit: process.env.GITHUB_SHA },
-    tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples };
+    tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples, ...(cancellation ? { cancellation } : {}) };
   await fs.writeFile(path.join(output, 'renderer-performance.json'), JSON.stringify(report, null, 2));
   return report;
 }
@@ -191,6 +256,7 @@ async function measureRendererWorkload(options) {
 module.exports = { seedRendererWorkload, streamRendererWorkload, measureRendererWorkload };
 
 if (require.main === module) {
+  if (process.argv.includes('--cancel')) process.env.GRAYCODE_RENDER_SCENARIO = 'cancel';
   // 先由 Node 关闭准备数据的核心，再启动 Electron；不绕过数据目录的单实例锁。
   const { spawn } = require('node:child_process');
   const { randomUUID } = require('node:crypto');
