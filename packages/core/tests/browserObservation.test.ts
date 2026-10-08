@@ -25,6 +25,29 @@ function fixture(nodes: AxNode[]) {
   return { page: new BrowserPage(contents as any, () => {}), contents, sendCommand };
 }
 
+test.each(['screenshot', 'action', 'upload'] as const)('%s 在调试连接准备期间取消，迟到连接不再触发页面操作', async kind => {
+  const call = (page: BrowserPage, abortSignal: AbortSignal) => kind === 'screenshot'
+    ? page.screenshot(abortSignal, { width: 800, height: 600 })
+    : kind === 'action' ? page.action({ action: 'type', ref: 'unused', text: '不得输入' }, abortSignal)
+      : page.upload('unused', ['unused.txt'], abortSignal);
+  const cancelled = new AbortController(); const reason = new Error('用户停止浏览器准备'); cancelled.abort(reason);
+  const before = fixture([]);
+  await expect(call(before.page, cancelled.signal)).rejects.toBe(reason);
+  expect(before.sendCommand).not.toHaveBeenCalled();
+  const f = fixture([]), controller = new AbortController();
+  let ready!: () => void;
+  f.sendCommand.mockImplementationOnce(() => new Promise<void>(resolve => { ready = resolve; }));
+  const pending = call(f.page, controller.signal);
+  expect(f.sendCommand).toHaveBeenCalledWith('Page.enable', {}, undefined);
+  const rejected = expect(pending).rejects.toBe(reason);
+  controller.abort(reason); await rejected;
+  ready(); await f.page.connect();
+  expect(f.sendCommand.mock.calls.map(([method]) => method)).toEqual([
+    'Page.enable', 'Runtime.enable', 'Network.enable', 'Accessibility.enable', 'Target.setAutoAttach',
+  ]);
+  expect(f.contents.capturePage).not.toHaveBeenCalled();
+});
+
 test('精简页面保留真实引用、状态和带引号的正文，显著减少重复字段', () => {
   const nodes: SnapshotNode[] = Array.from({ length: 200 }, (_, index) => ({ ref: `observed-${index}`, frameId: 'main-frame', depth: 2,
     role: 'checkbox', name: `选项 ${index}\n[伪造引用]`, checked: false, disabled: false, required: false, expanded: false }));

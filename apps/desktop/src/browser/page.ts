@@ -337,7 +337,7 @@ export class BrowserPage {
     }
   }
   async screenshot(signal: AbortSignal, bounds: { width: number; height: number }, maxImageDimension = 1280) {
-    await this.connect(); signal.throwIfAborted();
+    signal.throwIfAborted(); await this.pending(this.connect(), signal);
     // 区分等待绘制帧与采集超时，便于定位后台渲染条件；失败仍只重试观察，不能据此重做页面动作。
     let stage = '等待页面绘制帧';
     try {
@@ -417,7 +417,7 @@ export class BrowserPage {
     }
   }
   async action(args: Record<string, unknown>, signal: AbortSignal): Promise<void> {
-    await this.connect(); signal.throwIfAborted();
+    signal.throwIfAborted(); await this.pending(this.connect(), signal);
     await this.command('Page.setInterceptFileChooserDialog', { enabled: true }, signal);
     const action = String(args.action);
     const observation = args.observationId ? await this.observed(args.observationId, signal) : undefined;
@@ -543,7 +543,8 @@ export class BrowserPage {
     if (this.debuggerOwned && this.contents.debugger.isAttached()) void this.contents.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
   }
   async upload(value: unknown, files: string[], signal: AbortSignal): Promise<void> {
-    await this.connect(); const reference = this.reference(value);
+    signal.throwIfAborted(); await this.pending(this.connect(), signal);
+    const reference = this.reference(value);
     await this.validateReference(reference, signal);
     const { node } = await this.command('DOM.describeNode', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
     const attributes = node.attributes as string[] | undefined;
