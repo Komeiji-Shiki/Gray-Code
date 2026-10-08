@@ -1,5 +1,6 @@
 import { BackgroundContinuation, type BackgroundFollowup } from './continuation';
 import type { PlatformMessage, RunRecord, RecordMutation, VersionedRecord } from '@graycode/contracts';
+import { PlatformStorageError } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentParentConfiguration } from './types';
 import { PUSH_MESSAGE_NAMES } from '../../../../shared/protocol';
@@ -77,15 +78,21 @@ export class SubagentFeedback {
     pending.sort((a, b) => a.value.sequence !== undefined && b.value.sequence !== undefined ? a.value.sequence - b.value.sequence
       : a.value.sequence !== undefined ? 1 : b.value.sequence !== undefined ? -1
       : Number(a.value.message.timestamp ?? 0) - Number(b.value.message.timestamp ?? 0) || a.value.id.localeCompare(b.value.id));
-    const state = await this.app.storage.readConversationState(conversationId);
-    const messages = [...state.history.messages]; const appended: PlatformMessage[] = [];
+    const state = await this.app.storage.getConversationInfo(conversationId);
+    if (!state) throw new PlatformStorageError('NOT_FOUND', `Conversation does not exist: ${conversationId}`);
+    const history = await this.app.storage.readHistorySelection(conversationId, {
+      expectedRevision: state.historyRevision, projection: { fields: ['id'] },
+    });
+    const seen = new Set(history.messages.map(message => message.id));
+    let parentId = history.messages.at(-1)?.id ?? null;
+    const appended: PlatformMessage[] = [];
     for (const { value } of pending) {
-      if (messages.some(message => message.id === value.id)) continue;
-      const message = { ...value.message, parentId: messages.at(-1)?.id ?? null, ...(activeRun ? { runId: activeRun.id } : {}) };
-      messages.push(message); appended.push(message);
+      if (seen.has(value.id)) continue;
+      const message = { ...value.message, parentId, ...(activeRun ? { runId: activeRun.id } : {}) };
+      seen.add(message.id); parentId = message.id ?? null; appended.push(message);
     }
-    await this.app.storage.commitConversation({ conversationId, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
-      ...(activeRun ? { activeRunId: activeRun.id } : {}), messages,
+    await this.app.storage.commitConversation({ conversationId, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken,
+      ...(activeRun ? { activeRunId: activeRun.id } : {}), appendMessages: appended,
       records: pending.flatMap(({ record, value }) => [
         { namespace: 'subagent-feedback', id: value.id, expectedRevision: record.revision, delete: true },
         { namespace: 'subagent-deliveries', id: value.id, ownerId: conversationId, value: { deliveredAt: Date.now(), sequence: value.sequence } },

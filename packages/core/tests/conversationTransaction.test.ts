@@ -4,6 +4,32 @@ import type { PlatformApplication } from '../../../apps/server/src/application';
 import { conversationTools } from '../../../apps/server/src/conversations/tools';
 import { fixture, metadata } from './fixtures';
 
+test('后缀追加与交付记录原子提交，冲突回滚并保留历史原文', async () => {
+  const f = await fixture();
+  try {
+    await f.store.createConversation(metadata('append-atomic'));
+    const original = { id: 'old', role: 'user', parts: [{ text: '原始正文' }], unknownFuture: { kept: true } };
+    await f.store.appendHistory('append-atomic', [original]);
+    await f.store.putRecord({ namespace: 'pending', id: 'new', value: { text: '待交付' } });
+    const before = (await f.store.getConversationInfo('append-atomic'))!;
+    const mutation = { conversationId: 'append-atomic', expectedRevision: before.historyRevision, expectedMetadataToken: before.metadataToken,
+      appendMessages: [{ id: 'new', role: 'user', parentId: 'old', parts: [{ text: '新增正文' }] }],
+      records: [{ namespace: 'pending', id: 'new', expectedRevision: 99, delete: true as const }] };
+    await expect(f.store.commitConversation(mutation)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(await f.store.getConversationInfo('append-atomic')).toEqual(before);
+    expect((await f.store.readFullHistory('append-atomic')).messages).toEqual([original]);
+    expect(await f.store.getRecord('pending', 'new')).toEqual({ text: '待交付' });
+    await expect(f.store.commitConversation({ ...mutation, messages: [] })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(f.store.commitConversation({ ...mutation, messageUpdates: [] })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    mutation.records[0].expectedRevision = 1;
+    const result = await f.store.commitConversation(mutation);
+    expect(result.total).toBe(2);
+    expect((await f.store.readFullHistory('append-atomic')).messages).toEqual([original, mutation.appendMessages[0]]);
+    expect(await f.store.getRecord('pending', 'new')).toBeNull();
+    await expect(f.store.commitConversation(mutation)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  } finally { await f.cleanup(); }
+});
+
 test('待办和活动工具跳过历史正文，元数据并发变更仍拒绝覆盖', async () => {
   const f = await fixture();
   try {

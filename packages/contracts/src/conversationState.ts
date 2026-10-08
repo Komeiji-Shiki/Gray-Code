@@ -17,6 +17,8 @@ export interface ConversationCommit {
   messages?: PlatformMessage[];
   /** 保持消息位置的局部更新，与 messages 整体替换互斥。 */
   messageUpdates?: { index: number; message: PlatformMessage }[];
+  /** 在同一事务中追加后缀，与整体替换及局部更新互斥。 */
+  appendMessages?: PlatformMessage[];
   metadata?: PlatformConversation;
   records?: RecordMutation[];
   /** Snapshot the previous history in the same transaction as its replacement. */

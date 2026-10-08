@@ -133,7 +133,14 @@ describe('共享任务、事件等待与消息顺序', () => {
     expect(first.sequence).toBeLessThan(second.sequence);
     await app.subagents.feedback.enqueueMessages([pending('z-first')]);
     expect((await app.storage.getRecord('subagent-feedback', 'z-first') as { sequence: number }).sequence).toBe(first.sequence);
+    const fullState = jest.spyOn(app.storage, 'readConversationState');
+    const commit = jest.spyOn(app.storage, 'commitConversation');
     await app.subagents.feedback.flush(main.conversationId!, (await app.storage.getRun(main.runId))!);
+    expect(fullState).not.toHaveBeenCalled();
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ appendMessages: expect.arrayContaining([
+      expect.objectContaining({ id: 'z-first' }), expect.objectContaining({ id: 'a-second', parentId: 'z-first' }),
+    ]) }));
+    fullState.mockRestore(); commit.mockRestore();
     expect((await app.storage.readFullHistory(main.conversationId!)).messages.filter(message => ['z-first', 'a-second'].includes(message.id!)).map(message => message.id)).toEqual(['z-first', 'a-second']);
     for (const gate of gates.splice(0)) gate.resolve(); await app.runtime.wait(main.runId); await app.close();
     const gate = hold(); generate = async () => { await gate.promise; return answer('done'); };
