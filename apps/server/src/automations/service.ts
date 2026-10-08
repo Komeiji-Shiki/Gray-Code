@@ -23,6 +23,7 @@ function matchesEventSource(record: AutomationRecord, change: EventSourceChange)
 export class ApplicationAutomations {
   private readonly records = new Map<string, AutomationRecord>();
   private readonly queues = new Map<string, Promise<unknown>>();
+  private readonly starts = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private timer?: ReturnType<typeof setTimeout>;
   private timerAt?: number;
   private ready = false;
@@ -232,6 +233,7 @@ export class ApplicationAutomations {
   }
   async pause(actorId: string, id: string, stopCurrent = false) {
     this.app.requireOwner(actorId);
+    if (stopCurrent) this.starts.get(id)?.controller.abort(new Error('用户停止自动任务。'));
     const record = await this.mutate(id, current => { current.status = 'paused'; current.pauseReason = 'user';
       if (current.pendingEvent) { traceEvent(current, { ...current.pendingEvent, status: 'cancelled', reason: '用户暂停或停止后续执行。' }); delete current.pendingEvent; delete current.nextRunAt; }
     });
@@ -299,15 +301,21 @@ export class ApplicationAutomations {
     const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey && record.nextRunAt !== undefined && record.nextRunAt <= now);
     await Promise.all(due.map(record => this.dispatch(record.id, now)));
   }
-  private async dispatch(id: string, now: number) {
-    await this.serial(id, async () => {
+  private dispatch(id: string, now: number): Promise<void> {
+    const pending = this.starts.get(id); if (pending) return pending.done;
+    const controller = new AbortController();
+    // 准备尚未生成运行 ID；停止请求必须能在任务写入队列之外中断它。
+    const done = this.serial(id, async () => {
+      if (controller.signal.aborted) return;
       const stored = await this.app.storage.getVersionedRecord(automationNamespace, id);
       const record = stored.value as AutomationRecord | null;
       if (!record) { this.records.delete(id); return; }
       if (record.status !== 'active' || record.currentRequestKey || record.nextRunAt === undefined || record.nextRunAt > now || this.closing) return;
       if ((await this.app.storage.listRuns({ conversationId: record.conversationId, activeOnly: true, limit: 1 })).length) return;
       try {
+        controller.signal.throwIfAborted();
         const state = await this.app.conversations.read(record.actorId, record.conversationId);
+        controller.signal.throwIfAborted();
         if (normalizePendingApprovalGate((state.metadata.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) {
           record.status = 'paused'; record.pauseReason = 'input'; record.error = '当前对话中的文档正在等待确认，请确认后继续自动任务。';
         } else {
@@ -321,7 +329,7 @@ export class ApplicationAutomations {
           const change = { state, commit: { records: [{ namespace: automationNamespace, id, ownerId: record.conversationId, expectedRevision: stored.revision, value: started },
             ...(event ? [{ namespace: automationEventCauses, id: requestKey, ownerId: record.conversationId, expectedRevision: null, value: { ancestry: [...new Set([...event.ancestry, id])] } }] : [])] } };
           const message = event ? `${record.objective}\n\n本次事件：${event.summary}\n事件标识：${event.key}` : record.objective;
-          const scope = { workspace: workspace ?? undefined, automationId: id };
+          const scope = { workspace: workspace ?? undefined, automationId: id, signal: controller.signal };
           const continuation = !!record.lastRunId && !record.pendingObjectiveChange && (record.kind === 'goal' || record.followupPending);
           const run = continuation ? await this.app.runtime.continue({ ...input, expectedRevision: state.history.revision }, change, scope)
             : await this.app.runtime.start({ ...input, message: { role: 'user', parts: [{ text: message }] } }, change, scope);
@@ -329,12 +337,14 @@ export class ApplicationAutomations {
           this.app.publish({ type: 'conversation.changed', conversationId: record.conversationId, runId: run.id }); return;
         }
       } catch (error) {
+        if (controller.signal.aborted) return;
         if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) return;
         record.status = 'paused'; record.pauseReason = 'error'; record.error = error instanceof Error ? error.message : String(error);
       }
       record.updatedAt = Date.now();
       await this.app.storage.commitRecords([{ namespace: automationNamespace, id, ownerId: record.conversationId, expectedRevision: stored.revision, value: record }]); this.changed(record);
-    });
+    }).finally(() => { this.starts.delete(id); });
+    this.starts.set(id, { controller, done }); return done;
   }
   private async created(run: RunRecord) {
     if (run.automationId) {
@@ -417,6 +427,7 @@ export class ApplicationAutomations {
   }
   async close() {
     this.closing = true; this.unsubscribe(); if (this.timer) clearTimeout(this.timer); this.timer = undefined;
+    for (const pending of this.starts.values()) pending.controller.abort(new Error('应用正在退出。'));
     await this.eventSources.close(); await Promise.allSettled(this.queues.values());
   }
 }

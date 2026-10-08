@@ -2,6 +2,7 @@ import { writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import type { AutomationRecord, ModelInput, PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
+import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
 import { nextScheduledTime, validateSchedule } from '../../../apps/server/src/automations/schedule';
 import { fixture } from './fixtures';
 
@@ -86,6 +87,38 @@ describe('持久目标和定时触发', () => {
     expect(calls.find(call => call.conversationId === 'child-chat')?.tools.some(tool => tool.name === 'goal_update')).toBe(false);
     now += 1100; await app.automations.tick(now);
     await until(goal.id, record => record.status === 'completed' && !record.currentRequestKey); expect(primary).toBe(2);
+  });
+
+  test.each(['停止', '退出'])('自动任务%s会中断尚未提交的提示词准备', async action => {
+    const goal = await create();
+    let entered!: () => void, release!: () => void, signal: AbortSignal | undefined;
+    const entering = new Promise<void>(resolve => { entered = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const prepare = PlatformPromptService.prototype.prepare;
+    jest.spyOn(PlatformPromptService.prototype, 'prepare').mockImplementationOnce(async function (this: PlatformPromptService, input) {
+      signal = input.signal; entered();
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => reject(signal!.reason);
+        signal?.addEventListener('abort', abort, { once: true });
+        void released.then(() => { signal?.removeEventListener('abort', abort); resolve(); });
+      });
+      signal?.throwIfAborted(); return prepare.call(this, input);
+    });
+    const dispatching = app.automations.tick(now);
+    try {
+      await entering;
+      const overlapping = app.automations.tick(now);
+      const stopping = action === '停止' ? app.automations.pause('owner', goal.id, true) : app.automations.close();
+      try {
+        expect(signal?.aborted).toBe(true);
+        await Promise.all([dispatching, overlapping, stopping]);
+        expect(calls).toEqual([]);
+        expect(await app.storage.listRuns({ conversationId: 'auto-chat' })).toEqual([]);
+        expect((await app.storage.readHistory('auto-chat')).messages).toEqual([]);
+        expect(await app.storage.getRecord('automations', goal.id)).toMatchObject(action === '停止'
+          ? { status: 'paused', pauseReason: 'user' } : { status: 'active' });
+      } finally { release(); await Promise.all([dispatching, overlapping, stopping]); }
+    } finally { release(); await dispatching; }
   });
 
   test('重启保留长期目标进度并暂停，用户继续后才再次运行', async () => {
