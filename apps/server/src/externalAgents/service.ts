@@ -79,6 +79,10 @@ export class ExternalAgents {
       sessions: [...this.sessions.values()].filter(value => value.record.actorId === context.actorId && value.record.conversationId === context.conversationId)
         .map(value => this.summary(value.record)),
     } };
+    if (action !== 'create' && (typeof args.sessionId !== 'string' || !args.sessionId.trim()))
+      throw new Error('这个操作需要 sessionId，请使用 create、fork 或 list 返回的 session.id。');
+    if ((action === 'prompt' || action === 'create' && args.prompt !== undefined)
+      && (typeof args.prompt !== 'string' || !args.prompt.trim())) throw new Error('请提供给编码代理的非空 prompt。');
     if (action === 'events') {
       const live = await this.owned(String(args.sessionId), context, false);
       const after = Number(args.afterSequence ?? 0);
@@ -239,8 +243,7 @@ export class ExternalAgents {
     return client;
   }
   private async promptContent(args: Record<string, unknown>, context: ToolContext, client: AcpClient): Promise<ContentBlock[]> {
-    if (typeof args.prompt !== 'string' || !args.prompt.trim()) throw new Error('请提供给编码代理的提示。');
-    const content: ContentBlock[] = [{ type: 'text', text: args.prompt }];
+    const content: ContentBlock[] = [{ type: 'text', text: args.prompt as string }];
     const files = args.images as string[] | undefined;
     if (files?.length && !client.info.agentCapabilities?.promptCapabilities?.image) throw new Error('这个代理未声明图片输入能力。');
     if (files?.length) {
