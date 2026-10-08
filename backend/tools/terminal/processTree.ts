@@ -13,8 +13,13 @@ import * as path from 'path';
  * 被下一个进程复用之前。父进程从未被采样到的孤儿无法证明归属，只报告不终止。
  */
 export interface ProcessRecord { pid: number; ppid: number; createdAt: number; name: string; sessionId?: number }
+export interface ProcessSnapshot {
+    records: ProcessRecord[];
+    /** 枚举到 PID 但无权取得创建时间时，不能把它当作已经退出，也不能据此终止。 */
+    unresolved: Array<Omit<ProcessRecord, 'createdAt'>>;
+}
 export interface ProcessTreePort {
-    snapshot(): Promise<ProcessRecord[]>;
+    snapshot(relatedPids?: readonly number[]): Promise<ProcessSnapshot>;
     terminate(pids: number[]): Promise<void>;
 }
 export interface ProcessTreeReport {
@@ -41,27 +46,49 @@ const REPORT_LIMIT = 10;
 const key = (record: Pick<ProcessRecord, 'pid' | 'createdAt'>) => `${record.pid}:${record.createdAt}`;
 
 /** PowerShell 输出 Unix 毫秒，避免解析 CIM 日期字符串；会话 ID 用于缩小孤儿报告范围。 */
-const SNAPSHOT_SCRIPT = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name,SessionId | ForEach-Object { if ($_.CreationDate) { '{0}\t{1}\t{2}\t{3}\t{4}' -f $_.ProcessId, $_.ParentProcessId, ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds(), $_.SessionId, $_.Name } }";
+const SNAPSHOT_SCRIPT = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name,SessionId | ForEach-Object { $createdAt = if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() } else { '?' }; '{0}\t{1}\t{2}\t{3}\t{4}' -f $_.ProcessId, $_.ParentProcessId, $createdAt, $_.SessionId, $_.Name }";
 
-export function parseProcessSnapshot(text: string): ProcessRecord[] {
+export function parseProcessSnapshot(text: string): ProcessSnapshot {
     const records: ProcessRecord[] = [];
+    const unresolved: ProcessSnapshot['unresolved'] = [];
     for (const line of text.split(/\r?\n/)) {
         const [pid, ppid, createdAt, sessionId, ...name] = line.split('\t');
-        const value = { pid: Number(pid), ppid: Number(ppid), createdAt: Number(createdAt), sessionId: Number(sessionId), name: name.join('\t').trim() };
-        if (Number.isSafeInteger(value.pid) && value.pid > 0 && Number.isSafeInteger(value.ppid) && Number.isFinite(value.createdAt)) records.push(value);
+        const identity = { pid: Number(pid), ppid: Number(ppid), ...(sessionId ? { sessionId: Number(sessionId) } : {}), name: name.join('\t').trim() };
+        if (!Number.isSafeInteger(identity.pid) || identity.pid <= 0 || !Number.isSafeInteger(identity.ppid)) continue;
+        if (createdAt === '?') unresolved.push(identity);
+        else if (createdAt && Number.isFinite(Number(createdAt))) records.push({ ...identity, createdAt: Number(createdAt) });
     }
-    return records;
+    return { records, unresolved };
 }
 
-export function windowsProcessTreePort(): ProcessTreePort {
+/** 父 PID 只用于划定需要核对的范围，身份未知的记录永远不进入可终止集合。 */
+function unresolvedDescendants(snapshot: ProcessSnapshot, relatedPids: readonly number[]): ProcessSnapshot['unresolved'] {
+    const possible = new Set(relatedPids);
+    const children = new Map<number, number[]>();
+    for (const record of [...snapshot.records, ...snapshot.unresolved])
+        (children.get(record.ppid) ?? children.set(record.ppid, []).get(record.ppid)!).push(record.pid);
+    const pending = [...possible];
+    for (let index = 0; index < pending.length; index++) for (const pid of children.get(pending[index]) ?? []) {
+        if (!possible.has(pid)) { possible.add(pid); pending.push(pid); }
+    }
+    return snapshot.unresolved.filter(record => possible.has(record.pid));
+}
+
+export function windowsProcessTreePort(snapshotExecutable?: string): ProcessTreePort {
     const system = process.env.SystemRoot ?? 'C:\\Windows';
+    const querySnapshot = (executable?: string) => new Promise<ProcessSnapshot>((resolve, reject) => {
+        execFile(executable ?? path.join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+            executable ? ['--process-snapshot'] : ['-NoProfile', '-NonInteractive', '-Command', SNAPSHOT_SCRIPT],
+            { windowsHide: true, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+                if (error) reject(error); else resolve(parseProcessSnapshot(String(stdout)));
+            });
+    });
     return {
-        snapshot: () => new Promise((resolve, reject) => {
-            execFile(path.join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', SNAPSHOT_SCRIPT],
-                { windowsHide: true, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
-                    if (error) reject(error); else resolve(parseProcessSnapshot(String(stdout)));
-                });
-        }),
+        snapshot: async relatedPids => {
+            const snapshot = await querySnapshot(snapshotExecutable);
+            // 权限限制只影响本命令的可能成员时，继续使用原 CIM 核对，保留原有停止能力。
+            return snapshotExecutable && unresolvedDescendants(snapshot, relatedPids ?? []).length ? querySnapshot() : snapshot;
+        },
         // 与受管进程停止相同的 taskkill /T /F；调用方已确认 PID 身份，失败由随后的快照核实。
         terminate: pids => new Promise(resolve => {
             if (!pids.length) { resolve(); return; }
@@ -114,7 +141,7 @@ export class ProcessTreeTracker {
     /** 采样只记录 spawn 之后仍可能相关的进程，长时间运行时不会无限积累整机历史。 */
     sample(): Promise<void> {
         if (this.stopped) return Promise.resolve();
-        return this.sampling ??= this.port.snapshot().then(records => { this.remember(records); }, error => { this.lastError = String(error); })
+        return this.sampling ??= this.snapshotForTree().then(snapshot => { this.remember(snapshot.records); }, error => { this.lastError = String(error); })
             .finally(() => { this.sampling = undefined; });
     }
     private remember(records: ProcessRecord[]) {
@@ -132,6 +159,7 @@ export class ProcessTreeTracker {
     rootExited(): void { this.rootExitedAt ??= Date.now(); }
     stop(): void { this.stopped = true; clearTimeout(this.timer); this.timer = undefined; }
     members(): ProcessRecord[] { return attributeProcessTree(this.records.values(), this.rootPid, this.spawnedAt, this.rootExitedAt); }
+    private snapshotForTree(): Promise<ProcessSnapshot> { return this.port.snapshot(this.members().map(record => record.pid)); }
 
     /**
      * 根进程树已由调用方用 taskkill /T 终止后调用：补终止已确认但脱链的后代，再用快照核实。
@@ -141,28 +169,35 @@ export class ProcessTreeTracker {
         this.stop();
         try {
             // 旧采样保留父子链，当前快照核实存活身份；同时读取，避免停止时串行等待两次 CIM。
-            const [, current] = await Promise.all([this.sampling, this.port.snapshot()]);
-            this.remember(current);
+            const [, current] = await Promise.all([this.sampling, this.snapshotForTree()]);
+            this.remember(current.records);
             const members = this.members();
             const alive = (list: ProcessRecord[]) => members.filter(member => !(member.pid === this.rootPid && this.rootExitedAt !== undefined)
                 && list.some(record => record.pid === member.pid && (member.ppid === -1
                 ? Math.abs(record.createdAt - this.spawnedAt) <= SPAWN_SLACK_MS : record.createdAt === member.createdAt)));
-            const survivors = alive(current);
+            const survivors = alive(current.records);
             if (survivors.length) await this.port.terminate(survivors.map(record => record.pid));
-            const after = survivors.length ? await this.port.snapshot() : current;
-            const remaining = alive(after);
-            const report: ProcessTreeReport = { verified: true, cleaned: remaining.length === 0, observed: members.length,
-                detached: survivors.filter(record => record.pid !== this.rootPid && !remaining.includes(record)).slice(0, REPORT_LIMIT).map(({ pid, name }) => ({ pid, name })) };
+            const after = survivors.length ? await this.snapshotForTree() : current;
+            const remaining = alive(after.records);
+            const unresolved = unresolvedDescendants(after, members.map(record => record.pid));
+            const unverifiedPids = new Set(unresolved.map(record => record.pid));
+            const report: ProcessTreeReport = { verified: unresolved.length === 0, cleaned: remaining.length === 0 && unresolved.length === 0, observed: members.length,
+                detached: survivors.filter(record => record.pid !== this.rootPid && !remaining.includes(record) && !unverifiedPids.has(record.pid))
+                    .slice(0, REPORT_LIMIT).map(({ pid, name }) => ({ pid, name })) };
+            if (unresolved.length) {
+                report.unconfirmed = unresolved.slice(0, REPORT_LIMIT).map(({ pid, name }) => ({ pid, name }));
+                report.error = `Process identity could not be queried: ${unresolved.slice(0, REPORT_LIMIT).map(record => record.pid).join(', ')}.`;
+            }
             if (remaining.length) report.remaining = remaining.slice(0, REPORT_LIMIT).map(({ pid, name }) => ({ pid, name: name || 'shell' }));
             if (options.pipeHeld?.()) {
                 const memberKeys = new Set(members.map(key));
-                const live = new Map(after.map(record => [record.pid, record]));
+                const live = new Map(after.records.map(record => [record.pid, record]));
                 const session = members.find(member => member.ppid !== -1)?.sessionId;
                 const end = (this.rootExitedAt ?? Date.now()) + SPAWN_SLACK_MS;
-                const orphans = after.filter(record => !memberKeys.has(key(record)) && record.createdAt >= this.spawnedAt - SPAWN_SLACK_MS && record.createdAt <= end
+                const orphans = after.records.filter(record => !memberKeys.has(key(record)) && record.createdAt >= this.spawnedAt - SPAWN_SLACK_MS && record.createdAt <= end
                     && (session === undefined || record.sessionId === session) && record.pid !== process.pid
                     && !(live.get(record.ppid) && live.get(record.ppid)!.createdAt <= record.createdAt));
-                if (orphans.length) report.unconfirmed = orphans.slice(0, REPORT_LIMIT).map(({ pid, name }) => ({ pid, name }));
+                if (orphans.length) report.unconfirmed = [...(report.unconfirmed ?? []), ...orphans.map(({ pid, name }) => ({ pid, name }))].slice(0, REPORT_LIMIT);
             }
             return report;
         } catch (error) {

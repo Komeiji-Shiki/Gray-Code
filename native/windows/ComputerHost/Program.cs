@@ -16,8 +16,12 @@ namespace GrayCode.ComputerHost {
     private static SynchronizationContext dispatcher;
     private static volatile bool closing;
     private static void Write(object value) {lock(outputGate){Console.WriteLine(serializer.Serialize(value));Console.Out.Flush();}}
-    [STAThread] private static void Main() {
+    [STAThread] private static void Main(string[] args) {
       Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);
+      if(args.Length==1&&args[0]=="--process-snapshot") {
+        try {ProcessSnapshot.Write();}catch(Exception error){Console.Error.WriteLine(error.Message);Environment.ExitCode=1;}
+        return;
+      }
       try {Win32.SetProcessDpiAwarenessContext(new IntPtr(-4));}catch(EntryPointNotFoundException){Win32.SetProcessDPIAware();}
       Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
       SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());dispatcher=SynchronizationContext.Current;

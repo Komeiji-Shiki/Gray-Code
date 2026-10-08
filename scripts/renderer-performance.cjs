@@ -64,10 +64,11 @@ async function measureCommandCancellation(options) {
     // 诊断事件在构造进程对象时触发，spawn 后才有真实命令参数。
     child.once('spawn', () => {
       const command = (child.spawnargs ?? []).join(' ');
-      const kind = /Get-CimInstance\s+Win32_Process/i.test(command) ? 'process-snapshot'
+      const kind = /Get-CimInstance\s+Win32_Process|--process-snapshot/i.test(command) ? 'process-snapshot'
         : /\btaskkill(?:\.exe)?\b/i.test(command) ? 'taskkill' : undefined;
       if (!kind) return;
-      child.once('close', (exitCode, signal) => processSteps.push({ kind, startedAt, durationMilliseconds: performance.now() - startedAt, exitCode, signal }));
+      const source = kind === 'process-snapshot' ? command.includes('--process-snapshot') ? 'native' : 'cim' : undefined;
+      child.once('close', (exitCode, signal) => processSteps.push({ kind, source, startedAt, durationMilliseconds: performance.now() - startedAt, exitCode, signal }));
     });
   };
   diagnostics.subscribe('child_process', observe);

@@ -6,6 +6,8 @@ import { ComputerError, type ComputerNativePort, type NativeComputerStatus } fro
 
 interface Pending { resolve(value: any): void; reject(error: Error): void; cleanup(): void }
 
+export const computerHostExecutable = path.join(__dirname, 'computer-host', 'GrayCode.ComputerHost.exe');
+
 export class WindowsComputerNative implements ComputerNativePort {
   readonly available: boolean;
   identity?: { pid: number; executable: string; startedAt: number };
@@ -16,7 +18,7 @@ export class WindowsComputerNative implements ComputerNativePort {
   private sequence = 0;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Set<(status: NativeComputerStatus) => void>();
-  constructor(readonly executable = path.join(__dirname, 'computer-host', 'GrayCode.ComputerHost.exe')) {
+  constructor(readonly executable = computerHostExecutable) {
     this.available = process.platform === 'win32' && fs.existsSync(executable);
   }
   subscribe(listener: (status: NativeComputerStatus) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }

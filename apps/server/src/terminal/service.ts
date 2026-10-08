@@ -8,6 +8,8 @@ import { createShellRuntime } from '../../../../backend/tools/terminal/shellConf
 import { createOutputRuntime } from '../../../../backend/tools/terminal/outputDecoderRuntime';
 import { createTerminalPrompts } from '../../../../backend/tools/terminal/promptDescriptionsRuntime';
 import { windowsProcessTreePort } from '../../../../backend/tools/terminal/processTree';
+import { existsSync } from 'node:fs';
+import { computerHostExecutable } from '../computer/native';
 import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
@@ -36,7 +38,8 @@ interface ActiveTerminal {
 export class PlatformTerminals {
   private readonly active = new Map<string, ActiveTerminal>();
   private closing = false;
-  constructor(private readonly app: PlatformApplication, private readonly processTree = windowsProcessTreePort()) {}
+  constructor(private readonly app: PlatformApplication, private readonly processTree = windowsProcessTreePort(
+    process.platform === 'win32' && existsSync(computerHostExecutable) ? computerHostExecutable : undefined)) {}
 
   private runtime(config: ExecuteCommandToolConfig, tasks: TerminalTaskPort, directory?: string): Runner {
     const getConfig = () => config;

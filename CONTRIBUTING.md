@@ -59,6 +59,8 @@ npm --prefix frontend test -- src/__tests__/components/StaticGuards.test.ts
 
 MCP 与 ACP 使用真实本机 stdio/HTTP 夹具；节点使用隔离数据和实际本机 TLS。测试只关闭自己启动并持有的子进程。Windows 的沙箱或权限限制可能阻止进程树清理，应在能管理这些测试子进程的环境运行。
 
+Windows 原生进程查询可用 `node scripts/build-computer-host.mjs` 单独构建。将 `GRAYCODE_PROCESS_SNAPSHOT_EXE` 设为生成的 `GrayCode.ComputerHost.exe` 绝对路径后，`backend/__tests__/tools/processTree.test.ts` 中的“原生快照与 CIM”用例会只读比较身份与耗时，`packages/core/tests/terminalTaskTools.test.ts` 中的前台命令中断用例会使用该宿主核对并停止自己的启动器与后代。
+
 ACP 官方 SDK 使用 ESM，平台 Jest 仅转换该依赖的 JavaScript；生产 esbuild 继续正常打包，不为测试修改全局模块解析规则。
 
 ## 依赖维护

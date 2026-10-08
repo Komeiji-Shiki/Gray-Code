@@ -17,6 +17,7 @@ import type { BrowserHost } from './browser/port';
 import { ComputerService } from './computer/service';
 import { computerTools } from './computer/tools';
 import type { ComputerScreenPort, ComputerNativePort } from './computer/port';
+import type { ProcessTreePort } from '../../../backend/tools/terminal/processTree';
 import type { RemoteAccessHost } from './transport/remotePort';
 import { ExecutionNodes } from './nodes/service';
 import { PlatformNotifications } from './notifications';
@@ -119,6 +120,7 @@ export interface ApplicationOptions {
   browser?: (application: PlatformApplication) => BrowserHost;
   computerCapture?: ComputerScreenPort;
   computerNative?: ComputerNativePort;
+  terminalProcessTree?: ProcessTreePort;
   remoteAccess?: (application: PlatformApplication) => RemoteAccessHost;
 }
 export class PlatformApplication {
@@ -281,7 +283,7 @@ export class PlatformApplication {
     );
     this.product = new ProductConfiguration(this);
     this.chatgpt = new ChatGPTService(this);
-    this.terminals = new PlatformTerminals(this);
+    this.terminals = new PlatformTerminals(this, options.terminalProcessTree);
     this.interactiveTerminals = new InteractiveTerminals(this);
     this.remoteAccess = options.remoteAccess?.(this);
     this.nodes = new ExecutionNodes(this, options.secretCodec);

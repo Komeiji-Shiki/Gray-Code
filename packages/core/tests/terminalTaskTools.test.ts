@@ -4,10 +4,12 @@ import type { ToolContext } from '@graycode/core';
 import type { RunRecord } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { fixture } from './fixtures';
+import { windowsProcessTreePort } from '../../../backend/tools/terminal/processTree';
 
 let f: Awaited<ReturnType<typeof fixture>>, app: PlatformApplication, context: ToolContext;
 beforeEach(async () => {
-  f = await fixture(); await f.store.close(); app = await PlatformApplication.open({ dataDirectory: f.data });
+  f = await fixture(); await f.store.close(); app = await PlatformApplication.open({ dataDirectory: f.data,
+    terminalProcessTree: process.env.GRAYCODE_PROCESS_SNAPSHOT_EXE ? windowsProcessTreePort(process.env.GRAYCODE_PROCESS_SNAPSHOT_EXE) : undefined });
   const now = Date.now();
   await app.storage.createConversation({ id: 'terminal-chat', actorId: 'owner', title: 'terminal', createdAt: now, updatedAt: now });
   const run: RunRecord = { id: 'terminal-run', requestKey: 'terminal-run', actorId: 'owner', agentId: 'default', conversationId: 'terminal-chat', status: 'queued', iteration: 0, catalogVersion: 'fixture', createdAt: now, updatedAt: now };
