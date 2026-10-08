@@ -154,6 +154,21 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     const fallback = Math.max(virtualWindowStart.value, (Number(chatStore.windowStartIndex) || 0) + windowEnd.value)
     return typeof last?.backendIndex === 'number' ? Math.max(virtualWindowStart.value, last.backendIndex + 1) : fallback
   })
+  interface MessageStructureSnapshot { key?: unknown[]; all: Message[]; visible: Message[] }
+  // 楼层与标记只依赖结构；纯助手正文增量复用快照，避免每批重新遍历整个窗口。
+  const messageStructure = computed<MessageStructureSnapshot>((previous) => {
+    if (toRaw(props.messages) !== toRaw(chatStore.messages)) {
+      return { all: props.messages, visible: props.messages }
+    }
+    const source = chatStore.allMessages
+    const last = source.at(-1)
+    const key = [source, chatStore.messagesStructuralVersion, source.length,
+      last?.id, last?.role, last?.isFunctionResponse, last?.backendIndex,
+      last?.role === 'user' && !last.isFunctionResponse ? toRaw(last) : null]
+    if (previous?.key && key.every((value, index) => value === previous.key![index])) return previous
+    // 结构字段的响应由上面的版本与尾消息负责，消费方不再依赖每个数组槽位。
+    return { key, all: toRaw(source), visible: toRaw(props.messages) }
+  })
   // 用户消息对象写入后不再改写，按对象缓存标记；流式增量只替换助手消息，不必重新生成预览。
   const localMarkerByMessage = new WeakMap<Message, MessageMarker>()
   const sameMarkers = (left: readonly MessageMarker[], right: readonly MessageMarker[]) =>
@@ -167,7 +182,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     const serverMarkers = messageMarkers.value
     const userMessages: Message[] = []
     const userIndices: number[] = []
-    for (const message of props.messages) {
+    for (const message of messageStructure.value.visible) {
       if (message.role !== 'user' || message.isFunctionResponse || typeof message.backendIndex !== 'number') continue
       userMessages.push(message)
       userIndices.push(message.backendIndex)
@@ -257,7 +272,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 楼层号映射：后端一次全局扫描提供绝对位置，分页窗口按 backendIndex 对齐。
   // 历史缩短后旧快照立即失效；新消息在快照末尾按连续索引顺延。
   const floorByMessageId = computed(() => computePaginatedMessageFloorMap(
-    props.messages, chatStore.totalMessages < markerTotal.value ? null : globalFloorIndices.value, markerTotal.value
+    // 隐藏工具结果仍占持久化索引，连续性判断必须使用完整窗口。
+    messageStructure.value.all, chatStore.totalMessages < markerTotal.value ? null : globalFloorIndices.value, markerTotal.value
   ))
 
   // 存档序号：按创建时间升序编号（第 N 次存档）。

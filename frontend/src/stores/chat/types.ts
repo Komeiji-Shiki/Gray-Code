@@ -389,6 +389,8 @@ export interface ChatStoreComputed {
   filteredConversations: ComputedRef<Conversation[]>
   /** 用于显示的消息列表（过滤掉纯 functionResponse 消息） */
   messages: ComputedRef<Message[]>
+  /** 中间插入、替换和删除使消息结构缓存失效，尾部追加另由长度识别。 */
+  messagesStructuralVersion: ComputedRef<number>
   /** 是否有消息 */
   hasMessages: ComputedRef<boolean>
   /** 是否显示空状态 */

@@ -5,6 +5,7 @@ import { useVirtualMessageWindow } from '../useVirtualMessageWindow'
 import { messageListUiStateByTab } from '../messageListUiState'
 import { clearMessageJump, jumpToMessage, peekMessageJump } from '../messageJump'
 import type { Message } from '../../../types'
+import { sendToExtension } from '../../../utils/vscode'
 
 vi.mock('../../../utils/vscode', () => ({
   sendToExtension: vi.fn().mockResolvedValue({ total: 1000, markers: [], floorIndices: [] })
@@ -16,13 +17,15 @@ function messages(start: number, count: number): Message[] {
   }))
 }
 
-function mountWindow(fullWindow = false, start = 800, count = 200) {
+function mountWindow(fullWindow = false, start = 800, count = 200, storeBacked = false) {
   const state = reactive({ messages: messages(start, count), tabId: 'navigation-tab' })
   const chatStore = reactive({
     currentConversationId: 'conversation', totalMessages: start + count, windowStartIndex: start,
     isStreaming: false, isWaitingForResponse: false, isLoadingMoreMessages: false,
     checkpoints: [], openTabs: [{ id: state.tabId }], sessionSnapshots: new Map(),
     allMessages: state.messages,
+    get messages() { return storeBacked ? state.messages : undefined },
+    messagesStructuralVersion: 0,
     loadOlderMessagesPage: vi.fn().mockResolvedValue(false),
     loadMessagesAroundIndex: vi.fn().mockResolvedValue(false)
   })
@@ -68,6 +71,46 @@ describe('消息窗口分页与连续定位', () => {
     clearMessageJump()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  test('流式尾部正文不重扫楼层和标记，隐藏工具结果之后继续编号', async () => {
+    vi.mocked(sendToExtension).mockResolvedValueOnce({ total: 600, markers: [], floorIndices: Array.from({ length: 600 }, (_, i) => i) })
+    const { wrapper, state, chatStore, navigation } = mountWindow(false, 0, 600, true)
+    try {
+      chatStore.allMessages = [...state.messages]
+      state.messages[599].role = 'assistant'
+      let indexReads = 0
+      for (const [index, message] of chatStore.allMessages.entries()) {
+        Object.defineProperty(message, 'backendIndex', { configurable: true, get: () => { indexReads++; return index } })
+      }
+      await flushPromises()
+      expect(navigation.messageMarkers.value).toHaveLength(599)
+      indexReads = 0
+      chatStore.allMessages[599] = { ...chatStore.allMessages[599], content: '新增的流式正文' }
+      state.messages = [...chatStore.allMessages]
+      await nextTick()
+      expect(navigation.messageMarkers.value).toHaveLength(599)
+      expect(indexReads).toBeLessThan(200)
+      const last = () => navigation.messageRenderRows.value.filter(row => row.kind === 'message').at(-1)!
+      expect(last()).toMatchObject({ item: { floor: 600, message: { content: '新增的流式正文' } } })
+
+      const container = wrapper.element as HTMLElement
+      container.scrollTop = 9500
+      chatStore.allMessages.push({ id: 'tool-600', role: 'user', content: '', timestamp: 600, backendIndex: 600, isFunctionResponse: true },
+        { id: 'reply-601', role: 'assistant', content: '工具之后的回复', timestamp: 601, backendIndex: 601 })
+      state.messages = chatStore.allMessages.filter(message => !message.isFunctionResponse)
+      chatStore.totalMessages = 602
+      await nextTick()
+      expect(last()).toMatchObject({ item: { floor: 601, message: { id: 'reply-601' } } })
+
+      chatStore.allMessages[580] = { ...chatStore.allMessages[580], role: 'tool' }
+      chatStore.messagesStructuralVersion++
+      state.messages = chatStore.allMessages.filter(message => !message.isFunctionResponse)
+      await nextTick()
+      const changed = navigation.messageRenderRows.value.find(row => row.kind === 'message' && row.item.message.id === 'm-580')
+      expect(changed).toMatchObject({ item: { floor: undefined } })
+      expect(navigation.messageMarkers.value).toHaveLength(598)
+    } finally { wrapper.unmount() }
   })
 
   test('本地还有较早消息时只展开 40 条，不提前请求后端', async () => {

@@ -110,6 +110,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   const messages = computed(() =>
     getVisibleChatMessagesCached(state)
   )
+  const messagesStructuralVersion = computed(() => getMessagesStructuralVersion(state))
   
   /** 是否有消息 */
   const hasMessages = computed(() => state.allMessages.value.length > 0)
@@ -253,6 +254,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     sortedConversations,
     filteredConversations,
     messages,
+    messagesStructuralVersion,
     hasMessages,
     showEmptyState,
     currentModelName,

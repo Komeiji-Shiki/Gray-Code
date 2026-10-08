@@ -943,6 +943,7 @@ export const useChatStore = defineStore('chat', () => {
     historyFolded: state.historyFolded,
     foldedMessageCount: state.foldedMessageCount,
     messages: computed.messages,
+    messagesStructuralVersion: computed.messagesStructuralVersion,
     configId: state.configId,
     currentConfig: state.currentConfig,
     selectedModelId: state.selectedModelId,
