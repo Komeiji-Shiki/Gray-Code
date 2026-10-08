@@ -159,7 +159,10 @@ describe('original UI history operations on the independent core', () => {
     await expect(call('deleteMessage', { conversationId: 'conversation', targetIndex: 0, messageId: 'wrong' })).rejects.toThrow('MESSAGE_CHANGED');
     expect((await app.storage.getRun(running.runId))?.status).toBe('running');
     const page = await history();
+    const reads = jest.spyOn(app.conversations, 'read');
     await call('deleteMessage', { conversationId: 'conversation', targetIndex: page.messages.length - 1, messageId: 'pending' });
+    expect(reads).toHaveBeenCalledTimes(1);
+    reads.mockRestore();
     expect((await app.storage.getRun(running.runId))?.status).toBe('cancelled');
     expect((await history()).messages.some(message => message.id === 'pending')).toBe(false);
   });

@@ -16,18 +16,18 @@ export class ConversationService {
     await this.app.conversation(actorId, id);
     return this.app.storage.readConversationState(id, [{ namespace: branchNamespace, id }]);
   }
-  private target(state: ConversationState, index: number, messageId: string): void {
-    if (!Number.isSafeInteger(index) || index < 0 || !messageId || state.history.messages[index]?.id !== messageId)
+  private target(messages: ReadonlyArray<Pick<PlatformMessage, 'id'>>, index: number, messageId: string): void {
+    if (!Number.isSafeInteger(index) || index < 0 || !messageId || messages[index]?.id !== messageId)
       throw new Error('MESSAGE_CHANGED: 消息已变化，请刷新后重试。');
   }
   async idle(actorId: string, id: string, target?: { index: number; messageId: string }): Promise<ConversationState> {
     await this.app.manageConversation(actorId, id);
-    let state = await this.read(actorId, id);
-    if (target) this.target(state, target.index, target.messageId);
     const runs = await this.app.storage.listRuns({ conversationId: id, activeOnly: true });
+    // 取消前只校验目标身份；运行停止后再读取一次完整状态，保留清理期间追加的结果。
+    if (runs.length && target) this.target((await this.app.storage.readHistoryOutline(id)).entries, target.index, target.messageId);
     for (const run of runs) { await this.app.runtime.cancel(run.id, actorId); await this.app.runtime.wait(run.id); }
-    if (runs.length) state = await this.read(actorId, id);
-    if (target) this.target(state, target.index, target.messageId);
+    const state = await this.read(actorId, id);
+    if (target) this.target(state.history.messages, target.index, target.messageId);
     return state;
   }
   private changed(state: ConversationState, messages: PlatformMessage[], reason: string, branch: BranchState): PreparedConversationChange {
@@ -119,7 +119,7 @@ export class ConversationService {
     }
     const calls = model.parts.flatMap(part => part.functionCall ? [part.functionCall as { id: string; name: string }] : []).filter(call => selected.has(call.id) && !paired.has(call.id) && !detached.has(call.id));
     if (!calls.length) return { success: true };
-    const messages = structuredClone(state.history.messages);
+    const messages = state.history.messages.map(message => ({ ...message }));
     const responses: PlatformMessage[] = calls.map(call => ({ id: randomUUID(), role: 'user', isFunctionResponse: true, timestamp: Date.now(),
       parts: [{ functionResponse: { id: call.id, name: call.name, response: { success: false, code: 'CANCELLED', error: '用户取消了尚未完成的工具调用。' } } }] }));
     let insert = index + 1; while (messages[insert]?.isFunctionResponse) insert++;
@@ -176,11 +176,12 @@ export class ConversationService {
     return { success: true, revision: result.revision };
   }
   async reroll(actorId: string, id: string, targetId: string | undefined, requestKey: string): Promise<PreparedConversationChange> {
-    const initial = await this.read(actorId, id);
-    const target = targetId ?? [...initial.history.messages].reverse().find(message => message.role === 'model')?.id;
-    const index = initial.history.messages.findIndex(message => message.id === target);
-    if (index < 1 || initial.history.messages[index].role !== 'model') throw new Error('重试目标不是当前历史中的模型消息。');
-    const state = await this.idle(actorId, id, { index, messageId: initial.history.messages[index].id! });
+    await this.app.conversation(actorId, id);
+    const { entries } = await this.app.storage.readHistoryOutline(id);
+    let index = targetId !== undefined ? entries.findIndex(message => message.id === targetId) : entries.length - 1;
+    if (targetId === undefined) while (index >= 0 && entries[index].role !== 'model') index--;
+    if (index < 1 || entries[index].role !== 'model') throw new Error('重试目标不是当前历史中的模型消息。');
+    const state = await this.idle(actorId, id, { index, messageId: entries[index].id! });
     const branches = readBranches(state);
     assertBranchCapacity(branches, branches.graph.nodes[state.history.messages[index].id!].parentId!);
     const messages = truncateFrom(state.history.messages as Content[], index) as PlatformMessage[];
@@ -190,12 +191,13 @@ export class ConversationService {
   }
   async edit(actorId: string, id: string, targetId: string, parts: PlatformMessage['parts'], requestKey: string, mode: 'keep' | 'branch',
     options: { preserveAttachments?: boolean; deepSeekVisionTileSplit?: boolean } = {}) {
-    const initial = await this.read(actorId, id);
-    const index = initial.history.messages.findIndex(message => message.id === targetId);
-    if (index < 0 || initial.history.messages[index].role !== 'user' || initial.history.messages[index].isFunctionResponse) throw new Error('编辑目标不是用户消息。');
+    await this.app.conversation(actorId, id);
+    const { entries } = await this.app.storage.readHistoryOutline(id);
+    const index = entries.findIndex(message => message.id === targetId);
+    if (index < 0 || entries[index].role !== 'user' || entries[index].isFunctionResponse) throw new Error('编辑目标不是用户消息。');
     const state = await this.idle(actorId, id, { index, messageId: targetId });
     const branches = readBranches(state);
-    const messages = structuredClone(state.history.messages);
+    const messages = [...state.history.messages];
     const original = messages[index];
     const nextParts = structuredClone(options.preserveAttachments ? [...original.parts.filter(part => part.inlineData), ...parts] : parts);
     if (!nextParts.length) throw new Error('请输入消息或保留附件。');
