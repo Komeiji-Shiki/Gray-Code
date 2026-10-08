@@ -67,12 +67,13 @@ export class LanguageServices {
     return (session.definition.synchronizedLanguages ?? session.definition.languages).includes(documentLanguage(file));
   }
   /** 同一客户端的并发首次请求共用启动过程；Vue 的辅助服务也遵守同一工作区边界。 */
-  private sessionFor(client: ClientSession, workspace: WorkspaceDefinition, definition: RuntimeLanguageServer): Promise<Session> {
+  private sessionFor(client: ClientSession, workspace: WorkspaceDefinition, definition: RuntimeLanguageServer, signal?: AbortSignal): Promise<Session> {
+    signal?.throwIfAborted();
     if (this.closing || this.detachedClients.has(client.clientId)) return Promise.reject(new Error('语言服务客户端已断开或正在退出。'));
     const releasing = this.clientClosings.get(client.clientId);
-    if (releasing) return releasing.then(() => this.sessionFor(client, workspace, definition));
+    if (releasing) return releasing.then(() => this.sessionFor(client, workspace, definition, signal));
     const epoch = this.clientEpochs.get(client.clientId) ?? 0;
-    const current = () => !this.closing && !this.detachedClients.has(client.clientId) && epoch === (this.clientEpochs.get(client.clientId) ?? 0);
+    const current = () => !signal?.aborted && !this.closing && !this.detachedClients.has(client.clientId) && epoch === (this.clientEpochs.get(client.clientId) ?? 0);
     const key = this.key(client, workspace.id, definition.id);
     const pending = this.sessionStarts.get(key);
     if (pending) return pending;
@@ -86,14 +87,16 @@ export class LanguageServices {
       if (definition.companionId) {
         const paired = this.definitions().find(value => value.id === definition.companionId);
         if (!paired) throw new Error('语言服务缺少辅助运行程序：' + definition.companionId);
-        companion = await this.sessionFor(client, workspace, paired);
+        companion = await this.sessionFor(client, workspace, paired, signal);
       }
       if (session && session.companion !== companion) await this.stopSession(session);
+      signal?.throwIfAborted();
       if (!current()) throw new Error('语言服务客户端已断开。');
       if (!session || ['stopped', 'failed'].includes(session.info.status)) {
         session = this.create(client, workspace, definition, companion); this.sessions.set(key, session);
       }
       await session.ready;
+      signal?.throwIfAborted();
       if (!current()) throw new Error('语言服务客户端已断开。');
       return session;
     })();
@@ -199,6 +202,7 @@ export class LanguageServices {
         session.capabilities = result.capabilities;
         await connection.sendNotification('initialized', {});
         if (definition.settings) await connection.sendNotification('workspace/didChangeConfiguration', { settings: definition.settings });
+        if (session.info.status !== 'starting') throw new Error('语言服务已停止。');
         session.info.status = 'running'; this.changed(session);
       } catch (error) { fail(error); await stopOwnedProcess(child); throw new Error(session.info.error ?? String(error), { cause: error }); }
     })();
@@ -318,6 +322,7 @@ export class LanguageServices {
   }
   /** 模型读取使用独立文档缓冲，文件正文已由工具的读取策略确认。 */
   async toolRequest(context: ToolContext, absolute: string, text: string, method: string, params: Record<string, unknown> = {}) {
+    context.signal.throwIfAborted();
     if (!context.workspace || !context.conversationId || !['textDocument/definition', 'textDocument/references', 'textDocument/documentSymbol'].includes(method)) throw new Error('代码导航请求无效。');
     const workspace = this.app.workspace(context.actorId, context.workspace.id, ['workspace_read', 'process_execute']);
     const client = { actorId: context.actorId, clientId: `language-tool:${context.runId}` };
@@ -325,26 +330,49 @@ export class LanguageServices {
     const disabled = this.app.settings.read('development').development?.disabledLanguageServers ?? [];
     const definition = this.definitions().find(item => item.languages.includes(languageId) && !disabled.includes(item.id));
     if (!definition) throw new Error(`没有为 ${languageId} 配置语言服务。`);
-    const session = await this.sessionFor(client, workspace, definition);
-    context.signal.throwIfAborted();
-    const uri = documentUri(pathToFileURL(absolute).toString());
-    for (const current of session.companion ? [session.companion, session] : [session]) {
-      const synchronized = current.changes.catch(() => {}).then(async () => {
-        const version = current.documents.get(uri);
-        if (version === undefined) await current.connection.sendNotification('textDocument/didOpen', { textDocument: { uri, languageId, version: 1, text } });
-        else await current.connection.sendNotification('textDocument/didChange', { textDocument: { uri, version: version + 1 }, contentChanges: [{ text }] });
-        current.documents.set(uri, (version ?? 0) + 1);
-      });
-      current.changes = synchronized; await synchronized;
-    }
-    const cancellation = new CancellationTokenSource(); const cancel = () => cancellation.cancel();
+    const cancellation = new CancellationTokenSource();
+    let cleanup: Promise<void> | undefined;
+    const cancel = () => {
+      cancellation.cancel();
+      // 这些进程只属于本轮工具；关闭连接也能结束尚未完成的初始化和不响应取消的请求。
+      cleanup ??= this.finishToolRun(context.runId, true);
+      void cleanup.catch(() => {});
+    };
     context.signal.addEventListener('abort', cancel, { once: true });
-    try { context.signal.throwIfAborted(); return await this.invoke(session, method, { ...params, textDocument: { uri } }, cancellation); }
-    finally { cancellation.dispose(); context.signal.removeEventListener('abort', cancel); }
+    try {
+      context.signal.throwIfAborted();
+      const session = await this.sessionFor(client, workspace, definition, context.signal);
+      context.signal.throwIfAborted();
+      const uri = documentUri(pathToFileURL(absolute).toString());
+      for (const current of session.companion ? [session.companion, session] : [session]) {
+        const synchronized = current.changes.catch(() => {}).then(async () => {
+          context.signal.throwIfAborted();
+          const version = current.documents.get(uri);
+          if (version === undefined) await current.connection.sendNotification('textDocument/didOpen', { textDocument: { uri, languageId, version: 1, text } });
+          else await current.connection.sendNotification('textDocument/didChange', { textDocument: { uri, version: version + 1 }, contentChanges: [{ text }] });
+          current.documents.set(uri, (version ?? 0) + 1);
+        });
+        current.changes = synchronized; await synchronized;
+      }
+      context.signal.throwIfAborted();
+      const result = await this.invoke(session, method, { ...params, textDocument: { uri } }, cancellation);
+      context.signal.throwIfAborted();
+      return result;
+    } catch (error) { context.signal.throwIfAborted(); throw error; }
+    finally {
+      cancellation.dispose(); context.signal.removeEventListener('abort', cancel);
+      await cleanup;
+    }
   }
-  async finishToolRun(runId: string) {
+  async finishToolRun(runId: string, cancelled = false) {
     const clientId = `language-tool:${runId}`;
-    for (const [key, session] of this.sessions) if (session.client.clientId === clientId) { await this.stopSession(session); this.sessions.delete(key); }
+    const sessions = [...this.sessions.entries()].filter(([, session]) => session.client.clientId === clientId);
+    const results = await Promise.allSettled(sessions.map(async ([key, session]) => {
+      await this.stopSession(session, cancelled);
+      if (this.sessions.get(key) === session) this.sessions.delete(key);
+    }));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason), '工具语言服务关闭失败。');
   }
   async relativePath(client: ClientSession, workspaceId: string, uri: string): Promise<string> {
     this.app.requireOwner(client.actorId);
@@ -414,14 +442,15 @@ export class LanguageServices {
     const doc = this.app.files.clientDocuments(client.clientId, session.workspace.id).find(item => session.definition.languages.includes(documentLanguage(item.path)));
     return doc ? this.ensure(client, doc.workspaceId, doc.path) : null;
   }
-  private stopSession(session: Session): Promise<void> {
+  private stopSession(session: Session, cancelled = false): Promise<void> {
     if (session.stopping) return session.stopping;
+    const initialized = session.info.status === 'running';
     session.info.status = 'stopped';
     session.stopping = (async () => {
       // 完成协议关闭后，在父进程仍存活时结束进程树，避免 exit 提前退出后留下后台分析子进程。
-      try { await this.timed(session, 'shutdown', null, undefined, 3000); } catch { /* 已退出的语言服务直接释放。 */ }
+      if (initialized && !cancelled) try { await this.timed(session, 'shutdown', null, undefined, 3000); } catch { /* 已退出的语言服务直接释放。 */ }
       session.connection.dispose(); await stopOwnedProcess(session.child);
-      if (session.companion) await this.stopSession(session.companion);
+      if (session.companion) await this.stopSession(session.companion, cancelled);
       for (const uri of [...session.documents.keys()]) { session.documents.delete(uri); this.clearDiagnostics(session, uri); }
       session.diagnostics.clear(); this.changed(session);
     })().catch(error => { session.stopping = undefined; session.info.status = 'failed'; session.info.error = String(error); this.changed(session); throw error; });
@@ -445,9 +474,9 @@ export class LanguageServices {
   }
   async close(): Promise<void> {
     this.closing = true;
-    // 启动请求可以因关闭而被取消；等待其结束后，以实际持有的会话判断清理是否成功。
-    await Promise.allSettled([...this.sessionStarts.values()]);
+    // 先关闭连接使初始化结束；closing 已阻止尚未创建进程的启动请求继续执行。
     const results = await Promise.allSettled([...this.sessions.values()].map(session => this.stopSession(session)));
+    await Promise.allSettled([...this.sessionStarts.values()]);
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map(result => result.reason),
       `语言服务关闭失败：${failures.map(result => String(result.reason)).join('；')}`);

@@ -1,10 +1,49 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
+import type { ToolContext } from '@graycode/core';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
+import { LanguageServices } from '../../../apps/server/src/development/languages';
 import { fixture } from './fixtures';
 import { completionItems } from '../../../shared/completionItems';
+
+test.each(['initialize', 'request', 'close'] as const)('语言工具在 %s 阶段停止时关闭真实连接及进程，不等待服务响应', async stage => {
+  const f = await fixture();
+  const workspace = { id: 'project', name: '取消语言请求', directory: f.source, deviceId: 'local' };
+  const app = { workspace: () => workspace, settings: { read: () => ({}) }, publish: jest.fn() } as unknown as PlatformApplication;
+  const languages = new LanguageServices(app);
+  const controller = new AbortController();
+  // 使用真实 JSON-RPC 管道，服务故意不响应初始化或导航请求，也不处理取消通知。
+  const script = `
+    const rpc = require(${JSON.stringify(require.resolve('vscode-jsonrpc/node'))});
+    const connection = rpc.createMessageConnection(new rpc.StreamMessageReader(process.stdin), new rpc.StreamMessageWriter(process.stdout));
+    const pending = () => { process.stderr.write('WAITING\\n'); return new Promise(() => {}); };
+    connection.onRequest('initialize', ${stage === 'request' ? "() => ({ capabilities: { documentSymbolProvider: true } })" : 'pending'});
+    connection.onRequest('textDocument/documentSymbol', pending);
+    connection.onRequest('shutdown', () => { process.stderr.write('SHUTDOWN\\n'); return new Promise(() => {}); });
+    connection.listen();
+  `;
+  jest.spyOn(languages, 'definitions').mockReturnValue([{ id: 'fixture', name: '取消夹具', languages: ['typescript'], command: process.execPath, args: ['-e', script] }]);
+  const context = { actorId: 'owner', conversationId: 'conversation', runId: 'cancel-language', workspace, signal: controller.signal } as ToolContext;
+  try {
+    const result = languages.toolRequest(context, path.join(f.source, 'main.ts'), 'const value = 1;', 'textDocument/documentSymbol')
+      .then(value => ({ value }), error => ({ error }));
+    const session = [...(languages as any).sessions.values()][0];
+    expect(session).toBeDefined();
+    const [started] = await once(session.child.stderr, 'data');
+    expect(String(started)).toContain('WAITING');
+    const reason = new Error('停止本轮代码导航');
+    if (stage === 'close') await languages.close();
+    else controller.abort(reason);
+    expect(await result).toEqual({ error: stage === 'close' ? expect.any(Error) : reason });
+    expect(session.child.exitCode !== null || session.child.signalCode !== null).toBe(true);
+    expect(session.info.status).toBe('stopped');
+    expect(session.stderr).not.toContain('SHUTDOWN');
+    expect((languages as any).sessionStarts.size).toBe(0);
+  } finally { await languages.close(); await f.cleanup(); }
+}, 10_000);
 
 test('内置语言服务使用受控运行程序，首次跨文件定位和文档诊断保持完整、可清除', async () => {
   const f = await fixture(); await f.store.close();
