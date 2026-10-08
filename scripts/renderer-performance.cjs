@@ -39,7 +39,7 @@ function streamRendererWorkload(body, response) {
   return true;
 }
 
-async function measureRendererWorkload({ rpc, ui, chat, until, output, configId }) {
+async function measureRendererSamples({ rpc, ui, chat, until, output, configId }) {
   const samples = [];
   await ui('config.updateConfig', { configId, updates: { preferStream: true, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
   await ui('ui.settings.save');
@@ -77,9 +77,44 @@ async function measureRendererWorkload({ rpc, ui, chat, until, output, configId 
   }
   await ui('config.updateConfig', { configId, updates: { preferStream: false } });
   await ui('ui.settings.save');
-  const report = { generatedAt: new Date().toISOString(), environment: 'Electron offscreen, synthetic history and local SSE, single machine', samples };
+  const os = require('node:os'), cpus = os.cpus();
+  const report = { generatedAt: new Date().toISOString(), environment: 'Electron offscreen, synthetic history and local SSE, single machine',
+    runtime: { electron: process.versions.electron, node: process.versions.node, platform: process.platform, arch: process.arch,
+      cpuModel: cpus[0]?.model, cpuCount: cpus.length, memoryGiB: Math.round(os.totalmem() / 1024 ** 3), sourceCommit: process.env.GITHUB_SHA },
+    tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples };
   await fs.writeFile(path.join(output, 'renderer-performance.json'), JSON.stringify(report, null, 2));
   return report;
+}
+
+async function measureRendererWorkload(options) {
+  if (process.env.GRAYCODE_RENDER_TRACE !== '1') return measureRendererSamples(options);
+  const { contentTracing } = require('electron');
+  await contentTracing.startRecording({ recording_mode: 'record-until-full', trace_buffer_size_in_kb: 32768,
+    included_categories: ['toplevel', 'devtools.timeline', 'disabled-by-default-devtools.timeline', 'v8.execute', 'blink.user_timing'],
+    excluded_categories: ['*'] });
+  try { return await measureRendererSamples(options); }
+  finally {
+    const file = await contentTracing.stopRecording(path.join(options.output, 'renderer-trace.json'));
+    const { traceEvents: events } = JSON.parse(await fs.readFile(file, 'utf8'));
+    const threads = new Map(events.filter(event => event.ph === 'M' && event.name === 'thread_name')
+      .map(event => [`${event.pid}:${event.tid}`, event.args?.name]));
+    const timed = events.filter(event => event.ph === 'X' && typeof event.dur === 'number');
+    const renderer = timed.filter(event => threads.get(`${event.pid}:${event.tid}`) === 'CrRendererMain');
+    const location = event => {
+      const data = event.args?.data ?? {};
+      return { name: event.name, milliseconds: event.dur / 1000, url: data.url,
+        functionName: data.functionName, lineNumber: data.lineNumber, columnNumber: data.columnNumber };
+    };
+    // 这里只列包含关系中的耗时事件；父子事件会重叠，不能相加当作总耗时。
+    const longest = renderer.filter(event => event.dur >= 50000).sort((left, right) => right.dur - left.dur).slice(0, 25);
+    const summary = { events: events.length, rendererTimedEvents: renderer.length, file: path.basename(file),
+      longest: longest.map(event => ({ ...location(event), pid: event.pid, tid: event.tid,
+        children: renderer.filter(child => child !== event && child.pid === event.pid && child.tid === event.tid
+          && child.ts >= event.ts && child.ts + child.dur <= event.ts + event.dur)
+          .sort((left, right) => right.dur - left.dur).slice(0, 6).map(location) })) };
+    await fs.writeFile(path.join(options.output, 'renderer-trace-summary.json'), JSON.stringify(summary, null, 2));
+    process.stdout.write(JSON.stringify({ rendererTraceSummary: summary }) + '\n');
+  }
 }
 module.exports = { seedRendererWorkload, streamRendererWorkload, measureRendererWorkload };
 
@@ -91,7 +126,8 @@ if (require.main === module) {
   const output = path.join(root, '.tmp', `desktop-smoke-renderer-${randomUUID().slice(0, 8)}`);
   void seedRendererWorkload(path.join(output, 'data')).then(() => {
     const child = spawn(require('electron'), [path.join(__dirname, 'smoke-desktop.cjs')], { cwd: root, windowsHide: true, stdio: 'inherit',
-      env: { ...process.env, GRAYCODE_RENDER_BENCHMARK: '1', GRAYCODE_SMOKE_OUTPUT: output, GRAYCODE_BENCHMARK_ONLY: process.argv.includes('--only') ? '1' : '0' } });
+      env: { ...process.env, GRAYCODE_RENDER_BENCHMARK: '1', GRAYCODE_SMOKE_OUTPUT: output, GRAYCODE_BENCHMARK_ONLY: process.argv.includes('--only') ? '1' : '0',
+        GRAYCODE_RENDER_TRACE: process.argv.includes('--trace') || process.env.GRAYCODE_RENDER_TRACE === '1' ? '1' : '0' } });
     child.once('error', error => { console.error(error); process.exitCode = 1; });
     child.once('exit', code => { process.exitCode = code ?? 1; });
   }).catch(error => { console.error(error); process.exitCode = 1; });

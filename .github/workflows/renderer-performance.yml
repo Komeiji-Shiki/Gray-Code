@@ -3,6 +3,11 @@ name: Measure Windows renderer performance
 # 按需测量长对话；复用隔离夹具，报告保留实际提交和运行环境。
 on:
   workflow_dispatch:
+    inputs:
+      trace:
+        description: 记录 Chromium 执行轨迹以定位长任务
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,6 +32,8 @@ jobs:
       - name: Build desktop for measurement
         run: npm run build:desktop
       - name: Measure long conversation rendering
+        env:
+          GRAYCODE_RENDER_TRACE: ${{ inputs.trace && '1' || '0' }}
         run: node scripts/renderer-performance.cjs --only
       - name: Preserve renderer measurement
         if: always()
@@ -35,6 +42,7 @@ jobs:
           name: Windows-renderer-performance-${{ github.sha }}
           path: |
             .tmp/desktop-smoke-renderer-*/renderer-performance*.json
+            .tmp/desktop-smoke-renderer-*/renderer-trace*.json
             .tmp/desktop-smoke-renderer-*/renderer-failure-state.json
             .tmp/desktop-smoke-renderer-*/failure.json
             .tmp/desktop-smoke-renderer-*/*.png
