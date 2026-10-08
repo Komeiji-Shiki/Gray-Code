@@ -16,6 +16,7 @@ export interface WorkspaceOperation {
 }
 export type RequestedFileChange = { path: string; expectedHash: string | null } &
   ({ text: string | null; bytes?: never } | { bytes: Uint8Array; text?: never });
+type ConversationVersion = Pick<ConversationState, 'metadata' | 'metadataToken'> & { historyRevision: number };
 
 /** SQLite 与文件系统不能共用事务；先保存恢复记录，成功后原子提交对话与操作结果。 */
 export class WorkspaceChanges {
@@ -27,7 +28,10 @@ export class WorkspaceChanges {
     const run = await this.storage.getRun(context.runId);
     if (!run || run.conversationId !== context.conversationId || run.actorId !== context.actorId || run.workspaceId !== context.workspace.id)
       throw new Error('文件操作不属于当前任务。');
-    return this.storage.readConversationState(context.conversationId);
+    const state = await this.storage.getConversationInfo(context.conversationId);
+    if (!state) throw new Error('当前对话已删除。');
+    context.signal.throwIfAborted();
+    return state;
   }
   async directories(context: ToolContext, paths: string[]): Promise<void> {
     if (!context.workspace) throw new Error('请先选择工作区。');
@@ -67,7 +71,9 @@ export class WorkspaceChanges {
       const run = await this.storage.getRun(context.runId);
       if (!run || run.conversationId !== context.conversationId || run.actorId !== context.actorId || run.workspaceId !== workspace.id)
         throw new Error('文件操作不属于当前任务。');
-      const state = await this.storage.readConversationState(context.conversationId!);
+      const state = await this.storage.getConversationInfo(context.conversationId!);
+      if (!state) throw new Error('当前对话已删除。');
+      context.signal.throwIfAborted();
       const changes: FileChange[] = [];
       for (const request of requested) {
         const before = await transaction.capture(request.path);
@@ -81,7 +87,7 @@ export class WorkspaceChanges {
     }, { writeGrants: context.fileWriteGrants });
   }
 
-  async perform(transaction: FileTransaction, workspace: WorkspaceDefinition, state: ConversationState, changes: FileChange[],
+  async perform(transaction: FileTransaction, workspace: WorkspaceDefinition, state: ConversationVersion, changes: FileChange[],
     commit: Pick<ConversationCommit, 'messages' | 'metadata' | 'records' | 'snapshot'> = {},
     identity: Pick<WorkspaceOperation, 'runId' | 'toolCallId' | 'messageId' | 'writeGrants'> = {}, requestedDirectories: DirectoryChange[] = []): Promise<WorkspaceOperation> {
     const directoryMap = new Map(requestedDirectories.map(item => [item.path, item]));
@@ -96,7 +102,7 @@ export class WorkspaceChanges {
     const directories = [...directoryMap.values()].sort((a, b) => a.path.length - b.path.length);
     const operation: WorkspaceOperation = { id: randomUUID(), conversationId: state.metadata.id, workspace: structuredClone(workspace),
       createdAt: Date.now(), changes, directories, ...identity };
-    const base = { conversationId: state.metadata.id, expectedRevision: state.history.revision,
+    const base = { conversationId: state.metadata.id, expectedRevision: state.historyRevision,
       expectedMetadataToken: state.metadataToken, ...(identity.runId ? { activeRunId: identity.runId } : {}) };
     // 取得持久互斥权时再次检查历史和活跃任务；尚未写文件。
     await this.storage.commitConversation({ ...base, records: [{ namespace: operationNamespace, id: state.metadata.id,

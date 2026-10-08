@@ -45,7 +45,7 @@ describe('workspace file change coordination', () => {
 
   test('perform 最终对话 CAS 失败会回滚文件并保留历史', async () => {
     await f.store.createConversation(metadata('cas'));
-    const state = await f.store.readConversationState('cas'); const workspace = workspaceOf(f.source); const files = new WorkspaceFiles();
+    const state = (await f.store.getConversationInfo('cas'))!; const workspace = workspaceOf(f.source); const files = new WorkspaceFiles();
     const before = version(null); const after = version(Buffer.from('written'));
     let firstApply = true;
     const operation = new WorkspaceChanges(f.store, files);

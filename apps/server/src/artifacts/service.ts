@@ -15,7 +15,6 @@ import { createUpdateProgressTool } from '../../../../backend/tools/progress/upd
 import { createValidateProgressDocumentTool } from '../../../../backend/tools/progress/validate_progress_documentRuntime';
 import { randomUUID } from 'node:crypto';
 import type { RuntimeTool, ToolContext } from '@graycode/core';
-import type { ConversationState } from '@graycode/contracts';
 import type { ToolContext as LegacyToolContext } from '../../../../backend/tools/types';
 import { withArtifactHost, type ArtifactDocumentHost } from '../../../../backend/tools/shared/artifactHost';
 import { classifyApprovalGateForToolResult } from '../../../../backend/modules/api/chat/services/approvalGateRules';
@@ -41,9 +40,14 @@ export class PlatformArtifacts {
     const workspace = context.workspace, conversationId = context.conversationId;
     await this.app.conversation(context.actorId, conversationId);
     return this.app.files.transaction(workspace, async transaction => {
-      let snapshot: Promise<ConversationState> | undefined;
-      const readState = () => snapshot ??= this.app.storage.readConversationState(conversationId);
-      // 写入仍在操作开始时捕获对话版本；只读校验没有使用历史时不恢复正文和附件。
+      let snapshot: ReturnType<typeof this.app.storage.getConversationInfo> | undefined;
+      const readState = async () => {
+        const state = await (snapshot ??= this.app.storage.getConversationInfo(conversationId));
+        if (!state) throw new Error('当前对话已删除。');
+        return state;
+      };
+      let history: ReturnType<typeof this.app.storage.readHistorySelection> | undefined;
+      // 写入仍在操作开始时捕获版本；完整正文只在工具实际请求历史时读取。
       if (!readOnly) await readState();
       const captured = new Map<string, Promise<FileVersion>>();
       const capture = (key: string) => {
@@ -94,7 +98,12 @@ export class PlatformArtifacts {
       };
       const requireConversation = (id: string) => { if (id !== conversationId) throw new Error('不能访问其他对话。'); context.signal.throwIfAborted(); };
       const conversationStore: NonNullable<LegacyToolContext['conversationStore']> = {
-        getHistory: async id => { requireConversation(id); return structuredClone((await readState()).history.messages); },
+        getHistory: async id => {
+          requireConversation(id);
+          const state = await readState();
+          history ??= this.app.storage.readHistorySelection(conversationId, { expectedRevision: state.historyRevision });
+          return structuredClone((await history).messages);
+        },
         getCustomMetadata: async (id, key) => { requireConversation(id); return structuredClone(((await readState()).metadata.custom as Record<string, unknown> | undefined)?.[key]); },
         setCustomMetadata: async (id, key, value) => {
           requireConversation(id); const state = await readState();
@@ -117,21 +126,22 @@ export class PlatformArtifacts {
         if (staged.size) await this.app.changes.perform(transaction, workspace, state, [...staged.values()],
           metadataChanged ? { metadata: state.metadata } : {}, { runId: context.runId, toolCallId: context.toolCallId });
         else await this.app.storage.commitConversation({ conversationId: state.metadata.id,
-          expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
+          expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
       }
       if (metadataChanged) this.app.productUi.conversations.clearMetadataCache();
       return { ...result, attachments: multimodal };
     });
   }
   async beforeRun(run: import('@graycode/contracts').RunRecord) {
-    const conversation = await this.app.storage.getConversation(run.conversationId);
-    if (conversation && !normalizePendingApprovalGate((conversation.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) return;
-    const state = await this.app.storage.readConversationState(run.conversationId);
+    const state = await this.app.storage.getConversationInfo(run.conversationId);
+    if (!state) throw new Error('当前对话已删除。');
     if (!normalizePendingApprovalGate((state.metadata.custom as Record<string, unknown> | undefined)?.pendingApprovalGate)) return;
     // 新的用户消息取代旧确认请求；隐藏确认通过准备事务明确消费对应请求。
-    if (!state.history.messages.some(message => message.runId === run.id && message.isUserInput)) return;
+    const history = await this.app.storage.readHistorySelection(run.conversationId, { runIds: [run.id],
+      expectedRevision: state.historyRevision, projection: { fields: ['isUserInput'], omitBinary: true } });
+    if (!history.messages.some(message => message.isUserInput)) return;
     const metadata = { ...state.metadata, custom: { ...state.metadata.custom as Record<string, unknown>, pendingApprovalGate: null } };
-    await this.app.storage.commitConversation({ conversationId: run.conversationId, expectedRevision: state.history.revision,
+    await this.app.storage.commitConversation({ conversationId: run.conversationId, expectedRevision: state.historyRevision,
       expectedMetadataToken: state.metadataToken, activeRunId: run.id, metadata });
     this.app.productUi.conversations.clearMetadataCache();
   }

@@ -74,8 +74,10 @@ test('设计读取后的外部修改不能被更新工具覆盖', async () => {
 test('正常文档更新保留确认请求，并继续使用操作开始时的对话版本', async () => {
   const target = path.join(f.source, designPath);
   const read = jest.spyOn(app.storage, 'readConversationState');
+  const info = jest.spyOn(app.storage, 'getConversationInfo');
   expect(await tool('update_design').execute({ path: designPath, design: '# 已更新设计\n' }, context)).toMatchObject({ success: true });
-  expect(read).toHaveBeenCalledTimes(1);
+  expect(read).not.toHaveBeenCalled();
+  expect(info).toHaveBeenCalledTimes(1);
   expect(await fs.readFile(target, 'utf8')).toBe('# 已更新设计\n');
   expect((await app.storage.getConversation(run.conversationId))?.custom).toMatchObject({ pendingApprovalGate: { sourceToolCallId: 'artifact-call', sourceToolName: 'update_design' } });
   const nativeOpen = fs.open; let advanced = false;
@@ -100,7 +102,7 @@ test.each([false, true])('有确认请求时仍区分自动接续与显式用户
     activeRunId: run.id, metadata: { ...state.metadata, custom: { ...state.metadata.custom as object, pendingApprovalGate: gate } } });
   const reads = jest.spyOn(app.storage, 'readConversationState');
   await app.artifacts.beforeRun(run);
-  expect(reads).toHaveBeenCalledTimes(1);
+  expect(reads).not.toHaveBeenCalled();
   expect((await app.storage.getConversation(run.conversationId))?.custom).toMatchObject({ pendingApprovalGate: explicit ? null : gate });
   expect((await app.storage.readHistory(run.conversationId, { offset: 0, limit: 1 })).messages[0].parts[1]).toEqual({ inlineData: { mimeType: 'application/octet-stream', data: 'AA==' } });
 });
