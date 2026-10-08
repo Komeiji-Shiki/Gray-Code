@@ -193,7 +193,7 @@ export class WorkspaceCheckpoints {
         await this.app.storage.commitConversation({ conversationId, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
           ...(options.runId ? { activeRunId: options.runId } : {}), records: [
             { namespace, id: checkpoint.id, ownerId: conversationId, expectedRevision: null, value: checkpoint },
-            ...(node ? [branchMutation(state, branches)] : [])] });
+            ...(node ? [branchMutation(state, branches, state.history.messages)] : [])] });
       } catch (error) {
         if (await this.app.storage.getRecord(namespace, checkpoint.id)) { this.latest.set(conversationId, checkpoint.id); return checkpoint; }
         for (let offset = 0; offset < records.length; offset += 200)

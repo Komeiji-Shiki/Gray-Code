@@ -96,7 +96,7 @@ export class BotInbox {
       branches.graph = rebaseActivePathFromHistory(branches.graph, messages as Content[], { allowRootChange: true });
       Object.assign(branches.groups, groupMessages(messages));
       await this.app.conversations.commit({ state, commit: { messages,
-        records: [...batch.flatMap(item => this.consumed(item)), branchMutation(state, branches)] } });
+        records: [...batch.flatMap(item => this.consumed(item)), branchMutation(state, branches, messages)] } });
     }
     const next = items[count];
     if (next) {

@@ -10,7 +10,7 @@ export const branchNamespace = 'conversation-branches';
 export interface BranchState {
   version: 1;
   graph: ConversationBranchGraph;
-  /** Preserve complete messages, including individual tool-result IDs, signatures and turn snapshots. */
+  /** 非活跃候选保留完整消息，包括工具结果 ID、签名与回合快照；当前路径从主历史恢复。 */
   groups: Record<string, PlatformMessage[]>;
   pendingKind?: { parentId: string; kind: 'edit' | 'reroll'; requestKey: string; messageId?: string };
 }
@@ -56,14 +56,16 @@ export function readBranches(state: ConversationState): BranchState {
   return value;
 }
 
-/** Persist topology and messages separately inside the compressed record; no duplicated bodies in graph nodes. */
-export function branchMutation(state: ConversationState, branch: BranchState): RecordMutation {
+/** 主历史与分支记录在同一事务保存；这里只归档不在本次主历史中的完整候选消息。 */
+export function branchMutation(state: ConversationState, branch: BranchState, messages: ReadonlyArray<Pick<PlatformMessage, 'id'>>): RecordMutation {
   // 先移除不会保存的图正文和已删除组，避免复制大段内容后立即丢弃；保留字段仍独立复制。
   const nodes = Object.fromEntries(Object.entries(branch.graph.nodes).map(([id, node]) => {
     const { parts: _parts, contentMetadata: _contentMetadata, usageMetadata: _usageMetadata, ...metadata } = node;
     return [id, { ...metadata, parts: [] }];
   }));
-  const groups = Object.fromEntries(Object.entries(branch.groups).filter(([id]) => nodes[id]));
+  // 必须使用本次提交的历史，编辑或重生成前的旧路径仍需归档，不能按旧 state 或图的活动指针排除。
+  const currentIds = new Set(messages.map(message => message.id));
+  const groups = Object.fromEntries(Object.entries(branch.groups).filter(([id]) => nodes[id] && !currentIds.has(id)));
   const value = structuredClone({ ...branch, graph: { ...branch.graph, nodes }, groups });
   return { namespace: branchNamespace, id: state.metadata.id, ownerId: state.metadata.id, value,
     expectedRevision: state.records.find(record => record.namespace === branchNamespace)?.record.revision ?? null };

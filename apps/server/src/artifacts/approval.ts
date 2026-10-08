@@ -86,6 +86,6 @@ export class ArtifactApproval {
     const branches = readBranches(state);
     branches.graph = rebaseActivePathFromHistory(branches.graph, messages as Content[]);
     Object.assign(branches.groups, groupMessages(messages));
-    return { state, commit: { messages, metadata, records: [branchMutation(state, branches)] } };
+    return { state, commit: { messages, metadata, records: [branchMutation(state, branches, messages)] } };
   }
 }

@@ -95,6 +95,7 @@ describe('original UI history operations on the independent core', () => {
     const first = await history();
     const oldReply = first.messages.at(-1)!;
     await app.checkpoints.create('owner', 'conversation', { messageId: oldReply.id });
+    expect((await app.storage.getRecord('conversation-branches', 'conversation') as { groups: Record<string, unknown> }).groups).toEqual({});
     const retried = await run('chat.rerollStream', { streamId: 'reroll', assistantNodeId: oldReply.id });
     const second = await history(); const newReply = second.messages.at(-1)!;
     expect(await call('chat.rerollStream', { configId: channelId, conversationId: 'conversation', streamId: 'reroll', assistantNodeId: oldReply.id })).toMatchObject({ runId: retried.runId });

@@ -36,7 +36,7 @@ export class ConversationService {
     return { state, commit: { messages, metadata,
       snapshot: { id: randomUUID(), conversationId: state.metadata.id, timestamp: Date.now(), name: reason,
         kind: 'history-mutation', sourceRevision: state.history.revision, conversationMetadata: state.metadata },
-      records: [branchMutation(state, branch)] } };
+      records: [branchMutation(state, branch, messages)] } };
   }
   async commit(change: PreparedConversationChange, preserveWindow = false) {
     const result = await this.app.storage.commitConversation({ conversationId: change.state.metadata.id,
@@ -96,11 +96,12 @@ export class ConversationService {
     const branches = readBranches(state);
     branches.graph.exportedRefs = [...(branches.graph.exportedRefs ?? []), { targetConversationId: targetId, nodeId: sourceNodeId, exportedAt: now }];
     const graph = importLinearHistory(history as Content[]); graph.exportedFrom = { conversationId: id, nodeId: sourceNodeId };
-    const targetBranch: BranchState = { version: 1, graph, groups: groupMessages(history) };
+    // 分支副本的当前正文随共享历史一起提交，无需在图记录中再次保存。
+    const targetBranch: BranchState = { version: 1, graph, groups: {} };
     for (const node of Object.values(graph.nodes)) { node.parts = []; delete node.contentMetadata; delete node.usageMetadata; }
     const metadata = { id: targetId, title, actorId, createdAt: now, updatedAt: now, workspaceId: state.metadata.workspaceId, workspaceUri: state.metadata.workspaceUri, custom };
     await this.app.storage.forkConversation(id, metadata, { beforeIndex: end, expectedRevision: state.history.revision,
-      records: [branchMutation(state, branches), { namespace: branchNamespace, id: targetId, ownerId: targetId, expectedRevision: null, value: targetBranch }] });
+      records: [branchMutation(state, branches, state.history.messages), { namespace: branchNamespace, id: targetId, ownerId: targetId, expectedRevision: null, value: targetBranch }] });
     this.app.productUi.conversations.clearMetadataCache(); this.app.publish({ type: 'conversation.changed', conversationId: targetId });
     return { success: true, conversationId: targetId, title, createdAt: now, updatedAt: now, messageCount: history.length, preview, workspaceUri: metadata.workspaceUri, branch: custom.branch };
   }
@@ -171,7 +172,7 @@ export class ConversationService {
       branches.graph = renameBranchLabel(branches.graph, nodeId, normalized);
     }
     const result = await this.app.storage.commitConversation({ conversationId: id, expectedRevision: state.history.revision,
-      expectedMetadataToken: state.metadataToken, records: [branchMutation(state, branches)] });
+      expectedMetadataToken: state.metadataToken, records: [branchMutation(state, branches, state.history.messages)] });
     this.app.publish({ type: 'conversation.changed', conversationId: id });
     return { success: true, revision: result.revision };
   }
@@ -238,7 +239,7 @@ export class ConversationService {
     const checkpoints = new Set(removed.prunedNodeIds.map(id => branches.graph.nodes[id]?.workspaceCheckpointId).filter(Boolean));
     branches.graph = removed.graph;
     await this.app.storage.commitConversation({ conversationId: id, expectedRevision: state.history.revision,
-      expectedMetadataToken: state.metadataToken, records: [branchMutation(state, branches)] });
+      expectedMetadataToken: state.metadataToken, records: [branchMutation(state, branches, state.history.messages)] });
     this.app.publish({ type: 'conversation.changed', conversationId: id });
     for (const checkpoint of await this.app.checkpoints.list(actorId, id)) {
       if (!checkpoints.has(checkpoint.id) && !removed.prunedNodeIds.includes(checkpoint.messageNodeId ?? '')) continue;

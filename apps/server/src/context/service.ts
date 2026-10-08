@@ -255,7 +255,7 @@ export class PlatformContextService {
     branches.graph = rebaseActivePathFromHistory(branches.graph, messages as Content[], { allowRootChange: true });
     Object.assign(branches.groups, groupMessages(messages));
     await this.app.conversations.commit({ state, commit: { messages, metadata: { ...state.metadata,
-      custom: { ...state.metadata.custom as Record<string, unknown>, trimState: null } }, records: [branchMutation(state, branches)],
+      custom: { ...state.metadata.custom as Record<string, unknown>, trimState: null } }, records: [branchMutation(state, branches, messages)],
       snapshot: { id: randomUUID(), conversationId: id, timestamp: Date.now(), name: '编辑摘要前', kind: 'context-summary-edit', sourceRevision: state.history.revision, conversationMetadata: state.metadata } } }, true);
     return { success: true, message };
   }

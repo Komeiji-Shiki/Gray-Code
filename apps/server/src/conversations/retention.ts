@@ -48,7 +48,7 @@ export class BranchRetention {
       if (!validate(branch.graph).valid) { result.corruptConversations.push(id); continue; }
       try {
         await this.app.storage.commitConversation({ conversationId: id, expectedRevision: state.history.revision,
-          expectedMetadataToken: state.metadataToken, records: [branchMutation(state, branch)] });
+          expectedMetadataToken: state.metadataToken, records: [branchMutation(state, branch, state.history.messages)] });
       } catch { result.skippedConversations.push(id); continue; }
       result.conversationsChanged++; result.prunedNodeCount += pruned.prunedNodeIds.length;
       this.app.publish({ type: 'conversation.changed', conversationId: id });
