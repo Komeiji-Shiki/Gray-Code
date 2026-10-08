@@ -75,14 +75,19 @@ export class BotInbox {
     if (count) {
       const batch = items.slice(0, count);
       const state = await this.app.conversations.read(this.sessions.owner().id, conversationId);
-      const messages = structuredClone(state.history.messages);
+      const messages = state.history.messages.map(message => ({ ...message }));
+      let mergedTail: PlatformMessage | undefined;
       for (const item of batch) {
         const last = messages.at(-1);
         const delta = Number(item.message.timestamp) - Number(last?.botLastTimestamp);
         if (item.mergeable && last?.botPassive === true && last.botMergeable === true && last.botAuthorId === item.context.authorId
           && delta >= 0 && delta <= BOT_MESSAGE_MERGE_GAP_MS && !last.isSummarized) {
+          // 只为本批实际合并的尾部取得可写数组，旧正文和附件继续按只读数据复用。
+          if (last !== mergedTail) {
+            last.parts = [...last.parts]; last.botMessageIds = [...last.botMessageIds as string[]]; mergedTail = last;
+          }
           last.parts.push(...item.message.parts);
-          last.botMessageIds = [...last.botMessageIds as string[], item.context.id];
+          (last.botMessageIds as string[]).push(item.context.id);
           last.botLastTimestamp = item.message.timestamp;
         } else messages.push({ ...item.message, botPassive: true, botMergeable: item.mergeable });
       }

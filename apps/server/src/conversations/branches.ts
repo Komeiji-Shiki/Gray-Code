@@ -58,9 +58,13 @@ export function readBranches(state: ConversationState): BranchState {
 
 /** Persist topology and messages separately inside the compressed record; no duplicated bodies in graph nodes. */
 export function branchMutation(state: ConversationState, branch: BranchState): RecordMutation {
-  const value = structuredClone(branch);
-  for (const node of Object.values(value.graph.nodes)) { node.parts = []; delete node.contentMetadata; delete node.usageMetadata; }
-  for (const id of Object.keys(value.groups)) if (!value.graph.nodes[id]) delete value.groups[id];
+  // 先移除不会保存的图正文和已删除组，避免复制大段内容后立即丢弃；保留字段仍独立复制。
+  const nodes = Object.fromEntries(Object.entries(branch.graph.nodes).map(([id, node]) => {
+    const { parts: _parts, contentMetadata: _contentMetadata, usageMetadata: _usageMetadata, ...metadata } = node;
+    return [id, { ...metadata, parts: [] }];
+  }));
+  const groups = Object.fromEntries(Object.entries(branch.groups).filter(([id]) => nodes[id]));
+  const value = structuredClone({ ...branch, graph: { ...branch.graph, nodes }, groups });
   return { namespace: branchNamespace, id: state.metadata.id, ownerId: state.metadata.id, value,
     expectedRevision: state.records.find(record => record.namespace === branchNamespace)?.record.revision ?? null };
 }

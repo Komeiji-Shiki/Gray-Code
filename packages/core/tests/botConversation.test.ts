@@ -122,7 +122,17 @@ describe('Bot 频道上下文、附件与定时总结', () => {
   test('未 @ 背景、五分钟分组、忙时排队和实际身份共同保留，重连不换会话', async () => {
     const time = Date.now();
     await app.discord.receive(inbound('a', 'unbound', false, time));
-    await app.discord.receive(inbound('b', 'unbound', false, time + 300000));
+    const read = app.conversations.read.bind(app.conversations);
+    let captured: Awaited<ReturnType<typeof read>> | undefined;
+    const reading = jest.spyOn(app.conversations, 'read').mockImplementationOnce(async (...args) => {
+      captured = await read(...args);
+      Object.freeze(captured.history.messages[0].parts); Object.freeze(captured.history.messages[0].botMessageIds);
+      return captured;
+    });
+    try {
+      await app.discord.receive(inbound('b', 'unbound', false, time + 300000));
+      expect(captured!.history.messages[0].botMessageIds).toEqual(['a']);
+    } finally { reading.mockRestore(); }
     await app.discord.receive(inbound('c', 'unbound', false, time + 600001));
     await app.discord.receive(inbound('d', '10', false, time + 600002));
     const snapshot = await app.discord.sessions.snapshot(context()); const id = snapshot.conversation!.id;
