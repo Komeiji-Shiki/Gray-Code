@@ -3,7 +3,7 @@
  * toolIteration / awaitingConfirmation 相关
  *
  * 拆分自 streamChunkHandlers.ts（模块化重构第 4 批，纯移动、逻辑不改）。
- * 共享状态（fcSeenBodies / smoothBaseCache / activeFactor / turnBaseTokens）与
+ * 共享状态（fcSeenBodies / smoothBaseCache / activeTokenTurn）与
  * 共享辅助函数（contentToPersistedMessage / mergeToolsPreferExisting /
  * finishSmoothStreamForState 等）从 ./chunkText 导入，保持模块级单例。
  */

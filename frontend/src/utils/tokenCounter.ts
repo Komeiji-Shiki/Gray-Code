@@ -16,15 +16,14 @@
  *    同一模型的系统性偏差稳定，因子收敛后误差压到 ~3~5%。
  * 3. 回退：词表未就绪/加载失败时字符类别加权估算（ASCII/CJK/其他分系数），同样乘因子。
  *
- * 性能：同步 BPE 编码常规 chunk <1ms；超长文本分批（BATCH_SIZE 字符/片）规避
- * 大输入时合并缓存的非线性退化。
+ * 性能：词表初始化与 BPE 编码均在工作线程执行，正文更新不等待计数。
+ * 超长文本仍按 2000 字符分片，沿用原有估算口径。
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension } from './vscode'
-
-/** 分批阈值：超过后按片计数，规避 tokenizer 合并缓存的非线性退化 */
-const BATCH_SIZE = 2000
+import TokenizerWorker from './tokenCounter.worker?worker&inline'
+import type { TokenizerKind, TokenizerResource, TokenizerRequest, TokenizerResponse } from './tokenCounterEngine'
 
 /** 字符类别加权基线系数（回退估算用，tokens ≈ chars / 系数） */
 const FALLBACK_ASCII = 3.6
@@ -42,20 +41,55 @@ const CALIBRATION_EMA_NEW = 0.3
 const CALIBRATION_EMA_OLD = 0.7
 const CALIBRATION_KEY_PREFIX = 'graycode:tpsCal:'
 
-type TokenizerKind = 'gpt' | 'deepseek'
-
-/** 扩展端下发的词表资源（与 backend/modules/tokenizer 的 TokenizerResource 对应） */
-interface TokenizerResource {
-  name: string
-  bpeRanks: string
-  patStr: string
-  specialTokens: Record<string, number>
-}
-
-/** 已就绪的计数函数（词表加载完成后设置） */
-const tokenizerCounters = new Map<TokenizerKind, (text: string) => number>()
+const readyTokenizers = new Set<TokenizerKind>()
 /** 加载中 Promise（并发去重） */
 const tokenizerLoadPromises = new Map<TokenizerKind, Promise<void>>()
+let tokenizerWorker: Worker | null = null
+let tokenizerRequestId = 0
+const pendingTokenizerRequests = new Map<number, {
+  resolve: (response: TokenizerResponse) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}>()
+
+function disposeTokenizerWorker(error: Error): void {
+  tokenizerWorker?.terminate()
+  tokenizerWorker = null
+  readyTokenizers.clear()
+  for (const pending of pendingTokenizerRequests.values()) {
+    clearTimeout(pending.timer)
+    pending.reject(error)
+  }
+  pendingTokenizerRequests.clear()
+}
+
+function requestTokenizer(request: TokenizerRequest): Promise<TokenizerResponse> {
+  if (!tokenizerWorker) {
+    tokenizerWorker = new TokenizerWorker({ name: 'graycode-token-counter' })
+    tokenizerWorker.onmessage = (event: MessageEvent<TokenizerResponse>) => {
+      const pending = pendingTokenizerRequests.get(event.data.id)
+      if (!pending) return
+      pendingTokenizerRequests.delete(event.data.id)
+      clearTimeout(pending.timer)
+      if (event.data.error) pending.reject(new Error(event.data.error))
+      else pending.resolve(event.data)
+    }
+    tokenizerWorker.onerror = () => disposeTokenizerWorker(new Error('分词工作线程异常'))
+    tokenizerWorker.onmessageerror = () => disposeTokenizerWorker(new Error('分词结果无法读取'))
+  }
+  const worker = tokenizerWorker
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => disposeTokenizerWorker(new Error('分词工作线程超时')), 30_000)
+    pendingTokenizerRequests.set(request.id, { resolve, reject, timer })
+    try { worker.postMessage(request) } catch (error) {
+      pendingTokenizerRequests.delete(request.id)
+      clearTimeout(timer)
+      reject(error)
+    }
+  })
+}
+
+if (import.meta.hot) import.meta.hot.dispose(() => disposeTokenizerWorker(new Error('分词模块已重新加载')))
 
 /** 按模型名选择专属 tokenizer：DeepSeek 用官方词表，其余用 cl100k（校准因子修正偏差） */
 function pickTokenizerKind(modelKey: string): TokenizerKind {
@@ -84,7 +118,7 @@ function baseEstimateByCharClass(text: string): number {
   return ascii / FALLBACK_ASCII + cjk / FALLBACK_CJK + other / FALLBACK_OTHER
 }
 
-/** 从扩展端拉取词表并构造计数函数（下载可能耗时，允许长超时） */
+/** 词表仍经原通道读取，只把构造过程交给工作线程。 */
 async function loadTokenizer(kind: TokenizerKind): Promise<void> {
   const name = kind === 'deepseek' ? 'deepseek-v3' : 'cl100k'
   const resource = await sendToExtension<TokenizerResource>(
@@ -92,18 +126,14 @@ async function loadTokenizer(kind: TokenizerKind): Promise<void> {
     { name },
     { timeoutMs: 120_000 }
   )
-  const { Tiktoken } = await import('js-tiktoken/lite')
-  const enc = new Tiktoken({
-    bpe_ranks: resource.bpeRanks,
-    pat_str: resource.patStr,
-    special_tokens: resource.specialTokens
-  })
-  tokenizerCounters.set(kind, (text: string) => enc.encode(text).length)
+  await requestTokenizer({ id: ++tokenizerRequestId, type: 'load', kind, resource })
+  readyTokenizers.add(kind)
 }
 
-function ensureLoaded(kind: TokenizerKind): void {
-  if (tokenizerCounters.has(kind)) return
-  if (tokenizerLoadPromises.has(kind)) return
+function ensureLoaded(kind: TokenizerKind): Promise<void> {
+  if (readyTokenizers.has(kind)) return Promise.resolve()
+  const existing = tokenizerLoadPromises.get(kind)
+  if (existing) return existing
   const task = loadTokenizer(kind)
     .catch(() => {
       // 下载/加载失败（离线、源不可达）：保持回退估算；下次会话再试
@@ -112,42 +142,48 @@ function ensureLoaded(kind: TokenizerKind): void {
       tokenizerLoadPromises.delete(kind)
     })
   tokenizerLoadPromises.set(kind, task)
+  return task
 }
 
-function countWith(fn: ((text: string) => number) | null, text: string): number | null {
-  if (!fn) return null
-  if (text.length <= BATCH_SIZE) return fn(text)
-  let total = 0
-  // 误差说明（不改算法）：分片计数会丢失跨片边界的 token 合并——BPE 合并缓存按片重置，
-  // 本可合并为一个 token 的跨片字符序列会被计为多个，因此结果系统性略偏高（高估方向，
-  // 常规文本误差通常 <1%）；这是分批规避非线性退化的既定代价，仅用于估算/展示，不做修正。
-  for (let i = 0; i < text.length; i += BATCH_SIZE) {
-    total += fn(text.slice(i, i + BATCH_SIZE))
-  }
-  return total
+export interface BaseTokenCount {
+  tokens: number
+  source: 'tokenizer' | 'estimate'
 }
 
 /**
- * 统计文本的 base token 数（同步，未经校准因子修正）。
- * 按 modelKey 选择专属 tokenizer；未就绪/失败时回退字符类别加权估算。
+ * 异步统计未经校准的 token 数；数组中的文本仍分别计数，保留函数名与参数的边界。
+ * 未就绪、失败或工作线程积压时使用原字符估算，并随结果返回实际计数来源。
  */
-export function countBaseTokens(text: string, modelKey: string): number {
-  if (!text) return 0
+export async function countBaseTokens(input: string | string[], modelKey: string): Promise<BaseTokenCount> {
+  const texts = typeof input === 'string' ? [input] : input
   const kind = pickTokenizerKind(modelKey)
-  const fn = tokenizerCounters.get(kind) ?? null
-  const counted = countWith(fn, text)
-  if (counted !== null && counted > 0) return counted
-  return Math.max(1, Math.ceil(baseEstimateByCharClass(text)))
+  if (texts.some(Boolean) && readyTokenizers.has(kind) && pendingTokenizerRequests.size < 128) {
+    try {
+      const result = await requestTokenizer({ id: ++tokenizerRequestId, type: 'count', kind, texts })
+      if (result.counts) {
+        let source: BaseTokenCount['source'] = 'tokenizer'
+        const tokens = result.counts.reduce((total, count, index) => {
+          if (count > 0 || !texts[index]) return total + count
+          source = 'estimate'
+          return total + Math.max(1, Math.ceil(baseEstimateByCharClass(texts[index])))
+        }, 0)
+        return { tokens, source }
+      }
+    } catch {
+      // 计数失败只影响这次估算，不打断正文接收或把估算标成 tokenizer。
+    }
+  }
+  return { tokens: texts.reduce((total, text) => total + (text ? Math.max(1, Math.ceil(baseEstimateByCharClass(text))) : 0), 0), source: 'estimate' }
 }
 
 /** 触发 modelKey 对应 tokenizer 的加载（幂等，通过消息通道向扩展端获取词表） */
-export function ensureTokenCounterLoaded(modelKey: string): void {
-  ensureLoaded(pickTokenizerKind(modelKey))
+export function ensureTokenCounterLoaded(modelKey: string): Promise<void> {
+  return ensureLoaded(pickTokenizerKind(modelKey))
 }
 
-/** 查询 modelKey 对应 tokenizer 是否已加载就绪（false = 当前走字符加权估算） */
+/** 查询词表是否就绪；实际计数来源随每次结果返回。 */
 export function isTokenizerReady(modelKey: string): boolean {
-  return tokenizerCounters.has(pickTokenizerKind(modelKey))
+  return readyTokenizers.has(pickTokenizerKind(modelKey))
 }
 
 /** 读取 modelKey 的校准因子（未学习时 1） */

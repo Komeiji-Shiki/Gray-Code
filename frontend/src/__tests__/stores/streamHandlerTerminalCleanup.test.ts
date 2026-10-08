@@ -25,6 +25,48 @@ vi.mock('../../utils/vscode', () => ({
 }))
 
 import { sendToExtension } from '../../utils/vscode'
+import * as tokenCounter from '../../utils/tokenCounter'
+import { tpsMeter } from '../../utils/tpsMeter'
+import { resetTurnBaseTokenEstimate } from '../../stores/chat/streamChunkHandlers'
+
+test('异步分词不阻塞正文，结束和取消保持各轮校准归属', async () => {
+  const replies: Array<(result: tokenCounter.BaseTokenCount) => void> = []
+  vi.spyOn(tokenCounter, 'ensureTokenCounterLoaded').mockResolvedValue()
+  vi.spyOn(tokenCounter, 'getCalibrationFactor').mockReturnValue(1)
+  vi.spyOn(tokenCounter, 'countBaseTokens').mockImplementation(() => new Promise(resolve => replies.push(resolve)))
+  const calibrate = vi.spyOn(tokenCounter, 'calibrate').mockImplementation(() => {})
+  const record = vi.spyOn(tpsMeter, 'record').mockImplementation(() => {})
+  const state = createState({
+    allMessages: ref([{ id: 'm', role: 'assistant', content: '', timestamp: 0, parts: [] }] as Message[]),
+    streamingMessageId: ref('m'), selectedModelId: ref('first')
+  })
+  const send = (text: string, createdAt: number) => handleChunkType({ type: 'chunk', createdAt, chunk: { delta: [{ text }] } } as any, state)
+  const done = (tokens: number) => handleChunkType({ type: 'chunk', chunk: { delta: [], done: true, usage: { candidatesTokenCount: tokens } } } as any, state)
+  try {
+    resetTurnBaseTokenEstimate()
+    send('first', 101)
+    expect(state.allMessages.value[0].content).toBe('first')
+    expect(record).not.toHaveBeenCalled()
+    done(100)
+    state.selectedModelId.value = 'second'
+    send('second', 202)
+    done(200)
+    replies[1]({ tokens: 100, source: 'tokenizer' })
+    replies[0]({ tokens: 80, source: 'estimate' })
+    await nextTick(); await nextTick()
+    expect(calibrate.mock.calls).toEqual([['second', 100, 200], ['first', 80, 100]])
+    expect(record.mock.calls).toEqual([[100, 202, 'tokenizer'], [80, 101, 'estimate']])
+    send('cancelled', 303)
+    resetTurnBaseTokenEstimate()
+    replies[2]({ tokens: 50, source: 'tokenizer' })
+    await nextTick(); await nextTick()
+    expect(record).toHaveBeenCalledTimes(2)
+    expect(calibrate).toHaveBeenCalledTimes(2)
+  } finally {
+    resetTurnBaseTokenEstimate()
+    vi.restoreAllMocks()
+  }
+})
 
 afterEach(() => {
   disposeAllSmoothStreams()

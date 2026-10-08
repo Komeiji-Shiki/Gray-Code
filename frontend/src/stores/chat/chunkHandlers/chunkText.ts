@@ -6,7 +6,7 @@
  * 本文件持有本组模块级状态（单例，禁止在文件间复制）：
  * - fcSeenBodies：工具调用参数的 TPS 已计文本跟踪
  * - smoothBaseCache：平滑基线缓存
- * - activeModelKey / activeFactor / turnBaseTokens：TPS 校准上下文
+ * - activeTokenTurn：当前轮次的异步 TPS 校准上下文
  * chunkTools / chunkTerminal 通过本文件导出复用这些状态与共享辅助函数。
  */
 
@@ -18,7 +18,7 @@ import { contentToMessage, contentToMessageEnhanced } from '../parsers'
 import { addTextToMessage, processStreamingText, handleFunctionCallPart } from '../streamHelpers'
 import { getMessageIndexById, replaceMessageAt } from '../state'
 import type { StreamFunctionCall } from '../../../utils/functionCallMerge'
-import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor, isTokenizerReady } from '../../../utils/tokenCounter'
+import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor } from '../../../utils/tokenCounter'
 
 /**
  * 工具调用参数的 TPS 已计文本跟踪（per-tool call id）。
@@ -39,11 +39,15 @@ const MAX_FC_SEEN_TRACKED = 200
 const smoothBaseCache = new Map<string, string>()
 const MAX_SMOOTH_BASE_TRACKED = 200
 
-/** 当前流使用的模型与校准因子（模型切换时重新读取） */
-let activeModelKey = ''
-let activeFactor = 1
-/** 本轮（当前 API 调用流）累计的 base token 估算，流结束用于校准 */
-let turnBaseTokens = 0
+interface TokenTurnEstimate {
+  modelKey: string
+  factor: number
+  baseTokens: number
+  pending: number
+  finalTokens: number | null
+  cancelled: boolean
+}
+let activeTokenTurn: TokenTurnEstimate | null = null
 
 /**
  * 清空本轮 base 估算（本地取消路径使用）：后端此后可能不发任何终结 chunk（挂死/断网），
@@ -51,7 +55,8 @@ let turnBaseTokens = 0
  * handleCancelled/handleError 的终结路径同样调用本函数清空（拆分后位于 chunkTerminal）。
  */
 export function resetTurnBaseTokenEstimate(): void {
-  turnBaseTokens = 0
+  if (activeTokenTurn) activeTokenTurn.cancelled = true
+  activeTokenTurn = null
 }
 
 /** 从会话状态解析当前模型 key（与 checkpointActions 的 resolveConversationModelOverride 同口径） */
@@ -62,25 +67,34 @@ function resolveModelKey(state: ChatStoreState): string {
   return model || 'default'
 }
 
-/** 模型变化时重新读取校准因子并触发对应 tokenizer 懒加载 */
-function syncModelContext(state: ChatStoreState): void {
+/** 每轮固定模型与校准因子，异步回执不再依赖下一轮的可变全局状态。 */
+function syncModelContext(state: ChatStoreState): TokenTurnEstimate {
   const modelKey = resolveModelKey(state)
-  if (modelKey === activeModelKey) return
-  activeModelKey = modelKey
-  activeFactor = getCalibrationFactor(modelKey)
-  ensureTokenCounterLoaded(modelKey)
+  if (activeTokenTurn?.modelKey === modelKey) return activeTokenTurn
+  resetTurnBaseTokenEstimate()
+  activeTokenTurn = { modelKey, factor: getCalibrationFactor(modelKey), baseTokens: 0, pending: 0, finalTokens: null, cancelled: false }
+  void ensureTokenCounterLoaded(modelKey)
+  return activeTokenTurn
 }
 
-/** record：base 估算 × 校准因子；同时累计 base 供流结束校准。
- * source 标记当前计数方式：模型 tokenizer 就绪 → 真实计数，否则 → 字符加权估算。 */
-function recordTpsTokens(base: number, ts?: number): void {
-  if (base <= 0) return
-  turnBaseTokens += base
-  tpsMeter.record(
-    Math.max(1, Math.round(base * activeFactor)),
-    ts,
-    isTokenizerReady(activeModelKey) ? 'tokenizer' : 'estimate'
-  )
+function calibrateFinishedTokenTurn(turn: TokenTurnEstimate): void {
+  if (turn.cancelled || turn.pending > 0 || turn.finalTokens === null) return
+  if (turn.finalTokens > 0) calibrate(turn.modelKey, turn.baseTokens, turn.finalTokens)
+  turn.finalTokens = null
+}
+
+/** 正文不等待计数；回执使用原始到达时间，取消后不再影响 TPS 或校准。 */
+function recordTpsTokens(turn: TokenTurnEstimate, text: string | string[], ts?: number): void {
+  const timestamp = ts ?? Date.now()
+  turn.pending++
+  void countBaseTokens(text, turn.modelKey).then(result => {
+    if (turn.cancelled || result.tokens <= 0) return
+    turn.baseTokens += result.tokens
+    tpsMeter.record(Math.max(1, Math.round(result.tokens * turn.factor)), timestamp, result.source)
+  }).finally(() => {
+    turn.pending--
+    calibrateFinishedTokenTurn(turn)
+  })
 }
 
 /**
@@ -331,11 +345,11 @@ export function clearAllSmoothForState(state: ChatStoreState): void {
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
-  syncModelContext(state)
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex === -1 || !chunk.chunk) {
     return
   }
+  const tokenTurn = syncModelContext(state)
 
   const snapshotContent = chunk.chunk.contentSnapshot
   if (snapshotContent) {
@@ -373,7 +387,8 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
           // 时间戳用 chunk.createdAt——后台积压回放的 chunk 按原始发生时间入窗并被窗口
           // 立即修剪，不产生回放尖峰。
           recordTpsTokens(
-            countBaseTokens(part.text, activeModelKey),
+            tokenTurn,
+            part.text,
             typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
           )
           if (part.thought) {
@@ -402,16 +417,16 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
             const lastBody = fcSeenBodies.get(fcKey)
             if (lastBody === undefined) {
               // 首次到达：函数名 + 当前参数体（finalArgs 整块场景一次计全）
-              recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
+              recordTpsTokens(tokenTurn, [fcName, fcBody], recordTs)
             } else if (fcBody.length >= lastBody.length) {
               // 增量追加（partialArgs 流式语义）：只计新增部分
               const deltaText = fcBody.slice(lastBody.length)
               if (deltaText) {
-                recordTpsTokens(countBaseTokens(deltaText, activeModelKey), recordTs)
+                recordTpsTokens(tokenTurn, deltaText, recordTs)
               }
             } else {
               // 长度回退（快照/结构重置）：按当前全量重计
-              recordTpsTokens(countBaseTokens(fcBody, activeModelKey), recordTs)
+              recordTpsTokens(tokenTurn, fcBody, recordTs)
             }
             fcSeenBodies.set(fcKey, fcBody)
             if (fcSeenBodies.size > MAX_FC_SEEN_TRACKED) {
@@ -419,7 +434,7 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
             }
           } else {
             // 无稳定 call id（罕见）：按完整长度计一次
-            recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
+            recordTpsTokens(tokenTurn, [fcName, fcBody], recordTs)
           }
           handleFunctionCallPart(part, nextMessage)
         }
@@ -447,15 +462,9 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
       // countBaseTokens 同样计入 thought 文本——两边都含思考，直接对齐，不再减
       // thoughtsTokenCount（剔除会让真值偏小、校准因子被压低，TPS 显示反而偏低）。
       const finalUsage = chunk.chunk.usage
-      if (finalUsage && turnBaseTokens > 0) {
-        const realTokens = typeof finalUsage.candidatesTokenCount === 'number'
-          ? finalUsage.candidatesTokenCount
-          : 0
-        if (realTokens > 0) {
-          calibrate(activeModelKey, turnBaseTokens, realTokens)
-        }
-      }
-      turnBaseTokens = 0
+      tokenTurn.finalTokens = typeof finalUsage?.candidatesTokenCount === 'number' ? finalUsage.candidatesTokenCount : 0
+      if (activeTokenTurn === tokenTurn) activeTokenTurn = null
+      calibrateFinishedTokenTurn(tokenTurn)
       // 兜底：AI 输出结束，所有 streaming 工具应已完成参数输出
       if (nextMessage.tools) {
         for (const tool of nextMessage.tools) {

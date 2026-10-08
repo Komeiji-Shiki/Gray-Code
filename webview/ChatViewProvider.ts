@@ -1358,7 +1358,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             `img-src ${imgSrc.join(' ')}`,
             `media-src ${mediaSrc.join(' ')}`,
             `font-src ${fontSrc.join(' ')}`,
-            `connect-src ${connectSrc.join(' ')}`
+            `connect-src ${connectSrc.join(' ')}`,
+            "worker-src blob:"
         ].join('; ');
     }
 

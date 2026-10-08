@@ -16,16 +16,29 @@
 import { describe, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'node:module'
 import * as path from 'node:path'
+import type { TokenizerRequest, TokenizerResponse } from '../tokenCounterEngine'
 
 // mock 消息通道：tokenCounter 通过 sendToExtension 向扩展端获取词表
 vi.mock('../vscode', () => ({
   sendToExtension: vi.fn()
 }))
+vi.mock('../tokenCounter.worker?worker&inline', async () => {
+  const { TokenCounterEngine } = await import('../tokenCounterEngine')
+  return { default: class {
+    private readonly engine = new TokenCounterEngine()
+    onmessage?: (event: { data: TokenizerResponse }) => void
+    postMessage(request: TokenizerRequest) {
+      queueMicrotask(() => this.onmessage?.({ data: this.engine.handle(request) }))
+    }
+    terminate() {}
+  } }
+})
 
 import { sendToExtension } from '../vscode'
 import {
   countBaseTokens,
   ensureTokenCounterLoaded,
+  isTokenizerReady,
   getCalibrationFactor,
   calibrate
 } from '../tokenCounter'
@@ -57,55 +70,41 @@ beforeEach(() => {
 })
 
 describe('countBaseTokens - 回退估算（词表未就绪）', () => {
-  test('未加载时返回字符类别加权估算（>0）', () => {
-    const n = countBaseTokens('hello world 你好', 'gpt-4o')
-    expect(n).toBeGreaterThan(0)
+  test('未加载时返回字符类别加权估算（>0）', async () => {
+    const result = await countBaseTokens('hello world 你好', 'gpt-4o')
+    expect(result.tokens).toBeGreaterThan(0)
+    expect(result.source).toBe('estimate')
   })
 
-  test('空文本返回 0', () => {
-    expect(countBaseTokens('', 'gpt-4o')).toBe(0)
+  test('空文本返回 0', async () => {
+    expect((await countBaseTokens('', 'gpt-4o')).tokens).toBe(0)
   })
 })
 
 describe('countBaseTokens - cl100k 词表（消息通道加载后精确）', () => {
   test('加载后 hello world = 2（cl100k）', async () => {
-    ensureTokenCounterLoaded('gpt-4o')
-    let n = 0
-    for (let i = 0; i < 100; i++) {
-      n = countBaseTokens('hello world', 'gpt-4o')
-      if (n === 2) break
-      await new Promise(r => setTimeout(r, 50))
-    }
-    expect(n).toBe(2)
+    await ensureTokenCounterLoaded('gpt-4o')
+    expect(isTokenizerReady('gpt-4o')).toBe(true)
+    expect(await countBaseTokens('hello world', 'gpt-4o')).toEqual({ tokens: 2, source: 'tokenizer' })
     expect(mockedSend).toHaveBeenCalledWith('tokenizer.getResource', { name: 'cl100k' }, expect.anything())
   })
 })
 
 describe('countBaseTokens - DeepSeek 资源路径', () => {
   test('模型名含 deepseek 时请求 deepseek-v3 资源并计数', async () => {
-    ensureTokenCounterLoaded('deepseek-chat')
-    let n = 0
-    for (let i = 0; i < 100; i++) {
-      n = countBaseTokens('!', 'deepseek-chat')
-      if (n === 1) break
-      await new Promise(r => setTimeout(r, 50))
-    }
-    expect(n).toBe(1)
+    await ensureTokenCounterLoaded('deepseek-chat')
+    expect(await countBaseTokens('!', 'deepseek-chat')).toEqual({ tokens: 1, source: 'tokenizer' })
     expect(mockedSend).toHaveBeenCalledWith('tokenizer.getResource', { name: 'deepseek-v3' }, expect.anything())
   }, 30000)
 })
 
 describe('countBaseTokens - 分批计数', () => {
   test('大文本分批与单次编码误差 <1%', async () => {
-    ensureTokenCounterLoaded('gpt-4o')
+    await ensureTokenCounterLoaded('gpt-4o')
     const text = 'The quick brown fox jumps over the lazy dog. 中文内容混排 '.repeat(120)
     expect(text.length).toBeGreaterThan(2000)
-    let batched = 0
-    for (let i = 0; i < 200; i++) {
-      batched = countBaseTokens(text, 'gpt-4o')
-      if (batched > 100) break
-      await new Promise(r => setTimeout(r, 50))
-    }
+    const { tokens: batched, source } = await countBaseTokens(text, 'gpt-4o')
+    expect(source).toBe('tokenizer')
     // 单次编码对照（直接用同一词表构造）
     const { Tiktoken } = await import('js-tiktoken/lite')
     const enc = new Tiktoken({

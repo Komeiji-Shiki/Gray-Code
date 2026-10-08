@@ -698,7 +698,8 @@ export class SubAgentMonitorPanel {
             `font-src ${webview.cspSource}`,
             `style-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
             `script-src ${webview.cspSource} 'nonce-${nonce}' ${devServerOrigin || ''}`,
-            `connect-src ${webview.cspSource}${devServerOrigin ? ' ' + devServerOrigin : ''}`
+            `connect-src ${webview.cspSource}${devServerOrigin ? ' ' + devServerOrigin : ''}`,
+            "worker-src blob:"
         ].join('; ');
         const bootstrap = `<script nonce="${nonce}">window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
 
