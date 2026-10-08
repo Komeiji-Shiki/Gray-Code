@@ -159,9 +159,11 @@ const hScrollRatio = ref(0)
 // ==================== Marker 状态 ====================
 const markerPositions = ref<MarkerItem[]>([])
 let layoutUpdateRafId: number | null = null
+interface LayoutUpdateOptions { preserveBottom?: boolean; updateMarkers?: boolean; forceMarkers?: boolean }
 const pendingLayoutUpdateOptions = {
   preserveBottom: false,
-  updateMarkers: false
+  updateMarkers: false,
+  forceMarkers: false
 }
 
 // marker 重扫节流：流式期间内容结构变更每帧都会触发调度，但 marker 位置只随
@@ -375,8 +377,6 @@ function updateMarkers() {
   }
 
   const container = scrollContainer.value
-  const scrollHeight = container.scrollHeight
-  const clientHeight = container.clientHeight
   const trackHeight = scrollTrack.value.clientHeight
 
   if (isVirtualScroll.value) {
@@ -387,6 +387,8 @@ function updateMarkers() {
   }
 
   // 内容不足以滚动时无需显示 marker
+  const scrollHeight = container.scrollHeight
+  const clientHeight = container.clientHeight
   if (scrollHeight <= clientHeight || trackHeight <= 0) {
     markerPositions.value = []
     return
@@ -412,15 +414,10 @@ function updateMarkers() {
 }
 
 // 虚拟窗口滚动到新页或 marker 索引刷新时，滚动条本身没有 childList 变更，
-// 因此需要直接按全局索引重算 thumb 与 marker。
+// 与内容变化共用布局帧，避免在 Vue 更新的微任务中强制布局；索引切换不受重扫节流影响。
 watch(
   () => [props.virtualTotal, props.virtualStart, props.virtualEnd, props.virtualMarkers, props.markerSelector] as const,
-  () => {
-    nextTick(() => {
-      updateScrollbar()
-      updateMarkers()
-    })
-  }
+  () => scheduleLayoutUpdate({ forceMarkers: true })
 )
 
 /**
@@ -544,7 +541,7 @@ function requestMarkerScan() {
   }
 }
 
-function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
+function updateLayout(options: LayoutUpdateOptions = {}) {
   if (!scrollContainer.value) return
 
   const container = scrollContainer.value
@@ -565,14 +562,17 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
 
   updateScrollbar()
 
-  if (options.updateMarkers && (props.markerSelector || isVirtualScroll.value)) {
+  if (options.forceMarkers) {
+    updateMarkers()
+  } else if (options.updateMarkers && (props.markerSelector || isVirtualScroll.value)) {
     requestMarkerScan()
   }
 }
 
-function scheduleLayoutUpdate(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
+function scheduleLayoutUpdate(options: LayoutUpdateOptions = {}) {
   pendingLayoutUpdateOptions.preserveBottom ||= !!options.preserveBottom
   pendingLayoutUpdateOptions.updateMarkers ||= !!options.updateMarkers
+  pendingLayoutUpdateOptions.forceMarkers ||= !!options.forceMarkers
 
   if (layoutUpdateRafId !== null) return
 
@@ -581,6 +581,7 @@ function scheduleLayoutUpdate(options: { preserveBottom?: boolean; updateMarkers
     const nextOptions = { ...pendingLayoutUpdateOptions }
     pendingLayoutUpdateOptions.preserveBottom = false
     pendingLayoutUpdateOptions.updateMarkers = false
+    pendingLayoutUpdateOptions.forceMarkers = false
     updateLayout(nextOptions)
   })
 }
@@ -595,7 +596,6 @@ const markerBaseColor = computed(() => {
 // 滚动事件处理：吸底状态同步更新（不等 rAF）——用户滚动意图立即生效，
 // 避免同帧稍后执行的 updateLayout 读到陈旧 wasAtBottom 把用户拉回底部；
 // 滚动条 UI 更新仍 rAF 合帧。
-let scrollRafId: number | null = null
 let lastScrollObservation: { top: number; height: number; viewport: number; start: number; end: number } | undefined
 function handleScroll() {
   const container = scrollContainer.value
@@ -619,12 +619,7 @@ function handleScroll() {
   // 裁掉渲染窗口首行时 Chromium 会自行调 scrollTop；同位置事件也可能晚于高度增长。
   // 这些不是用户滚离，不能清掉 follow。必要时由同一个布局帧完成贴尾，不递归分页。
   lastScrollObservation = observation
-  if (layoutChanged && wasAtBottom) scheduleLayoutUpdate({ preserveBottom: true })
-  if (scrollRafId !== null) return
-  scrollRafId = requestAnimationFrame(() => {
-    scrollRafId = null
-    updateScrollbar()
-  })
+  scheduleLayoutUpdate({ preserveBottom: layoutChanged && wasAtBottom })
 }
 
 /** 用户滚动输入（wheel/触摸板）：标记冷静期。输入事件同步派发、早于 scroll 事件与 rAF */
@@ -956,10 +951,6 @@ onBeforeUnmount(() => {
   if (layoutUpdateRafId !== null) {
     cancelAnimationFrame(layoutUpdateRafId)
     layoutUpdateRafId = null
-  }
-  if (scrollRafId !== null) {
-    cancelAnimationFrame(scrollRafId)
-    scrollRafId = null
   }
   if (tooltipHideTimer) {
     clearTimeout(tooltipHideTimer)
