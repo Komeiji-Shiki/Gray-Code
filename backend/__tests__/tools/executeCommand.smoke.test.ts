@@ -463,7 +463,9 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         await flush();
         // 先让追踪器记录完整的链，再模拟 Shell 退出、管道仍被占用
         await (runtime.getActiveTerminals().get('orphan-pipe') as any).tracker.sample();
-        proc.exitCode = 0; proc.emit('exit', 0);
+        // 退出必须晚于夹具里的子孙创建，不能由测试机器是否耗时超过 40 毫秒来决定归属。
+        const exitClock = jest.spyOn(Date, 'now').mockReturnValue(now + 100);
+        try { proc.exitCode = 0; proc.emit('exit', 0); } finally { exitClock.mockRestore(); }
         // 本端管道被关闭后，Node 才会发出 close
         proc.stdout.on('close', () => setImmediate(() => proc.emit('close', 0)));
         abort.abort(new Error('Cancelled by user.'));
