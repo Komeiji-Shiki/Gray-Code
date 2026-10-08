@@ -20,12 +20,6 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
     context.signal.throwIfAborted();
     return id;
   };
-  const scope = async (context: ToolContext) => {
-    const id = await authorizeContext(context);
-    const state=await app.storage.readConversationState(id);
-    const view=await app.longMemoryPrompt.history.prepare(context.actorId,id,state.history.messages);
-    return { id,state,view };
-  };
   const schema = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
   return [
     {
@@ -49,8 +43,10 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
           }));
           return { success: true, notes: notes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.name.localeCompare(b.name)) };
         }
-        const { id, state,view } = await scope(context);
+        const id = await authorizeContext(context);
         if (['record', 'recall', 'inspect'].includes(String(args.action))) {
+          const state = await app.storage.readConversationState(id);
+          const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, state.history.messages);
           const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as ModelPrefix | undefined;
           const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
           const config = args.action === 'recall' && providerId ? await app.product.channel(providerId) : undefined;
@@ -59,6 +55,9 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         }
         if (!['read', 'write', 'append'].includes(String(args.action))) throw new Error('笔记操作无效。');
         if (typeof args.name !== 'string' || !args.name.trim()) throw new Error('需要提供笔记名称。');
+        // 自由笔记只需校验来源依赖，不需要恢复正文、附件或笔记图的完整工具结果。
+        const history = await app.storage.readHistorySelection(id, { projection: MEMORY_HISTORY_PROJECTION });
+        const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, history.messages);
         const key = noteKey(id, args.name);
         const previous = await app.storage.getVersionedRecord('context-notes', key);
         const note = previous.value as WorkingNote | null;
@@ -75,7 +74,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         if (text.length > 100000) throw new Error('每份工作笔记最多十万字符，请拆成多份笔记。');
         context.signal.throwIfAborted();
         await app.storage.commitRecords([{ namespace: 'context-notes', id: key, ownerId: id, expectedRevision: previous.revision,
-          value: { text, updatedAt: Date.now(), sourceMessageId: state.history.messages.at(-1)?.id } }]);
+          value: { text, updatedAt: Date.now(), sourceMessageId: history.messages.at(-1)?.id } }]);
         return { success: true, name: args.name, characters: text.length };
       },
     },
