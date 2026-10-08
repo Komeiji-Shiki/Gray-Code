@@ -81,6 +81,8 @@ Windows CI 和桌面打包（含 nightly）统一使用 `windows-2022`，原生�
 
 本批次性能数据与限制见[性能与验证](wiki/Performance-and-Validation.md)。临时测量放在忽略目录；需要长期防止回归的场景加入现有测试结构。
 
+长对话绘制可在桌面构建后单独运行 `node scripts/renderer-performance.cjs --only`，使用 1000、5000 条合成历史及本机流式端点，记录打开耗时、滚动帧间隔、长任务和挂载消息数。Actions 的 `Measure Windows renderer performance` 工作流提供同一脚本的手动 Windows 测量入口，报告保留 7 天。比较结果时应同时记录源码版本与机器环境，远端虚拟机的帧间隔不能直接代表用户电脑。
+
 ## 打包与构建身份
 
 正式桌面打包会先运行 `package:source`，要求已提交的干净源码，并把同一提交的源码归档及 SHA-256 随程序复制。`release/source/` 下的归档、校验文件和清单应与二进制一起提供下载；普通 `build:desktop` 仍可用于有本地修改的开发构建。`npm run license:check` 检查工作区组件的完整许可副本。

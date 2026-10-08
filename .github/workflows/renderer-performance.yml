@@ -1,0 +1,43 @@
+name: Measure Windows renderer performance
+
+# 按需测量长对话；复用隔离夹具，报告保留实际提交和运行环境。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
+      - name: Build desktop for measurement
+        run: npm run build:desktop
+      - name: Measure long conversation rendering
+        run: node scripts/renderer-performance.cjs --only
+      - name: Preserve renderer measurement
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Windows-renderer-performance-${{ github.sha }}
+          path: |
+            .tmp/desktop-smoke-renderer-*/renderer-performance*.json
+            .tmp/desktop-smoke-renderer-*/renderer-failure-state.json
+            .tmp/desktop-smoke-renderer-*/failure.json
+            .tmp/desktop-smoke-renderer-*/*.png
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
