@@ -469,7 +469,7 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: true } }); return { success: true };
       }
       case 'platform.modes.get': return { profiles: ui.preferences.app.modeProfiles ?? {},
-        presets: ui.preferences.settings.getAllPromptModes(), tools: this.app.tools.declarations().map(({ name }) => ({ name })) };
+        presets: ui.preferences.settings.getAllPromptModes(), tools: this.app.tools.names().map(name => ({ name })) };
       case 'platform.modes.update': {
         if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
         ui.preferences.app.modeProfiles ??= {};
@@ -534,7 +534,7 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: true } }); return { success: true };
       case 'platform.reviewers.get': return {
         agents: ui.preferences.app.agents.map(({ id, name, reviewerProviderId, reviewerApi, reviewerToolNames }) => ({ id, name, reviewerProviderId: reviewerProviderId ?? '', reviewerApi: reviewerApi ?? '', reviewerToolNames })),
-        providers: ui.preferences.value.channels.map(({ id, name, model, url }) => ({ id, name, model, endpoint: url })), tools: this.app.tools.declarations().map(({ name }) => ({ name })),
+        providers: ui.preferences.value.channels.map(({ id, name, model, url }) => ({ id, name, model, endpoint: url })), tools: this.app.tools.names().map(name => ({ name })),
       };
       case 'platform.reviewers.update': {
         const agent = ui.preferences.app.agents.find(agent => agent.id === data.id);

@@ -26,7 +26,7 @@ export class PlatformMcpService {
     }
   }
   async initialize(): Promise<void> { await this.manager.initialize(); this.refreshTools(); }
-  names(): string[] { return this.app.tools.declarations().filter(tool => tool.name.startsWith(MCP_TOOL_PREFIX)).map(tool => tool.name); }
+  names(): string[] { return this.app.tools.names().filter(name => name.startsWith(MCP_TOOL_PREFIX)); }
   synchronize(): Promise<void> {
     const operation = this.synchronizeQueue.catch(() => {}).then(async () => { await this.manager.synchronizeConfigs(); this.refreshTools(); });
     this.synchronizeQueue = operation;
