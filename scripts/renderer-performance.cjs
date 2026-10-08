@@ -55,18 +55,19 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId }
     await until(() => chat('!!document.querySelector(".send-button:not(:disabled)")'), 'benchmark input');
     await chat('document.querySelector(".send-button").click()');
     const result = await chat(`new Promise(resolve => {
-      const frames=[], tasks=[]; let previous=performance.now(), peakNodes=0, tick=0;
+      const frames=[], tasks=[], tokenSources=new Set(); let previous=performance.now(), peakNodes=0, tick=0;
       const observer=new PerformanceObserver(list => tasks.push(...list.getEntries().map(entry => entry.duration)));
       observer.observe({type:'longtask',buffered:false});
       const step=now=>{
         frames.push(now-previous); previous=now;
+        if(tick%12===0){const source=document.querySelector('.tps-source');if(source)tokenSources.add(source.classList.contains('is-tokenizer')?'tokenizer':'estimate');}
         const list=Array.from(document.querySelectorAll('.message-list')).find(node=>node.getBoundingClientRect().height>0);
         peakNodes=Math.max(peakNodes,list?.querySelectorAll('.messages-container [data-message-id]').length??0);
         const container=list?.querySelector('.scroll-container');
         if(container){container.dispatchEvent(new WheelEvent('wheel',{deltaY:tick%60<30?-200:200,bubbles:true}));container.scrollTop=Math.max(0,container.scrollTop+(tick%60<30?-80:80));}
         if(++tick<180){requestAnimationFrame(step);return;}
         observer.disconnect();frames.sort((a,b)=>a-b);
-        resolve({frameP50:frames[Math.floor(frames.length*.5)],frameP95:frames[Math.floor(frames.length*.95)],frameP99:frames[Math.floor(frames.length*.99)],longTasks:tasks.length,longTaskMax:Math.max(0,...tasks),peakMountedMessages:peakNodes,samples:frames.length});
+        resolve({frameP50:frames[Math.floor(frames.length*.5)],frameP95:frames[Math.floor(frames.length*.95)],frameP99:frames[Math.floor(frames.length*.99)],longTasks:tasks.length,longTaskMax:Math.max(0,...tasks),peakMountedMessages:peakNodes,samples:frames.length,tokenSources:[...tokenSources]});
       };requestAnimationFrame(step);
     })`);
     await chat('Array.from(document.querySelectorAll(".message-list")).find(node=>node.getBoundingClientRect().height>0)?.querySelector(".jump-btn-bottom")?.click()');
@@ -122,8 +123,13 @@ async function summarizeRendererCpu(profile, longTasks, output) {
       .map(([id, milliseconds]) => ({ id, sampledTotalMilliseconds: milliseconds, sampledSelfMilliseconds: self.get(id) ?? 0 }));
     const describe = async row => {
       const frame = nodes.get(row.id).callFrame;
+      const callers = [];
+      for (let id = parents.get(row.id); id !== undefined && callers.length < 4; id = parents.get(id)) {
+        const caller = nodes.get(id).callFrame, location = await source(caller);
+        if (location && !location.file.includes('node_modules/')) callers.push({ functionName: caller.functionName, source: location });
+      }
       return { ...row, functionName: frame.functionName, url: frame.url, line: frame.lineNumber + 1, column: frame.columnNumber + 1,
-        source: await source(frame) };
+        source: await source(frame), callers };
     };
     return { bySelf: await Promise.all([...rows].sort((left, right) => right.sampledSelfMilliseconds - left.sampledSelfMilliseconds).slice(0, limit).map(describe)),
       byTotal: await Promise.all(rows.sort((left, right) => right.sampledTotalMilliseconds - left.sampledTotalMilliseconds).slice(0, limit).map(describe)) };
