@@ -86,13 +86,77 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId }
   return report;
 }
 
+async function summarizeRendererCpu(profile, longTasks, output) {
+  const { SourceMap } = require('node:module');
+  const assetRoot = path.resolve(__dirname, '../apps/client/dist'), maps = new Map();
+  const parents = new Map(), nodes = new Map(profile.nodes.map(node => [node.id, node]));
+  for (const node of profile.nodes) for (const child of node.children ?? []) parents.set(child, node.id);
+  let time = profile.startTime;
+  const samples = (profile.samples ?? []).map((id, index) => {
+    const start = time; time += profile.timeDeltas?.[index] ?? 0; return { id, start, end: time };
+  });
+  const source = async frame => {
+    if (!frame.url.startsWith('graycode://app/')) return undefined;
+    const file = path.resolve(assetRoot, decodeURIComponent(new URL(frame.url).pathname).replace(/^\/+/, '') + '.map');
+    const relative = path.relative(assetRoot, file);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+    let pending = maps.get(file);
+    if (!pending) {
+      pending = fs.readFile(file, 'utf8').then(text => new SourceMap(JSON.parse(text)))
+        .catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      maps.set(file, pending);
+    }
+    const entry = (await pending)?.findEntry(frame.lineNumber, frame.columnNumber);
+    return entry?.originalSource ? { file: entry.originalSource, line: entry.originalLine + 1,
+      column: entry.originalColumn + 1, name: entry.name } : undefined;
+  };
+  const rank = async (start, end, limit) => {
+    const self = new Map(), total = new Map();
+    for (const sample of samples) {
+      const weight = Math.max(0, Math.min(end, sample.end) - Math.max(start, sample.start)) / 1000;
+      if (!weight) continue;
+      self.set(sample.id, (self.get(sample.id) ?? 0) + weight);
+      for (let id = sample.id; id !== undefined; id = parents.get(id)) total.set(id, (total.get(id) ?? 0) + weight);
+    }
+    const rows = [...total].filter(([id]) => !['(root)', '(idle)'].includes(nodes.get(id)?.callFrame.functionName))
+      .map(([id, milliseconds]) => ({ id, sampledTotalMilliseconds: milliseconds, sampledSelfMilliseconds: self.get(id) ?? 0 }));
+    const describe = async row => {
+      const frame = nodes.get(row.id).callFrame;
+      return { ...row, functionName: frame.functionName, url: frame.url, line: frame.lineNumber + 1, column: frame.columnNumber + 1,
+        source: await source(frame) };
+    };
+    return { bySelf: await Promise.all([...rows].sort((left, right) => right.sampledSelfMilliseconds - left.sampledSelfMilliseconds).slice(0, limit).map(describe)),
+      byTotal: await Promise.all(rows.sort((left, right) => right.sampledTotalMilliseconds - left.sampledTotalMilliseconds).slice(0, limit).map(describe)) };
+  };
+  const summary = { samples: samples.length, durationMilliseconds: (profile.endTime - profile.startTime) / 1000,
+    overall: await rank(profile.startTime, profile.endTime, 15), longTasks: [] };
+  for (const task of longTasks.slice(0, 3)) summary.longTasks.push({ milliseconds: task.dur / 1000,
+    ...await rank(task.ts, task.ts + task.dur, 6) });
+  await fs.writeFile(path.join(output, 'renderer-cpu-summary.json'), JSON.stringify(summary, null, 2));
+  process.stdout.write(JSON.stringify({ rendererCpuSummary: summary }) + '\n');
+}
+
 async function measureRendererWorkload(options) {
   if (process.env.GRAYCODE_RENDER_TRACE !== '1') return measureRendererSamples(options);
   const { contentTracing } = require('electron');
   await contentTracing.startRecording({ recording_mode: 'record-until-full', trace_buffer_size_in_kb: 32768,
     included_categories: ['toplevel', 'devtools.timeline', 'disabled-by-default-devtools.timeline', 'v8.execute', 'blink.user_timing'],
     excluded_categories: ['*'] });
-  try { return await measureRendererSamples(options); }
+  let profile;
+  const inspector = options.contents.debugger;
+  try {
+    inspector.attach('1.3');
+    try {
+      await inspector.sendCommand('Profiler.enable');
+      await inspector.sendCommand('Profiler.setSamplingInterval', { interval: 1000 });
+      await inspector.sendCommand('Profiler.start');
+      try { return await measureRendererSamples(options); }
+      finally {
+        ({ profile } = await inspector.sendCommand('Profiler.stop'));
+        await fs.writeFile(path.join(options.output, 'renderer-cpu.cpuprofile'), JSON.stringify(profile));
+      }
+    } finally { inspector.detach(); }
+  }
   finally {
     const file = await contentTracing.stopRecording(path.join(options.output, 'renderer-trace.json'));
     const { traceEvents: events } = JSON.parse(await fs.readFile(file, 'utf8'));
@@ -114,6 +178,8 @@ async function measureRendererWorkload(options) {
           .sort((left, right) => right.dur - left.dur).slice(0, 6).map(location) })) };
     await fs.writeFile(path.join(options.output, 'renderer-trace-summary.json'), JSON.stringify(summary, null, 2));
     process.stdout.write(JSON.stringify({ rendererTraceSummary: summary }) + '\n');
+    if (profile) await summarizeRendererCpu(profile,
+      longest.filter(event => event.name === 'RunTask' && event.pid === options.contents.getOSProcessId()), options.output);
   }
 }
 module.exports = { seedRendererWorkload, streamRendererWorkload, measureRendererWorkload };

@@ -16,6 +16,8 @@ jobs:
   measure:
     runs-on: windows-2022
     timeout-minutes: 20
+    env:
+      GRAYCODE_RENDER_TRACE: ${{ inputs.trace && '1' || '0' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -32,8 +34,6 @@ jobs:
       - name: Build desktop for measurement
         run: npm run build:desktop
       - name: Measure long conversation rendering
-        env:
-          GRAYCODE_RENDER_TRACE: ${{ inputs.trace && '1' || '0' }}
         run: node scripts/renderer-performance.cjs --only
       - name: Preserve renderer measurement
         if: always()
@@ -43,6 +43,7 @@ jobs:
           path: |
             .tmp/desktop-smoke-renderer-*/renderer-performance*.json
             .tmp/desktop-smoke-renderer-*/renderer-trace*.json
+            .tmp/desktop-smoke-renderer-*/renderer-cpu*
             .tmp/desktop-smoke-renderer-*/renderer-failure-state.json
             .tmp/desktop-smoke-renderer-*/failure.json
             .tmp/desktop-smoke-renderer-*/*.png

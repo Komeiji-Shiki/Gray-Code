@@ -218,7 +218,7 @@ async function main() {
     process.stdout.write(JSON.stringify(report) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
   if (rendererBenchmark && process.env.GRAYCODE_BENCHMARK_ONLY === '1') {
-    const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId });
+    const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents });
     process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
@@ -345,7 +345,7 @@ async function main() {
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
   await verifyProjectReplace(evaluate);
   await verifyRegexCancellation(rpc);
-  const rendererPerformance = rendererBenchmark ? await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId }) : undefined;
+  const rendererPerformance = rendererBenchmark ? await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents }) : undefined;
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".platform-settings-footer")'), 'settings draft for save and quit');
   const closingSettings = await ui('platform.settings.get');
