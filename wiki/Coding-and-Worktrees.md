@@ -52,7 +52,7 @@ GrayCode 集成代码检索、文件修改、差异审阅、终端和 Git 工作
 
 - **终端卡片**：输出与停止按钮按调用及会话归属，即使多个项目执行相同命令也各自独立。自动滚动会跟随末尾，手动滚离或关闭自动滚动后可阅读前面的输出；重新开启可回到末尾。重新打开历史后台任务时会查询当前状态，停止失败会显示具体原因。
 - **命令执行控制**：需要 Shell 管道、重定向、Shell 选择或后台完成通知时，使用 `execute_command`。已有可执行文件和独立参数时，优先用 `run_command(command, args)`，不经过 Shell，也不会展开管道或环境变量，避免多层转义。`run_command` 可传 `cwd` 选择工作区内目录；省略、空字符串或 `.` 沿用当前主根目录，多根工作区的其他相对路径使用 `@根名称/目录` 前缀。越界路径、指向工作区外的符号链接和文件路径会被拒绝。
-- **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。同一账号、对话及工作区的后续运行可继续使用原 ID，RPC 客户端仍按客户端身份隔离；没有对话上下文时仅允许原运行。错误码区分 `NOT_FOUND`、`FORBIDDEN`、`EXITED`、`INPUT_CLOSED`、`INVALID_CURSOR`，已退出的会话仍可读取。输入会等待管道写入结果；`INPUT_CLOSED` 表示输入管道不可用，进程可能仍在运行，其输出仍可读取。
+- **会话操作**：`process_session` 只接收 `run_command` 返回的会话 ID，可读取输出、发送输入或停止受管进程；不要传入 `execute_command` 返回的后台 `taskId`。同一账号、对话及工作区的后续运行可继续使用原 ID，RPC 客户端仍按客户端身份隔离；没有对话上下文时仅允许原运行。错误码区分 `NOT_FOUND`、`FORBIDDEN`、`EXITED`、`INPUT_CLOSED`、`INVALID_CURSOR`，已退出的会话仍可读取。输入原样写入标准输入，提交一行时在 `text` 末尾包含 `\n`，并等待管道写入结果；`INPUT_CLOSED` 表示输入管道不可用，进程可能仍在运行，其输出仍可读取。同批次的多个 `read` 可按既有只读规则并行，输入和停止继续顺序执行。
 - **后台 Shell 任务**：`terminal_task` 管理 `execute_command` 返回的 `taskId`，提供 `list`、`status`、`read`、`stop`；与 `process_session` 的会话 ID 不混用。仅能访问同一账号、会话和工作区的任务，后续运行可继续查询。`read` 默认返回 12,000 字符，按 UTF-16 `cursor` / `nextCursor` 续读，最多保留最近 256,000 字符；旧记录标明游标起点未知，宿主重启后的运行任务标记为中断，不自动重放。后台完成通知仍保留，无需循环轮询；遇到无进展或需要中间结果时再按需查询。查询成功与命令成功是两回事，命令结果看 `status`、`exitCode`、`error`。
 
 - **后续操作提示**：进程与终端回执中的 `nextActions` 直接列出下一步工具和参数：`run_command` 的会话交给 `process_session`，普通后台 Shell 任务交给 `terminal_task`，原生异步任务用其真实句柄调用 `wait_for_tasks`。命令结束且没有未读输出时不继续建议等待，后续诊断和增量读取仍使用同一受管身份。

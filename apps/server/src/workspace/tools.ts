@@ -201,13 +201,14 @@ export function workspaceTools(
           properties: {
             action: { type: "string", enum: ["read", "input", "stop"] },
             id: { type: "string" },
-            text: optionalText,
+            text: { type: 'string', description: isZh ? '仅用于 input：原样写入标准输入的文字。提交一行时请在末尾包含换行符（\\n），工具不会自动追加换行。' : 'input only: text written verbatim to standard input. Include a newline (\\n) at the end when submitting a line; the tool does not append one.' },
             cursor: { type: 'integer', minimum: 0, description: isZh ? '仅用于 read：上次返回的 nextCursor。' : 'read only: the nextCursor from the previous read.' },
             maxChars: { type: 'integer', minimum: 1, maximum: 256000, description: isZh ? '仅用于 read：本次最多返回的 UTF-16 字符数。' : 'read only: maximum number of UTF-16 characters to return.' },
           },
           required: ["action", "id"],
         },
       },
+      parallelRead: args => args.action === 'read',
       effects: (args) =>
         args.action === "read"
           ? ["workspace_read"]
