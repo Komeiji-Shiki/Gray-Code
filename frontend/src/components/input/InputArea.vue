@@ -899,6 +899,7 @@ watch(() => settingsStore.promptModesVersion, () => {
         <SendButton
           :disabled="!canSend"
           :loading="chatStore.isWaitingForResponse"
+          :cancelling="chatStore.isCancellingStream"
           @click="handleSend"
           @preserve-dynamic-context-click="handlePreserveDynamicContextSend"
           @cancel="handleCancel"

@@ -2,7 +2,7 @@
  * Chat Store 状态定义
  */
 
-import { reactive, ref, toRaw, triggerRef } from 'vue'
+import { reactive, ref, shallowRef, toRaw, triggerRef } from 'vue'
 import type { Ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointSummary } from '../../types'
@@ -451,6 +451,7 @@ export function createChatState(): ChatStoreState {
   
   /** 等待AI响应状态 - 用于显示等待动画 */
   const isWaitingForResponse = ref(false)
+  const pendingStreamCancellations = shallowRef<ChatStoreState['pendingStreamCancellations']['value']>(new Map())
   
   /** 重试状态 */
   const retryStatus = ref<RetryStatus | null>(null)
@@ -588,6 +589,7 @@ export function createChatState(): ChatStoreState {
     smoothTexts,
     smoothMode,
     isWaitingForResponse,
+    pendingStreamCancellations,
     retryStatus,
     autoSummaryStatus,
     checkpoints,

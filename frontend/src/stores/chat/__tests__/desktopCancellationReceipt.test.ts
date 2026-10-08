@@ -32,6 +32,7 @@ describe('独立宿主取消回执', () => {
     vi.mocked(sendToExtension).mockImplementation(() => new Promise(resolve => { finish = resolve }))
     const state = activeState()
     const cancellation = cancel(state, {} as any)
+    expect(state.pendingStreamCancellations.value.get('conversation-a')).toEqual({ streamId: 'run-a', messageId: 'message-a' })
     expect(state.isStreaming.value).toBe(true)
     expect(state.isWaitingForResponse.value).toBe(true)
     expect(state.activeStreamId.value).toBe('run-a')
@@ -43,6 +44,7 @@ describe('独立宿主取消回执', () => {
     expect(state.isWaitingForResponse.value).toBe(false)
     expect(state.activeStreamId.value).toBeNull()
     expect(state._lastCancelledStreamId.value?.streamId).toBe('run-a')
+    expect(state.pendingStreamCancellations.value.size).toBe(0)
   })
 
   test.each([cancelStream, cancelStreamAndRejectTools])('超时回执不伪造已取消或工具拒绝结果', async cancel => {
@@ -56,6 +58,27 @@ describe('独立宿主取消回执', () => {
     expect(state.allMessages.value).toHaveLength(1)
     expect(state.allMessages.value[0].tools?.[0].status).toBe('executing')
     expect(state.error.value?.code).toBe('RUN_CANCEL_TIMEOUT')
+    expect(state.pendingStreamCancellations.value.size).toBe(0)
+  })
+
+  test('同时取消不同会话时各自保留等待状态，旧回执不清理新会话的请求', async () => {
+    const replies: Array<(value: unknown) => void> = []
+    vi.mocked(sendToExtension).mockImplementation(() => new Promise(resolve => replies.push(resolve)))
+    const state = activeState()
+    const first = cancelStream(state, {} as any)
+    state.currentConversationId.value = 'conversation-b'
+    state.activeStreamId.value = 'run-b'
+    state.streamingMessageId.value = 'message-b'
+    const second = cancelStream(state, {} as any)
+    expect(state.pendingStreamCancellations.value.size).toBe(2)
+    replies[0]({ success: true }); await first
+    expect(state.pendingStreamCancellations.value.has('conversation-a')).toBe(false)
+    expect(state.pendingStreamCancellations.value.get('conversation-b')).toEqual({ streamId: 'run-b', messageId: 'message-b' })
+    expect(state.activeStreamId.value).toBe('run-b')
+    const rejected = expect(second).rejects.toMatchObject({ code: 'RUN_CANCEL_TIMEOUT' })
+    replies[1]({ success: false, code: 'RUN_CANCEL_TIMEOUT' }); await rejected
+    expect(state.pendingStreamCancellations.value.size).toBe(0)
+    expect(state.isWaitingForResponse.value).toBe(true)
   })
 
   test('连接失败与缺少明确成功的回执同样可重试', async () => {

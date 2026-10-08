@@ -353,6 +353,7 @@ const zhCN = {
             send: '发送消息',
             sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
             stopGenerating: '停止生成',
+            stoppingGeneration: '正在停止…',
             sendWhileBusy: '发送补充消息',
             interruptDelivered: '已插入到当前回合，AI 将尽快处理',
             attachFile: '添加附件',

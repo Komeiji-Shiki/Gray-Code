@@ -475,6 +475,8 @@ async function cancelDesktopStream(
   if (!conversationId || (!hadActiveRequest && !rejectTools)) return { cancelled: false }
   const ownsCurrentRequest = () => state.currentConversationId.value === conversationId && state.activeStreamId.value === streamId
     && (streamId !== null || state.streamingMessageId.value === messageId)
+  const cancellation = { streamId, messageId }
+  state.pendingStreamCancellations.value = new Map(state.pendingStreamCancellations.value).set(conversationId, cancellation)
   try {
     const response = await sendToExtension<{ success?: boolean; code?: string; error?: string } & Partial<CancelStreamResponse>>(
       MESSAGE_NAMES.cancelStream,
@@ -513,6 +515,12 @@ async function cancelDesktopStream(
       details: error instanceof Error ? error.message : String(error)
     }
     throw error
+  } finally {
+    if (state.pendingStreamCancellations.value.get(conversationId) === cancellation) {
+      const remaining = new Map(state.pendingStreamCancellations.value)
+      remaining.delete(conversationId)
+      state.pendingStreamCancellations.value = remaining
+    }
   }
 }
 

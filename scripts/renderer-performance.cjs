@@ -78,25 +78,27 @@ async function measureCommandCancellation({ rpc, ui, chat, until }) {
   const feedback = chat(`new Promise((resolve,reject)=>{
     const button=document.querySelector('.stop-icon')?.closest('button');if(!button){reject(new Error('Missing stop button'));return;}
     const start=performance.now();button.click();
-    const frame=()=>{if(!document.querySelector('.stop-icon'))resolve(performance.now()-start);else if(performance.now()-start>10000)reject(new Error('Stop button remained busy'));else requestAnimationFrame(frame);};
+    const frame=()=>{const current=document.querySelector('.stop-icon')?.closest('button');const state=!current?'idle':current.dataset.cancelling==='true'?'stopping':undefined;
+      if(state)resolve({milliseconds:performance.now()-start,state});else if(performance.now()-start>10000)reject(new Error('Stop button showed no feedback'));else requestAnimationFrame(frame);};
     requestAnimationFrame(frame);
   })`);
   const stopped = until(async () => {
     const result = await ui('terminal.getOutput', { terminalId: task.id });
     return result.running === false ? { result, milliseconds: performance.now() - started } : false;
   }, 'foreground command stopped');
-  const [frontendFeedbackMilliseconds, terminal] = await Promise.all([feedback, stopped]);
-  const run = await until(async () => {
+  const settled = until(async () => {
     const current = (await rpc('runs.list', { conversationId })).find(value => value.id === runId);
-    return current && ['completed', 'failed', 'cancelled', 'interrupted'].includes(current.status) ? current : false;
+    return current && ['completed', 'failed', 'cancelled', 'interrupted'].includes(current.status)
+      ? { run: current, milliseconds: performance.now() - started } : false;
   }, 'cancelled run settled');
-  const runSettledMilliseconds = performance.now() - started;
-  assert.equal(run.status, 'cancelled');
+  // 各阶段同时观察，界面等待不会被算入较早发生的运行或进程结束时间。
+  const exited = until(() => { try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; } }, 'owned foreground process exited')
+    .then(() => performance.now() - started);
+  const [frontend, terminal, runtime, processExitMilliseconds] = await Promise.all([feedback, stopped, settled, exited]);
+  assert.equal(runtime.run.status, 'cancelled');
   assert(terminal.result.output.includes('renderer-command-ready'), '取消后应保留已经产生的命令输出');
-  // 只探测夹具自己报告的 PID 是否仍存在，不终止或枚举其他进程。
-  await until(() => { try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; } }, 'owned foreground process exited');
-  return { messages: 5000, frontendFeedbackMilliseconds, terminalStoppedMilliseconds: terminal.milliseconds,
-    runSettledMilliseconds, processExitMilliseconds: performance.now() - started, runStatus: run.status, outputRetained: true,
+  return { messages: 5000, frontendFeedbackMilliseconds: frontend.milliseconds, frontendFeedbackState: frontend.state, terminalStoppedMilliseconds: terminal.milliseconds,
+    runSettledMilliseconds: runtime.milliseconds, processExitMilliseconds, runStatus: runtime.run.status, outputRetained: true,
     killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: 100 };
 }
 

@@ -351,6 +351,7 @@ const ja: LanguageMessages = {
             send: 'メッセージを送信',
             sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
             stopGenerating: '生成を停止',
+            stoppingGeneration: '停止しています…',
             sendWhileBusy: '追加メッセージを送信',
             interruptDelivered: '現在のターンに挿入しました。AI がまもなく処理します',
             attachFile: 'ファイルを添付',

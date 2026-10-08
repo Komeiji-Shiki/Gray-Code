@@ -351,6 +351,7 @@ const en: LanguageMessages = {
             send: 'Send message',
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
+            stoppingGeneration: 'Stopping…',
             sendWhileBusy: 'Send a follow-up message',
             interruptDelivered: 'Inserted into the current turn — AI will handle it shortly',
             attachFile: 'Attach file',

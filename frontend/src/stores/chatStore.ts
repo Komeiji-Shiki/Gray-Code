@@ -186,6 +186,11 @@ export const useChatStore = defineStore('chat', () => {
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
   const branchCandidateGroups = vueComputed(() => buildCandidateGroupIndex(state.branchGraph.value))
+  const isCancellingStream = vueComputed(() => {
+    const request = state.pendingStreamCancellations.value.get(state.currentConversationId.value ?? '')
+    return !!request && request.streamId === state.activeStreamId.value
+      && (request.streamId !== null || request.messageId === state.streamingMessageId.value)
+  })
 
   /** 是否还有更多历史对话可加载（分页） */
   const hasMoreConversations = vueComputed(
@@ -958,6 +963,7 @@ export const useChatStore = defineStore('chat', () => {
     hasMoreConversations,
     activeStreamId: state.activeStreamId,
     isWaitingForResponse: state.isWaitingForResponse,
+    isCancellingStream,
     retryStatus: state.retryStatus,
     autoSummaryStatus: state.autoSummaryStatus,
     smoothTexts: state.smoothTexts,

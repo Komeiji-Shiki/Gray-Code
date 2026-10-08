@@ -258,6 +258,8 @@ export interface ChatStoreState {
   smoothMode: Ref<SmoothMode>
   /** 等待AI响应状态 */
   isWaitingForResponse: Ref<boolean>
+  /** 未收到回执的取消请求；身份用于避免影响其他会话或后续运行。 */
+  pendingStreamCancellations: Ref<Map<string, { streamId: string | null; messageId: string | null }>>
   /** 重试状态 */
   retryStatus: Ref<RetryStatus | null>
   /** 自动总结状态（用于显示“自动总结中”提示） */

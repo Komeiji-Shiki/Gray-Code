@@ -12,6 +12,7 @@ const { t } = useI18n()
 defineProps<{
   disabled?: boolean
   loading?: boolean
+  cancelling?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -52,11 +53,14 @@ function handleCancel() {
     <button
       type="button"
       class="send-button"
-      :title="t('components.input.stopGenerating')"
-      :aria-label="t('components.input.stopGenerating')"
+      :disabled="cancelling"
+      :data-cancelling="cancelling ? 'true' : undefined"
+      :aria-busy="cancelling || undefined"
+      :title="t(cancelling ? 'components.input.stoppingGeneration' : 'components.input.stopGenerating')"
+      :aria-label="t(cancelling ? 'components.input.stoppingGeneration' : 'components.input.stopGenerating')"
       @click="handleCancel"
     >
-      <i class="codicon codicon-primitive-square stop-icon" aria-hidden="true"></i>
+      <i class="codicon stop-icon" :class="cancelling ? 'codicon-loading codicon-modifier-spin' : 'codicon-primitive-square'" aria-hidden="true"></i>
     </button>
   </div>
 
