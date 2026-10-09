@@ -307,10 +307,23 @@ export class PlatformTerminals {
       await Promise.all([...this.active.values()].filter(task => owned(task.record)).map(task => task.events));
       context.signal.throwIfAborted();
       const records: TerminalRecord[] = [];
-      for (const id of await this.app.storage.listRecords('terminal-records', context.conversationId)) {
+      let afterId: string | undefined;
+      for (;;) {
         context.signal.throwIfAborted();
-        const record = this.active.get(id)?.record ?? await this.app.storage.getRecord('terminal-records', id) as TerminalRecord | null;
-        if (record && owned(record)) records.push(record);
+        // 列表只需要归属和状态摘要，正文在 read 时读取；持久化分页不改变对模型的时间排序。
+        const page = await this.app.storage.readRecordPage('terminal-records', context.conversationId, {
+          afterId, limit: 200,
+          projection: {
+            fields: ['id', 'actorId', 'conversationId', 'runId', 'workspaceId', 'status', 'startTime', 'updatedAt', 'data'],
+            properties: { data: { fields: ['command', 'background', 'exitCode', 'error'] } },
+          },
+        });
+        for (const saved of page) {
+          const record = this.active.get(saved.id)?.record ?? saved.value as TerminalRecord;
+          if (record && owned(record)) records.push(record);
+        }
+        if (page.length < 200) break;
+        afterId = page[page.length - 1].id;
       }
       records.sort((a, b) => b.startTime - a.startTime || a.id.localeCompare(b.id));
       const tasks = records.slice(Number(offset), Number(offset) + Number(limit)).map(record => this.withNextActions(this.taskSummary(record)));

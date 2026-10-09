@@ -13,7 +13,7 @@ export class QuestionBroker {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('Question timeout must be positive.');
   }
   ask(runId: string, actorId: string, questions: UserQuestion[]): QuestionRequest {
-    if (this.list(runId).length >= 3) throw new Error('Three question requests are already pending.');
+    if (this.pendingCount(runId) >= 3) throw new Error('Three question requests are already pending.');
     const now = Date.now();
     const request: QuestionRequest = { id: randomUUID(), runId, actorId, questions: structuredClone(questions), createdAt: now, expiresAt: now + this.timeoutMs };
     const timer = setTimeout(() => this.finish(request.id), this.timeoutMs);
@@ -39,11 +39,21 @@ export class QuestionBroker {
     return value;
   }
   list(runId?: string): QuestionRequest[] { return [...this.pending.values()].filter(value => !runId || value.request.runId === runId).map(value => structuredClone(value.request)); }
+  /** 内部调度只需要数量，不为额度或等待判断复制完整问题正文。 */
+  pendingCount(runId: string): number {
+    let count = 0;
+    for (const value of this.pending.values()) if (value.request.runId === runId) count++;
+    return count;
+  }
+  get(id: string): QuestionRequest | undefined {
+    const request = this.pending.get(id)?.request;
+    return request ? structuredClone(request) : undefined;
+  }
   drain(runId: string): QuestionFeedback[] { const values = this.feedback.get(runId) ?? []; this.feedback.delete(runId); return values; }
   hasFeedback(runId: string): boolean { return (this.feedback.get(runId)?.length ?? 0) > 0; }
   async wait(runId: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    if (this.hasFeedback(runId) || !this.list(runId).length) return;
+    if (this.hasFeedback(runId) || !this.pendingCount(runId)) return;
     let wake!: () => void;
     const ready = new Promise<void>(resolve => { wake = resolve; });
     this.waiters.set(runId, wake); signal.addEventListener('abort', wake, { once: true });

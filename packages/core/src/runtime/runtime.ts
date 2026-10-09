@@ -359,7 +359,7 @@ export class PlatformRuntime {
   pendingQuestions() { return this.questions.list(); }
   async answerQuestion(questionId: string, actorId: string, answers: string[]): Promise<void> {
     const actor = await this.services.actor(actorId);
-    const question = this.questions.list().find(value => value.id === questionId);
+    const question = this.questions.get(questionId);
     if (!actor || actor.revoked || !question || (actor.role !== 'owner' && question.actorId !== actor.id)) throw new Error('This account cannot answer the question.');
     this.questions.answer(questionId, answers, actorId);
   }
@@ -393,11 +393,14 @@ export class PlatformRuntime {
         if (access) throw new Error(access);
         let state = await this.services.storage.readConversationState(run.conversationId, undefined, { cursor: { runId: run.id, revision: historyRevision } });
         const incoming = state.history;
-        historyMessages = [...historyMessages.slice(0, incoming.startIndex), ...incoming.messages];
+        const replacedHistory = incoming.startIndex < historyMessages.length;
+        if (incoming.startIndex === 0) historyMessages = incoming.messages;
+        else if (replacedHistory) historyMessages = historyMessages.slice(0, incoming.startIndex).concat(incoming.messages);
+        else if (incoming.messages.length) historyMessages = historyMessages.concat(incoming.messages);
         historyRevision = incoming.revision;
-        // 历史可能经过总结或分支替换；复用本次已读取的内容同步配对状态，不另发存储请求。
-        this.active.get(run.id)!.pendingTools.clear();
-        for (const message of historyMessages) this.trackToolPairing(run.id, message);
+        // 已提交的追加消息沿用现有配对集合；总结或分支替换改变共享前缀时才重建。
+        if (replacedHistory) this.active.get(run.id)!.pendingTools.clear();
+        for (const message of replacedHistory ? historyMessages : incoming.messages) this.trackToolPairing(run.id, message);
         state = { ...state, history: { ...incoming, startIndex: 0, messages: historyMessages } };
         run.iteration = iteration;
         await this.event(run.id, 'model.preparing', { iteration }, { iteration });
@@ -528,7 +531,7 @@ export class PlatformRuntime {
           if (this.services.models.hasContinuation?.(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (await this.services.deliverFeedback?.(run)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (this.questions.hasFeedback(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); await this.drainFeedback(run); continue; }
-          if (this.questions.list(run.id).length) {
+          if (this.questions.pendingCount(run.id)) {
             this.notify({ type: 'model.continued', runId: run.id });
             await this.event(run.id, 'run.waiting_input', {}, { status: 'awaiting_input' });
             await this.questions.wait(run.id, signal);
@@ -622,7 +625,7 @@ export class PlatformRuntime {
 
   private parallelRead(call: FunctionCall, agent: AgentDefinition, catalog: ToolCatalog): boolean {
     const entry = catalog.entries.get(call.name);
-    if (!entry || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
+    if (!entry?.tool.parallelRead || agent.reviewerProviderId && agent.reviewerToolNames?.includes(call.name)) return false;
     try {
       const args = entry.normalizeArguments(call.args);
       const preparedArgs = entry.tool.normalizeArgs?.(args).args ?? args;
@@ -642,8 +645,12 @@ export class PlatformRuntime {
     try {
       const entry = catalog.entries.get(call.name);
       if (!entry) return { success: false, code: 'UNKNOWN_TOOL', error: 'Tool is absent from the configured catalog.' };
-      const { task_handle: _handle, ...nativeArgs } = call.args;
-      call = { ...call, args: entry.normalizeArguments(nativeAsync ? nativeArgs : call.args) };
+      let args = call.args;
+      if (nativeAsync) {
+        const { task_handle: _handle, ...nativeArgs } = args;
+        args = nativeArgs;
+      }
+      call = { ...call, args: entry.normalizeArguments(args) };
       if (entry.tool.normalizeArgs) {
         const prepared = entry.tool.normalizeArgs(call.args);
         call = { ...call, args: prepared.args };

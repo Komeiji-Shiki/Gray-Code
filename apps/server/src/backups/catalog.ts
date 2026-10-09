@@ -38,6 +38,10 @@ export interface RestoreCatalog { preview: BackupRestorePreview; items: Item[]; 
 
 export async function restoreCatalog(source: PlatformStorage, current: PlatformStorage, migrations: string[] = [], unavailableCredentials: string[] = []): Promise<RestoreCatalog> {
   const [units, currentUnits] = await Promise.all([source.backupInventory(), current.backupInventory()]);
+  // 本次预览使用固定清单，依赖和冲突判断直接按身份查询，避免每个条目重复扫描整个备份。
+  const currentByKey = new Map(currentUnits.map(unit => [unit.key, unit]));
+  const conversations = new Map(units.filter(unit => unit.kind === 'conversation').map(unit => [unit.id, unit]));
+  const currentPets = new Set(currentUnits.filter(unit => unit.namespace === 'pet-resource').map(unit => unit.id));
   const settings = await source.getRecord('platform-settings', 'main') as { accounts?: Array<{ id: string; displayName: string }>; workspaces?: Array<{ name: string; directory: string }> } | null;
   const items: Item[] = [], used = new Set<string>();
   const add = (id: string, name: string, category: BackupCategoryId, candidates: BackupUnit[]) => {
@@ -73,6 +77,7 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
     add(`records:${namespace}`, namespace.startsWith('skill') || namespace === 'imported-skills' ? '技能配置：' + namespace : namespace, /skill/.test(namespace) ? 'skills' : 'other', records.filter(unit => unit.namespace === namespace));
   for (const unit of records.filter(unit => unit.namespace === 'platform-secrets')) add(`secret:${unit.id}`, '连接凭据 ' + unit.id, 'settings', [unit]);
   const secretIds = new Set(records.filter(unit => unit.namespace === 'platform-secrets').map(unit => unit.id));
+  const itemsById = new Map(items.map(item => [item.id, item]));
   const referenced = (value: unknown, found: Set<string>) => {
     if (typeof value === 'string' && secretIds.has(value)) found.add(`secret:${value}`);
     else if (Array.isArray(value)) value.forEach(item => referenced(item, found));
@@ -84,8 +89,8 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
     for (const unit of item.units) {
       if (['pet-resource-file', 'pet-runtime', 'computer-actions', 'activity-samples', MEMORY_IMPORT_FILE_NAMESPACE].includes(unit.namespace!)) continue;
       const value = await source.getRecord(unit.namespace!, unit.id) as Record<string, any>; referenced(value, dependencies);
-      if (value?.conversationId) { const conversation = units.find(row => row.kind === 'conversation' && row.id === value.conversationId); if (conversation && !currentUnits.some(row => row.key === conversation.key)) dependencies.add(conversation.key); }
-      if (unit.namespace === 'pet-configuration' && value?.resourceId && !currentUnits.some(row => row.namespace === 'pet-resource' && row.id === value.resourceId)) dependencies.add(`pet:${value.resourceId}`);
+      if (value?.conversationId) { const conversation = conversations.get(value.conversationId); if (conversation && !currentByKey.has(conversation.key)) dependencies.add(conversation.key); }
+      if (unit.namespace === 'pet-configuration' && value?.resourceId && !currentPets.has(value.resourceId)) dependencies.add(`pet:${value.resourceId}`);
     }
     item.requires = [...dependencies];
   }
@@ -95,9 +100,9 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
   }))).filter((item): item is NonNullable<typeof item> => !!item);
   const categories = backupCategories.map(category => {
     const own = items.filter(item => item.category === category.id);
-    const conflicts = own.filter(item => item.units.some(unit => currentUnits.some(value => value.key === unit.key)));
+    const conflicts = own.filter(item => item.units.some(unit => currentByKey.has(unit.key)));
     const dependencies = new Map<BackupCategoryId, string>();
-    for (const item of own) for (const id of item.requires) { const required = items.find(value => value.id === id); if (required && required.category !== category.id) dependencies.set(required.category, `包含所依赖的${backupCategories.find(value => value.id === required.category)!.name}对象，准备恢复时会列出实际范围。`); }
+    for (const item of own) for (const id of item.requires) { const required = itemsById.get(id); if (required && required.category !== category.id) dependencies.set(required.category, `包含所依赖的${backupCategories.find(value => value.id === required.category)!.name}对象，准备恢复时会列出实际范围。`); }
     return { ...category, count: own.length + (category.id === 'skills' ? directories.length : 0), conflicts: conflicts.length + (category.id === 'skills' ? directories.filter(item => item.expected).length : 0),
       dependencies: [...dependencies].map(([id, reason]) => ({ id, reason })), examples: own.slice(0, 20).map(item => ({ name: item.name, conflict: conflicts.includes(item) })) };
   });
@@ -111,13 +116,15 @@ export function selectBackupRestore(catalog: RestoreCatalog, selection: BackupRe
     return { ...selection, groups: [], directories: [] };
   }
   if (!selection.categories?.length || new Set(selection.categories.map(category => category.id)).size !== selection.categories.length) throw new Error('请至少选择一个恢复类别，并指定冲突处理方式。');
+  const itemsById = new Map(catalog.items.map(item => [item.id, item]));
+  const currentByKey = new Map(catalog.current.map(unit => [unit.key, unit]));
   const selected = new Map<string, 'keep' | 'replace'>();
   const add = (id: string, conflict: 'keep' | 'replace') => {
-    const item = catalog.items.find(item => item.id === id); if (!item) throw new Error('备份缺少所选资源的依赖。');
+    const item = itemsById.get(id); if (!item) throw new Error('备份缺少所选资源的依赖。');
     const previous = selected.get(id); if (previous && previous !== conflict) throw new Error('关联资源的冲突处理方式不一致，请为相关类别选择相同方式。');
     if (previous) return; selected.set(id, conflict);
     // 保留已有整体时不替换它的凭据或关联资源。
-    if (conflict === 'keep' && item.units.some(unit => catalog.current.some(value => value.key === unit.key))) return;
+    if (conflict === 'keep' && item.units.some(unit => currentByKey.has(unit.key))) return;
     item.requires.forEach(required => add(required, conflict));
   };
   for (const category of selection.categories) {
@@ -125,17 +132,17 @@ export function selectBackupRestore(catalog: RestoreCatalog, selection: BackupRe
     catalog.items.filter(item => item.category === category.id).forEach(item => add(item.id, category.conflict));
   }
   const groups: BackupMergeGroup[] = [...selected].map(([id, conflict]) => {
-    const item = catalog.items.find(item => item.id === id)!;
+    const item = itemsById.get(id)!;
     const copying = conflict === 'replace' || !item.units.some(unit => catalog.current.some(row => row.key === unit.key));
     if (copying && item.units.some(unit => unit.namespace === 'platform-secrets' && catalog.preview.unavailableCredentials?.includes(unit.id))) throw new Error('所选类别依赖原电脑或原应用配置保护的连接凭据，请在仍能解密凭据的原应用中使用备份密码重新导出，或取消这个类别。');
     const remove = id === 'devices' && conflict === 'replace' ? catalog.current.filter(unit => nodeUnit(unit) && unit.namespace !== 'node-revocations' && !item.units.some(source => source.key === unit.key)) : [];
     return { id, conflict, units: item.units, remove, source: Object.fromEntries(item.units.map(unit => [unit.key, unit.fingerprint])),
-      expected: Object.fromEntries([...item.units, ...remove].map(unit => [unit.key, catalog.current.find(value => value.key === unit.key)?.fingerprint ?? null])) };
+      expected: Object.fromEntries([...item.units, ...remove].map(unit => [unit.key, currentByKey.get(unit.key)?.fingerprint ?? null])) };
   });
   const skills = selection.categories.find(category => category.id === 'skills');
   return { ...selection, groups, directories: skills ? catalog.directories.map(directory => ({ ...directory, conflict: skills.conflict })) : [],
-    items: [...selected].map(([id, conflict]) => { const item = catalog.items.find(item => item.id === id)!; return { name: item.name, category: item.category,
-      action: conflict === 'keep' && item.units.some(unit => catalog.current.some(row => row.key === unit.key)) ? 'keep' as const : 'restore' as const,
+    items: [...selected].map(([id, conflict]) => { const item = itemsById.get(id)!; return { name: item.name, category: item.category,
+      action: conflict === 'keep' && item.units.some(unit => currentByKey.has(unit.key)) ? 'keep' as const : 'restore' as const,
       dependency: !selection.categories!.some(category => category.id === item.category) }; }),
     ...(selection.categories.some(category => category.id === 'devices' && category.conflict === 'replace') ? { expectedDevices: deviceFingerprint(catalog.current) } : {}) };
 }

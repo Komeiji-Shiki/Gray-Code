@@ -47,7 +47,8 @@ export interface RuntimeTool {
   nativeAsyncParameterDescriptions?: Record<string, string>;
   /** Pure classification. Must not read files, contact a service, or create a snapshot. */
   effects: (args: Record<string, unknown>) => ToolEffect[];
-  execute: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolOutcome>;
+  /** 执行复用规范化后的参数；需要修改时由工具局部复制，保留模型调用和审批参数。 */
+  execute: (args: Readonly<Record<string, unknown>>, context: ToolContext) => Promise<ToolOutcome>;
 }
 export interface ToolCatalog {
   version: string;

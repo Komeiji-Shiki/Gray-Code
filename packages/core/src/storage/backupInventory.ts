@@ -33,7 +33,7 @@ export function backupInventory(db: SqliteConnection, objects: ObjectStore): Bac
         WHERE s.history_id IN (${histories}) ORDER BY e.segment_id,e.ordinal`, historyArgs],
     ]);
     const records = (db.prepare('SELECT count(*) n FROM records WHERE owner_id=?').get(row.id) as { n: number }).n;
-    const metadata = objects.getValue<{ actorId?: string; workspaceId?: string }>(row.metadata_hash);
+    const metadata = objects.getValue<{ actorId?: string; workspaceId?: string }>(row.metadata_hash, { fields: ['actorId', 'workspaceId'] });
     result.push({ ...unit, key: backupUnitKey(unit), label: row.title || row.id, fingerprint, records, actorId: metadata.actorId, workspaceId: metadata.workspaceId });
   }
   for (const row of db.prepare('SELECT namespace,id,owner_id,value_hash,revision FROM records WHERE owner_id IS NULL OR owner_id NOT IN (SELECT id FROM conversations) ORDER BY namespace,id').iterate() as Iterable<{ namespace: string; id: string; value_hash: Buffer }>) {

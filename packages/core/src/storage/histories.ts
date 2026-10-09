@@ -247,22 +247,34 @@ export class HistoryStore {
     if (options.runIds?.some(runId => typeof runId !== 'string' || !runId)) invalid('Run IDs must be nonempty strings.');
     if (options.indices?.some(index => !Number.isSafeInteger(index) || index < 0)) invalid('Message indices must be nonnegative integers.');
     const runs = options.runIds ? new Set(options.runIds) : undefined;
-    const indices = options.indices ? new Set(options.indices) : undefined;
+    const indices = options.indices ? [...new Set(options.indices)].sort((left, right) => left - right) : undefined;
     return this.db.transaction(() => {
       const info = this.checkRevision(id, options.expectedRevision);
       const result = { total: info.message_count, revision: info.revision, messages: [] as PlatformMessage[] };
-      if (runs?.size === 0 || indices?.size === 0) return result;
-      const rows = this.rows(id, 0, info.message_count);
-      if (rows.length !== info.message_count) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
-      for (let index = 0; index < rows.length; index++) {
-        if (indices && !indices.has(index)) continue;
-        const row = rows[index];
-        if (runs) {
-          const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
-          const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
-          if (typeof owner.runId !== 'string' || !runs.has(owner.runId)) continue;
+      if (runs?.size === 0 || indices?.length === 0) return result;
+      const ranges: Array<{ start: number; end: number }> = [];
+      if (indices) {
+        // 选定位置按原历史顺序返回；相邻位置共用范围查询，不读取未选中的整段索引。
+        for (const index of indices) {
+          if (index >= info.message_count) break;
+          const previous = ranges.at(-1);
+          if (previous?.end === index) previous.end++;
+          else ranges.push({ start: index, end: index + 1 });
         }
-        result.messages.push(this.decode(row, options.projection));
+      } else ranges.push({ start: 0, end: info.message_count });
+      // 同一次同步查询的投影不变，缓存键的后缀只序列化一次，不随每条消息重复计算。
+      const projectionKey = options.projection ? JSON.stringify(options.projection) : '';
+      for (const range of ranges) {
+        const rows = this.rows(id, range.start, range.end);
+        if (rows.length !== range.end - range.start) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
+        for (const row of rows) {
+          if (runs) {
+            const cached = this.bodies.get(row.body_hash.toString('hex'))?.body;
+            const owner = cached ?? this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields: ['runId'], omitBinary: true });
+            if (typeof owner.runId !== 'string' || !runs.has(owner.runId)) continue;
+          }
+          result.messages.push(this.decode(row, options.projection, projectionKey));
+        }
       }
       return result;
     })();
@@ -522,9 +534,9 @@ export class HistoryStore {
     return { body_hash: this.objects.putValue(body), message_id: id ?? null, role, timestamp };
   }
 
-  private body(hash: Buffer, projection?: ValueProjection): Record<string, unknown> {
+  private body(hash: Buffer, projection?: ValueProjection, projectionKey = projection ? JSON.stringify(projection) : ''): Record<string, unknown> {
     // 投影与完整正文共用原有容量和淘汰规则；内容及投影相同才复用，避免每次检查点重新解码旧消息。
-    const key = hash.toString('hex') + (projection ? `:${JSON.stringify(projection)}` : '');
+    const key = hash.toString('hex') + (projection ? `:${projectionKey}` : '');
     const cached = this.bodies.get(key);
     if (cached) { this.bodies.delete(key); this.bodies.set(key, cached); return cached.body; }
     const body = this.objects.getValue<Record<string, unknown>>(hash, projection);
@@ -539,8 +551,8 @@ export class HistoryStore {
     return body;
   }
 
-  private decode(row: EntryRow, projection?: ValueProjection): PlatformMessage {
-    const body = this.body(row.body_hash, projection);
+  private decode(row: EntryRow, projection?: ValueProjection, projectionKey?: string): PlatformMessage {
+    const body = this.body(row.body_hash, projection, projectionKey);
     const message = { ...body, role: row.role } as PlatformMessage;
     if (row.message_id !== null) message.id = row.message_id;
     if (row.timestamp !== null) message.timestamp = row.timestamp;
