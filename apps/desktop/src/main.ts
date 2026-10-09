@@ -16,8 +16,6 @@ import { activateDesktopWindow } from './windowActivation';
 import {
   app,
   BrowserWindow,
-  clipboard,
-  ClipboardItem,
   dialog,
   ipcMain,
   Menu,
@@ -34,13 +32,11 @@ import {
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import { PlatformApplication } from "../../server/src/application";
 import { ApplicationRouter } from "../../server/src/transport/router";
 import { DesktopBrowser } from "./browser";
 import { DesktopComputerCapture } from './computerCapture';
 import { DesktopPetWindow } from './petWindow';
-import { systemFonts } from "./fonts";
 import { migrateLegacySettings } from './legacySettings';
 import { backfillPlaceholderTitles } from '../../server/src/conversations/autoTitles';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
@@ -49,8 +45,8 @@ import { DesktopEditorRegistration } from './editorRegistration';
 import { bindDesktopAppearance } from './appearance';
 import { resolveAppearancePalette } from '../../../shared/appearance';
 import { isTrustedApplicationFrame } from './trustedFrame';
-import { openOfficeFile, openWorkspaceInExplorer, revealWorkspaceFile } from './workspaceExplorer';
 import { desktopRpcReply } from '../../../shared/desktopBridge';
+import { DesktopRequests } from './requests';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: import('../../../shared/distribution').DistributionInfo & { buildTime: string };
@@ -430,6 +426,16 @@ async function main(): Promise<void> {
     if (closePending && exitPhase === 'idle' && (event.type === 'runtime.preparation.changed' || event.type === 'chat.preparation.changed' || event.type === "file.activity" || event.type === 'nodes.changed' || event.type === 'processes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
       checkIdleClose();
   });
+  const desktopRequests = new DesktopRequests({
+    application, router, client, backups: backups!, installer, updates, storageLocation, desktopFiles,
+    editorRegistration, notifications, petWindow: petWindowController, saveAll: desktopSaveAll,
+    dataDirectory, build: __GRAYCODE_DESKTOP_BUILD__, getWindow: () => window, createWindow,
+    isClosing: () => exitPhase === 'closing' || exitPhase === 'ready' || application.isClosing,
+    dirtyState: () => ({ documents: dirtyDocuments, settings: dirtySettings }),
+    setDirtyDocuments: count => { dirtyDocuments = count; },
+    setDirtySettings: dirty => { dirtySettings = dirty; },
+    activeTasks, quit, notify,
+  });
   ipcMain.handle(
     "graycode:rpc",
     (event, method: string, params: Record<string, any> = {}) => desktopRpcReply(async () => {
@@ -437,198 +443,7 @@ async function main(): Promise<void> {
       if (!isTrustedApplicationFrame(trustedContents, event.senderFrame, event.sender.mainFrame)) {
         throw new Error("Untrusted application frame.");
       }
-      if (method === 'ui.request' && typeof params.type === 'string' && params.type.startsWith('desktop.editor.')) {
-        method = params.type; params = params.data ?? {};
-      }
-      if (method === 'ui.request' && typeof params.type === 'string' && params.type.startsWith('backup.')) {
-        method = params.type; params = params.data ?? {};
-      }
-      if (method === 'desktop.editor.status') return editorRegistration.status();
-      if (method === 'desktop.editor.register') return editorRegistration.register();
-      if (method === 'desktop.editor.defaults') {
-        const status = await editorRegistration.status();
-        if (!status.registered) throw new Error('请先将当前 GrayCode 注册为代码编辑器。');
-        await shell.openExternal('ms-settings:defaultapps?registeredAppUser=GrayCode'); return { success: true };
-      }
-      if (method === 'desktop.files.ready') { await desktopFiles.clientReady(); return { success: true }; }
-      if (method === 'ui.request' && (params.type?.startsWith('desktop.updates.') || ['getAppInfo', 'getUpdateStatus', 'checkUpdateNow', 'updateNow', 'installUpdate', 'openUpdatePage', 'notifications.agentStop', 'notifications.preview', 'exportPromptModes', 'conversation.revealInExplorer', 'storagePath.getConfig', 'storagePath.validate', 'storagePath.selectFolder', 'storagePath.openInExplorer', 'storagePath.migrate', 'storagePath.reset', 'reloadWindow', 'openDirectory', 'desktop.fonts', 'desktop.chooseWorkspace', 'desktop.dirtySettings', 'settings.import', 'settings.export'].includes(params.type))) {
-        method = params.type;
-        params = params.data ?? {};
-      }
-      if (exitPhase === 'closing' || exitPhase === 'ready' || application.isClosing) throw new Error('应用正在关闭，请稍后重新打开。');
-      if (method === 'files.reveal') return revealWorkspaceFile(application, shell, client.actorId, params as { workspaceId: string; path: string });
-      if (method === 'files.openOffice') return openOfficeFile(application, shell, client.actorId, params as { workspaceId: string; path: string });
-      if (method === 'workspace.openInExplorer') return openWorkspaceInExplorer(application, shell, client.actorId, params);
-      if (method === 'desktop.pet.expand') return petWindowController!.expand(params.expanded === true);
-      if (['desktop.pet.manage', 'desktop.pet.screenSense', 'desktop.pet.openConversation'].includes(method)) {
-        if (method === 'desktop.pet.openConversation') await application.conversation(client.actorId, params.conversationId);
-        if (!window || window.isDestroyed()) await createWindow(); else { window.show(); window.focus(); }
-        if (method === 'desktop.pet.manage') notify({ type: 'pets.open' });
-        else if (method === 'desktop.pet.screenSense') notify({ type: 'screenSense.open' });
-        else await router.call(client, 'ui.command', { command: 'platform.openModeConversation', data: { conversationId: params.conversationId } });
-        return { success: true };
-      }
-      application.requireOwner(client.actorId);
-      if (method === 'backup.status') return backups!.status();
-      if (method === 'backup.cancel') { backups!.cancel(); return { success: true }; }
-      if (method === 'backup.cancelRestore') { await backups!.cancelRestore(); return { success: true }; }
-      if (method === 'backup.preview') return backups!.previewRestore();
-      if (method === 'backup.select') return backups!.selectRestore(params.selection);
-      if (method === 'backup.export') {
-        const selected = await dialog.showSaveDialog(window!, { title: '备份程序数据',
-          defaultPath: `GrayCode-${new Date().toISOString().slice(0, 10)}.graycode-backup`,
-          filters: [{ name: 'GrayCode 程序数据备份', extensions: ['graycode-backup'] }] });
-        if (selected.canceled || !selected.filePath) return { cancelled: true };
-        return backups!.export(selected.filePath, params.password || undefined);
-      }
-      if (method === 'backup.restore') {
-        if (storageLocation.getConfig().config.pendingMigration) throw new Error('请先完成数据目录迁移，再恢复备份。');
-        const selected = await dialog.showOpenDialog(window!, { title: '选择程序数据备份', properties: ['openFile'],
-          filters: [{ name: 'GrayCode 程序数据备份', extensions: ['graycode-backup'] }] });
-        if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
-        return backups!.prepareRestore(selected.filePaths[0], params.password || undefined, { previewOnly: params.previewOnly === true });
-      }
-      if (method === 'backup.restart') {
-        const pending = (await backups!.status()).pending;
-        if (!pending) throw new Error('没有等待应用的备份。');
-        if (pending.requiresSelection && !pending.selection) throw new Error('请先选择恢复范围并查看最终预览。');
-        if (dirtySettings || dirtyDocuments || application.files.dirtyDocumentCount(true) || await application.productUi.hasDirtyPreferences(true)) throw new Error('请先保存或放弃编辑器与设置中的修改，再应用备份。');
-        const selected = await dialog.showMessageBox(window!, { type: 'question', title: '恢复程序数据',
-          message: pending.selection?.mode === 'selective' ? '重启并恢复最终预览中的所选数据？' : '重启并应用完整备份？', detail: '当前任务和连接将停止，恢复前的数据目录会完整保留。项目源码不会被替换。',
-          buttons: ['重启并恢复', '继续工作'], defaultId: 1, cancelId: 1 });
-        if (selected.response !== 0) return { cancelled: true };
-        await backups!.confirmRestore(pending);
-        setTimeout(() => { void quit(true).catch(error => dialog.showErrorBox('GrayCode 恢复失败', String(error))); }, 100);
-        return { success: true };
-      }
-      if (method === 'getAppInfo') return { name: 'GrayCode', displayName: 'GrayCode', version: app.getVersion(), publisher: 'Komeiji-Shiki', runtime: 'desktop',
-        ...__GRAYCODE_DESKTOP_BUILD__, executablePath: app.getPath('exe') };
-      if (method === 'getUpdateStatus') return updates.get();
-      if (method === 'checkUpdateNow') return updates.check();
-      if (method === 'openUpdatePage') return updates.open();
-      if (method === 'updateNow' || method === 'installUpdate') return updates.prepare(method === 'updateNow');
-      if (method === 'desktop.updates.status') return installer.status();
-      if (method === 'desktop.updates.apply') return installer.apply();
-      if (method === 'desktop.updates.rollback') return installer.rollback();
-      if (method === 'desktop.updates.openRecovery') {
-        const recovery = (await installer.status()).recovery;
-        if (!recovery) throw new Error('当前没有保存的回退点。');
-        const error = await shell.openPath(path.dirname(recovery.backupPath));
-        if (error) throw new Error(error);
-        return { success: true };
-      }
-      if (method === 'desktop.updates.local') {
-        const selected = await dialog.showOpenDialog(window!, { title: '选择离线更新清单', properties: ['openFile'],
-          filters: [{ name: 'GrayCode 更新清单（releases.win-x64.json）', extensions: ['json'] }] });
-        if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
-        if (path.basename(selected.filePaths[0]) !== 'releases.win-x64.json') throw new Error('请选择发行包附带的 releases.win-x64.json，并将完整更新包放在同一目录。');
-        return installer.prepare(path.dirname(selected.filePaths[0]));
-      }
-      if (method.startsWith('storagePath.') || ['reloadWindow', 'notifications.agentStop', 'notifications.preview', 'exportPromptModes', 'conversation.revealInExplorer'].includes(method)) application.requireOwner(client.actorId);
-      if (method === 'notifications.agentStop' || method === 'notifications.preview') {
-        if (!['error', 'awaiting_user_action', 'continue_required'].includes(params.reason) || method === 'notifications.agentStop' && typeof params.dedupeKey !== 'string') throw new Error('通知参数无效。');
-        if (params.conversationId) await application.conversation(client.actorId, params.conversationId);
-        return { success: true, ...await (method === 'notifications.preview' ? notifications!.preview(params as any) : notifications!.notify(params as any)) };
-      }
-      if (method === 'exportPromptModes') {
-        if (typeof params.content !== 'string') throw new Error('预设内容无效。');
-        const selected = await dialog.showSaveDialog(window!, { title: '导出提示词预设', defaultPath: path.basename(String(params.filename ?? 'graycode-prompt-modes.json')), filters: [{ name: 'JSON', extensions: ['json'] }] });
-        if (selected.canceled || !selected.filePath) return { success: false, cancelled: true };
-        await writeFile(selected.filePath, params.content, 'utf8'); return { success: true, filePath: selected.filePath };
-      }
-      if (method === 'storagePath.getConfig') return storageLocation.getConfig();
-      if (method === 'storagePath.validate') return storageLocation.validate(params.path);
-      if (method === 'storagePath.migrate' || method === 'storagePath.reset') {
-        if ((await backups!.status()).pending) throw new Error('请先应用或取消备份恢复，再迁移数据目录。');
-        return storageLocation.schedule(method === 'storagePath.reset' ? storageLocation.defaultPath : params.path);
-      }
-      if (method === 'storagePath.selectFolder') {
-        const selected = await dialog.showOpenDialog(window!, { title: '选择数据目录', properties: ['openDirectory', 'createDirectory'] });
-        return { path: selected.canceled ? null : selected.filePaths[0] };
-      }
-      if (method === 'storagePath.openInExplorer' || method === 'conversation.revealInExplorer') {
-        if (method === 'conversation.revealInExplorer') await application.conversation(client.actorId, params.conversationId);
-        const target = method === 'storagePath.openInExplorer' && params.path ? String(params.path) : dataDirectory;
-        if (!path.isAbsolute(target)) throw new Error('请选择完整目录路径。');
-        const error = await shell.openPath(target); if (error) throw new Error(error); return { success: true };
-      }
-      if (method === 'reloadWindow') {
-        if (await activeTasks() || dirtySettings || dirtyDocuments || application.files.dirtyDocumentCount(true) || await application.productUi.hasDirtyPreferences(true)) throw new Error('请先结束任务、保存或放弃编辑器与设置中的修改，再重启应用。');
-        setTimeout(() => { void quit(true).catch(error => dialog.showErrorBox('GrayCode 重启失败', String(error))); }, 100);
-        return { success: true };
-      }
-      if (method === 'openDirectory') {
-        application.requireOwner(client.actorId);
-        const target = String(params.path ?? '');
-        if (!path.isAbsolute(target)) throw new Error('请选择完整的目录路径。');
-        const error = await shell.openPath(target);
-        if (error) throw new Error(error);
-        return { success: true };
-      }
-      if (method === 'settings.import') {
-        const selected = await dialog.showOpenDialog(window!, { title: '导入 GrayCode 设置', properties: ['openFile'], filters: [{ name: 'GrayCode 设置', extensions: ['json'] }] });
-        if (selected.canceled) return { cancelled: true };
-        const value = JSON.parse((await readFile(selected.filePaths[0], 'utf8')).replace(/^\uFEFF/, ''));
-        return router.call(client, 'ui.request', { type: 'settings.importData', data: { value } });
-      }
-      if (method === 'settings.export') {
-        const selected = await dialog.showSaveDialog(window!, { title: '导出 GrayCode 设置', defaultPath: 'graycode-settings.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
-        if (selected.canceled || !selected.filePath) return { cancelled: true };
-        const value = await router.call(client, 'ui.request', { type: 'settings.exportData', data: {} });
-        await writeFile(selected.filePath, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });
-        return { success: true, filePath: selected.filePath };
-      }
-      if (method === "desktop.chooseWorkspace") {
-        const result = await dialog.showOpenDialog({
-          properties: ["openDirectory"],
-        });
-        return result.canceled
-          ? null
-          : {
-              directory: result.filePaths[0],
-              name: path.basename(result.filePaths[0]),
-            };
-      }
-      if (method === 'desktop.menu') {
-        const item = Menu.getApplicationMenu()?.items.find(item => item.label === params.label);
-        item?.submenu?.popup({ window: window! }); return;
-      }
-      if (method === "desktop.fonts") return systemFonts(params.refresh === true);
-      if (method === 'desktop.clipboard.writeText') {
-        if (typeof params.text !== 'string') throw new Error('复制内容必须是文本。');
-        await clipboard.writeText(params.text); return { success: true };
-      }
-      if (method === 'desktop.clipboard.writeImage') {
-        // 图片来自查看器的原始像素；先约束编码大小，再交给原生解码，避免 IPC 分配无界数据。
-        const maxBytes = 50 * 1024 * 1024;
-        if (typeof params.data !== 'string' || params.data.length > Math.ceil(maxBytes / 3) * 4)
-          throw new Error(t('desktop.shell.previewCopyFailed'));
-        const bytes = Buffer.from(params.data, 'base64');
-        if (!bytes.length || bytes.length > maxBytes || bytes.toString('base64') !== params.data)
-          throw new Error(t('desktop.shell.previewCopyFailed'));
-        const image = nativeImage.createFromBuffer(bytes);
-        if (image.isEmpty()) throw new Error(t('desktop.shell.previewCopyFailed'));
-        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([Uint8Array.from(bytes)], { type: 'image/png' }) })]);
-        return { success: true };
-      }
-      if (method === 'files.download') {
-        const file = await application.fileActions.download(client.actorId, params.workspaceId, params.path);
-        const selected = await dialog.showSaveDialog(window!, { title: '另存文件', defaultPath: file.name, properties: ['showOverwriteConfirmation'] });
-        if (selected.canceled || !selected.filePath) return { cancelled: true };
-        const sameFile = process.platform === 'win32' ? path.resolve(selected.filePath).toLowerCase() === file.absolute.toLowerCase() : path.resolve(selected.filePath) === file.absolute;
-        if (sameFile) throw new Error('请选择不同的保存位置。');
-        await copyFile(file.absolute, selected.filePath); return { success: true, filePath: selected.filePath };
-      }
-      if (method === 'desktop.saveResult') { desktopSaveAll.complete(event.sender.id, params); return { success: true }; }
-      if (method === "desktop.dirtyDocuments") {
-        dirtyDocuments = Math.max(0, Number(params.count) || 0);
-        return;
-      }
-      if (method === "desktop.dirtySettings") {
-        dirtySettings = params.dirty === true;
-        return;
-      }
-      return router.call(client, method, params);
+      return desktopRequests.call(event.sender.id, method, params);
     }),
   );
   Menu.setApplicationMenu(
