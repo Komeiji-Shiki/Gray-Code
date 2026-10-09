@@ -77,7 +77,8 @@ export class PlatformContextService {
   async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     const { run, input } = context;
     const pendingAsyncCallIds = input.pendingToolCallIds?.length ? new Set(input.pendingToolCallIds) : undefined;
-    let config = await this.app.product.channel(input.providerId);
+    // 管理策略只用普通渠道字段；远程 Token 计数读取独立的计数配置。
+    let config = await this.app.product.channel(input.providerId, { includeCredential: false });
     if (!config) return { history: context.history, messages: input.messages };
     const management = this.configuration(context.history.metadata, config);
     // 工具目录和总结方式在回合开始时一同捕获，设置变更不破坏正在运行的前缀。
@@ -123,18 +124,19 @@ export class PlatformContextService {
       return { history: frame.state, messages, notices };
     }
     let info = await evaluate(context.iteration === 1);
-    const turnId = [...frame.state.history.messages].reverse().find(message => isRealUserMessage({ ...message, isSummarized: false } as Content) && !message.userFeedback)?.id ?? run.id;
+    const turnId = frame.state.history.messages.findLast(message => isRealUserMessage({ ...message, isSummarized: false } as Content) && !message.userFeedback)?.id ?? run.id;
     const old = custom?.platformContext as TurnContextState | undefined;
     const turn: TurnContextState = old?.turnId === turnId ? { ...old } : { turnId, summaryAttempts: 0 };
     const fixedTokens = info.fixedPromptTokens ?? this.localTokens.estimateMessageTokens({ role: 'user', parts: [{ text: fixedSystem + promptText }] });
     const overflow = info.history.reduce((total, message) => total + this.localTokens.estimateMessageTokens(message), fixedTokens) > resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens;
-    if (!resolveContextManagementPolicy(config).enabled) { turn.fallback = false; turn.fallbackStart = undefined; }
-    if (overflow && resolveContextManagementPolicy(config).enabled && context.iteration > 1) info = await evaluate(true);
     const policy = resolveContextManagementPolicy(config);
+    if (!policy.enabled) { turn.fallback = false; turn.fallbackStart = undefined; }
+    if (overflow && policy.enabled && context.iteration > 1) info = await evaluate(true);
     const active = () => activeContextHistory(filterHistory?.(frame.state.history.messages)??frame.state.history.messages, config);
-    const activeTokens = active().reduce((total, message) => total + this.localTokens.estimateMessageTokens(message as Content), fixedTokens);
-    const threshold = calculateContextThreshold(config.contextThreshold ?? '80%', resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens);
-    const shouldCompact = policy.enabled && policy.mode === 'summarize' && (info.needsAutoSummarize || activeTokens > threshold);
+    // 活动历史的额外计数只用于自动总结阈值；裁剪、关闭管理或已触发总结时无需重复估算。
+    const shouldCompact = policy.enabled && policy.mode === 'summarize' && (info.needsAutoSummarize ||
+      active().reduce((total, message) => total + this.localTokens.estimateMessageTokens(message as Content), fixedTokens)
+        > calculateContextThreshold(config.contextThreshold ?? '80%', resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens));
     if (management.method === 'notes' && shouldCompact && !switchRequested) {
       if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name))) throw new Error('笔记管理需要启用 context_notes、context_history 和 new_context 工具，请启用后重试。');
       if (overflow) {
@@ -144,7 +146,7 @@ export class PlatformContextService {
         await event('context.summary.completed', { ...result });
         if (preview) notices.push('当前内容预计超过上下文容量，发送前将切换到笔记窗口；这里展示切换后的内容。');
       } else {
-        const windowId = [...frame.state.history.messages].reverse().find(message => message.contextWindowId)?.contextWindowId ?? 'initial';
+        const windowId = frame.state.history.messages.findLast(message => message.contextWindowId)?.contextWindowId ?? 'initial';
         if (custom?.contextReminderWindowId !== windowId) {
           frame.state.history.messages.push({ id: randomUUID(), role: 'user', contextControl: 'reminder', parts: [{ text: CONTEXT_NOTES_REMINDER }],
             parentId: frame.state.history.messages.at(-1)?.id ?? null, timestamp: Date.now(), index: frame.state.history.messages.length });
@@ -196,7 +198,7 @@ export class PlatformContextService {
     const lastSummary = findLastSummaryIndex(full);
     const start = lastSummary + 1;
     const candidates = full.slice(start).filter(message => !message.isSummarized);
-    const main = await this.app.product.channel(providerId);
+    const main = await this.app.product.channel(providerId, { includeCredential: false });
     if (!main) throw new Error('总结使用的主渠道不存在。');
     const tokens = candidates.map(message => this.summaries.estimateMessageTokensForBudget(message, main.type));
     const keep = resolveKeepRecentTokenBudget(override ? `${100 - override.percent}%` : settings.keepRecentTokens, tokens.reduce((sum, item) => sum + item, 0));
@@ -208,7 +210,7 @@ export class PlatformContextService {
     if (end < 1) throw new Error('总结范围边界不可用。');
     const actualProvider = settings.useSeparateModel && settings.summarizeChannelId ? settings.summarizeChannelId : providerId;
     const actualModel = settings.useSeparateModel && settings.summarizeChannelId ? settings.summarizeModelId || undefined : modelOverride;
-    const config = await this.app.product.channel(actualProvider);
+    const config = await this.app.product.channel(actualProvider, { includeCredential: false });
     if (!config?.enabled) throw new Error('总结渠道不存在或已禁用。');
     const basePrompt = override?.prompt.trim() || (mode === 'auto' ? settings.autoSummarizePrompt : settings.summarizePrompt);
     const prompt = this.summaries.buildDetailedSummaryPrompt(basePrompt, extractSummaryAnchorText(full, end));
@@ -286,7 +288,7 @@ export class PlatformContextService {
         const state = await this.app.conversations.read(actorId, id);
         if ((await this.app.storage.listRuns({ conversationId: id, activeOnly: true })).length) throw new Error('请等待当前任务完成后再手动总结。');
         const frame = new CapturedContext(state);
-        const channel = await this.app.product.channel(providerId);
+        const channel = await this.app.product.channel(providerId, { includeCredential: false });
         const method = botSchedule?.method === 'summary' || botSchedule?.method === 'notes'
           ? botSchedule.method : this.configuration(state.metadata, channel ?? undefined).method;
         const result = botSchedule && (!botSchedule.method || botSchedule.method === 'time')

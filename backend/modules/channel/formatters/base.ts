@@ -342,20 +342,21 @@ export abstract class BaseFormatter {
                 !!message.turnDynamicContext;
 
             if (isHistoricalPreservedTurn) {
-                const cached = this.createDynamicContextMessagesFromCache(message.turnDynamicContext!).filter(snapshot =>
-                    message.botTaskContextEmbedded !== true || !snapshot.parts.some(part =>
-                        typeof part.text === 'string' && isLegacyBotIdentityText(part.text)));
-                anchors.push(...cached.filter(item => item.promptAnchor));
-                const snapshotMessages = cached.filter(item => !item.promptAnchor);
                 // preserve 回插的快照与直发路径共用同一开关语义：未显式开启
                 // 「发送历史思考内容」时剥离 thought part，保证同一消息在
                 // 当前轮/历史轮字节一致，不重写提示词前缀缓存。
-                result.push(...(stripThoughtParts
-                    ? snapshotMessages.map(snapshot => ({
-                        ...snapshot,
-                        parts: snapshot.parts?.filter(part => part.thought !== true)
-                    }))
-                    : snapshotMessages));
+                for (const snapshot of this.createDynamicContextMessagesFromCache(message.turnDynamicContext!)) {
+                    if (message.botTaskContextEmbedded === true && snapshot.parts.some(part =>
+                        typeof part.text === 'string' && isLegacyBotIdentityText(part.text))) continue;
+                    if (snapshot.promptAnchor) {
+                        anchors.push(snapshot);
+                    } else {
+                        result.push(stripThoughtParts ? {
+                            ...snapshot,
+                            parts: snapshot.parts?.filter(part => part.thought !== true)
+                        } : snapshot);
+                    }
+                }
             }
             result.push(message);
         }

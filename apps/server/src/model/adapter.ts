@@ -5,7 +5,7 @@ import type {
   PlatformMessage,
   ProviderDefinition,
 } from "@graycode/contracts";
-import { FormatterRegistry } from "../../../../backend/modules/channel/formatters";
+import { formatterRegistry } from "../../../../backend/modules/channel/formatters";
 import { ChannelHttpExecutor } from "../../../../backend/modules/channel/channelManager/channelHttpExecutor";
 import { StreamAccumulator } from "../../../../backend/modules/channel/StreamAccumulator";
 import { validateHistoryIntegrity } from "../../../../backend/modules/channel/HistoryIntegrityValidator";
@@ -109,7 +109,7 @@ export class ProviderModelAdapter implements ModelProvider {
     if (config.type === 'openai-responses' && subscription) config.authMode = 'chatgpt';
     if (!config.model?.trim()) throw new Error(`渠道「${profile.name || profile.id}」尚未选择模型，请在输入栏选择模型后发送。`);
     const capabilities = resolveCapabilities(profile, config.model);
-    const formatter = new FormatterRegistry().get(profile.protocol);
+    const formatter = formatterRegistry.get(profile.protocol);
     if (!formatter)
       throw new Error(`Unsupported model protocol: ${profile.protocol}`);
     // 不再深复制完整历史：视觉预处理、重复响应修复与格式器都按写时复制产生新对象（Responses WebSocket

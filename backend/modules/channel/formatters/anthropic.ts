@@ -351,16 +351,19 @@ export class AnthropicFormatter extends BaseFormatter {
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
-            // 分离各种类型的 parts
-            const textParts = content.parts.filter(p => 'text' in p && !p.thought);
-            const thoughtParts = content.parts.filter(p => 'text' in p && p.thought);
-            const redactedThinkingParts = content.parts.filter(p => p.redactedThinking);
-            const signatureParts = content.parts.filter(p => (p as any).signature);
-            const functionCallParts = content.parts.filter(p => p.functionCall && !p.functionCall.rejected);
-            const functionResponseParts = content.parts.filter(
-                p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
-            );
-            const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
+            const textParts: ContentPart[] = [];
+            const functionCallParts: ContentPart[] = [];
+            const functionResponseParts: ContentPart[] = [];
+            const mediaParts: ContentPart[] = [];
+            let hasThinkingParts = false;
+            // 思考块仍按原 parts 顺序组装，此处只记录是否存在，其他类型独立分类。
+            for (const part of content.parts) {
+                if ('text' in part && !part.thought) textParts.push(part);
+                if (('text' in part && part.thought) || part.redactedThinking || (part as any).signature) hasThinkingParts = true;
+                if (part.functionCall && !part.functionCall.rejected) functionCallParts.push(part);
+                if (part.functionResponse && !(part.functionResponse.id && rejectedCallIds.has(part.functionResponse.id))) functionResponseParts.push(part);
+                if (part.inlineData || part.fileData) mediaParts.push(part);
+            }
             
             if (functionCallParts.length > 0) {
                 // assistant 消息包含 tool_use
@@ -463,7 +466,7 @@ export class AnthropicFormatter extends BaseFormatter {
             if (
                 functionCallParts.length === 0 &&
                 functionResponseParts.length === 0 &&
-                (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0 || signatureParts.length > 0)
+                (textParts.length > 0 || mediaParts.length > 0 || hasThinkingParts)
             ) {
                 // 普通消息（可能包含文本、多媒体和/或思考内容）
                 const contentArray: any[] = [];

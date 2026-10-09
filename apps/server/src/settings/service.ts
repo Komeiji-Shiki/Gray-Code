@@ -121,6 +121,8 @@ export class SettingsService<T = never> {
       credentialIds,
     };
   }
+  /** 版本比较只读取标量，避免界面请求为判断草稿是否过期而复制整份设置。 */
+  get revision(): number { return this.current.revision; }
   snapshot(): SettingsSnapshot {
     return structuredClone(this.current);
   }

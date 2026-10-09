@@ -49,7 +49,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
           const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, state.history.messages);
           const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as ModelPrefix | undefined;
           const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
-          const config = args.action === 'recall' && providerId ? await app.product.channel(providerId) : undefined;
+          const config = args.action === 'recall' && providerId ? await app.product.channel(providerId, { includeCredential: false }) : undefined;
           context.signal.throwIfAborted();
           return runNoteGraphTool(args, view.messages, context.toolCallId, config ? activeContextHistory(view.messages, config) : []);
         }

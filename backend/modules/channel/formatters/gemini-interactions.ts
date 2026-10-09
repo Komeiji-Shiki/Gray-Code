@@ -62,28 +62,10 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
         } else if (toolMode === 'json') {
             processedHistory = this.convertHistoryToJSONMode(history);
         } else {
-            // Function Call 模式：过滤 rejected 残留（与 gemini 渠道同口径）
-            const rejectedCallIds = new Set<string>();
-            for (const content of history) {
-                for (const part of content.parts) {
-                    if (part.functionCall?.rejected && part.functionCall.id) {
-                        rejectedCallIds.add(part.functionCall.id);
-                    }
-                }
-            }
-            processedHistory = history
-                .map(content => ({
-                    ...content,
-                    parts: content.parts.filter(p => {
-                        if (p.functionCall?.rejected) return false;
-                        if (p.functionResponse?.id && rejectedCallIds.has(p.functionResponse.id)) return false;
-                        return true;
-                    })
-                }))
-                .filter(content => content.parts.length > 0);
+            processedHistory = this.filterRejectedToolParts(history);
         }
 
-        // 注入 prompt context（preserve 回插动态快照），随后清理内部字段
+        // 注入 prompt context（preserve 回插动态快照）；steps 按协议字段重建，宿主字段不会进入请求。
         // 注意：Interactions 不需要 convertThoughtSignatures（签名在 thought step 而非 part 上）
         processedHistory = this.injectPromptContextMessages(
             processedHistory,
@@ -91,8 +73,6 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             request.dynamicContextStrategy,
             { stripPreservedThoughtParts: c.sendHistoryThoughts !== true }
         );
-        processedHistory = this.cleanInternalFields(processedHistory);
-
         // 根据配置限制发送的图片总数（在 Content[] 层面，与 steps 转换解耦）
 
         // 构建请求体（官方契约：裸 model ID + input 直接为 steps 数组；用户手填 models/ 前缀统一剥除）

@@ -15,7 +15,7 @@ export async function contextStatus(app: PlatformApplication, context: ToolConte
   const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
   const modelOverride = context.modelSelection?.modelOverride ?? prefix?.modelOverride;
   if (!providerId) throw new Error('当前运行没有已捕获的模型渠道。');
-  const config = await app.product.channel(providerId);
+  const config = await app.product.channel(providerId, { includeCredential: false });
   if (!config) throw new Error('当前运行的模型渠道不可用，无法查询上下文预算。');
   const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, state.history.messages);
   const history = activeContextHistory(view.messages, config);
@@ -32,7 +32,7 @@ export async function contextStatus(app: PlatformApplication, context: ToolConte
   const policy = resolveContextManagementPolicy(config);
   const management = conversationContextSettings(app, state.metadata, config);
   const captured = prefix?.turnContext;
-  const boundary = [...state.history.messages].reverse().find(message => message.isSummary && !message.isSummarized);
+  const boundary = state.history.messages.findLast(message => message.isSummary && !message.isSummarized);
   context.signal.throwIfAborted();
   return { success: true, data: {
     measuredAt: Date.now(), windowId: boundary?.contextWindowId ?? 'initial',

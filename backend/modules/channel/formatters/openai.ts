@@ -126,17 +126,13 @@ export class OpenAIFormatter extends BaseFormatter {
                 : toolsContent;
         }
         
-        // 转换思考签名格式（移除，因为 OpenAI 目前不使用思考签名）
-        let processedHistory = this.convertThoughtSignatures(history);
-        processedHistory = this.injectPromptContextMessages(
-            processedHistory,
+        // 出站消息按协议字段重建，签名和宿主元数据无需先复制整份历史来剔除。
+        const processedHistory = this.injectPromptContextMessages(
+            history,
             this.getPromptContextForRequest(request),
             request.dynamicContextStrategy,
             { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
-        
-        // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory);
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
         const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode, !!config.pdfAttachmentEnabled);
@@ -324,14 +320,19 @@ export class OpenAIFormatter extends BaseFormatter {
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
-            // 分离各种类型的 parts
-            const textParts = content.parts.filter(p => 'text' in p && !p.thought);
-            const thoughtParts = content.parts.filter(p => 'text' in p && p.thought === true);
-            const functionCallParts = content.parts.filter(p => p.functionCall && !!p.functionCall.id && !p.functionCall.rejected && respondedCallIds.has(p.functionCall.id));
-            const functionResponseParts = content.parts.filter(
-                p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
-            );
-            const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
+            const textParts: ContentPart[] = [];
+            const thoughtParts: ContentPart[] = [];
+            const functionCallParts: ContentPart[] = [];
+            const functionResponseParts: ContentPart[] = [];
+            const mediaParts: ContentPart[] = [];
+            // 一个 part 可同时携带正文、工具和附件，独立分类并保留各组原有顺序。
+            for (const part of content.parts) {
+                if ('text' in part && !part.thought) textParts.push(part);
+                if ('text' in part && part.thought === true) thoughtParts.push(part);
+                if (part.functionCall && !!part.functionCall.id && !part.functionCall.rejected && respondedCallIds.has(part.functionCall.id)) functionCallParts.push(part);
+                if (part.functionResponse && !(part.functionResponse.id && rejectedCallIds.has(part.functionResponse.id))) functionResponseParts.push(part);
+                if (part.inlineData || part.fileData) mediaParts.push(part);
+            }
             
             if (functionCallParts.length > 0) {
                 for (const part of functionCallParts) pendingCalls.add(part.functionCall!.id!);
@@ -929,35 +930,6 @@ export class OpenAIFormatter extends BaseFormatter {
      */
     getSupportedType(): string {
         return 'openai';
-    }
-    
-    /**
-     * 转换思考签名格式
-     *
-     * 将内部存储的 thoughtSignatures 移除或转换
-     * OpenAI 目前不使用思考签名，所以直接移除
-     *
-     * 注意：这里做占位处理，未来如果 OpenAI API 支持签名，可以在这里添加
-     * 类似于 GeminiFormatter.convertThoughtSignatures 的处理
-     */
-    private convertThoughtSignatures(history: Content[]): Content[] {
-        return history.map(content => {
-            return {
-                ...content,
-                parts: content.parts.map(part => {
-                    // 移除 thoughtSignatures 字段
-                    // 未来如果 OpenAI 支持签名，可以像 Gemini 一样：
-                    // if (part.thoughtSignatures?.openai) {
-                    //     return { ...restPart, signature: thoughtSignatures.openai };
-                    // }
-                    if (part.thoughtSignatures) {
-                        const { thoughtSignatures, ...restPart } = part;
-                        return restPart;
-                    }
-                    return part;
-                })
-            };
-        });
     }
     
     /**

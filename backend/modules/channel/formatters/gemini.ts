@@ -172,29 +172,7 @@ export class GeminiFormatter extends BaseFormatter {
             // JSON 模式：将 functionCall 和 functionResponse 转换为 JSON 代码块
             processedHistory = this.convertHistoryToJSONMode(history);
         } else {
-            // Function Call 模式：直接使用原始历史
-            // 过滤 rejected 残留（中断/取消的无响应调用），避免孤儿 functionCall part
-            // 发给 Gemini（与 XML/JSON 模式及 OpenAI/Anthropic 的过滤口径一致）。
-            // 配对 functionResponse 一起丢弃（成对过滤）；过滤后丢弃空 parts 消息
-            // （Gemini 要求每个 content 至少一个 part）。
-            const rejectedCallIds = new Set<string>();
-            for (const content of history) {
-                for (const part of content.parts) {
-                    if (part.functionCall?.rejected && part.functionCall.id) {
-                        rejectedCallIds.add(part.functionCall.id);
-                    }
-                }
-            }
-            processedHistory = history
-                .map(content => ({
-                    ...content,
-                    parts: content.parts.filter(p => {
-                        if (p.functionCall?.rejected) return false;
-                        if (p.functionResponse?.id && rejectedCallIds.has(p.functionResponse.id)) return false;
-                        return true;
-                    })
-                }))
-                .filter(content => content.parts.length > 0);
+            processedHistory = this.filterRejectedToolParts(history);
         }
         
         // 转换思考签名格式：将 thoughtSignatures.gemini 转换为 thoughtSignature
@@ -720,6 +698,32 @@ export class GeminiFormatter extends BaseFormatter {
             .filter(content => content.parts.length > 0);
     }
     
+    /** 两个 Gemini 协议共用调用/结果成对过滤；正常历史复用原数组，减少每轮重建。 */
+    protected filterRejectedToolParts(history: Content[]): Content[] {
+        const rejectedCallIds = new Set<string>();
+        let needsFiltering = false;
+        for (const content of history) {
+            if (content.parts.length === 0) needsFiltering = true;
+            for (const part of content.parts) {
+                if (part.functionCall?.rejected) {
+                    needsFiltering = true;
+                    if (part.functionCall.id) rejectedCallIds.add(part.functionCall.id);
+                }
+            }
+        }
+        if (!needsFiltering) return history;
+        return history
+            .map(content => ({
+                ...content,
+                parts: content.parts.filter(part => {
+                    if (part.functionCall?.rejected) return false;
+                    if (part.functionResponse?.id && rejectedCallIds.has(part.functionResponse.id)) return false;
+                    return true;
+                })
+            }))
+            .filter(content => content.parts.length > 0);
+    }
+
     /**
      * 转换思考签名格式
      *

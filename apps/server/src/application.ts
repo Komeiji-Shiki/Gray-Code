@@ -302,7 +302,7 @@ export class PlatformApplication {
         profile: async (id) => this.settings.find('providers', id) ?? null,
         credential: (reference) => this.settings.credential(reference),
         chatgpt: (id, signal) => this.chatgpt.credentials(id, signal),
-        channel: id => this.product.channel(id),
+        channel: id => this.product.channel(id, { includeCredential: false }),
         // 复用原图片/PDF 预处理；调用位于当前应用的可选依赖作用域内。
         prepareVision: (history, model, signal) => prepareDeepSeekVisionHistory(history, model, true, signal),
         proxyUrl: () => { const proxy = this.product.runtimeSettings().getProxySettings(); return proxy.enabled ? proxy.url : undefined; },
@@ -322,7 +322,7 @@ export class PlatformApplication {
       tools: this.tools,
       models: this.models,
       prepareTools: async (names, input, agent) => {
-        const channel = await this.product.channel(input.providerId ?? agent.providerId);
+        const channel = await this.product.channel(input.providerId ?? agent.providerId, { includeCredential: false });
         const media = this.media.tools(this.product.runtimeSettings(), channel?.toolOptions);
         const overrides = new Map(media.map(tool => [tool.declaration.name, tool]));
         if (names.includes('goal_update')) overrides.set('goal_update', this.automations.tool());

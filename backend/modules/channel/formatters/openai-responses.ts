@@ -152,16 +152,13 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 : request.dynamicSystemPrompt;
         }
 
-        let processedHistory = history;
-        processedHistory = this.injectPromptContextMessages(
-            processedHistory,
+        // input 项按协议字段重建，宿主元数据无需先复制整份历史来清洗。
+        const processedHistory = this.injectPromptContextMessages(
+            history,
             this.getPromptContextForRequest(request),
             request.dynamicContextStrategy,
             { stripPreservedThoughtParts: !isChatGPTSubscription && config.sendHistoryThoughts !== true }
         );
-
-        // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
-        processedHistory = this.cleanInternalFields(processedHistory);
 
         // 转换历史消息为 OpenAI Responses input 格式。
         // reasoning item 的两种回放形态分开控制：

@@ -98,15 +98,16 @@ export async function manualSummaryPrefix(app: PlatformApplication, frame: Captu
   const custom = frame.state.metadata.custom as Record<string, unknown> | undefined;
   const stored = custom?.contextRequestPrefix as ModelPrefix | undefined;
   if (stored) return { ...structuredClone(stored), providerId, modelOverride: modelOverride ?? (stored.providerId === providerId ? stored.modelOverride : undefined) };
-  const lastModel = [...frame.state.history.messages].reverse().find(message => message.role === 'model' && typeof message.runId === 'string');
+  const lastModel = frame.state.history.messages.findLast(message => message.role === 'model' && typeof message.runId === 'string');
   const run = lastModel ? await app.storage.getRun(lastModel.runId as string) : undefined;
   const saved = run ? await app.storage.getRecord('model-requests', `${run.id}:${run.iteration}`) as { prefix?: ModelPrefix } | null : undefined;
   if (saved?.prefix) return { ...structuredClone(saved.prefix), providerId, modelOverride: modelOverride ?? (saved.prefix.providerId === providerId ? saved.prefix.modelOverride : undefined) };
-  const agent = app.settings.snapshot().settings.agents.find(item => item.id === run?.agentId) ?? app.settings.snapshot().settings.agents[0];
+  const { agents } = app.settings.read('agents');
+  const agent = agents.find(item => item.id === run?.agentId) ?? agents[0];
   const actor = app.actor(run?.actorId ?? actorId);
   if (!agent || !actor) throw new Error('无法恢复当前会话使用的模型前缀。');
-  const previousTurn = [...frame.state.history.messages].reverse().find(isHistoricalUserInput);
-  const workspace = frame.state.metadata.workspaceId ? app.settings.snapshot().settings.workspaces.find(item => item.id === frame.state.metadata.workspaceId) : undefined;
+  const previousTurn = frame.state.history.messages.findLast(isHistoricalUserInput);
+  const workspace = typeof frame.state.metadata.workspaceId === 'string' ? app.settings.find('workspaces', frame.state.metadata.workspaceId) : undefined;
   const prepared = await new PlatformPromptService(app).prepare({ agent, actor, workspace, conversation: frame.state.metadata,
     history: frame.state.history.messages, previousTurn, request: { actorId: actor.id, agentId: agent.id, conversationId: frame.state.metadata.id,
       requestKey: 'manual-summary', providerId, modelOverride, promptModeId: typeof previousTurn?.promptModeId === 'string' ? previousTurn.promptModeId : undefined,
@@ -117,7 +118,7 @@ export async function manualSummaryPrefix(app: PlatformApplication, frame: Captu
 }
 
 export async function summarizeFullContext(app: PlatformApplication, frame: CapturedContext, prefix: ModelPrefix, signal: AbortSignal, automatic: boolean): Promise<ContextBoundaryResult> {
-  const config = await app.product.channel(prefix.providerId);
+  const config = await app.product.channel(prefix.providerId, { includeCredential: false });
   if (!config?.enabled) throw new Error('当前会话的模型渠道不存在或已禁用。');
   const settings = app.product.runtimeSettings().getSummarizeConfig();
   const filtered = await app.longMemoryPrompt.history.prepare(prefix.taskContext?.actor.id??String(frame.state.metadata.actorId),frame.state.metadata.id,frame.state.history.messages);

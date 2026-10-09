@@ -39,7 +39,7 @@ export class PlatformPromptService {
     // 失败提示属于本轮动态上下文，不写成用户历史消息，也不进入上一轮的缓存快照。
     const failureSnapshot = failure ? [{ role: 'user' as const, parts: [{ text: failure }] }] : [];
     const failureMessage: PlatformMessage[] = failureSnapshot.map(message => ({ ...message, contextControl: 'run_failure' }));
-    const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId);
+    const contextChannel = await this.app.product.channel(input.request.providerId ?? input.agent.providerId, { includeCredential: false });
     input.signal?.throwIfAborted();
     const contextSettings = this.app.context.configuration(input.conversation, contextChannel ?? undefined);
     const contextManagementMethod = contextSettings.method;
@@ -136,7 +136,8 @@ export class PlatformPromptService {
     const beforeHistoryMessages = withoutStandaloneBotEnvironment((resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], botEnvironment);
     return {
       systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
-      ...(input.preview ? { previewDynamicText: assembler.getDynamicContextText(mode, context) } : {}),
+      // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
+      ...(input.preview ? { previewDynamicText: bundle.text } : {}),
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])],
       promptContext: { beforeHistoryMessages,

@@ -45,7 +45,7 @@ export class ProductConfiguration {
     const manager = new SettingsManager({ load: async () => persisted?.features ?? null, save: async () => {} });
     await manager.initialize();
     this.activeSettings = manager;
-    const profiles = this.application.settings.snapshot().settings.providers;
+    const { providers: profiles } = this.application.settings.read('providers');
     this.saved = { features: structuredClone(manager.getSettings()), channels: projectChannels(profiles, persisted?.channels ?? [], profiles) };
     this.saved.branchRetentionDays = persisted?.branchRetentionDays;
     this.saved.importedSkills = persisted?.importedSkills ?? [];
@@ -66,10 +66,11 @@ export class ProductConfiguration {
   get features(): GlobalSettings { return structuredClone(this.saved.features); }
   runtimeSettings(): SettingsManager { return this.activeSettings; }
   mcpConfigs(): McpServerConfig[] { return structuredClone(this.saved.mcpServers ?? []); }
-  async channel(id: string): Promise<ChannelConfig | null> {
+  async channel(id: string, options: { includeCredential?: boolean } = {}): Promise<ChannelConfig | null> {
     const config = this.saved.channels.find(channel => channel.id === id);
     if (!config) return null;
-    const profile = this.application.settings.find('providers', id);
+    // 模型适配器自行取得本次认证信息，能力和工具配置查询也只需要普通配置字段。
+    const profile = options.includeCredential === false ? undefined : this.application.settings.find('providers', id);
     // 平台没有“多模态工具”开关，工具图片与文档总是随结果发送。旧渠道或设置页新建的渠道仍保存着
     // multimodalToolsEnabled: false，历史整理会据此删掉工具结果里的图片，模型只能看到元数据。
     return { ...structuredClone(config), multimodalToolsEnabled: true,
@@ -176,7 +177,7 @@ export class ProductConfiguration {
         ...(memoryConfig ? [{ namespace: 'memory-config', id: memoryConfig.scopeId, value: memoryConfig.value, expectedRevision: memoryConfig.expectedRevision }] : [])], credentials: { ...credentials, ...sealed.credentials },
       publish: () => { this.saved = saved; this.activeSettings = activeSettings; this.application.refreshMutationTools(); this.application.files.rebindWorkspaces(previous.workspaces, next.workspaces); },
       activate: async () => {
-        this.application.publish({ type: 'settings.changed', revision: this.application.settings.snapshot().revision });
+        this.application.publish({ type: 'settings.changed', revision: this.application.settings.revision });
         if (configurationImports.length) this.application.publish({ type: 'ui.message', message: { type: 'command', command: 'migration.configuration.saved',
           data: { operationIds: [...new Set(configurationImports.map(item => item.reportId))] } } });
         await this.application.languages.configure();

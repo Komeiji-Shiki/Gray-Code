@@ -136,20 +136,37 @@ export class CharacterPipeline {
     const stages = targets.map(({ part }) => ({ raw: String(part.text), afterMacro: phase === 'source' ? expandCharacterMacros(String(part.text), snapshot.macros) : String(part.text) }));
     const transformed = await this.engine.transformBatch(stages.map((stage, index) => ({ text: stage.afterMacro,
       context: { placement: targets[index].part.thought ? 6 : placement, phase, depth: 0, macros: snapshot.macros, isEdit } })), snapshot.rules, signal);
-    const output = structuredClone(parts);
-    targets.forEach(({ index }, position) => { output[index].text = transformed[position].text; });
+    // 只替换文本块，图片、工具参数和签名块沿用原对象，避免复制无关附件。
+    const output = [...parts];
+    targets.forEach(({ index }, position) => {
+      if (transformed[position].text !== parts[index].text) output[index] = { ...parts[index], text: transformed[position].text };
+    });
     return { parts: output, stages: stages.map((stage, index) => ({ ...stage, afterRegex: transformed[index].text, applied: transformed[index].applied, errors: transformed[index].errors })) };
   }
   async modelHistory(messages: PlatformMessage[], snapshot: CharacterTurn | undefined, signal: AbortSignal) {
     if (!snapshot) return messages;
-    const result = structuredClone(messages);
-    const targets = result.flatMap((message, index) => message.parts.map((part, partIndex) => ({ message, part, index, partIndex })))
-      .filter(item => typeof item.part.text === 'string' && !item.part.thoughtSignature && !item.part.thoughtSignatures && !item.part.redactedThinking);
+    const targets: Array<{ message: PlatformMessage; part: PlatformMessage['parts'][number]; index: number; partIndex: number }> = [];
+    for (let index = 0; index < messages.length; index++) {
+      const message = messages[index];
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        const part = message.parts[partIndex];
+        if (typeof part.text === 'string' && !part.thoughtSignature && !part.thoughtSignatures && !part.redactedThinking)
+          targets.push({ message, part, index, partIndex });
+      }
+    }
     const outputs = await this.engine.transformBatch(targets.map(item => ({ text: String(item.part.text), context: {
       placement: item.part.thought ? 6 : item.message.role === 'model' ? 2 : 1, phase: 'prompt' as const,
       depth: messages.length - item.index - 1, macros: snapshot.macros,
     } })), snapshot.rules, signal);
-    targets.forEach((item, index) => { result[item.index].parts[item.partIndex].text = outputs[index].text; });
+    // 角色正则只可能改文字，按实际变化复制消息和 parts，不复制整段历史的二进制内容。
+    let result = messages;
+    targets.forEach((item, index) => {
+      const text = outputs[index].text;
+      if (text === item.part.text) return;
+      if (result === messages) result = [...messages];
+      if (result[item.index] === item.message) result[item.index] = { ...item.message, parts: [...item.message.parts] };
+      result[item.index].parts[item.partIndex] = { ...item.part, text };
+    });
     return result;
   }
   async output(turn: CharacterTurn | undefined, message: PlatformMessage, signal: AbortSignal) {
