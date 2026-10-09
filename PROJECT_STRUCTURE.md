@@ -8,6 +8,7 @@
 | --- | --- |
 | [apps/desktop/src/bootstrap.ts](apps/desktop/src/bootstrap.ts) | 桌面启动与安装器入口 |
 | [apps/desktop/src/main.ts](apps/desktop/src/main.ts) | Electron 组合根、窗口、协议、IPC、原生能力与退出 |
+| [apps/desktop/src/requests.ts](apps/desktop/src/requests.ts) | 桌面请求处理、兼容入口、权限与退出阶段声明 |
 | [apps/server/src/application.ts](apps/server/src/application.ts) | 平台服务组合根与生命周期 |
 | [apps/server/src/main.ts](apps/server/src/main.ts) | 独立 CLI、Web 服务与存储命令 |
 | [packages/core/src/runtime/runtime.ts](packages/core/src/runtime/runtime.ts) | 模型/工具循环、运行状态、确认、取消与结果保存 |
@@ -78,6 +79,8 @@ packages/core 不导入 Electron、VS Code、frontend、webview 或 backend。�
 
 请求图片计数遍历真实协议内容块，避开工具参数中的普通 JSON。计数跟随模型请求事件与快照保存，正文保持不变。输入用量、费用估算和供应方缓存反馈仍以各自来源为准。
 
+正式请求与预览由上下文服务共用同一套模型准备流程，按相同顺序处理历史过滤、记忆捕获、上下文、角色历史、记忆注入和 Bot 前缀。预览使用已捕获的会话元数据，并沿途保持只读。
+
 ## 存储与性能
 
 历史使用不可变片段和增量游标，连续运行避免反复解压完整消息列表。追加与尾部修改更新对应后缀；历史版本、分支/恢复或回收变化使旧游标失效。
@@ -87,6 +90,8 @@ packages/core 不导入 Electron、VS Code、frontend、webview 或 backend。�
 格式版本 7 为模型请求快照引入值引用。相同消息和工具对象按内容寻址共享，已有 object_edges 同时关联这些值与附件。读取透明重建完整结构，旧格式记录仍可读；SQL 表布局没有为该优化另建一套快照数据库。
 
 向量候选缓存在相关记忆修改后失效，精确 top-k 在独立线程计算，存储线程可处理其他读取。写入保持原队列顺序。文件树采用可见行渲染和父目录局部刷新。
+
+存储操作表同时声明处理函数与向量计算期间的并发读取策略，协议新增操作时必须补齐两者。记忆写入、恢复和备份合并在各自成功提交后使对应向量缓存失效。
 
 工具搜索与项目搜索的正则计算使用可终止工作线程，同一次请求逐文件复用线程，取消和关闭会等待线程结束。普通文本查询复用同一套纯计算逻辑直接执行。匹配顺序、分页及片段预算仍由统一计算入口维护；线程只接收查询数据，不执行文件访问或写入，替换结果继续交给既有版本检查与审阅流程。
 
@@ -106,6 +111,10 @@ packages/core 不导入 Electron、VS Code、frontend、webview 或 backend。�
 
 首批强类型 RPC 覆盖常用设置、文件、运行任务、电脑和浏览器方法。桌面 preload、Web bridge、服务器路由和节点电脑入口共享字段检查；业务身份与工作区校验保留在服务中。其余领域继续通过现有动态入口，逐域迁移。
 
+角色与导航的稳定 UI 操作在 contracts 的 UiRequests 中关联参数与结果，客户端和服务端处理器共用这份契约，传输仍使用 ui.request。渠道、子代理和上下文配置的纯类型也由 contracts 提供，前端从中派生表单 DTO，旧后端导入路径继续重导出共享类型。
+
+桌面请求在同一张处理表中声明执行函数、ui.request 兼容入口、owner 权限与关闭期间可用性，主进程负责可信 frame 校验和宿主生命周期。
+
 成熟聊天协议通过 ProductUi/ProductChat 映射到平台服务，桥接本身不拥有第二个运行器。两个 Vue 根与 iframe 保留既有功能；设置加载使用请求序号，旧响应与旧错误不能覆盖新状态。
 
 事件订阅者的异常分别处理。HTTP SSE 使用有界队列，过慢连接完成已经接受的帧后重置；单个较大帧不会被截成不可解析的半条消息。权限读取失败也会先结束已接受的输出，再由最后成功交付的位置重连补发。同一事件只编码一次，多个连接与补发共用只读 UTF-8 字节。
@@ -121,5 +130,7 @@ Bot、节点、自动任务与子任务复用运行核心。事务领取、稳�
 ## 构建与测试
 
 [build-platform.mjs](scripts/build-platform.mjs)生成核心、存储/向量/角色工作线程、服务端与 CLI，并检查宿主依赖。[build-desktop.mjs](scripts/build-desktop.mjs)生成桌面主进程、preload、终端宿主和构建信息。正式打包收集真实生产依赖及许可证，核对必要入口。
+
+[generate-tool-meta.mjs](scripts/generate-tool-meta.mjs) 使用 TypeScript 语法树静态提取工具声明，支持纯数据常量的相对导入和对象展开；动态字段保留标记，生成时不执行工具工厂或宿主代码。文档工具的读写属性来自原声明，TODO、Plan、Progress 共用条目结构和参数 schema，各领域保留自己的校验规则。
 
 测试位置为 backend/__tests__、frontend/src 下的测试目录及 packages/core/tests。命令、选择范围与发行检查见[贡献指南](CONTRIBUTING.md)。用户流程与数据含义见 [Wiki](wiki/Home.md)。
