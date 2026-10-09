@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, ref,onMounted,onUnmounted } from 'vue';
-import type { CharacterResource } from '@graycode/contracts';
-import { call } from '../api';
+import type { CharacterResourceRow } from '@graycode/contracts';
+import { uiRequest } from '../api';
 import WorldbookEditor from './WorldbookEditor.vue';
 import MemoryLibrary from './MemoryLibrary.vue';
 
-type ResourceRow = Omit<CharacterResource, 'raw' | 'source'> & { revision: number; resolvedReferences?: Record<string, string> };
 const emit = defineEmits<{ close: []; play: [id: string]; pets: [] }>();
 const props = defineProps<{ initialTab?: 'resources' | 'memory' }>();
 const dialog=ref<HTMLDialogElement>();
@@ -15,8 +14,8 @@ const memoryLibrary=ref<{dirty:boolean;busy:boolean;discardChanges():void}>();
 const worldbookEditor=ref<{dirty:boolean;discardChanges():void}>();
 function requestClose(){navigate(()=>emit('close'),true);}
 onMounted(()=>dialog.value?.showModal());
-const items = ref<ResourceRow[]>([]);
-const selected = ref<ResourceRow | null>(null);
+const items = ref<CharacterResourceRow[]>([]);
+const selected = ref<CharacterResourceRow | null>(null);
 const raw = ref<unknown>();
 const previewImage = ref('');
 const name = ref('');
@@ -38,7 +37,6 @@ const kinds: Record<string, string> = { character: '角色卡', worldbook: '世�
 const visible = computed(() => items.value.filter(item => !filter.value || item.name.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase())));
 const books = computed(() => items.value.filter(item => item.kind === 'worldbook'));
 const regexes = computed(() => items.value.filter(item => item.kind === 'regex'));
-const rpc = <T,>(type: string, data: Record<string, unknown> = {}) => call<T>('ui.request', { type, data });
 async function perform(action: () => Promise<void>) {
   if(busy.value)return;
   busy.value = true; error.value = '';
@@ -62,14 +60,14 @@ function discardAndContinue(){
 }
 function openPets(){navigate(()=>{emit('close');emit('pets');},true);}
 function play(){if(selected.value){const id=selected.value.id;navigate(()=>{emit('close');emit('play',id);},true);}}
-async function reload() { items.value = await rpc<ResourceRow[]>('characters.list'); }
+async function reload() { items.value = await uiRequest('characters.list'); }
 async function choose(id: string) {
   const epoch = ++selectionEpoch;
-  const result = await rpc<{ info: ResourceRow & { source: { mimeType: string } }; resource: Pick<CharacterResource, 'raw'>; revision: number }>('characters.get', { id });
+  const result = await uiRequest('characters.get', { id });
   if (epoch !== selectionEpoch) return;
   let image='';
   if (result.info.source.mimeType === 'image/png') {
-    const source = await rpc<CharacterResource['source']>('characters.original', { id });
+    const source = await uiRequest('characters.original', { id });
     if (epoch !== selectionEpoch) return;
     image = 'data:image/png;base64,' + source.inlineData.data;
   }
@@ -87,25 +85,25 @@ async function importFiles(event: Event) {
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file);
       });
-      const result = await rpc<{ id: string }>('characters.import', { name: file.name, data }); lastId = result.id;
+      const result = await uiRequest('characters.import', { name: file.name, data }); lastId = result.id;
     }
     await reload(); if (lastId) await choose(lastId);
   });
 }
 async function save() {
   if (!selected.value) return;
-  await rpc('characters.bind', { id: selected.value.id, revision: selected.value.revision, name: name.value,
+  await uiRequest('characters.bind', { id: selected.value.id, revision: selected.value.revision, name: name.value,
     worldbookIds: worldbookIds.value, regexIds: regexIds.value, resolvedReferences: references.value });
   await reload(); await choose(selected.value.id);
 }
 async function saveWorldbook(value: Record<string, unknown> | unknown[]) {
   if (!selected.value) return;
-  await rpc('characters.worldbook.update', { id: selected.value.id, revision: selected.value.revision, raw: value, name: name.value });
+  await uiRequest('characters.worldbook.update', { id: selected.value.id, revision: selected.value.revision, raw: value, name: name.value });
   await reload(); await choose(selected.value.id);
 }
 async function exportOriginal() {
   if (!selected.value) return;
-  const source = await rpc<CharacterResource['source']>('characters.original', { id: selected.value.id });
+  const source = await uiRequest('characters.original', { id: selected.value.id });
   const bytes = Uint8Array.from(atob(source.inlineData.data), char => char.charCodeAt(0));
   const url = URL.createObjectURL(new Blob([bytes], { type: source.inlineData.mimeType }));
   const link = document.createElement('a'); link.href = url; link.download = source.name; link.click();
@@ -113,7 +111,7 @@ async function exportOriginal() {
 }
 async function archive() {
   if (!selected.value) return;
-  await rpc('characters.archive', { id: selected.value.id, revision: selected.value.revision });
+  await uiRequest('characters.archive', { id: selected.value.id, revision: selected.value.revision });
   selected.value = null;raw.value=undefined; await reload();
 }
 onUnmounted(()=>{selectionEpoch++;});

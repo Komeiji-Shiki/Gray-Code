@@ -34,6 +34,7 @@ import { removePermissionAccount, resolveBotGuestActor } from '../bots/permissio
 import { activateConversationWorkspace } from '../conversations/workspace';
 import { validateDecisionProvider } from '../model/decisionReviewer';
 import type { WorkspaceDiff } from '../workspace/diffs';
+import type { UiRequestHandlers } from '@graycode/contracts';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -209,6 +210,44 @@ export class ProductUi {
     };
     const checkpointHandler = this.checkpointUi.handlers(client, ui.preferences, ui.workspaceId)[type];
     if (checkpointHandler) return checkpointHandler(data);
+    // 角色会话仍走前面的独立入口；其他稳定请求在原有会话和工作区权限检查之后处理。
+    const stableHandlers: Omit<UiRequestHandlers, Extract<keyof UiRequestHandlers, `characters.conversation.${string}`>> = {
+      'characters.list': () => this.app.characters.list(),
+      'characters.original': params => this.app.characters.original(params.id),
+      'characters.definition': params => this.app.characters.definition(params.id),
+      'characters.get': params => this.app.characters.get(params.id),
+      'characters.import': params => this.app.characters.import(params),
+      'characters.bind': params => this.app.characters.bind(params.id, params.revision, params),
+      'characters.worldbook.update': params => this.app.characters.updateWorldbook(params.id, params.revision, params.raw, params.name),
+      'characters.archive': params => this.app.characters.archive(params.id, params.revision),
+      'conversation.navigation': params => new ConversationNavigation(this.app).list(client.actorId, params),
+      'conversation.navigation.reorder': params => new NavigationOrderingStore(this.app).reorder(client.actorId, params),
+      'conversation.navigation.pinGroup': params => new NavigationOrderingStore(this.app).pinGroup(client.actorId, params),
+      'projects.rename': params => new ProjectNavigation(this.app).update(client.actorId, params, { name: params.name }),
+      'projects.previewRemoval': params => new ProjectNavigation(this.app).previewRemoval(client.actorId, params),
+      'projects.remove': params => new ProjectNavigation(this.app).remove(client.actorId, params, params),
+      'conversation.pin': params => new ConversationNavigation(this.app).pin(client.actorId, params.conversationId, params.pinned === true),
+      'conversation.rename': params => new ConversationNavigation(this.app).rename(client.actorId, params.conversationId, params.title),
+      'conversation.deleteConversation': async params => {
+        await deleteConversation(this.app, client.actorId, params.conversationId); return { success: true };
+      },
+      'ui.mode.new': async params => {
+        if (!['chat', 'code', 'character'].includes(params.mode)) throw new Error('未知对话模式。');
+        if (params.automaticWorkspace !== undefined && (params.mode !== 'chat' || typeof params.automaticWorkspace !== 'boolean')) throw new Error('新建对话的工作区选项无效。');
+        ui.mode = params.mode;
+        const workspaceId = params.mode === 'chat' ? undefined : params.workspaceId || undefined;
+        const profile = this.app.settings.snapshot().settings.modeProfiles?.[ui.mode!];
+        const preset = profile?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
+        const custom = { platformMode: ui.mode, promptModeConfig: { modeId: preset } };
+        const automaticWorkspace = params.automaticWorkspace !== false;
+        const conversation = await this.app.createConversation(client.actorId, params.mode === 'character' ? '新角色对话' : '新对话', workspaceId,
+          automaticWorkspace ? custom : await this.app.companion.forNewConversation(client.actorId, custom), undefined, { automaticWorkspace });
+        ui.workspaceId = typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined;
+        return { conversationId: conversation.id };
+      },
+    };
+    const stableHandler = Object.prototype.hasOwnProperty.call(stableHandlers, type) ? stableHandlers[type as keyof typeof stableHandlers] : undefined;
+    if (stableHandler) return (stableHandler as (params: Record<string, unknown>) => unknown)(data);
     switch (type) {
       case 'notifications.agentStop':
       case 'notifications.preview': return { success: true, shown: false, skipped: true, reason: 'desktop_notification_unavailable' };
@@ -239,14 +278,6 @@ export class ProductUi {
         if (name !== 'cl100k' && name !== 'deepseek-v3') throw new Error('未知 tokenizer 词表。');
         return this.app.tokenizers.ensureResource(name);
       }
-      case 'characters.list': return this.app.characters.list();
-      case 'characters.original': return this.app.characters.original(data.id);
-      case 'characters.definition': return this.app.characters.definition(data.id);
-      case 'characters.get': return this.app.characters.get(data.id);
-      case 'characters.import': return this.app.characters.import(data as { name: string; data: string });
-      case 'characters.bind': return this.app.characters.bind(data.id, data.revision, data as any);
-      case 'characters.worldbook.update': return this.app.characters.updateWorldbook(data.id, data.revision, data.raw, data.name);
-      case 'characters.archive': return this.app.characters.archive(data.id, data.revision);
       case 'subagents.openMonitor': {
         if (data.conversationId) await this.app.conversation(client.actorId, data.conversationId);
         const runId = await this.app.subagentMonitor.focus(client.actorId, data.runId, data.conversationId, data.toolId);
@@ -398,14 +429,6 @@ export class ProductUi {
         return { mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode };
       }
       case 'chat.resumeConversationStream': return this.chat.resumeConversationStream(client, data.conversationId);
-      case 'conversation.navigation': return new ConversationNavigation(this.app).list(client.actorId, data);
-      case 'conversation.navigation.reorder': return new NavigationOrderingStore(this.app).reorder(client.actorId, data as any);
-      case 'conversation.navigation.pinGroup': return new NavigationOrderingStore(this.app).pinGroup(client.actorId, data as any);
-      case 'projects.rename': return new ProjectNavigation(this.app).update(client.actorId, data, { name: data.name });
-      case 'projects.previewRemoval': return new ProjectNavigation(this.app).previewRemoval(client.actorId, data);
-      case 'projects.remove': return new ProjectNavigation(this.app).remove(client.actorId, data, data);
-      case 'conversation.pin': return new ConversationNavigation(this.app).pin(client.actorId, data.conversationId, data.pinned === true);
-      case 'conversation.rename': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);
       case 'ui.conversation.views': {
         const views = (Array.isArray(data.views) ? data.views : []).slice(0, 100).map((item: any) => ({ id: String(item.id), conversationId: typeof item.conversationId === 'string' ? item.conversationId : null,
           title: String(item.title), isStreaming: item.isStreaming === true, hasDraft: item.hasDraft === true, active: item.active === true }));
@@ -430,20 +453,6 @@ export class ProductUi {
         ui.mode = data.mode;
         notify({ type: 'command', command: 'platform.modeSelected', data: { mode: data.mode, promptModeId: preset } });
         return { success: true, workspaceId };
-      }
-      case 'ui.mode.new': {
-        if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
-        if (data.automaticWorkspace !== undefined && (data.mode !== 'chat' || typeof data.automaticWorkspace !== 'boolean')) throw new Error('新建对话的工作区选项无效。');
-        ui.mode = data.mode;
-        const workspaceId = data.mode === 'chat' ? undefined : data.workspaceId || undefined;
-        const profile = this.app.settings.snapshot().settings.modeProfiles?.[ui.mode!];
-        const preset = profile?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
-        const custom = { platformMode: ui.mode, promptModeConfig: { modeId: preset } };
-        const automaticWorkspace = data.automaticWorkspace !== false;
-        const conversation = await this.app.createConversation(client.actorId, data.mode === 'character' ? '新角色对话' : '新对话', workspaceId,
-          automaticWorkspace ? custom : await this.app.companion.forNewConversation(client.actorId, custom), undefined, { automaticWorkspace });
-        ui.workspaceId = typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined;
-        return { conversationId: conversation.id };
       }
       case 'platform.modes.createCharacterPreset': {
         const preset = createCharacterStarterPreset(randomUUID());
@@ -647,9 +656,6 @@ export class ProductUi {
       case 'conversation.setCustomMetadata': await this.conversations.setCustomMetadata(data.conversationId, data.key, data.value); return { success: true };
       case 'conversation.setTitle': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);
       case 'conversation.updateSummary': await this.conversations.updateSummary(data.conversationId, data); return { success: true };
-      case 'conversation.deleteConversation': {
-        await deleteConversation(this.app, client.actorId, data.conversationId); return { success: true };
-      }
       case 'getOpenTabs': return { tabs: this.app.files.editorContext(client.clientId, workspace).openFiles };
       case 'getActiveEditor': return { path: this.app.files.editorContext(client.clientId, workspace).activeFile ?? null };
     }

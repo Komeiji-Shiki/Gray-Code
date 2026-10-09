@@ -5,6 +5,7 @@ import type { RuntimeDiagnostics } from './remote';
 import type { ComputerAction, ComputerObservation, ComputerObserveInput, ComputerOperation, ComputerStatus, ComputerWindows } from './computer';
 import type { BrowserLayout, BrowserProfile, BrowserState, BrowserTab } from './browser';
 import type { VisualActionResult } from './visual';
+import type { UiRequestEnvelope, UiRequestName, UiRequestResult } from './uiRequests';
 
 export interface ModelRequestSnapshot {
   runId: string; iteration: number; capturedAt: number; protocol: string; model: string; body: unknown;
@@ -20,6 +21,7 @@ export type BrowserControlAction = 'navigate' | 'back' | 'forward' | 'reload' | 
 
 /** 每个领域只在这里声明参数和返回值，桌面与 Web 共用同一调用签名。 */
 export interface RpcMethods {
+  'ui.request': Method<UiRequestEnvelope, UiRequestResult<UiRequestName>>;
   'diagnostics.get': Method<Empty, RuntimeDiagnostics>;
   'settings.get': Method<Empty, SettingsSnapshot>;
   'settings.save': Method<SettingsDraft, SettingsSnapshot>;
@@ -75,6 +77,7 @@ const text: Check = { accepts: value => typeof value === 'string' };
 const number: Check = { accepts: value => typeof value === 'number' && Number.isFinite(value) };
 const boolean: Check = { accepts: value => typeof value === 'boolean' };
 const object: Check = { accepts: value => !!value && typeof value === 'object' && !Array.isArray(value) };
+const unknownValue: Check = { accepts: () => true };
 const strings: Check = { accepts: value => Array.isArray(value) && value.every(item => typeof item === 'string') };
 const optional = (check: Check): Check => ({ ...check, optional: true });
 const oneOf = (...values: string[]): Check => ({ accepts: value => typeof value === 'string' && values.includes(value) });
@@ -83,6 +86,8 @@ const tab = { tabId: text };
 
 // 字段表受方法参数类型约束；新增字段时，遗漏入口检查会触发编译错误。
 const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
+  // 旧 UI 操作的数据形态继续兼容，稳定接口的参数与结果由 UiRequests 关联。
+  'ui.request': { type: text, data: optional(unknownValue) },
   'diagnostics.get': {},
   'settings.get': {}, 'settings.save': { settings: object, expectedRevision: number, credentials: optional(object) },
   'files.list': { workspaceId: text, path: optional(text) }, 'files.inspect': file, 'files.downloadInfo': file, 'files.download': file, 'files.reveal': file, 'files.openOffice': file,

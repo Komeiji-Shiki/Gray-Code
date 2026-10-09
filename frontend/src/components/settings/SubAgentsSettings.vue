@@ -18,7 +18,7 @@ import { ref, computed, onMounted } from 'vue'
 import { CustomSelect, ConfirmDialog, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
-import type { SubAgentConfig, SubAgentToolsConfig } from '@/types'
+import type { SubAgentConfig, SubAgentToolsConfig, SubAgentsConfig, SubAgentConfigUpdate } from '@/types'
 import { groupToolsByCategory } from '@/utils/toolCategory'
 import SubAgentGlobalConfigSection from './subAgentsSettings/SubAgentGlobalConfigSection.vue'
 import SubAgentBasicInfoSection from './subAgentsSettings/SubAgentBasicInfoSection.vue'
@@ -143,9 +143,9 @@ const toolsByCategory = computed(() => groupToolsByCategory(allTools.value))
 const currentToolList = computed(() => {
   const mode = currentAgent.value?.tools.mode
   if (mode === 'whitelist') {
-    return currentAgent.value?.tools.whitelist || []
+    return currentAgent.value?.tools.whitelist ?? currentAgent.value?.tools.list ?? []
   } else if (mode === 'blacklist') {
-    return currentAgent.value?.tools.blacklist || []
+    return currentAgent.value?.tools.blacklist ?? currentAgent.value?.tools.list ?? []
   }
   return []
 })
@@ -161,7 +161,7 @@ async function toggleTool(toolName: string, selected: boolean) {
 
   const mode = currentAgent.value.tools.mode
   const listKey = mode === 'whitelist' ? 'whitelist' : 'blacklist'
-  const currentList = [...(currentAgent.value.tools[listKey] || [])]
+  const currentList = [...currentToolList.value]
 
   if (selected) {
     if (!currentList.includes(toolName)) {
@@ -186,7 +186,7 @@ async function toggleTool(toolName: string, selected: boolean) {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, generalWorkerMaxRuntimeSeconds?: number, defaultMaxIterations?: number, queueTimeoutSeconds?: number, defaultMaxRuntimeSeconds?: number }>(MESSAGE_NAMES['subagents.list'], {})
+    const response = await sendToExtension<SubAgentsConfig>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -302,7 +302,7 @@ function selectAgent(agentType: string) {
  * 乐观更新：先合并到本地再发请求，避免保存往返窗口内连续编辑互相覆盖（对象字段做字段级
  * 合并，不整体替换，防止丢 channel.modelId/syncWithCurrentModel）；保存失败时回滚本地。
  */
-async function updateAgentField<K extends keyof SubAgentConfig>(field: K, value: unknown): Promise<{ ok: boolean; error?: unknown }> {
+async function updateAgentField<K extends keyof SubAgentConfigUpdate>(field: K, value: SubAgentConfigUpdate[K]): Promise<{ ok: boolean; error?: unknown }> {
   if (!currentAgent.value) return { ok: false }
 
   // await 前捕获代理类型并按 agentType 定位本地对象：往返期间用户可能切换代理，
@@ -313,7 +313,7 @@ async function updateAgentField<K extends keyof SubAgentConfig>(field: K, value:
 
   if (agent) {
     const next = isPlainObject(previous) && isPlainObject(value)
-      ? { ...(previous as Record<string, unknown>), ...value }
+      ? { ...(previous as Record<string, unknown>), ...(value as Record<string, unknown>) }
       : value === null && (field === 'maxIterations' || field === 'maxRuntime') ? undefined : value
     agent[field] = next as SubAgentConfig[K]
   }
@@ -353,7 +353,7 @@ async function toggleSyncWithCurrentModel(value: boolean) {
 }
 
 // 子组件回调：基本信息字段更新
-function handleBasicFieldUpdate(field: 'description' | 'maxIterations' | 'maxRuntime' | 'enabled', value: unknown) {
+function handleBasicFieldUpdate(field: 'description' | 'maxIterations' | 'maxRuntime' | 'enabled', value: SubAgentConfigUpdate[typeof field]) {
   void updateAgentField(field, value)
 }
 

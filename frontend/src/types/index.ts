@@ -772,25 +772,7 @@ export interface CheckpointManifest {
 /**
  * 模型信息
  */
-export interface ModelInfo {
-  /** 模型 ID */
-  id: string
-  
-  /** 模型名称 */
-  name?: string
-  
-  /** 模型描述 */
-  description?: string
-  
-  /** 上下文窗口大小 */
-  contextWindow?: number
-  
-  /** 最大输出token */
-  maxOutputTokens?: number
-
-  /** contextWindow 是否已经是仅输入上限 */
-  contextWindowIncludesOutput?: boolean
-}
+export type { ModelInfo } from '../../../packages/contracts/src/channels/base'
 export const SUPPORTED_DOCUMENT_TYPES = ['application/pdf', 'text/plain', 'application/json']
 
 // ============ MCP 相关类型 ============

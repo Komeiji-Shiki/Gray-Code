@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { CharacterChatConfig, CharacterResource } from '@graycode/contracts';
-import { call } from '../api';
+import { call, uiRequest } from '../api';
 import { state } from '../state';
 const props = defineProps<{ characterId?: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -30,7 +30,6 @@ const draftKey = () => JSON.stringify([characterId.value, userName.value, person
   scanDepth.value, tokenBudget.value, greetingIndex.value, recursiveScan.value, maxRecursionSteps.value]);
 const dirty = computed(() => ready.value && draftKey() !== saved);
 function requestClose() { if (busy.value) return; if (dirty.value) confirmLeave.value = true; else emit('close'); }
-const rpc = <T,>(type: string, data: Record<string, unknown> = {}) => call<T>('ui.request', { type, data });
 async function save(create: boolean) {
   if (busy.value || !ready.value) return;
   busy.value = true; error.value = '';
@@ -40,9 +39,10 @@ async function save(create: boolean) {
       persona: persona.value, worldbookIds: worldbookIds.value, regexIds: regexIds.value, scanDepth: Number(scanDepth.value),
       worldTokenBudget: tokenBudget.value === '' ? undefined : Number(tokenBudget.value),
       recursiveScan: recursiveScan.value === '' ? undefined : recursiveScan.value === 'true', maxRecursionSteps: maxRecursionSteps.value === '' ? undefined : Number(maxRecursionSteps.value) };
-    const result = await rpc<{ conversationId?: string }>(create ? 'characters.conversation.create' : 'characters.conversation.save',
-      { config, conversationId, metadataToken: metadataToken.value });
-    if (result.conversationId) {
+    const result = create
+      ? await uiRequest('characters.conversation.create', { config })
+      : await uiRequest('characters.conversation.save', { config, conversationId: conversationId!, metadataToken: metadataToken.value });
+    if ('conversationId' in result) {
       state.mode = 'character'; state.chatFocused = true;
       await call('ui.command', { command: 'platform.openModeConversation', data: result });
     }
@@ -55,7 +55,7 @@ watch(characterId, async id => {
   greetings.value = [];
   if (!id) return;
   try {
-    const result = await rpc<{ greetings: string[] }>('characters.definition', { id });
+    const result = await uiRequest('characters.definition', { id });
     if (epoch !== greetingEpoch) return;
     greetings.value = result.greetings;
     if (greetingIndex.value >= result.greetings.length) greetingIndex.value = 0;
@@ -65,9 +65,9 @@ onMounted(async () => {
   dialog.value?.showModal();
   busy.value = true;
   try {
-    resources.value = await rpc('characters.list');
+    resources.value = await uiRequest('characters.list');
     if (conversationId && !props.characterId) {
-      const result = await rpc<{ config: CharacterChatConfig | null; metadataToken: string; mode: unknown }>('characters.conversation.get', { conversationId });
+      const result = await uiRequest('characters.conversation.get', { conversationId });
       metadataToken.value = result.metadataToken; canSave.value = result.mode === 'character';
       if (result.config) {
         characterId.value = result.config.characterId ?? ''; userName.value = result.config.userName; persona.value = result.config.persona;

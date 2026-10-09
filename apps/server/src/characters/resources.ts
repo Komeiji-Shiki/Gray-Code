@@ -1,13 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { CharacterResource, CharacterResourceKind, RecordMutation } from '@graycode/contracts';
+import type { CharacterResource, CharacterResourceInfo, CharacterResourceRow, CharacterResourceDetail, CharacterResourceKind, RecordMutation } from '@graycode/contracts';
 import { identifyCharacterResource, readCharacterDefinition, readCharacterFile, readRegexRules, readWorldbook } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 
-export type ResourceInfo = Omit<CharacterResource, 'raw' | 'source'> & {
-  source: Omit<CharacterResource['source'], 'inlineData'> & { mimeType: string };
-  archived?: boolean;
-  resolvedReferences?: Record<string, string>;
-};
+export type ResourceInfo = CharacterResourceInfo;
 const metadataNamespace = 'character-resource-info';
 const contentNamespace = 'character-resource-content';
 const originalNamespace = 'character-resource-original';
@@ -16,21 +12,21 @@ type ResourceDefinition = Omit<CharacterResource, 'source'> & { source: Resource
 /** 资源元数据与原始正文分开存储，列表不读取整张 PNG。 */
 export class CharacterResources {
   constructor(private readonly app: PlatformApplication) {}
-  async list() {
+  async list(): Promise<CharacterResourceRow[]> {
     const ids = await this.app.storage.listRecords(metadataNamespace);
     const rows = await Promise.all(ids.map(async id => {
       const record = await this.app.storage.getVersionedRecord(metadataNamespace, id);
-      return record.value ? { ...(record.value as ResourceInfo), revision: record.revision } : null;
+      return record.value ? { ...(record.value as ResourceInfo), revision: record.revision! } : null;
     }));
-    return rows.filter(row => row && !row.archived);
+    return rows.filter((row): row is CharacterResourceRow => !!row && !row.archived);
   }
-  async get(id: string) {
+  async get(id: string): Promise<CharacterResourceDetail> {
     const record = await this.app.storage.getVersionedRecord(contentNamespace, id);
     if (!record.value) throw new Error('角色资源不存在。');
     const data = record.value as { raw: CharacterResource['raw']; info: ResourceInfo };
     const info = data.info;
     return { resource: { ...info, raw: data.raw, source: info.source } as ResourceDefinition,
-      revision: record.revision, info };
+      revision: record.revision!, info };
   }
   async original(id: string) {
     const original = await this.app.storage.getRecord(originalNamespace, id) as CharacterResource['source'] | null;

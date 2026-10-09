@@ -1,7 +1,7 @@
 /** 两种常规上下文管理方式共用同一条请求前缀，不另换总结模型。 */
-export type ContextManagementMethod = 'summary' | 'notes';
+import type { ContextManagementMethod, ContextUserMessageRetention } from '../packages/contracts/src/contextManagement';
+export type { ContextManagementMethod, ContextUserMessageRetention } from '../packages/contracts/src/contextManagement';
 export const DEFAULT_CONTEXT_MANAGEMENT_METHOD: ContextManagementMethod = 'summary';
-export type ContextUserMessageRetention = 'first' | 'all';
 export const DEFAULT_USER_MESSAGE_RETENTION: ContextUserMessageRetention = 'first';
 export const CONTEXT_TOOL_NAMES = ['context_history', 'context_notes', 'new_context'] as const;
 

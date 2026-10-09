@@ -3,7 +3,7 @@ import { useNavigationIntent, type NavigationIntent } from '../navigationIntent'
 const navigate = useNavigationIntent();
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ConversationNavigationItem, ConversationNavigationResult, ConversationViewInfo, NavigationOrdering } from '@graycode/contracts';
-import { call, subscribe } from '../api';
+import { call, subscribe, uiRequest } from '../api';
 import { guard, state } from '../state';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import ConversationNavigationRow from './navigation/ConversationNavigationRow.vue';
@@ -41,14 +41,13 @@ const overlayRoot = computed(() => dialogElement.value ?? menuElement.value ?? c
 const { rememberTrigger } = useNavigationFocus(overlayRoot, dismissOverlay, () => searchInput.value ?? sidebarElement.value?.querySelector<HTMLButtonElement>('button') ?? undefined);
 let disposed = false;
 let epoch = 0; let refreshTimer: ReturnType<typeof setTimeout> | undefined; let unsubscribe: (() => void) | undefined;
-const rpc = <T,>(type: string, data: Record<string, unknown> = {}) => call<T>('ui.request', { type, data });
 const ordering = computed<NavigationOrdering>(() => navigation.value.ordering ?? { revision: 0, groups: [], pinnedGroups: [], conversations: [], pinned: [], drafts: [] });
 const views = computed(() => new Map(state.conversationViews.filter(view => view.conversationId).map(view => [view.conversationId!, view])));
 const drafts = computed(() => orderSidebarItems(state.conversationViews.filter(view => !view.conversationId && (view.active || view.hasDraft)), ordering.value.drafts, view => view.id));
 const runs = computed(() => new Map(navigation.value.runs.map(run => [run.conversationId, run.status])));
 const drag = useNavigationDrag(async (kind, ids) => {
   const scope = navigationScope.value;
-  const result = await rpc<NavigationOrdering>('conversation.navigation.reorder', { scope, kind, ids, revision: ordering.value.revision });
+  const result = await uiRequest('conversation.navigation.reorder', { scope, kind, ids, revision: ordering.value.revision });
   if (scope !== navigationScope.value) return;
   navigation.value = { ...navigation.value, ordering: result, nextCursor: undefined,
     items: orderSidebarItems(navigation.value.items, result.conversations, item => item.id),
@@ -90,7 +89,7 @@ async function refresh(reset = false, more = false) {
   const current = ++epoch; const searching = query.value;
   if (more) loadingMore.value = true;
   try {
-    const result = await rpc<ConversationNavigationResult>('conversation.navigation', { scope: navigationScope.value, query: searching, ...(more ? { cursor: navigation.value.nextCursor } : {}) });
+    const result = await uiRequest('conversation.navigation', { scope: navigationScope.value, query: searching, ...(more ? { cursor: navigation.value.nextCursor } : {}) });
     if (current !== epoch || searching !== query.value) return;
     const pinnedIds = new Set(result.pinned.map(item => item.id));
     const items = new Map((reset ? [] : navigation.value.items).filter(item => !pinnedIds.has(item.id)).map(item => [item.id, item]));
@@ -142,7 +141,7 @@ async function selectProject(group: (typeof groups.value)[number]) {
 async function newConversation(workspaceId?: string) {
   const intent = navigate({ workspaceId });
   if (workspaceId) {
-    const result = await rpc<{ conversationId: string }>('ui.mode.new', { mode: 'code', workspaceId });
+    const result = await uiRequest('ui.mode.new', { mode: 'code', workspaceId });
     if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
   } else await command('newChat', undefined, intent);
 }
@@ -163,7 +162,7 @@ function showCreateMenu(event: MouseEvent) {
 async function createGeneralConversation(automaticWorkspace: boolean) {
   const intent = navigate();
   createMenu.value = undefined;
-  const result = await rpc<{ conversationId: string }>('ui.mode.new', { mode: 'chat', automaticWorkspace });
+  const result = await uiRequest('ui.mode.new', { mode: 'chat', automaticWorkspace });
   if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
 }
 async function openInExplorer() {
@@ -187,7 +186,7 @@ function showProjectMenu(event: MouseEvent, project: NavigationProject) {
 async function changeGroupPin() {
   const project = menu.value?.project; menu.value = undefined;
   if (!project || project.key !== 'general' && !project.workspace) return;
-  const result = await rpc<NavigationOrdering>('conversation.navigation.pinGroup', { key: project.key, pinned: !groupPinned(project.key), revision: ordering.value.revision });
+  const result = await uiRequest('conversation.navigation.pinGroup', { key: project.key, pinned: !groupPinned(project.key), revision: ordering.value.revision });
   navigation.value = { ...navigation.value, ordering: result, nextCursor: undefined };
   await refresh();
 }
@@ -201,7 +200,7 @@ async function showDialog(kind: NavigationDialogKind) {
   if (kind === 'project-remove') {
     dialogBusy.value = true;
     try {
-      const preview = await rpc<{ count: number; activeCount: number; token: string }>('projects.previewRemoval', projectTarget(selected.project!));
+      const preview = await uiRequest('projects.previewRemoval', projectTarget(selected.project!));
       if (!disposed && dialog.value === selected) projectRemoval.value = preview;
     } catch (cause) { if (!disposed && dialog.value === selected) error.value = (cause as Error).message; }
     finally { if (!disposed && dialog.value === selected) dialogBusy.value = false; }
@@ -209,7 +208,7 @@ async function showDialog(kind: NavigationDialogKind) {
 }
 async function changePin() {
   const item = menu.value?.item; menu.value = undefined; if (!item) return;
-  await rpc('conversation.pin', { conversationId: item.id, pinned: !item.pinnedAt });
+  await uiRequest('conversation.pin', { conversationId: item.id, pinned: !item.pinnedAt });
   navigation.value.items = navigation.value.items.filter(value => value.id !== item.id);
   navigation.value.pinned = navigation.value.pinned.filter(value => value.id !== item.id);
   if (item.pinnedAt) navigation.value.items.push({ ...item, pinnedAt: undefined });
@@ -224,17 +223,17 @@ async function confirmDialog() {
   if (!dialog.value || dialogBusy.value) return;
   const selected = dialog.value; dialogBusy.value = true;
   try {
-    if (selected.kind === 'project-rename') await rpc('projects.rename', { ...projectTarget(selected.project!), name: title.value });
+    if (selected.kind === 'project-rename') await uiRequest('projects.rename', { ...projectTarget(selected.project!), name: title.value });
     else if (selected.kind === 'project-remove') {
       if (!projectRemoval.value) return;
-      const result = await rpc<{ deletedIds: string[] }>('projects.remove', { ...projectTarget(selected.project!), deleteConversations: deleteProjectConversations.value, token: projectRemoval.value.token });
+      const result = await uiRequest('projects.remove', { ...projectTarget(selected.project!), deleteConversations: deleteProjectConversations.value, token: projectRemoval.value.token });
       for (const view of state.conversationViews.filter(view => view.conversationId && result.deletedIds.includes(view.conversationId)))
         await command('platform.closeConversationView', { tabId: view.id });
     }
-    else if (selected.kind === 'rename') await rpc('conversation.rename', { conversationId: selected.item!.id, title: title.value });
+    else if (selected.kind === 'rename') await uiRequest('conversation.rename', { conversationId: selected.item!.id, title: title.value });
     else if (selected.kind === 'close') await command('platform.closeConversationView', { tabId: selected.view!.id });
     else {
-      await rpc('conversation.deleteConversation', { conversationId: selected.item!.id });
+      await uiRequest('conversation.deleteConversation', { conversationId: selected.item!.id });
       navigation.value.items = navigation.value.items.filter(item => item.id !== selected.item!.id);
       navigation.value.pinned = navigation.value.pinned.filter(item => item.id !== selected.item!.id);
       if (selected.view) await command('platform.closeConversationView', { tabId: selected.view.id });

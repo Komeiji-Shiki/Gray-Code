@@ -8,13 +8,13 @@
 import { ref } from 'vue'
 import { useI18n } from '@/i18n'
 import { CustomCheckbox } from '../../common'
-import type { SubAgentConfig } from '@/types/settingsConfig'
+import type { SubAgentConfig, SubAgentConfigUpdate } from '@/types/settingsConfig'
 
 const props = defineProps<{
   agent: SubAgentConfig
   defaultMaxIterations: number
   defaultMaxRuntimeSeconds: number
-  onUpdateField: (field: 'description' | 'maxIterations' | 'maxRuntime' | 'enabled', value: unknown) => void
+  onUpdateField: (field: 'description' | 'maxIterations' | 'maxRuntime' | 'enabled', value: SubAgentConfigUpdate[typeof field]) => void
 }>()
 
 const { t } = useI18n()

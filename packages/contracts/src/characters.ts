@@ -18,6 +18,23 @@ export interface CharacterChatConfig {
   /** Explicit user configuration is used when a book omits these fields. */
   scanDepth: number; worldTokenBudget?: number; recursiveScan?: boolean; maxRecursionSteps?: number;
 }
+/** 资料列表和详情共享同一份元数据，原文件正文仍由 original 单独读取。 */
+export type CharacterResourceInfo = Omit<CharacterResource, 'raw' | 'source'> & {
+  source: Omit<CharacterResource['source'], 'inlineData'> & { mimeType: string };
+  archived?: boolean;
+  resolvedReferences?: Record<string, string>;
+};
+export type CharacterResourceRow = CharacterResourceInfo & { revision: number };
+export interface CharacterResourceDetail {
+  info: CharacterResourceInfo;
+  resource: CharacterResourceInfo & { raw: CharacterResource['raw'] };
+  revision: number;
+}
+export interface CharacterConversationSettings {
+  config: CharacterChatConfig | null;
+  metadataToken: string;
+  mode: unknown;
+}
 export interface RegexRule {
   id: string; name: string; pattern: string; replacement: string; enabled: boolean;
   placements: number[]; trim: string[]; markdownOnly: boolean; promptOnly: boolean; runOnEdit: boolean;

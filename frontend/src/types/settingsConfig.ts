@@ -22,33 +22,12 @@ export interface ImageConfig {
   maxImagesPerTask: number
 }
 
-/** 子代理工具配置（SubAgentsSettings.vue） */
-export interface SubAgentToolsConfig {
-  mode: 'all' | 'builtin' | 'mcp' | 'whitelist' | 'blacklist'
-  whitelist?: string[]
-  blacklist?: string[]
-  includeMcp?: boolean
-}
+import type { SubAgentConfigItem } from '../../../packages/contracts/src/subagents'
+export type { SubAgentToolsConfig, SubAgentConfigUpdate, SubAgentsConfig } from '../../../packages/contracts/src/subagents'
 
-/** 子代理渠道/模型绑定 */
-export interface SubAgentChannelConfig {
-  channelId: string
-  modelId?: string
-  syncWithCurrentModel?: boolean
-}
-
-/** 子代理配置（SubAgentsSettings.vue） */
-export interface SubAgentConfig {
-  type: string
-  name: string
-  description: string
-  systemPrompt: string
-  channel: SubAgentChannelConfig
-  tools: SubAgentToolsConfig
-  maxIterations?: number
-  maxRuntime?: number
-  enabled?: boolean
-}
+export type SubAgentChannelConfig = SubAgentConfigItem['channel']
+/** 前端还会读取省略 enabled 的旧配置，其余字段直接使用共享契约。 */
+export type SubAgentConfig = Omit<SubAgentConfigItem, 'enabled'> & Partial<Pick<SubAgentConfigItem, 'enabled'>>
 
 /** 审查报告中「AgentConfig」的别名 */
 export type AgentConfig = SubAgentConfig
