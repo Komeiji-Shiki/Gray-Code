@@ -19,6 +19,7 @@ import MessageQueue from '../../components/input/MessageQueue.vue'
 import type { Attachment } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
 import { markAgentMessageRoundPending, clearAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
+import { resetChannelConfigsCache } from '../../services/channelConfigCache'
 
 const originalHost = window.__GRAYCODE_HOST
 
@@ -149,6 +150,7 @@ describe('InputArea 发送失败恢复', () => {
   let wrapper: VueWrapper | undefined
 
   beforeEach(() => {
+    resetChannelConfigsCache()
     runtime.chatStore = reactive({
       editorNodes: [] as EditorNode[],
       inputValue: '',
@@ -554,6 +556,7 @@ describe('InputArea DeepSeek 整图发送', () => {
   }
 
   beforeEach(() => {
+    resetChannelConfigsCache()
     runtime.chatStore = reactive({
       editorNodes: [] as EditorNode[],
       inputValue: '',

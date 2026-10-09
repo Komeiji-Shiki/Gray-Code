@@ -1,5 +1,6 @@
 import type { RpcCall, UiRequestCall } from '@graycode/contracts';
 import { callDesktopBridge, type DesktopBridge } from '../../../shared/desktopBridge';
+import { requiresJsonRoundTrip } from '../../../shared/hostPayload';
 export type { DesktopBridge } from '../../../shared/desktopBridge';
 declare global {
   interface Window {
@@ -12,12 +13,13 @@ export function call<T = any>(
 ): Promise<T> {
   if (!window.graycode)
     return Promise.reject(new Error("请从 GrayCode 桌面应用打开此界面。"));
-  // Vue 表单中的代理对象不能直接交给 Electron 的结构化克隆。
+  // 仅为代理对象及非 JSON 数据解包；普通文档和附件参数直接传输，避免复制正文。
   if (method === 'files.upload' && 'bytes' in params && params.bytes instanceof Uint8Array) {
     const { bytes, ...fields } = params;
-    return callDesktopBridge<T>(window.graycode, method, { ...JSON.parse(JSON.stringify(fields)), bytes });
+    return callDesktopBridge<T>(window.graycode, method, { ...(requiresJsonRoundTrip(fields) ? JSON.parse(JSON.stringify(fields)) : fields), bytes });
   }
-  return callDesktopBridge<T>(window.graycode, method, JSON.parse(JSON.stringify(params)));
+  const payload = requiresJsonRoundTrip(params) ? JSON.parse(JSON.stringify(params)) : params;
+  return callDesktopBridge<T>(window.graycode, method, payload);
 }
 export function subscribe(
   listener: (event: Record<string, any>) => void,

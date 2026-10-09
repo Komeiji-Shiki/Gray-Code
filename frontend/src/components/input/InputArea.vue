@@ -25,6 +25,7 @@ import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
 import { sendToExtension, showNotification, onExtensionCommand } from '../../utils/vscode'
 import * as configService from '../../services/config'
+import { preloadChannelConfigs, setChannelConfigsCache } from '../../services/channelConfigCache'
 import * as contextService from '../../services/context'
 import { formatNumber, generateId } from '../../utils/format'
 import { languageFromPath } from '../../utils/languageFromPath'
@@ -92,6 +93,7 @@ const reasoningProfiles = ref<ProviderDefinition[]>([])
 const isLoadingConfigs = ref(true)
 const configsLoadError = ref('')
 let configLoadGeneration = 0
+let inputAreaUnmounted = false
 
 const promptModes = ref<PromptMode[]>([])
 let promptModesLoadGeneration = 0
@@ -127,31 +129,22 @@ const channelSetupStatus = computed<ChannelSetupStatus>(() => {
   return 'ready'
 })
 
-async function loadConfigs() {
+async function loadConfigs(refresh = false) {
+  if (inputAreaUnmounted) return
   const generation = ++configLoadGeneration
+  if (refresh) setChannelConfigsCache(null)
   isLoadingConfigs.value = true
   configsLoadError.value = ''
   try {
-    const [ids, platformSettings] = await Promise.all([
-      configService.listConfigIds(),
+    const [snapshot, platformSettings] = await Promise.all([
+      preloadChannelConfigs(),
       window.__GRAYCODE_HOST ? sendToExtension<{ providers: ProviderDefinition[] }>('platform.settings.get', {}) : Promise.resolve(undefined)
     ])
-    // 并行拉取全部渠道配置（原为串行 N 次 IPC，渠道多时首屏线性变慢）；
-    // 单条失败仅跳过该条并告警，不拖垮整批（保留单条失败容忍语义）
-    let firstError = ''
-    const results = await Promise.all(ids.map(async (id) => {
-      try {
-        return await configService.getConfig(id)
-      } catch (error) {
-        console.warn(`Failed to load config ${id}:`, error)
-        firstError ||= error instanceof Error ? error.message : String(error)
-        return null
-      }
-    }))
     if (generation !== configLoadGeneration) return
+    configsLoadError.value = snapshot.error
+    if (snapshot.configs === null) return
     reasoningProfiles.value = platformSettings?.providers ?? []
-    configs.value = results.filter((c): c is ChannelConfig => !!c)
-    configsLoadError.value = firstError
+    configs.value = snapshot.configs
   } catch (error) {
     console.error('Failed to load configs:', error)
     if (generation === configLoadGeneration) configsLoadError.value = error instanceof Error ? error.message : String(error)
@@ -720,7 +713,8 @@ onMounted(() => {
   // 渠道/模型设置在设置面板变更后（新增/移除模型、改渠道参数、增删渠道），
   // 后端推送刷新命令，输入区重新拉取配置，让渠道/模型下拉框立即同步（无需重启扩展）。
   unsubscribeConfigChanged = onExtensionCommand('channels.configChanged', () => {
-    loadConfigs()
+    // 当前消息的所有订阅者先完成失效处理，再发起共享刷新，避免旧回调作废刚开始的新请求。
+    void Promise.resolve().then(() => loadConfigs(true))
   })
 
   loadConfigs()
@@ -728,6 +722,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  inputAreaUnmounted = true
   configLoadGeneration++
   promptModesLoadGeneration++
   if (unsubscribeAddContext) unsubscribeAddContext()
@@ -735,8 +730,8 @@ onBeforeUnmount(() => {
 })
 
 watch(() => chatStore.configId, () => {
-  if (chatStore.configId && !configs.value.some(c => c.id === chatStore.configId)) {
-    loadConfigs()
+  if (!isLoadingConfigs.value && chatStore.configId && !configs.value.some(c => c.id === chatStore.configId)) {
+    loadConfigs(true)
   }
 })
 
