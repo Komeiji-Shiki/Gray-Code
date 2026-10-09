@@ -20,6 +20,7 @@ import { ensureParentDir, isProgressModePathAllowedWithMultiRoot, normalizeProgr
 import { withProgressWriteLock } from './progressWriteLock';
 import { projectProgressToolResultData } from './resultProjection';
 import type { ProgressArtifactRef, ProgressPhase, ProgressRiskItem, ProgressStatus, ProgressTodoItem } from './schema';
+import { PROGRESS_TOOL_PROPERTIES } from './toolSchema';
 
 export interface CreateProgressArgs {
   path?: string;
@@ -59,45 +60,7 @@ export function createCreateProgressToolDeclaration(): ToolDeclaration {
         },
         projectName: { type: 'string', description: 'Optional readable project name. Defaults to the name of the first workspace folder.' },
         projectId: { type: 'string', description: 'Optional stable project ID. Defaults to a slug of the project name.' },
-        status: { type: 'string', enum: ['active', 'blocked', 'completed', 'archived'] },
-        phase: { type: 'string', enum: ['design', 'plan', 'implementation', 'review', 'maintenance'] },
-        currentFocus: { type: 'string' },
-        latestConclusion: { type: 'string' },
-        currentBlocker: { type: 'string' },
-        nextAction: { type: 'string' },
-        activeArtifacts: {
-          type: 'object',
-          properties: {
-            design: { type: 'string' },
-            plan: { type: 'string' },
-            review: { type: 'string' }
-          }
-        },
-        todos: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              content: { type: 'string' },
-              status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }
-            },
-            required: ['id', 'content', 'status']
-          }
-        },
-        risks: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              title: { type: 'string' },
-              status: { type: 'string', enum: ['active', 'resolved', 'accepted'] },
-              description: { type: 'string' }
-            },
-            required: ['id', 'title', 'status', 'description']
-          }
-        }
+        ...PROGRESS_TOOL_PROPERTIES,
       }
     }
   };

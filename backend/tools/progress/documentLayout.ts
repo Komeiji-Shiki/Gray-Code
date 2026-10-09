@@ -8,6 +8,11 @@ import { normalizeSingleLineText } from '../shared/textUtils';
 import { findDuplicateIds, isTodoStatus, validateTodos } from '../shared/todoValidation';
 import {
   MAX_PROGRESS_LOG_ENTRIES,
+  PROGRESS_LOG_TYPES,
+  PROGRESS_MILESTONE_STATUSES,
+  PROGRESS_PHASES,
+  PROGRESS_RISK_STATUSES,
+  PROGRESS_STATUSES,
   PROGRESS_ARTIFACTS_END,
   PROGRESS_ARTIFACTS_SECTION_TITLE,
   PROGRESS_ARTIFACTS_START,
@@ -71,15 +76,11 @@ function buildInlinePreview(value: string | null | undefined, maxChars = 180): s
 }
 
 export function isProgressStatus(value: unknown): value is ProgressStatus {
-  return value === 'active' || value === 'blocked' || value === 'completed' || value === 'archived';
+  return PROGRESS_STATUSES.some(status => status === value);
 }
 
 export function isProgressPhase(value: unknown): value is ProgressPhase {
-  return value === 'design' ||
-    value === 'plan' ||
-    value === 'implementation' ||
-    value === 'review' ||
-    value === 'maintenance';
+  return PROGRESS_PHASES.some(phase => phase === value);
 }
 
 export function isProgressTodoStatus(value: unknown): value is ProgressTodoStatus {
@@ -87,19 +88,15 @@ export function isProgressTodoStatus(value: unknown): value is ProgressTodoStatu
 }
 
 export function isProgressMilestoneStatus(value: unknown): value is ProgressMilestoneStatus {
-  return value === 'in_progress' || value === 'completed';
+  return PROGRESS_MILESTONE_STATUSES.some(status => status === value);
 }
 
 export function isProgressRiskStatus(value: unknown): value is ProgressRiskStatus {
-  return value === 'active' || value === 'resolved' || value === 'accepted';
+  return PROGRESS_RISK_STATUSES.some(status => status === value);
 }
 
 export function isProgressLogType(value: unknown): value is ProgressLogType {
-  return value === 'created' ||
-    value === 'updated' ||
-    value === 'milestone_recorded' ||
-    value === 'artifact_changed' ||
-    value === 'risk_changed';
+  return PROGRESS_LOG_TYPES.some(type => type === value);
 }
 
 export function normalizeOptionalProgressText(value: unknown): string | null {

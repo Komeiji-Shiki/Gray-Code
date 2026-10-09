@@ -206,6 +206,9 @@ export const toolMeta: Record<string, ToolMeta> = {
     descriptionDynamic: true,
     parameters: {
       "images": {"type":"array","items":{"type":"object"}},
+      "prompt": {"type":"string"},
+      "reference_images": {"type":"array","items":{"type":"string"}},
+      "output_path": {"type":"string"},
     },
     parametersDynamic: true,
     source: "backend/tools/media/generate_imageRuntime.ts",
@@ -224,7 +227,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     parameters: {
       "paths": {"type":"array","items":{"type":"string"},"required":true},
       "maxDepth": {"type":"integer","default":1},
-      "kinds": {"type":"array","items":{"type":"string"}},
+      "kinds": {"type":"array","items":{"type":"string","enum":["file","module","namespace","package","class","method","property","field","constructor","enum","interface","function","variable","constant","string","number","boolean","array","object","key","null","enum_member","struct","event","operator","type_parameter","unknown"]}},
     },
     parametersDynamic: true,
     source: "backend/tools/lsp/declarations.ts",
@@ -344,13 +347,12 @@ export const toolMeta: Record<string, ToolMeta> = {
   'office_edit': {
     descriptionDynamic: true,
     parameters: {
-      "path": {"type":"string","description":"Office 文件路径，后缀为 .docx、.xlsx 或 .pptx。"},
-      "expectedHash": {"type":"string"},
+      "path": {"type":"string","description":"Office 文件路径，后缀为 .docx、.xlsx 或 .pptx。","required":true},
+      "expectedHash": {"type":"string","required":true},
       "paragraphs": {"type":"array","items":{"type":"object"}},
       "appendParagraphs": {"type":"array","items":{"type":"string"}},
       "cells": {"type":"array","items":{"type":"object"}},
     },
-    parametersDynamic: true,
     source: "backend/tools/office/declarations.ts",
   },
   'office_read': {

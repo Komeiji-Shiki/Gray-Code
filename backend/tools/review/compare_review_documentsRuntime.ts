@@ -218,6 +218,7 @@ function compareReviewSnapshots(
 export function createCompareReviewDocumentsToolDeclaration(): ToolDeclaration {
   return {
     name: 'compare_review_documents',
+    readOnly: true,
     description:
       'Compare two review documents under .graycode/review/**.md without modifying them. The result lists findings that were added, removed or carried over, changes in tracking status, and differences in summary statistics.',
     category: 'review',

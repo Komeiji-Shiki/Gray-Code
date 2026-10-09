@@ -11,15 +11,15 @@
  *   - 前端镜像文件的 descriptionFormatter 从生成物取描述（toolMetaLookup.ts），
  *     label/icon 等前端特有展示元数据仍保留手写
  *
- * 提取策略（宁缺毋滥）：
+ * 提取策略：
  *   - description：仅当能静态求值为稳定字符串时提取；运行时动态构造
- *     （函数调用、导入常量插值、getter、三元等）一律标记 descriptionDynamic 并省略。
+ *     （函数调用、getter、三元等）标记 descriptionDynamic 并省略。
  *   - parameters：提取每个顶层参数的字面量 type/description/enum/default/required；
  *     动态字段省略该字段并置 parametersDynamic。
- *   - 支持的字面量子集：字符串（含转义）、模板字符串（仅可解析的 ${标识符} 插值）、
- *     数字、布尔、null、数组（含 [...模块级常量] 展开）、对象（含简写属性）、
- *     '+' 字符串拼接、以及上述引用的 const/let 初值常量（含 'NAME += 字面量' 追加链、
- *     函数参数默认值）。
+ *   - TypeScript AST 解析字符串、模板、数字、布尔、null、数组、对象及展开、
+ *     属性访问和 '+' 拼接；按词法作用域解析 const/let 初值、无条件 '+=' 与函数参数默认值。
+ *   - 相对 TS 模块的导入常量和共享 schema 经 AST 静态求值，支持 as const/satisfies；
+ *     不加载执行模块，不调用工具工厂和宿主能力。
  *   - 多根工作区等环境相关分支（if/三元）不解析，取单根默认值（环境无关、幂等）。
  *
  * 用法：
@@ -32,6 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ToolDeclarationReader, findDeclarationCandidates } from './lib/tool-meta-ast.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BACKEND_TOOLS_DIR = path.join(ROOT, 'backend', 'tools');
@@ -47,503 +48,6 @@ const GENERATED_HEADER = `/**
  * 重新生成：node scripts/generate-tool-meta.mjs
  */
 `;
-
-/* ------------------------------------------------------------------ */
-/* 小型 TS 字面量求值器（只支持确定性字面量子集，其余视为 dynamic）    */
-/* ------------------------------------------------------------------ */
-
-/**
- * 从 source 中收集可静态求值的常量表（模块级 + 函数体第一层），供标识符解析：
- * - const NAME = <literal> / let NAME = <literal>（取初值）
- * - NAME += <literal>（无条件追加链，字符串拼接 / 数值相加）
- * - 函数参数默认值：function f(param: Type = <literal>)
- * 条件分支内的赋值（if/三元）不收集——环境相关，宁缺毋滥。
- */
-function collectConsts(source) {
-    const consts = new Map();
-    const depthMap = new Map(); // name -> 声明时深度（用于 += 链匹配）
-    let depth = 0;
-
-    for (let i = 0; i < source.length; i++) {
-        const c = source[i];
-        if (c === '/' && source[i + 1] === '/') { while (i < source.length && source[i] !== '\n') i++; continue; }
-        if (c === '/' && source[i + 1] === '*') { const end = source.indexOf('*/', i + 2); i = end === -1 ? source.length : end + 1; continue; }
-        if (c === "'" || c === '"') { i = skipString(source, i, c); continue; }
-        if (c === '`') { i = skipTemplate(source, i); continue; }
-        if (c === '{') { depth++; continue; }
-        if (c === '}') { depth--; continue; }
-        if (depth > 2) continue; // 只收集模块级（0）、工厂函数体第一层（1）与箭头声明体（2）
-
-        if (c === 'f' && source.startsWith('function', i)) {
-            // 函数签名里的参数默认值：function name(a: T = 1, b = 'x')
-            const sigEnd = source.indexOf(')', i);
-            const sig = source.slice(i, sigEnd);
-            const paramRe = /([A-Za-z_$][\w$]*)\s*(?::[^=,)]+)?\s*=\s*/g;
-            let m;
-            while ((m = paramRe.exec(sig)) !== null) {
-                const sub = new ValueParser(sig, consts, m.index + m[0].indexOf('=') + 1);
-                const val = sub.parseValue();
-                if (val.ok && isPlainLiteral(val.value)) {
-                    consts.set(m[1], val.value);
-                    depthMap.set(m[1], depth);
-                }
-            }
-            i = sigEnd;
-            continue;
-        }
-
-        const isConst = source.startsWith('const ', i) || source.startsWith('let ', i);
-        if (isConst) {
-            const m = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*/.exec(source.slice(i));
-            if (m) {
-                const vp = new ValueParser(source, consts, i + m[0].length);
-                const val = vp.parseValue();
-                if (val.ok && isPlainLiteral(val.value)) {
-                    consts.set(m[1], val.value);
-                    depthMap.set(m[1], depth);
-                }
-                i = vp.i;
-                continue;
-            }
-        }
-
-        const plusAssign = /^([A-Za-z_$][\w$]*)\s*\+=\s*/.exec(source.slice(i));
-        if (plusAssign && depthMap.get(plusAssign[1]) === depth && consts.has(plusAssign[1])) {
-            const vp = new ValueParser(source, consts, i + plusAssign[0].length);
-            const val = vp.parseValue();
-            if (val.ok) {
-                const cur = consts.get(plusAssign[1]);
-                if (typeof cur === 'string' && typeof val.value === 'string') {
-                    consts.set(plusAssign[1], cur + val.value);
-                } else if (typeof cur === 'number' && typeof val.value === 'number') {
-                    consts.set(plusAssign[1], cur + val.value);
-                }
-            }
-            i = vp.i;
-            continue;
-        }
-    }
-    return consts;
-}
-
-/** 跳过普通字符串，返回结束引号的位置 */
-function skipString(source, start, quote) {
-    let i = start + 1;
-    while (i < source.length) {
-        if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === quote) return i;
-        i++;
-    }
-    return i;
-}
-
-/** 跳过模板字符串（含 ${...} 内部），返回结束反引号的位置 */
-function skipTemplate(source, start) {
-    let i = start + 1;
-    while (i < source.length) {
-        if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === '`') return i;
-        if (source[i] === '$' && source[i + 1] === '{') {
-            let d = 1;
-            i += 2;
-            while (i < source.length && d > 0) {
-                if (source[i] === "'" || source[i] === '"') { i = skipString(source, i, source[i]) + 1; continue; }
-                if (source[i] === '`') { i = skipTemplate(source, i) + 1; continue; }
-                if (source[i] === '{') d++;
-                else if (source[i] === '}') d--;
-                i++;
-            }
-            continue;
-        }
-        i++;
-    }
-    return i;
-}
-
-function isPlainLiteral(v) {
-    return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
-        || v === null
-        || (Array.isArray(v) && v.every(isPlainLiteral))
-        || (v !== null && typeof v === 'object' && Object.values(v).every(isPlainLiteral));
-}
-
-/**
- * 递归下降求值器：从 pos 开始求值一个值表达式。
- * 返回 { ok, value, dynamicKeys, spreadDynamic, i }：
- * - ok: 语法上是否是一个可识别的字面量/标识符/拼接表达式（即使含动态成分）
- * - value: 求值结果（动态成分不写入）
- * - dynamicKeys: 对象内无法求值的键名集合
- * - spreadDynamic: 对象/数组内出现无法求值的展开
- */
-class ValueParser {
-    constructor(source, consts, pos) {
-        this.src = source;
-        this.consts = consts;
-        this.i = pos;
-        this.dynKeysTotal = 0; // 全解析过程中动态键总数（含嵌套对象）
-        this.spreadDynamicTotal = 0; // 全解析过程中无法求值的展开总数（含嵌套）
-    }
-
-    skipWs() {
-        while (this.i < this.src.length) {
-            const c = this.src[this.i];
-            if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { this.i++; continue; }
-            if (c === '/' && this.src[this.i + 1] === '/') { while (this.i < this.src.length && this.src[this.i] !== '\n') this.i++; continue; }
-            if (c === '/' && this.src[this.i + 1] === '*') { const end = this.src.indexOf('*/', this.i + 2); this.i = end === -1 ? this.src.length : end + 2; continue; }
-            break;
-        }
-    }
-
-    parseValue() {
-        this.skipWs();
-        return this.parseAdditive();
-    }
-
-    parseAdditive() {
-        let left = this.parsePrimary();
-        if (!left.ok) return left;
-        this.skipWs();
-        while (this.src[this.i] === '+') {
-            this.i++;
-            const right = this.parsePrimary();
-            if (!right.ok) return { ok: false, i: this.i };
-            if (typeof left.value === 'string' || typeof right.value === 'string') {
-                left = { ok: true, value: String(left.value ?? '') + String(right.value ?? ''), i: right.i };
-            } else {
-                left = { ok: true, value: left.value + right.value, i: right.i };
-            }
-            this.skipWs();
-        }
-        // 三元表达式不是确定性字面量：即使条件可解析也不能取左值
-        if (this.src[this.i] === '?') return { ok: false, i: this.i, dynamic: true };
-        return left;
-    }
-
-    /** 跳过无法求值的动态值（函数调用/三元等），停在下一个顶层 ',' 或 stopChar */
-    skipDynamicValue(stopChar) {
-        let depth = 0;
-        while (this.i < this.src.length) {
-            const c = this.src[this.i];
-            if (c === "'" || c === '"') { this.i = skipString(this.src, this.i, c) + 1; continue; }
-            if (c === '`') { this.i = skipTemplate(this.src, this.i) + 1; continue; }
-            if (c === '/' && this.src[this.i + 1] === '/') { while (this.i < this.src.length && this.src[this.i] !== '\n') this.i++; continue; }
-            if (c === '/' && this.src[this.i + 1] === '*') { const end = this.src.indexOf('*/', this.i + 2); this.i = end === -1 ? this.src.length : end + 2; continue; }
-            if (c === '(' || c === '[' || c === '{') depth++;
-            else if (c === ',' && depth === 0) return;
-            else if (c === stopChar && depth === 0) return;
-            else if (c === ')' || c === ']' || c === '}') { if (depth > 0) depth--; }
-            this.i++;
-        }
-    }
-
-    parsePrimary() {
-        this.skipWs();
-        const c = this.src[this.i];
-        if (c === "'" || c === '"') return this.parseString();
-        if (c === '`') return this.parseTemplate();
-        if (c === '[') return this.parseArray();
-        if (c === '{') return this.parseObject();
-        if (c === '(') {
-            this.i++;
-            const v = this.parseValue();
-            this.skipWs();
-            if (this.src[this.i] === ')') this.i++;
-            return v;
-        }
-        if (/[0-9]/.test(c)) {
-            const m = /^[0-9]+(?:\.[0-9]+)?/.exec(this.src.slice(this.i));
-            if (m) { this.i += m[0].length; return { ok: true, value: Number(m[0]), i: this.i }; }
-            return { ok: false, i: this.i };
-        }
-        if (c === 't' && this.src.startsWith('true', this.i)) { this.i += 4; return { ok: true, value: true, i: this.i }; }
-        if (c === 'f' && this.src.startsWith('false', this.i)) { this.i += 5; return { ok: true, value: false, i: this.i }; }
-        if (c === 'n' && this.src.startsWith('null', this.i)) { this.i += 4; return { ok: true, value: null, i: this.i }; }
-        if (/[A-Za-z_$]/.test(c)) {
-            const m = /^[A-Za-z_$][\w$]*/.exec(this.src.slice(this.i));
-            const name = m[0];
-            this.i += name.length;
-            if (this.consts.has(name)) {
-                return { ok: true, value: this.consts.get(name), i: this.i };
-            }
-            return { ok: false, i: this.i, unresolvableIdent: name };
-        }
-        return { ok: false, i: this.i };
-    }
-
-    parseString() {
-        const strStart = this.i; // 入口位置（开引号处）——非法转义分支据此跳过整个字符串
-        const quote = this.src[this.i];
-        this.i++;
-        let out = '';
-        while (this.i < this.src.length) {
-            const c = this.src[this.i];
-            if (c === quote) { this.i++; return { ok: true, value: out, i: this.i }; }
-            if (c === '\\') {
-                const esc = this.src[this.i + 1];
-                if (esc === 'n') out += '\n';
-                else if (esc === 't') out += '\t';
-                else if (esc === 'r') out += '\r';
-                else if (esc === 'b') out += '\b';
-                else if (esc === 'f') out += '\f';
-                else if (esc === 'v') out += '\v';
-                else if (esc === 'u' && /^[0-9a-fA-F]{4}/.test(this.src.slice(this.i + 2, this.i + 6))) {
-                    out += String.fromCharCode(parseInt(this.src.slice(this.i + 2, this.i + 6), 16));
-                    this.i += 4;
-                } else if (esc === 'x' && /^[0-9a-fA-F]{2}/.test(this.src.slice(this.i + 2, this.i + 4))) {
-                    // \xNN 转义（\x00-\xFF），与 JS 字符串语义一致；共消费 4 字符（\ x N N）
-                    out += String.fromCharCode(parseInt(this.src.slice(this.i + 2, this.i + 4), 16));
-                    this.i += 2;
-                } else if (esc === 'x' || esc === 'u') {
-                    // 非法 \x/\u 转义（hex 位数不足，如 '\x4'、'\u123'；含不支持的 \u{...} 码点形式）：
-                    // JS 中属语法错误或本求值器不支持，无法静态求值——显式标记 dynamic（宁缺毋滥），
-                    // 不再落入下方字面 fallback 输出 'x4'/'u123' 之类错误文本。
-                    // 恢复点须位于整个字符串结尾之后（与模板分支 skipTemplate 语义对齐）：
-                    // 若停留在字符串中间，调用方 skipDynamicValue 会把串内字符当顶层结构扫描，
-                    // 可能越过本字符串结尾误跳下一个字符串字面量。
-                    this.i = Math.min(skipString(this.src, strStart, quote) + 1, this.src.length);
-                    return { ok: false, i: this.i, dynamic: true };
-                } else if (esc === '0' || (esc >= '1' && esc <= '7')) {
-                    // \0 与遗留八进制转义（\1-\7、\01、\012…）：JS 中 \0 后随非数字为 NUL、
-                    // 其余为遗留八进制（严格模式/ESM 属语法错误），求值器不静态解码——与 \x/\u
-                    // 一致显式标记 dynamic（选 dynamic 方案），不再落入字面 fallback 输出 '0'/'1'
-                    // 之类错误文本；同样跳过整个字符串，恢复点在串尾之后。
-                    // 边界说明：\8/\9 在严格模式（本文件为 .mjs/ESM）下同为语法错误，此处未单独列出——
-                    // 合法源码不可达，落入下方字面 fallback（out += esc）无实际影响。
-                    this.i = Math.min(skipString(this.src, strStart, quote) + 1, this.src.length);
-                    return { ok: false, i: this.i, dynamic: true };
-                } else if (esc !== undefined) out += esc;
-                this.i += 2;
-                continue;
-            }
-            out += c;
-            this.i++;
-        }
-        return { ok: false, i: this.i };
-    }
-
-    parseTemplate() {
-        const tplStart = this.i; // 开头的 `
-        this.i++;
-        let out = '';
-        while (this.i < this.src.length) {
-            const c = this.src[this.i];
-            if (c === '`') { this.i++; return { ok: true, value: out, i: this.i }; }
-            if (c === '\\') {
-                const esc = this.src[this.i + 1];
-                out += esc === 'n' ? '\n' : esc === 't' ? '\t' : esc === 'r' ? '\r' : esc;
-                this.i += 2;
-                continue;
-            }
-            if (c === '$' && this.src[this.i + 1] === '{') {
-                this.i += 2;
-                // 只支持 ${标识符} 的简单插值；其余视为 dynamic
-                const m = /^[A-Za-z_$][\w$]*\s*\}/.exec(this.src.slice(this.i));
-                if (m) {
-                    const name = m[0].replace(/\s*\}$/, '');
-                    if (this.consts.has(name)) {
-                        out += String(this.consts.get(name));
-                        this.i += m[0].length;
-                        continue;
-                    }
-                }
-                // 不可解析的插值：跳到整个模板结尾再标记 dynamic，避免调用方在模板中间误停
-                this.i = skipTemplate(this.src, tplStart) + 1;
-                return { ok: false, i: this.i, dynamic: true };
-            }
-            out += c;
-            this.i++;
-        }
-        return { ok: false, i: this.i };
-    }
-
-    parseArray() {
-        this.i++; // [
-        const items = [];
-        let spreadDynamic = false;
-        this.skipWs();
-        if (this.src[this.i] === ']') { this.i++; return { ok: true, value: items, i: this.i, spreadDynamic }; }
-        while (this.i < this.src.length) {
-            this.skipWs();
-            if (this.src[this.i] === ']') { this.i++; break; } // 尾随逗号
-            if (this.src.startsWith('...', this.i)) {
-                this.i += 3;
-                // 纯标识符展开（如 [...RANGES]）可内联；复合表达式一律跳过并标记 dynamic
-                const idMatch = /^([A-Za-z_$][\w$]*)(?=\s*[,}\]]|$)/.exec(this.src.slice(this.i));
-                let inlined = false;
-                if (idMatch && this.consts.has(idMatch[1])) {
-                    const val = this.consts.get(idMatch[1]);
-                    if (Array.isArray(val)) { items.push(...val); inlined = true; }
-                    // 对象不可迭代：JS 中 [...obj] 运行时抛 TypeError，无法静态内联 → 走下方 dynamic 分支
-                }
-                if (!inlined) {
-                    spreadDynamic = true; // 无法求值的展开：数组内容不确定
-                    this.spreadDynamicTotal++;
-                }
-                this.skipDynamicValue(']');
-                this.skipWs();
-                if (this.src[this.i] === ',') { this.i++; continue; }
-                if (this.src[this.i] === ']') { this.i++; break; }
-                return { ok: false, i: this.i };
-            }
-            const v = this.parseValue();
-            if (!v.ok) {
-                spreadDynamic = true; // 元素动态：数组不完整
-                this.spreadDynamicTotal++;
-                this.skipDynamicValue(']');
-                this.skipWs();
-                if (this.src[this.i] === ',') { this.i++; continue; }
-                if (this.src[this.i] === ']') { this.i++; break; }
-                return { ok: false, i: this.i };
-            }
-            items.push(v.value);
-            this.skipWs();
-            if (this.src[this.i] === ',') { this.i++; continue; }
-            if (this.src[this.i] === ']') { this.i++; break; }
-            return { ok: false, i: this.i };
-        }
-        return { ok: true, value: items, i: this.i, spreadDynamic };
-    }
-
-    parseObject() {
-        this.i++; // {
-        const out = {};
-        const dynamicKeys = new Set();
-        let spreadDynamic = false;
-        this.skipWs();
-        if (this.src[this.i] === '}') { this.i++; return { ok: true, value: out, i: this.i, dynamicKeys, spreadDynamic }; }
-        while (this.i < this.src.length) {
-            this.skipWs();
-            if (this.src[this.i] === '}') { this.i++; break; } // 尾随逗号
-            if (this.src.startsWith('...', this.i)) {
-                this.i += 3;
-                // 纯标识符展开（如 ...singleModeProperties）可内联；复合表达式一律跳过并标记 dynamic
-                const idMatch = /^([A-Za-z_$][\w$]*)(?=\s*[,}\]]|$)/.exec(this.src.slice(this.i));
-                let inlined = false;
-                if (idMatch && this.consts.has(idMatch[1])) {
-                    const val = this.consts.get(idMatch[1]);
-                    if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-                        Object.assign(out, val);
-                        inlined = true;
-                    }
-                }
-                if (!inlined) {
-                    spreadDynamic = true; // 无法求值的展开：对象内容不确定
-                    this.spreadDynamicTotal++;
-                }
-                this.skipDynamicValue('}');
-                this.skipWs();
-                if (this.src[this.i] === ',') { this.i++; continue; }
-                if (this.src[this.i] === '}') { this.i++; break; }
-                return { ok: false, i: this.i };
-            }
-            let key;
-            const c = this.src[this.i];
-            if (c === "'" || c === '"') {
-                const ks = this.parseString();
-                if (!ks.ok) return { ok: false, i: this.i };
-                key = ks.value;
-                this.skipWs();
-                if (this.src[this.i] !== ':') return { ok: false, i: this.i };
-                this.i++;
-            } else if (/[A-Za-z_$]/.test(c)) {
-                const m = /^[A-Za-z_$][\w$]*/.exec(this.src.slice(this.i));
-                key = m[0];
-                this.i += key.length;
-                this.skipWs();
-                if (this.src[this.i] !== ':') {
-                    // 简写属性：key 单独出现，值取常量表（取不到则 dynamic）
-                    if (this.consts.has(key)) {
-                        out[key] = this.consts.get(key);
-                    } else {
-                        dynamicKeys.add(key);
-                        this.dynKeysTotal++;
-                    }
-                    this.skipWs();
-                    if (this.src[this.i] === ',') { this.i++; continue; }
-                    if (this.src[this.i] === '}') { this.i++; break; }
-                    return { ok: false, i: this.i };
-                }
-                this.i++; // :
-            } else {
-                return { ok: false, i: this.i };
-            }
-            const v = this.parseValue();
-            // 动态数组展开的已知子集不是完整值；尤其不能把导入的枚举生成成 enum: []。
-            if (v.ok && !(Array.isArray(v.value) && v.spreadDynamic)) {
-                out[key] = v.value;
-            } else {
-                dynamicKeys.add(key);
-                this.dynKeysTotal++;
-                this.skipDynamicValue('}'); // 动态值：跳到下一个顶层 , 或 }
-            }
-            this.skipWs();
-            if (this.src[this.i] === ',') { this.i++; continue; }
-            if (this.src[this.i] === '}') { this.i++; break; }
-            return { ok: false, i: this.i };
-        }
-        return { ok: true, value: out, i: this.i, dynamicKeys, spreadDynamic };
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/* 声明发现：在 backend/tools 各工具文件中定位 ToolDeclaration 对象字面量 */
-/* ------------------------------------------------------------------ */
-
-/** 收集文件内容中所有不在字符串/注释/模板内的 '{' 位置 */
-function collectBracePositions(source) {
-    const positions = [];
-    for (let i = 0; i < source.length; i++) {
-        const c = source[i];
-        if (c === '/' && source[i + 1] === '/') { while (i < source.length && source[i] !== '\n') i++; continue; }
-        if (c === '/' && source[i + 1] === '*') { const end = source.indexOf('*/', i + 2); i = end === -1 ? source.length : end + 1; continue; }
-        if (c === "'" || c === '"') { i = skipString(source, i, c); continue; }
-        if (c === '`') { i = skipTemplate(source, i); continue; }
-        if (c === '{') positions.push(i);
-    }
-    return positions;
-}
-
-/**
- * 从单个 backend/tools 文件中提取工具声明候选。
- * 发现方式：找到所有 `name: '<tool>'` 字面量，向前扫描最近的、能解析为
- * 含 name + parameters 键的对象字面量（即 ToolDeclaration 形态）。
- */
-function findDeclarationCandidates(relPath, source) {
-    const consts = collectConsts(source);
-    const braces = collectBracePositions(source);
-    const candidates = [];
-    const nameRe = /\bname\s*:\s*'([a-z][a-z0-9_]*)'/g;
-    let m;
-    while ((m = nameRe.exec(source)) !== null) {
-        const toolName = m[1];
-        const namePos = m.index;
-        // 从最近到最远尝试所有 '{' 位置
-        for (let b = braces.length - 1; b >= 0; b--) {
-            if (braces[b] > namePos) continue;
-            const vp = new ValueParser(source, consts, braces[b]);
-            const obj = vp.parseObject();
-            if (!obj.ok) continue;
-            const value = obj.value;
-            if (typeof value.name === 'string' && value.name === toolName
-                && value.parameters && typeof value.parameters === 'object'
-                && !Array.isArray(value.parameters)) {
-                candidates.push({
-                    toolName,
-                    source: relPath,
-                    start: braces[b],
-                    end: obj.i,
-                    dynamicKeys: obj.dynamicKeys,
-                    spreadDynamic: obj.spreadDynamic,
-                    dynKeysTotal: vp.dynKeysTotal,
-                    spreadDynamicTotal: vp.spreadDynamicTotal,
-                    raw: value,
-                });
-                break; // 找到最近的外层声明即止
-            }
-        }
-    }
-    return candidates;
-}
 
 /* ------------------------------------------------------------------ */
 /* 声明 → 生成物条目                                                   */
@@ -584,11 +88,12 @@ function buildToolEntry(candidate) {
         entry.descriptionDynamic = true;
     }
 
-    const requiredSet = Array.isArray(raw.parameters.required)
-        ? new Set(raw.parameters.required.filter(r => typeof r === 'string'))
+    const parameters = raw.parameters ?? {};
+    const requiredSet = Array.isArray(parameters.required)
+        ? new Set(parameters.required.filter(r => typeof r === 'string'))
         : new Set();
 
-    const properties = raw.parameters.properties;
+    const properties = parameters.properties;
     // 顶层动态键中属于 parameters 部分之外的数量（description/name/category 等不计入）
     const topDynKeysCount = dynamicKeys.size;
     // parameters 结构不完整的情形：parameters 键本身动态、任何嵌套动态键/展开、
@@ -632,6 +137,7 @@ function candidateScore(entry) {
 
 function extractAllTools() {
     const byName = new Map();
+    const reader = new ToolDeclarationReader(ROOT);
     const files = walkTsFiles(BACKEND_TOOLS_DIR);
     for (const file of files) {
         const rel = path.relative(ROOT, file).replace(/\\/g, '/');
@@ -640,10 +146,16 @@ function extractAllTools() {
         // 生成的 toolMeta.ts 与 CI（LF 源）不一致，导致 toolMetaParity 测试漂移失败。
         // 源码中显式的 \r\n 转义序列是反斜杠字符，不在此替换范围，语义保持不变。
         const source = fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
-        const candidates = findDeclarationCandidates(rel, source);
+        const candidates = reader.findCandidates(rel, source);
         for (const candidate of candidates) {
             const entry = buildToolEntry(candidate);
             const prev = byName.get(candidate.toolName);
+            // 同一工具目录内的环境分支与工厂副本按原覆盖率选取；不同目录同分定义需要明确归属。
+            if (prev && candidateScore(entry) === candidateScore(prev.entry)
+                && toolFamily(candidate.source) !== toolFamily(prev.candidate.source)
+                && JSON.stringify({ ...entry, source: undefined }) !== JSON.stringify({ ...prev.entry, source: undefined })) {
+                throw new Error(`工具 ${candidate.toolName} 存在冲突声明：${prev.candidate.source} 与 ${candidate.source}`);
+            }
             if (!prev || candidateScore(entry) > candidateScore(prev.entry)) {
                 byName.set(candidate.toolName, { entry, candidate });
             }
@@ -653,9 +165,13 @@ function extractAllTools() {
     return [...byName.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
 }
 
+function toolFamily(source) {
+    return source.split('/')[2];
+}
+
 function walkTsFiles(dir) {
     const out = [];
-    for (const name of fs.readdirSync(dir)) {
+    for (const name of fs.readdirSync(dir).sort()) {
         const full = path.join(dir, name);
         const stat = fs.statSync(full);
         if (stat.isDirectory()) {
@@ -825,8 +341,6 @@ if (isDirectRun) {
 
 // 导出供调试/测试复用
 export {
-    collectConsts,
-    ValueParser,
     findDeclarationCandidates,
     buildToolEntry,
     extractAllTools,

@@ -23,6 +23,7 @@ export interface ValidateReviewDocumentArgs {
 export function createValidateReviewDocumentToolDeclaration(): ToolDeclaration {
   return {
     name: 'validate_review_document',
+    readOnly: true,
     description:
       'Check an existing review document under .graycode/review/**.md without modifying it. The result reports problems with its format, metadata and consistency rules.',
     category: 'review',

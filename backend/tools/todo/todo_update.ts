@@ -13,6 +13,7 @@
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { isTodoStatus } from '../shared/todoValidation';
+import { TODO_STATUS_SCHEMA } from '../shared/todoSchema';
 import type { TodoItem, TodoStatus } from '../shared/todoValidation';
 
 // 与 todo_write 一致：TodoStatus/TodoItem 已收敛到 shared/todoValidation（发现 12），
@@ -271,9 +272,9 @@ export function createTodoUpdateToolDeclaration(): ToolDeclaration {
                             id: { type: 'string', description: 'ID of the target item.' },
                             content: { type: 'string', description: 'Item content, used by add and set_content.' },
                             status: {
-                                type: 'string',
+                                type: TODO_STATUS_SCHEMA.type,
                                 description: 'Item status, used by add and set_status.',
-                                enum: ['pending', 'in_progress', 'completed', 'cancelled']
+                                enum: [...TODO_STATUS_SCHEMA.enum]
                             }
                         },
                         required: ['op']

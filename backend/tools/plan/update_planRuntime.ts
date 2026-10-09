@@ -19,13 +19,15 @@ import {
 } from './sourceArtifactSectionRuntime';
 import { syncProgressFromPlanArtifact } from '../progress/autoSyncRuntime';
 import { withProgressWriteLock } from '../progress/progressWriteLock';
+import { TODO_ITEM_SCHEMA } from '../shared/todoSchema';
+import type { PlanTodoItem } from './todoListSection';
 
 export type PlanUpdateMode = 'revision' | 'progress_sync';
 
 export interface UpdatePlanArgs {
   path: string;
   plan?: string;
-  todos?: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }>;
+  todos?: PlanTodoItem[];
   title?: string;
   overview?: string;
   changeSummary?: string;
@@ -59,15 +61,7 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
         todos: {
           type: 'array',
           description: 'The complete TODO checklist; it replaces the previous one.',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              content: { type: 'string' },
-              status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }
-            },
-            required: ['id', 'content', 'status']
-          }
+          items: TODO_ITEM_SCHEMA
         },
         updateMode: {
           type: 'string',

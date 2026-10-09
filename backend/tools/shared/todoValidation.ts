@@ -8,8 +8,9 @@
  */
 
 import { normalizeSingleLineText } from './textUtils';
+import { TODO_STATUSES } from './todoSchema';
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+export type TodoStatus = typeof TODO_STATUSES[number];
 
 export interface TodoItem {
   id: string;
@@ -18,10 +19,7 @@ export interface TodoItem {
 }
 
 export function isTodoStatus(value: unknown): value is TodoStatus {
-  return value === 'pending' ||
-    value === 'in_progress' ||
-    value === 'completed' ||
-    value === 'cancelled';
+  return TODO_STATUSES.some(status => status === value);
 }
 
 export interface ValidateTodosOptions {

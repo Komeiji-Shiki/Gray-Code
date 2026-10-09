@@ -2,12 +2,21 @@
  * Progress 文档与工具共享 schema
  */
 
-export type ProgressStatus = 'active' | 'blocked' | 'completed' | 'archived';
-export type ProgressPhase = 'design' | 'plan' | 'implementation' | 'review' | 'maintenance';
-export type ProgressTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-export type ProgressMilestoneStatus = 'in_progress' | 'completed';
-export type ProgressRiskStatus = 'active' | 'resolved' | 'accepted';
-export type ProgressLogType = 'created' | 'updated' | 'milestone_recorded' | 'artifact_changed' | 'risk_changed';
+import type { TodoItem, TodoStatus } from '../shared/todoValidation';
+
+// 类型、模型参数和文档校验共用枚举值，避免新增状态时只改到其中一条路径。
+export const PROGRESS_STATUSES = ['active', 'blocked', 'completed', 'archived'] as const;
+export const PROGRESS_PHASES = ['design', 'plan', 'implementation', 'review', 'maintenance'] as const;
+export const PROGRESS_MILESTONE_STATUSES = ['in_progress', 'completed'] as const;
+export const PROGRESS_RISK_STATUSES = ['active', 'resolved', 'accepted'] as const;
+export const PROGRESS_LOG_TYPES = ['created', 'updated', 'milestone_recorded', 'artifact_changed', 'risk_changed'] as const;
+
+export type ProgressStatus = typeof PROGRESS_STATUSES[number];
+export type ProgressPhase = typeof PROGRESS_PHASES[number];
+export type ProgressTodoStatus = TodoStatus;
+export type ProgressMilestoneStatus = typeof PROGRESS_MILESTONE_STATUSES[number];
+export type ProgressRiskStatus = typeof PROGRESS_RISK_STATUSES[number];
+export type ProgressLogType = typeof PROGRESS_LOG_TYPES[number];
 
 export interface ProgressArtifactRef {
   design?: string;
@@ -15,11 +24,7 @@ export interface ProgressArtifactRef {
   review?: string;
 }
 
-export interface ProgressTodoItem {
-  id: string;
-  content: string;
-  status: ProgressTodoStatus;
-}
+export type ProgressTodoItem = TodoItem;
 
 export interface ProgressMilestoneRecord {
   id: string;

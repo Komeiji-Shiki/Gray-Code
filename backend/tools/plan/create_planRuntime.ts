@@ -16,12 +16,14 @@ import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils
 import { buildTrackedPlanSourceArtifact, renderPlanSourceArtifactSection, type PlanSourceArtifactInput } from './sourceArtifactSectionRuntime';
 import { syncProgressFromPlanArtifact } from '../progress/autoSyncRuntime';
 import { withProgressWriteLock } from '../progress/progressWriteLock';
+import { TODO_ITEM_SCHEMA } from '../shared/todoSchema';
+import type { PlanTodoItem } from './todoListSection';
 
 export interface CreatePlanArgs {
   title?: string;
   overview?: string;
   plan: string;
-  todos?: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }>;
+  todos?: PlanTodoItem[];
   path?: string;
   sourceArtifact?: PlanSourceArtifactInput;
 }
@@ -41,15 +43,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
         todos: {
           type: 'array',
           description: 'TODO checklist for the plan. Required; each item has id, content and status.',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              content: { type: 'string' },
-              status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }
-            },
-            required: ['id', 'content', 'status']
-          }
+          items: TODO_ITEM_SCHEMA
         },
         sourceArtifact: {
           type: 'object',

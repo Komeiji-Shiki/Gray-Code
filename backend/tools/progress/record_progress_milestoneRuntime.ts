@@ -21,6 +21,7 @@ import {
 } from './pathUtilsRuntime';
 import { withProgressWriteLock } from './progressWriteLock';
 import { projectProgressToolResultData } from './resultProjection';
+import { PROGRESS_MILESTONE_STATUSES } from './schema';
 import type {
   ProgressArtifactRef,
   ProgressMilestoneRecord,
@@ -98,7 +99,7 @@ export function createRecordProgressMilestoneToolDeclaration(): ToolDeclaration 
         },
         milestoneId: { type: 'string' },
         title: { type: 'string' },
-        status: { type: 'string', enum: ['in_progress', 'completed'] },
+        status: { type: 'string', enum: [...PROGRESS_MILESTONE_STATUSES] },
         summary: { type: 'string' },
         relatedTodoIds: { type: 'array', items: { type: 'string' } },
         relatedReviewMilestoneIds: { type: 'array', items: { type: 'string' } },

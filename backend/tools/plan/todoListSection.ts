@@ -4,14 +4,10 @@
 
 import { escapeRegExp, normalizeSingleLineText } from '../shared/textUtils';
 import { isTodoStatus } from '../shared/todoValidation';
+import type { TodoItem, TodoStatus } from '../shared/todoValidation';
 
-export type PlanTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-
-export interface PlanTodoItem {
-  id: string;
-  content: string;
-  status: PlanTodoStatus;
-}
+export type PlanTodoStatus = TodoStatus;
+export type PlanTodoItem = TodoItem;
 
 const TODO_SECTION_TITLE = '## TODO LIST';
 const TODO_SECTION_START = '<!-- GRAYCODE_TODO_LIST_START -->';

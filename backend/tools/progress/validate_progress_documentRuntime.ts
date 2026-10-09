@@ -20,6 +20,7 @@ export interface ValidateProgressDocumentArgs {
 export function createValidateProgressDocumentToolDeclaration(): ToolDeclaration {
   return {
     name: 'validate_progress_document',
+    readOnly: true,
     strict: true,
     description:
       'Check the progress document at .graycode/progress.md without modifying it. The result reports problems with its metadata, section order and basic consistency rules.',

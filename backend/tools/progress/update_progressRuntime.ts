@@ -34,6 +34,7 @@ import type {
   ProgressStatus,
   ProgressTodoItem,
 } from './schema';
+import { PROGRESS_LOG_APPEND_SCHEMA, PROGRESS_TOOL_PROPERTIES } from './toolSchema';
 
 export interface UpdateProgressArgs {
   path?: string;
@@ -76,57 +77,8 @@ export function createUpdateProgressToolDeclaration(): ToolDeclaration {
           type: 'string',
           description: 'Optional target path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
         },
-        status: { type: 'string', enum: ['active', 'blocked', 'completed', 'archived'] },
-        phase: { type: 'string', enum: ['design', 'plan', 'implementation', 'review', 'maintenance'] },
-        currentFocus: { type: 'string' },
-        latestConclusion: { type: 'string' },
-        currentBlocker: { type: 'string' },
-        nextAction: { type: 'string' },
-        activeArtifacts: {
-          type: 'object',
-          properties: {
-            design: { type: 'string' },
-            plan: { type: 'string' },
-            review: { type: 'string' }
-          }
-        },
-        todos: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              content: { type: 'string' },
-              status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }
-            },
-            required: ['id', 'content', 'status']
-          }
-        },
-        risks: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              title: { type: 'string' },
-              status: { type: 'string', enum: ['active', 'resolved', 'accepted'] },
-              description: { type: 'string' }
-            },
-            required: ['id', 'title', 'status', 'description']
-          }
-        },
-        appendLog: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              type: { type: 'string', enum: ['created', 'updated', 'milestone_recorded', 'artifact_changed', 'risk_changed'] },
-              refId: { type: 'string' },
-              message: { type: 'string' }
-            },
-            required: ['type', 'message']
-          }
-        }
+        ...PROGRESS_TOOL_PROPERTIES,
+        appendLog: PROGRESS_LOG_APPEND_SCHEMA,
       }
     }
   };

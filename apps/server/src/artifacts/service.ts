@@ -28,7 +28,7 @@ export class PlatformArtifacts {
     const factories = [createCreateDesignTool, createUpdateDesignTool, createCreatePlanTool, createUpdatePlanTool, createCompareReviewDocumentsTool, createCreateReviewTool, createFinalizeReviewTool, createRecordReviewMilestoneTool, createReopenReviewTool, createValidateReviewDocumentTool, createCreateProgressTool, createRecordProgressMilestoneTool, createUpdateProgressTool, createValidateProgressDocumentTool];
     return factories.map(factory => {
       const tool = factory();
-      const readOnly = ['validate_review_document', 'compare_review_documents', 'validate_progress_document'].includes(tool.declaration.name);
+      const readOnly = tool.declaration.readOnly === true;
       return { declaration: { name: tool.declaration.name, description: tool.declaration.description, parameters: tool.declaration.parameters },
         effects: () => readOnly ? ['workspace_read'] : ['workspace_read', 'workspace_write'],
         execute: (args, context) => this.execute(tool, args, context, readOnly) } as RuntimeTool;

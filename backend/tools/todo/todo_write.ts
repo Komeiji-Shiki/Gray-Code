@@ -9,6 +9,7 @@
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { validateTodos } from '../shared/todoValidation';
 import type { TodoItem, TodoStatus } from '../shared/todoValidation';
+import { TODO_ITEM_SCHEMA, TODO_STATUS_SCHEMA } from '../shared/todoSchema';
 
 // 保持对外类型导出（todo/index.ts 通过 export * 转发）
 export type { TodoItem, TodoStatus } from '../shared/todoValidation';
@@ -50,17 +51,17 @@ export function createTodoWriteToolDeclaration(): ToolDeclaration {
                     type: 'array',
                     description: 'The complete list of TODO items.',
                     items: {
-                        type: 'object',
+                        type: TODO_ITEM_SCHEMA.type,
                         properties: {
-                            id: { type: 'string', description: 'Unique ID of the item.' },
-                            content: { type: 'string', description: 'What the item is about.' },
+                            id: { ...TODO_ITEM_SCHEMA.properties.id, description: 'Unique ID of the item.' },
+                            content: { ...TODO_ITEM_SCHEMA.properties.content, description: 'What the item is about.' },
                             status: {
-                                type: 'string',
+                                type: TODO_STATUS_SCHEMA.type,
                                 description: 'Status of the item.',
-                                enum: ['pending', 'in_progress', 'completed', 'cancelled']
+                                enum: [...TODO_STATUS_SCHEMA.enum]
                             }
                         },
-                        required: ['id', 'content', 'status']
+                        required: [...TODO_ITEM_SCHEMA.required]
                     }
                 },
             },
