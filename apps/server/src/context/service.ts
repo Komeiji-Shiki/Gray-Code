@@ -24,6 +24,8 @@ import { branchMutation, groupMessages, readBranches } from '../conversations/br
 import { rebaseActivePathFromHistory } from '../../../../backend/modules/conversation/branch/BranchGraph';
 import { CONTEXT_NOTES_REMINDER, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { activeContextHistory, captureModelPrefix, conversationContextSettings, manualSummaryPrefix, notesWindowBoundary, summarizeFullContext } from './compaction';
+import { applyBotContextPrefixes, type CapturedBotEnvironment } from '../bots/prompt';
+import type { CharacterTurn } from '../characters/pipeline';
 
 interface TurnContextState { turnId: string; summaryAttempts: number; fallbackStart?: number; fallback?: boolean }
 interface SummaryResult { summaryContent: Content; insertIndex: number; removedCount: number }
@@ -55,6 +57,22 @@ export class PlatformContextService {
     state.history.revision = result.revision; state.history.total = result.total; state.metadataToken = result.metadataToken;
     frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear();
     this.app.productUi.conversations.clearMetadataCache();
+  }
+  /** 正式请求与预览共用处理顺序；预览沿用捕获的元数据，并把只读模式传给记忆和上下文准备。 */
+  async prepareModel(input: ModelRequestContext, preview = false) {
+    const view = await this.app.longMemoryPrompt.history.prepare(input.run.actorId, input.run.conversationId,
+      input.history.history.messages, preview ? input.history.metadata : undefined);
+    const memory = await this.app.longMemoryPrompt.capture({ ...input,
+      history: { ...input.history, history: { ...input.history.history, messages: view.messages } } }, preview);
+    const prepared = await this.prepare(input, preview, memory.text, view.filter);
+    prepared.messages = await this.app.characterPipeline.modelHistory(prepared.messages,
+      input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
+    prepared.messages = this.app.longMemoryPrompt.inject(view.filter(prepared.messages), memory, input.input,
+      view.filter(prepared.history.history.messages));
+    prepared.messages = applyBotContextPrefixes(prepared.messages,
+      (prepared.history.metadata.custom as { botEnvironment?: CapturedBotEnvironment } | undefined)?.botEnvironment,
+      input.input.taskContext?.actor);
+    return prepared;
   }
   async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
     const { run, input } = context;

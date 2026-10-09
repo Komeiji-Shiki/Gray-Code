@@ -2,7 +2,6 @@ import { workspaceFilePath } from './workspace/paths';
 import { prepareDeepSeekVisionHistory } from '../../../backend/modules/channel/deepseekVision';
 import { configuredAgent } from './settings/agent';
 import { actorForBotRun, resolveBotGuestActor } from './bots/permissions';
-import { applyBotContextPrefixes, type CapturedBotEnvironment } from './bots/prompt';
 import { resolveBotAgent } from './bots/profiles';
 import { canReadBotConversation } from './bots/channelAccess';
 import { PlatformLongMemory } from './memory/longTerm/service';
@@ -332,28 +331,8 @@ export class PlatformApplication {
       preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),
       currentAutomationId: () => this.automations.meter.currentId(),
       runInScope: (run, execute) => this.nodes.runInScope(run, () => this.automations.meter.run(run, execute)),
-      prepareModel: async input => {
-        const view=await this.longMemoryPrompt.history.prepare(input.run.actorId,input.run.conversationId,input.history.history.messages);
-        const memory=await this.longMemoryPrompt.capture({...input,history:{...input.history,history:{...input.history.history,messages:view.messages}}});
-        const prepared = await this.context.prepare(input,false,memory.text,view.filter);
-        prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
-        prepared.messages=this.longMemoryPrompt.inject(view.filter(prepared.messages),memory,input.input,view.filter(prepared.history.history.messages));
-        prepared.messages = applyBotContextPrefixes(prepared.messages,
-          (prepared.history.metadata.custom as { botEnvironment?: CapturedBotEnvironment } | undefined)?.botEnvironment,
-          input.input.taskContext?.actor);
-        return prepared;
-      },
-      previewModel: async input => {
-        const view=await this.longMemoryPrompt.history.prepare(input.run.actorId,input.run.conversationId,input.history.history.messages,input.history.metadata);
-        const memory=await this.longMemoryPrompt.capture({...input,history:{...input.history,history:{...input.history.history,messages:view.messages}}},true);
-        const prepared = await this.context.prepare(input, true,memory.text,view.filter);
-        prepared.messages = await this.characterPipeline.modelHistory(prepared.messages, input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
-        prepared.messages=this.longMemoryPrompt.inject(view.filter(prepared.messages),memory,input.input,view.filter(prepared.history.history.messages));
-        prepared.messages = applyBotContextPrefixes(prepared.messages,
-          (prepared.history.metadata.custom as { botEnvironment?: CapturedBotEnvironment } | undefined)?.botEnvironment,
-          input.input.taskContext?.actor);
-        return prepared;
-      },
+      prepareModel: input => this.context.prepareModel(input),
+      previewModel: input => this.context.prepareModel(input, true),
       transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),
       beforeRun: async (run, workspace, signal) => { await this.nodes.checkRun(run); await this.artifacts.beforeRun(run); await this.checkpointLifecycle.beforeRun(run, workspace, signal); },
       modelBoundary: async (run, workspace, signal, phase, iteration, message) => {
