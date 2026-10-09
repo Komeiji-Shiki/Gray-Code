@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectRuntimeDependencies } from './desktop-runtime-dependencies.mjs';
+import { collectRuntimeDependencies, DESKTOP_RUNTIME_ROOTS } from './desktop-runtime-dependencies.mjs';
 import { assertCleanDesktopPackage } from './desktop-profile-guard.mjs';
 import { verifySourcePackage } from './package-source.mjs';
 import { stageDistributionAssets, verifyDistributionAssets } from './distribution-assets.mjs';
@@ -35,12 +35,6 @@ if (process.platform === 'win32') {
   }
 }
 
-/**
- * 桌面运行时真正的生产依赖（main.cjs bundle 的 external + 其传递闭包）。
- * electron 由运行库自身提供，不进包。
- */
-const RUNTIME_ROOTS = ['sharp', 'jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server',
-  'pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server', '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server', 'docx', 'exceljs', 'pptxgenjs'];
 /** 工作区包只需 package.json（定位）+ dist（bundle 外部引用的编译产物）。 */
 const WORKSPACE_SLIM = new Set(['@graycode/core', '@graycode/contracts', '@graycode/desktop', '@graycode/server', '@graycode/client']);
 
@@ -102,7 +96,7 @@ const out = await packager({
     // 独立 DAP 发行包包含工作进程、启动注入脚本与许可证，必须作为整体复制。
     await fsp.cp(path.join(root, 'resources', 'debuggers'), `${buildPath}/resources/debuggers`, { recursive: true });
     // 3. 重建最小生产 node_modules（复制期已整体排除，见 ignore）。
-    const closure = collectRuntimeDependencies(root, RUNTIME_ROOTS);
+    const closure = collectRuntimeDependencies(root, DESKTOP_RUNTIME_ROOTS);
     let bytes = 0;
     for (const { name, dir, relative } of closure.values()) {
       const dest = path.join(buildPath, relative);

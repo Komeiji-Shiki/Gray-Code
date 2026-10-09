@@ -1,9 +1,10 @@
+import './build-platform.mjs';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { writeFileSync } from 'node:fs';
-import { buildComputerHost } from './build-computer-host.mjs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readDistributionInfo } from './distribution-info.mjs';
+import { DESKTOP_RUNTIME_EXTERNALS } from './desktop-runtime-dependencies.mjs';
 const require = createRequire(import.meta.url);
 const distribution = readDistributionInfo();
 const buildInfo = { ...distribution, buildTime: new Date().toISOString() };
@@ -12,7 +13,7 @@ for (const name of ['main', 'preload', 'desktopDialogPreload']) {
     bundle: true, platform: 'node', format: 'cjs', target: 'node24', sourcemap: true, metafile: true,
     define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo), __GRAYCODE_DISTRIBUTION__: JSON.stringify(distribution) },
     // 沙箱预加载不能 require 工作区包，纯契约代码必须随它一起打包。
-    external: name !== 'main' ? ['electron'] : ['sharp', 'jsonc-parser', 'electron', 'node-pty', 'better-sqlite3', 'discord.js', 'velopack', '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server', 'docx', 'exceljs', 'pptxgenjs'] });
+    external: name !== 'main' ? ['electron'] : ['electron', ...DESKTOP_RUNTIME_EXTERNALS] });
   if (name !== 'main') {
     const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports).filter(item => item.external && item.path !== 'electron');
     if (imports.length) throw new Error(`沙箱预加载包含无法加载的外部依赖：${imports.map(item => item.path).join(', ')}`);
@@ -26,5 +27,9 @@ await build({ entryPoints: ['apps/server/src/workspace/terminalHost.ts'], outfil
 if (!process.argv.includes('--package-only')) {
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'apps/desktop/tsconfig.json'], { stdio: 'inherit', windowsHide: true });
 }
-buildComputerHost('apps/desktop/dist/computer-host');
+// 平台前置构建已生成本轮原生宿主，桌面只复制同一产物，完整构建无需再次调用编译器。
+if (process.platform === 'win32') {
+  mkdirSync('apps/desktop/dist/computer-host', { recursive: true });
+  copyFileSync('apps/server/dist/computer-host/GrayCode.ComputerHost.exe', 'apps/desktop/dist/computer-host/GrayCode.ComputerHost.exe');
+}
 console.log('Desktop main process and isolated preload built.');

@@ -21,12 +21,18 @@ namespace GrayCode.ComputerHost {
       DesktopWindows.RequireInteractive();var window=observation.window;DesktopWindows.Verify(window,false);
       var handle=DesktopWindows.Parse(window.id);string notice=null;
       if(!DesktopWindows.Describe(handle,false).foreground) {
-        bool blank;var background=Background(handle,window,args,out blank);
-        if(background!=null&&!blank){DesktopWindows.Verify(window,false);return Finish(background,window,"print-window",null);}
-        var lease=Json.Text(args,"leaseId");
-        if(lease.Length==0||!control.Holds(lease,handle)) {
-          if(background!=null)return Finish(background,window,"print-window","后台截图只有单一颜色，窗口可能没有画出内容；取得该窗口的控制权后再观察，会自动切到前台截图。");
-          throw new ComputerException("FOCUS_REQUIRED","这个窗口不在前台，后台截图也没有成功；取得该窗口的控制权后再观察，会自动切到前台截图，也可以请用户切换到该窗口。");
+        Win32.Rect backgroundBounds;long backgroundAt;
+        using(var background=Background(handle,window,out backgroundBounds,out backgroundAt)) {
+          // 先决定是否采用后台画面；准备切前台时，空白图像无需缩放、编码和生成 base64。
+          if(background!=null&&!Uniform(background)) {
+            var encoded=Encode(background,backgroundBounds,args,backgroundAt);DesktopWindows.Verify(window,false);
+            return Finish(encoded,window,"print-window",null);
+          }
+          var lease=Json.Text(args,"leaseId");
+          if(lease.Length==0||!control.Holds(lease,handle)) {
+            if(background!=null)return Finish(Encode(background,backgroundBounds,args,backgroundAt),window,"print-window","后台截图只有单一颜色，窗口可能没有画出内容；取得该窗口的控制权后再观察，会自动切到前台截图。");
+            throw new ComputerException("FOCUS_REQUIRED","这个窗口不在前台，后台截图也没有成功；取得该窗口的控制权后再观察，会自动切到前台截图，也可以请用户切换到该窗口。");
+          }
         }
         if(!DesktopWindows.BringToFront(handle))throw new ComputerException("FOCUS_REJECTED","后台截图没有取得画面，系统也没有把焦点交给目标窗口，请由用户切换后重新观察。");
         Thread.Sleep(120);notice="后台截图没有取得画面，已把窗口切到前台后截图。";
@@ -39,20 +45,18 @@ namespace GrayCode.ComputerHost {
       result.windowId=window.id;result.monitorId=window.monitorId;result.dpi=window.dpi;result.method=method;result.notice=notice;return result;
     }
     // PW_RENDERFULLCONTENT 让 DirectX 和合成窗口也画出内容；结果按 DWM 可见边框裁掉阴影。
-    private static CaptureResult Background(IntPtr handle,WindowIdentity window,Dictionary<string,object> args,out bool blank) {
-      blank=true;var full=window.NativeBounds;var frame=window.FrameBounds;
+    private static Bitmap Background(IntPtr handle,WindowIdentity window,out Win32.Rect bounds,out long capturedAt) {
+      bounds=new Win32.Rect();capturedAt=0;var full=window.NativeBounds;var frame=window.FrameBounds;
       var width=full.Right-full.Left;var height=full.Bottom-full.Top;
       if(width<1||height<1||(long)width*height>64000000)return null;
       using(var original=new Bitmap(width,height,PixelFormat.Format32bppRgb)) {
         bool printed;
         using(var graphics=Graphics.FromImage(original)){var dc=graphics.GetHdc();try{printed=Win32.PrintWindow(handle,dc,2);}finally{graphics.ReleaseHdc(dc);}}
-        var capturedAt=Json.Now;if(!printed)return null;
+        capturedAt=Json.Now;if(!printed)return null;
         var crop=Rectangle.Intersect(new Rectangle(frame.Left-full.Left,frame.Top-full.Top,frame.Right-frame.Left,frame.Bottom-frame.Top),new Rectangle(0,0,width,height));
         if(crop.Width<1||crop.Height<1)crop=new Rectangle(0,0,width,height);
-        using(var cropped=original.Clone(crop,PixelFormat.Format32bppRgb)) {
-          blank=Uniform(cropped);
-          return Encode(cropped,new Win32.Rect {Left=full.Left+crop.Left,Top=full.Top+crop.Top,Right=full.Left+crop.Right,Bottom=full.Top+crop.Bottom},args,capturedAt);
-        }
+        bounds=new Win32.Rect {Left=full.Left+crop.Left,Top=full.Top+crop.Top,Right=full.Left+crop.Right,Bottom=full.Top+crop.Bottom};
+        return original.Clone(crop,PixelFormat.Format32bppRgb);
       }
     }
     private static bool Uniform(Bitmap image) {
@@ -104,7 +108,8 @@ namespace GrayCode.ComputerHost {
             ImageCodecInfo codec=null;foreach(var item in ImageCodecInfo.GetImageEncoders())if(item.MimeType=="image/jpeg"){codec=item;break;}
             using(var parameters=new EncoderParameters(1)){parameters.Param[0]=new EncoderParameter(Encoder.Quality,(long)Math.Max(50,Math.Min(95,Json.Number(args,"quality",85))));scaled.Save(stream,codec,parameters);}
           } else scaled.Save(stream,ImageFormat.Png);
-          return new CaptureResult {capturedAt=capturedAt,bounds=Json.Rect(bounds),width=imageWidth,height=imageHeight,mimeType=jpeg?"image/jpeg":"image/png",data=Convert.ToBase64String(stream.ToArray())};
+          // 直接使用编码流的有效区间，避免 ToArray 再复制一份整张图片。
+          return new CaptureResult {capturedAt=capturedAt,bounds=Json.Rect(bounds),width=imageWidth,height=imageHeight,mimeType=jpeg?"image/jpeg":"image/png",data=Convert.ToBase64String(stream.GetBuffer(),0,(int)stream.Length)};
         }
       }
     }

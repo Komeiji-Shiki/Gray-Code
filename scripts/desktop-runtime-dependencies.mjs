@@ -2,14 +2,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire, isBuiltin } from 'node:module';
 
+// 编译 external 与发布依赖从同一处组成；语言服务由独立进程启动，桌面专用模块另行追加。
+const SHARED_RUNTIME_PACKAGES = ['sharp', 'jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js',
+  '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server', 'docx', 'exceljs', 'pptxgenjs'];
+const LANGUAGE_SERVER_PACKAGES = ['pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server',
+  '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server'];
+export const PLATFORM_RUNTIME_EXTERNALS = [...SHARED_RUNTIME_PACKAGES, ...LANGUAGE_SERVER_PACKAGES];
+export const DESKTOP_RUNTIME_EXTERNALS = [...SHARED_RUNTIME_PACKAGES, 'velopack'];
+export const DESKTOP_RUNTIME_ROOTS = [...PLATFORM_RUNTIME_EXTERNALS, 'velopack'];
+
 /** 沿安装时的模块查找路径收集依赖，保留嵌套版本和工作区包的实际位置。 */
 export function collectRuntimeDependencies(root, names) {
   const modules = path.join(root, 'node_modules');
   const packages = new Map();
   const queue = names.map(name => ({ name, from: root }));
   const inside = (parent, child) => child === parent || child.startsWith(parent + path.sep);
-  while (queue.length) {
-    const { name, from, optional = false } = queue.shift();
+  for (let index = 0; index < queue.length; index++) {
+    const { name, from, optional = false } = queue[index];
     // 部分包把 https 等内置模块列为依赖；运行时由 Node 提供，不存在第三方查找路径。
     if (isBuiltin(name)) continue;
     const search = createRequire(path.join(from, 'package.json')).resolve.paths(name) ?? [];
@@ -23,8 +32,10 @@ export function collectRuntimeDependencies(root, names) {
     if (inside(modules, installed)) relative = path.relative(root, installed);
     else {
       // 工作区符号链接的本地依赖须映射到该包在发布目录中的位置。
-      const parent = [...packages.values()].filter(item => inside(item.dir, installed))
-        .sort((left, right) => right.dir.length - left.dir.length)[0];
+      let parent;
+      for (const item of packages.values()) {
+        if (inside(item.dir, installed) && (!parent || item.dir.length > parent.dir.length)) parent = item;
+      }
       if (!parent) throw new Error(`运行时依赖位于已收集包之外：${installed}`);
       relative = path.join(parent.relative, path.relative(parent.dir, installed));
     }
