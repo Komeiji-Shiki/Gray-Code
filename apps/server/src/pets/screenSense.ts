@@ -39,7 +39,7 @@ export class ScreenSenseService {
   private async validateChat(client: ClientSession, config: ScreenSenseConfiguration) {
     const conversation = await this.app.conversation(client.actorId, config.conversationId);
     if (conversation.actorId !== client.actorId || (conversation.custom as any)?.platformMode !== 'chat') throw new Error('请选择自己的普通对话。');
-    if (!this.app.settings.snapshot().settings.providers.some(provider => provider.id === config.providerId)) throw new Error('请选择可用渠道。');
+    if (!this.app.settings.find('providers', config.providerId)) throw new Error('请选择可用渠道。');
   }
   private async configure(client: ClientSession, input: ScreenSenseConfiguration, revision: number | null) {
     if (!input || !['manual', 'interval'].includes(input.trigger) || !['preview', 'automatic'].includes(input.delivery)) throw new Error('请选择触发方式和发送方式。');

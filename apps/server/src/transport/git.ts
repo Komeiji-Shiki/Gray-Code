@@ -17,7 +17,7 @@ export async function gitRequest(app: PlatformApplication, session: ClientSessio
     case 'git.worktree.create': result = await app.git.createWorktree(workspace, params.input, params.directory); break;
     case 'git.worktree.remove': {
       const directory = await app.files.resolveAbsolute(params.path);
-      const registered = app.settings.snapshot().settings.workspaces.find(item => workspaceRoots(item).some(root => inside(directory, root.directory)));
+      const registered = app.settings.read('workspaces').workspaces.find(item => workspaceRoots(item).some(root => inside(directory, root.directory)));
       if (registered) throw new Error(`工作树仍用作项目目录（${registered.name}），请先在工作区设置中移除该目录。`);
       result = await app.git.removeWorktree(workspace, directory, params.directory); break;
     }

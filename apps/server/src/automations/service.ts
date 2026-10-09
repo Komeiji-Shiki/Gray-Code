@@ -156,7 +156,7 @@ export class ApplicationAutomations {
   }
   async options(actorId: string, conversationId?: string): Promise<AutomationOptions> {
     this.app.requireOwner(actorId);
-    const settings = this.app.settings.snapshot().settings;
+    const settings = this.app.settings.read('providers', 'agents', 'workspaces', 'modeProfiles');
     const conversation = conversationId ? await this.app.conversation(actorId, conversationId) : undefined;
     const custom = conversation?.custom as { inputModelConfig?: { configId: string; modelId: string; reasoningEffort?: string }; promptModeConfig?: { modeId: string }; platformMode?: 'chat' | 'code' | 'character' } | undefined;
     const runtime = this.app.product.runtimeSettings();
@@ -183,7 +183,7 @@ export class ApplicationAutomations {
     if (!['goal', 'schedule', 'event'].includes(input.kind) || typeof input.objective !== 'string' || !input.objective.trim()) throw new Error('请填写需要执行的目标或任务。');
     const channel = await this.app.product.channel(input.providerId);
     if (!channel?.enabled) throw new Error('请选择已启用的模型渠道。');
-    const agent = this.app.settings.snapshot().settings.agents.find(agent => agent.id === input.agentId);
+    const agent = this.app.settings.find('agents', input.agentId);
     if (!agent) throw new Error('智能体不存在。');
     const schedule = input.kind === 'schedule' ? validateSchedule(input.schedule!) : undefined;
     if (schedule && !['skip', 'once'].includes(input.missedRunPolicy ?? '')) throw new Error('请选择错过触发时间后跳过还是补一次。');
@@ -197,7 +197,7 @@ export class ApplicationAutomations {
     if ([...this.records.values()].some(record => record.conversationId === conversation.id && record.status !== 'completed')) throw new Error('这个对话已有一个未完成的自动任务，请先完成或移除。');
     const workspace = conversation.workspaceId ? this.app.workspace(actorId, String(conversation.workspaceId), []) : undefined;
     const custom = conversation.custom as { promptModeConfig?: { modeId: string }; platformMode?: 'chat' | 'code' | 'character' } | undefined;
-    const promptModeId = input.promptModeId ?? custom?.promptModeConfig?.modeId ?? this.app.settings.snapshot().settings.modeProfiles?.[custom?.platformMode ?? 'chat']?.promptModeId
+    const promptModeId = input.promptModeId ?? custom?.promptModeConfig?.modeId ?? this.app.settings.read('modeProfiles').modeProfiles?.[custom?.platformMode ?? 'chat']?.promptModeId
       ?? agent.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
     const now = Date.now();
     const record: AutomationRecord = { version: 1, id: randomUUID(), kind: input.kind, name, objective: input.objective.trim(), conversationId: conversation.id,
@@ -212,7 +212,7 @@ export class ApplicationAutomations {
     this.app.requireOwner(actorId);
     if (typeof input.objective !== 'string' || !input.objective.trim()) throw new Error('请填写任务目标。');
     const channel = await this.app.product.channel(input.providerId);
-    if (!channel?.enabled || !this.app.settings.snapshot().settings.agents.some(agent => agent.id === input.agentId)) throw new Error('请选择可用的智能体和模型渠道。');
+    if (!channel?.enabled || !this.app.settings.find('agents', input.agentId)) throw new Error('请选择可用的智能体和模型渠道。');
     const schedule = input.kind === 'schedule' ? validateSchedule(input.schedule!) : undefined;
     if (schedule && (!['skip', 'once'].includes(input.missedRunPolicy ?? '') || nextScheduledTime(schedule, Date.now()) === undefined)) throw new Error('请选择未来触发时间及错过时间后的处理方式。');
     const event = input.kind === 'event' ? await this.eventSources.validate(actorId, input.event) : undefined;

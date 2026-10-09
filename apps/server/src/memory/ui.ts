@@ -7,7 +7,7 @@ import { MemoryEngine } from '../../../../backend/modules/memory/MemoryEngine';
 import { DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../../../backend/modules/memory/types';
 
 export function memoryUiHandlers(app: PlatformApplication, actorId: string, draft: ProductSettingsDraft) {
-  const workspaces = () => app.settings.snapshot().settings.workspaces.flatMap(workspace => workspaceRoots(workspace).map(root => workspaceForRoot(workspace, root.directory)));
+  const workspaces = () => app.settings.read('workspaces').workspaces.flatMap(workspace => workspaceRoots(workspace).map(root => workspaceForRoot(workspace, root.directory)));
   const scope = async (data: Record<string, any>) => {
     if (!data.workspaceUri) return app.memory.scope(actorId);
     const directory = fileURLToPath(String(data.workspaceUri));

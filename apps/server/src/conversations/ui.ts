@@ -161,7 +161,7 @@ export function conversationUiHandlers(app: PlatformApplication, client: ClientS
     'conversation.createBranchConversation': (data: Record<string, any>) => app.conversations.fork(client.actorId, data.sourceConversationId, data.branchAtIndex, data),
     'conversation.setWorkspaceUri': async (data: Record<string, any>) => {
       const state = await app.conversations.read(client.actorId, data.conversationId);
-      const workspace = app.settings.snapshot().settings.workspaces.find(item => pathToFileURL(item.directory).toString() === data.workspaceUri);
+      const workspace = app.settings.read('workspaces').workspaces.find(item => pathToFileURL(item.directory).toString() === data.workspaceUri);
       if (!workspace) throw new Error('工作区尚未添加到独立平台。');
       app.workspace(client.actorId, workspace.id, ['workspace_read']);
       if (state.metadata.workspaceId && state.metadata.workspaceId !== workspace.id) throw new Error('此对话已绑定其他工作区，请新建代码对话。');

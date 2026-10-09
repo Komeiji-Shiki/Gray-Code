@@ -20,7 +20,7 @@ export class ConversationNavigation {
       return value === 'discord' || value === 'onebot' ? value : undefined;
     };
     const included = (item: Parameters<typeof botPlatform>[0]) => (options.scope === 'bots') === ['discord', 'onebot'].includes(botPlatform(item) ?? '');
-    const workspaces = this.app.settings.snapshot().settings.workspaces.map(item => ({ ...item, uri: pathToFileURL(item.directory).toString() }));
+    const workspaces = this.app.settings.read('workspaces').workspaces.map(item => ({ ...item, uri: pathToFileURL(item.directory).toString() }));
     const projects = await new ProjectNavigation(this.app).preferences();
     const preference = (item: { workspaceId?: string; workspaceUri?: string }) => {
       const workspace = conversationWorkspace(item, workspaces);

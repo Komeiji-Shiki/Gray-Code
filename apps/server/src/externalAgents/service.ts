@@ -37,7 +37,7 @@ export class ExternalAgents {
         void this.conversationChanged(event.conversationId).catch(error => console.error('外部代理会话清理失败：', error));
     });
   }
-  private profiles() { return this.app.settings.snapshot().settings.externalAgents ?? []; }
+  private profiles() { return this.app.settings.read('externalAgents').externalAgents ?? []; }
   private refreshTools() {
     const enabled = this.profiles().some(profile => profile.enabled) || this.sessions.size > 0;
     this.app.tools.replaceNamespace('coding_agent', enabled ? [externalAgentTool(this)] : []);

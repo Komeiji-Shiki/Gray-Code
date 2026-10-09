@@ -22,7 +22,7 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
     general ? settings.generalWorkerMaxRuntimeSeconds! : config?.maxRuntime ?? settings.defaultMaxRuntimeSeconds!);
   const inherit = general || config!.channel.syncWithCurrentModel === true || config!.channel.syncWithCurrentModel === undefined && settings.forceUseCurrentChannel === true;
   const selection = inherit ? structuredClone(context.modelSelection) : { providerId: config!.channel.channelId, modelOverride: config!.channel.modelId };
-  if (!app.settings.snapshot().settings.providers.some(provider => provider.id === selection.providerId)) throw new Error('子代理渠道不存在。');
+  if (!app.settings.find('providers', selection.providerId)) throw new Error('子代理渠道不存在。');
   const tools = config?.tools ?? { mode: 'all' };
   const toolNames = context.agent.toolNames.filter(name => {
     if (/^(memory_|todo_)/.test(name) || !app.product.runtimeSettings().isToolEnabled(name) || depth >= MAX_SUBAGENT_NESTING_DEPTH && name === 'subagents') return false;

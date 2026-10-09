@@ -71,12 +71,21 @@ export class ExecutionNodes {
   private interfaces() {
     return Object.entries(networkInterfaces()).flatMap(([name, values]) => (values ?? []).filter(value => value.family === 'IPv4').map(value => ({ name, address: value.address, internal: value.internal })));
   }
-  status(actorId: string): ExecutionNodeStatus {
-    this.app.requireOwner(actorId);
-    const peers: NodePeerSummary[] = [...this.registry.peers.values()].map(peer => ({ id: peer.id, nodeId: peer.nodeId, name: peer.name, direction: peer.direction,
+  private peerSummary(peer: NodePeer): NodePeerSummary {
+    return { id: peer.id, nodeId: peer.nodeId, name: peer.name, direction: peer.direction,
       createdAt: peer.createdAt, revokedAt: peer.revokedAt, address: peer.address, grant: structuredClone(peer.grant),
       state: peer.revokedAt ? 'revoked' : this.incoming.get(peer.id)?.wire.online ? 'online' : 'offline',
-      ...(peer.direction === 'outgoing' ? this.clients.summaries(peer) : {}) }));
+      ...(peer.direction === 'outgoing' ? this.clients.summaries(peer) : {}) };
+  }
+  /** 单设备事件沿用状态页的摘要规则，避免枚举所有设备和查询本机网卡。 */
+  peer(actorId: string, peerId: string): NodePeerSummary | undefined {
+    this.app.requireOwner(actorId);
+    const peer = this.registry.peers.get(peerId);
+    return peer ? this.peerSummary(peer) : undefined;
+  }
+  status(actorId: string): ExecutionNodeStatus {
+    this.app.requireOwner(actorId);
+    const peers = [...this.registry.peers.values()].map(peer => this.peerSummary(peer));
     return { nodeId: this.identity.id, settings: this.identity.settings, secureStorage: this.identity.secureStorage,
       listener: structuredClone(this.listenerState), interfaces: this.interfaces(), peers };
   }
@@ -188,8 +197,8 @@ export class ExecutionNodes {
     switch (method) {
       case 'nodes.status': return this.status(session.actorId);
       case 'nodes.options': return {
-        accounts: this.app.settings.snapshot().settings.accounts.filter(value => !value.revoked).map(value => ({ id: value.id, displayName: value.displayName, role: value.role, workspaceIds: value.workspaceIds, computer: value.role === 'owner' || value.effects.includes('desktop_control') })),
-        workspaces: this.app.settings.snapshot().settings.workspaces.filter(value => !value.managedConversationId).map(value => ({ id: value.id, name: value.name, directory: value.directory })),
+        accounts: this.app.settings.read('accounts').accounts.filter(value => !value.revoked).map(value => ({ id: value.id, displayName: value.displayName, role: value.role, workspaceIds: value.workspaceIds, computer: value.role === 'owner' || value.effects.includes('desktop_control') })),
+        workspaces: this.app.settings.read('workspaces').workspaces.filter(value => !value.managedConversationId).map(value => ({ id: value.id, name: value.name, directory: value.directory })),
       };
       case 'nodes.configure': return this.serialized(() => this.configure(params as NodeListenerSettings));
       case 'nodes.invitation': return this.serialized(() => this.invitation(params as NodeGrant));

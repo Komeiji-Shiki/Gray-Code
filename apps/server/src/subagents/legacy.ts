@@ -122,7 +122,7 @@ export class LegacySubagents {
 
   private async manualContext(actorId: string, source: LegacySource): Promise<SubagentLaunchContext> {
     this.app.requireOwner(actorId);
-    const appSettings = this.app.settings.snapshot().settings;
+    const appSettings = this.app.settings.read('providers', 'agents', 'modeProfiles');
     const preferences = this.app.product.runtimeSettings();
     const custom = source.state.metadata.custom as Record<string, any> | undefined;
     const selected = custom?.inputModelConfig as { configId?: string; modelId?: string } | undefined;

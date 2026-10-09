@@ -29,7 +29,7 @@ export class RemoteAccessService implements RemoteAccessHost {
   get keepsAlive() { return this.initialized && !this.closed && !this.paused && this.configured().enabled; }
   private configured(): RemoteAccessSettings {
     if (this.override) return { enabled: true, port: this.override.port ?? 0, publicOrigin: this.override.publicOrigin };
-    return this.app.settings.snapshot().settings.remoteAccess ?? { enabled: false, port: 0 };
+    return this.app.settings.read('remoteAccess').remoteAccess ?? { enabled: false, port: 0 };
   }
   status(): RemoteAccessStatus {
     const config = this.configured(); const port = this.server?.port;

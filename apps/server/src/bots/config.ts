@@ -36,7 +36,7 @@ export function discordProfile(config: DiscordSettings, source: Pick<BotInbound,
   if (override?.providerId && override.providerId !== defaults?.providerId && !override.modelId) delete merged.modelId;
   return merged;
 }
-export function botProfile(settings: AppSettings, platform: 'discord' | 'onebot', source: Pick<BotInbound, 'direct' | 'channelId'>): DiscordReplyProfile {
+export function botProfile(settings: Pick<AppSettings, 'discord' | 'onebot'>, platform: 'discord' | 'onebot', source: Pick<BotInbound, 'direct' | 'channelId'>): DiscordReplyProfile {
   if (platform === 'discord') return discordProfile(settings.discord, source);
   const config = settings.onebot!;
   const defaults = config.defaultProfile;

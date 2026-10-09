@@ -28,7 +28,7 @@ export async function serveWorkspaceFile(app: PlatformApplication, auth: { clien
     if (typeof version !== 'string') throw new Error('上传前请先取得目标路径的版本。');
     const workspace = app.workspace(auth.client.actorId, workspaceId, ['workspace_write']);
     const absolute = await app.files.resolveEntry(workspace, file);
-    app.files.assertCleanEntries(absolute, app.settings.snapshot().settings.workspaces);
+    app.files.assertCleanEntries(absolute, app.settings.read('workspaces').workspaces);
     const bytes = await uploadBytes(request);
     if (!auth.valid()) { response.writeHead(401); response.end(JSON.stringify({ error: '登录已失效，上传未应用。' })); return true; }
     const result = await app.fileActions.upload(auth.client.actorId, workspaceId, file, version, bytes);

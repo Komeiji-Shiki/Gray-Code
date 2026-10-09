@@ -22,7 +22,7 @@ export async function longMemoryRequest(app:PlatformApplication,session:ClientSe
   const context={conversationId:typeof params.conversationId==='string'?params.conversationId:undefined,workspaceId:typeof params.workspaceId==='string'?params.workspaceId:undefined};
   if(method==='memory.options'){
     const [scopes,policy,imports]=await Promise.all([service.scopesForManagement(session.actorId,context),service.policies.get(session.actorId),listImportLibraries(app.storage,session.actorId)]);
-    const settings=app.settings.snapshot().settings;
+    const settings=app.settings.read('workspaces','providers');
     const label=(scope:LongMemoryScope)=>scope.kind==='personal'?'个人':scope.kind==='group'?'群组 · '+scope.key:scope.kind==='library'?'导入资料库':'项目 · '+(settings.workspaces.find(workspace=>workspace.directory.replaceAll('\\','/').toLowerCase()===scope.key?.replaceAll('\\','/').toLowerCase())?.name??scope.key);
     return {scopes:scopes.map(scope=>({...scope,label:imports.find(item=>item.scopeId===scope.id)?.name??(label(scope)+(scope.realm==='real'?'':' · 角色剧情'))})),policy,
       providers:settings.providers.map(provider=>({id:provider.id,name:provider.name,model:provider.model,models:provider.models.map(model=>model.id)}))};

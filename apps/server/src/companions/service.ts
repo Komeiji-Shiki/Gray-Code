@@ -61,7 +61,7 @@ export class CompanionService {
       this.app.productUi.conversations.clearMetadataCache();
       this.app.publish({ type: 'conversation.changed', conversationId });
     } else {
-      const preset = this.app.settings.snapshot().settings.modeProfiles?.chat?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
+      const preset = this.app.settings.read('modeProfiles').modeProfiles?.chat?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
       const conversation = await this.app.createConversation(client.actorId, '新对话', undefined,
         { platformMode: 'chat', companion: binding, promptModeConfig: { modeId: preset } }, undefined, { automaticWorkspace: true, records });
       conversationId = conversation.id;

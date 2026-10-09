@@ -16,7 +16,7 @@ export class MemoryPolicyStore {
     for(const field of ['enabled','automaticExtraction'] as const)if(typeof value[field]!=='boolean')throw new Error('记忆开关无效。');
     for(const [field,min,max]of [['recallTokens',256,16000],['recallLimit',1,50],['extractionOutputTokens',1024,32768]]as const)
       if(!Number.isSafeInteger(value[field])||value[field]<min||value[field]>max)throw new Error(`${field} 必须在 ${min} 至 ${max} 之间。`);
-    const provider=value.providerId?this.app.settings.snapshot().settings.providers.find(item=>item.id===value.providerId):undefined;
+    const provider=value.providerId?this.app.settings.find('providers',value.providerId):undefined;
     if(value.providerId&&!provider)throw new Error('请选择已有模型渠道。');
     if(value.automaticExtraction&&(!value.providerId||!(value.model||provider?.model)))throw new Error('启用后台整理前，请选择渠道和模型。');
     if(value.automaticScopes?.some(kind=>!['personal','workspace','group'].includes(kind)))throw new Error('自动整理范围无效。');

@@ -14,7 +14,7 @@ export class MemoryBackground {
   constructor(private readonly service:PlatformLongMemory){}
   private track<T>(promise:Promise<T>):Promise<T>{this.scheduling.add(promise);void promise.finally(()=>this.scheduling.delete(promise)).catch(()=>{});return promise;}
   async initialize():Promise<void>{
-    for(const account of this.service.app.settings.snapshot().settings.accounts.filter(actor=>!actor.revoked&&actor.role!=='guest'))
+    for(const account of this.service.app.settings.read('accounts').accounts.filter(actor=>!actor.revoked&&actor.role!=='guest'))
       for(const scope of await this.service.app.storage.longMemoryScopes(account.id))this.scopes.set(scope.id,scope);
     this.kick();
   }

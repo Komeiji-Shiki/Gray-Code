@@ -44,7 +44,7 @@ export class BoundBotService {
     this.streams = new BotStreams(app, platform, this.sessions, this.outbox);
     this.unsubscribe = app.subscribe(notification => {
       if (notification.type === 'settings.changed') {
-        if (!this.app.settings.snapshot().settings[this.platform]?.enabled) { void this.stop(); return; }
+        if (!this.app.settings.read(this.platform)[this.platform]?.enabled) { void this.stop(); return; }
         if (!this.autoConnectEnabled()) { this.cancelAutoRetry(); this.notifyConnectionChange(); }
       }
       if (notification.type === 'model.delta') { this.streams.delta(String(notification.runId), notification.parts as Record<string, unknown>[]); return; }
@@ -66,7 +66,7 @@ export class BoundBotService {
   }
   status(): BotStatus {
     const needsReconnect = this.platform === 'discord' && this.current.status === 'connected'
-      && this.connectedMessageContent !== discordNeedsMessageContent(this.app.settings.snapshot().settings.discord);
+      && this.connectedMessageContent !== discordNeedsMessageContent(this.app.settings.read('discord').discord);
     return { ...this.current, ...this.gateway?.health?.(), ...this.outbox.status(), needsReconnect };
   }
   async autoConnect(): Promise<void> {
@@ -75,7 +75,7 @@ export class BoundBotService {
     await this.automaticAttempt(this.retryEpoch);
   }
   private autoConnectEnabled(): boolean {
-    const settings = this.app.settings.snapshot().settings[this.platform];
+    const settings = this.app.settings.read(this.platform)[this.platform];
     return !!settings?.enabled && settings.autoConnect !== false;
   }
   private cancelAutoRetry() {
@@ -120,7 +120,7 @@ export class BoundBotService {
     if (epoch !== this.connectionEpoch) return this.status();
     let gateway: BotGateway | undefined;
     try {
-      const settings = this.app.settings.snapshot().settings[this.platform];
+      const settings = this.app.settings.read(this.platform)[this.platform];
       if (!settings?.enabled || this.platform === 'discord' && !settings.credentialRef) throw new Error('请先保存已启用的 Bot 配置和凭据。');
       const token = settings.credentialRef ? await this.app.settings.credential(settings.credentialRef) : '';
       if (epoch !== this.connectionEpoch) return this.status();
@@ -129,7 +129,7 @@ export class BoundBotService {
       gateway = this.gateway = this.factory();
       gateway.setInteractionHandler?.(input => this.gateway === gateway && epoch === this.connectionEpoch
         ? this.interaction(input) : input.respond({ content: '连接已经变化，请重新打开 /gray 面板。' }));
-      const allMessages = this.platform === 'discord' ? discordNeedsMessageContent(this.app.settings.snapshot().settings.discord) : !settings.mentionOnly;
+      const allMessages = this.platform === 'discord' ? discordNeedsMessageContent(this.app.settings.read('discord').discord) : !settings.mentionOnly;
       const user = await gateway.connect(token ?? '', allMessages, message => { if (this.gateway === gateway && epoch === this.connectionEpoch) void this.receive(message); },
         status => {
           if (this.gateway !== gateway || epoch !== this.connectionEpoch || this.current.status === status) return;

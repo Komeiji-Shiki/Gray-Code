@@ -43,7 +43,8 @@ export class AutomationEventSources {
       return { trigger: { type: trigger.type, conversationId: conversation.id }, busyPolicy: value.busyPolicy, restartPolicy: value.restartPolicy } as AutomationEventConfiguration;
     }
     if (trigger?.type === 'node_online') {
-      if (!this.app.nodes.status(actorId).peers.some(peer => peer.id === trigger.peerId && !peer.revokedAt)) throw new Error('请选择尚未撤销的已配对设备。');
+      const peer = this.app.nodes.peer(actorId, trigger.peerId);
+      if (!peer || peer.revokedAt) throw new Error('请选择尚未撤销的已配对设备。');
       return { trigger: { type: trigger.type, peerId: trigger.peerId }, busyPolicy: value.busyPolicy, restartPolicy: value.restartPolicy } as AutomationEventConfiguration;
     }
     if (trigger?.type !== 'file_changed' || typeof trigger.path !== 'string' || !trigger.path.trim()
@@ -60,7 +61,7 @@ export class AutomationEventSources {
   }
   async sourceState(actorId: string, event: AutomationEventConfiguration): Promise<string> {
     if (event.trigger.type === 'run_completed') return String(Date.now());
-    if (event.trigger.type === 'node_online') return this.app.nodes.status(actorId).peers.find(peer => peer.id === (event.trigger as { peerId: string }).peerId)?.state ?? 'missing';
+    if (event.trigger.type === 'node_online') return this.app.nodes.peer(actorId, event.trigger.peerId)?.state ?? 'missing';
     this.lifetime.signal.throwIfAborted();
     // 配置校验也可能正在读文件；它不在监听队列中，但同样需要在关闭时结束。
     const reading = this.fileState(actorId, event); this.reads.add(reading);
@@ -141,11 +142,11 @@ export class AutomationEventSources {
   nodesChanged() { return this.enqueue(async () => {
     for (const record of this.records()) {
       if (record.event?.trigger.type !== 'node_online') continue;
-      const next = await this.sourceState(record.actorId, record.event);
+      const peer = this.app.nodes.peer(record.actorId, record.event.trigger.peerId);
+      const next = peer?.state ?? 'missing';
       if (next === record.eventSourceState) continue;
       if (next === 'missing' || next === 'revoked') { await this.reportFailure(record.id, new Error('来源设备已经移除或撤销，请重新选择事件来源。'), record.event.trigger); continue; }
       if (next !== 'online') { await this.host.baseline(record.id, { trigger: record.event.trigger, previous: record.eventSourceState, next }); continue; }
-      const peer = this.app.nodes.status(record.actorId).peers.find(row => row.id === (record.event!.trigger as { peerId: string }).peerId);
       await this.host.receive(record.id, { key: `node:${randomUUID()}`, type: 'node_online', observedAt: Date.now(), status: 'pending', ancestry: [],
         summary: `${peer?.name ?? '所选设备'}已上线或恢复连接` }, { trigger: record.event.trigger, previous: record.eventSourceState, next });
     }

@@ -25,7 +25,7 @@ export async function characterConversation(app: PlatformApplication, client: Cl
     'characters.conversation.create': async params => {
       const value = await characterConfig(app, params.config);
       const settings = app.product.runtimeSettings();
-      const preset = app.settings.snapshot().settings.modeProfiles?.character?.promptModeId ?? settings.getCurrentPromptModeId();
+      const preset = app.settings.read('modeProfiles').modeProfiles?.character?.promptModeId ?? settings.getCurrentPromptModeId();
       const character = value.characterId ? (await app.characters.get(value.characterId)).resource : null;
       const greeting = await app.characterPipeline.greeting(value);
       const conversation = await app.createConversation(client.actorId, character?.name ?? '新角色对话', undefined,

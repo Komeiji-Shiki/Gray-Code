@@ -6,7 +6,7 @@ import { createOneBotProtocol } from './onebotProtocol';
 export class OneBotService extends BoundBotService {
   constructor(app: PlatformApplication, factory?: () => BotGateway) {
     super(app, 'onebot', factory ?? (() => {
-      const config = app.settings.snapshot().settings.onebot;
+      const config = app.settings.read('onebot').onebot;
       if (!config) throw new Error('请先配置 OneBot。');
       return new OneBotGateway(config.endpoint, createOneBotProtocol(config));
     }));

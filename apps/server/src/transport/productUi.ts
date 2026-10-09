@@ -194,7 +194,7 @@ export class ProductUi {
       }
     }
     // Only refresh idle clients. An open or dirty draft retains its original CAS revision.
-    if (!ui.editing && !ui.preferences.dirty && ui.preferences.revision !== this.app.settings.snapshot().revision)
+    if (!ui.editing && !ui.preferences.dirty && ui.preferences.revision !== this.app.settings.revision)
       ui.preferences = await this.app.product.draft();
     signal?.throwIfAborted();
     const notify = (message: unknown) => this.app.publish({ type: 'ui.message', clientId: client.clientId, message });
@@ -237,7 +237,7 @@ export class ProductUi {
         if (params.automaticWorkspace !== undefined && (params.mode !== 'chat' || typeof params.automaticWorkspace !== 'boolean')) throw new Error('新建对话的工作区选项无效。');
         ui.mode = params.mode;
         const workspaceId = params.mode === 'chat' ? undefined : params.workspaceId || undefined;
-        const profile = this.app.settings.snapshot().settings.modeProfiles?.[ui.mode!];
+        const profile = this.app.settings.read('modeProfiles').modeProfiles?.[ui.mode!];
         const preset = profile?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
         const custom = { platformMode: ui.mode, promptModeConfig: { modeId: preset } };
         const automaticWorkspace = params.automaticWorkspace !== false;
@@ -339,7 +339,7 @@ export class ProductUi {
       }
       case 'appearance.images.remove': {
         const url = `graycode://app/assets/background/${data.id}`;
-        if (this.app.settings.snapshot().settings.appearance.backgroundImage === url)
+        if (this.app.settings.read('appearance').appearance.backgroundImage === url)
           throw new Error('这张图片正在作为背景使用，请先选择其他背景并保存设置。');
         for (const pending of this.clients.values()) {
           const session = await pending;
@@ -421,12 +421,12 @@ export class ProductUi {
           try { conversation = await activateConversationWorkspace(this.app, client.actorId, conversation); }
           catch (error) { this.app.publish({ type: 'notification', clientId: client.clientId, message: `项目工作区未打开：${error instanceof Error ? error.message : String(error)}` }); }
         }
-        const focusedWorkspace = this.app.settings.snapshot().settings.workspaces.find(workspace => workspace.id === conversation?.workspaceId);
+        const focusedWorkspace = this.app.settings.find('workspaces', typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined);
         if (conversation && !data.resynchronized) ui.workspaceId = focusedWorkspace?.id;
         const focusedMode = (conversation?.custom as Record<string, unknown> | undefined)?.platformMode;
         if (typeof focusedMode === 'string' && ['chat', 'code', 'character'].includes(focusedMode)) ui.mode = focusedMode as UiSession['mode'];
         this.app.publish({ type: 'ui.conversation.focused', clientId: client.clientId, conversationId: conversation?.id ?? null, workspaceId: focusedWorkspace?.id ?? null, mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode, resynchronized: data.resynchronized === true,
-          defaultPromptModeId: this.app.settings.snapshot().settings.modeProfiles?.[ui.mode ?? 'chat']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId() });
+          defaultPromptModeId: this.app.settings.read('modeProfiles').modeProfiles?.[ui.mode ?? 'chat']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId() });
         return { mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode };
       }
       case 'chat.resumeConversationStream': return this.chat.resumeConversationStream(client, data.conversationId);
@@ -437,7 +437,7 @@ export class ProductUi {
       }
       case 'ui.mode.select': {
         if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
-        const preset = this.app.settings.snapshot().settings.modeProfiles?.[data.mode as 'chat' | 'code' | 'character']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
+        const preset = this.app.settings.read('modeProfiles').modeProfiles?.[data.mode as 'chat' | 'code' | 'character']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
         let workspaceId: string | undefined;
         if (data.conversationId) {
           await this.app.conversation(client.actorId, data.conversationId);
@@ -631,7 +631,7 @@ export class ProductUi {
         if (!await this.app.storage.getConversation(data.conversationId)) {
           const mode = ui.mode ?? 'chat';
           const preset = typeof data.promptModeId === 'string' && ui.preferences.settings.getAllPromptModes().some(item => item.id === data.promptModeId)
-            ? data.promptModeId : this.app.settings.snapshot().settings.modeProfiles?.[mode]?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
+            ? data.promptModeId : this.app.settings.read('modeProfiles').modeProfiles?.[mode]?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
           // 对话模式自动创建专用目录，不继承切换模式前选中的项目。
           await this.app.createConversation(client.actorId, data.title ?? '新对话', mode === 'chat' ? undefined : workspace?.id,
             { platformMode: mode, promptModeConfig: { modeId: preset } }, undefined, { id: data.conversationId, automaticWorkspace: true });

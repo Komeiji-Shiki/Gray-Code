@@ -18,7 +18,7 @@ export class NavigationOrderingStore {
   async pinGroup(actorId: string, input: { key: string; pinned: boolean; revision: number }) {
     this.app.requireOwner(actorId);
     if (typeof input.key !== 'string' || typeof input.pinned !== 'boolean' ||
-      input.key !== 'general' && !this.app.settings.snapshot().settings.workspaces.some(workspace =>
+      input.key !== 'general' && !this.app.settings.read('workspaces').workspaces.some(workspace =>
         workspace.id === input.key && !workspace.managedConversationId && !workspace.id.startsWith('workspace-bot_')))
       throw new Error('这个对话分组不存在。');
     const current = await this.get(actorId);
@@ -42,7 +42,7 @@ export class NavigationOrderingStore {
     if (current.revision !== input.revision) throw new Error('侧边栏顺序已变化，请刷新后重试。');
     if (input.kind === 'conversations' || input.kind === 'pinned') {
       const groups = new Set<string>();
-      const workspaces = this.app.settings.snapshot().settings.workspaces;
+      const { workspaces } = this.app.settings.read('workspaces');
       const hidden = this.app.subagents.childConversationIds();
       for (const id of input.ids) {
         if (hidden.has(id)) throw new Error('子任务不在当前侧边栏列表中。');

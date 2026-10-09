@@ -47,6 +47,8 @@ export class SubagentExecutionService {
   private readonly continuations = new Set<string>();
   private readonly live = new Map<string, LiveSubagent>();
   private readonly records = new Map<string, PlatformSubagent>();
+  private readonly byConversation = new Map<string, PlatformSubagent>();
+  private readonly byAgent = new Map<string, PlatformSubagent>();
   private readonly byCoreRun = new Map<string, PlatformSubagent>();
   private readonly saves = new Map<string, Promise<unknown>>();
   private readonly limiter: SubAgentConcurrencyLimiter;
@@ -81,11 +83,17 @@ export class SubagentExecutionService {
     this.saves.set(record.id, saved);
     return saved;
   }
+  /** 会话与代理身份在接续时保持不变，父链和运行查询直接复用登记的记录。 */
+  private register(record: PlatformSubagent): void {
+    this.records.set(record.id, record);
+    this.byConversation.set(record.conversationId, record);
+    this.byAgent.set(record.profile.id, record);
+  }
   async initialize(): Promise<void> {
     for (const id of await this.app.storage.listRecords(namespace)) {
       const record = await this.app.storage.getRecord(namespace, id) as PlatformSubagent;
       if (!terminal(record.status)) { record.status = 'interrupted'; record.error = '宿主重启，未自动重放子代理操作。'; await this.save(record); }
-      this.records.set(record.id, record);
+      this.register(record);
     }
     // 完整恢复父子关系后再接收结果，使嵌套任务沿用同一个主会话序号。
     for (const record of this.records.values()) if (record.background) {
@@ -97,7 +105,7 @@ export class SubagentExecutionService {
     if (!record) return null;
     await this.app.conversation(actorId, record.parentConversationId);
     if (this.app.actor(actorId)?.role !== 'owner' && record.actorId !== actorId) throw new Error('无权访问此子代理运行。');
-    this.records.set(id, record); return record;
+    this.register(record); return record;
   }
   /** 会话正文、任务配置及旧运行对应关系一次发布，避免留下半个迁入任务。 */
   async adopt(record: PlatformSubagent, messages: PlatformMessage[] = [], records: RecordMutation[] = []): Promise<void> {
@@ -106,7 +114,7 @@ export class SubagentExecutionService {
       workspaceId: record.workspace?.id, createdAt: record.createdAt, updatedAt: record.updatedAt, parentConversationId: record.parentConversationId,
       custom: { platformSubagentId: record.id, ...(record.legacyOrigin ? { legacySubagent: record.legacyOrigin } : {}) } }, messages,
       [...records, { namespace, id: record.id, ownerId: record.parentConversationId, expectedRevision: null, value: record }]);
-    this.records.set(record.id, record);
+    this.register(record);
   }
   async retryLegacy(record: PlatformSubagent, messages: PlatformMessage[], context: SubagentLaunchContext): Promise<void> {
     if (this.live.has(record.id)) throw new Error('请先停止子代理，再重试旧记录。');
@@ -116,7 +124,7 @@ export class SubagentExecutionService {
     record.background = true; await this.save(record); this.launch(record);
   }
   agent(id: string, actorId?: string, conversationId?: string): AgentDefinition | null {
-    const record = [...this.records.values()].find(record => record.profile.id === id);
+    const record = this.byAgent.get(id);
     if (!record || record.conversationId !== conversationId || !actorId || record.actorId !== actorId && this.app.actor(actorId)?.role !== 'owner') return null;
     return structuredClone(record.profile);
   }
@@ -150,10 +158,11 @@ export class SubagentExecutionService {
   }
   hasActiveAgent(name: string) { return [...this.live.values()].some(item => item.record.agentName === name); }
   activeIds() { return [...this.live.keys()]; }
-  childConversationIds() { return new Set([...this.records.values()].map(record => record.conversationId)); }
-  isChildConversation(conversationId: string) { return [...this.records.values()].some(record => record.conversationId === conversationId); }
+  childConversationIds() { return new Set(this.byConversation.keys()); }
+  isChildConversation(conversationId: string) { return this.byConversation.has(conversationId); }
   recordForRun(run: RunRecord): PlatformSubagent | undefined {
-    return [...this.records.values()].find(record => record.profile.id === run.agentId && record.actorId === run.actorId && record.conversationId === run.conversationId);
+    const record = this.byAgent.get(run.agentId);
+    return record?.actorId === run.actorId && record.conversationId === run.conversationId ? record : undefined;
   }
   acceptsMessages(id: string) { const live = this.live.get(id); return !!live?.acceptingMessages && !live.controller.signal.aborted; }
   stopAcceptingMessages(id: string) { const live = this.live.get(id); if (live) live.acceptingMessages = false; }
@@ -196,7 +205,7 @@ export class SubagentExecutionService {
   private rootRecord(record: PlatformSubagent): PlatformSubagent {
     let current = record;
     for (let depth = 0; depth < MAX_SUBAGENT_NESTING_DEPTH; depth++) {
-      const parent = [...this.records.values()].find(item => item.conversationId === current.parentConversationId);
+      const parent = this.byConversation.get(current.parentConversationId);
       if (!parent) break;
       current = parent;
     }
@@ -216,13 +225,13 @@ export class SubagentExecutionService {
         this.taskEvent(current, 'start');
       }
       const parentConversationId: string = current.parentConversationId;
-      current = [...this.records.values()].find(item => item.conversationId === parentConversationId);
+      current = this.byConversation.get(parentConversationId);
     }
     await Promise.all(changed.map(item => this.save(item)));
   }
   rootConversationId(conversationId: string): string {
     for (let depth = 0; depth < MAX_SUBAGENT_NESTING_DEPTH; depth++) {
-      const record = [...this.records.values()].find(record => record.conversationId === conversationId);
+      const record = this.byConversation.get(conversationId);
       if (!record) break;
       conversationId = record.parentConversationId;
     }
@@ -283,7 +292,7 @@ export class SubagentExecutionService {
       let descendant = false;
       for (let depth = 0; parent && depth <= MAX_SUBAGENT_NESTING_DEPTH; depth++) {
         if (parent === conversationId) { descendant = true; break; }
-        parent = [...this.records.values()].find(item => item.conversationId === parent)?.parentConversationId;
+        parent = this.byConversation.get(parent)?.parentConversationId;
       }
       if (descendant) for (const runId of record.coreRunIds) byRun.set(runId, record);
     }
@@ -336,11 +345,13 @@ export class SubagentExecutionService {
       }
       await this.app.storage.commitRecords([{ namespace, id: record.id, delete: true }]);
       this.records.delete(record.id);
+      this.byConversation.delete(record.conversationId);
+      this.byAgent.delete(record.profile.id);
       for (const id of record.coreRunIds) this.byCoreRun.delete(id);
     }
   }
   async boundary(run: RunRecord, signal: AbortSignal): Promise<void> {
-    const record = this.byCoreRun.get(run.id) ?? [...this.records.values()].find(record => record.profile.id === run.agentId);
+    const record = this.byCoreRun.get(run.id) ?? this.byAgent.get(run.agentId);
     const live = record && this.live.get(record.id);
     if (!live?.pauseRequested) return;
     record!.status = 'paused'; await this.save(record!); this.emit(record!, 'run_paused');
@@ -523,13 +534,15 @@ export class SubagentExecutionService {
     if (typeof runId !== 'string') return;
     let record = this.byCoreRun.get(runId);
     if (!record && event.type !== 'event') return;
-    if (event.type === 'event') {
+    const completed = event.type === 'event' && ['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'].includes(event.event.type);
+    // 已关联的中间事件只投影已有子代理记录；完成反馈仍读取本次运行状态。
+    if (event.type === 'event' && (!record || completed)) {
       const run = await this.app.storage.getRun(runId); if (!run) return;
-      if (['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'].includes(event.event.type)) {
+      if (completed) {
         await this.feedback.flush(run.conversationId);
         this.app.publish({ type: 'conversation.changed', runId: run.id, conversationId: run.conversationId });
       }
-      record ??= [...this.records.values()].find(record => record.profile.id === run.agentId);
+      record ??= this.byAgent.get(run.agentId);
     }
     if (!record) return; this.byCoreRun.set(runId, record);
     const live = this.live.get(record.id);

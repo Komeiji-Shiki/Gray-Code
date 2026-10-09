@@ -50,7 +50,7 @@ export class BotSessions {
   readonly inbox: BotInbox;
   constructor(private readonly app: PlatformApplication) { this.inbox = new BotInbox(app, this); }
   owner(): ActorIdentity {
-    const actor = this.app.settings.snapshot().settings.accounts.find(item => item.role === 'owner' && !item.revoked);
+    const actor = this.app.settings.read('accounts').accounts.find(item => item.role === 'owner' && !item.revoked);
     if (!actor) throw new Error('当前部署没有可用的主人账号。');
     return actor;
   }
@@ -96,7 +96,7 @@ export class BotSessions {
     const id = this.key(context);
     const record = await this.app.storage.getVersionedRecord(namespace, id);
     let value = record.value as BotSession | null;
-    const settings = this.app.settings.snapshot().settings;
+    const settings = this.app.settings.read('discord', 'onebot');
     const config = settings[context.platform]!;
     if (!value) {
       const owner = this.owner();
@@ -134,7 +134,7 @@ export class BotSessions {
   async snapshot(context: BotContext) {
     const loaded = await this.load(context); const conversation = await this.current(loaded);
     const run = conversation ? (await this.app.storage.listRuns({ conversationId: conversation.id, limit: 1 }))[0] : undefined;
-    const settings = this.app.settings.snapshot().settings;
+    const settings = this.app.settings.read('agents', 'providers', 'workspaces');
     const agent = settings.agents.find(item => item.id === loaded.profile.agentId);
     const provider = settings.providers.find(item => item.id === (loaded.profile.providerId ?? agent?.providerId));
     const workspaceId = conversation?.workspaceId ?? loaded.profile.workspaceId;
@@ -151,13 +151,13 @@ export class BotSessions {
     return { loaded, conversation, run, active: active(run), provider, model: loaded.profile.modelId ?? agent?.modelId ?? provider?.model, workspace, questions, approvals };
   }
   workspaces(actorId: string) {
-    return this.app.settings.snapshot().settings.workspaces.filter(workspace => {
+    return this.app.settings.read('workspaces').workspaces.filter(workspace => {
       try { this.app.workspace(actorId, workspace.id, ['workspace_read']); return true; } catch { return false; }
     });
   }
   models(actorId: string) {
     this.app.requireOwner(actorId);
-    return this.app.settings.snapshot().settings.providers.flatMap(provider => {
+    return this.app.settings.read('providers').providers.flatMap(provider => {
       const values = new Map(provider.models.map(model => [model.id, model.name || model.id]));
       if (provider.model && !values.has(provider.model)) values.set(provider.model, provider.model);
       return [...values].map(([modelId, name]) => ({ providerId: provider.id, modelId, label: name, providerName: provider.name }));
@@ -217,19 +217,19 @@ export class BotSessions {
   private async runWorkspace(context: BotContext, loaded: LoadedSession, conversation: PlatformConversation) {
     let channelWorkspaceId = loaded.profile.workspaceId === null ? undefined : loaded.profile.workspaceId ?? (typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined);
     if (!channelWorkspaceId && loaded.profile.workspaceId !== null) channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id);
-    if (channelWorkspaceId === `workspace-${conversation.id}` && !this.app.settings.snapshot().settings.workspaces.some(item => item.id === channelWorkspaceId)) {
+    if (channelWorkspaceId === `workspace-${conversation.id}` && !this.app.settings.find('workspaces', channelWorkspaceId)) {
       channelWorkspaceId = await this.app.botWorkspaces.get(context, conversation.id, { existingOnly: true, workspaceUri: conversation.workspaceUri });
     }
     let workspaceId = channelWorkspaceId;
     if (workspaceId) {
       const actor = await actorForBotRun(this.app, loaded.actor.id, { conversationId: conversation.id, workspaceId });
-      const workspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === workspaceId);
+      const workspace = this.app.settings.find('workspaces', workspaceId);
       if (!actor || !workspace || authorizeEffects(actor, ['workspace_read'], workspace)) workspaceId = undefined;
     }
     return { channelWorkspaceId, workspaceId };
   }
   private runMetadata(conversation: PlatformConversation, context: BotContext, loaded: LoadedSession, channelWorkspaceId?: string) {
-    const channelWorkspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === channelWorkspaceId);
+    const channelWorkspace = this.app.settings.find('workspaces', channelWorkspaceId);
     return { ...conversation, workspaceId: channelWorkspaceId, workspaceUri: channelWorkspace ? pathToFileURL(channelWorkspace.directory).toString() : undefined,
       custom: { ...conversation.custom as Record<string, unknown>, botEnvironment: captureBotEnvironment(context, loaded.profile) } };
   }
@@ -286,7 +286,7 @@ export class BotSessions {
     } else if (action.kind === 'model' || action.kind === 'model-default') {
       this.app.requireOwner(loaded.actor.id);
       if (action.kind === 'model') {
-        const provider = this.app.settings.snapshot().settings.providers.find(item => item.id === action.providerId);
+        const provider = this.app.settings.find('providers', action.providerId);
         if (!provider || !action.modelId.trim()) throw new Error('模型渠道已变化，请重新选择。');
         loaded.value.selection.providerId = action.providerId; loaded.value.selection.modelId = action.modelId;
         reply = `后续请求使用 ${provider.name} / ${action.modelId}，当前对话保持不变。`;

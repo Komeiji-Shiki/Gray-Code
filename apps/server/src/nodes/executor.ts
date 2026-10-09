@@ -33,7 +33,7 @@ export class NodeExecutor {
     return { nodeId: this.registry.identity.id, name: this.registry.identity.settings.name, protocol: 1, platform: process.platform,
       account: { id: actor.id, displayName: actor.displayName, role: actor.role },
       workspaces: peer.grant.workspaceIds.map(id => { const value = this.app.workspace(actor.id, id, []); return { id, name: value.name, directory: value.directory }; }),
-      agents: this.app.settings.snapshot().settings.agents.map(agent => ({ id: agent.id, name: agent.name })),
+      agents: this.app.settings.read('agents').agents.map(agent => ({ id: agent.id, name: agent.name })),
       tasks: peer.grant.tasks, computer: !!computer?.available, screenshot: !!computer?.screenshotAvailable,
       ...(computer?.available && computer.screenshotAvailable ? { visual: { version: 1, coordinateSpace: 'image', actions: [...computerActionNames] } } : {}) };
   }

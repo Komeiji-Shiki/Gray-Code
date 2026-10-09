@@ -29,7 +29,7 @@ export async function petInteraction(app: PlatformApplication, client: ClientSes
   const history = selected ? (await app.storage.readHistory(selected.id, { limit: 12 })).messages : [];
   return { conversations: conversations.map(item => ({ id: item.id, title: item.title })),
     selectedConversationId: selected?.id, selection: (selected?.custom as any)?.inputModelConfig,
-    providers: app.settings.snapshot().settings.providers.map(provider => ({ id: provider.id, name: provider.name, model: provider.model, models: provider.models })),
+    providers: app.settings.read('providers').providers.map(provider => ({ id: provider.id, name: provider.name, model: provider.model, models: provider.models })),
     history: history.map(message => ({ id: message.id, role: message.role, text: message.parts.filter(part => !part.thought).map(part => part.text ?? '').join('').slice(0, 12000) })).filter(message => message.text),
     runs: runs.map(run => ({ ...run, title: titles[run.conversationId] })), approvals, questions };
 }

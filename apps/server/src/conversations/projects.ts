@@ -28,7 +28,7 @@ export class ProjectNavigation {
   private target(actorId: string, target: ProjectNavigationTarget): ProjectNavigationTarget {
     this.app.requireOwner(actorId);
     if (target.workspaceId) {
-      const workspace = this.app.settings.snapshot().settings.workspaces.find(item => item.id === target.workspaceId);
+      const workspace = this.app.settings.find('workspaces', target.workspaceId);
       if (!workspace || workspace.managedConversationId) throw new Error('这个项目不存在。');
       return { workspaceId: workspace.id, workspaceUri: pathToFileURL(workspace.directory).toString() };
     }
@@ -50,7 +50,7 @@ export class ProjectNavigation {
   }
   private async removalPlan(actorId: string, target: ProjectNavigationTarget) {
     const resolved = this.target(actorId, target);
-    const workspaces = this.app.settings.snapshot().settings.workspaces;
+    const { workspaces } = this.app.settings.read('workspaces');
     const hidden = this.app.subagents.childConversationIds();
     const conversations: Array<{ id: string; createdAt: number }> = [];
     let cursor: { updatedAt: number; id: string } | undefined;
