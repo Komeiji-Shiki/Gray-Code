@@ -1,17 +1,13 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { PlatformDatabase } from './database';
 import { errorDetails } from '../errors';
-import type { StorageRequest, StorageReply, StorageMethod, StorageOperations } from './protocol';
+import type { StorageRequest, StorageReply, StorageOperations } from './protocol';
 
 if (!parentPort) throw new Error('Storage worker must run in a worker thread.');
 const port = parentPort;
 try {
   const database = new PlatformDatabase(workerData.directory);
   // 向量计算期间允许独立读取；一旦有排队写入，后续请求继续按原顺序执行。
-  const concurrentReads = new Set<StorageMethod>(['getRecord', 'getVersionedRecord', 'listRecords', 'readRecordPage',
-    'getConversation', 'getConversationInfo', 'listConversations', 'readConversationState', 'readHistory', 'readHistoryWithFloors', 'readHistoryOutline', 'readPendingToolCalls', 'readHistorySelection', 'readFullHistory', 'historyInfo',
-    'getRun', 'getRunByRequestKey', 'listRuns', 'readRunEvents', 'readUsageState', 'recordRevisions', 'listUsageConversations', 'listConversationIds',
-    'getSnapshot', 'listSnapshots', 'longMemoryScopes', 'longMemoryState', 'longMemoryRead', 'longMemoryTopics', 'longMemoryGraph', 'longMemoryBrowse']);
   const queue: StorageRequest[] = [];
   let computing = false;
   const failure = (request: StorageRequest, error: unknown) => {
@@ -43,7 +39,7 @@ try {
     } catch (error) { failure(request, error); }
   }
   port.on('message', (request: StorageRequest) => {
-    const independentRead = concurrentReads.has(request.method) || request.method === 'longMemoryRecall' && !isVector(request);
+    const independentRead = database.canRunDuringVectorCalculation(request.method, request.input as never);
     if (computing && (queue.length > 0 || !independentRead)) queue.push(request);
     else dispatch(request);
   });

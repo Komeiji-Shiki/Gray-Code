@@ -80,236 +80,261 @@ export class PlatformDatabase {
   }
   async closeVectorWorker(): Promise<void> { await this.vectorRanker?.close(); }
 
-  execute<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): StorageOperations[M]['output'] {
-    // The dispatch table is explicit: RPC never indexes arbitrary database methods.
-    const operations: { [K in StorageMethod]: (value: StorageOperations[K]['input']) => StorageOperations[K]['output'] } = {
-      longMemoryScopes: ({ actorId }) => this.longMemories.scopes(actorId),
-      longMemoryState: scope => this.longMemories.state(scope),
-      longMemoryWrite: input => this.longMemories.write(input),
-      longMemoryRecall: input => this.longMemories.query.recall(input),
-      longMemoryTopics: input => this.longMemories.query.topics(input),
-      longMemoryBrowse: input => this.longMemories.query.browse(input),
-      longMemoryRead: input => this.longMemories.query.read(input),
-      longMemoryGraph: input => this.longMemories.query.graph(input),
-      longMemoryRevisions: ({ scope, id }) => this.longMemories.query.revisions(scope, id),
-      longMemoryInspect: ({scope,id,version})=>this.longMemories.query.inspect(scope,id,version),
-      longMemorySources: ({scope,references})=>this.longMemories.query.sources(scope,references),
-      longMemoryRecordVersions: ({scope,references})=>this.longMemories.query.recordVersions(scope,references),
-      longMemoryImpact: ({ scope, kind, id, action }) => this.longMemories.impact(scope, kind, id, action),
-      longMemoryDeletedSources: ({scopes})=>this.longMemories.deletedSources(scopes),
-      longMemoryDeletionState: ()=>this.longMemories.deletionState(),
-      longMemoryVector: ({ scope, id, version, vector }) => this.longMemories.putVector(scope, id, version, vector),
-      longMemoryExport: ({ scopes }) => this.longMemories.archive.export(scopes),
-      longMemoryRestore: ({ actorId, archive, publication, copyVectors }) => this.db.transaction(() => {
-        const result = this.longMemories.archive.restore(actorId, archive);
+  // 调度属性与实现同源，新增操作时必须同时声明是否能与向量计算并行。
+  private readonly operations: { [K in StorageMethod]: {
+    concurrentRead: boolean | ((input: StorageOperations[K]['input']) => boolean);
+    execute: (input: StorageOperations[K]['input']) => StorageOperations[K]['output'];
+  } } = {
+    longMemoryScopes: { concurrentRead: true, execute: ({ actorId }) => this.longMemories.scopes(actorId) },
+    longMemoryState: { concurrentRead: true, execute: scope => this.longMemories.state(scope) },
+    longMemoryWrite: { concurrentRead: false, execute: input => {
+      const result = this.longMemories.write(input);
+      this.vectorMatrices.invalidate([input.scope.id]);
+      return result;
+    } },
+    longMemoryRecall: { concurrentRead: input => !input.vector, execute: input => this.longMemories.query.recall(input) },
+    longMemoryTopics: { concurrentRead: true, execute: input => this.longMemories.query.topics(input) },
+    longMemoryBrowse: { concurrentRead: true, execute: input => this.longMemories.query.browse(input) },
+    longMemoryRead: { concurrentRead: true, execute: input => this.longMemories.query.read(input) },
+    longMemoryGraph: { concurrentRead: true, execute: input => this.longMemories.query.graph(input) },
+    longMemoryRevisions: { concurrentRead: false, execute: ({ scope, id }) => this.longMemories.query.revisions(scope, id) },
+    longMemoryInspect: { concurrentRead: false, execute: ({scope,id,version})=>this.longMemories.query.inspect(scope,id,version) },
+    longMemorySources: { concurrentRead: false, execute: ({scope,references})=>this.longMemories.query.sources(scope,references) },
+    longMemoryRecordVersions: { concurrentRead: false, execute: ({scope,references})=>this.longMemories.query.recordVersions(scope,references) },
+    longMemoryImpact: { concurrentRead: false, execute: ({ scope, kind, id, action }) => this.longMemories.impact(scope, kind, id, action) },
+    longMemoryDeletedSources: { concurrentRead: false, execute: ({scopes})=>this.longMemories.deletedSources(scopes) },
+    longMemoryDeletionState: { concurrentRead: false, execute: ()=>this.longMemories.deletionState() },
+    longMemoryVector: { concurrentRead: false, execute: ({ scope, id, version, vector }) => {
+      const result = this.longMemories.putVector(scope, id, version, vector);
+      this.vectorMatrices.invalidate([scope.id]);
+      return result;
+    } },
+    longMemoryExport: { concurrentRead: false, execute: ({ scopes }) => this.longMemories.archive.export(scopes) },
+    longMemoryRestore: { concurrentRead: false, execute: ({ actorId, archive, publication, copyVectors }) => {
+      const result = this.db.transaction(() => {
+        const restored = this.longMemories.archive.restore(actorId, archive);
         for(const copy of copyVectors??[]){const scope=archive.scopes.find(scope=>scope.id===copy.scopeId);if(!scope)invalid('索引共享范围不属于本次归档。');this.longMemories.copyVector(scope,copy.id,copy.from,copy.to);}
         // 原始附件先保存，记忆正文与导入目录在同一事务中正式出现。
         if (publication?.length) this.commitRecords(publication);
-        return result;
-      })(),
-      longMemoryJobs: ({ scopes, status }) => this.longMemories.jobs.list(scopes, status),
-      longMemoryJob: ({scope,id})=>this.longMemories.jobs.get(scope,id),
-      longMemoryEnqueue: ({ scope, job }) => this.longMemories.jobs.enqueue(scope, job),
-      longMemoryJobTransition: ({ scope, id, action, error,usage }) => this.longMemories.jobs.transition(scope, id, action, error,usage),
-      longMemoryJobFinish: ({ scope, id, write, usage,vectors }) => this.longMemories.jobs.finish(scope, id, write, usage,vectors),
-      memoryImportBatch: input => this.memories.importBatch(input),
-      memoryImportPublish: input => this.memories.publishImport(input),
-      memoryScopes: ({ actorId }) => this.memories.scopes(actorId),
-      memoryState: scope => this.memories.state(scope),
-      memoryEntries: ({ scope, offset, limit, expectedRevision }) => this.memories.entries(scope, offset, limit, expectedRevision),
-      memorySummaries: ({ scope, lo, hi, expectedRevision }) => this.memories.summaries(scope, lo, hi, expectedRevision),
-      memoryRevisions: ({ scope, before }) => this.memories.revisions(scope, before),
-      memoryWrite: input => this.memories.write(input),
-      readConversationState: ({ id, records = [], cursor, historyProjection }) => {
-        const row = this.conversation(id);
-        if (records.length > 256) invalid('Too many conversation state records.');
-        if (cursor && historyProjection) invalid('Incremental history and field projection cannot be combined.');
-        return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
-          history: cursor ? { conversationId: id, ...this.histories.readIncremental(row.history_id, cursor) }
-            : historyProjection ? { conversationId: id, startIndex: 0, ...this.histories.select(row.history_id, { projection: historyProjection }) }
-            : this.execute('readFullHistory', { id }),
-          records: records.map(ref => ({ ...ref, record: this.execute('getVersionedRecord', ref) })) };
-      },
-      commitConversation: value => this.commitConversation(value),
-      createRun: value => this.db.transaction(() => {
-        this.assertWorkspaceOperation(value.run.conversationId);
-        const result = this.runs.create(value.run);
-        if (result.created) this.writeHistory(value.run.conversationId, [value.message], false, value.expectedRevision);
-        return result;
-      })(),
-      getRun: ({ id }) => this.runs.get(id),
-      getRunByRequestKey: ({ requestKey }) => this.runs.byRequestKey(requestKey),
-      listRuns: options => this.runs.list(options),
-      appendRunEvent: value => {
-        const event = this.runs.append(value);
-        if (value.update?.status && ['completed', 'failed', 'cancelled', 'interrupted'].includes(value.update.status)) this.histories.releaseCursor(value.runId);
-        return event;
-      },
-      readRunEvents: ({ runId, after, limit }) => this.runs.events(runId, after, limit),
-      createConversation: metadata => this.createConversation(metadata),
-      initializeConversation: value => this.db.transaction(() => {
-        this.createConversation(value.metadata);
-        if (value.messages.length) this.writeHistory(value.metadata.id, value.messages, false);
-        this.commitRecords(value.records);
-        return this.summary(this.conversation(value.metadata.id));
-      })(),
-      getConversation: ({ id }) => this.getConversation(id),
-      getConversationInfo: ({ id }) => {
-        const row = this.findConversation(id);
-        if (!row) return null;
-        const history = this.histories.info(row.history_id);
-        return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
-          messageCount: history.message_count, historyRevision: history.revision };
-      },
-      saveMetadata: metadata => this.saveMetadata(metadata),
-      listConversations: options => this.listConversations(options),
-      listConversationIds: options => this.listConversationIds(options),
-      searchConversationIds: ({ query }) => this.searchConversationIds(query),
-      listUsageConversations: options => this.listUsageConversations(options),
-      readHistory: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }),
-      readHistoryWithFloors: ({ id, options }) => ({ conversationId: id, ...this.histories.pageWithFloors(this.conversation(id).history_id, options) }),
-      readHistoryOutline: ({ id }) => ({ conversationId: id, ...this.histories.outline(this.conversation(id).history_id) }),
-      readPendingToolCalls: ({ id, runId }) => this.histories.pendingToolCalls(this.conversation(id).history_id, runId),
-      readHistorySelection: ({ id, options }) => ({ conversationId: id, ...this.histories.select(this.conversation(id).history_id, options) }),
-      historyInfo: ({ id }) => {
-        const info = this.histories.info(this.conversation(id).history_id);
-        return { total: info.message_count, revision: info.revision };
-      },
-      readUsageState: ({ id, records = [], since }) => ({ ...this.histories.usage(this.conversation(id).history_id, since),
-        records: records.map(record => ({ namespace: record.namespace, id: record.id, record: this.execute('getVersionedRecord', record) })) }),
-      recordRevisions: ({ records }) => records.map(({ namespace, id }) => {
-        assertIdentifier(namespace); assertIdentifier(id);
-        return (this.db.prepare('SELECT revision FROM records WHERE namespace=? AND id=?').get(namespace, id) as { revision: number } | undefined)?.revision ?? null;
-      }),
-      readFullHistory: ({ id }) => {
-        const historyId = this.conversation(id).history_id;
-        const info = this.histories.info(historyId);
-        const messages: PlatformMessage[] = [];
-        for (let offset = 0; offset < info.message_count; offset += 1000) messages.push(...this.histories.page(historyId, { offset, limit: 1000 }).messages);
-        return { conversationId: id, total: info.message_count, revision: info.revision, startIndex: 0, messages };
-      },
-      appendHistory: ({ id, messages, options }) => this.writeHistory(id, messages, false, options?.expectedRevision),
-      replaceHistory: ({ id, messages, options }) => this.writeHistory(id, messages, true, options?.expectedRevision),
-      forkConversation: value => this.db.transaction(() => {
-        const source = this.conversation(value.sourceId);
-        this.histories.checkRevision(source.history_id, value.expectedRevision);
-        const target = this.insertConversation(value.metadata, this.histories.fork(source.history_id, value.beforeIndex));
-        if (value.records?.length) this.commitRecords(value.records);
-        return target;
-      })(),
-      deleteConversation: ({ id }) => this.db.transaction(() => {
-        this.assertWorkspaceOperation(id);
-        const row = this.findConversation(id);
-        if (!row) return false;
-        this.db.prepare('DELETE FROM records WHERE owner_id=?').run(id);
-        this.db.prepare('DELETE FROM migrations WHERE conversation_id=?').run(id);
-        this.db.prepare('DELETE FROM conversations WHERE id=?').run(id);
-        this.db.prepare('DELETE FROM histories WHERE id=?').run(row.history_id);
-        return true;
-      })(),
-      saveSnapshot: ({ metadata, messages }) => this.db.transaction(() => {
-        assertIdentifier(metadata.id, 'snapshot id');
-        if (!Number.isFinite(metadata.timestamp)) invalid('Snapshot timestamp must be finite.');
-        const conversation = this.conversation(metadata.conversationId);
-        if (this.db.prepare('SELECT 1 FROM snapshots WHERE id=?').get(metadata.id)) {
-          throw new PlatformStorageError('REVISION_CONFLICT', 'Snapshot ID already exists.');
-        }
-        const historyId = this.histories.fork(conversation.history_id);
-        if (messages !== undefined) this.histories.replace(historyId, messages);
-        this.db.prepare('INSERT INTO snapshots(id,conversation_id,history_id,metadata_hash) VALUES(?,?,?,?)')
-          .run(metadata.id, metadata.conversationId, historyId, this.objects.putValue(metadata));
-      })(),
-      getSnapshot: ({ id }) => {
-        assertIdentifier(id);
-        const row = this.db.prepare('SELECT history_id,metadata_hash FROM snapshots WHERE id=?').get(id) as { history_id: string; metadata_hash: Buffer } | undefined;
-        if (!row) return null;
-        const history: PlatformMessage[] = [];
-        const total = this.histories.info(row.history_id).message_count;
-        for (let offset = 0; offset < total; offset += 1000) history.push(...this.histories.page(row.history_id, { offset, limit: 1000 }).messages);
-        return { ...this.objects.getValue<SnapshotMetadata>(row.metadata_hash), history };
-      },
-      listSnapshots: ({ conversationId }) => {
-        assertIdentifier(conversationId);
-        return (this.db.prepare('SELECT id FROM snapshots WHERE conversation_id=? ORDER BY id').all(conversationId) as { id: string }[]).map(row => row.id);
-      },
-      deleteSnapshot: ({ id }) => this.db.transaction(() => {
-        assertIdentifier(id);
-        const row = this.db.prepare('SELECT history_id FROM snapshots WHERE id=?').get(id) as { history_id: string } | undefined;
-        if (!row) return false;
-        this.db.prepare('DELETE FROM snapshots WHERE id=?').run(id);
-        this.db.prepare('DELETE FROM histories WHERE id=?').run(row.history_id);
-        return true;
-      })(),
-      putRecord: record => { this.commitRecords([record]); },
-      commitRecords: mutations => this.commitRecords(mutations),
-      getVersionedRecord: ({ namespace, id, projection }) => {
-        assertIdentifier(namespace); assertIdentifier(id);
-        const row = this.db.prepare('SELECT value_hash,revision FROM records WHERE namespace=? AND id=?').get(namespace, id) as { value_hash: Buffer; revision: number } | undefined;
-        return { value: row ? this.objects.getValue(row.value_hash, projection) : null, revision: row?.revision ?? null };
-      },
-      getRecord: ({ namespace, id }) => {
-        assertIdentifier(namespace); assertIdentifier(id);
-        const row = this.db.prepare('SELECT value_hash FROM records WHERE namespace=? AND id=?').get(namespace, id) as { value_hash: Buffer } | undefined;
-        return row ? this.objects.getValue(row.value_hash) : null;
-      },
-      listRecords: ({ namespace, ownerId }) => {
-        assertIdentifier(namespace);
-        const rows = ownerId === undefined
-          ? this.db.prepare('SELECT id FROM records WHERE namespace=? ORDER BY id').all(namespace)
-          : this.db.prepare('SELECT id FROM records WHERE namespace=? AND owner_id=? ORDER BY id').all(namespace, ownerId);
-        return (rows as { id: string }[]).map(row => row.id);
-      },
-      readRecordPage: ({ namespace, ownerId, afterId, limit }) => {
-        assertIdentifier(namespace); assertIdentifier(ownerId);
-        if (afterId !== undefined) assertIdentifier(afterId);
-        if (!Number.isInteger(limit) || limit < 1 || limit > 200) invalid('A record page must contain between 1 and 200 entries.');
-        // 复用 namespace、owner_id、id 的索引，从游标继续读取，避免每次遍历整个事件档案。
-        const rows = this.db.prepare('SELECT id,value_hash FROM records WHERE namespace=? AND owner_id=? AND id>? ORDER BY id LIMIT ?')
-          .all(namespace, ownerId, afterId ?? '', limit) as { id: string; value_hash: Buffer }[];
-        return rows.map(row => ({ namespace, id: row.id, ownerId, value: this.objects.getValue(row.value_hash) }));
-      },
-      deleteRecord: ({ namespace, id }) => {
-        assertIdentifier(namespace); assertIdentifier(id);
-        return this.db.prepare('DELETE FROM records WHERE namespace=? AND id=?').run(namespace, id).changes > 0;
-      },
-      migrationBegin: value => this.beginMigration(value),
-      migrationAppend: value => this.db.transaction(() => {
-        const migration = this.migration(value.sourceKey);
-        if (migration.status !== 'importing' || migration.imported_count !== value.offset) {
-          throw new PlatformStorageError('REVISION_CONFLICT', 'Migration offset no longer matches.');
-        }
-        this.histories.append(migration.history_id!, value.messages);
-        const count = value.offset + value.messages.length;
-        this.db.prepare('UPDATE migrations SET imported_count=? WHERE source_key=?').run(count, value.sourceKey);
-        return { nextIndex: count, complete: false };
-      })(),
-      migrationFinish: value => this.db.transaction(() => {
-        const migration = this.migration(value.sourceKey);
-        if (migration.status === 'complete') return;
-        if (migration.fingerprint !== value.fingerprint) throw new PlatformStorageError('SOURCE_CHANGED', 'Source changed during migration.');
-        if (migration.imported_count !== value.total) throw new PlatformStorageError('CORRUPT_DATA', 'Imported message count does not match source.');
-        const metadata = this.objects.getValue<PlatformConversation>(migration.metadata_hash);
-        this.insertConversation(metadata, migration.history_id!);
-        this.db.prepare("UPDATE migrations SET status='complete',history_id=NULL WHERE source_key=?").run(value.sourceKey);
-      })(),
-      statistics: () => this.statistics(),
-      collectGarbage: () => this.collectGarbage(),
-      verify: () => this.verify(),
-      checkpoint: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); },
-      backupSnapshot: () => ({ ...captureStorageSnapshot(this.db, this.databasePath, this.objectPath), statistics: this.statistics() }),
-      backupInventory: () => backupInventory(this.db, this.objects),
-      mergeBackupUnits: input => { this.histories.clearSnapshots(); return mergeBackupUnits(this.db, this.objects, this.objectPath, input); },
-      close: () => { this.db.close(); },
-    };
-    if (!Object.hasOwn(operations, method)) invalid('Unknown storage operation.');
-    const result = operations[method](input);
-    // 只失效记忆数据的计算缓存，普通聊天写入不会迫使下一次搜索重传向量。
-    // 这些操作只修改输入声明的范围（删除后复用的行号也由写入方范围的失效覆盖）；备份合并无法判断范围，全部失效。
-    if (method === 'longMemoryWrite' || method === 'longMemoryVector' || method === 'longMemoryJobFinish')
-      this.vectorMatrices.invalidate([(input as StorageOperations['longMemoryWrite' | 'longMemoryVector' | 'longMemoryJobFinish']['input']).scope.id]);
-    else if (method === 'longMemoryRestore') this.vectorMatrices.invalidate((input as StorageOperations['longMemoryRestore']['input']).archive.scopes.map(scope => scope.id));
-    else if (method === 'mergeBackupUnits') this.vectorMatrices.invalidate();
-    return result;
+        return restored;
+      })();
+      // 事务成功后再失效，失败恢复不会改变现有向量矩阵。
+      this.vectorMatrices.invalidate(archive.scopes.map(scope => scope.id));
+      return result;
+    } },
+    longMemoryJobs: { concurrentRead: false, execute: ({ scopes, status }) => this.longMemories.jobs.list(scopes, status) },
+    longMemoryJob: { concurrentRead: false, execute: ({scope,id})=>this.longMemories.jobs.get(scope,id) },
+    longMemoryEnqueue: { concurrentRead: false, execute: ({ scope, job }) => this.longMemories.jobs.enqueue(scope, job) },
+    longMemoryJobTransition: { concurrentRead: false, execute: ({ scope, id, action, error,usage }) => this.longMemories.jobs.transition(scope, id, action, error,usage) },
+    longMemoryJobFinish: { concurrentRead: false, execute: ({ scope, id, write, usage,vectors }) => {
+      const result = this.longMemories.jobs.finish(scope, id, write, usage,vectors);
+      this.vectorMatrices.invalidate([scope.id]);
+      return result;
+    } },
+    memoryImportBatch: { concurrentRead: false, execute: input => this.memories.importBatch(input) },
+    memoryImportPublish: { concurrentRead: false, execute: input => this.memories.publishImport(input) },
+    memoryScopes: { concurrentRead: false, execute: ({ actorId }) => this.memories.scopes(actorId) },
+    memoryState: { concurrentRead: false, execute: scope => this.memories.state(scope) },
+    memoryEntries: { concurrentRead: false, execute: ({ scope, offset, limit, expectedRevision }) => this.memories.entries(scope, offset, limit, expectedRevision) },
+    memorySummaries: { concurrentRead: false, execute: ({ scope, lo, hi, expectedRevision }) => this.memories.summaries(scope, lo, hi, expectedRevision) },
+    memoryRevisions: { concurrentRead: false, execute: ({ scope, before }) => this.memories.revisions(scope, before) },
+    memoryWrite: { concurrentRead: false, execute: input => this.memories.write(input) },
+    readConversationState: { concurrentRead: true, execute: ({ id, records = [], cursor, historyProjection }) => {
+      const row = this.conversation(id);
+      if (records.length > 256) invalid('Too many conversation state records.');
+      if (cursor && historyProjection) invalid('Incremental history and field projection cannot be combined.');
+      return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
+        history: cursor ? { conversationId: id, ...this.histories.readIncremental(row.history_id, cursor) }
+          : historyProjection ? { conversationId: id, startIndex: 0, ...this.histories.select(row.history_id, { projection: historyProjection }) }
+          : this.execute('readFullHistory', { id }),
+        records: records.map(ref => ({ ...ref, record: this.execute('getVersionedRecord', ref) })) };
+    } },
+    commitConversation: { concurrentRead: false, execute: value => this.commitConversation(value) },
+    createRun: { concurrentRead: false, execute: value => this.db.transaction(() => {
+      this.assertWorkspaceOperation(value.run.conversationId);
+      const result = this.runs.create(value.run);
+      if (result.created) this.writeHistory(value.run.conversationId, [value.message], false, value.expectedRevision);
+      return result;
+    })() },
+    getRun: { concurrentRead: true, execute: ({ id }) => this.runs.get(id) },
+    getRunByRequestKey: { concurrentRead: true, execute: ({ requestKey }) => this.runs.byRequestKey(requestKey) },
+    listRuns: { concurrentRead: true, execute: options => this.runs.list(options) },
+    appendRunEvent: { concurrentRead: false, execute: value => {
+      const event = this.runs.append(value);
+      if (value.update?.status && ['completed', 'failed', 'cancelled', 'interrupted'].includes(value.update.status)) this.histories.releaseCursor(value.runId);
+      return event;
+    } },
+    readRunEvents: { concurrentRead: true, execute: ({ runId, after, limit }) => this.runs.events(runId, after, limit) },
+    createConversation: { concurrentRead: false, execute: metadata => this.createConversation(metadata) },
+    initializeConversation: { concurrentRead: false, execute: value => this.db.transaction(() => {
+      this.createConversation(value.metadata);
+      if (value.messages.length) this.writeHistory(value.metadata.id, value.messages, false);
+      this.commitRecords(value.records);
+      return this.summary(this.conversation(value.metadata.id));
+    })() },
+    getConversation: { concurrentRead: true, execute: ({ id }) => this.getConversation(id) },
+    getConversationInfo: { concurrentRead: true, execute: ({ id }) => {
+      const row = this.findConversation(id);
+      if (!row) return null;
+      const history = this.histories.info(row.history_id);
+      return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
+        messageCount: history.message_count, historyRevision: history.revision };
+    } },
+    saveMetadata: { concurrentRead: false, execute: metadata => this.saveMetadata(metadata) },
+    listConversations: { concurrentRead: true, execute: options => this.listConversations(options) },
+    listConversationIds: { concurrentRead: true, execute: options => this.listConversationIds(options) },
+    searchConversationIds: { concurrentRead: false, execute: ({ query }) => this.searchConversationIds(query) },
+    listUsageConversations: { concurrentRead: true, execute: options => this.listUsageConversations(options) },
+    readHistory: { concurrentRead: true, execute: ({ id, options }) => ({ conversationId: id, ...this.histories.page(this.conversation(id).history_id, options) }) },
+    readHistoryWithFloors: { concurrentRead: true, execute: ({ id, options }) => ({ conversationId: id, ...this.histories.pageWithFloors(this.conversation(id).history_id, options) }) },
+    readHistoryOutline: { concurrentRead: true, execute: ({ id }) => ({ conversationId: id, ...this.histories.outline(this.conversation(id).history_id) }) },
+    readPendingToolCalls: { concurrentRead: true, execute: ({ id, runId }) => this.histories.pendingToolCalls(this.conversation(id).history_id, runId) },
+    readHistorySelection: { concurrentRead: true, execute: ({ id, options }) => ({ conversationId: id, ...this.histories.select(this.conversation(id).history_id, options) }) },
+    historyInfo: { concurrentRead: true, execute: ({ id }) => {
+      const info = this.histories.info(this.conversation(id).history_id);
+      return { total: info.message_count, revision: info.revision };
+    } },
+    readUsageState: { concurrentRead: true, execute: ({ id, records = [], since }) => ({ ...this.histories.usage(this.conversation(id).history_id, since),
+      records: records.map(record => ({ namespace: record.namespace, id: record.id, record: this.execute('getVersionedRecord', record) })) }) },
+    recordRevisions: { concurrentRead: true, execute: ({ records }) => records.map(({ namespace, id }) => {
+      assertIdentifier(namespace); assertIdentifier(id);
+      return (this.db.prepare('SELECT revision FROM records WHERE namespace=? AND id=?').get(namespace, id) as { revision: number } | undefined)?.revision ?? null;
+    }) },
+    readFullHistory: { concurrentRead: true, execute: ({ id }) => {
+      const historyId = this.conversation(id).history_id;
+      const info = this.histories.info(historyId);
+      const messages: PlatformMessage[] = [];
+      for (let offset = 0; offset < info.message_count; offset += 1000) messages.push(...this.histories.page(historyId, { offset, limit: 1000 }).messages);
+      return { conversationId: id, total: info.message_count, revision: info.revision, startIndex: 0, messages };
+    } },
+    appendHistory: { concurrentRead: false, execute: ({ id, messages, options }) => this.writeHistory(id, messages, false, options?.expectedRevision) },
+    replaceHistory: { concurrentRead: false, execute: ({ id, messages, options }) => this.writeHistory(id, messages, true, options?.expectedRevision) },
+    forkConversation: { concurrentRead: false, execute: value => this.db.transaction(() => {
+      const source = this.conversation(value.sourceId);
+      this.histories.checkRevision(source.history_id, value.expectedRevision);
+      const target = this.insertConversation(value.metadata, this.histories.fork(source.history_id, value.beforeIndex));
+      if (value.records?.length) this.commitRecords(value.records);
+      return target;
+    })() },
+    deleteConversation: { concurrentRead: false, execute: ({ id }) => this.db.transaction(() => {
+      this.assertWorkspaceOperation(id);
+      const row = this.findConversation(id);
+      if (!row) return false;
+      this.db.prepare('DELETE FROM records WHERE owner_id=?').run(id);
+      this.db.prepare('DELETE FROM migrations WHERE conversation_id=?').run(id);
+      this.db.prepare('DELETE FROM conversations WHERE id=?').run(id);
+      this.db.prepare('DELETE FROM histories WHERE id=?').run(row.history_id);
+      return true;
+    })() },
+    saveSnapshot: { concurrentRead: false, execute: ({ metadata, messages }) => this.db.transaction(() => {
+      assertIdentifier(metadata.id, 'snapshot id');
+      if (!Number.isFinite(metadata.timestamp)) invalid('Snapshot timestamp must be finite.');
+      const conversation = this.conversation(metadata.conversationId);
+      if (this.db.prepare('SELECT 1 FROM snapshots WHERE id=?').get(metadata.id)) {
+        throw new PlatformStorageError('REVISION_CONFLICT', 'Snapshot ID already exists.');
+      }
+      const historyId = this.histories.fork(conversation.history_id);
+      if (messages !== undefined) this.histories.replace(historyId, messages);
+      this.db.prepare('INSERT INTO snapshots(id,conversation_id,history_id,metadata_hash) VALUES(?,?,?,?)')
+        .run(metadata.id, metadata.conversationId, historyId, this.objects.putValue(metadata));
+    })() },
+    getSnapshot: { concurrentRead: true, execute: ({ id }) => {
+      assertIdentifier(id);
+      const row = this.db.prepare('SELECT history_id,metadata_hash FROM snapshots WHERE id=?').get(id) as { history_id: string; metadata_hash: Buffer } | undefined;
+      if (!row) return null;
+      const history: PlatformMessage[] = [];
+      const total = this.histories.info(row.history_id).message_count;
+      for (let offset = 0; offset < total; offset += 1000) history.push(...this.histories.page(row.history_id, { offset, limit: 1000 }).messages);
+      return { ...this.objects.getValue<SnapshotMetadata>(row.metadata_hash), history };
+    } },
+    listSnapshots: { concurrentRead: true, execute: ({ conversationId }) => {
+      assertIdentifier(conversationId);
+      return (this.db.prepare('SELECT id FROM snapshots WHERE conversation_id=? ORDER BY id').all(conversationId) as { id: string }[]).map(row => row.id);
+    } },
+    deleteSnapshot: { concurrentRead: false, execute: ({ id }) => this.db.transaction(() => {
+      assertIdentifier(id);
+      const row = this.db.prepare('SELECT history_id FROM snapshots WHERE id=?').get(id) as { history_id: string } | undefined;
+      if (!row) return false;
+      this.db.prepare('DELETE FROM snapshots WHERE id=?').run(id);
+      this.db.prepare('DELETE FROM histories WHERE id=?').run(row.history_id);
+      return true;
+    })() },
+    putRecord: { concurrentRead: false, execute: record => { this.commitRecords([record]); } },
+    commitRecords: { concurrentRead: false, execute: mutations => this.commitRecords(mutations) },
+    getVersionedRecord: { concurrentRead: true, execute: ({ namespace, id, projection }) => {
+      assertIdentifier(namespace); assertIdentifier(id);
+      const row = this.db.prepare('SELECT value_hash,revision FROM records WHERE namespace=? AND id=?').get(namespace, id) as { value_hash: Buffer; revision: number } | undefined;
+      return { value: row ? this.objects.getValue(row.value_hash, projection) : null, revision: row?.revision ?? null };
+    } },
+    getRecord: { concurrentRead: true, execute: ({ namespace, id }) => {
+      assertIdentifier(namespace); assertIdentifier(id);
+      const row = this.db.prepare('SELECT value_hash FROM records WHERE namespace=? AND id=?').get(namespace, id) as { value_hash: Buffer } | undefined;
+      return row ? this.objects.getValue(row.value_hash) : null;
+    } },
+    listRecords: { concurrentRead: true, execute: ({ namespace, ownerId }) => {
+      assertIdentifier(namespace);
+      const rows = ownerId === undefined
+        ? this.db.prepare('SELECT id FROM records WHERE namespace=? ORDER BY id').all(namespace)
+        : this.db.prepare('SELECT id FROM records WHERE namespace=? AND owner_id=? ORDER BY id').all(namespace, ownerId);
+      return (rows as { id: string }[]).map(row => row.id);
+    } },
+    readRecordPage: { concurrentRead: true, execute: ({ namespace, ownerId, afterId, limit }) => {
+      assertIdentifier(namespace); assertIdentifier(ownerId);
+      if (afterId !== undefined) assertIdentifier(afterId);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) invalid('A record page must contain between 1 and 200 entries.');
+      // 复用 namespace、owner_id、id 的索引，从游标继续读取，避免每次遍历整个事件档案。
+      const rows = this.db.prepare('SELECT id,value_hash FROM records WHERE namespace=? AND owner_id=? AND id>? ORDER BY id LIMIT ?')
+        .all(namespace, ownerId, afterId ?? '', limit) as { id: string; value_hash: Buffer }[];
+      return rows.map(row => ({ namespace, id: row.id, ownerId, value: this.objects.getValue(row.value_hash) }));
+    } },
+    deleteRecord: { concurrentRead: false, execute: ({ namespace, id }) => {
+      assertIdentifier(namespace); assertIdentifier(id);
+      return this.db.prepare('DELETE FROM records WHERE namespace=? AND id=?').run(namespace, id).changes > 0;
+    } },
+    migrationBegin: { concurrentRead: false, execute: value => this.beginMigration(value) },
+    migrationAppend: { concurrentRead: false, execute: value => this.db.transaction(() => {
+      const migration = this.migration(value.sourceKey);
+      if (migration.status !== 'importing' || migration.imported_count !== value.offset) {
+        throw new PlatformStorageError('REVISION_CONFLICT', 'Migration offset no longer matches.');
+      }
+      this.histories.append(migration.history_id!, value.messages);
+      const count = value.offset + value.messages.length;
+      this.db.prepare('UPDATE migrations SET imported_count=? WHERE source_key=?').run(count, value.sourceKey);
+      return { nextIndex: count, complete: false };
+    })() },
+    migrationFinish: { concurrentRead: false, execute: value => this.db.transaction(() => {
+      const migration = this.migration(value.sourceKey);
+      if (migration.status === 'complete') return;
+      if (migration.fingerprint !== value.fingerprint) throw new PlatformStorageError('SOURCE_CHANGED', 'Source changed during migration.');
+      if (migration.imported_count !== value.total) throw new PlatformStorageError('CORRUPT_DATA', 'Imported message count does not match source.');
+      const metadata = this.objects.getValue<PlatformConversation>(migration.metadata_hash);
+      this.insertConversation(metadata, migration.history_id!);
+      this.db.prepare("UPDATE migrations SET status='complete',history_id=NULL WHERE source_key=?").run(value.sourceKey);
+    })() },
+    statistics: { concurrentRead: false, execute: () => this.statistics() },
+    collectGarbage: { concurrentRead: false, execute: () => this.collectGarbage() },
+    verify: { concurrentRead: false, execute: () => this.verify() },
+    checkpoint: { concurrentRead: false, execute: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); } },
+    backupSnapshot: { concurrentRead: false, execute: () => ({ ...captureStorageSnapshot(this.db, this.databasePath, this.objectPath), statistics: this.statistics() }) },
+    backupInventory: { concurrentRead: false, execute: () => backupInventory(this.db, this.objects) },
+    mergeBackupUnits: { concurrentRead: false, execute: input => {
+      this.histories.clearSnapshots();
+      const result = mergeBackupUnits(this.db, this.objects, this.objectPath, input);
+      this.vectorMatrices.invalidate();
+      return result;
+    } },
+    close: { concurrentRead: false, execute: () => { this.db.close(); } },
+  };
+
+  canRunDuringVectorCalculation<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): boolean {
+    const policy = this.operations[method]?.concurrentRead;
+    return typeof policy === 'function' ? policy(input) : policy === true;
+  }
+
+  execute<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): StorageOperations[M]['output'] {
+    // RPC 只访问已登记的操作，不按传入名称调用其他数据库方法。
+    if (!Object.hasOwn(this.operations, method)) invalid('Unknown storage operation.');
+    return this.operations[method].execute(input);
   }
 
   private commitConversation(value: ConversationCommit): ConversationCommitResult {
