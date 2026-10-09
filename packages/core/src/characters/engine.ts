@@ -57,11 +57,14 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
   const count = input.messageCount ?? input.history.length;
   const candidates = input.books.flatMap(book => book.entries.map(entry => ({ book, entry, key: `${book.id}/${entry.id}` })))
     .sort((a, b) => Number(b.entry.constant) - Number(a.entry.constant) || b.entry.priority - a.entry.priority || b.entry.order - a.entry.order);
+  const histories = new Map<number, string>();
   let recursionText = '';
   const totalPasses = input.maxRecursionSteps && input.maxRecursionSteps > 0 ? input.maxRecursionSteps : candidates.length + 1;
   const skip = (bookId: string, entryId: string, reason: string) => output.skipped.push({ bookId, entryId, reason });
   for (let pass = 0; pass < totalPasses; pass++) {
     const activated: (typeof candidates[number] & { score: number; sticky: boolean; text: string })[] = [];
+    // 递归正文只在轮次之间追加；仅保留最近的扫描组，避免不同来源的大文本同时占用内存。
+    let scan: { depth: number; extra: string; text: string; lowercase?: string } | undefined;
     for (const node of candidates) {
       const { book, entry, key } = node;
       if (selected.has(key) || declined.has(key) || !entry.enabled || !entry.content.trim()) continue;
@@ -73,17 +76,24 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
       if (!sticky && timing && count > timing.activatedAt && count <= timing.cooldownUntil) { declined.add(key); skip(book.id, entry.id, 'cooldown'); continue; }
       if (entry.vectorized && !entry.constant && !sticky) { declined.add(key); skip(book.id, entry.id, '未配置向量激活'); continue; }
       const depth = Math.max(0, Math.floor(entry.scanDepth ?? book.scanDepth ?? input.scanDepth));
-      const history = depth === 0 ? '' : input.history.slice(-depth).join('\n');
+      let history = histories.get(depth);
+      if (history === undefined) {
+        history = depth === 0 ? '' : input.history.slice(-depth).join('\n');
+        histories.set(depth, history);
+      }
       const extra = (entry.additionalSources ?? []).map(name => input.additionalSources?.[name] ?? '').join('\n');
-      const haystack = expandCharacterMacros(`${history}\n${recursionText}\n${extra}`, input.macros);
+      if (!scan || scan.depth !== depth || scan.extra !== extra) {
+        scan = { depth, extra, text: expandCharacterMacros(`${history}\n${recursionText}\n${extra}`, input.macros) };
+      }
+      const haystack = scan;
       let active = entry.constant || sticky;
       let score = 0;
       try {
         const matches = (value: string) => {
           const keyword = expandCharacterMacros(value, input.macros);
           if (!keyword) return false;
-          if (entry.useRegex || /^\/.+\/[dgimsuvy]*$/.test(keyword)) return compile(keyword).test(haystack);
-          const source = entry.caseSensitive ? haystack : haystack.toLowerCase();
+          if (entry.useRegex || /^\/.+\/[dgimsuvy]*$/.test(keyword)) return compile(keyword).test(haystack.text);
+          const source = entry.caseSensitive ? haystack.text : (haystack.lowercase ??= haystack.text.toLowerCase());
           const target = entry.caseSensitive ? keyword : keyword.toLowerCase();
           if (!entry.wholeWords) return source.includes(target);
           return new RegExp(`(?<![\\p{L}\\p{N}_])${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(source);

@@ -61,9 +61,7 @@ def _normalize_case_sensitive(entry: WorldBookEntry, default_case_sensitive: boo
 def _includes_keyword(text: str, keyword: str, case_sensitive: bool) -> bool:
     if not keyword:
         return False
-    if case_sensitive:
-        return keyword in text
-    return keyword.lower() in text.lower()
+    return (keyword if case_sensitive else keyword.lower()) in text
 
 
 def _any_included(text: str, keywords: list[str], case_sensitive: bool) -> bool:
@@ -167,18 +165,32 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
     by_index: dict[int, dict[str, Any]] = {}
     prob_failed: set[int] = set()
     recursion_context = context_text
+    lowercase_context: str | None = None
+    lowercase_recursion_context: str | None = None
 
     def consider(entry: WorldBookEntry, iteration: int) -> bool:
+        nonlocal lowercase_context, lowercase_recursion_context
         if not entry.get("enabled"):
             return False
 
-        ctx = context_text if (iteration > 0 and entry.get("excludeRecursion")) else recursion_context
+        base_context = iteration > 0 and entry.get("excludeRecursion")
+        ctx = context_text if base_context else recursion_context
         case_sensitive = _normalize_case_sensitive(entry, default_case_sensitive)
 
         mode = entry.get("activationMode")
         if mode == "always":
             return True
         if mode == "keyword":
+            # 同一上下文只转换一次；递归追加内容后清除对应的小写文本。
+            if not case_sensitive:
+                if base_context:
+                    if lowercase_context is None:
+                        lowercase_context = context_text.lower()
+                    ctx = lowercase_context
+                else:
+                    if lowercase_recursion_context is None:
+                        lowercase_recursion_context = recursion_context.lower()
+                    ctx = lowercase_recursion_context
             return _keyword_triggered(entry, ctx, case_sensitive)
         if mode == "vector":
             return entry.get("index") in vector_hits
@@ -221,6 +233,7 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
                 recursion_context = (
                     f"{recursion_context}\n{entry.get('content')}" if recursion_context else str(entry.get("content"))
                 )
+                lowercase_recursion_context = None
 
         if not any_new:
             break

@@ -14,8 +14,7 @@ function normalizeCaseSensitive(entry: WorldBookEntry, defaultCaseSensitive: boo
 
 function includesKeyword(text: string, keyword: string, caseSensitive: boolean): boolean {
   if (!keyword) return false;
-  if (caseSensitive) return text.includes(keyword);
-  return text.toLowerCase().includes(keyword.toLowerCase());
+  return text.includes(caseSensitive ? keyword : keyword.toLowerCase());
 }
 
 function anyIncluded(text: string, keywords: string[], caseSensitive: boolean): boolean {
@@ -140,16 +139,25 @@ export function getActiveEntries(params: {
   const probFailed = new Set<number>();
 
   let recursionContext = contextText;
+  let lowercaseContext: string | undefined;
+  let lowercaseRecursionContext: string | undefined;
 
   const consider = (entry: WorldBookEntry, iteration: number) => {
     if (!entry.enabled) return false;
 
     // excludeRecursion: 不被“递归上下文”触发（只用 base context）
-    const ctx = iteration > 0 && entry.excludeRecursion ? contextText : recursionContext;
+    const baseContext = iteration > 0 && entry.excludeRecursion;
+    const ctx = baseContext ? contextText : recursionContext;
     const caseSensitive = normalizeCaseSensitive(entry, defaultCaseSensitive);
 
     if (entry.activationMode === 'always') return true;
-    if (entry.activationMode === 'keyword') return keywordTriggered(entry, ctx, caseSensitive);
+    if (entry.activationMode === 'keyword') {
+      // 同一上下文的所有关键词共用小写文本；追加递归内容后再重新计算。
+      const matchingContext = caseSensitive ? ctx : baseContext
+        ? (lowercaseContext ??= contextText.toLowerCase())
+        : (lowercaseRecursionContext ??= recursionContext.toLowerCase());
+      return keywordTriggered(entry, matchingContext, caseSensitive);
+    }
     if (entry.activationMode === 'vector') return vectorHits.has(entry.index);
 
     return false;
@@ -187,6 +195,7 @@ export function getActiveEntries(params: {
       // preventRecursion: 不参与“递归上下文”
       if (!entry.preventRecursion && entry.content) {
         recursionContext = recursionContext ? `${recursionContext}\n${entry.content}` : entry.content;
+        lowercaseRecursionContext = undefined;
       }
     }
 
