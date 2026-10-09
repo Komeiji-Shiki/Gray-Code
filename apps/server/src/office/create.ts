@@ -60,7 +60,8 @@ async function createSpreadsheet(content: OfficeContent): Promise<Buffer> {
     }
     if (content.font) sheet.eachRow(row => row.eachCell(cell => { cell.font = { ...cell.font, name: content.font }; }));
   }
-  return Buffer.from(await book.xlsx.writeBuffer());
+  // ExcelJS 的 Node 实现返回 Buffer，声明文件仍将它写成 ArrayBuffer。
+  return await book.xlsx.writeBuffer() as unknown as Buffer;
 }
 
 async function createSlides(content: OfficeContent): Promise<Buffer> {
@@ -77,7 +78,7 @@ async function createSlides(content: OfficeContent): Promise<Buffer> {
     for (const item of definition.elements ?? []) slide.addText(item.text, { ...item, fontFace: content.font });
     if (definition.notes !== undefined) slide.addNotes(definition.notes);
   }
-  return Buffer.from(await presentation.write({ outputType: 'nodebuffer', compression: true }) as Uint8Array);
+  return await presentation.write({ outputType: 'nodebuffer', compression: true }) as Buffer;
 }
 
 export async function createOffice(format: OfficeFormat, content: OfficeContent): Promise<Buffer> {

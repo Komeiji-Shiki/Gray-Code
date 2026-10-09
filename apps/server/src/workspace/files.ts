@@ -184,11 +184,12 @@ export class WorkspaceFiles {
       // 确认只允许此次恢复读取磁盘，草稿仍保留；失败时不需要重建被提前删除的内容。
       const ignoredDrafts = new Set(confirmed ? dirty.map(([key]) => key) : []);
       const resolve = (file: string, entryOnly = false, directory = false) => this.resolveGranted(workspace, file, options.writeGrants, entryOnly, directory);
-      const capture = async (file: string, entryOnly = false) => {
-        const absolute = await resolve(file, entryOnly);
+      // 同一阶段按已解析的真实路径读取版本；预检与实际写入阶段仍分别重新解析目标。
+      const captureAbsolute = (absolute: string) => {
         this.checkDrafts(absolute, options.clientId, ignoredDrafts);
         return readFileVersion(absolute);
       };
+      const capture = async (file: string, entryOnly = false) => captureAbsolute(await resolve(file, entryOnly));
       const directoryExists = async (directory: string) => {
         try {
           if (!(await stat(await resolve(directory, false, true))).isDirectory()) throw new Error('目录路径已被文件占用。');
@@ -213,11 +214,11 @@ export class WorkspaceFiles {
           const key = this.key(absolute);
           if (seen.has(key)) throw new Error('同一批次不能重复修改同一个文件。');
           seen.add(key);
-          if ((await capture(change.path, change.entryOnly)).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改，请重新读取。`);
+          if ((await captureAbsolute(absolute)).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改，请重新读取。`);
         }
         for (const change of changes) {
           const absolute = await resolve(change.path, change.entryOnly);
-          if ((await capture(change.path, change.entryOnly)).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改。`);
+          if ((await captureAbsolute(absolute)).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改。`);
           if (change.before.hash === change.after.hash) continue;
           await replaceFileVersion(absolute, change.after);
           this.changed(workspace.id, change.path, absolute);

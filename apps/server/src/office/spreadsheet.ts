@@ -3,7 +3,9 @@ import type { OfficeCell } from './create';
 
 export async function readSpreadsheet(bytes: Uint8Array, selected?: string) {
   const { default: ExcelJS } = await import('exceljs');
-  const book = new ExcelJS.Workbook(); await book.xlsx.load(Uint8Array.from(bytes).buffer);
+  const book = new ExcelJS.Workbook();
+  // Node 入口支持带偏移的字节视图；类型声明的 ArrayBuffer 无需通过复制来满足。
+  await book.xlsx.load(bytes as unknown as Parameters<typeof book.xlsx.load>[0]);
   const sheets = book.worksheets.map(sheet => ({ name: sheet.name, rows: sheet.rowCount, columns: sheet.columnCount }));
   if (selected && !book.getWorksheet(selected)) throw new Error(`工作表不存在：${selected}`);
   const items: Array<Record<string, unknown>> = [];

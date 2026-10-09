@@ -351,10 +351,7 @@ ${content}
             this.options.signal?.throwIfAborted();
             if (this.options.host?.resolvePath) dirPath = await this.options.host.resolvePath(dirPath);
             this.options.signal?.throwIfAborted();
-            if (!fs.existsSync(dirPath)) {
-                return;
-            }
-            
+            // 目录缺失由 readdir 直接返回，避免每次刷新先做同步存在性查询。
             const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
             this.options.signal?.throwIfAborted();
             
@@ -410,7 +407,6 @@ ${content}
                     const requestedFile = path.join(fullPath, 'SKILL.md');
                     const skillFile = this.options.host?.resolvePath ? await this.options.host.resolvePath(requestedFile) : requestedFile;
                     this.options.signal?.throwIfAborted();
-                    if (!fs.existsSync(skillFile)) return;
                     const skill = await this.loadSkill(name, skillFile, source);
                     if (skill) {
                         targetSkills.set(skill.id, skill);
@@ -423,6 +419,7 @@ ${content}
             }));
         } catch (error) {
             this.options.signal?.throwIfAborted();
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
             console.error(`[SkillsManager] Failed to scan directory ${dirPath}:`, error);
         }
     }
@@ -462,6 +459,7 @@ ${content}
             return this.parseSkillText(id, raw, filePath, source);
         } catch (error) {
             this.options.signal?.throwIfAborted();
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
             console.error(`[SkillsManager] Failed to load skill ${id}:`, error);
             return null;
         }
@@ -630,10 +628,12 @@ ${content}
      * 获取所有已启用 Skill 的摘要信息
      */
     getSkillSummaries(): Array<{ name: string; description: string }> {
-        return this.getEnabledSkills().map(s => ({ 
-            name: s.name, 
-            description: s.description 
-        }));
+        const summaries: Array<{ name: string; description: string }> = [];
+        // 摘要不需要正文和路径副本，直接按原 Map 顺序读取已启用条目。
+        for (const skill of this.skills.values()) {
+            if (this.enabledSkillIds.has(skill.id)) summaries.push({ name: skill.name, description: skill.description });
+        }
+        return summaries;
     }
     
     /**

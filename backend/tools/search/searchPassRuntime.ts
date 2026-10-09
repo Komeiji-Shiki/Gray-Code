@@ -199,21 +199,25 @@ async function searchInDirectory(
 
             // 文件头文本检测（跳过二进制）
             let detection: TextDetectionResult = { isText: true, encoding: 'utf-8', bomLength: 0 };
+            let header: Uint8Array | undefined;
+            const streamHeaderBytes = Math.max(headerSampleBytes, 64 * 1024);
             if (enableHeaderTextCheck) {
                 try {
-                    const header = await readHeaderBytes(fileUri, headerSampleBytes);
-                    detection = detectTextFromHeader(header);
+                    // 快速二进制判断保留原样本长度，流式编码识别复用同一次读取的大样本。
+                    header = await readHeaderBytes(fileUri, streaming ? streamHeaderBytes : headerSampleBytes);
+                    detection = detectTextFromHeader(header.subarray(0, headerSampleBytes));
                     if (!detection.isText) {
                         return { kind: 'binary' };
                     }
                 } catch {
                     // header 检测失败时退化为旧行为（仍有大小/输出护栏）
+                    header = undefined;
                     detection = { isText: true, encoding: 'utf-8', bomLength: 0 };
                 }
             }
 
             if (streaming) {
-                detection = detectStreamingEncoding(await readHeaderBytes(fileUri, Math.max(headerSampleBytes, 64 * 1024)));
+                detection = detectStreamingEncoding(header ?? await readHeaderBytes(fileUri, streamHeaderBytes));
                 if (!detection.isText) return { kind: 'binary' };
                 return { kind: 'stream', relativePath: host.toRelativePath(fileUri, workspaceName !== null), file: fileUri, detection };
             }

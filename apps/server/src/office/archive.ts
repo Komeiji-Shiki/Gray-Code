@@ -20,7 +20,8 @@ export class OfficeArchive {
   readonly zip: AdmZip;
   constructor(bytes: Uint8Array, format: OfficeFormat) {
     if (bytes.length > MAX_OFFICE_BYTES) throw new Error('Office 文件超过 64 MiB。');
-    this.zip = new AdmZip(Buffer.from(bytes));
+    // ZIP 读取不修改原始字节，保留视图范围即可，避免再复制整份文档。
+    this.zip = new AdmZip(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
     const entries = this.zip.getEntries();
     if (entries.length > 20000 || entries.reduce((sum: number, entry: any) => sum + entry.header.size, 0) > 256 * 1024 * 1024)
       throw new Error('Office 文件解压后的内容过大。');

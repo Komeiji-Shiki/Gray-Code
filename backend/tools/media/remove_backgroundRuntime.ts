@@ -392,10 +392,12 @@ async function executeRemoveTask(
             return { index, success: false, error: `Task ${index + 1}: Failed to generate mask. Content may have been filtered.` };
         }
 
+        // 保存遮罩和像素处理共用一次解码，保存入口只读取这份字节。
+        const maskBuffer = Buffer.from(maskImage.data, 'base64');
         // 遮罩也是写入目标，宿主与成品图使用同一文件授权和事务。
         let maskSaveWarning: string | undefined;
         if (mask_path) {
-            try { await saveImage(Buffer.from(maskImage.data, 'base64'), mask_path, context, 'remove_background'); }
+            try { await saveImage(maskBuffer, mask_path, context, 'remove_background'); }
             catch (error) { maskSaveWarning = `Task ${index + 1}: failed to save mask image: ${String(error)}`; }
         }
 
@@ -412,7 +414,6 @@ async function executeRemoveTask(
             return { index, success: false, error: `Task ${index + 1}: sharp library not installed, please install in Settings -> Extension Dependencies` };
         }
         
-        const maskBuffer = Buffer.from(maskImage.data, 'base64');
         const originalMeta = await sharp(imageFile.data).metadata();
 
         // 像素数护栏（权威兜底）：逐像素合成是主线程 width*height 次 JS 循环，进入前必须校验尺寸。

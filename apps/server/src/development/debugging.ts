@@ -13,7 +13,7 @@ interface Session {
   info: DebugSessionInfo; client: ClientSession; workspace: WorkspaceDefinition; configuration: DebugConfiguration;
   connection?: DapConnection; ready?: Promise<void>; runtime?: DebugAdapterRuntime; opening?: Promise<DebugAdapterRuntime>; stopping?: Promise<void>;
   programs: DebugTerminalProgram[];
-  output: DebugOutput[]; outputSequence: number; executionRevision: number; breakpointResults: Record<string, DebugBreakpointResult[]>;
+  output: DebugOutput[]; outputCharacters: number; outputSequence: number; executionRevision: number; breakpointResults: Record<string, DebugBreakpointResult[]>;
 }
 const finished = (session: Session) => ['terminated', 'failed'].includes(session.info.status);
 const requestMethods = new Set(['threads', 'stackTrace', 'scopes', 'variables', 'evaluate', 'continue', 'pause', 'next', 'stepIn', 'stepOut',
@@ -86,7 +86,10 @@ export class DebugServices {
   private output(session: Session, category: string, text: string, extra: Partial<DebugOutput> = {}) {
     const entry = { ...extra, sequence: ++session.outputSequence, category, output: text.slice(-200_000) };
     session.output.push(entry);
-    while (session.output.length > 1000 || session.output.length > 1 && session.output.reduce((sum, item) => sum + item.output.length, 0) > 300_000) session.output.shift();
+    // 只在增删条目时维护原字符预算，高频输出不再反复遍历完整历史。
+    session.outputCharacters += entry.output.length;
+    while (session.output.length > 1000 || session.output.length > 1 && session.outputCharacters > 300_000)
+      session.outputCharacters -= session.output.shift()!.output.length;
     this.app.publish({ type: 'debug.output', clientId: session.client.clientId, sessionId: session.info.id, entry });
   }
   async start(client: ClientSession, workspaceId: string, configuration: DebugConfiguration) {
@@ -137,7 +140,7 @@ export class DebugServices {
   }
   private create(client: ClientSession, workspace: WorkspaceDefinition, configuration: DebugConfiguration, parent?: Session): Session {
     const id = randomUUID();
-    const session: Session = { client, workspace, configuration: structuredClone(configuration), output: [], programs: [], outputSequence: 0, executionRevision: 0, breakpointResults: {},
+    const session: Session = { client, workspace, configuration: structuredClone(configuration), output: [], outputCharacters: 0, programs: [], outputSequence: 0, executionRevision: 0, breakpointResults: {},
       info: { id, rootId: parent?.info.rootId ?? id, parentId: parent?.info.id, workspaceId: workspace.id, configurationId: configuration.id,
         adapterId: configuration.adapterId, request: configuration.request, name: configuration.name, status: 'starting', capabilities: {} } };
     this.sessions.set(id, session); this.changed(session); return session;

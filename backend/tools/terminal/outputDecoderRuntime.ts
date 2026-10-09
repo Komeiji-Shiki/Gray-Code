@@ -161,7 +161,7 @@ function countReplacementChars(text: string): number {
 /**
  * 判断是否应从 UTF-8 降级到 GBK 解码
  */
-function shouldFallbackToGbk(utf8Text: string, gbkText: string, chunk: Buffer): boolean {
+function shouldFallbackToGbk(utf8Text: string, chunk: Buffer): boolean {
     // 纯 ASCII 内容不需要降级
     if (!chunk.some(byte => byte >= 0x80)) {
         return false;
@@ -172,7 +172,8 @@ function shouldFallbackToGbk(utf8Text: string, gbkText: string, chunk: Buffer): 
         return false;
     }
 
-    const gbkReplacementCount = countReplacementChars(gbkText);
+    // 只有 UTF-8 已出现替换字符时才预览 GBK，正常输出不需要再次解码整块字节。
+    const gbkReplacementCount = countReplacementChars(gbkPreviewDecoder.decode(chunk));
     return gbkReplacementCount < utf8ReplacementCount;
 }
 
@@ -206,8 +207,7 @@ function decodeWithMode(
         return utf8Text;
     }
 
-    const gbkPreview = gbkPreviewDecoder.decode(chunk);
-    if (shouldFallbackToGbk(utf8Text, gbkPreview, chunk)) {
+    if (shouldFallbackToGbk(utf8Text, chunk)) {
         modeRef.mode = 'gbk';
         // 把扣下的跨 chunk 前缀与本 chunk 一起交给 GBK 解码：
         // 本 chunk 的 utf8 输出（替换字符垃圾）被丢弃，前缀字节不再丢失
