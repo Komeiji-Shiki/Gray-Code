@@ -29,11 +29,11 @@ export class ToolRegistry {
     private aliasIndex = new Map<string, string>();
     private dependencyChecker: DependencyChecker | null = null;
     /**
-     * 注册/注销版本号：每次 register/unregister 递增。
+     * 声明版本号：注册、注销、成功刷新与清空非空注册表时递增。
      * 修改原因：subagents 的工具名快照缓存以「工具数 + MCP 计数」为键，
      *          同数量注册/注销（如注销后以同数量重新注册）时快照会滞后。
      * 修改方式：缓存键纳入本版本号，注册/注销即自然失效，无需跨模块失效调用。
-     * 注：refreshTool 只替换已有工具实例、不改变工具名集合，故不递增。
+     * refreshTool 也可能改变描述、参数或别名，声明缓存同样需要失效。
      */
     private revision = 0;
     
@@ -262,7 +262,7 @@ export class ToolRegistry {
     }
 
     /**
-     * 注册/注销版本号：工具集合内容可能变化（同数量注册/注销）时用于使依赖方缓存失效。
+     * 声明版本号：工具集合或已有声明变化时用于使依赖方缓存失效。
      *
      * @returns 当前版本号
      */
@@ -324,6 +324,7 @@ export class ToolRegistry {
         this.removeAliases(name);
         this.tools.set(name, tool);
         this.indexAliases(tool);
+        this.revision++;
         return true;
     }
 
@@ -331,6 +332,7 @@ export class ToolRegistry {
      * 清空所有工具
      */
     clear(): void {
+        if (this.tools.size > 0) this.revision++;
         this.tools.clear();
         this.registrations.clear();
         this.aliasIndex.clear();

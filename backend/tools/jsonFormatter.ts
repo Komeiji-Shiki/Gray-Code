@@ -69,7 +69,20 @@ function generateParameterExample(schema: any): any {
         return schema.example || 'string_value';
     }
     if (schema.type === 'number' || schema.type === 'integer') {
-        return schema.example || 0;
+        // 显式示例和默认值直接沿用；只修正兜底的 0，避免从 1 开始的行号示例无效。
+        const explicit = schema.example ?? schema.default;
+        if (explicit != null) return explicit;
+        let value = Math.max(schema.minimum ?? -Infinity, Math.min(schema.maximum ?? Infinity, 0));
+        if (typeof schema.exclusiveMinimum === 'number' && value <= schema.exclusiveMinimum) {
+            value = typeof schema.maximum === 'number'
+                ? (schema.exclusiveMinimum + schema.maximum) / 2
+                : schema.exclusiveMinimum + 1;
+        }
+        if (schema.type === 'integer') {
+            value = Math.ceil(value);
+            if (typeof schema.maximum === 'number' && value > schema.maximum) value = Math.floor(schema.maximum);
+        }
+        return value;
     }
     if (schema.type === 'boolean') {
         return schema.example ?? true;
@@ -80,7 +93,10 @@ function generateParameterExample(schema: any): any {
     }
     if (schema.type === 'object' && schema.properties) {
         const obj: Record<string, any> = {};
+        const required = Array.isArray(schema.required) ? schema.required : [];
         for (const [key, val] of Object.entries(schema.properties)) {
+            // 已声明必填项时只展示必要结构，避免嵌套可选参数撑大每轮工具指南。
+            if (required.length > 0 && !required.includes(key)) continue;
             obj[key] = generateParameterExample(val);
         }
         return obj;
@@ -147,51 +163,13 @@ ${JSON.stringify({ tool: tool.name, parameters: exampleParams }, null, 2)}
     
     return `## Tool Usage Guide
 
-You are a powerful AI assistant with access to various tools. You should actively use these tools to gather information, perform actions, and provide accurate responses.
-
-### How to Call Tools
-
-When you need to use a tool, output a JSON object wrapped in special boundary markers:
-
-${TOOL_CALL_START}
-{"tool": "tool_name", "parameters": {...}}
-${TOOL_CALL_END}
-
-You can call multiple tools by outputting multiple tool blocks:
-
-${TOOL_CALL_START}
-{"tool": "read_file", "parameters": {"path": "file1.txt"}}
-${TOOL_CALL_END}
-
-Reading multiple files (each item may optionally specify a line range):
+Place calls at the end of your reply, with one valid JSON object per boundary block. Repeat blocks for multiple calls. Send independent calls and edits together; wait for results when later calls depend on them or edits overlap.
 
 ${TOOL_CALL_START}
 {"tool": "read_file", "parameters": {"files": [{"path": "file1.txt"}, {"path": "src/main.ts", "startLine": 10, "endLine": 20}]}}
 ${TOOL_CALL_END}
 
-${TOOL_CALL_START}
-{"tool": "write_file", "parameters": {"path": "output.txt", "content": "Hello!"}}
-${TOOL_CALL_END}
-
-### Best Practices
-
-1. **Actively use tools**: When you need information you don't have, use the appropriate tool to get it. Don't guess or make assumptions when tools can provide accurate data.
-
-2. **Place tool calls at the end**: Structure your response so that tool calls appear at the end of your message. First provide any explanations or context, then call the necessary tools.
-
-3. **One step at a time**: After each tool call, wait for the result before proceeding. Use the tool results to inform your next steps.
-
-4. **Combine tools effectively**: You can call multiple tools in a single response when needed. Use the results from one tool to inform subsequent tool calls.
-
-### Syntax Rules
-
-- Each tool call must be wrapped in ${TOOL_CALL_START} and ${TOOL_CALL_END} markers
-- The content between markers must be a valid JSON object
-- Use proper JSON syntax (double quotes for strings, no trailing commas)
-- Arrays use standard JSON array syntax: ["item1", "item2"]
-- The boundary markers ensure that any code blocks in parameters won't interfere with parsing
-
----
+Use the listed parameter names and JSON types: double-quoted keys and strings, no trailing commas, and arrays as arrays. Escape line breaks inside strings. Parameters may contain code blocks without changing the boundary format.
 
 ## Available Tools
 

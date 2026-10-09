@@ -87,86 +87,23 @@ ${paramsList}
     
     return `## Tool Usage Guide
 
-You are a powerful AI assistant with access to various tools. You should actively use these tools to gather information, perform actions, and provide accurate responses.
+Place calls at the end of your reply, one per <tool_use> block. Repeat blocks for multiple calls. Send independent calls and edits together; wait for results when later calls depend on them or edits overlap.
 
-### How to Call Tools
-
-When you need to use a tool, respond with XML format:
+Use the listed parameter names. Arrays use <item> elements; objects use nested properties. Text containing <, >, & or multiline code must use CDATA:
 <tool_use>
-  <tool_name>tool name here</tool_name>
+  <tool_name>tool_name</tool_name>
   <parameters>
-    <parameter_name>value</parameter_name>
-    <!-- For array parameters, use multiple <item> elements: -->
+    <text_param><![CDATA[if (a < b && c > d) { ... }]]></text_param>
     <array_param>
       <item>value1</item>
       <item>value2</item>
     </array_param>
-    <!-- For object parameters, use nested elements: -->
     <object_param>
       <property1>value1</property1>
       <property2>value2</property2>
     </object_param>
   </parameters>
 </tool_use>
-
-**CRITICAL - CDATA for code and special characters**: If a parameter value contains \`<\`, \`>\`, \`&\`, or multi-line code, you MUST wrap the value in a CDATA section, otherwise the XML cannot be parsed:
-<tool_use>
-  <tool_name>write_file</tool_name>
-  <parameters>
-    <path>index.html</path>
-    <content><![CDATA[<html>
-  <body>if (a < b && c > d) { ... }</body>
-</html>]]></content>
-  </parameters>
-</tool_use>
-
-### Examples
-
-Reading a single file:
-<tool_use>
-  <tool_name>read_file</tool_name>
-  <parameters>
-    <path>src/main.ts</path>
-  </parameters>
-</tool_use>
-
-Reading multiple files (each item may optionally specify a line range):
-<tool_use>
-  <tool_name>read_file</tool_name>
-  <parameters>
-    <files>
-      <item>
-        <path>file1.txt</path>
-      </item>
-      <item>
-        <path>src/main.ts</path>
-        <startLine>10</startLine>
-        <endLine>20</endLine>
-      </item>
-    </files>
-  </parameters>
-</tool_use>
-
-Writing files:
-<tool_use>
-  <tool_name>write_file</tool_name>
-  <parameters>
-    <path>file1.txt</path>
-    <content>Hello, World!</content>
-  </parameters>
-</tool_use>
-
-### Best Practices
-
-1. **Actively use tools**: When you need information you don't have, use the appropriate tool to get it. Don't guess or make assumptions when tools can provide accurate data.
-
-2. **Place tool calls at the end**: Structure your response so that tool calls appear at the end of your message. First provide any explanations or context, then call the necessary tools.
-
-3. **One step at a time**: After each tool call, wait for the result before proceeding. Use the tool results to inform your next steps.
-
-4. **Combine tools effectively**: You can call multiple tools in a single response when needed. Use the results from one tool to inform subsequent tool calls.
-
----
 
 ## Available Tools
 

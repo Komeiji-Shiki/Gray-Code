@@ -4,7 +4,7 @@
  * 覆盖：
  *  - register 重复注册抛错（且保留首个实例）
  *  - refreshTool 失败时保留旧实例（不替换、不污染别名）
- *  - revision 递增语义（register/unregister 递增，refreshTool 不递增）
+ *  - revision 声明版本语义（注册、注销、成功刷新与清空非空注册表递增）
  */
 
 import { ToolRegistry } from '../../tools/ToolRegistry';
@@ -67,7 +67,7 @@ describe('ToolRegistry 核心行为', () => {
         expect(registry.refreshTool('missing_tool')).toBe(false);
     });
 
-    test('revision：register/unregister 递增，refreshTool（成功/失败）不递增', () => {
+    test('revision：声明发生变化时递增，失败刷新与空注册表清空时不变', () => {
         const registry = new ToolRegistry();
         expect(registry.getRevision()).toBe(0);
 
@@ -77,11 +77,11 @@ describe('ToolRegistry 核心行为', () => {
         registry.register(() => makeTool('tool_b'));
         expect(registry.getRevision()).toBe(2);
 
-        // refreshTool 只替换实例、不改变工具名集合 → 不递增
+        // 成功刷新可能改变描述、参数与别名，声明版本需要递增。
         expect(registry.refreshTool('tool_a')).toBe(true);
-        expect(registry.getRevision()).toBe(2);
+        expect(registry.getRevision()).toBe(3);
 
-        // 工厂抛错同样不改变工具名集合 → 不递增
+        // 工厂抛错保留旧声明，版本不变。
         const registry2 = new ToolRegistry();
         let shouldThrow2 = false;
         const registration2 = (): Tool => {
@@ -103,16 +103,18 @@ describe('ToolRegistry 核心行为', () => {
 
         // unregister 已存在工具 → 递增
         expect(registry.unregister('tool_b')).toBe(true);
-        expect(registry.getRevision()).toBe(3);
+        expect(registry.getRevision()).toBe(4);
 
         // unregister 不存在的工具 → 不递增
         expect(registry.unregister('nope')).toBe(false);
-        expect(registry.getRevision()).toBe(3);
+        expect(registry.getRevision()).toBe(4);
 
-        // clear 只清空映射、不改 revision
+        // 清空非空注册表使声明缓存失效；再次清空没有变化。
         registry.clear();
-        expect(registry.getRevision()).toBe(3);
+        expect(registry.getRevision()).toBe(5);
         expect(registry.count()).toBe(0);
+        registry.clear();
+        expect(registry.getRevision()).toBe(5);
     });
 
     test('registerBatch 逐条注册并递增 revision', () => {

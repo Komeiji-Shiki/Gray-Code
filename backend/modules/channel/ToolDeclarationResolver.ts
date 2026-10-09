@@ -49,7 +49,7 @@ export interface ToolDeclarationResolveOptions {
 // ==================== 工具声明缓存 ====================
 // 工具循环每迭代都会经 ChannelManager.getFilteredTools → resolve() 重建全部声明
 // （遍历工具注册表 + 逐工具递归 cleanJsonSchema + 遍历全部 MCP 工具），同一回合内
-// 解析输入几乎不变。按「解析选项 + 设置指纹 + MCP 工具列表版本」缓存结果：
+// 解析输入几乎不变。按「解析选项 + 设置指纹 + 注册表与 MCP 工具列表版本」缓存结果：
 // - 设置指纹取影响工具声明的配置切片（toolsEnabled / toolAutoExec / imageTools /
 //   memory / subagents），任何相关设置变更都会改变指纹 → 自动失效；
 // - MCP 连接/断开/能力刷新事件递增版本号（getAllTools 只返回已连接且有能力缓存的
@@ -105,10 +105,11 @@ export class ToolDeclarationResolver {
 
     /** 设置指纹：只序列化影响工具声明的配置切片（值都很小，序列化成本可忽略） */
     private settingsFingerprint(): string {
-        const settings = this.settingsManager
-            && typeof (this.settingsManager as any).getSettings === 'function'
-            ? (this.settingsManager as any).getSettings() as { toolsEnabled?: unknown; toolAutoExec?: unknown; toolsConfig?: Record<string, unknown> }
-            : undefined;
+        const settings = this.settingsManager && typeof this.settingsManager.getScalarSettings === 'function'
+            ? this.settingsManager.getScalarSettings('toolsEnabled', 'toolAutoExec', 'toolsConfig')
+            : this.settingsManager && typeof this.settingsManager.getSettings === 'function'
+                ? this.settingsManager.getSettings()
+                : undefined;
         if (!settings) {
             return '';
         }
@@ -140,6 +141,8 @@ export class ToolDeclarationResolver {
             options.channelType ?? '',
             options.toolMode ?? '',
             options.multimodalEnabled ?? false,
+            // 坐标模式影响裁剪工具说明，缓存键与声明使用相同默认值。
+            options.toolOptions?.cropImage?.useNormalizedCoordinates ?? true,
             options.includeBuiltins !== false,
             options.includeMcp !== false,
             options.allowlist ?? null,
@@ -147,6 +150,7 @@ export class ToolDeclarationResolver {
             options.excludeToolNames ?? null,
             toolPolicy ?? null,
             this.settingsFingerprint(),
+            this.toolRegistry?.getRevision?.() ?? 0,
             this.mcpToolsVersion,
             hasAvailableSubAgentSafe(),
         ]);

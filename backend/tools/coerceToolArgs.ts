@@ -104,7 +104,7 @@ function coerceObjectBySchema(
     properties: Record<string, PropertySchema>
 ): { value: Record<string, any>; modified: boolean } {
     let modified = false;
-    const result: Record<string, any> = { ...obj };
+    let result = obj;
 
     for (const [key, propSchema] of Object.entries(properties)) {
         if (!(key in result)) {
@@ -112,6 +112,10 @@ function coerceObjectBySchema(
         }
         const coerced = coerceValueBySchema(result[key], propSchema);
         if (coerced.modified) {
+            // 合法的批量参数沿用原引用，首次转换时才复制，避免逐项创建无用副本。
+            if (!modified) {
+                result = { ...obj };
+            }
             result[key] = coerced.value;
             modified = true;
         }
@@ -174,15 +178,19 @@ function coerceValueBySchema(
         }
 
         if (Array.isArray(arrayValue) && schema.items) {
-            let itemsModified = false;
-            const newItems = arrayValue.map((item: any) => {
-                const coerced = coerceValueBySchema(item, schema.items);
+            let newItems = arrayValue;
+            for (let i = 0; i < arrayValue.length; i++) {
+                // 与 map 一样保留稀疏位置；null/undefined 继续由元素转换规则处理。
+                if (!(i in arrayValue)) continue;
+                const coerced = coerceValueBySchema(arrayValue[i], schema.items);
                 if (coerced.modified) {
-                    itemsModified = true;
+                    if (newItems === arrayValue) {
+                        newItems = arrayValue.slice();
+                    }
+                    newItems[i] = coerced.value;
                 }
-                return coerced.value;
-            });
-            if (itemsModified) {
+            }
+            if (newItems !== arrayValue) {
                 return { value: newItems, modified: true };
             }
         }
