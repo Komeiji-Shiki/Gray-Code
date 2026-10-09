@@ -31,15 +31,20 @@ export function presentProjectSearch(text: string, found: TextMatch[], limit: nu
     return { line, character: offset - lineStart };
   };
   const matches: ProjectSearchMatch[] = [];
+  let previewLineEnd = 0;
   for (const match of found) {
     if (matches.length >= limit) return { matches, truncated: true };
     const start = position(match.index), startOffset = lineStart;
     const end = position(match.index + match.length);
-    const lineEnd = text.indexOf('\n', match.index);
+    // 命中位置递增，同一行的预览复用行尾，避免长行的剩余文字被反复扫描。
+    if (match.index >= previewLineEnd) {
+      const lineEnd = text.indexOf('\n', match.index);
+      previewLineEnd = lineEnd < 0 ? text.length : lineEnd;
+    }
     const previewStart = Math.max(startOffset, match.index - 100);
-    const previewEnd = Math.min(lineEnd < 0 ? text.length : lineEnd, previewStart + 300);
+    const previewEnd = Math.min(previewLineEnd, previewStart + 300);
     matches.push({ range: { start, end }, text: match.text.slice(0, 300),
-      preview: `${previewStart > startOffset ? '…' : ''}${text.slice(previewStart, previewEnd).replace(/\r$/, '')}${previewEnd < (lineEnd < 0 ? text.length : lineEnd) ? '…' : ''}` });
+      preview: `${previewStart > startOffset ? '…' : ''}${text.slice(previewStart, previewEnd).replace(/\r$/, '')}${previewEnd < previewLineEnd ? '…' : ''}` });
   }
   return { matches, truncated: false };
 }

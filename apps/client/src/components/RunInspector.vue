@@ -33,7 +33,10 @@ const activity = computed(() => window.graycode?.kind === 'web' && webUi.connect
   ? '正在重新连接，任务状态待同步' : !selected.value && state.snapshot?.settings.providers.length === 0
     ? '请先配置模型服务' : runActivity(selected.value, events.value));
 const visibleEvents = computed(() => events.value.filter(event => lane.value === '全部' || eventLane(event.type) === lane.value));
-const groups = computed(() => requestGroups(request.value?.body));
+const json = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+// 请求预览内容只随请求变化格式化，避免运行事件更新时反复序列化长上下文正文。
+const groups = computed(() => requestGroups(request.value?.body).map(group => ({ title: group.title, text: json(group.value) })));
+const plainRequestBody = computed(() => JSON.stringify(request.value?.body, null, 2));
 const requests = computed(() => events.value.filter(event => event.type === 'model.request'));
 const streaming = computed(() => {
   for (let index = events.value.length - 1; index >= 0; index--) {
@@ -42,7 +45,6 @@ const streaming = computed(() => {
   }
   return undefined;
 });
-const json = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString();
 async function loadDiagnostics() {
   try { diagnostics.value = await call('diagnostics.get'); }
@@ -148,8 +150,8 @@ onUnmounted(() => { disposed = true; refreshRunsAgain = false; conversationEpoch
         <template v-else><p>{{ request.model }} · {{ request.protocol }} · {{ time(request.capturedAt) }}</p>
           <p v-if="request.metrics" class="preview-note">{{ request.metrics.inputItems }} 条输入项 · {{ request.metrics.inputImages }} 张输入图片 · {{ request.metrics.nativeTools }} 项原生工具声明</p>
           <JsonDetails v-if="request.turnContext?.characterTurn" class="request-group" label="本回合角色资料与世界书激活结果" :value="request.turnContext.characterTurn" />
-          <pre v-if="view === 'plain'">{{ JSON.stringify(request.body, null, 2) }}</pre>
-          <template v-else><details v-for="(group, index) in groups" :key="index" class="request-group" open><summary>{{ group.title }}</summary><pre>{{ json(group.value) }}</pre></details></template>
+          <pre v-if="view === 'plain'">{{ plainRequestBody }}</pre>
+          <template v-else><details v-for="(group, index) in groups" :key="index" class="request-group" open><summary>{{ group.title }}</summary><pre>{{ group.text }}</pre></details></template>
         </template>
       </div>
     </div>
