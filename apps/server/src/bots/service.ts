@@ -1,17 +1,18 @@
-import type { BotStatus, RunEvent, PlatformMessage } from '@graycode/contracts';
+import type { BotStatus, RunEvent, PlatformMessage, BotPermissionDiagnostic } from '@graycode/contracts';
 export type { BotStatus } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import { saveBotDocument } from './documents';
 import { cleanBotPresentationReferences } from './presentation';
-import type { BotGateway, BotInbound, BotInteraction } from './gateway';
-import { discordNeedsMessageContent, discordTriggered } from './config';
+import type { BotGateway, BotInbound, BotInteraction, BotReply } from './gateway';
+import { discordNeedsMessageContent, discordTriggered, discordTrigger } from './config';
 import { BotSessions, parseBotAction, botRunLabels, type BotContext, type BotPlatform, type BotRoute } from './sessions';
 import { BotOutbox } from './outbox';
-import { BotStreams, botFinalReplies, botMessageText } from './streaming';
+import { BotStreams, botFinalReplies, botMessageText, botGeneratedImages } from './streaming';
 import { botRunMessages, botRunReply } from './rounds';
 import { botInboundParts } from './media';
 import { BotSummaries } from './summaries';
 import { publicBotError } from './errorSummary';
+import { BotDiagnostics } from './diagnostics';
 
 /** 平台适配器负责传输，共享会话服务负责所有文字指令和交互菜单的任务操作。 */
 export class BoundBotService {
@@ -28,12 +29,15 @@ export class BoundBotService {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private events: Promise<unknown> = Promise.resolve();
   private readonly inbound = new Map<string, Promise<unknown>>();
+  private readonly receiving = new Map<string, Promise<void>>();
+  readonly diagnostics = new BotDiagnostics();
   readonly sessions: BotSessions;
   readonly outbox: BotOutbox;
   readonly summaries: BotSummaries;
   private readonly streams: BotStreams;
   constructor(protected readonly app: PlatformApplication, protected readonly platform: BotPlatform, private readonly factory: () => BotGateway) {
     this.sessions = new BotSessions(app);
+    this.sessions.inbox.observe = (context, stage, reason, conversationId, runId) => this.diagnostics.update(context.id, stage, reason, conversationId, runId);
     this.summaries = new BotSummaries(app, platform, this.sessions);
     this.outbox = new BotOutbox(app, platform, () => this.gateway && this.current.status === 'connected' && this.current.botId
       ? { gateway: this.gateway, botId: this.current.botId } : undefined, route => this.admitted(route));
@@ -63,7 +67,7 @@ export class BoundBotService {
   status(): BotStatus {
     const needsReconnect = this.platform === 'discord' && this.current.status === 'connected'
       && this.connectedMessageContent !== discordNeedsMessageContent(this.app.settings.snapshot().settings.discord);
-    return { ...this.current, ...this.outbox.status(), needsReconnect };
+    return { ...this.current, ...this.gateway?.health?.(), ...this.outbox.status(), needsReconnect };
   }
   async autoConnect(): Promise<void> {
     if (this.automatic || !this.autoConnectEnabled()) return;
@@ -127,15 +131,20 @@ export class BoundBotService {
         ? this.interaction(input) : input.respond({ content: '连接已经变化，请重新打开 /gray 面板。' }));
       const allMessages = this.platform === 'discord' ? discordNeedsMessageContent(this.app.settings.snapshot().settings.discord) : !settings.mentionOnly;
       const user = await gateway.connect(token ?? '', allMessages, message => { if (this.gateway === gateway && epoch === this.connectionEpoch) void this.receive(message); },
-        status => { if (this.gateway !== gateway || epoch !== this.connectionEpoch) return; this.current.status = status; this.notifyConnectionChange(); if (status === 'connected') void this.outbox.flush(); });
+        status => {
+          if (this.gateway !== gateway || epoch !== this.connectionEpoch || this.current.status === status) return;
+          this.current.status = status; this.notifyConnectionChange();
+          if (status === 'connected') { void this.outbox.flush(); if (this.current.botId) void this.sessions.inbox.resume(this.platform); }
+          else this.sessions.inbox.pause();
+        });
       if (this.gateway !== gateway || epoch !== this.connectionEpoch) { await gateway.disconnect(); return this.status(); }
       this.connectedMessageContent = allMessages;
-      this.current = { status: 'connected', botId: user.id, name: user.name, avatarUrl: user.avatarUrl, controlsReady: user.controlsReady, warning: user.warning };
+      this.current = { status: gateway.health?.().online === false ? 'offline' : 'connected', botId: user.id, name: user.name, avatarUrl: user.avatarUrl, controlsReady: user.controlsReady, warning: user.warning };
       await this.streams.resume();
       if (epoch !== this.connectionEpoch) return this.status();
       await this.outbox.flush();
       if (epoch !== this.connectionEpoch) return this.status();
-      await this.sessions.inbox.resume(this.platform);
+      if (this.current.status === 'connected') await this.sessions.inbox.resume(this.platform);
       if (epoch !== this.connectionEpoch) return this.status();
       this.summaries.start(); return this.status();
     } catch (error) {
@@ -151,6 +160,7 @@ export class BoundBotService {
   }
   private async disconnect(): Promise<void> {
     const epoch = ++this.connectionEpoch; const gateway = this.gateway; this.gateway = undefined;
+    this.sessions.inbox.pause();
     this.clearInteractions(); await this.summaries.stop(); await this.streams.pause(); await gateway?.disconnect();
     if (epoch === this.connectionEpoch) { this.current = { status: 'stopped' }; this.notifyConnectionChange(); }
   }
@@ -165,34 +175,50 @@ export class BoundBotService {
     return this.sessions.admitted(route);
   }
   async receive(message: BotInbound): Promise<void> {
+    this.diagnostics.receive(message);
     let context: BotContext;
-    try { context = this.context(message); } catch { return; }
-    if (!this.sessions.canRecord(context)) return;
-    const key = this.sessions.key(context);
-    const work = (this.inbound.get(key) ?? Promise.resolve()).catch(() => {}).then(() => this.receiveOne(context, message));
-    this.inbound.set(key, work);
-    try { await work; } finally { if (this.inbound.get(key) === work) this.inbound.delete(key); }
-  }
-  private async receiveOne(context: BotContext, message: BotInbound): Promise<void> {
-    let actorId: string | undefined;
-    try { actorId = this.sessions.authorize(context).id; } catch { /* 未绑定成员仍提供获准频道的背景上下文。 */ }
-    const config = this.app.settings.snapshot().settings[this.platform]!;
+    try { context = this.context(message); } catch { this.diagnostics.update(message.id, 'ignored', 'Bot 尚未连接。'); return; }
+    if (!this.sessions.canRecord(context)) { this.diagnostics.update(message.id, 'ignored', '会话未获准、用户被拉黑，或私聊权限不足。'); return; }
+    if (this.receiving.has(message.id)) { this.diagnostics.update(message.id, 'duplicate', '同一条消息正在处理，无需重复解析附件。'); return; }
     const text = (this.platform === 'discord' ? message.content.replace(new RegExp(`<@!?${context.botId}>`, 'g'), '') : message.content).trim();
-    const triggered = !!actorId && !message.automated && (this.platform === 'discord' ? discordTriggered(this.app.settings.snapshot().settings.discord, message, text)
-      : !config.mentionOnly || message.mentioned || message.direct);
+    const receivedAt = Date.now();
+    const key = this.sessions.key(context);
+    const process = async () => {
+      if (await this.sessions.inbox.contains(context)) { this.diagnostics.update(message.id, 'duplicate', '这条平台消息已经处理。'); return; }
+      await this.receiveOne(context, message, text, receivedAt);
+    };
+    // 控制指令仍走会话事务和实时授权，但不等待前一条消息的网络附件读取。
+    const priority = ['status', 'cancel', 'answer', 'approval', 'interrupt', 'help', 'source', 'workspaces'].includes(parseBotAction(text).kind);
+    const work = (priority ? process() : (this.inbound.get(key) ?? Promise.resolve()).catch(() => {}).then(process))
+      .catch(error => { this.current.error = (error as Error).message; this.diagnostics.update(message.id, 'failed', this.current.error); });
+    this.receiving.set(message.id, work);
+    if (!priority) this.inbound.set(key, work);
+    try { await work; } finally { this.receiving.delete(message.id); if (this.inbound.get(key) === work) this.inbound.delete(key); }
+  }
+  private async receiveOne(context: BotContext, message: BotInbound, text: string, receivedAt: number): Promise<void> {
+    let actorId: string | undefined;
+    let denied: string | undefined;
+    try { actorId = this.sessions.authorize(context).id; } catch (error) { denied = (error as Error).message; }
+    const settings = this.app.settings.read('discord', 'onebot');
+    const config = settings[this.platform]!;
+    const action = parseBotAction(text);
+    const control = action.kind !== 'message';
+    let triggered = !!actorId && !message.automated && discordTriggered(config, message, text);
     try {
-      const resolved = await this.gateway?.hydrate?.(message) ?? message;
+      this.diagnostics.update(message.id, control ? 'control' : 'preparing', control ? '正在处理控制指令。' : '正在读取引用和附件。');
+      const resolved = control ? { ...message, attachments: [], references: [], segments: undefined } : await this.gateway?.hydrate?.(message) ?? message;
       const hydrated = this.platform === 'discord' ? await cleanBotPresentationReferences(this.app, resolved, context.botId) : resolved;
+      triggered = !!actorId && !message.automated && discordTriggered(config, hydrated, text);
       let documentConversation: Promise<string> | undefined;
       const parts = await botInboundParts({ ...hydrated, content: text }, this.platform, undefined, async (attachment, bytes) => {
         const id = await (documentConversation ??= this.sessions.serial(context, async () => (await this.sessions.recordingConversation(context)).conversation.id));
         return saveBotDocument(this.app, id, attachment, bytes);
       });
-      const action = parseBotAction(text);
-      const control = triggered && action.kind !== 'message';
-      await this.sessions.inbox.receive(context, hydrated, parts, triggered && !control, !message.mentioned && !triggered);
-      if (!control || !actorId) return;
-      const result = await this.sessions.perform(context, action);
+      const result = control && triggered && actorId ? await this.sessions.perform(context, action) : undefined;
+      await this.sessions.inbox.receive(context, hydrated, parts, triggered && !control, !message.mentioned && !triggered, receivedAt, control);
+      if (denied || message.automated) this.diagnostics.update(message.id, 'ignored', denied ?? '机器人和 Webhook 消息只作为背景。');
+      if (!result || !actorId) return;
+      this.diagnostics.update(message.id, 'control', '控制指令已处理。');
       if (result.reply) {
         const snapshot = await this.sessions.snapshot(context);
         const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
@@ -202,6 +228,7 @@ export class BoundBotService {
       }
     } catch (error) {
       this.current.error = error instanceof Error ? error.message : 'Bot 请求未完成。';
+      this.diagnostics.update(message.id, 'failed', this.current.error);
       if (!actorId || !triggered) return;
       const route: BotRoute = { platform: this.platform, botId: context.botId, channelId: context.channelId, actorId,
         conversationId: '', platformUserId: context.authorId, direct: context.direct, network: context.network,
@@ -214,6 +241,8 @@ export class BoundBotService {
   private async onEvent(event: RunEvent): Promise<void> {
     if (!['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted', 'approval.requested', 'question.asked'].includes(event.type)) return;
     const run = await this.app.storage.getRun(event.runId); if (!run) return;
+    if (event.type.startsWith('run.') && run.requestKey.startsWith(`${this.platform}:`)) this.diagnostics.update(run.requestKey.slice(this.platform.length + 1), event.type === 'run.completed' ? 'completed' : 'failed',
+      event.type === 'run.completed' ? '回复已生成；投递状态可在待发送列表查看。' : `任务${botRunLabels[run.status]}`, run.conversationId, run.id);
     if (event.type.startsWith('run.') && this.current.status === 'connected') void this.sessions.inbox.flush(run.conversationId).catch(error => { this.current.error = (error as Error).message; });
     const route = await this.sessions.routeForRun(this.platform, run);
     if (!route) return;
@@ -224,8 +253,10 @@ export class BoundBotService {
     if (event.type.startsWith('run.') && route.conversationId !== run.conversationId) return;
     let text: string;
     let footer: string | undefined;
+    let attachments: BotReply[] = [];
     if (event.type === 'run.completed') {
       const messages = await botRunMessages(this.app, run);
+      attachments = botGeneratedImages(messages);
       const conclusion = event.payload.reason === 'document_confirmation' ? '文档已经生成，正在等待确认。请在桌面端审阅并确认设计、评审或计划后继续。' : undefined;
       if (this.platform === 'discord') ({ text, footer } = botRunReply(messages, route, conclusion));
       else text = conclusion ?? botMessageText(messages.at(-1), route, this.platform);
@@ -245,14 +276,22 @@ export class BoundBotService {
       if (this.platform === 'discord') ({ text, footer } = botRunReply(await botRunMessages(this.app, run), route, text));
     }
     const terminal = event.type.startsWith('run.');
-    if (terminal && await this.streams.finish(run.id, route, text, footer)) return;
-    await this.outbox.put(`${event.runId}-${event.sequence}`, route, botFinalReplies(text, route, footer));
+    if (terminal && await this.streams.finish(run.id, route, text, footer, attachments)) return;
+    await this.outbox.put(`${event.runId}-${event.sequence}`, route, [...botFinalReplies(text, route, footer), ...attachments]);
   }
   async guilds() { if (!this.gateway?.listGuilds) throw new Error('请先连接 Discord。'); return this.gateway.listGuilds(); }
   async channels(guildId: string) { if (!this.gateway?.listChannels) throw new Error('请先连接 Discord。'); return this.gateway.listChannels(guildId); }
   async user(userId: string) { if (!this.gateway?.getUser) throw new Error('请先连接 Discord。'); return this.gateway.getUser(userId); }
+  checkPermission(authorId: string, channelId: string, direct: boolean): BotPermissionDiagnostic {
+    const config = this.app.settings.read(this.platform)[this.platform]!;
+    const context: BotContext = { id: 'permission-check', platform: this.platform, botId: this.current.botId ?? '', authorId, channelId, direct,
+      network: this.platform === 'onebot' ? this.app.settings.read('onebot').onebot?.protocolVersion === 12 ? this.app.settings.read('onebot').onebot?.self?.platform : 'qq' : undefined };
+    const trigger = discordTrigger(config, channelId);
+    try { const actor = this.sessions.authorize(context); return { allowed: true, reason: '可以在此会话发起任务，工具仍按该账号的授权执行。', actorName: actor.displayName, trigger }; }
+    catch (error) { return { allowed: false, reason: (error as Error).message, trigger }; }
+  }
   async close(): Promise<void> {
-    this.unsubscribe(); this.cancelAutoRetry(); await Promise.allSettled(this.inbound.values()); await this.events;
+    this.unsubscribe(); this.cancelAutoRetry(); this.sessions.inbox.pause(); await Promise.allSettled(this.receiving.values()); await this.events;
     await this.sessions.close(); await this.streams.close(); await this.stop(); await this.outbox.close();
   }
 }

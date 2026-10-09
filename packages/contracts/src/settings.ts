@@ -44,6 +44,13 @@ export interface BotConnectionSettings {
   workspaceId?: string;
   mentionOnly: boolean;
   defaultProfile?: DiscordReplyProfile;
+  defaultTrigger?: DiscordTrigger;
+  messagePolicy?: BotMessagePolicy;
+}
+export interface BotMessagePolicy {
+  mergeWindowMs: number;
+  cooldownMs: number;
+  maxPending: number;
 }
 export interface BotEnvironmentEntry {
   enabled: boolean;
@@ -66,7 +73,7 @@ export type DiscordTrigger = 'mention' | 'reply' | 'mention_or_reply' | 'keyword
 export interface DiscordReplyProfile {
   environmentEntry?: BotEnvironmentEntry;
   autoSummary?: BotAutoSummarySettings;
-  output?: Partial<DiscordOutputSettings>;
+  output?: Partial<BotOutputSettings>;
   agentId?: string;
   providerId?: string;
   modelId?: string;
@@ -84,15 +91,17 @@ export interface DiscordChannelSettings {
   name?: string;
   trigger?: DiscordTrigger;
   keywords?: string[];
+  messagePolicy?: Partial<BotMessagePolicy>;
   profile?: DiscordReplyProfile;
 }
-export interface DiscordOutputSettings {
+export interface BotOutputSettings {
   streaming: boolean;
   updateIntervalMs: number;
   showThoughts: boolean;
   showToolStatus: boolean;
-  longReplies: 'split' | 'file';
+  longReplies: 'split' | 'file' | 'forward';
 }
+export interface DiscordOutputSettings extends BotOutputSettings { longReplies: 'split' | 'file' }
 export interface DiscordSettings extends BotConnectionSettings {
   defaultTrigger?: DiscordTrigger;
   defaultProfile?: DiscordReplyProfile;
@@ -102,8 +111,9 @@ export interface DiscordSettings extends BotConnectionSettings {
   output?: DiscordOutputSettings;
 }
 export interface OneBotSettings extends BotConnectionSettings {
-  channels?: Record<string, { name?: string; profile?: DiscordReplyProfile }>;
+  channels?: Record<string, Pick<DiscordChannelSettings, 'name' | 'profile' | 'trigger' | 'keywords' | 'messagePolicy'>>;
   directMessages?: { profile?: DiscordReplyProfile };
+  output?: BotOutputSettings;
   /** OneBot 11 正向 WebSocket 的通用接口地址。 */
   endpoint: string;
   protocolVersion?: 11 | 12;

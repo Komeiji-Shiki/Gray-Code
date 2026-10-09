@@ -1,4 +1,4 @@
-import type { BotChannel, BotGuild, BotUser } from '@graycode/contracts';
+import type { BotChannel, BotGuild, BotUser, BotStatus } from '@graycode/contracts';
 export type { BotChannel, BotGuild, BotUser } from '@graycode/contracts';
 
 export interface BotInbound {
@@ -10,17 +10,24 @@ export interface BotInbound {
   timestamp?: number;
   attachments?: BotAttachment[];
   references?: BotReference[];
+  segments?: BotMessageSegment[];
 }
+/** 下标引用兼容原有附件和引用读取路径，同时保留平台消息段的顺序。 */
+export type BotMessageSegment = { type: 'text'; text: string } | { type: 'attachment' | 'reference'; index: number };
 export interface BotAttachment { name: string; url?: string; fileId?: string; contentType?: string; size?: number }
 export interface BotReference {
   kind: 'reply' | 'forward'; id: string; channelId?: string; authorId?: string; authorName?: string; content?: string;
   timestamp?: number; attachments?: BotAttachment[]; references?: BotReference[]; unavailable?: string;
+  segments?: BotMessageSegment[];
 }
 export interface BotButton { id: string; label: string; style?: 'primary' | 'secondary' | 'danger'; disabled?: boolean }
 export interface BotSelectOption { label: string; value: string; description?: string; selected?: boolean }
 export type BotPanelRow = { buttons: BotButton[] } | { select: { id: string; placeholder: string; options: BotSelectOption[] } };
 export interface BotPanel { content: string; rows?: BotPanelRow[]; files?: Array<{ name: string; data: Uint8Array }> }
-export interface BotReply { content?: string; files?: Array<{ name: string; data: Uint8Array }>; replyToMessageId?: string }
+export interface BotReply {
+  content?: string; files?: Array<{ name: string; data: Uint8Array; contentType?: string }>;
+  replyToMessageId?: string; forward?: string[];
+}
 export interface BotMessageReceipt { id: string }
 export interface BotModal { id: string; title: string; fields: Array<{ id: string; label: string; value?: string; placeholder?: string; required?: boolean }> }
 export interface BotInteraction {
@@ -45,4 +52,5 @@ export interface BotGateway {
   /** 仅由发件箱使用自己保存的回执，移除流式排版收缩后多余的消息。 */
   deleteReply?(channelId: string, messageId: string): Promise<void>;
   hydrate?(message: BotInbound): Promise<BotInbound>;
+  health?(): Pick<BotStatus, 'lastHeartbeatAt' | 'online'>;
 }

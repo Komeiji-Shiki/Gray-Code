@@ -123,7 +123,8 @@ export class ProductUi {
       if (type === 'platform.remote.revoke') { await this.app.remoteAccess.revoke(data.id); return { success: true }; }
       throw new Error('未知远程连接操作。');
     }
-    if (['platform.discord.guilds', 'platform.discord.channels', 'platform.discord.user', 'platform.discord.outbox', 'platform.discord.retryDelivery', 'platform.onebot.outbox', 'platform.onebot.retryDelivery'].includes(type))
+    if (['platform.discord.guilds', 'platform.discord.channels', 'platform.discord.user', 'platform.discord.outbox', 'platform.discord.retryDelivery', 'platform.onebot.outbox', 'platform.onebot.retryDelivery',
+      'platform.discord.diagnostics', 'platform.onebot.diagnostics', 'platform.discord.checkPermission', 'platform.onebot.checkPermission'].includes(type))
       return this.invoke(client, type, data);
     if (['subagents.pauseRun', 'subagents.resumeRun', 'subagents.exitRun', 'subagents.resolveApproval', 'subagents.answerQuestion', 'subagents.monitor.requests', 'subagents.pendingRequests'].includes(type))
       return this.invoke(client, type, data);
@@ -520,6 +521,10 @@ export class ProductUi {
       case 'platform.settings.get': return ui.preferences.app;
       case 'platform.workspaces.automaticRoot': return { directory: await this.app.conversationWorkspaces.root() };
       case 'platform.discord.status': return this.app.discord.status();
+      case 'platform.discord.diagnostics': return { messages: this.app.discord.diagnostics.list() };
+      case 'platform.onebot.diagnostics': return { messages: this.app.onebot.diagnostics.list() };
+      case 'platform.discord.checkPermission': return this.app.discord.checkPermission(String(data.userId ?? ''), String(data.channelId ?? ''), data.direct === true);
+      case 'platform.onebot.checkPermission': return this.app.onebot.checkPermission(String(data.userId ?? ''), String(data.channelId ?? ''), String(data.channelId ?? '').startsWith('private:'));
       case 'platform.discord.guilds': return { guilds: await this.app.discord.guilds() };
       case 'platform.discord.channels': return { channels: await this.app.discord.channels(data.guildId) };
       case 'platform.discord.user': return this.app.discord.user(data.userId);

@@ -1,8 +1,8 @@
-import type { ActorIdentity, AppSettings, DiscordOutputSettings, DiscordReplyProfile, DiscordSettings, DiscordTrigger } from '@graycode/contracts';
+import type { ActorIdentity, AppSettings, BotMessagePolicy, BotOutputSettings, DiscordOutputSettings, DiscordReplyProfile, DiscordSettings, DiscordTrigger, OneBotSettings } from '@graycode/contracts';
 import type { BotInbound } from './gateway';
 
 export const discordTriggers: DiscordTrigger[] = ['mention', 'reply', 'mention_or_reply', 'keyword', 'all', 'command'];
-export function discordTrigger(config: DiscordSettings, channelId: string): DiscordTrigger {
+export function discordTrigger(config: DiscordSettings | OneBotSettings, channelId: string): DiscordTrigger {
   return config.channels?.[channelId]?.trigger ?? config.defaultTrigger ?? (config.mentionOnly ? 'mention' : 'all');
 }
 export function discordNeedsMessageContent(config: DiscordSettings): boolean {
@@ -12,7 +12,7 @@ export function discordAdmitted(config: DiscordSettings, source: Pick<BotInbound
   if (!config.enabled || actor.revoked) return false;
   return source.direct ? actor.role === 'owner' && config.directMessages?.enabled !== false : config.allowedChannelIds.includes(source.channelId);
 }
-export function discordTriggered(config: DiscordSettings, source: BotInbound, text: string): boolean {
+export function discordTriggered(config: DiscordSettings | OneBotSettings, source: BotInbound, text: string): boolean {
   if (source.direct || /^\/gray(?:\s|$)/i.test(text)) return true;
   switch (discordTrigger(config, source.channelId)) {
     case 'mention': return source.mentioned;
@@ -22,6 +22,10 @@ export function discordTriggered(config: DiscordSettings, source: BotInbound, te
     case 'keyword': return (config.channels?.[source.channelId]?.keywords ?? []).some(keyword => text.toLocaleLowerCase().includes(keyword.toLocaleLowerCase()));
     case 'command': return false;
   }
+}
+export function botMessagePolicy(config: DiscordSettings | OneBotSettings, channelId: string, direct = false): BotMessagePolicy {
+  if (direct) return { mergeWindowMs: 0, cooldownMs: 0, maxPending: 0 };
+  return { mergeWindowMs: 0, cooldownMs: 0, maxPending: 0, ...config.messagePolicy, ...config.channels?.[channelId]?.messagePolicy };
 }
 export function discordProfile(config: DiscordSettings, source: Pick<BotInbound, 'direct' | 'channelId'>): DiscordReplyProfile {
   const defaults = config.defaultProfile;
@@ -35,8 +39,17 @@ export function discordProfile(config: DiscordSettings, source: Pick<BotInbound,
 export function botProfile(settings: AppSettings, platform: 'discord' | 'onebot', source: Pick<BotInbound, 'direct' | 'channelId'>): DiscordReplyProfile {
   if (platform === 'discord') return discordProfile(settings.discord, source);
   const config = settings.onebot!;
-  return { agentId: config.agentId, workspaceId: config.workspaceId, ...config.defaultProfile,
-    ...(source.direct ? config.directMessages?.profile : {}), ...config.channels?.[source.channelId]?.profile };
+  const defaults = config.defaultProfile;
+  const override = source.direct ? config.directMessages?.profile : config.channels?.[source.channelId]?.profile;
+  const merged = { agentId: config.agentId, workspaceId: config.workspaceId, ...defaults, ...override };
+  if (defaults?.output || override?.output) merged.output = { ...defaults?.output, ...override?.output };
+  if (override?.providerId && override.providerId !== defaults?.providerId && !override.modelId) delete merged.modelId;
+  return merged;
+}
+export function botOutput(settings: Pick<AppSettings, 'discord' | 'onebot'>, platform: 'discord' | 'onebot', profile?: DiscordReplyProfile): BotOutputSettings {
+  const output = platform === 'discord' ? discordOutput(settings.discord) : settings.onebot?.output
+    ?? { streaming: false, updateIntervalMs: 1000, showThoughts: false, showToolStatus: false, longReplies: 'split' as const };
+  return { ...output, ...profile?.output };
 }
 export function discordOutput(config: DiscordSettings): DiscordOutputSettings {
   // 没有新增输出配置的旧存档继续采用完成后发送；新配置的选择由设置页保存。
@@ -45,15 +58,25 @@ export function discordOutput(config: DiscordSettings): DiscordOutputSettings {
 
 export function validateDiscordSettings(settings: AppSettings): void {
   const config = settings.discord;
-  const output = (value: DiscordOutputSettings, label: string) => {
+  const output = (value: BotOutputSettings, label: string, onebot = false) => {
     if ([value.streaming, value.showThoughts, value.showToolStatus].some(value => typeof value !== 'boolean')
       || !Number.isSafeInteger(value.updateIntervalMs) || value.updateIntervalMs < 1000 || value.updateIntervalMs > 60000
-      || !['split', 'file'].includes(value.longReplies)) throw new Error(`${label}输出配置无效，更新间隔需要在 1 至 60 秒之间。`);
+      || !(onebot ? ['split', 'file', 'forward'] : ['split', 'file']).includes(value.longReplies)) throw new Error(`${label}输出配置无效，更新间隔需要在 1 至 60 秒之间。`);
+    if (onebot && value.streaming) throw new Error('OneBot 不支持编辑流式回复，请关闭流式输出。');
+    if (onebot && settings.onebot?.protocolVersion === 12 && value.longReplies === 'forward') throw new Error('OneBot 12 不支持合并转发，请选择分段或文件。');
   };
-  const profile = (value: DiscordReplyProfile | undefined, label: string) => {
+  const policy = (value: Partial<BotMessagePolicy> | undefined) => {
+    if (!value) return;
+    for (const key of ['mergeWindowMs', 'cooldownMs', 'maxPending'] as const) {
+      const number = value[key];
+      if (number !== undefined && (!Number.isSafeInteger(number) || number < 0 || number > (key === 'mergeWindowMs' ? 10_000 : key === 'cooldownMs' ? 3_600_000 : 1000)))
+        throw new Error('消息策略无效：合并窗口为 0 至 10 秒，冷却为 0 至 3600 秒，排队上限为 0 至 1000 条，0 表示关闭。');
+    }
+  };
+  const profile = (value: DiscordReplyProfile | undefined, label: string, onebot = false) => {
     if (!value) return;
     if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}配置必须是对象。`);
-    if (value.output) output({ ...discordOutput(config), ...value.output }, label);
+    if (value.output) output(botOutput(settings, onebot ? 'onebot' : 'discord', value), label, onebot);
     if (value.agentId && !settings.agents.some(agent => agent.id === value.agentId)) throw new Error(`${label}选择的智能体不存在。`);
     if (value.providerId && !settings.providers.some(provider => provider.id === value.providerId)) throw new Error(`${label}选择的模型渠道不存在。`);
     if (value.modelId !== undefined && (typeof value.modelId !== 'string' || !value.modelId.trim())) throw new Error(`${label}请选择有效模型。`);
@@ -80,6 +103,7 @@ export function validateDiscordSettings(settings: AppSettings): void {
       || value.character.worldTokenBudget !== undefined && (!Number.isSafeInteger(value.character.worldTokenBudget) || value.character.worldTokenBudget < 0))) throw new Error(`${label}的角色配置无效。`);
   };
   if (config.defaultTrigger && !discordTriggers.includes(config.defaultTrigger)) throw new Error('默认回复触发方式无效。');
+  policy(config.messagePolicy);
   if (config.directMessages && typeof config.directMessages.enabled !== 'boolean') throw new Error('私聊开关无效。');
   profile(config.defaultProfile, '默认回复'); profile(config.directMessages?.profile, '主人私聊');
   for (const [id, channel] of Object.entries(config.channels ?? {})) {
@@ -88,10 +112,20 @@ export function validateDiscordSettings(settings: AppSettings): void {
     if (channel.keywords && (!Array.isArray(channel.keywords) || channel.keywords.some(value => typeof value !== 'string' || !value.trim()))) throw new Error('关键词不能包含空白项。');
     if (discordTrigger(config, id) === 'keyword' && !channel.keywords?.length) throw new Error(`请为频道 ${channel.name ?? id} 填写触发关键词。`);
     profile(channel.profile, `频道 ${channel.name ?? id}`);
+    policy(channel.messagePolicy);
   }
   if (config.output) output(config.output, 'Discord');
   if (settings.onebot) {
-    profile(settings.onebot.defaultProfile, 'QQ 默认回复'); profile(settings.onebot.directMessages?.profile, 'QQ 私聊');
-    for (const [id, channel] of Object.entries(settings.onebot.channels ?? {})) profile(channel.profile, `QQ 会话 ${id}`);
+    const qq = settings.onebot;
+    if (qq.defaultTrigger && !discordTriggers.includes(qq.defaultTrigger)) throw new Error('QQ 默认回复触发方式无效。');
+    policy(qq.messagePolicy);
+    if (qq.output) output(qq.output, 'QQ', true);
+    profile(qq.defaultProfile, 'QQ 默认回复', true); profile(qq.directMessages?.profile, 'QQ 私聊', true);
+    for (const [id, channel] of Object.entries(qq.channels ?? {})) {
+      if (channel.trigger && !discordTriggers.includes(channel.trigger)) throw new Error(`QQ 会话 ${id} 的触发方式无效。`);
+      if (channel.keywords && (!Array.isArray(channel.keywords) || channel.keywords.some(value => typeof value !== 'string' || !value.trim()))) throw new Error('QQ 关键词不能包含空白项。');
+      if (discordTrigger(qq, id) === 'keyword' && !channel.keywords?.length) throw new Error(`请为 QQ 会话 ${id} 填写触发关键词。`);
+      policy(channel.messagePolicy); profile(channel.profile, `QQ 会话 ${id}`, true);
+    }
   }
 }

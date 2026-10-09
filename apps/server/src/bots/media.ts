@@ -53,22 +53,53 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
       } catch (error) { return [{ text: `[${label}：未读取，${(error as Error).message}]` }]; }
     })(); cached.set(key, work); return work;
   };
-  const references = async (values: BotReference[], depth: number) => {
+  // 下载可以并行，加入模型输入的顺序仍由原消息段决定。
+  const assets: BotAttachment[] = [];
+  const collect = (source: BotInbound | BotReference, depth: number) => {
+    assets.push(...source.attachments ?? []);
+    if (depth < 4) for (const reference of (source.references ?? []).slice(0, 40)) if (!reference.unavailable) collect(reference, depth + 1);
+  };
+  collect(message, 0);
+  const unique = [...new Map(assets.map(item => [JSON.stringify([item.url, item.fileId, item.name]), item])).values()].slice(0, 20);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(3, unique.length) }, async () => {
+    while (cursor < unique.length) await attachmentParts(unique[cursor++]);
+  }));
+  const content = async (source: BotInbound | BotReference, depth: number): Promise<void> => {
+    if (source.segments) {
+      for (const segment of source.segments) {
+        if (segment.type === 'text') parts.push({ text: segment.text });
+        else if (segment.type === 'attachment') {
+          const attachment = source.attachments?.[segment.index];
+          if (attachment) parts.push(...await attachmentParts(attachment));
+        } else {
+          const reference = source.references?.[segment.index];
+          if (reference) await references([reference], depth);
+        }
+      }
+    } else {
+      if (source.content) parts.push({ text: source.content });
+      for (const attachment of source.attachments ?? []) parts.push(...await attachmentParts(attachment));
+      await references(source.references ?? [], depth);
+    }
+  };
+  const references = async (values: BotReference[], depth: number): Promise<void> => {
     for (const ref of values.slice(0, 40)) {
       parts.push({ text: formatBotSourceHeader(`${ref.kind === 'forward' ? '转发' : '引用'}消息`, { displayName: ref.authorName, timestamp: ref.timestamp }).slice(0, -1) + '，以下是原来源内容]' });
       if (ref.unavailable) parts.push({ text: `[未读取：${ref.unavailable}]` });
-      else {
-        if (ref.content) parts.push({ text: ref.content });
-        for (const attachment of ref.attachments ?? []) parts.push(...await attachmentParts(attachment));
-        if (ref.references?.length) { if (depth < 4) await references(ref.references, depth + 1); else parts.push({ text: '[嵌套引用超过 4 层，后续未读取]' }); }
-      }
+      else if (depth <= 4) await content(ref, depth + 1);
+      else parts.push({ text: '[嵌套引用超过 4 层，后续未读取]' });
       parts.push({ text: '[原来源内容结束]' });
     }
     if (values.length > 40) parts.push({ text: '[转发条目超过 40 条，后续未读取]' });
   };
-  parts.push({ text: `${formatBotSourceHeader(`${platform === 'discord' ? 'Discord' : message.network ?? 'QQ'} 发言`, {
-    displayName: message.authorName, timestamp: message.timestamp })}\n${message.content}` });
-  for (const attachment of message.attachments ?? []) parts.push(...await attachmentParts(attachment));
-  await references(message.references ?? [], 0);
+  const header = formatBotSourceHeader(`${platform === 'discord' ? 'Discord' : message.network ?? 'QQ'} 发言`, {
+    displayName: message.authorName, timestamp: message.timestamp });
+  if (message.segments) { parts.push({ text: header }); await content(message, 0); }
+  else {
+    parts.push({ text: `${header}\n${message.content}` });
+    for (const attachment of message.attachments ?? []) parts.push(...await attachmentParts(attachment));
+    await references(message.references ?? [], 0);
+  }
   return parts;
 }

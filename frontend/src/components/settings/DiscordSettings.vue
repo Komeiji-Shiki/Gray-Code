@@ -9,6 +9,8 @@ import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty
 import DiscordProfileFields from './discord/DiscordProfileFields.vue';
 import DiscordOutputFields from './discord/DiscordOutputFields.vue';
 import BotOutboxPanel from './bots/BotOutboxPanel.vue';
+import BotMessagePolicyFields from './bots/BotMessagePolicyFields.vue';
+import BotDiagnosticsPanel from './bots/BotDiagnosticsPanel.vue';
 
 const sections = [{ id: 'connection', name: '连接' }, { id: 'defaults', name: '默认回复' }, { id: 'channels', name: '频道' }, { id: 'direct', name: '主人私聊' }, { id: 'bindings', name: '身份绑定' }, { id: 'outbox', name: '待发送' }];
 const section = ref('connection');
@@ -134,11 +136,13 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
         <div class="discord-fields"><label><span>启用 Bot</span><input v-model="bot.enabled" type="checkbox" /></label><label><span>Bot Token<small>填写新值可以替换原凭据，留空保留。</small></span><input type="password" autocomplete="new-password" :placeholder="bot.credentialRef ? '已配置 Bot Token' : '输入 Bot Token'" @input="setToken(($event.target as HTMLInputElement).value)" /></label></div>
         <div class="discord-actions"><button :disabled="!!busy" @click="action('连接 Bot', connect)">{{ busy === '连接 Bot' ? '正在连接…' : '连接 / 重连' }}</button><button :disabled="!!busy || status.status === 'stopped'" @click="action('断开 Bot', async () => { await sendToExtension('platform.discord.stop', {}); await refreshStatus(); guilds = []; channels = []; })">断开</button><button :disabled="!!busy" @click="action('刷新状态', refreshStatus)">刷新状态</button></div>
         <p v-if="status.error || status.warning" class="discord-error">{{ status.error || status.warning }}</p>
+        <BotDiagnosticsPanel platform="discord" />
         <p v-if="status.retryAt" class="discord-notice">将于 {{ new Date(status.retryAt).toLocaleTimeString() }} 自动重试连接。也可以立即点击“连接 / 重连”。</p>
         <div class="discord-note"><strong>开始使用</strong><p>保存 Token 并连接后，在“频道”中选择允许响应的频道，再到“身份绑定”关联主人的 Discord 账号。随后输入 /gray，即可管理本频道对话、选择模型与工作区、查看状态和停止任务。</p><p>Bot 邀请需要 bot 和 applications.commands 权限范围。记录群聊背景消息需要在 Discord 开发者后台打开 Message Content Intent，即使只在被 @ 时回复也需要。</p><a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">打开 Discord 开发者后台</a></div>
       </section>
       <section v-else-if="section === 'defaults'">
         <h5>默认回复配置</h5><p>频道与私聊继承这些设置，可以分别覆盖。当前会话在 Discord 中主动选择的模型会保留，直到切回默认配置。</p>
+        <BotMessagePolicyFields :model-value="bot.messagePolicy" @update:model-value="bot.messagePolicy = $event" />
         <DiscordProfileFields :model-value="bot.defaultProfile ?? {}" :inherited="baseProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="changeDefaultProfile" />
         <h5>默认输出方式</h5><DiscordOutputFields :model-value="output" :inherited="legacyOutput" @update:model-value="bot.output = { ...output, ...$event }" />
       </section>
@@ -153,6 +157,7 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
         <div v-if="selectedChannelId && bot.allowedChannelIds.includes(selectedChannelId)" class="discord-channel-config">
           <div class="discord-heading"><h5># {{ selectedChannel?.name || selectedChannelId }}</h5><button @click="bot.allowedChannelIds = bot.allowedChannelIds.filter(id => id !== selectedChannelId); selectedChannelId = ''; changedByButton()">停止响应此频道</button></div>
           <div class="discord-fields"><label><span>回复触发方式</span><select :value="selectedChannel?.trigger ?? ''" @change="updateChannel(selectedChannelId, { trigger: (($event.target as HTMLSelectElement).value || undefined) as DiscordTrigger | undefined })"><option value="">继承默认触发方式</option><option v-for="item in triggers" :key="item.id" :value="item.id">{{ item.label }}</option></select></label><label v-if="(selectedChannel?.trigger ?? defaultTrigger) === 'keyword'"><span>触发关键词<small>每行一个，命中任意一项即可。</small></span><textarea rows="3" :value="selectedChannel?.keywords?.join('\n') ?? ''" @input="updateChannel(selectedChannelId, { keywords: ($event.target as HTMLTextAreaElement).value.split('\n').map(value => value.trim()).filter(Boolean) })" /></label></div>
+          <BotMessagePolicyFields :model-value="selectedChannel?.messagePolicy" :inherited="bot.messagePolicy" override @update:model-value="updateChannel(selectedChannelId, { messagePolicy: $event })" />
           <DiscordProfileFields :key="selectedChannelId" :model-value="selectedChannel?.profile ?? {}" :inherited="inheritedProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="updateChannel(selectedChannelId, { profile: $event })" />
         </div>
       </section>

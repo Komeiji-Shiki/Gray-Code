@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { BotDeliverySummary } from '../../../../../packages/contracts/src/bots';
 import { sendToExtension } from '../../../utils/vscode';
+import { t } from '../../../i18n';
 
 const props = defineProps<{ platform: 'discord' | 'onebot'; connected: boolean; channels?: Record<string, { name?: string }> }>();
 const emit = defineEmits<{ refreshStatus: [] }>();
@@ -50,10 +51,11 @@ onBeforeUnmount(() => { revision++; });
     <p v-if="!loaded && busy" role="status">正在读取待发送消息…</p>
     <p v-else-if="loaded && !messages.length" class="outbox-empty">目前没有待发送消息。</p>
     <article v-for="item in messages" :key="item.id" class="outbox-delivery">
-      <header><strong>{{ uncertain(item) ? '发送结果尚未确认' : item.phase === 'editing' ? '正在更新回复' : '等待发送或更新' }}</strong><small>{{ item.createdAt ? new Date(item.createdAt).toLocaleString() : '旧版消息' }}</small></header>
+      <header><strong>{{ uncertain(item) ? '发送结果尚未确认' : item.phase === 'failed' ? t('desktop.bot.failedDelivery') : item.phase === 'editing' ? '正在更新回复' : '等待发送或更新' }}</strong><small>{{ item.createdAt ? new Date(item.createdAt).toLocaleString() : '旧版消息' }}</small></header>
       <p>会话 {{ channels?.[item.channelId]?.name || item.channelId }} · {{ item.completedParts }} / {{ item.totalParts }} 段</p>
       <pre>{{ item.preview }}</pre>
       <p v-if="item.error" class="outbox-error">{{ item.error }}</p>
+      <p v-if="item.retryAt">{{ t('desktop.bot.retryAt') }}：{{ new Date(item.retryAt).toLocaleTimeString() }}</p>
       <label v-if="uncertain(item)" class="outbox-confirm"><input v-model="acknowledged" type="checkbox" :value="item.id" :disabled="!!busy" />已检查会话，允许重试并接受可能重复发送</label>
       <button :disabled="!!busy || !connected || (uncertain(item) && !acknowledged.includes(item.id))" @click="retry(item)">{{ busy === item.id ? '正在重试…' : '重试发送' }}</button>
     </article>

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import type { ActorIdentity, ApprovalRequest, ConversationSummary, DiscordOutputSettings, DiscordReplyProfile, PlatformConversation, RecordMutation, RunRecord } from '@graycode/contracts';
+import type { ActorIdentity, ApprovalRequest, ConversationSummary, BotOutputSettings, DiscordReplyProfile, PlatformConversation, RecordMutation, RunRecord } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { BotInbound } from './gateway';
-import { discordAdmitted, discordOutput, botProfile } from './config';
+import { discordAdmitted, botOutput, botProfile } from './config';
 import { captureBotAgent } from './profiles';
 import { BOT_CHANNEL_ACCESS, addBotParticipant, sameBotChannel, type BotChannelAccess } from './channelAccess';
 import { BotInbox, type BotInboxItem } from './inbox';
@@ -17,7 +17,7 @@ export interface BotRoute {
   platform?: BotPlatform; botId: string; channelId: string; actorId: string; conversationId: string;
   platformUserId?: string; network?: string; direct?: boolean;
   replyToMessageId?: string;
-  output?: DiscordOutputSettings;
+  output?: BotOutputSettings;
 }
 export interface BotContext extends Pick<BotInbound, 'id' | 'authorId' | 'channelId' | 'direct' | 'network' | 'authorName' | 'sourceMessageId'> {
   botId: string; platform: BotPlatform;
@@ -346,7 +346,7 @@ export class BotSessions {
         const route: BotRoute = { platform: context.platform, botId: context.botId, channelId: context.channelId, actorId: loaded.actor.id,
           conversationId: conversation.id, platformUserId: context.authorId, direct: context.direct,
           ...(context.sourceMessageId ? { replyToMessageId: context.sourceMessageId } : {}),
-          output: { ...discordOutput(this.app.settings.snapshot().settings.discord), ...loaded.profile.output } };
+          output: botOutput(this.app.settings.read('discord', 'onebot'), context.platform, loaded.profile) };
         run = await this.app.runtime.continue({ actorId: loaded.actor.id, conversationId: conversation.id, agentId: latest.agentId,
           workspaceId, requestKey, expectedRevision: state.history.revision }, { state, commit: {
           metadata: this.runMetadata(state.metadata, context, loaded, channelWorkspaceId),
@@ -363,7 +363,7 @@ export class BotSessions {
         const route: BotRoute = { platform: context.platform, botId: context.botId, channelId: context.channelId, actorId: loaded.actor.id,
           conversationId: conversation.id, platformUserId: context.authorId, network: context.network, direct: context.direct,
           ...(action.input ? { replyToMessageId: context.sourceMessageId ?? (context.platform === 'discord' ? context.id : undefined) } : {}),
-          ...(context.platform === 'discord' ? { output: { ...discordOutput(this.app.settings.snapshot().settings.discord), ...loaded.profile.output } } : {}) };
+          output: botOutput(this.app.settings.read('discord', 'onebot'), context.platform, loaded.profile) };
         const state = await this.app.conversations.read(loaded.actor.id, conversation.id);
         const metadata = this.runMetadata(state.metadata, context, loaded, channelWorkspaceId);
         run = await this.app.runtime.start({ requestKey, actorId: loaded.actor.id, conversationId: conversation.id, workspaceId, agentId: agent.id,
@@ -377,7 +377,7 @@ export class BotSessions {
     await this.app.storage.commitRecords([this.mutation(loaded), receiptRecord()]);
     return { reply, run };
   }
-  async close() { await Promise.allSettled(this.queues.values()); }
+  async close() { this.inbox.pause(); await Promise.allSettled(this.queues.values()); }
 }
 
 export function parseBotAction(text: string): BotAction {

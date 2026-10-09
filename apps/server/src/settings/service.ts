@@ -7,6 +7,7 @@ import { validateRemoteAccess } from '../transport/webOrigin';
 import { validateDecisionProvider } from '../model/decisionReviewer';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import { DARK_PALETTES, DEFAULT_UI_FONT } from '../../../../shared/appearance';
+import { DEFAULT_BOT_MESSAGE_POLICY } from '../../../../shared/botConversation';
 import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import type {
@@ -84,6 +85,7 @@ export function initialSettings(toolNames: string[]): AppSettings {
       allowedChannelIds: [],
       agentId: "default",
       mentionOnly: true,
+      messagePolicy: { ...DEFAULT_BOT_MESSAGE_POLICY },
     },
   };
 }

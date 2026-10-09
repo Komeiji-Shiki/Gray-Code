@@ -3,8 +3,13 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import PlatformWorkspaceSettings from './PlatformWorkspaceSettings.vue';
 import BotConversationFields from './discord/BotConversationFields.vue';
 import BotOutboxPanel from './bots/BotOutboxPanel.vue';
+import BotMessagePolicyFields from './bots/BotMessagePolicyFields.vue';
+import BotTriggerFields from './bots/BotTriggerFields.vue';
+import BotLongReplyFields from './bots/BotLongReplyFields.vue';
+import BotDiagnosticsPanel from './bots/BotDiagnosticsPanel.vue';
+import { DEFAULT_BOT_MESSAGE_POLICY, DEFAULT_ONEBOT_OUTPUT } from '../../../../shared/botConversation';
 import PermissionAccountFields from './PermissionAccountFields.vue';
-import type { AppSettings, PlatformBinding } from '../../../../packages/contracts/src/settings';
+import type { AppSettings, PlatformBinding, OneBotSettings } from '../../../../packages/contracts/src/settings';
 import type { ActorIdentity } from '../../../../packages/contracts/src/runtime';
 import { sendToExtension } from '../../utils/vscode';
 import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
@@ -22,6 +27,12 @@ const id = (prefix: string) => prefix + '_' + crypto.randomUUID().slice(0, 8);
 const pendingDeleteId = ref('');
 const accountBusy = ref('');
 const botChannel = ref('');
+const onebotOutput = computed(() => settings.value?.onebot?.output ?? { ...DEFAULT_ONEBOT_OUTPUT, longReplies: 'split' as const });
+const selectedOnebotChannel = computed(() => settings.value?.onebot?.channels?.[botChannel.value] ?? {});
+function changeOnebotChannel(value: Partial<NonNullable<OneBotSettings['channels']>[string]>) {
+  if (!settings.value?.onebot || !botChannel.value) return;
+  settings.value.onebot.channels = { ...settings.value.onebot.channels, [botChannel.value]: { ...selectedOnebotChannel.value, ...value } };
+}
 const mcpPermissionTools = ref<Array<{ name: string; description?: string; serverName?: string }>>([]);
 const defaultPermissionAccount = computed(() => settings.value?.accounts.find(account => account.id === settings.value?.botGuestAccountId && account.role !== 'owner'));
 async function addBinding(bindingPlatform: 'discord' | 'onebot' = platform.value) {
@@ -91,7 +102,8 @@ onMounted(async () => {
   await action(async () => { settings.value = await sendToExtension('platform.settings.get', {});
     if (props.section === 'accounts') mcpPermissionTools.value = (await sendToExtension<{ tools: typeof mcpPermissionTools.value }>('tools.getMcpTools', {})).tools ?? [];
     if (props.section === 'onebot') {
-      settings.value!.onebot ??= { endpoint: '', enabled: false, protocolVersion: 11, self: { platform: 'qq', userId: '' }, allowedChannelIds: [], agentId: settings.value!.agents[0]?.id ?? '', mentionOnly: true };
+      settings.value!.onebot ??= { endpoint: '', enabled: false, protocolVersion: 11, self: { platform: 'qq', userId: '' }, allowedChannelIds: [], agentId: settings.value!.agents[0]?.id ?? '', mentionOnly: true,
+        messagePolicy: { ...DEFAULT_BOT_MESSAGE_POLICY }, defaultProfile: { output: { ...DEFAULT_ONEBOT_OUTPUT } } };
       settings.value!.onebot.self ??= { platform: 'qq', userId: '' };
     }
     if (props.section === 'discord' || props.section === 'onebot') await refreshStatus(); });
@@ -120,16 +132,27 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <p v-if="status.retryAt">将于 {{ new Date(status.retryAt).toLocaleTimeString() }} 自动重试连接，也可以点击“连接 / 重连”。</p>
       <button class="outbox-toggle" :aria-expanded="showOutbox" @click="showOutbox = !showOutbox">{{ showOutbox ? '收起待发送消息' : '查看待发送消息' }}{{ status.pendingMessages ? `（${status.pendingMessages}）` : '' }}</button>
       <BotOutboxPanel v-if="showOutbox" :platform="platform" :connected="status.status === 'connected'" @refresh-status="action(refreshStatus)" />
+      <BotDiagnosticsPanel :platform="platform" />
       <h3>响应范围与会话</h3>
       <label>允许响应的会话<textarea :value="bot.allowedChannelIds.join('\n')" rows="3" :placeholder="section === 'onebot' ? '每行一个：group:群号 或 private:用户ID' : '每行一个频道 ID'" @input="bot.allowedChannelIds = ($event.target as HTMLTextAreaElement).value.split(/[\n,，]/).map(id => id.trim()).filter(Boolean)"></textarea></label>
       <p v-if="section === 'onebot' && settings.onebot?.protocolVersion === 12">v12 还支持 channel:群组ID:频道ID；ID 中的冒号等分隔符须作 URL 编码。</p>
       <label>智能体<select v-model="bot.agentId"><option v-for="agent in settings.agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label>
       <label>工作区<select v-model="bot.workspaceId"><option :value="undefined">各会话使用文档目录中的独立工作区</option><option v-for="workspace in settings.workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option></select></label>
-      <label>只响应提及 Bot 的消息<input v-model="bot.mentionOnly" type="checkbox" /></label>
+      <label v-if="section === 'discord'">只响应提及 Bot 的消息<input v-model="bot.mentionOnly" type="checkbox" /></label>
       <p>已允许会话中的未触发消息同样记录上下文。只合并相邻同一人、间隔不超过五分钟的未 @ 消息。</p>
       <template v-if="section === 'onebot' && settings.onebot">
+        <BotTriggerFields :model-value="{ trigger: bot.defaultTrigger }" :inherited="bot.mentionOnly ? 'mention' : 'all'" @update:model-value="bot.defaultTrigger = $event.trigger" />
+        <BotMessagePolicyFields :model-value="bot.messagePolicy" @update:model-value="bot.messagePolicy = $event" />
+        <BotLongReplyFields :model-value="bot.defaultProfile?.output" :inherited="onebotOutput" :allow-forward="settings.onebot.protocolVersion !== 12"
+          @update:model-value="bot.defaultProfile = { ...bot.defaultProfile, output: $event }" />
         <BotConversationFields :model-value="bot.defaultProfile ?? {}" @update:model-value="bot.defaultProfile = $event" />
         <label>单独配置群聊或私聊<select v-model="botChannel"><option value="">请选择会话</option><option v-for="channel in bot.allowedChannelIds" :key="channel" :value="channel">{{ channel }}</option></select></label>
+        <template v-if="botChannel">
+          <BotTriggerFields :model-value="selectedOnebotChannel" :inherited="bot.defaultTrigger ?? (bot.mentionOnly ? 'mention' : 'all')" override @update:model-value="changeOnebotChannel($event)" />
+          <BotMessagePolicyFields v-if="!botChannel.startsWith('private:')" :model-value="selectedOnebotChannel.messagePolicy" :inherited="bot.messagePolicy" override @update:model-value="changeOnebotChannel({ messagePolicy: $event })" />
+          <BotLongReplyFields :model-value="selectedOnebotChannel.profile?.output" :inherited="{ ...onebotOutput, ...bot.defaultProfile?.output }" :allow-forward="settings.onebot.protocolVersion !== 12" override
+            @update:model-value="changeOnebotChannel({ profile: { ...selectedOnebotChannel.profile, output: $event } })" />
+        </template>
         <BotConversationFields v-if="botChannel" :key="botChannel" :model-value="settings.onebot.channels?.[botChannel]?.profile ?? {}" :inherited="bot.defaultProfile"
           @update:model-value="settings.onebot.channels = { ...settings.onebot.channels, [botChannel]: { ...settings.onebot.channels?.[botChannel], profile: $event } }" />
       </template>

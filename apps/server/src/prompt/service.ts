@@ -138,7 +138,7 @@ export class PlatformPromptService {
       systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
       ...(input.preview ? { previewDynamicText: assembler.getDynamicContextText(mode, context) } : {}),
       toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
-        ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment'] : [])])],
+        ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])],
       promptContext: { beforeHistoryMessages,
         afterHistoryMessages: [...((resumed ?? bundle).afterHistoryMessages as PlatformMessage[]).filter(message => botEnvironment?.version !== 1
           || !message.parts.some(part => typeof part.text === 'string' && isLegacyBotIdentityText(part.text))), ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,

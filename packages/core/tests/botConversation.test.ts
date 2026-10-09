@@ -13,6 +13,7 @@ import { deserializePromptContextCache } from '../../../backend/modules/prompt/p
 import { validateHistoryIntegrity } from '../../../backend/modules/channel/HistoryIntegrityValidator';
 import type { Content } from '../../../backend/modules/conversation/types';
 import { fixture } from './fixtures';
+import { oneBotContent } from '../../../apps/server/src/bots/onebotContent';
 
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 describe('Bot 频道上下文、附件与定时总结', () => {
@@ -47,6 +48,58 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     await app.settings.save({ settings: saved.settings, expectedRevision: saved.revision }); await app.discord.start();
   });
   afterEach(async () => { delete process.env.GRAYCODE_CONTEXT_TEST_TOKEN; await app.close(); await f.cleanup(); });
+
+  test('慢附件期间控制命令优先，重复消息不会重复解析', async () => {
+    const entered = deferred<void>(), release = deferred<void>();
+    const hydrate = jest.fn(async (message: BotInbound) => { entered.resolve(); await release.promise; return message; });
+    gateway.hydrate = hydrate;
+    const pending = app.discord.receive(inbound('slow-attachment'));
+    try {
+      await entered.promise;
+      await app.discord.receive(inbound('slow-attachment'));
+      await app.discord.receive({ ...inbound('cancel'), content: '/gray cancel' });
+      expect(hydrate).toHaveBeenCalledTimes(1);
+      expect(app.discord.diagnostics.list().find(value => value.id === 'cancel')?.stage).toBe('control');
+    } finally { release.resolve(); await pending; delete gateway.hydrate; }
+  });
+
+  test('合并窗口、同一用户冷却和排队上限按群生效，原消息继续保存', async () => {
+    const settings = app.settings.snapshot();
+    settings.settings.discord.messagePolicy = { mergeWindowMs: 1000, cooldownMs: 3000, maxPending: 2 };
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    const release = deferred<void>(); hold = release.promise;
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask', 'performance', 'hrtime'] });
+    try {
+      await app.discord.receive(inbound('merge-a', '10', true));
+      await app.discord.receive(inbound('merge-b', '10', true));
+      expect(generated).toHaveLength(0);
+      await jest.advanceTimersByTimeAsync(1000); await first.promise;
+      const source = generated[0].messages.findLast(value => value.isUserInput)!;
+      expect(source.parts.map(value => value.text ?? '').join('\n')).toContain('merge-a');
+      expect(source.parts.map(value => value.text ?? '').join('\n')).toContain('merge-b');
+      await app.discord.receive(inbound('waiting-a', '10', true));
+      await app.discord.receive(inbound('waiting-b', '10', true));
+      await app.discord.receive(inbound('limited', '10', true));
+      expect(app.discord.diagnostics.list().find(value => value.id === 'limited')?.stage).toBe('limited');
+      release.resolve();
+      const run = (await app.storage.listRuns({ activeOnly: true }))[0];
+      if (run) await app.runtime.wait(run.id);
+      const conversationId = (await app.discord.sessions.snapshot(context())).conversation!.id;
+      await app.discord.sessions.inbox.flush(conversationId);
+      await jest.advanceTimersByTimeAsync(2999); expect(generated).toHaveLength(1);
+      await jest.advanceTimersByTimeAsync(1); await second.promise;
+      expect((await app.storage.listRecords('bot-inbound-archive')).length).toBe(5);
+    } finally { release.resolve(); jest.useRealTimers(); }
+  });
+
+  test('QQ 消息段原顺序在并行下载后保持，文字仍对应各自图片', async () => {
+    const parsed = oneBotContent([
+      { type: 'text', data: { text: '图片 A' } }, { type: 'image', data: { file: 'a', url: 'https://qpic.cn/a', name: 'a.png' } },
+      { type: 'text', data: { text: '图片 B' } }, { type: 'image', data: { file: 'b', url: 'https://qpic.cn/b', name: 'b.png' } },
+    ], '900', 11);
+    const parts = await botInboundParts({ ...inbound('ordered'), ...parsed }, 'onebot', async () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(parts.slice(1).map(value => value.inlineData ? 'image' : value.text)).toEqual(['图片 A', '[附件 "a.png"]', 'image', '图片 B', '[附件 "b.png"]', 'image']);
+  });
 
   test('后续成员发言和频道模板修改不改写已发送的 Bot 历史前缀', async () => {
     await app.discord.receive(inbound('prefix-owner', '10', true));

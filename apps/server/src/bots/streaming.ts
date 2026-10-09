@@ -17,10 +17,28 @@ interface StreamState {
 export function botFinalReplies(text: string, route: BotRoute, footer?: string): BotReply[] {
   // 逐轮统计和总计连续显示，正文或代码与统计之间仍保留原来的段落间距。
   const suffix = footer ? `${text.trimEnd().split('\n').at(-1)?.startsWith('-# ') ? '\n' : '\n\n'}${footer}` : '';
-  if (route.output?.longReplies === 'file' && text.length > 1900) return [{ content: `回复较长，全文保存在附件中。${suffix}`, files: [{ name: 'GrayCode 回复.md', data: Buffer.from(text + suffix) }] }];
+  if (route.platform === 'onebot' && route.output?.longReplies === 'forward' && text.length > 1900)
+    return [{ forward: splitBotText(text + suffix) }];
+  if (route.output?.longReplies === 'file' && text.length > 1900) {
+    const file = { name: 'GrayCode 回复.md', data: Buffer.from(text + suffix) };
+    return route.platform === 'onebot' ? [{ content: '回复较长，全文保存在附件中。' }, { files: [file] }]
+      : [{ content: `回复较长，全文保存在附件中。${suffix}`, files: [file] }];
+  }
   // 在分段和代码围栏闭合之后追加统计，保证 -# 位于最后一条消息的普通文本行。
   const replies = splitBotText(text, 1900 - suffix.length).map(content => ({ content }));
   replies[replies.length - 1].content += suffix;
+  return replies;
+}
+
+/** 只转发模型本轮生成的图片字节，工具读取的本地图片不会自动发送。 */
+export function botGeneratedImages(messages: PlatformMessage[]): BotReply[] {
+  const replies: BotReply[] = [];
+  for (const message of messages) for (const part of message.parts) {
+    const image = part.inlineData as { mimeType?: string; data?: string } | undefined;
+    if (!image?.mimeType?.startsWith('image/') || typeof image.data !== 'string' || part.thought) continue;
+    const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[image.mimeType] ?? 'png';
+    replies.push({ files: [{ name: `GrayCode-${replies.length + 1}.${extension}`, contentType: image.mimeType, data: Buffer.from(image.data, 'base64') }] });
+  }
   return replies;
 }
 
@@ -122,13 +140,13 @@ export class BotStreams {
     }, state.route.output!.updateIntervalMs);
     state.timer.unref();
   }
-  async finish(runId: string, route: BotRoute, text: string, footer?: string): Promise<boolean> {
+  async finish(runId: string, route: BotRoute, text: string, footer?: string, attachments: BotReply[] = []): Promise<boolean> {
     const state = await this.streams.get(runId);
     this.rememberFinished(runId);
     if (!state) { this.streams.delete(runId); return false; }
     state.done = true; if (state.timer) clearTimeout(state.timer);
     await state.rendering?.catch(() => {});
-    await this.outbox.put(`stream-${runId}`, route, botFinalReplies(text, route, footer));
+    await this.outbox.put(`stream-${runId}`, route, [...botFinalReplies(text, route, footer), ...attachments]);
     this.streams.delete(runId);
     return true;
   }

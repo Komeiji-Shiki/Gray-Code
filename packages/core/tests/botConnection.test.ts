@@ -1,8 +1,28 @@
 import { PlatformApplication } from '../../../apps/server/src/application';
 import type { BotGateway } from '../../../apps/server/src/bots/gateway';
 import { fixture } from './fixtures';
+import { Client, Events } from 'discord.js';
+import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
 
 const deferred = <T = void>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
+
+test('Discord 重新登录完成后恢复连接状态', async () => {
+  jest.spyOn(Client.prototype, 'login').mockImplementation(async function () {
+    Object.defineProperty(this, 'user', { configurable: true, value: { id: '900', username: '测试', displayAvatarURL: () => '' } });
+    Object.defineProperty(this, 'application', { configurable: true, value: { commands: { create: async () => {} } } });
+    return 'fixture';
+  });
+  jest.spyOn(Client.prototype, 'isReady').mockReturnValue(true);
+  jest.spyOn(Client.prototype, 'destroy').mockResolvedValue(undefined);
+  const gateway = new DiscordJsGateway(), states: string[] = [];
+  try {
+    await gateway.connect('fixture', false, () => {}, status => states.push(status));
+    const client = (gateway as any).client as Client;
+    client.emit(Events.ShardReconnecting, 0);
+    client.emit(Events.ShardReady, 0, undefined);
+    expect(states.slice(-2)).toEqual(['reconnecting', 'connected']);
+  } finally { await gateway.disconnect(); jest.restoreAllMocks(); }
+});
 
 describe('Bot 启动重试与停止', () => {
   let f: Awaited<ReturnType<typeof fixture>>;

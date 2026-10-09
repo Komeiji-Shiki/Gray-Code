@@ -1,6 +1,7 @@
 import type { OneBotSettings } from '@graycode/contracts';
-import type { BotInbound, BotAttachment, BotReference, BotMessageReceipt } from './gateway';
+import type { BotInbound, BotAttachment, BotReference, BotMessageReceipt, BotReply } from './gateway';
 import { oneBotContent } from './onebotContent';
+import { BotDeliveryError } from './deliveryError';
 export interface OneBotAction { action: string; params: Record<string, unknown>; self?: { platform: string; user_id: string } }
 export interface OneBotProtocol {
   login(): OneBotAction;
@@ -8,7 +9,9 @@ export interface OneBotProtocol {
   inbound(value: Record<string, any>, botId: string): BotInbound | undefined;
   send(channelId: string, text: string, replyToMessageId?: string): OneBotAction;
   receipt(data: Record<string, any>): BotMessageReceipt;
-  hydrate(message: BotInbound, call: (action: OneBotAction) => Promise<Record<string, any>>): Promise<BotInbound>;
+  hydrate(message: BotInbound, call: (action: OneBotAction) => Promise<Record<string, any>>, botId?: string): Promise<BotInbound>;
+  health(value: Record<string, any>, botId?: string): { interval?: number; online?: boolean } | undefined;
+  prepareReply(action: OneBotAction, reply: BotReply, botId: string, call: (action: OneBotAction) => Promise<Record<string, any>>): Promise<OneBotAction>;
 }
 const numericId = (value: unknown): string | undefined => typeof value === 'string' && /^\d+$/.test(value) ? value
   : typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : undefined;
@@ -49,7 +52,25 @@ function v11(): OneBotProtocol {
       if (id === undefined) throw new Error('OneBot 11 未返回有效的发送回执。');
       return { id };
     },
-    hydrate: (message, call) => hydrateOneBot(message, 11, call),
+    hydrate: (message, call, botId) => hydrateOneBot(message, 11, call, botId),
+    prepareReply: async (action, reply, botId) => {
+      if (reply.forward) {
+        const { message: _message, ...target } = action.params;
+        return { action: action.action === 'send_group_msg' ? 'send_group_forward_msg' : 'send_private_forward_msg', params: { ...target,
+          messages: reply.forward.map((text, index) => ({ type: 'node', data: { user_id: botId, nickname: 'GrayCode',
+            content: messageSegments(text, index === 0 ? reply.replyToMessageId : undefined, 11) } })) } };
+      }
+      const document = reply.files?.some(file => !file.contentType?.startsWith('image/') && !/\.(png|jpe?g|webp|gif)$/i.test(file.name));
+      // QQ 普通文件使用独立文件消息，不能混入引用段；图片仍保留原消息引用。
+      const messages = (action.params.message as Array<{ type: string; data: Record<string, unknown> }>).filter(segment =>
+        (segment.type !== 'text' || segment.data.text) && (!document || segment.type !== 'reply'));
+      for (const file of reply.files ?? []) messages.push({ type: file.contentType?.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? 'image' : 'file',
+        data: { file: `base64://${Buffer.from(file.data).toString('base64')}`, name: file.name } });
+      return { ...action, params: { ...action.params, message: messages } };
+    },
+    health: (value, botId) => value.post_type === 'meta_event' && value.meta_event_type === 'heartbeat'
+      && (!botId || numericId(value.self_id) === botId)
+      ? { interval: value.interval, online: typeof value.status?.online === 'boolean' ? value.status.online : undefined } : undefined,
   };
 }
 
@@ -86,12 +107,29 @@ function v12(identity: NonNullable<OneBotSettings['self']>): OneBotProtocol {
       if (!textId(data.message_id)) throw new Error('OneBot 12 未返回有效的发送回执。');
       return { id: data.message_id };
     },
-    hydrate: (message, call) => hydrateOneBot(message, 12, action => call({ ...action, self })),
+    hydrate: (message, call) => hydrateOneBot(message, 12, action => call({ ...action, self }), self.user_id),
+    prepareReply: async (action, reply, _botId, call) => {
+      if (reply.forward) throw new BotDeliveryError('OneBot 12 不支持合并转发，请选择分段或文件。', 'rejected');
+      const messages = (action.params.message as Array<{ type: string; data: Record<string, unknown> }>).filter(segment => segment.type !== 'text' || segment.data.text);
+      for (const file of reply.files ?? []) {
+        const uploaded = await call({ action: 'upload_file', self, params: { type: 'data', name: file.name, data: Buffer.from(file.data).toString('base64') } });
+        if (!textId(uploaded.file_id)) throw new BotDeliveryError('OneBot 12 未返回文件编号，消息尚未发送。', 'rejected');
+        messages.push({ type: file.contentType?.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? 'image' : 'file', data: { file_id: uploaded.file_id } });
+      }
+      return { ...action, params: { ...action.params, message: messages } };
+    },
+    health: value => {
+      if (value.type !== 'meta') return;
+      if (value.detail_type === 'heartbeat') return { interval: value.interval };
+      if (value.detail_type !== 'status_update') return;
+      const bot = value.status?.bots?.find((item: Record<string, any>) => item.self?.platform === self.platform && item.self?.user_id === self.user_id);
+      return { online: typeof bot?.online === 'boolean' ? bot.online : undefined };
+    },
   };
 }
 export function createOneBotProtocol(settings: OneBotSettings): OneBotProtocol { return settings.protocolVersion === 12 ? v12(settings.self!) : v11(); }
 
-async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (action: OneBotAction) => Promise<Record<string, any>>): Promise<BotInbound> {
+async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (action: OneBotAction) => Promise<Record<string, any>>, botUserId?: string): Promise<BotInbound> {
   const attachment = async (item: BotAttachment): Promise<BotAttachment> => {
     if (item.url || !item.fileId) return item;
     try {
@@ -127,5 +165,7 @@ async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (actio
     if (values.length > 40) result.push({ kind: 'forward', id: 'truncated', unavailable: '转发条目超过 40 条，后续未读取' });
     return result;
   };
-  return { ...message, attachments: await Promise.all((message.attachments ?? []).map(attachment)), references: await refs(message.references ?? [], 0) };
+  const references = await refs(message.references ?? [], 0);
+  return { ...message, attachments: await Promise.all((message.attachments ?? []).map(attachment)), references,
+    repliedToBot: !!botUserId && references.some(reference => reference.kind === 'reply' && reference.authorId === botUserId) };
 }

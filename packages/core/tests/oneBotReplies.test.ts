@@ -3,6 +3,7 @@ import type { OneBotSettings } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { fixture } from './fixtures';
+import { OneBotGateway } from '../../../apps/server/src/bots/onebotGateway';
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 async function until<T>(read: () => Promise<T> | T, label: string): Promise<T> {
@@ -16,6 +17,32 @@ function configuration(version: 11 | 12, endpoint: string): OneBotSettings {
     ...(version === 12 ? { self: { platform: 'fixture', userId: 'robot:0' } } : {}),
     defaultProfile: { workspaceId: null, toolsEnabled: false } };
 }
+
+test('OneBot 11 和 12 的附件、合并转发与心跳使用各自协议', async () => {
+  const v11 = createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1'));
+  const action = v11.send('group:30', '', '-101');
+  const reply = { files: [{ name: 'image.png', data: Buffer.from('image') }] };
+  const rich = await v11.prepareReply(action, reply, '900', async () => ({}));
+  expect(rich.params.message).toEqual([{ type: 'reply', data: { id: '-101' } }, { type: 'image', data: { file: 'base64://aW1hZ2U=', name: 'image.png' } }]);
+  const document = await v11.prepareReply(action, { files: [{ name: 'result.txt', data: Buffer.from('text') }] }, '900', async () => ({}));
+  expect(document.params.message).toEqual([{ type: 'file', data: { file: 'base64://dGV4dA==', name: 'result.txt' } }]);
+  const forward = await v11.prepareReply(action, { forward: ['第一段', '第二段'] }, '900', async () => ({}));
+  expect(forward.action).toBe('send_group_forward_msg'); expect((forward.params.messages as unknown[]).length).toBe(2);
+  const v12 = createOneBotProtocol(configuration(12, 'ws://127.0.0.1:1'));
+  const calls: unknown[] = [];
+  const file = await v12.prepareReply(v12.send('group:team%3Aone', ''), reply, '', async value => { calls.push(value); return { file_id: 'uploaded' }; });
+  expect(calls[0]).toMatchObject({ action: 'upload_file', params: { type: 'data', data: 'aW1hZ2U=' } });
+  expect(file.params.message).toEqual([{ type: 'image', data: { file_id: 'uploaded' } }]);
+  await expect(v12.prepareReply(v12.send('group:team%3Aone', ''), { forward: ['不支持'] }, '', async () => ({}))).rejects.toThrow('不支持合并转发');
+  const gateway = new OneBotGateway('ws://127.0.0.1:1', v11), close = jest.fn();
+  (gateway as any).socket = { close }; (gateway as any).botId = '900';
+  jest.useFakeTimers();
+  try {
+    (gateway as any).message({ post_type: 'meta_event', meta_event_type: 'heartbeat', self_id: 900, interval: 1000, status: { online: false } });
+    expect(gateway.health().online).toBe(false);
+    await jest.advanceTimersByTimeAsync(3000); expect(close).toHaveBeenCalledTimes(1);
+  } finally { await gateway.disconnect(); jest.useRealTimers(); }
+});
 
 test('OneBot 消息编号与事件编号分离，回复和回执按各版本使用真实编号', () => {
   const v11 = createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1'));

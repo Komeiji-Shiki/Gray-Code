@@ -11,6 +11,10 @@ import { fixture, metadata } from './fixtures';
 import { cleanBotPresentationReferences, stripDiscordPresentation } from '../../../apps/server/src/bots/presentation';
 import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
 import { botFailureContext, publicBotError } from '../../../apps/server/src/bots/errorSummary';
+import { BotDeliveryError } from '../../../apps/server/src/bots/deliveryError';
+import { botDocumentTools } from '../../../apps/server/src/bots/documents';
+import path from 'node:path';
+import { writeFile } from 'node:fs/promises';
 
 describe('Bot 回复合并与发送恢复', () => {
   let f: Awaited<ReturnType<typeof fixture>>; let app: PlatformApplication; let outbox: BotOutbox;
@@ -27,6 +31,48 @@ describe('Bot 回复合并与发送恢复', () => {
     outbox = new BotOutbox(app, 'discord', () => connected ? { gateway, botId: '900' } : undefined, async () => admitted);
   });
   afterEach(async () => { await outbox.close(); await f.cleanup(); });
+
+  test('本地附件按账号读取权限发送到原会话，同一调用保留发送回执', async () => {
+    await writeFile(path.join(f.root, 'result.txt'), '生成或选择的本地文件');
+    const run = jest.spyOn(f.store, 'getRun').mockResolvedValue({ id: 'run', actorId: 'owner' } as any);
+    const tools = botDocumentTools({ ...app, actor: () => ({ id: 'owner', role: 'owner' }),
+      product: { runtimeSettings: () => ({ getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
+      discord: { sessions: { routeForRun: async () => route, admitted: async () => true }, outbox } } as unknown as PlatformApplication);
+    const tool = tools.find(value => value.declaration.name === 'bot_send_attachment')!;
+    const context = { runId: 'run', actorId: 'owner', conversationId: 'conversation', toolCallId: 'send-file',
+      workspace: { id: 'workspace', name: '测试工作区', directory: f.root }, signal: new AbortController().signal } as any;
+    try {
+      const first = await tool.execute({ path: 'result.txt' }, context);
+      const second = await tool.execute({ path: 'result.txt' }, context);
+      expect(first).toMatchObject({ delivered: true, status: 'sent' }); expect(second).toMatchObject({ delivered: true });
+      expect(sent).toHaveLength(1); expect(Buffer.from(sent[0].files![0].data).toString()).toBe('生成或选择的本地文件');
+    } finally { run.mockRestore(); }
+  });
+
+  test('发送按频道独立推进，慢频道不会阻塞后来到达的其他频道', async () => {
+    let release!: () => void, entered!: () => void, otherSent!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const delivered = new Promise<void>(resolve => { otherSent = resolve; });
+    gateway.sendReply = async (channelId, reply) => {
+      if (channelId === '30') { entered(); await blocked; } else otherSent();
+      sent.push(reply); return { id: channelId };
+    };
+    const slow = outbox.put('slow', route, [{ content: '慢频道' }]);
+    await started;
+    const fast = outbox.put('fast', { ...route, channelId: '31' }, [{ content: '其他频道' }]);
+    try { await delivered; expect(sent.map(value => value.content)).toEqual(['其他频道']); }
+    finally { release(); await Promise.all([slow, fast]); }
+  });
+
+  test('明确拒绝与回执未知分别保存，修正明确失败后无需重复风险确认', async () => {
+    gateway.sendReply = async () => { throw new BotDeliveryError('附件格式不支持', 'rejected'); };
+    await outbox.put('rejected', route, [{ content: '待发送' }]);
+    expect((await outbox.list())[0]).toMatchObject({ phase: 'failed', error: '附件格式不支持' });
+    gateway.sendReply = async () => ({ id: 'fixed' });
+    await outbox.retry('rejected');
+    expect(await outbox.list()).toEqual([]);
+  });
 
   test('仅公开固定安全错误或 HTTP 状态，未知异常不泄露给 Discord 和模型', () => {
     expect(publicBotError('Workspace or account is unavailable.')).toBe('Workspace or account is unavailable.');

@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile, readFile } from 'node:fs/promises';
 import type { RuntimeTool } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { BotAttachment } from './gateway';
+import { FileReadAccess } from '../workspace/readAccess';
 
 export interface BotDocument { id: string; name: string; path: string; sizeBytes: number; encoding: string }
 const recordKey = (conversationId: string, id: string) => JSON.stringify([conversationId, id]);
@@ -78,6 +79,30 @@ export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {
       const truncated = text.length > limit;
       return { success: true, id: document.id, name: document.name, path: document.path, sizeBytes: info.size,
         offset, text: text.slice(0, limit), truncated, ...(truncated ? { nextOffset: offset + limit } : {}) };
+    },
+  }, {
+    declaration: { name: 'bot_send_attachment', description: 'Send an image or document from an authorized local path to the Bot conversation that started this task. The destination is fixed to that conversation. Images are displayed as images; other files are sent as documents. Inspect the returned delivery status: queued or unknown delivery must be handled through the outbox, not by calling this tool again.',
+      parameters: { type: 'object', properties: { path: { type: 'string', minLength: 1 } }, required: ['path'], additionalProperties: false } },
+    effects: () => ['workspace_read', 'external_send'],
+    execute: async (args, context) => {
+      const run = await app.storage.getRun(context.runId);
+      if (!run || run.actorId !== context.actorId || !context.toolCallId) throw new Error('文件发送缺少当前 Bot 任务或工具调用标识。');
+      const route = await app.discord.sessions.routeForRun('discord', run) ?? await app.onebot.sessions.routeForRun('onebot', run);
+      if (!route) throw new Error('当前任务没有 Bot 回复位置。');
+      const platform = route.platform ?? 'discord', service = app[platform];
+      if (!await service.sessions.admitted(route)) throw new Error('当前 Bot 会话的发送权限已关闭。');
+      const absolute = await new FileReadAccess(app, context).resolve(String(args.path));
+      const info = await stat(absolute);
+      if (!info.isFile() || info.size > 32 * 1024 * 1024) throw new Error('Bot 附件需要是 32 MiB 以内的普通文件。');
+      const data = await readFile(absolute, { signal: context.signal });
+      context.signal.throwIfAborted();
+      const name = path.basename(absolute);
+      const id = `attachment-${context.runId}-${context.iteration ?? 0}-${context.toolCallId}`;
+      await service.outbox.put(id, route, [{ files: [{ name, data }] }]);
+      const delivered = await app.storage.getRecord(`${platform}-delivered`, id);
+      const waiting = delivered ? null : await app.storage.getRecord(`${platform}-outbox`, id) as { phase: string; error?: string } | null;
+      return { success: true, deliveryId: id, name, delivered: !!delivered,
+        status: delivered ? 'sent' : waiting?.phase ?? 'suppressed', ...(waiting?.error ? { message: waiting.error } : {}) };
     },
   }];
 }

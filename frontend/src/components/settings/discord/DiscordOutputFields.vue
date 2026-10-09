@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { DiscordOutputSettings } from '../../../../../packages/contracts/src/settings';
-const props = defineProps<{ modelValue: Partial<DiscordOutputSettings>; inherited: DiscordOutputSettings }>();
+import type { BotOutputSettings, DiscordOutputSettings } from '../../../../../packages/contracts/src/settings';
+const props = defineProps<{ modelValue: Partial<BotOutputSettings>; inherited: DiscordOutputSettings }>();
 const emit = defineEmits<{ 'update:modelValue': [value: Partial<DiscordOutputSettings>] }>();
 const effective = computed(() => ({ ...props.inherited, ...props.modelValue }));
 function set<K extends keyof DiscordOutputSettings>(key: K, value: DiscordOutputSettings[K]) {
-  emit('update:modelValue', { ...props.modelValue, [key]: value });
+  emit('update:modelValue', { ...props.modelValue, longReplies: effective.value.longReplies === 'file' ? 'file' : 'split', [key]: value });
 }
 </script>
 <template>

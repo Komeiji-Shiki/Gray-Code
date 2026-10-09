@@ -1,4 +1,4 @@
-import type { BotAttachment, BotReference } from './gateway';
+import type { BotAttachment, BotReference, BotMessageSegment } from './gateway';
 
 const decode = (text: string) => text.replace(/&#44;/g, ',').replace(/&#91;/g, '[').replace(/&#93;/g, ']').replace(/&amp;/g, '&');
 export function oneBotSegments(value: unknown): Array<{ type: string; data: Record<string, any> }> {
@@ -17,25 +17,31 @@ export function oneBotSegments(value: unknown): Array<{ type: string; data: Reco
 export function oneBotContent(value: unknown, botId: string, version: 11 | 12, depth = 0) {
   let content = ''; let mentioned = false;
   const attachments: BotAttachment[] = []; const references: BotReference[] = [];
+  const segments: BotMessageSegment[] = [];
+  const text = (value: string) => { content += value; segments.push({ type: 'text', text: value }); };
   for (const segment of oneBotSegments(value)) {
     const data = segment.data;
-    if (segment.type === 'text' && typeof data.text === 'string') content += data.text;
+    if (segment.type === 'text' && typeof data.text === 'string') text(data.text);
     else if (segment.type === 'at' || segment.type === 'mention') {
       const id = String(version === 11 ? data.qq : data.user_id);
-      if (id === botId) mentioned = true; else content += ` @${id} `;
+      if (id === botId) mentioned = true; else text(` @${id} `);
     } else if (['image', 'record', 'voice', 'audio', 'video', 'file'].includes(segment.type)) {
+      segments.push({ type: 'attachment', index: attachments.length });
       attachments.push({ name: data.name || data.file_name || (segment.type === 'image' ? 'image.png' : segment.type),
         url: typeof data.url === 'string' ? data.url : typeof data.file === 'string' && /^https?:\/\//.test(data.file) ? data.file : undefined,
         fileId: String(data.file_id ?? data.file ?? ''), size: Number(data.file_size ?? data.size) || undefined,
         contentType: segment.type === 'image' ? 'image/*' : undefined });
-    } else if (segment.type === 'reply') references.push({ kind: 'reply', id: String(data.id ?? data.message_id ?? '') });
-    else if (segment.type === 'forward') references.push({ kind: 'forward', id: String(data.id ?? '') });
+    } else if (segment.type === 'reply' || segment.type === 'forward') {
+      segments.push({ type: 'reference', index: references.length });
+      references.push({ kind: segment.type, id: String(data.id ?? data.message_id ?? '') });
+    }
     else if (segment.type === 'node') {
+      segments.push({ type: 'reference', index: references.length });
       const id = String(data.id ?? `embedded-${references.length}`);
       const parsed = depth < 4 && data.content ? oneBotContent(data.content, botId, version, depth + 1) : undefined;
       references.push({ kind: 'forward', id, authorId: String(data.uin ?? data.user_id ?? ''), authorName: data.name ?? data.nickname,
         ...(parsed ? parsed : { unavailable: '转发节点内容未提供或嵌套超过 4 层' }) });
     }
   }
-  return { content: content.trim(), mentioned, attachments, references };
+  return { content: content.trim(), mentioned, attachments, references, segments };
 }

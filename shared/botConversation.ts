@@ -1,4 +1,8 @@
-import type { BotAutoSummarySettings, BotEnvironmentEntry } from '../packages/contracts/src/settings';
+import type { BotAutoSummarySettings, BotEnvironmentEntry, BotMessagePolicy, BotOutputSettings } from '../packages/contracts/src/settings';
+
+/** 只用于创建新配置，旧配置缺少字段时继续沿用原来的回复节奏。 */
+export const DEFAULT_BOT_MESSAGE_POLICY: BotMessagePolicy = { mergeWindowMs: 1000, cooldownMs: 3000, maxPending: 20 };
+export const DEFAULT_ONEBOT_OUTPUT: BotOutputSettings = { streaming: false, updateIntervalMs: 1000, showThoughts: false, showToolStatus: false, longReplies: 'forward' };
 
 export const DEFAULT_BOT_ENVIRONMENT: BotEnvironmentEntry = {
   enabled: true,

@@ -1,6 +1,7 @@
 import { ApplicationIntegrationType, ChannelType, Client, Events, GatewayIntentBits, InteractionContextType, MessageFlags,
   Partials, PermissionFlagsBits, SlashCommandBuilder, type Channel, type Interaction, type Message, type MessageSnapshot } from 'discord.js';
 import { discordModal, discordPanel } from './discordComponents';
+import { BotDeliveryError } from './deliveryError';
 
 import type { BotChannel, BotGateway, BotInbound, BotInteraction, BotReply, BotReference } from './gateway';
 export type DiscordInbound = BotInbound;
@@ -28,6 +29,10 @@ export class DiscordJsGateway implements DiscordGateway {
     client.on(Events.InteractionCreate, interaction => { void this.interaction(interaction); });
     client.on(Events.ShardReconnecting, () => state("reconnecting"));
     client.on(Events.ShardResume, () => state("connected"));
+    // 旧会话无法恢复时 SDK 会重新登录，完成后发出 Ready 而不是 Resume。
+    client.on(Events.ShardReady, () => { if (client.isReady()) state("connected"); });
+    client.on(Events.ClientReady, () => state("connected"));
+    client.on(Events.ShardDisconnect, () => state("disconnected"));
     client.on(Events.Error, () => state("connection_error"));
     client.on(Events.ShardError, () => state("connection_error"));
     try {
@@ -109,7 +114,7 @@ export class DiscordJsGateway implements DiscordGateway {
   }
   async sendReply(channelId: string, reply: BotReply, nonce?: string) {
     const channel = await this.ready().channels.fetch(channelId);
-    if (!channel?.isSendable()) throw new Error('这个 Discord 频道目前无法接收消息。');
+    if (!channel?.isSendable()) throw new BotDeliveryError('这个 Discord 频道目前无法接收消息。', 'rejected');
     const message = await channel.send({ content: reply.content, files: reply.files?.map(file => ({ name: file.name, attachment: Buffer.from(file.data) })),
       ...(reply.replyToMessageId ? { reply: { messageReference: reply.replyToMessageId, failIfNotExists: false } } : {}),
       ...(nonce ? { nonce, enforceNonce: true } : {}), allowedMentions: { parse: [], repliedUser: false } });

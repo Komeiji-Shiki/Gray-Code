@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref, toValue, type MaybeRefOrGetter } from 'vue';
 import type { BotStatus } from '../../../packages/contracts/src/bots';
 import { onExtensionCommand, sendToExtension } from '../utils/vscode';
+import { t } from '../i18n';
 
 const labels: Record<string, string> = {
   loading: '正在读取状态', stopped: '已断开', connecting: '正在连接', connected: '已连接',
@@ -26,7 +27,7 @@ export function useBotConnectionStatus(platform: MaybeRefOrGetter<'discord' | 'o
 
   return {
     status,
-    statusLabel: computed(() => labels[status.value.status] ?? status.value.status),
+    statusLabel: computed(() => ['offline', 'unresponsive'].includes(status.value.status) ? t(`desktop.bot.${status.value.status}`) : labels[status.value.status] ?? status.value.status),
     refreshStatus: () => requestStatus('status'),
     startConnection: () => requestStatus('start'),
   };
