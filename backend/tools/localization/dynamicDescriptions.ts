@@ -118,15 +118,15 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
     // 它们仍通过 declaration 的 paramAliases/compatParams 被接受（见 read_file.ts 声明）。
     const usageNote = pick(
         lang,
-        '\n\npath 用于读取单个文件，files 用于批量读取，两者只能选一个，不要同时发送。单个文件的行范围用顶层 startLine/endLine，批量读取时在每个 files 项里分别设置；省略 endLine 会读到文件末尾。请先通过搜索或符号结果定位；位置未知时，可以从第 1 行开始分段读取大文件，并根据返回的总行数继续，不要一次读完整个日志或长文档。',
-        '\n\nUse path to read one file or files to read several; send only one of the two. For a single file, set the line range with the top-level startLine/endLine; in batch mode, set them on each files item. Omitting endLine reads to the end of the file. Find the location through search or symbol results first; when it is unknown, read a large file in chunks starting at line 1 and use the returned total line count to continue, rather than loading a whole log or long document at once.'
+        '\n\npath 与 files 二选一。单文件用顶层 startLine/endLine，批量时各 files 项单独设置；省略 endLine 读取至末尾。先用搜索或符号定位，未知位置的大文件从第 1 行分段读，根据总行数继续。',
+        '\n\nUse either path or files. Set top-level startLine/endLine for one file, or set them per files item for a batch; omitting endLine reads to EOF. Locate content with search or symbols first. When its location is unknown, read large files in chunks from line 1 and continue using the returned total line count.'
     );
 
     // 结果：行号前缀不是正文；非 UTF-8 文本会自动识别编码
     const lineNumberNote = pick(
         lang,
-        '\n\n文本文件的每一行会带行号前缀，例如 "   1 | code here"。行号和 "|" 只用于定位，不属于文件内容，编辑文件时不要写回去。GBK、Shift-JIS、Big5、UTF-16 等非 UTF-8 文本会自动识别，结果里的 encoding 字段给出实际编码，encodingGuessed 表示这是按内容推测的结果；没有 encoding 字段就是 UTF-8。',
-        '\n\nEach line of a text file comes back with a line-number prefix such as "   1 | code here". The number and the "|" are only for locating lines and are not part of the file, so do not write them back when editing. Non-UTF-8 text such as GBK, Shift-JIS, Big5 and UTF-16 is detected automatically: the encoding field in the result names the actual encoding, and encodingGuessed means it was inferred from the content. No encoding field means UTF-8.'
+        '\n\n文本行号前缀（如 "1 |"）仅供定位，编辑时不要写回。自动识别非 UTF-8 编码：encoding 给出编码，encodingGuessed 表示推测；无 encoding 即 UTF-8。',
+        '\n\nText line-number prefixes such as "1 |" are for location only; do not write them back. Non-UTF-8 encodings are detected automatically: encoding names the encoding and encodingGuessed marks a content-based guess. No encoding field means UTF-8.'
     );
 
     // 限制：行范围只适用于文本（仅多模态分支需要）

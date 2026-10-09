@@ -83,40 +83,16 @@ Each diff names the original text in search and the new text in replace. search 
 
         // 默认声明主推结构化 hunks：newContent 像 write_file.content 一样表示最终内容，避免 patch 字符串的转义错误。
         const description = isZh
-            ? `对一个文件做一处或多处内容替换，并打开待确认的 diff 预览。
+            ? `对一个文件应用 hunks，并打开待确认的 Diff。
 
-每个 hunk 替换一段连续内容：oldContent 是文件里现有的原文，必须与文件完全一致；newContent 是替换后的最终内容，按普通 JSON 字符串填写，不要加 + 前缀，也不要为 diff 额外转义双引号。多处不相邻的修改放进同一个 hunks 数组，并按它们在原文件中的先后顺序排列，工具会自动处理前面修改带来的行号偏移。两个 hunk 不能修改同一段或互相重叠的文本，需要改同一块时请合并成一个 hunk。oldContent 在文件中出现多次时，用 startLine 指明位置，或多带一些上下文让它唯一；oldContent 唯一时会忽略 startLine，所以过时的行号不会导致失败。
+每项替换连续原文：oldContent 必须完全匹配空格、缩进和换行；newContent 填最终内容，使用普通 JSON 字符串，不加 + 前缀或额外 diff 转义。hunks 按原文件顺序排列、不得重叠，同一块修改合并为一项；行号偏移由工具处理。原文重复时用 startLine 或增加上下文定位；原文唯一时忽略 startLine。新调用用 hunks；patch 仅兼容旧 unified diff。
 
-patch 字段只为兼容旧的 unified diff 文本而保留，新的调用请使用 hunks。
+示例：{"path": "src/example.ts","hunks": [{"oldContent": "content: old;","newContent": "content: \\"\\";","startLine": 12}]}${batchingSuffix}`
+            : `Apply hunks to one file and open a diff preview for confirmation.
 
-示例：
-{
-  "path": "src/example.ts",
-  "hunks": [
-    {
-      "oldContent": "content: old;",
-      "newContent": "content: \\"\\";",
-      "startLine": 12
-    }
-  ]
-}${batchingSuffix}`
-            : `Make one or more content replacements in a single file and open a diff preview for confirmation.
+Each hunk replaces a contiguous block: oldContent must exactly match spaces, indentation and newlines; newContent is the final text as an ordinary JSON string, with no + prefix or extra diff escaping. Order hunks by their position in the original file without overlap; merge edits to the same block. Line shifts are handled automatically. For repeated oldContent, specify startLine or add context to make it unique; unique oldContent ignores startLine. Use hunks for new calls; patch only supports legacy unified diff.
 
-Each hunk replaces one contiguous block: oldContent is the existing text and must match the file exactly; newContent is the final replacement text, written as an ordinary JSON string with no + prefix and no extra escaping of double quotes for diff purposes. Put several non-adjacent edits in the same hunks array, ordered as they appear in the original file, and the tool keeps track of line shifts from earlier edits. Two hunks must not touch the same or overlapping text; merge them into one hunk instead. When oldContent appears more than once, give startLine or add surrounding context so it is unique; if oldContent is already unique, startLine is ignored, so a stale line number does not cause a failure.
-
-The patch field exists only for legacy unified diff text; use hunks for new calls.
-
-Example:
-{
-  "path": "src/example.ts",
-  "hunks": [
-    {
-      "oldContent": "content: old;",
-      "newContent": "content: \\"\\";",
-      "startLine": 12
-    }
-  ]
-}${batchingSuffix}`;
+Example: {"path": "src/example.ts","hunks": [{"oldContent": "content: old;","newContent": "content: \\"\\";","startLine": 12}]}${batchingSuffix}`;
 
         return {
             name: 'apply_diff',
