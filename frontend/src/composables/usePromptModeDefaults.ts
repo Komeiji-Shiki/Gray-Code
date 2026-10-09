@@ -200,10 +200,10 @@ The following skills are currently active...
   ])
 
   // 静态变量 ID 集合（模块 ID 恒定，不随语言变化）
-  const staticModuleIds = new Set(['ENVIRONMENT', 'TOOLS', 'CONTEXT_BADGE_FORMAT', 'MCP_TOOLS', 'MEMORY'])
+  const staticModuleIds = new Set(STATIC_PROMPT_MODULES.value.map(module => module.id))
 
   // 动态变量 ID 集合
-  const dynamicModuleIds = new Set(['TODO_LIST', 'WORKSPACE_FILES', 'OPEN_TABS', 'ACTIVE_EDITOR', 'DIAGNOSTICS', 'PINNED_FILES', 'SKILLS'])
+  const dynamicModuleIds = new Set(DYNAMIC_CONTEXT_MODULES.value.map(module => module.id))
 
   const DEFAULT_TEMPLATE = CODE_MODE_TEMPLATE
 
