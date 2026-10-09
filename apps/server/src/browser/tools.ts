@@ -4,7 +4,7 @@ import type { BrowserHost } from './port';
 import { actionObservationProperties, snapshotProperties } from './observationOptions';
 
 const tabId = { type: 'string', description: '浏览器返回的稳定标签 ID。' };
-const ref = { type: 'string', description: 'snapshot 返回的元素引用，同一文档中节点和操作含义未变时可跨动作、快照和分页复用；导航、节点删除或含义改变后重新读取。对某个区域分页读取时，用最新的 scopeRef 继续限定在原区域。' };
+const ref = { type: 'string', description: 'snapshot 返回的元素引用，同一文档中的节点仍存在时可跨动作、快照和分页复用；主文档换页或节点删除后重新读取。文字引用可直接点击，由工具定位文字和可点击祖先。区域分页时使用返回的 scopeRef。' };
 export function browserTools(host?: BrowserHost): RuntimeTool[] {
   const declarations = [
     { name: 'browser_tabs', description: '管理应用内置浏览器的标签页。list 同时返回当前账号可用的登录配置；create 在后台新建标签页；show 把标签页显示给本机用户，但不会显示或聚焦操作系统窗口。任务结束后标签页会保留，用户可以继续使用。',
@@ -20,25 +20,25 @@ export function browserTools(host?: BrowserHost): RuntimeTool[] {
         maxImageDimension: { type: 'integer', minimum: 320, maximum: 2560, description: '截图最长边像素，默认 1280；小字可提高至 2560。' },
         since: { type: 'integer', minimum: 0, description: 'logs 的排他游标，填上次 nextCursor；有 hasMore 时继续读取。提供后按时间顺序分页，不跳过尚未返回的记录；outputLost 表示更早的记录已被缓冲淘汰。' },
         maxEntries: { type: 'integer', minimum: 1, maximum: 200, description: '日志单页条数，默认 50；未提供 since 时返回最近的日志。' } }, required: ['action', 'tabId'], additionalProperties: false } },
-    { name: 'browser_action', description: '在内置浏览器中操作网页。定位目标有两种方式：用最近一次截图的 observationId 加图片像素坐标，或用 snapshot 返回的 ref。\n'
+    { name: 'browser_action', description: '在内置浏览器中操作网页。优先使用 snapshot 返回的 ref，文字引用也可点击；坐标定位使用截图的图片像素，省略 observationId 时沿用最近截图。截图中的 imageToViewportScale 是图片坐标到 CSS 视口坐标的换算比例，工具自动换算。\n'
       + 'hover 展开悬停菜单；fill 按 ref 替换输入框文字，空字符串表示清空，日期按页面要求的原生格式填写；type 在当前焦点或 ref 处输入；select 按 ref 设置原生下拉框的选项；check 按 ref 把复选框或开关设为目标状态，已是目标状态时不会再点击。自定义菜单用 click 或 press，复杂画布用坐标或 drag。\n'
-      + '动作后默认返回新截图，可用 after 改为返回快照或两者都返回。异步产生的结果用 browser_read 的 wait 确认。\n'
+      + 'type 和 press 可以直接作用于当前焦点。点击与悬停结果的 pointer 返回页面坐标和命中元素；可见位置没有理想命中时仍尝试点击，元素没有坐标时尝试 DOM click。动作后默认返回新截图，可用 after=snapshot 取得更紧凑的页面结果，或 both 同时返回。异步结果用 browser_read 的 wait 确认。\n'
       + '结果中的 status 表示动作本身的结果；observationError 和 snapshotError 只表示动作后的观察失败，不要因此重复动作。openedTabs 列出动作期间由本标签页打开的新页面（id、requestedUrl、status 及可用的页面状态），而返回的截图和快照仍属于原标签页；要读取新页面请改用它的 id，状态为 opening 但没有 id 或稍后才打开的页面用 browser_tabs 的 list 确认。',
       parameters: { type: 'object', properties: { action: { type: 'string', enum: ['navigate', 'back', 'forward', 'reload', 'click', 'hover', 'type', 'fill', 'select', 'check', 'press', 'scroll', 'drag'] }, tabId, ref,
-        observationId: { type: 'string', description: '最近一次截图返回的 id；每次动作后改用新截图的 id。' },
+        observationId: { type: 'string', description: '坐标定位对应的截图 ID，省略时使用最近截图；ref 定位优先。读取快照和经过一段时间不会令截图 ID 过期。' },
         x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, toX: { type: 'integer', minimum: 0 }, toY: { type: 'integer', minimum: 0 },
         button: { type: 'string', enum: ['left', 'middle', 'right'] }, clickCount: { type: 'integer', minimum: 1, maximum: 2 },
         durationMs: { type: 'integer', minimum: 50, maximum: 2000 },
         ...actionObservationProperties,
-        url: { type: 'string', description: 'navigate 时为目标地址；其他动作填最近读取的页面地址，用于确认操作对象。' }, text: { type: 'string', maxLength: 100000 }, key: { type: 'string', description: '如 Enter、Control+A、Shift+Tab、ArrowDown 或 F5。' },
+        url: { type: 'string', description: 'navigate 时填写目标地址；其他动作可省略，实际操作当前 tabId 页面。' }, text: { type: 'string', maxLength: 100000 }, key: { type: 'string', description: '如 Enter、Control+A、Shift+Tab、ArrowDown 或 F5。' },
         values: { type: 'array', items: { type: 'string' }, maxItems: 100, description: 'select 按选项 value 精确匹配；与 labels 二选一。多选框可用空数组清空。' },
         labels: { type: 'array', items: { type: 'string' }, maxItems: 100, description: 'select 按页面选项标签精确匹配；与 values 二选一。' },
         checked: { type: 'boolean', description: 'check 的目标状态，true 选中，false 取消。' },
-        direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, distance: { type: 'integer', minimum: 1, maximum: 10000 } }, required: ['action', 'tabId', 'url'], additionalProperties: false } },
+        direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, distance: { type: 'integer', minimum: 1, maximum: 10000 } }, required: ['action', 'tabId'], additionalProperties: false } },
     { name: 'browser_files', description: '在内置浏览器中上传或下载文件。upload 把允许访问的文件放入页面的文件选择控件；download 直接点击下载元素，把完整响应保存到指定的工作区路径，单个文件上限 64 MiB，不要先用普通 click 触发下载。覆盖已有文件时需要提供匹配的旧哈希，文件有未保存的编辑时会拒绝写入。',
       parameters: { type: 'object', properties: { action: { type: 'string', enum: ['upload', 'download'] }, tabId, ref,
-        url: { type: 'string', description: '最近读取的页面地址，用于确认传输对象。' }, paths: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20 },
-        path: { type: 'string', description: '下载文件的工作区目标路径。' }, expectedHash: { type: ['string', 'null'], description: '现有文件的哈希，新文件填写 null。' } }, required: ['action', 'tabId', 'ref', 'url'], additionalProperties: false } },
+        url: { type: 'string', description: '可省略；文件控件由当前 tabId 和 ref 定位。' }, paths: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20 },
+        path: { type: 'string', description: '下载文件的工作区目标路径。' }, expectedHash: { type: ['string', 'null'], description: '现有文件的哈希，新文件填写 null。' } }, required: ['action', 'tabId', 'ref'], additionalProperties: false } },
   ];
   return declarations.map(declaration => ({ declaration, nativeAsync: true,
     effects: (args): ToolEffect[] => declaration.name === 'browser_files' ? ['private_browser', 'external_send', args.action === 'download' ? 'workspace_write' : 'workspace_read']

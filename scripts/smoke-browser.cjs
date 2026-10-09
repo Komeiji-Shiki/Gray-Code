@@ -26,10 +26,13 @@ function fixtureHtml(origin, crossOrigin) {
   return `<!doctype html><meta charset="utf-8"><title>Research browser fixture</title>
   <style>body{background:#17191d;color:#ddd;font:16px sans-serif;margin:16px}a{color:#8ab4ff}nav{height:90px;overflow:auto}
   button,input,select{border:1px solid #777;border-radius:0;padding:8px;margin:4px}iframe{width:400px;height:170px}
+  #route,#pointer-menu{padding:8px;margin:4px;border:1px solid #777}#pointer-menu{cursor:pointer}
   #menu{display:none}#hover:hover #menu{display:block}#covered{position:relative;width:240px;height:50px}#cover{position:absolute;inset:0;background:#444}
   #large{display:block;width:1800px;height:1000px}</style>
   <nav>${Array.from({ length: 310 }, (_, i) => `<a href="#nav-${i}">Navigation ${i}</a> `).join('')}</nav>
   <main><h1>Research catalog</h1>
+  <div id="route"><span>SPA guide route</span></div><div id="pointer-menu">Pointer-only menu</div>
+  <p id="route-state">Guide clicks: 0</p><p id="pointer-state">Pointer clicks: 0</p>
   <form id="search"><label>Search papers<input name="query" type="search" aria-label="Search papers"></label><button>Search</button></form>
   <div id="results" role="status">Ready for query</div>
   <label>Discipline<select aria-label="Discipline"><option value="theory">Theory</option><option value="systems">Systems</option><option value="closed" disabled>Closed</option></select></label>
@@ -38,9 +41,11 @@ function fixtureHtml(origin, crossOrigin) {
   <input type="number" aria-label="Year" value="2020"><input type="date" aria-label="Published after">
   <div contenteditable="true" role="textbox" aria-label="Abstract notes">Old abstract</div>
   <div id="hover"><button aria-label="Analysis menu">Analysis menu</button><div id="menu"><button onclick="document.getElementById('results').textContent='Metrics opened'">Metrics</button></div></div>
-  <button id="meaning" onclick="this.textContent='Delete record'">Save record</button>
+  <button id="meaning" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1);this.textContent='Delete record';document.getElementById('meaning-state').textContent='Meaning clicks: '+this.dataset.clicks">Save record</button>
+  <p id="meaning-state">Meaning clicks: 0</p>
   <button id="removed" onclick="this.remove()">Remove this control</button>
-  <div id="shadow"></div><div id="covered"><button aria-label="Covered control">Covered control</button><div id="cover">Overlay</div></div>
+  <div id="shadow"></div><div id="covered"><button aria-label="Covered control" onclick="document.getElementById('covered-state').textContent='Covered control clicks: 1'">Covered control</button>
+  <div id="cover" onclick="this.textContent='Overlay clicks: 1'">Overlay</div></div><p id="covered-state">Covered control clicks: 0</p>
   <iframe title="Same origin" src="${origin}/frame"></iframe><iframe title="Cross origin" src="${crossOrigin}/frame"></iframe>
   ${'<section role="group">'.repeat(35)}<button aria-label="Deep component" onclick="this.textContent='Deep clicked'">Deep component</button>${'</section>'.repeat(35)}
   <a href="${origin}/paper">Read paper here</a><a target="_blank" href="${origin}/paper">Open paper tab</a>
@@ -48,6 +53,14 @@ function fixtureHtml(origin, crossOrigin) {
   <button id="large" onclick="this.textContent='Large clicked'">Large surface</button></main>
   <script>
   let changed=0;
+  let guideClicks=0,pointerClicks=0;
+  document.getElementById('route').addEventListener('click',()=>{
+    history.pushState({},'', '/guide');document.getElementById('route-state').textContent='Guide clicks: '+(++guideClicks);
+  });
+  // 菜单本身没有监听器或 ARIA；真实委派点击配合 pointer 样式确认交互线索识别。
+  document.addEventListener('click',event=>{
+    if(event.target.closest('#pointer-menu'))document.getElementById('pointer-state').textContent='Pointer clicks: '+(++pointerClicks);
+  });
   document.querySelector('[aria-label="Peer reviewed"]').addEventListener('change',()=>{document.getElementById('checkCount').textContent='Checkbox changes: '+(++changed);});
   document.getElementById('search').addEventListener('submit',event=>{
     event.preventDefault();document.getElementById('results').textContent='Searching';
@@ -153,11 +166,52 @@ async function run(output) {
     const shot = await tool('browser_read', { action: 'screenshot', tabId });
     assert.equal(shot.success, true, JSON.stringify(shot));
     const first = await read({ maxNodes: 20 });
-    assert.equal(first.data.nextOffset, 20); assert(first.data.total > 600);
+    assert.equal(first.data.nextOffset, 20); assert(first.data.total > 310);
     const second = await read({ maxNodes: 20, offset: first.data.nextOffset });
     assert.equal(second.data.offset, 20); assert.notEqual(second.data.nodes[0].name, first.data.nodes[0].name);
     await action({ action: 'hover', observationId: shot.data.id, x: 20, y: 20 });
     checks.push('pagination-and-screenshot-preservation');
+    // 同一个路由场景同时覆盖自定义导航、文字引用、旧截图、旧地址与任务结束后的继续操作。
+    const routeRef = await find('SPA guide route', 'generic', { interactiveOnly: true });
+    const pointerRef = await find('Pointer-only menu', 'generic', { interactiveOnly: true });
+    const routeText = await find('SPA guide route', 'StaticText');
+    const routeHover = await action({ action: 'hover', ref: routeRef, after: 'snapshot' });
+    assert.equal(routeHover.data.pointer.source, 'element');
+    assert(Number.isFinite(routeHover.data.pointer.viewport.x)); assert(Number.isFinite(routeHover.data.pointer.viewport.y));
+    assert.equal(routeHover.data.pointer.hit.name, 'SPA guide route');
+    const routeShot = await tool('browser_read', { action: 'screenshot', tabId });
+    assert.equal(routeShot.success, true, JSON.stringify(routeShot));
+    const routePoint = {
+      x: routeHover.data.pointer.viewport.x * routeShot.data.screenshot.width / routeShot.data.viewport.width,
+      y: routeHover.data.pointer.viewport.y * routeShot.data.screenshot.height / routeShot.data.viewport.height,
+    };
+    const guide = await action({ action: 'click', ref: routeText, url: undefined, observationId: shot.data.id,
+      after: 'snapshot', snapshotOptions: { query: 'Guide clicks: 1', compact: false } });
+    assert.equal(guide.data.url, origin + '/guide'); assert(guide.data.snapshot.total > 0);
+    assert.equal(guide.data.pointer.source, 'element'); assert.equal(guide.data.pointer.hit.name, 'SPA guide route');
+    assert.equal(await find('SPA guide route', 'generic', { interactiveOnly: true }), routeRef);
+    const oldUrl = origin + '/previous-route';
+    const repeatedGuide = await action({ action: 'click', ...routePoint, url: oldUrl, observationId: routeShot.data.id,
+      after: 'snapshot', snapshotOptions: { query: 'Guide clicks: 2', compact: false } });
+    assert.equal(repeatedGuide.data.requestedUrl, oldUrl); assert.equal(repeatedGuide.data.url, origin + '/guide');
+    assert(repeatedGuide.data.snapshot.total > 0); assert.equal(repeatedGuide.data.pointer.source, 'image');
+    assert.equal(repeatedGuide.data.pointer.observationId, routeShot.data.id);
+    assert.equal(repeatedGuide.data.pointer.hit.name, 'SPA guide route');
+    assert(Math.abs(repeatedGuide.data.pointer.viewport.x - routeHover.data.pointer.viewport.x) < 0.01);
+    assert(Math.abs(repeatedGuide.data.pointer.viewport.y - routeHover.data.pointer.viewport.y) < 0.01);
+    browser.finishRun(context.runId);
+    await read({ query: 'SPA guide route', interactiveOnly: true });
+    const resumedGuide = await action({ action: 'click', ...routePoint, url: undefined, observationId: routeShot.data.id,
+      after: 'snapshot', snapshotOptions: { query: 'Guide clicks: 3', compact: false } });
+    assert(resumedGuide.data.snapshot.total > 0); assert.equal(resumedGuide.data.pointer.hit.name, 'SPA guide route');
+    assert.equal(resumedGuide.data.pointer.observationId, routeShot.data.id);
+    const pointerMenu = await action({ action: 'click', ref: pointerRef, url: undefined, observationId: shot.data.id,
+      after: 'snapshot', snapshotOptions: { query: 'Pointer clicks: 1', compact: false } });
+    assert(pointerMenu.data.snapshot.total > 0); assert.equal(pointerMenu.data.pointer.hit.name, 'Pointer-only menu');
+    checks.push('js-route-and-pointer-menu-in-interactive-snapshot');
+    checks.push('static-text-ref-click-without-url-or-screenshot-identity-gates');
+    checks.push('screenshot-coordinates-survive-snapshot-spa-route-and-run-end-with-hit-feedback');
+    await action({ action: 'navigate', url, after: 'snapshot' });
     const deepRef = await find('Deep component', 'button'); assert(deepRef);
     const searchRef = await find('Search papers', 'searchbox');
     const filled = await action({ action: 'fill', ref: searchRef, text: 'first query', after: 'snapshot', snapshotOptions: { query: 'Search papers', role: 'searchbox', compact: false } });
@@ -166,13 +220,14 @@ async function run(output) {
     await action({ action: 'fill', ref: searchRef, text: '' });
     const changedRef = await find('Save record', 'button');
     await action({ action: 'click', ref: changedRef });
-    const changed = await tool('browser_action', { tabId, url, action: 'click', ref: changedRef });
-    assert.equal(changed.success, false); assert.match(changed.error, /操作含义已经变化/);
-    assert.notEqual(await find('Delete record', 'button'), changedRef);
+    const changed = await action({ action: 'click', ref: changedRef });
+    assert.equal(changed.data.pointer.hit.name, 'Delete record');
+    assert.equal(await find('Delete record', 'button'), changedRef);
+    assert((await read({ query: 'Meaning clicks: 2' })).data.total > 0);
     const removedRef = await find('Remove this control', 'button');
     await action({ action: 'click', ref: removedRef });
     assert.equal((await tool('browser_action', { tabId, url, action: 'click', ref: removedRef })).success, false);
-    checks.push('stable-reference-across-actions-and-snapshots-with-semantic-and-removal-guards');
+    checks.push('stable-reference-across-label-changes-with-removal-detection');
     checks.push('snapshot-only-ref-chaining-without-extra-read');
     assert.equal((await read({ query: 'Search papers', role: 'searchbox' })).data.nodes[0].value ?? '', '');
     const submitted = await action({ action: 'type', ref: await find('Search papers', 'searchbox'), text: 'quantum methods' });
@@ -210,11 +265,14 @@ async function run(output) {
       assert.equal(scrolled.success, true, JSON.stringify(scrolled));
     }
     checks.push('same-origin-and-cross-origin-frame-actions');
-    const blocked = await tool('browser_action', { tabId, url, action: 'click', ref: await find('Covered control', 'button') });
-    assert.equal(blocked.success, false); assert(blocked.error.includes('遮挡'), JSON.stringify(blocked));
+    const covered = await action({ action: 'click', ref: await find('Covered control', 'button') });
+    assert.equal(covered.data.pointer.overlapped, true); assert.equal(covered.data.pointer.hit.name, 'Overlay');
+    assert(Number.isFinite(covered.data.pointer.viewport.x)); assert(Number.isFinite(covered.data.pointer.viewport.y));
+    assert((await read({ query: 'Overlay clicks: 1' })).data.total > 0);
+    assert((await read({ query: 'Covered control clicks: 0' })).data.total > 0);
     await action({ action: 'click', ref: await find('Large surface', 'button') });
     assert((await read({ query: 'Large clicked' })).data.total > 0);
-    checks.push('overlay-rejection-and-partially-visible-large-element');
+    checks.push('overlay-attempt-reports-real-hit-and-partially-visible-large-element');
     const screenshot = await tool('browser_read', { action: 'screenshot', tabId });
     const image = nativeImage.createFromBuffer(Buffer.from(screenshot.attachments[0].data, 'base64'));
     assert(!image.isEmpty()); await fs.writeFile(path.join(output, 'browser.png'), image.toPNG());

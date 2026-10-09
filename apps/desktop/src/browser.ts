@@ -3,7 +3,7 @@ import { BaseWindow, BrowserWindow, WebContentsView, session, net, type Session 
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { BrowserLayout, BrowserObservation, BrowserState, BrowserTab, ToolOutcome, VisualActionResult } from '@graycode/contracts';
+import type { BrowserLayout, BrowserObservation, BrowserState, BrowserTab, BrowserActionFeedback, ToolOutcome, VisualActionResult } from '@graycode/contracts';
 import { authorizeEffects, type ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../server/src/application';
 import type { BrowserHost } from '../../server/src/browser/port';
@@ -276,8 +276,6 @@ export class DesktopBrowser implements BrowserHost {
         if (!parent.contentView.children.includes(tab.view)) parent.contentView.addChildView(tab.view);
         const x = Math.max(0, Math.min(width - 1, Math.round(input.x * zoom))); const y = Math.max(0, Math.min(height - 1, Math.round(input.y * zoom)));
         const bounds = { x, y, width: Math.max(1, Math.min(width - x, Math.round(input.width * zoom))), height: Math.max(1, Math.min(height - y, Math.round(input.height * zoom))) };
-        const previous = tab.view.getBounds();
-        if (previous.width !== bounds.width || previous.height !== bounds.height) tab.page.invalidate();
         tab.view.setBounds(bounds);
         tab.view.setVisible(true);
         this.throttle(tab, true);
@@ -453,7 +451,6 @@ export class DesktopBrowser implements BrowserHost {
           data: { ...previous.outcome?.data as Record<string, unknown>, operationId: id, status: previous.status, repeated: true } };
       return this.actionResult(tab, { ...previous.outcome, data: { ...previous.outcome.data as Record<string, unknown>, repeated: true } }, signal, observationOptions);
     }
-    if (args.action !== 'navigate' && args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化或未提供，请重新读取后确认操作目标。');
     this.attach(tab);
     const operation: BrowserOperation = { id, fingerprint, tabId: tab.id, runId: context.runId, requestedAt: Date.now(), status: 'dispatching' };
     const record = { namespace, id, ownerId: context.conversationId ?? context.actorId };
@@ -466,6 +463,7 @@ export class DesktopBrowser implements BrowserHost {
     try {
       try {
         const wc = tab.view.webContents;
+        let feedback: BrowserActionFeedback | undefined;
         signal.throwIfAborted();
         if (args.action === 'navigate') { tab.source = undefined; await this.navigate(tab, args.url, signal); }
         else if (args.action === 'back') { if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); }
@@ -473,16 +471,17 @@ export class DesktopBrowser implements BrowserHost {
         else if (args.action === 'reload') wc.reload();
         else {
           tab.modelInput = true;
-          try { await tab.page.action(args, signal); } finally { tab.modelInput = false; }
+          try { feedback = await tab.page.action(args, signal); } finally { tab.modelInput = false; }
         }
         signal.throwIfAborted(); operation.status = 'completed';
         const receipt: VisualActionResult = { operationId: id, status: 'completed' };
         const download = tab.blockedDownload as OwnedTab['blockedDownload'];
         operation.outcome = download ? { success: false, code: 'DOWNLOAD_DESTINATION_REQUIRED',
           error: '该操作触发文件下载，请通过 browser_files 指定保存路径。', data: { filename: download.filename, downloadUrl: download.url, ...receipt } }
-          : { success: true, data: { ...this.describe(tab), ...receipt } };
+          : { success: true, data: { ...this.describe(tab), ...receipt, ...feedback,
+            ...(typeof args.url === 'string' && args.url !== wc.getURL() ? { requestedUrl: args.url } : {}) } };
       } catch (error) {
-        operation.status = (error as { code?: string }).code === 'OBSERVATION_STALE' ? 'failed' : 'unknown'; operation.error = (error as Error).message;
+        operation.status = ['OBSERVATION_STALE', 'BROWSER_TARGET_MISSING', 'BROWSER_NO_GEOMETRY'].includes((error as { code?: string }).code ?? '') ? 'failed' : 'unknown'; operation.error = (error as Error).message;
         operation.outcome = { success: false, code: (error as { code?: string }).code ?? 'BROWSER_ACTION_UNKNOWN', error: operation.error,
           data: { operationId: id, status: operation.status } };
       }
@@ -534,10 +533,9 @@ export class DesktopBrowser implements BrowserHost {
         if (name === 'browser_action') return await this.performAction(tab, args, context, signal);
         if (name === 'browser_files') {
           tab.modelInput = true;
-          if (args.url !== tab.view.webContents.getURL()) throw new Error('页面地址已经变化，请重新读取后确认文件传输目标。');
           const currentContext = { ...context, signal };
-          if (args.action === 'upload') return { success: true, data: await this.transfers.upload(tab.page, args, currentContext) };
-          if (args.action === 'download') return { success: true, data: await this.transfers.download(tab.page, args, currentContext) };
+          if (args.action === 'upload') return { success: true, data: { ...await this.transfers.upload(tab.page, args, currentContext), pageUrl: tab.view.webContents.getURL() } };
+          if (args.action === 'download') return { success: true, data: { ...await this.transfers.download(tab.page, args, currentContext), pageUrl: tab.view.webContents.getURL() } };
         }
         throw new Error('不支持的浏览器工具操作。');
       } catch (error) {
@@ -551,7 +549,7 @@ export class DesktopBrowser implements BrowserHost {
   }
   finishRun(runId: string): void {
     for (const tab of this.tabs.values()) if (tab.lease?.runId === runId) {
-      tab.lease.controller.abort(new Error('任务已结束。')); tab.lease = undefined; tab.page.invalidate(); this.changed(tab.actorId);
+      tab.lease.controller.abort(new Error('任务已结束。')); tab.lease = undefined; this.changed(tab.actorId);
       this.settle(tab);
     }
     this.pauseIdleCapture();

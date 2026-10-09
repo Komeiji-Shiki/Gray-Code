@@ -54,25 +54,41 @@ export const checkedState = `function() {
   return { error: '此元素不是复选框、单选框或开关。' };
 }`;
 
-// 命中检测逐层穿过 Shadow DOM，同时检查外部遮挡；使用可见部分，避免大元素中心在屏幕外。
+// 文字引用用 Range 定位实际字形；命中检测穿过 Shadow DOM，可见区域提供可执行的定位结果。
 export const pointInElement = `function(allowDisabled) {
-  if (!this.isConnected || (!allowDisabled && (this.matches(':disabled') || this.getAttribute('aria-disabled') === 'true')) || this.closest('[inert]')) return null;
-  const view = this.ownerDocument.defaultView;
-  const rects = Array.from(this.getClientRects());
+  if (!this.isConnected) return null;
+  const text = this.nodeType === 3, element = text ? this.parentElement : this;
+  if (!element || element.nodeType !== 1) return null;
+  const view = element.ownerDocument.defaultView;
+  element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  let geometry = element;
+  if (text) { geometry = element.ownerDocument.createRange(); geometry.selectNodeContents(this); }
+  const rects = Array.from(geometry.getClientRects());
+  const describe = hit => hit ? {
+    tagName: hit.tagName.toLowerCase(), role: hit.getAttribute('role') || undefined,
+    name: (hit.getAttribute('aria-label') || hit.innerText || hit.textContent || '').trim().slice(0, 160),
+    relation: hit === element ? 'target' : element.contains(hit) ? 'descendant' : hit.contains(this) ? 'ancestor' : 'other',
+    disabled: hit.matches(':disabled') || hit.getAttribute('aria-disabled') === 'true',
+    inert: !!hit.closest('[inert]')
+  } : undefined;
+  let fallback;
   for (let index = 0; index < rects.length; index++) {
     const r = rects[index], left = Math.max(0, r.left), right = Math.min(view.innerWidth, r.right);
     const top = Math.max(0, r.top), bottom = Math.min(view.innerHeight, r.bottom);
     if (right - left < 1 || bottom - top < 1) continue;
     for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
       const x = left + (right - left) * fx, y = top + (bottom - top) * fy;
-      let target = this, clear = true;
+      let target = element, clear = true, actual;
       while (target) {
         const root = target.getRootNode(), hit = root.elementFromPoint(x, y);
-        if (hit !== target && !target.contains(hit)) { clear = false; break; }
+        actual ??= hit;
+        if (hit !== target && !target.contains(hit) && !(text && hit && hit.contains(this))) { actual = hit; clear = false; break; }
         target = root.host;
       }
-      if (clear) return { index, u: (x - r.left) / r.width, v: (y - r.top) / r.height };
+      const point = { index, x, y, u: (x - r.left) / r.width, v: (y - r.top) / r.height, hit: describe(actual) };
+      if (clear) return point;
+      fallback ??= { ...point, overlapped: true };
     }
   }
-  return null;
+  return fallback ?? null;
 }`;

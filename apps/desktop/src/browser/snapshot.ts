@@ -29,15 +29,51 @@ export interface AxNode {
   description?: { value?: string };
   value?: { value?: unknown };
   backendDOMNodeId?: number;
+  /** DOM 快照确认的点击监听或独立 pointer 光标线索。 */
+  clickable?: boolean;
   properties?: Array<{ name: string; value: { value?: unknown } }>;
+}
+
+export interface DomInteractionSnapshot {
+  strings?: string[];
+  documents?: Array<{
+    frameId: number;
+    nodes: { nodeType?: number[]; parentIndex?: number[]; backendNodeId?: number[]; isClickable?: { index: number[] } };
+    layout: { nodeIndex: number[]; styles: number[][] };
+  }>;
+}
+
+/** 一个目标的 DOM 快照包含同进程 iframe；按框架和真实节点编号合并到各自的 AX 树。 */
+export function snapshotClickables(snapshot: DomInteractionSnapshot): Map<string, Set<number>> {
+  const result = new Map<string, Set<number>>(), strings = snapshot.strings ?? [];
+  for (const { frameId, nodes, layout } of snapshot.documents ?? []) {
+    const clickable = new Set(nodes.isClickable?.index ?? []);
+    const pointers = new Set(layout.nodeIndex.filter((_node, index) => strings[layout.styles[index]?.[0]] === 'pointer'));
+    // 光标会继承到文本包装层；只追加独立 pointer 边界，避免每层 span 都重复变成操作目标。
+    for (const index of pointers) if (!pointers.has(nodes.parentIndex?.[index] ?? -1)) clickable.add(index);
+    const rendered = new Set(layout.nodeIndex), ids = new Set<number>();
+    for (const index of clickable) {
+      const id = nodes.backendNodeId?.[index];
+      if (nodes.nodeType?.[index] === 1 && rendered.has(index) && id !== undefined) ids.add(id);
+    }
+    result.set(strings[frameId], ids);
+  }
+  return result;
 }
 
 const interactiveRoles = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio',
   'switch', 'slider', 'spinbutton', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'listbox', 'option', 'treeitem',
   'date', 'datetime', 'inputtime', 'colorwell']);
 const snapshotProperties = new Set(['checked', 'selected', 'disabled', 'expanded', 'required', 'readonly', 'level',
-  'multiline', 'url', 'focused', 'busy', 'hasPopup', 'autocomplete', 'orientation', 'multiselectable', 'valuemin', 'valuemax', 'valuetext']);
+  'multiline', 'url', 'clickable', 'focused', 'busy', 'hasPopup', 'autocomplete', 'orientation', 'multiselectable', 'valuemin', 'valuemax', 'valuetext']);
 const textContainerRoles = new Set(['paragraph', 'heading', 'caption', 'listitem', 'cell', 'columnheader', 'rowheader']);
+
+/** 内嵌媒体保留类型与编码，正文不参与快照检索或字符预算；元素身份仍使用原始 AX 节点。 */
+export function snapshotUrl(url: string): string {
+  const header = /^data:([^,]*),/i.exec(url);
+  if (!header || !/;base64(?:;|$)/i.test(header[1]) && !/^image\//i.test(header[1])) return url;
+  return `${header[0]}[内嵌${/^image\//i.test(header[1]) ? '图片' : '数据'}已省略]`;
+}
 
 /** 按树顺序输出，正文、表头和所属控件保持相邻；Chromium 返回的数组可能是广度优先排列。 */
 export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backendNodeId?: number): Generator<{ node: AxNode; row: SnapshotNode }> {
@@ -61,10 +97,12 @@ export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backend
     const descendants = node.childIds?.length ? node.childIds.map(id => byId.get(id)).filter((child): child is AxNode => !!child) : children.get(node.nodeId) ?? [];
     const role = node.role?.value ?? 'node';
     const properties = Object.fromEntries((node.properties ?? []).map(property => [property.name, property.value.value]));
+    if (typeof properties.url === 'string') properties.url = snapshotUrl(properties.url);
+    if (node.clickable) properties.clickable = true;
     const interactive = interactiveRoles.has(role.toLowerCase()) || properties.focusable === true && role !== 'RootWebArea'
-      || properties.editable === 'richtext' || properties.editable === 'plaintext';
-    const omitted = node.ignored || role === 'InlineTextBox' || !node.name?.value && ['generic', 'none'].includes(role) && !interactive;
-    const container = !node.ignored && textContainerRoles.has(role.toLowerCase()) ? node.nodeId : textContainer;
+      || properties.editable === 'richtext' || properties.editable === 'plaintext' || node.clickable === true;
+    const omitted = node.ignored && !node.clickable || role === 'InlineTextBox' || !node.name?.value && ['generic', 'none'].includes(role) && !interactive;
+    const container = (!node.ignored || node.clickable) && (textContainerRoles.has(role.toLowerCase()) || node.clickable) ? node.nodeId : textContainer;
     for (let index = descendants.length - 1; index >= 0; index--) pending.push({ node: descendants[index], depth: depth + (omitted ? 0 : 1), textContainer: container });
     if (omitted) continue;
     // 段落内的字符 span 可散布在透明包装层中；按页面树顺序拼接，嵌套段落各自保留边界。
@@ -74,12 +112,14 @@ export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backend
     }
     ordered.push({ node, depth, properties, interactive, textContainer });
   }
-  const paragraphs = new Map([...text].filter(([, fragments]) => fragments.length > 1).map(([id, fragments]) => [id, fragments.join('')]));
+  const paragraphs = new Map([...text].filter(([id, fragments]) => fragments.length > 1 || byId.get(id)?.clickable)
+    .map(([id, fragments]) => [id, fragments.join('')]));
   const query = options.query?.toLocaleLowerCase();
   for (const { node, depth, properties, interactive, textContainer } of ordered) {
     const role = node.role?.value ?? 'node';
     // 聚合正文的 ref 属于真实段落；链接、控件及其他语义节点仍保持各自的引用与点击目标。
-    if (!interactive && textContainer && paragraphs.has(textContainer) && (role === 'StaticText' || role === 'LineBreak')) continue;
+    if (!interactive && textContainer && paragraphs.has(textContainer) && (role === 'StaticText' || role === 'LineBreak')
+      && options.role?.toLowerCase() !== role.toLowerCase()) continue;
     if (options.role && role.toLowerCase() !== options.role.toLowerCase()) continue;
     if (options.interactiveOnly && !interactive) continue;
     const paragraph = paragraphs.get(node.nodeId), name = node.name?.value || paragraph || '', description = node.description?.value;

@@ -128,13 +128,23 @@ test('正文按父子顺序聚合碎片且保留链接引用，长文本预算�
   expect((links.nodes as SnapshotNode[])[0]).toMatchObject({ role: 'link', name: '参考资料', url: 'https://fixture.test/reference', ref: expect.any(String) });
   await fragmented.page.action({ action: 'press', ref: (links.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal());
   expect(fragmented.sendCommand).toHaveBeenCalledWith('DOM.focus', { backendNodeId: 4 }, undefined);
-  const long = fixture(Array.from({ length: 40 }, (_, index) => ax(String(index + 1), '长'.repeat(6000) + '关键结论')));
+  const embeddedImage = 'data:image/png;base64,' + 'a'.repeat(100000);
+  const embeddedSvg = 'data:image/svg+xml,%3Csvg%3E' + 'b'.repeat(100000);
+  const nodes = Array.from({ length: 40 }, (_, index) => ({ ...ax(String(index + 1), '长'.repeat(6000) + '关键结论'),
+    properties: [{ name: 'url', value: { value: index === 0 ? embeddedImage : index === 1 ? embeddedSvg : 'https://fixture.test/image.png' } }] }));
+  const long = fixture(nodes);
   const page = await long.page.snapshot(signal(), { query: '关键结论', compact: false });
   expect(page).toMatchObject({ total: 40, truncated: false });
   expect((page.nodes as SnapshotNode[])[0]).toMatchObject({ name: expect.stringContaining('关键结论'), textTruncated: true });
+  expect((page.nodes as SnapshotNode[]).slice(0, 3).map(node => node.url)).toEqual([
+    'data:image/png;base64,[内嵌图片已省略]', 'data:image/svg+xml,[内嵌图片已省略]', 'https://fixture.test/image.png',
+  ]);
+  expect(compactSnapshot(page.nodes as SnapshotNode[]).join('\n')).not.toContain('a'.repeat(100));
+  expect(nodes[0].properties[0].value.value).toBe(embeddedImage);
   const limited = await long.page.snapshot(signal(), { compact: false });
   expect(limited).toMatchObject({ total: 40, characterLimit: 60000, truncated: true });
   expect(limited.nextOffset).toBe(limited.returned);
+  expect(limited.returned).toBeGreaterThan(1);
 });
 
 test('frameId 可以读取超出首页预算的嵌入页，失败的 OOPIF 重读后不误报 partial', async () => {
@@ -164,10 +174,14 @@ test('区域分页保留独立续查引用，日期及可聚焦自定义控件�
   expect(next).toMatchObject({ total: 3, returned: 2, truncated: false });
 });
 
-test('快照查询不使未改变页面的截图失效，hover 只移动鼠标', async () => {
+test('快照、子框架通知和同文档路由保持截图可用，hover 只移动鼠标', async () => {
   const f = fixture([ax('1', '菜单')]);
   f.contents.capturePage.mockResolvedValue({ isEmpty: () => false, getSize: () => ({ width: 1280, height: 720 }), toPNG: () => Buffer.from('fixture') });
   const screenshot = await f.page.screenshot(signal(), { width: 1280, height: 720 });
+  f.contents.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false });
+  f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+  f.contents.debugger.emit('message', {}, 'DOM.documentUpdated', {});
+  f.contents.debugger.emit('message', {}, 'Target.detachedFromTarget', { sessionId: 'unrelated' });
   await f.page.snapshot(signal(), { query: '菜单' });
   await f.page.action({ action: 'hover', observationId: screenshot.observation.id, x: 120, y: 60 }, signal());
   const inputs = f.sendCommand.mock.calls.filter(([method]) => method === 'Input.dispatchMouseEvent');
@@ -211,19 +225,22 @@ test('截图保持比例并报告实际尺寸，小图片不放大', async () =>
   await f.page.screenshot(signal(), { width: 1280, height: 720 }, 2560); expect(small.resize).not.toHaveBeenCalled();
 });
 
-test('截图坐标转换为页面坐标，并使旧观察在动作或缩放后失效', async () => {
+test('截图按实际像素比例换算，观察可跨动作、缩放和时间继续使用', async () => {
   const f = fixture([]);
-  const picture = { isEmpty: () => false, getSize: () => ({ width: 1280, height: 800 }), toPNG: () => Buffer.from('fixture') };
+  const picture = { isEmpty: () => false, getSize: () => ({ width: 1099, height: 1038 }), toPNG: () => Buffer.from('fixture') };
   f.contents.capturePage.mockResolvedValue(picture);
-  const zoom = jest.spyOn(f.contents, 'getZoomFactor').mockReturnValue(1.25);
-  const frame = await f.page.screenshot(signal(), { width: 800, height: 500 });
-  const args = { action: 'click', observationId: frame.observation.id, x: 640, y: 400 };
-  await f.page.action(args, signal());
-  expect(f.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mousePressed', x: 320, y: 200 }), undefined);
-  await expect(f.page.action(args, signal())).rejects.toMatchObject({ code: 'OBSERVATION_STALE' });
-  const current = await f.page.screenshot(signal(), { width: 800, height: 500 });
+  const zoom = jest.spyOn(f.contents, 'getZoomFactor').mockReturnValue(1);
+  const frame = await f.page.screenshot(signal(), { width: 879, height: 830 });
+  expect(frame.observation.imageToViewportScale).toEqual({ x: 879 / 1099, y: 830 / 1038 });
+  const args = { action: 'click', observationId: frame.observation.id, x: 550, y: 519 };
+  const viewport = { x: 550 * 879 / 1099, y: 519 * 830 / 1038 };
+  expect(await f.page.action(args, signal())).toMatchObject({ pointer: { source: 'image', method: 'pointer', image: { x: 550, y: 519 }, viewport } });
+  expect(f.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mousePressed', ...viewport }), undefined);
+  await expect(f.page.action(args, signal())).resolves.toHaveProperty('pointer');
   zoom.mockReturnValue(1.5);
-  await expect(f.page.action({ ...args, observationId: current.observation.id }, signal())).rejects.toMatchObject({ code: 'OBSERVATION_STALE' });
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(frame.observation.capturedAt + 180000);
+  try { await expect(f.page.action({ action: 'click', x: 550, y: 519 }, signal())).resolves.toHaveProperty('pointer'); }
+  finally { clock.mockRestore(); }
 });
 
 test('日志游标只读取新增记录，缓冲丢失和条数限制均报告截断', () => {
@@ -427,14 +444,15 @@ test('条件等待在标记未变时跳过完整重读，变化后立即重读�
 });
 
 
-test('节点被复用成其他含义或移除时拒绝旧引用，重新观察会给出新引用', async () => {
+test('同一节点的文字变化沿用引用，ref定位忽略无关截图ID，节点移除后提示重新定位', async () => {
   const node = ax('1', '保存'), f = fixture([node]);
   const first = await f.page.snapshot(signal(), { compact: false });
   const ref = (first.nodes as SnapshotNode[])[0].ref!;
   node.name.value = '删除';
-  await expect(f.page.action({ action: 'press', ref, key: 'Enter' }, signal())).rejects.toThrow('操作含义已经变化');
+  await expect(f.page.action({ action: 'press', ref, observationId: '旧截图', key: 'Enter' }, signal())).resolves.toEqual({});
   const current = await f.page.snapshot(signal(), { compact: false });
-  expect((current.nodes as SnapshotNode[])[0].ref).not.toBe(ref);
+  expect((current.nodes as SnapshotNode[])[0].ref).toBe(ref);
+  f.sendCommand.mockClear();
   const base = f.sendCommand.getMockImplementation()!;
   f.sendCommand.mockImplementation(async (method, params, session) => method === 'Runtime.callFunctionOn'
     ? { result: { value: false } } : base(method, params, session));

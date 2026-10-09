@@ -1,15 +1,13 @@
 import type { WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { BrowserObservation } from '@graycode/contracts';
-import { compactSnapshot, snapshotRows, type AxNode, type SnapshotNode, type SnapshotOptions } from './snapshot';
+import type { BrowserObservation, BrowserActionFeedback, BrowserHitTarget } from '@graycode/contracts';
+import { compactSnapshot, snapshotClickables, snapshotRows, snapshotUrl, type AxNode, type SnapshotNode, type SnapshotOptions } from './snapshot';
 import { browserKey } from './keys';
 import { checkedState, pointInElement, prepareTextInput, selectElement } from './elements';
 
-interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string; meaning: string }
+interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string }
 const referenceKey = (reference: Pick<ElementReference, 'backendNodeId' | 'sessionId' | 'frameId'>) => JSON.stringify([reference.sessionId, reference.frameId, reference.backendNodeId]);
-// 输入值、焦点和选中状态可由动作改变；角色、名称和链接目标决定模型观察到的操作含义。
-const referenceMeaning = (node: AxNode) => JSON.stringify([node.role?.value, node.name?.value, node.properties?.find(property => property.name === 'url')?.value.value]);
 interface PageLog { cursor: number; time: number; kind: 'console' | 'network' | 'error'; text: string }
 /** 一次完整读取的原始 AX 节点；marker 是读树前在该框架隔离世界里布置的变更标记。 */
 interface FrameRead { frameId?: string; identity?: string; sessionId?: string; nodes: AxNode[]; marker?: { contextId: number; id: number } }
@@ -53,8 +51,8 @@ export class BrowserPage {
   private continuation?: { key: string; offset: number; read: PageRead; timer: ReturnType<typeof setTimeout> };
   constructor(readonly contents: WebContents, private readonly changed: () => void) {
     contents.on('did-start-navigation', details => {
-      this.invalidate();
-      if (details?.isMainFrame && !details.isSameDocument) this.mainDocumentPending = true;
+      if (details?.isMainFrame && !details.isSameDocument) { this.invalidate(); this.mainDocumentPending = true; }
+      else this.forget();
     });
     const ready = () => { this.mainDocumentPending = false; };
     contents.on('dom-ready', ready); contents.on('did-stop-loading', ready);
@@ -67,13 +65,17 @@ export class BrowserPage {
         this.sessions.set(params.sessionId, params.targetInfo); this.topology++;
         void this.enable(params.sessionId).catch(error => this.log('error', String(error)));
       }
-      if (method === 'Target.detachedFromTarget') { this.sessions.delete(params.sessionId); this.topology++; this.invalidate(); }
+      if (method === 'Target.detachedFromTarget' && this.sessions.delete(params.sessionId)) { this.topology++; this.forget(); }
       if (method === 'Page.frameAttached' || method === 'Page.frameDetached') this.topology++;
       if (method === 'Runtime.consoleAPICalled') this.log('console', `${params.type}: ${(params.args ?? []).map((value: { value?: unknown; description?: string }) => value.value ?? value.description ?? '').join(' ')}`);
       if (method === 'Runtime.exceptionThrown') this.log('error', params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.text ?? '页面脚本异常');
       if (method === 'Network.responseReceived') this.log('network', `${params.response.status} ${params.type} ${params.response.url}`);
       if (method === 'Network.loadingFailed') this.log('network', `${params.type} ${params.errorText}`);
-      if (method === 'Page.frameNavigated' || method === 'DOM.documentUpdated') this.invalidate();
+      if (method === 'Page.frameNavigated') {
+        if (!sessionId && !params.frame?.parentId) this.invalidate();
+        else { this.topology++; this.forget(); }
+      }
+      if (method === 'DOM.documentUpdated') this.forget();
       // 不打开系统对话框阻塞后台任务；页面提示保留在日志中。
       if (method === 'Page.javascriptDialogOpening' && this.automated) {
         this.log('console', `${params.type}: ${params.message}`);
@@ -83,7 +85,8 @@ export class BrowserPage {
   }
   get revision(): number { return this.epoch; }
   invalidate(): void { this.references.clear(); this.referenceIds.clear(); this.invalidateVisual(); }
-  private invalidateVisual(): void { this.observation = undefined; this.epoch++; this.forget(); }
+  // 页面变化使在途快照重新读取，截图仍保留坐标映射，模型可以继续使用已知位置尝试操作。
+  private invalidateVisual(): void { this.epoch++; this.forget(); }
   private forget(): void {
     if (this.continuation) clearTimeout(this.continuation.timer);
     this.continuation = undefined;
@@ -142,7 +145,7 @@ export class BrowserPage {
   private async observe(signal: AbortSignal, options: SnapshotOptions) {
     signal.throwIfAborted(); await this.pending(this.connect(), signal);
     const scope = options.ref ? this.reference(options.ref) : undefined;
-    // 新快照沿用同一节点的引用；只有节点或操作含义改变才换引用，截图仍独立校验。
+    // 同一 DOM 节点继续使用原引用，名称和路由变化由新快照展示，不要求模型重新绑定。
     const epoch = this.epoch; const prefix = randomUUID().slice(0, 8);
     const references = new Map<string, ElementReference>();
     let scopeRef: string | undefined;
@@ -158,9 +161,8 @@ export class BrowserPage {
     if (scope) {
       const node = read.reads.find(frame => frame.sessionId === scope.sessionId && frame.frameId === scope.frameId)?.nodes.find(node => node.backendDOMNodeId === scope.backendNodeId);
       if (node) {
-        const current = { ...scope, meaning: referenceMeaning(node) };
-        scopeRef = current.meaning === scope.meaning ? String(options.ref) : `${prefix}-scope`;
-        references.set(scopeRef, current);
+        scopeRef = String(options.ref);
+        references.set(scopeRef, scope);
       }
     }
     let total = 0, characters = 0, budgetReached = false;
@@ -171,20 +173,20 @@ export class BrowserPage {
         const size = JSON.stringify(row).length;
         if (characters + size > 60000 && rows.length) { budgetReached = true; continue; }
         characters += size;
-        const reference = node.backendDOMNodeId ? { backendNodeId: node.backendDOMNodeId, sessionId, frameId, meaning: referenceMeaning(node) } : undefined;
+        const reference = node.backendDOMNodeId ? { backendNodeId: node.backendDOMNodeId, sessionId, frameId } : undefined;
         const previousId = reference && (scopeRef && referenceKey(reference) === referenceKey(scope!) ? scopeRef : this.referenceIds.get(referenceKey(reference)));
-        const id = reference ? previousId && (references.get(previousId) ?? this.references.get(previousId))?.meaning === reference.meaning ? previousId : `${prefix}-${rows.length + 1}` : undefined;
+        const id = reference ? previousId ?? `${prefix}-${rows.length + 1}` : undefined;
         if (id) references.set(id, reference!);
         rows.push({ ...(id ? { ref: id } : {}), frameId: identity, ...row });
       }
     }
-    const frames = read.frames.map(frame => ({ ...frame }));
+    const frames: PageRead['frames'] = read.frames.map(frame => ({ ...frame, ...(typeof frame.url === 'string' ? { url: snapshotUrl(frame.url) } : {}) }));
     if (options.frameId && !frames.length) throw new Error('页面框架不存在或已经变化，请先读取整个页面确认 frameId。');
     if (epoch !== this.epoch || read.epoch !== epoch) throw Object.assign(new Error('页面在读取时发生导航，请重新读取。'), { code: 'BROWSER_PAGE_CHANGED' });
-    // 完整原始树也覆盖筛选外的节点，及时移除已删除或被框架复用成其他含义的引用。
+    // 原始树覆盖筛选外的节点；只移除已经离开文档的引用，属性变化继续复用节点身份。
     for (const frame of read.reads) {
-      const meanings = new Map(frame.nodes.filter(node => node.backendDOMNodeId && !node.ignored).map(node => [node.backendDOMNodeId, referenceMeaning(node)]));
-      for (const [id, reference] of this.references) if (reference.sessionId === frame.sessionId && reference.frameId === frame.frameId && meanings.get(reference.backendNodeId) !== reference.meaning) {
+      const nodeIds = new Set(frame.nodes.map(node => node.backendDOMNodeId));
+      for (const [id, reference] of this.references) if (reference.sessionId === frame.sessionId && reference.frameId === frame.frameId && !nodeIds.has(reference.backendNodeId)) {
         this.references.delete(id); this.referenceIds.delete(referenceKey(reference));
       }
     }
@@ -206,16 +208,23 @@ export class BrowserPage {
   private async collect(signal: AbortSignal, options: SnapshotOptions, scope?: ElementReference): Promise<PageRead> {
     const read: PageRead = { epoch: this.epoch, topology: this.topology, frames: [], reads: [] };
     const frames = read.frames;
+    const interactions = new Map<string | undefined, Promise<Map<string, Set<number>>>>();
     const load = async (frameId?: string, url?: string, sessionId?: string) => {
       const identity = frameId ?? this.sessions.get(sessionId!)?.targetId;
       if (options.frameId && options.frameId !== identity) return;
       // 标记先于读树布置，读取期间发生的变化也会让后续复用失效。
       const marker = await this.watch(identity, sessionId, signal);
       const { nodes } = await this.command('Accessibility.getFullAXTree', frameId ? { frameId } : {}, signal, sessionId) as { nodes: AxNode[] };
+      // 同一次观察中每个目标只取一次 DOM 线索，JS 路由节点不再依赖 ARIA 或 tabindex 才能被识别。
+      if (!interactions.has(sessionId)) interactions.set(sessionId,
+        this.command('DOMSnapshot.captureSnapshot', { computedStyles: ['cursor'] }, signal, sessionId).then(snapshotClickables)
+          .catch(() => { signal.throwIfAborted(); return new Map<string, Set<number>>(); }));
+      const clickable = (await interactions.get(sessionId)!).get(identity!);
+      const observedNodes = clickable?.size ? nodes.map(node => clickable.has(node.backendDOMNodeId!) ? { ...node, clickable: true } : node) : nodes;
       const failed = frames.findIndex(frame => frame.frameId === identity && frame.unavailable);
       if (failed >= 0) frames.splice(failed, 1);
       frames.push({ frameId: identity, url });
-      read.reads.push({ frameId, identity, sessionId, nodes, marker });
+      read.reads.push({ frameId, identity, sessionId, nodes: observedNodes, marker });
     };
     const visit = async (node: { frame: { id: string; url: string }; childFrames?: any[] }) => {
       try { await load(node.frame.id, node.frame.url); }
@@ -365,6 +374,7 @@ export class BrowserPage {
       const observation: Omit<BrowserObservation, 'tabId'> = {
         id: randomUUID(), capturedAt: Date.now(), url: this.contents.getURL(), coordinateSpace: 'image',
         screenshot: { mimeType: 'image/png', ...image.getSize() },
+        imageToViewportScale: { x: bounds.width / zoomFactor / image.getSize().width, y: bounds.height / zoomFactor / image.getSize().height },
         // 视图 DIP 尺寸包括滚动条，除以页面缩放后与整张截图一一对应。
         viewport: { width: bounds.width / zoomFactor, height: bounds.height / zoomFactor,
           scrollX: metrics.cssVisualViewport.pageX, scrollY: metrics.cssVisualViewport.pageY, zoomFactor },
@@ -379,14 +389,10 @@ export class BrowserPage {
       throw error;
     }
   }
-  private async observed(id: unknown, signal: AbortSignal) {
+  private observed(id?: unknown) {
     const value = this.observation;
-    if (!value || id !== value.id || Date.now() - value.capturedAt > 120_000)
-      throw Object.assign(new Error('截图观察已失效，请重新截图。'), { code: 'OBSERVATION_STALE' });
-    const metrics = await this.command('Page.getLayoutMetrics', {}, signal);
-    if (this.observation !== value || this.contents.getZoomFactor() !== value.viewport.zoomFactor
-      || metrics.cssVisualViewport.pageX !== value.viewport.scrollX || metrics.cssVisualViewport.pageY !== value.viewport.scrollY)
-      throw Object.assign(new Error('页面缩放或滚动位置已变化，请重新截图。'), { code: 'OBSERVATION_STALE' });
+    if (!value || id !== undefined && id !== value.id)
+      throw Object.assign(new Error(value ? `找不到截图 ${String(id)}，最近截图为 ${value.id}；也可省略 observationId 使用最近截图。` : '还没有截图，请先截图，或使用元素 ref 定位。'), { code: 'OBSERVATION_STALE' });
     return value;
   }
   private imagePoint(observation: Omit<BrowserObservation, 'tabId'>, x: unknown, y: unknown) {
@@ -398,36 +404,37 @@ export class BrowserPage {
   }
   private reference(value: unknown): ElementReference {
     const reference = typeof value === 'string' ? this.references.get(value) : undefined;
-    if (!reference) throw new Error('元素引用不存在或已经失效，请重新读取页面。');
+    if (!reference) throw Object.assign(new Error('找不到这个元素引用，请读取当前页面取得目标 ref。'), { code: 'BROWSER_TARGET_MISSING' });
     return reference;
   }
   private async element(reference: ElementReference, signal: AbortSignal) {
     const { object } = await this.command('DOM.resolveNode', { backendNodeId: reference.backendNodeId, objectGroup: 'graycode-browser' }, signal, reference.sessionId);
-    if (!object?.objectId) throw new Error('页面元素已移除，请重新读取。');
+    if (!object?.objectId) throw Object.assign(new Error('页面元素已移除，请重新读取。'), { code: 'BROWSER_TARGET_MISSING' });
     return object.objectId as string;
   }
   private async validateReference(reference: ElementReference, signal: AbortSignal): Promise<void> {
     const objectId = await this.element(reference, signal);
     const connected = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
       functionDeclaration: 'function() { return this.isConnected === true; }' }, signal, reference.sessionId);
-    const { nodes } = await this.command('Accessibility.getPartialAXTree', { backendNodeId: reference.backendNodeId, fetchRelatives: false }, signal, reference.sessionId) as { nodes: AxNode[] };
-    const node = nodes?.find(node => node.backendDOMNodeId === reference.backendNodeId && !node.ignored);
-    if (connected.result?.value !== true || !node || referenceMeaning(node) !== reference.meaning) {
+    if (connected.result?.value !== true) {
       const key = referenceKey(reference), id = this.referenceIds.get(key);
       if (id) this.references.delete(id);
       this.referenceIds.delete(key);
-      throw new Error('页面元素已移除或操作含义已经变化，请重新读取目标区域。');
+      throw new Error('页面元素已移除，请重新读取目标区域。');
     }
   }
-  async action(args: Record<string, unknown>, signal: AbortSignal): Promise<void> {
+  async action(args: Record<string, unknown>, signal: AbortSignal): Promise<BrowserActionFeedback> {
     signal.throwIfAborted(); await this.pending(this.connect(), signal);
     await this.command('Page.setInterceptFileChooserDialog', { enabled: true }, signal);
     const action = String(args.action);
-    const observation = args.observationId ? await this.observed(args.observationId, signal) : undefined;
-    const reference = args.ref || ['fill', 'select', 'check'].includes(action) || !observation && ['click', 'hover', 'press'].includes(action) ? this.reference(args.ref) : undefined;
-    if (action === 'drag' && !observation || action === 'type' && !observation && !reference) throw new Error('请提供最近截图的 observationId 或可输入元素的 ref。');
+    const reference = args.ref && action !== 'drag' ? this.reference(args.ref) : undefined;
+    // 元素引用优先；坐标动作才读取截图，省略 ID 时沿用最近截图，键盘操作可直接使用当前焦点。
+    const usesImage = !reference && (['click', 'hover', 'drag'].includes(action) || action === 'scroll' && (args.x !== undefined || args.y !== undefined));
+    const observation = usesImage ? this.observed(args.observationId) : undefined;
+    if (['fill', 'select', 'check'].includes(action) && !reference) throw new Error(`${action} 需要目标控件的 ref。`);
+    const feedback: BrowserActionFeedback = {};
     try {
-      if (reference) await this.validateReference(reference, signal);
+      if (reference && ['type', 'press'].includes(action)) await this.validateReference(reference, signal);
       if (action === 'scroll') {
         if (!['up', 'down', 'left', 'right'].includes(String(args.direction))) throw new Error('请提供滚动方向。');
         const distance = typeof args.distance === 'number' ? args.distance : 600;
@@ -445,19 +452,37 @@ export class BrowserPage {
         if (action === 'check') {
           if (typeof args.checked !== 'boolean') throw new Error('check 需要 checked 指定目标状态。');
           const state = await this.checkState(reference!, signal);
-          if (state.checked === args.checked) return;
+          if (state.checked === args.checked) return feedback;
           if (state.radio && !args.checked) throw new Error('单选框不能直接取消，请选择同组的其他选项。');
         }
-        const point = reference ? await this.point(reference, signal, action === 'hover') : this.imagePoint(observation!, args.x, args.y);
+        let point: Awaited<ReturnType<BrowserPage['point']>>;
+        try { point = reference ? await this.point(reference, signal, action === 'hover') : this.imagePoint(observation!, args.x, args.y); }
+        catch (error) {
+          signal.throwIfAborted();
+          if (reference && action === 'click' && (error as { code?: string }).code === 'BROWSER_NO_GEOMETRY') {
+            const objectId = await this.element(reference, signal);
+            const clicked = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
+              functionDeclaration: `function() { const element = this.nodeType === 3 ? this.parentElement : this; if (!element?.isConnected || typeof element.click !== 'function') return false;
+                const hit = { tagName: element.tagName.toLowerCase(), role: element.getAttribute('role') || undefined, name: (element.getAttribute('aria-label') || element.textContent || '').trim().slice(0, 160) };
+                element.click(); return hit; }` }, signal, reference.sessionId);
+            if (clicked.result?.value) return { pointer: { source: 'element', method: 'dom-click', hit: clicked.result.value } };
+          }
+          throw error;
+        }
         const button = args.button ?? 'left';
         if (!['left', 'middle', 'right'].includes(String(button))) throw new Error('不支持的鼠标按键。');
         const count = args.clickCount === 2 ? 2 : 1;
-        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' }, signal, reference?.sessionId);
-        if (action === 'hover') return;
+        const viewport = { x: point.x, y: point.y };
+        await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...viewport, button: 'none' }, signal, reference?.sessionId);
+        feedback.pointer = { source: reference ? 'element' : 'image', method: 'pointer', viewport,
+          ...(observation ? { observationId: observation.id, image: { x: Number(args.x), y: Number(args.y) } } : {}),
+          hit: point.hit ?? await this.hitAtPoint(viewport, signal, reference?.sessionId),
+          ...(point.overlapped ? { overlapped: true } : {}) };
+        if (action === 'hover') return feedback;
         if (action === 'check' && (button !== 'left' || count !== 1)) throw new Error('check 仅使用一次左键点击。');
         for (let clickCount = 1; clickCount <= count; clickCount++) {
-          try { await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button, clickCount }, signal, reference?.sessionId); }
-          finally { await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button, clickCount }, AbortSignal.timeout(1000), reference?.sessionId); }
+          try { await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...viewport, button, clickCount }, signal, reference?.sessionId); }
+          finally { await this.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...viewport, button, clickCount }, AbortSignal.timeout(1000), reference?.sessionId); }
         }
         if (action === 'check' && (await this.checkState(reference!, signal)).checked !== args.checked)
           throw new Error('已点击选项，但页面尚未确认目标状态，请重新观察，不要重复切换。');
@@ -504,6 +529,7 @@ export class BrowserPage {
         if (reference) await this.command('DOM.focus', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
         await this.press(String(args.key), signal, reference?.sessionId);
       } else throw new Error('不支持的页面操作。');
+      return feedback;
     } finally {
       this.invalidateVisual();
       if (this.contents.debugger.isAttached()) void this.contents.debugger.sendCommand('Runtime.releaseObjectGroup', { objectGroup: 'graycode-browser' }, reference?.sessionId).catch(() => {});
@@ -524,18 +550,28 @@ export class BrowserPage {
     if (!state || state.error) throw new Error(state?.error ?? '无法读取选项状态。');
     return { checked: state.checked === true || state.checked === 'true' ? true : state.checked === false || state.checked === 'false' ? false : 'mixed', radio: state.radio };
   }
-  private async point(reference: ElementReference, signal: AbortSignal, allowDisabled = false): Promise<{ x: number; y: number }> {
-    await this.command('DOM.scrollIntoViewIfNeeded', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
+  private async hitAtPoint(point: { x: number; y: number }, signal: AbortSignal, sessionId?: string): Promise<BrowserHitTarget | undefined> {
+    const result = await this.command('Runtime.evaluate', { returnByValue: true, expression: `(() => {
+      let element = document.elementFromPoint(${point.x}, ${point.y});
+      while (element?.shadowRoot) { const inner = element.shadowRoot.elementFromPoint(${point.x}, ${point.y}); if (!inner || inner === element) break; element = inner; }
+      if (!element) return undefined;
+      return { tagName: element.tagName.toLowerCase(), role: element.getAttribute('role') || undefined,
+        name: (element.getAttribute('aria-label') || element.getAttribute('alt') || (['BODY', 'HTML'].includes(element.tagName) ? '' : element.textContent) || '').trim().slice(0, 160) };
+    })()` }, signal, sessionId);
+    return result.result?.value;
+  }
+  private async point(reference: ElementReference, signal: AbortSignal, allowDisabled = false): Promise<{ x: number; y: number; hit?: BrowserHitTarget; overlapped?: boolean }> {
     const objectId = await this.element(reference, signal);
     const result = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
       functionDeclaration: pointInElement, arguments: [{ value: allowDisabled }] }, signal, reference.sessionId);
     const location = result.result?.value;
-    if (!location) throw new Error('此元素当前不可点击或被其他内容遮挡，请重新读取页面。');
-    const resultQuads = await this.command('DOM.getContentQuads', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
-    const quad = resultQuads.quads?.[location.index] as number[] | undefined;
-    if (!quad || quad.length !== 8) throw new Error('此元素当前不可见。');
+    if (!location) throw Object.assign(new Error('元素没有可用的位置。'), { code: 'BROWSER_NO_GEOMETRY' });
+    const resultQuads = await this.command('DOM.getContentQuads', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId).catch(error => { signal.throwIfAborted(); return undefined; });
+    const quad = resultQuads?.quads?.[location.index] as number[] | undefined;
+    if (!quad || quad.length !== 8) return { x: location.x, y: location.y, hit: location.hit, overlapped: location.overlapped };
     return { x: quad[0] + (quad[2] - quad[0]) * location.u + (quad[6] - quad[0]) * location.v,
-      y: quad[1] + (quad[3] - quad[1]) * location.u + (quad[7] - quad[1]) * location.v };
+      y: quad[1] + (quad[3] - quad[1]) * location.u + (quad[7] - quad[1]) * location.v,
+      hit: location.hit, overlapped: location.overlapped };
   }
   detach(): void {
     this.invalidate();

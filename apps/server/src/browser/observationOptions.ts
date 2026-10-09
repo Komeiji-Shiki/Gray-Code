@@ -5,7 +5,7 @@ export const snapshotProperties = {
   maxNodes: { type: 'integer', minimum: 1, maximum: 1000 },
   query: { type: 'string', minLength: 1, maxLength: 1000, description: '不区分大小写的文字片段，匹配名称、段落正文、值、描述或链接 URL。' },
   role: { type: 'string', description: '按 snapshot 中的角色筛选，如 link、button、textbox、heading、row、combobox。' },
-  interactiveOnly: { type: 'boolean', description: '只读取按钮、链接、输入框等交互控件。' },
+  interactiveOnly: { type: 'boolean', description: '只读取交互目标，包括按钮、链接、输入框，以及带点击监听或 pointer 光标的自定义元素。' },
   frameId: { type: 'string', description: '从 frames 返回值取得，限定读取某个 iframe。' },
 };
 export const actionObservationProperties = {
