@@ -46,6 +46,8 @@ export interface HistoryOutlineEntry {
 export interface HistorySelection {
   runIds?: string[];
   indices?: number[];
+  /** 限定在末尾消息窗口，其他筛选条件在该窗口内生效。 */
+  tail?: number;
   projection?: ValueProjection;
   expectedRevision?: number;
 }
@@ -246,6 +248,7 @@ export class HistoryStore {
   select(id: string, options: HistorySelection) {
     if (options.runIds?.some(runId => typeof runId !== 'string' || !runId)) invalid('Run IDs must be nonempty strings.');
     if (options.indices?.some(index => !Number.isSafeInteger(index) || index < 0)) invalid('Message indices must be nonnegative integers.');
+    if (options.tail !== undefined && (!Number.isSafeInteger(options.tail) || options.tail < 1)) invalid('History tail must be a positive integer.');
     const runs = options.runIds ? new Set(options.runIds) : undefined;
     const indices = options.indices ? [...new Set(options.indices)].sort((left, right) => left - right) : undefined;
     return this.db.transaction(() => {
@@ -253,15 +256,17 @@ export class HistoryStore {
       const result = { total: info.message_count, revision: info.revision, messages: [] as PlatformMessage[] };
       if (runs?.size === 0 || indices?.length === 0) return result;
       const ranges: Array<{ start: number; end: number }> = [];
+      const start = options.tail === undefined ? 0 : Math.max(0, info.message_count - options.tail);
       if (indices) {
         // 选定位置按原历史顺序返回；相邻位置共用范围查询，不读取未选中的整段索引。
         for (const index of indices) {
+          if (index < start) continue;
           if (index >= info.message_count) break;
           const previous = ranges.at(-1);
           if (previous?.end === index) previous.end++;
           else ranges.push({ start: index, end: index + 1 });
         }
-      } else ranges.push({ start: 0, end: info.message_count });
+      } else ranges.push({ start, end: info.message_count });
       // 同一次同步查询的投影不变，缓存键的后缀只序列化一次，不随每条消息重复计算。
       const projectionKey = options.projection ? JSON.stringify(options.projection) : '';
       for (const range of ranges) {

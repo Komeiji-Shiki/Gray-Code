@@ -7,9 +7,18 @@ export class BrowserProfiles {
   constructor(private readonly app: PlatformApplication) {}
   async list(actorId: string): Promise<BrowserProfile[]> {
     const values: BrowserProfile[] = [];
-    for (const id of await this.app.storage.listRecords(namespace)) {
-      const value = await this.app.storage.getRecord(namespace, id) as BrowserProfile | null;
-      if (value?.actorId === actorId) values.push(value);
+    let afterId: string | undefined;
+    for (;;) {
+      // 旧配置未保存 ownerId，沿用 actorId 过滤；分页投影避免每个配置单独往返存储线程。
+      const page = await this.app.storage.readRecordPage(namespace, undefined, {
+        afterId, limit: 200, projection: { fields: ['id', 'actorId', 'name'] },
+      });
+      for (const record of page) {
+        const value = record.value as BrowserProfile | null;
+        if (value?.actorId === actorId) values.push(value);
+      }
+      if (page.length < 200) break;
+      afterId = page[page.length - 1].id;
     }
     if (!values.some(value => value.id === `default:${actorId}`)) values.unshift({ id: `default:${actorId}`, actorId, name: '默认登录配置' });
     return values.sort((left, right) => Number(right.id === `default:${actorId}`) - Number(left.id === `default:${actorId}`) || left.name.localeCompare(right.name));

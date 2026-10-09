@@ -139,7 +139,7 @@ export class PlatformStorage {
   commitRecords(mutations: RecordMutation[]) { return this.request('commitRecords', mutations); }
   getRecord(namespace: string, id: string) { return this.request('getRecord', { namespace, id }); }
   listRecords(namespace: string, ownerId?: string) { return this.request('listRecords', { namespace, ownerId }); }
-  readRecordPage(namespace: string, ownerId: string, options: Omit<StorageOperations['readRecordPage']['input'], 'namespace' | 'ownerId'>) {
+  readRecordPage(namespace: string, ownerId: string | undefined, options: Omit<StorageOperations['readRecordPage']['input'], 'namespace' | 'ownerId'>) {
     return this.request('readRecordPage', { namespace, ownerId, ...options });
   }
   deleteRecord(namespace: string, id: string) { return this.request('deleteRecord', { namespace, id }); }

@@ -10,6 +10,9 @@ function fixture() {
   ]);
   const storage = {
     listRecords: jest.fn(async () => [...records.keys()]),
+    readRecordPage: jest.fn(async (namespace: string, _ownerId: string | undefined, options: { afterId?: string; limit: number }) =>
+      [...records.keys()].sort().filter(id => options.afterId === undefined || id > options.afterId).slice(0, options.limit)
+        .map(id => ({ namespace, id, value: records.get(id) }))),
     getRecord: jest.fn(async (_namespace: string, id: string) => records.get(id) ?? null),
     getVersionedRecord: jest.fn(async () => ({ revision: null })), commitRecords: jest.fn(async () => {}),
   };

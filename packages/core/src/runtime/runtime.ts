@@ -751,7 +751,8 @@ export class PlatformRuntime {
 
   private async saveToolResult(run: RunRecord, call: Pick<FunctionCall, 'id' | 'name'>, outcome: ToolOutcome): Promise<void> {
     const { attachments, ...response } = outcome;
-    const page = await this.services.storage.readHistory(run.conversationId, { limit: 1 });
+    // 父消息身份来自尾部索引，正文和附件不必为此再次读取并跨线程复制。
+    const page = await this.services.storage.readHistorySelection(run.conversationId, { tail: 1, projection: { fields: [] } });
     const message: PlatformMessage = { id: randomUUID(), role: 'user', runId: run.id, isFunctionResponse: true,
       timestamp: Date.now(), parentId: page.messages.at(-1)?.id ?? null,
       parts: [{ functionResponse: { id: call.id, name: call.name, response } },
@@ -785,7 +786,7 @@ export class PlatformRuntime {
 
   private async drainFeedback(run: RunRecord): Promise<void> {
     for (const feedback of this.questions.drain(run.id)) {
-      const page = await this.services.storage.readHistory(run.conversationId, { limit: 1 });
+      const page = await this.services.storage.readHistorySelection(run.conversationId, { tail: 1, projection: { fields: [] } });
       const text = feedback.timedOut
         ? `Optional question ${feedback.request.id} received no answer before its deadline. Decide within existing permissions; this is not approval for any restricted operation. Questions: ${JSON.stringify(feedback.request.questions)}`
         : `Answer to optional question ${feedback.request.id}: ${JSON.stringify(feedback.request.questions.map((question, i) => ({ question: question.title, answer: feedback.answers![i] })))}`;

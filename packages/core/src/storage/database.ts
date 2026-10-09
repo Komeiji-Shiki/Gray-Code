@@ -279,13 +279,15 @@ export class PlatformDatabase {
       return (rows as { id: string }[]).map(row => row.id);
     } },
     readRecordPage: { concurrentRead: true, execute: ({ namespace, ownerId, afterId, limit, projection }) => {
-      assertIdentifier(namespace); assertIdentifier(ownerId);
+      assertIdentifier(namespace); if (ownerId !== undefined) assertIdentifier(ownerId);
       if (afterId !== undefined) assertIdentifier(afterId);
       if (!Number.isInteger(limit) || limit < 1 || limit > 200) invalid('A record page must contain between 1 and 200 entries.');
-      // 复用 namespace、owner_id、id 的索引，从游标继续读取，避免每次遍历整个事件档案。
-      const rows = this.db.prepare('SELECT id,value_hash FROM records WHERE namespace=? AND owner_id=? AND id>? ORDER BY id LIMIT ?')
-        .all(namespace, ownerId, afterId ?? '', limit) as { id: string; value_hash: Buffer }[];
-      return rows.map(row => ({ namespace, id: row.id, ownerId, value: this.objects.getValue(row.value_hash, projection) }));
+      // 按所有者复用索引；未指定所有者时按主键分页，兼容没有 owner_id 的旧记录。
+      const rows = (ownerId === undefined
+        ? this.db.prepare('SELECT id,owner_id,value_hash FROM records WHERE namespace=? AND id>? ORDER BY id LIMIT ?').all(namespace, afterId ?? '', limit)
+        : this.db.prepare('SELECT id,owner_id,value_hash FROM records WHERE namespace=? AND owner_id=? AND id>? ORDER BY id LIMIT ?').all(namespace, ownerId, afterId ?? '', limit)
+      ) as { id: string; owner_id: string | null; value_hash: Buffer }[];
+      return rows.map(row => ({ namespace, id: row.id, ownerId: row.owner_id ?? undefined, value: this.objects.getValue(row.value_hash, projection) }));
     } },
     deleteRecord: { concurrentRead: false, execute: ({ namespace, id }) => {
       assertIdentifier(namespace); assertIdentifier(id);

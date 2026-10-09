@@ -48,17 +48,32 @@ export class WorkspaceDiffs {
   async list(actorId: string, workspaceId: string, includeId?: string): Promise<WorkspaceDiff[]> {
     if (includeId !== undefined && (typeof includeId !== 'string' || !includeId)) throw new Error(t('modules.diff.previewNotFound'));
     this.app.workspace(actorId, workspaceId, ['workspace_read']);
-    const values: WorkspaceDiff[] = [];
-    for (const id of await this.app.storage.listRecords(namespace)) {
-      const value = await this.app.storage.getRecord(namespace, id) as WorkspaceDiff;
-      if (value.workspaceId === workspaceId) { await this.app.conversation(actorId, value.conversationId); values.push(value); }
+    type DiffHeader = Pick<WorkspaceDiff, 'id' | 'conversationId' | 'workspaceId' | 'createdAt'>;
+    let recent: DiffHeader[] = [], included: DiffHeader | undefined, afterId: string | undefined;
+    const conversations = new Set<string>();
+    for (;;) {
+      // 历史提案先按轻量字段筛选，仅还原最终显示项的正文，避免把其他工作区与过期提案全部读回。
+      const page = await this.app.storage.readRecordPage(namespace, undefined, { afterId, limit: 200,
+        projection: { fields: ['id', 'conversationId', 'workspaceId', 'createdAt'] } });
+      for (const entry of page) {
+        const value = entry.value as DiffHeader;
+        if (value.workspaceId !== workspaceId) continue;
+        if (!conversations.has(value.conversationId)) {
+          await this.app.conversation(actorId, value.conversationId); conversations.add(value.conversationId);
+        }
+        if (value.id === includeId) included = value;
+        recent.push(value);
+      }
+      recent = recent.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+      if (page.length < 200) break;
+      afterId = page.at(-1)!.id;
     }
-    const recent = values.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
-    if (includeId === undefined || recent.some(value => value.id === includeId)) return recent;
-    const included = values.find(value => value.id === includeId);
-    if (!included) throw new Error(t('modules.diff.previewNotFound'));
-    // 精确预览历史目标时仍保持列表上限，只替换最旧的一项，不改默认最新列表。
-    return [...recent.slice(0, 99), included];
+    if (includeId !== undefined && !recent.some(value => value.id === includeId)) {
+      if (!included) throw new Error(t('modules.diff.previewNotFound'));
+      // 精确预览历史目标时仍保持列表上限，只替换最旧的一项，不改默认最新列表。
+      recent = [...recent.slice(0, 99), included];
+    }
+    return Promise.all(recent.map(value => this.app.storage.getRecord(namespace, value.id) as Promise<WorkspaceDiff>));
   }
   async content(actorId: string, id: string) {
     const value = await this.app.storage.getRecord(namespace, id) as WorkspaceDiff | null;

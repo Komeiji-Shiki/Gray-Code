@@ -30,19 +30,25 @@ export class BotSummaries {
   }
   private async check(now: number) {
     if (!this.enabled) return;
-    const ids = await this.app.storage.listRecords(botInboxStateNamespace);
-    for (const id of ids) {
-      if (!this.enabled) return;
-      try { await this.checkConversation(id, now); }
-      catch (error) {
-        // 一个频道的配置、存储或投递失败，不阻止其他频道维护上下文。
-        this.app.publish({ type: 'bot.summary.finished', platform: this.platform, conversationId: id, error: String((error as Error).message ?? error) });
+    let afterId: string | undefined;
+    for (;;) {
+      // 定时检查只需摘要状态，批量投影避免逐条往返存储，也不还原频道的其他统计数据。
+      const page = await this.app.storage.readRecordPage(botInboxStateNamespace, undefined, { afterId, limit: 200,
+        projection: { fields: ['sequence', 'context', 'lastActivityAt', 'summaryAttemptAt', 'summarySequence',
+          'summaryError', 'summarySignature', 'summaryRetryAt'] } });
+      for (const record of page) {
+        if (!this.enabled) return;
+        try { await this.checkConversation(record.id, now, record.value as BotInboxState); }
+        catch (error) {
+          // 一个频道的配置、存储或投递失败，不阻止其他频道维护上下文。
+          this.app.publish({ type: 'bot.summary.finished', platform: this.platform, conversationId: record.id, error: String((error as Error).message ?? error) });
+        }
       }
+      if (page.length < 200 || !this.enabled) return;
+      afterId = page.at(-1)!.id;
     }
   }
-  private async checkConversation(id: string, now: number) {
-    const record = await this.app.storage.getVersionedRecord(botInboxStateNamespace, id);
-    const value = record.value as BotInboxState | null;
+  private async checkConversation(id: string, now: number, value: BotInboxState) {
     if (!value || value.context.platform !== this.platform || !this.sessions.canRecord(value.context)) return;
     const loaded = await this.sessions.load(value.context, true);
     if (loaded.value.conversationId !== id) return;
