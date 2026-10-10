@@ -6,6 +6,7 @@
  * SettingsManager 聚合委托各主题服务，本文件不对外导出（除 SettingsStorage 类型）。
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
     GlobalSettings,
     SettingsChangeEvent,
@@ -88,25 +89,8 @@ export class SettingsCore {
      * 整体写回，并发调用时后写会覆盖先写，必须整段入队串行执行。
      */
     private writeQueue: Promise<void> = Promise.resolve();
-    /**
-     * serializeMutation 重入标志：mutator 执行期间为 true。
-     * mutator 内嵌套调用 serializeMutation（如服务级 update*Config 在 mutator 内调用
-     * 底层写入口 saveToolsConfigEntry，后者也整体入队）时据此内联执行，避免
-     * 「内层 run 链在外层 tail 之后才启动、外层 mutator 又 await 内层 run」的队列死锁。
-     *
-     * 已知边界：标志跨 await 保持——mutator 等待（storage.save/load 等）期间到达的
-     * 并发调用（另一事件循环任务）同样会走内联分支、与当前 mutator 交错执行（与嵌套
-     * 调用无法区分）。对「读-改-写」型 mutator，交错写仍基于最新内存状态合并，不丢
-     * 更新；唯一需要收口的是 reloadAndNotify 的「load → 整体替换」窄窗口——由
-     * mutationGeneration 代际校验 + 重读保护覆盖（见 reloadAndNotify）。
-     */
-    private inMutation = false;
-    /**
-     * 变更代际计数：mutator 实际执行（队列运行或内联执行）时递增。
-     * 供 reloadAndNotify 检测「load() 等待窗口内是否有并发变更交错」：
-     * 有交错则丢弃本次过期快照、重读最新存储，避免整体替换覆盖并发变更。
-     */
-    private mutationGeneration = 0;
+    /** 仅同一活跃调用链允许重入，独立请求即使在 await 期间到达也须排队。 */
+    private readonly mutationContext = new AsyncLocalStorage<{ active: boolean }>();
 
     constructor(storage: SettingsStorage) {
         this.storage = storage;
@@ -299,24 +283,24 @@ export class SettingsCore {
      * 内联执行 mutator：调用方 await 语义不变，内层与外层在同一执行栈内顺序完成，
      * 等价于串行（项目内全部嵌套调用均为 await 形态，无 fire-and-forget 交错）。
      *
-     * 注：标志跨 await 保持，mutator 等待期间到达的并发调用同样走内联分支（与嵌套调用
-     * 无法区分）；交错写基于最新内存状态合并不丢更新，唯一需要收口的是 reloadAndNotify
-     * 的 load 窗口（代际校验 + 重读，见 reloadAndNotify）。
+     * 异步上下文只归属于本次调用；外层完成后标记失效，继承该上下文的延迟任务重新排队。
      */
     serializeMutation<T>(mutator: () => T | Promise<T>): Promise<T> {
-        if (this.inMutation) {
+        if (this.mutationContext.getStore()?.active) {
             // 已在 mutator 执行栈内：内联执行（mutator 同步 throw 也转为 rejected promise）
-            this.mutationGeneration++;
             return Promise.resolve().then(() => mutator());
         }
-        const run = this.writeQueue.then(async () => {
-            this.inMutation = true;
-            this.mutationGeneration++;
-            try {
-                return await mutator();
-            } finally {
-                this.inMutation = false;
-            }
+        const run = this.writeQueue.then(() => {
+            const owner = { active: true };
+            return this.mutationContext.run(owner, async () => {
+                try {
+                    return await mutator();
+                } finally {
+                    owner.active = false;
+                    // 草稿设置核心生命周期很短；队列保证没有其他活跃 owner，可在下次 run 前释放上下文。
+                    this.mutationContext.disable();
+                }
+            });
         });
         // 链尾吞掉本次错误（调用方仍从 run 拿到真实结果），防止单次失败阻塞后续写
         this.writeQueue = run.then(
@@ -398,17 +382,7 @@ export class SettingsCore {
         // 避免导入流程的 reload 与并发写操作交错（如 reload 读到半旧状态后整体写回覆盖新变更）
         await this.serializeMutation(async () => {
             const oldSettings = this.cloneConfig(this.settings);
-            // 代际校验 + 重读：inMutation 标志跨 await 保持，load() 等待窗口内到达的并发
-            // 变更会经 serializeMutation 内联分支与本次 reload 交错执行（其变更已写入内存
-            // 与存储）。若直接用本次 load 的过期快照整体替换 this.settings，会覆盖该并发
-            // 变更（内存回退旧状态、与存储分叉）。比对代际：窗口内有交错则重读最新存储
-            // （并发变更的保存已完成，重读即拿到最新状态）；有界重试避免极端高频写入下
-            // 饿死，最终一次仍接受结果（与旧行为等价，仅收窄覆盖窗口）。
-            const generationBeforeLoad = this.mutationGeneration;
-            let stored = await this.storage.load();
-            for (let attempt = 0; attempt < 2 && this.mutationGeneration !== generationBeforeLoad; attempt++) {
-                stored = await this.storage.load();
-            }
+            const stored = await this.storage.load();
             if (!stored) {
                 // 存储为空：内存状态无需任何变化，广播 full 事件无意义（old/new 内容相同），
                 // 且 newValue 若传 this.settings 是活引用。直接返回，不广播不拷贝。
