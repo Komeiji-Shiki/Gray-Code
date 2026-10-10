@@ -47,9 +47,10 @@ function getExecuteCommandShellGuidanceDescription(): string {
     const enabled = new Set(host.shells.getEnabledShellTypesForEnum());
     const posix = ['sh', 'bash', 'gitbash', 'wsl', 'zsh'].filter(name => enabled.has(name));
     const unavailable = getUnavailableShellsDescription();
-    const output = getMaxOutputLines() === -1
+    const maxOutputLines = getMaxOutputLines();
+    const output = maxOutputLines === -1
         ? (zh ? '默认不截断输出。' : 'Output is not truncated by default.')
-        : (zh ? `默认只保留最后 ${getMaxOutputLines()} 行输出。` : `By default only the last ${getMaxOutputLines()} lines of output are kept.`);
+        : (zh ? `默认只保留最后 ${maxOutputLines} 行输出。` : `By default only the last ${maxOutputLines} lines of output are kept.`);
     return [
         zh
             ? `command 是交给所选 Shell 解析的文本，不是 argv 数组。省略 shell 或填 default 时使用 ${getDefaultShellType()}。只能选择 shell 参数列出的类型，并按所选 Shell 的语法和转义规则书写，不要混用。`
@@ -64,7 +65,7 @@ function getExecuteCommandShellGuidanceDescription(): string {
         enabled.has('zsh') ? (zh
             ? 'Zsh 的 glob、alias 和扩展规则可能不同，不要假定所有 Bash 特有语法都适用。'
             : 'Zsh glob, alias and expansion rules differ; do not assume all Bash-specific syntax works.') : '',
-        getComplexCommandGuidanceDescription(lang, enabled),
+        getComplexCommandGuidanceDescription(lang),
         getSshGuidanceDescription(lang, enabled.has('powershell')),
     ].filter(Boolean).join('\n\n');
 }
@@ -104,27 +105,15 @@ function getPowerShellGuidanceDescription(lang: LocalizationLanguage): string {
     return lang === 'zh-CN'
         ? [
             '## PowerShell 规则（`shell: "powershell"`）',
-            '',
-            '- PowerShell 不是 Bash；不要把 Bash 语法直接写进 PowerShell。',
-            '- 单引号保留字面量：`\'a|b\'`、`\'$HOME\'`、`\'$(hostname)\'`。',
-            '- 双引号会展开 PowerShell 变量和子表达式：`"$env:TEMP"`、`"$(Get-Date)"`。',
-            '- 环境变量写法是 `$env:NAME`，例如 `$env:TEMP`，不是 Bash 的 `$NAME`。',
-            '- 未引用的 `|` 是 PowerShell 管道，示例：`Get-ChildItem | Select-Object -First 10`。',
+            '- 单引号保留字面量；双引号展开变量与 `$()` 子表达式。环境变量用 `$env:NAME`，未引用的 `|` 是管道。',
             '- 调用路径含空格的可执行文件，用 `&`：`& "C:\\Program Files\\nodejs\\node.exe" --version`。',
-            '- 调用原生可执行文件时，PowerShell 解析完还会再经过 Windows 的 argv 规则；引号和反斜杠紧贴双引号时要格外小心。',
-            '- 复杂的 Node/Python/JSON/正则内容不要硬写成 `node -e "..."`，优先用单引号 here-string 写成临时脚本。'
+            '- 原生程序的参数还会经过 Windows argv 解析，注意双引号附近的引号与反斜杠。复杂内容用 `@\' ... \'@` 单引号 here-string 写入脚本。'
         ].join('\n')
         : [
             '## PowerShell rules (`shell: "powershell"`)',
-            '',
-            '- PowerShell is not Bash; do not write Bash syntax directly into PowerShell.',
-            '- Single quotes preserve literals: `\'a|b\'`, `\'$HOME\'`, `\'$(hostname)\'`.',
-            '- Double quotes expand PowerShell variables and subexpressions: `"$env:TEMP"`, `"$(Get-Date)"`.',
-            '- Environment variables are written as `$env:NAME`, e.g. `$env:TEMP`, not Bash\'s `$NAME`.',
-            '- An unquoted `|` is a PowerShell pipeline, e.g.: `Get-ChildItem | Select-Object -First 10`.',
+            '- Single quotes preserve literals; double quotes expand variables and `$()` subexpressions. Environment variables use `$env:NAME`; unquoted `|` is a pipeline.',
             '- To invoke an executable whose path contains spaces, use `&`: `& "C:\\Program Files\\nodejs\\node.exe" --version`.',
-            '- When calling native exes, PowerShell parsing is followed by Windows/native argv rules; be extra careful when quotes and backslashes sit right next to double quotes.',
-            '- Do not force complex Node/Python/JSON/regex content into `node -e "..."`; prefer a single-quoted here-string in a temp script.'
+            '- Native arguments also pass through Windows argv parsing; take care with quotes and backslashes near double quotes. Write complex content to a script using an `@\' ... \'@` single-quoted here-string.'
         ].join('\n');
 }
 
@@ -133,27 +122,15 @@ function getCmdGuidanceDescription(lang: LocalizationLanguage): string {
     return lang === 'zh-CN'
         ? [
             '## CMD 规则（`shell: "cmd"`）',
-            '',
-            '- CMD 不是 PowerShell，也不是 Bash。',
-            '- 环境变量写法是 `%NAME%`，例如 `%TEMP%`。',
-            '- `|`、`<`、`>`、`&`、`^` 是 CMD 特殊字符。',
-            '- 管道示例：`dir | findstr foo`。',
-            '- 字面管道符可放进双引号：`"a|b"`；必要时使用 `a^|b`。如果已经在双引号内，不要额外写 `^|`。',
-            '- 多命令串联可用 `&&`：`npm install && npm test`。',
-            '- 路径含空格时使用双引号。复杂脚本通常优先改用 PowerShell 或 sh。',
-            '- 不要给整条命令外面再包一层引号：cmd 启动时会去掉最外层引号，命令里如果还有引号就会解析失败。'
+            '- 环境变量用 `%NAME%`；`|`、`<`、`>`、`&`、`^` 是特殊字符，多命令用 `&&` 串联。',
+            '- 字面管道符用 `"a|b"` 或 `a^|b`，双引号内不额外加 `^`。含空格的路径用双引号。',
+            '- 不要给整条命令再包外层引号，cmd 启动时会剥离它。复杂多行脚本优先选 PowerShell 或 sh。'
         ].join('\n')
         : [
             '## CMD rules (`shell: "cmd"`)',
-            '',
-            '- CMD is not PowerShell, and not Bash.',
-            '- Environment variables are written as `%NAME%`, e.g. `%TEMP%`.',
-            '- `|`, `<`, `>`, `&`, `^` are CMD special characters.',
-            '- Pipeline example: `dir | findstr foo`.',
-            '- A literal pipe can be put inside double quotes: `"a|b"`; when needed use `a^|b`. If already inside double quotes, do not add an extra `^|`.',
-            '- Multiple commands can be chained with `&&`: `npm install && npm test`.',
-            '- Use double quotes when paths contain spaces. For complex scripts, prefer PowerShell or sh.',
-            '- Do not wrap the whole command in an extra outer quote (cmd strips the outermost quotes at startup; inner quotes then fail to parse).'
+            '- Environment variables use `%NAME%`; `|`, `<`, `>`, `&`, `^` are special characters. Chain commands with `&&`.',
+            '- Use `"a|b"` or `a^|b` for a literal pipe; do not add `^` inside double quotes. Quote paths containing spaces.',
+            '- Do not add outer quotes around the entire command; cmd strips them at startup. Prefer PowerShell or sh for complex multiline scripts.'
         ].join('\n');
 }
 
@@ -163,23 +140,13 @@ function getPosixShellGuidanceDescription(shellNames: string[], lang: Localizati
     return lang === 'zh-CN'
         ? [
             `## POSIX 共用规则（${shellName}）`,
-            '',
-            `- 使用 POSIX/${shellName} 风格语法，不要使用 PowerShell 的 \`$env:NAME\` 或 CMD 的 \`%NAME%\`。`,
-            '- 单引号保留字面量：`\'a|b\'`、`\'$HOME\'`、`\'$(hostname)\'`。',
-            '- 双引号允许变量展开和命令替换：`"$HOME"`、`"$(hostname)"`。',
-            '- 未引用的 `|` 是管道，示例：`find . -name \'*.ts\' | head`。',
-            '- 复杂多行内容优先使用强字面量 heredoc：`cat > /tmp/probe.sh <<\'EOF\' ... EOF`。',
-            '- 在 Windows 上使用 Git sh/Git Bash 时，还要注意 Git/MSYS 的路径转换规则。'
+            '- 单引号保留字面量；双引号允许 `$NAME` 变量展开与 `$(hostname)` 命令替换，未引用的 `|` 是管道。',
+            '- 多行字面内容用引用分隔符的 heredoc：`cat > /tmp/script.sh <<\'EOF\' ... EOF`。'
         ].join('\n')
         : [
             `## Shared POSIX rules (${shellName})`,
-            '',
-            `- Use POSIX/${shellName}-style syntax; do not use PowerShell's \`$env:NAME\` or CMD's \`%NAME%\`.`,
-            '- Single quotes preserve literals: `\'a|b\'`, `\'$HOME\'`, `\'$(hostname)\'`.',
-            '- Double quotes allow variable expansion and command substitution: `"$HOME"`, `"$(hostname)"`.',
-            '- An unquoted `|` is a pipeline, e.g.: `find . -name \'*.ts\' | head`.',
-            '- Prefer a strong-literal heredoc for complex multi-line content: `cat > /tmp/probe.sh <<\'EOF\' ... EOF`.',
-            '- If this is Git sh/Git Bash on Windows, also follow the Git/MSYS path conversion rules.'
+            '- Single quotes preserve literals; double quotes allow `$NAME` expansion and `$(hostname)` substitution. Unquoted `|` is a pipeline.',
+            '- For multiline literal content, quote the heredoc delimiter: `cat > /tmp/script.sh <<\'EOF\' ... EOF`.'
         ].join('\n');
 }
 
@@ -188,19 +155,11 @@ function getGitMsysGuidanceDescription(lang: LocalizationLanguage): string {
     return lang === 'zh-CN'
         ? [
             '## Git Bash / Git sh / MSYS 额外规则',
-            '',
-            '- Git Bash/Git sh 使用类 sh/bash 语法，但运行在 Windows/MSYS 环境中，不等于真实 Linux。',
-            '- 传给 Windows 原生程序的以 `/` 开头参数可能被自动转换为 Windows 路径，例如 `/a/b/c` 可能变成 `A:/b/c`。',
-            '- 正则 `/xxx/`、Linux 远端路径、Docker volume、`-L/regex/` 等要小心路径转换污染。',
-            '- 必要时可在命令前设置 `MSYS_NO_PATHCONV=1`，或使用 `MSYS2_ARG_CONV_EXCL=*`。'
+            '- Windows/MSYS 会转换传给原生程序的 `/` 开头参数，可能影响正则、远端路径和 Docker volume。需要保留原文时设置 `MSYS_NO_PATHCONV=1` 或 `MSYS2_ARG_CONV_EXCL=*`。'
         ].join('\n')
         : [
             '## Git Bash / Git sh / MSYS extra rules',
-            '',
-            '- Git Bash/Git sh use sh/bash-like syntax but run in a Windows/MSYS environment, not real Linux.',
-            '- Arguments starting with `/` passed to Windows native programs may be auto-converted to Windows paths, e.g. `/a/b/c` may become `A:/b/c`.',
-            '- Be careful about path-conversion pollution for regex `/xxx/`, Linux remote paths, Docker volumes, `-L/regex/`, etc.',
-            '- If needed, set `MSYS_NO_PATHCONV=1` before the command, or use `MSYS2_ARG_CONV_EXCL=*`.'
+            '- Windows/MSYS may convert `/`-prefixed arguments passed to native programs, affecting regex, remote paths and Docker volumes. Preserve them with `MSYS_NO_PATHCONV=1` or `MSYS2_ARG_CONV_EXCL=*` when needed.'
         ].join('\n');
 }
 
@@ -209,42 +168,26 @@ function getWslGuidanceDescription(lang: LocalizationLanguage): string {
     return lang === 'zh-CN'
         ? [
             '## WSL 规则（`shell: "wsl"`）',
-            '',
             '- WSL 模式通过 `wsl.exe -- bash -c <command>` 执行，命令由 WSL 内的 bash 解析。',
-            '- 路径应使用 WSL/Linux 格式，例如 `/mnt/c/Users/...`，不要直接使用 PowerShell 的 `$env:TEMP`。',
-            '- 从 WSL 调 Windows 程序通常需要写 `.exe`，例如 `notepad.exe`。',
-            '- 如果当前环境提示 WSL 未安装或未启用，不要选择 `wsl`。'
+            '- 路径用 WSL/Linux 格式，例如 `/mnt/c/Users/...`；调用 Windows 程序通常需要 `.exe`。环境提示 WSL 不可用时不要选择它。'
         ].join('\n')
         : [
             '## WSL rules (`shell: "wsl"`)',
-            '',
             '- WSL mode executes via `wsl.exe -- bash -c <command>`; the command is parsed by bash inside WSL.',
-            '- Paths should use WSL/Linux format, e.g. `/mnt/c/Users/...`, not PowerShell\'s `$env:TEMP`.',
-            '- Calling Windows programs from WSL usually requires the `.exe` suffix, e.g. `notepad.exe`.',
-            '- If the current environment reports WSL is not installed or enabled, do not choose `wsl`.'
+            '- Use WSL/Linux paths such as `/mnt/c/Users/...`; Windows programs usually need `.exe`. Do not select WSL if the environment reports it unavailable.'
         ].join('\n');
 }
 
 
-function getComplexCommandGuidanceDescription(lang: LocalizationLanguage, enabled: Set<string>): string {
+function getComplexCommandGuidanceDescription(lang: LocalizationLanguage): string {
     return lang === 'zh-CN'
         ? [
             '## 复杂命令规则',
-            '',
-            '- 简单命令可以直接内联；包含多层引号、JSON、正则、Node/Python 代码、Nginx/systemd 配置、SSH 远端脚本时，不要强行写成一行。',
-            ...(enabled.has('powershell') ? ['- PowerShell 推荐：用 `@\' ... \'@` 单引号 here-string 写入临时脚本，再用 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` 保存为 UTF-8 无 BOM 后执行。'] : []),
-            ...(['sh','bash','gitbash','wsl','zsh'].some(name => enabled.has(name)) ? ['- sh/bash/zsh 推荐：用 `cat > /tmp/script.sh <<\'EOF\' ... EOF` 写强字面量 heredoc，再执行脚本。'] : []),
-            ...(enabled.has('cmd') ? ['- CMD 不适合承载复杂多行脚本；除非用户明确要求 CMD，否则复杂逻辑优先用 PowerShell 或 sh。'] : []),
-            '- 诊断引号/管道问题时，先写一个 argv/hex 探针确认目标程序实际收到什么，不要猜。'
+            '- 多层引号、JSON、正则或代码先写入 UTF-8 无 BOM 临时脚本再执行。遇到转义问题，用 argv/hex 探针确认目标程序实际收到的参数。'
         ].join('\n')
         : [
             '## Complex command rules',
-            '',
-            '- Simple commands can be inlined; do not force content with nested quotes, JSON, regex, Node/Python code, Nginx/systemd config, or SSH remote scripts into a single line.',
-            ...(enabled.has('powershell') ? ['- PowerShell: prefer writing a temp script with an `@\' ... \'@` single-quoted here-string, then save it as UTF-8 without BOM via `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` and run it.'] : []),
-            ...(['sh','bash','gitbash','wsl','zsh'].some(name => enabled.has(name)) ? ['- sh/bash/zsh: prefer writing a strong-literal heredoc `cat > /tmp/script.sh <<\'EOF\' ... EOF`, then run the script.'] : []),
-            ...(enabled.has('cmd') ? ['- CMD is not suited for complex multi-line scripts; unless the user explicitly asks for CMD, prefer PowerShell or sh for complex logic.'] : []),
-            '- When diagnosing quote/pipe issues, first write an argv/hex probe to confirm what the target program actually receives; do not guess.'
+            '- Write nested quotes, JSON, regex or code to a UTF-8 temporary script without BOM before running it. For escaping issues, use an argv/hex probe to inspect the received arguments.'
         ].join('\n');
 }
 
@@ -253,21 +196,15 @@ function getSshGuidanceDescription(lang: LocalizationLanguage, powershell: boole
     return lang === 'zh-CN'
         ? [
             '## SSH 多层解析规则',
-            '',
-            '- SSH 至少有两层解析：本地 shell 先解析整条 `ssh ...` 命令；远端用户 shell 再解析远端命令。远端命令不是 argv 直达目标程序。',
-            ...(powershell ? ['- 在 PowerShell 中调用 SSH，外层单引号只能阻止本地 PowerShell 展开；远端 shell 仍会解释 `$HOME`、`$(hostname)`、`|` 等。'] : []),
-            ...(powershell ? ['- 在 PowerShell → ssh → 远端 bash 这条链路中，如果远端 shell 需要用双引号保护参数，PowerShell 命令里通常要写 `\\"`；要让远端收到字面的 `$HOME`，写 `\\"\\$HOME\\"`；字面的 `$(hostname)` 写 `\\"\\$(hostname)\\"`。'] : []),
-            '- 复杂远端操作不要硬塞一行：优先本地生成脚本，`scp` 上传到远端 `/tmp/...`，`ssh` 执行远端脚本，完成后清理脚本。',
-            ...(powershell ? ['- Windows 用户目录 SSH key 示例：`ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`。'] : []),
+            '- 本地 Shell 与远端 Shell 会依次解析命令，远端命令不是 argv 直传。',
+            ...(powershell ? ['- PowerShell 的外层单引号只阻止本地展开，远端仍解释 `$HOME`、`$(hostname)` 和 `|`；分别按两侧语法转义。'] : []),
+            '- 复杂远端操作优先生成脚本，用 `scp` 上传、`ssh` 执行，完成后清理。',
         ].join('\n')
         : [
             '## SSH multi-layer parsing rules',
-            '',
-            '- SSH has at least two parsing layers: the local shell first parses the whole `ssh ...` command; the remote user shell then parses the remote command. The remote command is not passed as argv directly to the target program.',
-            ...(powershell ? ['- When calling SSH from PowerShell, an outer single quote only stops local PowerShell expansion; the remote shell still interprets `$HOME`, `$(hostname)`, `|`, etc.'] : []),
-            ...(powershell ? ['- In a PowerShell → ssh → remote bash chain, if the remote shell needs double quotes to protect arguments, the PowerShell command usually needs `\\"`; to pass a literal `$HOME` to the remote side, write `\\"\\$HOME\\"`, and for a literal `$(hostname)` write `\\"\\$(hostname)\\"`.'] : []),
-            '- Do not cram complex remote operations into one line: prefer generating the script locally, `scp` it to `/tmp/...` on the remote, `ssh` to run it, then clean up the script.',
-            ...(powershell ? ['- Windows SSH key example in the user directory: `ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`.'] : []),
+            '- Local and remote shells parse the command in order; the remote command is not passed directly as argv.',
+            ...(powershell ? ['- Outer PowerShell single quotes stop local expansion only; the remote shell still interprets `$HOME`, `$(hostname)` and `|`. Escape for each shell separately.'] : []),
+            '- For complex remote operations, generate a script, upload with `scp`, execute with `ssh`, then clean up.',
         ].join('\n');
 }
 return { getAllWorkspaceRoots, getOSName, getExecuteCommandShellGuidanceDescription, getCwdParameterDescription };

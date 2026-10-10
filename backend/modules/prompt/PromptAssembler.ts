@@ -376,10 +376,13 @@ export class PromptAssembler {
      * 动态内容（时间、文件树、标签页等）由 getDynamicContextMessages() 方法生成
      */
     private generateFromTemplate(template: string, customPrefix: string, customSuffix: string, runtime?: DynamicRuntimeContext): string {
-        // 静态模块（不会频繁变化）
+        // 自定义模板可能不引用这些段落，只构建实际用到的模块，避免无关的上下文与设置读取。
+        const referencedKeys = this.getReferencedPromptPlaceholders(template)
         const modules: Record<string, string> = {
-            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
-            'CONTEXT_BADGE_FORMAT': this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()),
+            'ENVIRONMENT': referencedKeys.has('ENVIRONMENT')
+                ? this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()) : '',
+            'CONTEXT_BADGE_FORMAT': referencedKeys.has('CONTEXT_BADGE_FORMAT')
+                ? this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()) : '',
             // 动态内容占位符 - 这些将被移到动态上下文消息中
             // 为了向后兼容，如果模板中包含 these placeholders，替换为空字符串
             'WORKSPACE_FILES': '',
@@ -391,7 +394,7 @@ export class PromptAssembler {
             'TOOLS': '{{$TOOLS}}',
             'MCP_TOOLS': '{{$MCP_TOOLS}}',
             // 记忆系统使用说明（用户可在设置中自定义）
-            'MEMORY': this.generateMemorySection()
+            'MEMORY': referencedKeys.has('MEMORY') ? this.generateMemorySection() : ''
         }
         
         // 替换模板中的占位符（使用 {{$xxx}} 格式）：单次交替正则扫描 + 回调查表替换

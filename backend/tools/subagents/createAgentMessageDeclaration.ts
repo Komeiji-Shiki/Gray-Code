@@ -8,12 +8,12 @@ export function createAgentMessageDeclaration(isZh: boolean, description?: strin
         aliases: ['agent.sendMessage'],
         category: 'agents',
         description: description ?? (isZh
-            ? `向当前对话中另一个代理（子代理）或主会话（主模型）发送消息。用 targetRunId 或 targetAgentName 二选一指定收件方：收件方必须是当前对话中正在运行的子代理，targetAgentName 填 "main" 则发给主会话。系统会自动识别你的身份，无法冒充其他代理。
+            ? `向当前对话中正在运行的子代理或主会话发送消息。targetRunId 与 targetAgentName 二选一，targetAgentName="main" 表示主会话；发送者身份自动附带。
 
-消息异步送达，并由进程内邮箱保存到收件方读取为止：仍挂在主回合上的前台子代理给主会话发消息时，会转到后台继续执行，主会话立即开始处理消息；主会话空闲时也会立即处理；其他忙碌的收件方在当前工具执行完后读取；运行中的子代理在每次工具执行后、调用模型前和结束前检查收件箱。不要轮询，也不要重复发送相同内容。`
-            : `Send a message to another agent (a sub-agent) or to the main session (the main model) in the current conversation. Choose the recipient with exactly one of targetRunId or targetAgentName: the recipient must be a sub-agent with an active run in this conversation, or targetAgentName "main" for the main session. Your identity is attached automatically, so you cannot impersonate another agent.
+消息异步保存至收件方读取。前台子代理联系主会话后转入后台，主会话立即处理；空闲主会话也立即处理，其他忙碌代理在工具结束后或下次模型调用前读取。不要轮询或重复发送。`
+            : `Send a message to an active sub-agent or the main session in this conversation. Use exactly one of targetRunId or targetAgentName; targetAgentName="main" selects the main session. Sender identity is attached automatically.
 
-Delivery is asynchronous, and the in-process mailbox holds the message until the recipient reads it. When a foreground sub-agent still attached to the main round messages the main session, it continues in the background and the main session handles the message right away. An idle main session also handles it right away. Other busy recipients read it after their current tool finishes, and running sub-agents check their inbox after each tool, before each model call and before finishing. Do not poll or resend the same text.`),
+Messages are held until read. A foreground sub-agent messaging the main session moves to the background and the main session handles it immediately; an idle main session also handles it immediately. Other busy agents read after their tool finishes or before their next model call. Do not poll or resend.`),
         parameters: {
             type: 'object',
             properties: {

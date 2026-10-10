@@ -322,20 +322,16 @@ export function buildGenerateImageDescriptions(options: GenerateImageDescription
 
     let description = pick(
         lang,
-        `用 AI 模型生成图片，可以根据提示词生成，也可以基于参考图片修改或把多张参考图合成新场景。生成的图片会保存到指定路径并返回供查看。
+        `用 AI 根据提示词生成图片、修改参考图或合成多图，保存到指定路径并返回供查看。提示词可用自然语言或关键词。
 
-生成的图片带纯色背景，不是透明背景；需要透明背景时，请生成后再用 remove_background 处理。
+生成结果带纯色背景，需要透明背景时再用 remove_background。
 
-每次调用最多 ${maxBatchTasks} 个生成任务，每个任务最多保存 ${maxImagesPerTask} 张图片。${paramSection}${mediaModeNote(lang, 'prompt + output_path', maxBatchTasks)}批量模式适合用不同提示词一次生成多张图片。
+每次调用最多 ${maxBatchTasks} 个生成任务，每个任务最多保存 ${maxImagesPerTask} 张图片。${paramSection}${mediaModeNote(lang, 'prompt + output_path', maxBatchTasks)}`,
+        `Generate images from prompts, edit references or combine multiple images with AI; save to the given path and return for viewing. Prompts may use sentences or keywords.
 
-提示词可以用完整句子描述场景（例如"一只橙色的猫坐在窗台上，阳光洒在它身上"），也可以用逗号分隔的关键词（例如"orange cat, sitting on windowsill, sunlight, warm lighting, high quality"），或两者结合。`,
-        `Generate images with an AI model, either from a prompt, by editing reference images, or by combining several reference images into a new scene. Generated images are saved to the given path and returned for viewing.
+Results have a solid background; use remove_background when transparency is needed.
 
-Generated images have a solid background, not a transparent one; if you need transparency, run remove_background on the result.
-
-Each call can run at most ${maxBatchTasks} generation tasks, and each task saves at most ${maxImagesPerTask} images.${paramSection}${mediaModeNote(lang, 'prompt + output_path', maxBatchTasks)} Batch mode is useful for producing several images from different prompts at once.
-
-A prompt can describe the scene in full sentences (for example "an orange cat sitting on a windowsill, sunlight shining on it"), list comma-separated keywords (for example "orange cat, sitting on windowsill, sunlight, warm lighting, high quality"), or mix both styles.`
+Each call can run at most ${maxBatchTasks} generation tasks, and each task saves at most ${maxImagesPerTask} images.${paramSection}${mediaModeNote(lang, 'prompt + output_path', maxBatchTasks)}`
     );
 
     if (isMultiRoot) {
@@ -426,8 +422,8 @@ export function buildRemoveBackgroundDescriptions(options: RemoveBackgroundDescr
 
     let description = pick(
         lang,
-        `移除图片背景，生成透明背景的 PNG，适合商品图去背景、人像抠图、提取物体或准备合成素材。工具先用 AI 生成遮罩（主体为黑色、背景为白色），再按遮罩把背景设为透明并保存为 PNG。${mediaModeNote(lang, 'image_path + output_path', maxBatchTasks)}`,
-        `Remove the background from images and save them as transparent PNGs, for example to clean up product shots, cut out portraits, extract objects or prepare compositing material. The tool first uses AI to create a mask (subject black, background white), then makes the background transparent according to the mask and saves a PNG.${mediaModeNote(lang, 'image_path + output_path', maxBatchTasks)}`
+        `用 AI 遮罩移除图片背景，保存为透明 PNG。遮罩中主体为黑色、背景为白色。${mediaModeNote(lang, 'image_path + output_path', maxBatchTasks)}`,
+        `Remove image backgrounds with an AI mask and save transparent PNGs. The mask uses black for the subject and white for the background.${mediaModeNote(lang, 'image_path + output_path', maxBatchTasks)}`
     );
 
     if (isMultiRoot) {
@@ -522,13 +518,13 @@ export function buildCropImageDescriptions(options: CropImageDescriptionOptions)
     const coordinateText = useNormalized
         ? pick(
             lang,
-            '按归一化坐标（0-1000）裁切图片。(0, 0) 是左上角，(1000, 1000) 是右下角，工具会自动换算成实际像素。x1、y1 是裁切区域左上角，x2、y2 是右下角，要求 x1 < x2、y1 < y2。例如裁左上四分之一用 x1=0, y1=0, x2=500, y2=500，裁中心区域用 x1=250, y1=250, x2=750, y2=750。',
-            'Crop images using normalized coordinates (0-1000). (0, 0) is the top-left corner and (1000, 1000) the bottom-right; the tool converts them to actual pixels. x1, y1 is the top-left of the crop area and x2, y2 the bottom-right, with x1 < x2 and y1 < y2. For example, x1=0, y1=0, x2=500, y2=500 keeps the top-left quarter, and x1=250, y1=250, x2=750, y2=750 keeps the center.'
+            '按归一化坐标（0-1000）裁切图片，(0, 0) 为左上角，(1000, 1000) 为右下角，自动换算成像素。x1、y1 为裁切区域左上角，x2、y2 为右下角，要求 x1 < x2、y1 < y2。',
+            'Crop using normalized coordinates (0-1000), from top-left (0, 0) to bottom-right (1000, 1000), converted to pixels automatically. x1, y1 is the crop top-left and x2, y2 its bottom-right; require x1 < x2 and y1 < y2.'
         )
         : pick(
             lang,
-            '按像素坐标裁切图片。(0, 0) 是左上角，坐标以图片实际像素为单位，需要根据图片尺寸计算。x1、y1 是裁切区域左上角，x2、y2 是右下角，要求 x1 < x2、y1 < y2。以 1920x1080 的图片为例，裁左上四分之一用 x1=0, y1=0, x2=960, y2=540，裁中心区域用 x1=480, y1=270, x2=1440, y2=810。',
-            'Crop images using pixel coordinates. (0, 0) is the top-left corner, and coordinates are in the image\'s actual pixels, so work them out from its dimensions. x1, y1 is the top-left of the crop area and x2, y2 the bottom-right, with x1 < x2 and y1 < y2. For a 1920x1080 image, x1=0, y1=0, x2=960, y2=540 keeps the top-left quarter, and x1=480, y1=270, x2=1440, y2=810 keeps the center.'
+            '按图片实际像素坐标裁切，(0, 0) 为左上角。根据图片尺寸指定区域：x1、y1 为左上角，x2、y2 为右下角，要求 x1 < x2、y1 < y2。',
+            'Crop using the image\'s actual pixel coordinates, with (0, 0) at the top-left. Set x1, y1 to the crop top-left and x2, y2 to its bottom-right using the image dimensions; require x1 < x2 and y1 < y2.'
         );
 
     let description = coordinateText + pick(
@@ -618,8 +614,8 @@ export function buildResizeImageDescriptions(options: ResizeImageDescriptionOpti
 
     let description = pick(
         lang,
-        `把图片缩放到指定的宽度和高度（像素），适合需要精确尺寸的场景。缩放会拉伸填满目标尺寸，不保持原宽高比，例如 width=800, height=600 或 width=512, height=512。目标尺寸不能超过 16384x16384。输出格式由输出路径的扩展名决定，支持 PNG、JPEG 和 WebP。${mediaModeNote(lang, 'image_path + output_path + width + height', maxBatchTasks)}`,
-        `Resize images to an exact width and height in pixels, for cases that need precise dimensions. The image is stretched to fill the target size and does not keep its aspect ratio, for example width=800, height=600 or width=512, height=512. The target size cannot exceed 16384x16384. The output format follows the output path extension; PNG, JPEG and WebP are supported.${mediaModeNote(lang, 'image_path + output_path + width + height', maxBatchTasks)}`
+        `把图片拉伸到指定宽高（像素），不保持原宽高比，尺寸不能超过 16384x16384。输出格式按路径扩展名确定，支持 PNG、JPEG 和 WebP。${mediaModeNote(lang, 'image_path + output_path + width + height', maxBatchTasks)}`,
+        `Stretch images to the specified width and height in pixels without preserving aspect ratio, at most 16384x16384. The output path extension selects PNG, JPEG or WebP.${mediaModeNote(lang, 'image_path + output_path + width + height', maxBatchTasks)}`
     );
 
     if (isMultiRoot) {
@@ -692,8 +688,8 @@ export function buildRotateImageDescriptions(options: RotateImageDescriptionOpti
 
     let description = pick(
         lang,
-        `按指定角度旋转图片。angle 可以是任意值，包括负数和超过 360 的数：正数顺时针，负数逆时针，例如 angle=90 顺时针转 90°，angle=-45 逆时针转 45°，angle=180 转半圈。画布会自动扩大到能容纳旋转后图片的最小矩形，空出的区域在 PNG/WebP 中是透明的，在 JPEG 中是黑色的。输出格式优先按 format 参数，其次按输出路径的扩展名，支持 PNG、JPEG 和 WebP。${mediaModeNote(lang, 'image_path + output_path + angle', maxBatchTasks)}`,
-        `Rotate images by a given angle. angle can be any value, including negative numbers and values over 360: positive turns clockwise and negative counter-clockwise, so angle=90 turns 90° clockwise, angle=-45 turns 45° counter-clockwise and angle=180 turns it halfway around. The canvas grows to the smallest rectangle that fits the rotated image; the uncovered area is transparent for PNG/WebP and black for JPEG. The output format comes from format if given, otherwise from the output path extension; PNG, JPEG and WebP are supported.${mediaModeNote(lang, 'image_path + output_path + angle', maxBatchTasks)}`
+        `按 angle 旋转图片，正数顺时针，负数逆时针，允许超过 360°。画布扩大至容纳旋转结果，空白区域在 PNG/WebP 中透明、JPEG 中为黑色。format 优先于输出扩展名，支持 PNG、JPEG 和 WebP。${mediaModeNote(lang, 'image_path + output_path + angle', maxBatchTasks)}`,
+        `Rotate by angle: positive clockwise, negative counter-clockwise, values over 360° allowed. The canvas expands to fit; uncovered areas are transparent in PNG/WebP and black in JPEG. format takes precedence over the output extension; PNG, JPEG and WebP are supported.${mediaModeNote(lang, 'image_path + output_path + angle', maxBatchTasks)}`
     );
 
     if (isMultiRoot) {

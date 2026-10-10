@@ -155,14 +155,16 @@ export function handleSearch(docLines: string[], query: string, isRegex: boolean
         }
     }
 
+    const maxDigits = String(docLines.length).length;
     for (let ri = 0; ri < ranges.length; ri++) {
         const range = ranges[ri];
+        // 连续命中会合并成大段上下文，逐行查询数组会重复扫描整段命中列表。
+        const matchLines = new Set(range.matchLines);
         const contextLines = docLines.slice(range.start, range.end + 1);
         const formatted = contextLines.map((line, idx) => {
             const lineNum = range.start + idx + 1; // 1-based
-            const maxDigits = String(docLines.length).length;
             const numStr = String(lineNum).padStart(maxDigits, ' ');
-            const isMatch = range.matchLines.includes(range.start + idx);
+            const isMatch = matchLines.has(range.start + idx);
             displayPattern.lastIndex = 0;
             const matchIndex = isMatch ? displayPattern.exec(line)?.index ?? 0 : 0;
             const displayLine = truncateLineForDisplay(line, lineNum, cfg.lineDisplayLimit, matchIndex);

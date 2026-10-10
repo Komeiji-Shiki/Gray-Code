@@ -141,12 +141,8 @@ function extractAllTools() {
     const files = walkTsFiles(BACKEND_TOOLS_DIR);
     for (const file of files) {
         const rel = path.relative(ROOT, file).replace(/\\/g, '/');
-        // 规范化真实换行（CRLF/CR → LF）：字符串/模板字面量中的真实换行符会被
-        // JSON.stringify 编码进生成物，若不统一，Windows 工作区（autocrlf 转 CRLF）
-        // 生成的 toolMeta.ts 与 CI（LF 源）不一致，导致 toolMetaParity 测试漂移失败。
-        // 源码中显式的 \r\n 转义序列是反斜杠字符，不在此替换范围，语义保持不变。
-        const source = fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
-        const candidates = reader.findCandidates(rel, source);
+        // Reader 统一规范化换行并缓存已导入的模块，遍历到共享声明时无需再次读文件。
+        const candidates = reader.findCandidates(rel);
         for (const candidate of candidates) {
             const entry = buildToolEntry(candidate);
             const prev = byName.get(candidate.toolName);
@@ -171,9 +167,11 @@ function toolFamily(source) {
 
 function walkTsFiles(dir) {
     const out = [];
-    for (const name of fs.readdirSync(dir).sort()) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+        const name = entry.name;
         const full = path.join(dir, name);
-        const stat = fs.statSync(full);
+        const stat = entry.isSymbolicLink() ? fs.statSync(full) : entry;
         if (stat.isDirectory()) {
             out.push(...walkTsFiles(full));
         } else if (name.endsWith('.ts')) {
