@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import CompanionSetup from '../../../../apps/client/src/components/CompanionSetup.vue';
 import CharacterSetup from '../../../../apps/client/src/components/CharacterSetup.vue';
 const mocks = vi.hoisted(() => ({ call: vi.fn(), state: { conversationId: 'original', mode: 'character', chatFocused: false } }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call }));
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call,
+  uiRequest: (type: string, data?: object) => mocks.call('ui.request', { type, data: data ?? {} }) }));
 vi.mock('../../../../apps/client/src/state', () => ({ state: mocks.state }));
 const wrappers: ReturnType<typeof mount>[] = [];
 const button = (wrapper: ReturnType<typeof mount>, label: string) => wrapper.findAll('button').find(item => item.text() === label)!;

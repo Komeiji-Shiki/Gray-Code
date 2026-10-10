@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import ResourceLibrary from '../../../../apps/client/src/components/ResourceLibrary.vue';
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, subscribe: () => () => {} }));
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, subscribe: () => () => {},
+  uiRequest: (type: string, data?: object) => mocks.call('ui.request', { type, data: data ?? {} }) }));
 vi.mock('../../../../apps/client/src/state', () => ({ state: { conversationId: undefined, workspaceId: '' } }));
 const wrappers: ReturnType<typeof mount>[] = [];
 const button = (wrapper: ReturnType<typeof mount>, label: string) => wrapper.findAll('button').find(item => item.text() === label)!;

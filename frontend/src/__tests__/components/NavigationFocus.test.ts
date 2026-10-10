@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({ call: vi.fn(), state: {
   conversationId: 'conversation-a', conversationViews: [] as any[], workspaceId: '',
   chatFocused: false, settingsOpen: false, navigationDialogOpen: false,
 } }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, subscribe: () => () => {} }));
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, subscribe: () => () => {},
+  uiRequest: (type: string, data?: object) => mocks.call('ui.request', { type, data: data ?? {} }) }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive } = await import('vue');
   return { state: reactive(mocks.state), guard: (action: () => unknown) => action() };

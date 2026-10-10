@@ -5,7 +5,8 @@ import FileTree from '../../../../apps/client/src/components/FileTree.vue';
 const mocks = vi.hoisted(() => ({ call: vi.fn(), subscribe: vi.fn((_listener: (event: any) => void) => () => {}), listeners: new Set<(event: any) => void>(), state: {
   conversationId: 'a1', conversationViews: [] as any[], workspaceId: 'project-a', chatFocused: false, settingsOpen: false, navigationDialogOpen: false, fileDialogOpen: false,
 } }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call, subscribe: mocks.subscribe }));
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call, subscribe: mocks.subscribe,
+  uiRequest: (type: string, data?: object) => mocks.call('ui.request', { type, data: data ?? {} }) }));
 vi.mock('../../../../apps/client/src/state', () => ({ state: mocks.state, guard: (action: () => unknown) => action() }));
 vi.mock('../../../../apps/client/src/workspaceRoots', async () => {
   const { computed } = await import('vue'); return { useWorkspaceRoots: () => ({ roots: computed(() => [{ name: '项目 A', directory: 'C:/A' }]) }) };
