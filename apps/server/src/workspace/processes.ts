@@ -70,6 +70,9 @@ export class WorkspaceProcesses {
   private closing = false;
   constructor(private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord' | 'getRun'>, private readonly changed?: () => void) {}
   get activeCount(): number { return [...this.entries.values()].filter(entry => entry.running).length; }
+  activeConversationIds(): Set<string> {
+    return new Set([...this.entries.values()].flatMap(entry => entry.running && typeof entry.owner !== 'string' && entry.owner.conversationId ? [entry.owner.conversationId] : []));
+  }
   async start(
     workspace: WorkspaceDefinition,
     owner: ProcessOwner,

@@ -39,6 +39,53 @@ describe('持久目标和定时触发', () => {
     throw new Error('自动任务状态未达到预期');
   }
 
+  test.each(['terminal', 'process', 'subagent'])('空闲任务等待 %s 结束后重新计时，再按间隔重复发送', async activity => {
+    let occupied = true;
+    jest.spyOn(app.subagents, 'rootConversationId').mockImplementation(id => id === 'nested-child' ? 'auto-chat' : id);
+    if (activity === 'terminal') jest.spyOn(app.terminals, 'list').mockImplementation(() => occupied
+      ? [{ id: 'background-command', type: 'terminal', startTime: now, metadata: { conversationId: 'nested-child', runId: 'child-run' } }] : []);
+    if (activity === 'process') jest.spyOn(app.processes, 'activeConversationIds').mockImplementation(() => new Set(occupied ? ['nested-child'] : []));
+    if (activity === 'subagent') jest.spyOn(app.subagents, 'hasActiveConversation').mockImplementation(id => occupied && id === 'auto-chat');
+    const task = await create({ kind: 'schedule', schedule: { type: 'idle', everyMinutes: 2 } });
+    now += 90_000; await app.automations.tick(now);
+    const waiting = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+    expect(waiting.idleSince).toBeUndefined(); expect(waiting.nextRunAt).toBeUndefined(); expect(calls).toHaveLength(0);
+    occupied = false; now += 30_000; await app.automations.tick(now);
+    now += 119_999; await app.automations.tick(now); expect(calls).toHaveLength(0);
+    now++; await Promise.all([app.automations.tick(now), app.automations.tick(now)]);
+    await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    now += 120_000; await app.automations.tick(now);
+    await until(task.id, record => record.completedRuns === 2 && !record.currentRequestKey);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].messages.filter(message => message.isUserInput)).toHaveLength(2);
+  });
+
+  test('普通前台消息重置空闲等待而保留监听，暂停编辑和重启重新等待', async () => {
+    const task = await create({ kind: 'schedule', schedule: { type: 'idle', everyMinutes: 2 } });
+    let release!: () => void;
+    generate = async () => { await new Promise<void>(resolve => { release = resolve; }); return answer(); };
+    now += 60_000;
+    const run = await app.runtime.start({ requestKey: 'idle-manual', actorId: 'owner', agentId: 'default', conversationId: 'auto-chat', providerId,
+      promptModeId: 'automation-test', message: { role: 'user', parts: [{ text: '先处理这件事' }] } });
+    await until(task.id, record => record.status === 'active' && record.idleSince === undefined);
+    now += 180_000; await app.automations.tick(now); expect(calls).toHaveLength(1);
+    release(); await app.runtime.wait(run.id); generate = async () => answer();
+    await app.automations.tick(now);
+    let saved = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+    expect(saved.nextRunAt).toBe(now + 120_000);
+    await app.automations.pause('owner', task.id);
+    await app.automations.update('owner', task.id, { kind: 'schedule', name: '空闲提醒', objective: '继续处理待办', agentId: 'default', providerId,
+      schedule: { type: 'idle', everyMinutes: 3 } });
+    await app.automations.resume('owner', task.id);
+    now += 60_000; await app.close(); app = await open();
+    saved = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+    expect(saved.schedule).toEqual({ type: 'idle', everyMinutes: 3 });
+    expect(saved.status).toBe('active'); expect(saved.nextRunAt).toBe(now + 180_000);
+    now += 179_999; await app.automations.tick(now); expect(calls).toHaveLength(1);
+    now++; await app.automations.tick(now);
+    await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey); expect(calls).toHaveLength(2);
+  });
+
   test('事件来源的对话选项按列表摘要的归属账号筛选，不逐个读取元数据', async () => {
     await app.storage.createConversation({ id: 'guest-chat', title: '别人的对话', createdAt: now, updatedAt: now, actorId: 'guest', custom: { platformMode: 'chat' } });
     await app.storage.createConversation({ id: 'untitled-chat', createdAt: now, updatedAt: now, actorId: 'owner' });

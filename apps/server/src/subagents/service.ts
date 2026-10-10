@@ -213,6 +213,13 @@ export class SubagentExecutionService {
   }
   rootParentRunId(record: PlatformSubagent) { return this.rootRecord(record).parentRunId; }
   rootParentConfiguration(record: PlatformSubagent) { return this.rootRecord(record).parentConfiguration; }
+  rootConversationId(conversationId: string): string {
+    const child = this.byConversation.get(conversationId);
+    return child ? this.rootRecord(child).parentConversationId : conversationId;
+  }
+  hasActiveConversation(conversationId: string): boolean {
+    return [...this.live.values()].some(({ record }) => this.rootRecord(record).parentConversationId === conversationId);
+  }
   async detachToMain(record: PlatformSubagent): Promise<void> {
     let current: PlatformSubagent | undefined = record;
     const changed: PlatformSubagent[] = [];

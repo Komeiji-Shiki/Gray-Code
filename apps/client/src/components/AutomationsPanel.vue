@@ -41,7 +41,7 @@ function status(row: AutomationView) {
   if (runActive(row)) return row.status === 'paused' ? '本轮结束后暂停' : '正在执行';
   if (row.status === 'completed') return '已完成';
   if (row.status === 'paused') return ({ restart: '重启后等待继续', error: '发生错误', input: '需要补充信息', user: '已暂停' })[row.pauseReason ?? 'user'];
-  return row.awaitingBackground ? '等待子任务结果' : row.kind === 'goal' ? '准备继续' : '等待触发';
+  return row.awaitingBackground ? '等待子任务结果' : row.schedule?.type === 'idle' ? '等待空闲触发' : row.kind === 'goal' ? '准备继续' : '等待触发';
 }
 async function refresh() {
   const epoch = ++refreshEpoch;
@@ -79,7 +79,7 @@ async function editTask(row: AutomationView) {
     providerId: row.configuration.providerId, modelId: row.configuration.modelOverride ?? '', promptModeId: row.configuration.promptModeId ?? '',
     reasoningEffort: row.configuration.reasoningEffort ?? '',
     cadence: source?.type === 'daily' && source.weekDays ? 'weekly' : source?.type ?? 'once', at: localTime,
-    everyMinutes: source?.type === 'interval' ? String(source.everyMinutes) : '', time: source?.type === 'daily' ? source.time : '',
+    everyMinutes: source?.type === 'interval' || source?.type === 'idle' ? String(source.everyMinutes) : '', time: source?.type === 'daily' ? source.time : '',
     timeZone: source?.type === 'daily' ? source.timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone,
     weekDays: source?.type === 'daily' ? [...source.weekDays ?? []] : [], missedRunPolicy: row.missedRunPolicy ?? '', event: eventForm(row.event) });
   creating.value = true;
@@ -111,6 +111,7 @@ function schedule(): AutomationSchedule | undefined {
   if (form.kind !== 'schedule') return;
   if (form.cadence === 'once') return { type: 'once', at: new Date(form.at).getTime() };
   if (form.cadence === 'interval') return { type: 'interval', startAt: new Date(form.at).getTime(), everyMinutes: Number(form.everyMinutes) };
+  if (form.cadence === 'idle') return { type: 'idle', everyMinutes: Number(form.everyMinutes) };
   return { type: 'daily', time: form.time, timeZone: form.timeZone, ...(form.cadence === 'weekly' ? { weekDays: [...form.weekDays] } : {}) };
 }
 async function create() {
@@ -119,7 +120,7 @@ async function create() {
     conversationId: form.target === 'current' ? options.value?.current.conversationId : undefined,
     workspaceId: form.target === 'new' ? form.workspaceId || undefined : undefined,
     event: form.kind === 'event' ? eventConfiguration(form.event) : undefined,
-    schedule: schedule(), missedRunPolicy: form.kind === 'schedule' ? form.missedRunPolicy : undefined });
+    schedule: schedule(), missedRunPolicy: form.kind === 'schedule' && form.cadence !== 'idle' ? form.missedRunPolicy : undefined });
   creating.value = false; editingId.value = ''; form.objective = ''; form.name = ''; select(created);
 }
 async function openConversation(id: string) { await call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: id } }); emit('close'); }
@@ -161,12 +162,12 @@ function providerChanged() { form.modelId = profile.value?.model ?? ''; form.rea
           <label v-if="reasoningLevels.length">思考强度<select v-model="form.reasoningEffort"><option value="">沿用渠道设置</option><option v-for="level in reasoningLevels" :key="level" :value="level">{{ level }}</option></select></label>
           <template v-if="form.kind === 'schedule'">
             <h4>触发时间</h4>
-            <label>重复方式<select v-model="form.cadence"><option value="once">只执行一次</option><option value="interval">按分钟间隔</option><option value="daily">每天</option><option value="weekly">指定星期</option></select></label>
+            <label>重复方式<select v-model="form.cadence" aria-label="自动任务重复方式"><option value="once">只执行一次</option><option value="interval">按分钟间隔</option><option value="idle">连续空闲后重复执行</option><option value="daily">每天</option><option value="weekly">指定星期</option></select></label>
             <label v-if="form.cadence === 'once' || form.cadence === 'interval'">{{ form.cadence === 'once' ? '执行时间' : '首次执行时间' }}（当前设备时间）<input v-model="form.at" type="datetime-local" required /></label>
-            <label v-if="form.cadence === 'interval'">间隔分钟<input v-model="form.everyMinutes" type="number" min="1" step="1" required /><small class="settings-help">单位为分钟，越短检查越频繁，也可能增加模型请求与费用。进度检查可按几分钟设置，日报可选择每天执行。</small></label>
+            <label v-if="form.cadence === 'interval' || form.cadence === 'idle'">{{ form.cadence === 'idle' ? '连续空闲分钟' : '间隔分钟' }}<input v-model="form.everyMinutes" type="number" min="1" step="1" required aria-label="自动任务间隔分钟" /><small class="settings-help">{{ form.cadence === 'idle' ? '关联对话及其子代理没有前台运行、后台命令或子代理活动时开始计时。连续空闲满此间隔后发送上面的任务指令；出现活动后重新计时，应用重启后也重新等待。' : '单位为分钟，越短检查越频繁，也可能增加模型请求与费用。进度检查可按几分钟设置，日报可选择每天执行。' }}</small></label>
             <div v-if="form.cadence === 'daily' || form.cadence === 'weekly'" class="automation-fields"><label>每天的时间<input v-model="form.time" type="time" required /></label><label>时区<input v-model="form.timeZone" required placeholder="Asia/Shanghai" /></label></div>
             <fieldset v-if="form.cadence === 'weekly'" class="weekday-options"><legend>执行星期</legend><label v-for="day in weekDays" :key="day.id"><input v-model="form.weekDays" type="checkbox" :value="day.id" />周{{ day.name }}</label></fieldset>
-            <label>应用关闭期间错过时间<select v-model="form.missedRunPolicy" required><option value="" disabled>请选择处理方式</option><option value="skip">跳过，等待下次触发</option><option value="once">重开后补一次，不逐次补跑</option></select></label>
+            <label v-if="form.cadence !== 'idle'">应用关闭期间错过时间<select v-model="form.missedRunPolicy" required><option value="" disabled>请选择处理方式</option><option value="skip">跳过，等待下次触发</option><option value="once">重开后补一次，不逐次补跑</option></select></label>
           </template>
           <AutomationEventFields v-else-if="form.kind === 'event'" v-model="form.event" :options="options" />
           <p v-else class="muted">长期目标在应用重启后保留进度并暂停，由你手动继续。</p>
@@ -178,7 +179,8 @@ function providerChanged() { form.modelId = profile.value?.model ?? ''; form.rea
           <div class="automation-statistics"><div><small>累计 Token</small><strong>{{ used(selected).toLocaleString() }}</strong></div><div><small>已完成轮次</small><strong>{{ selected.completedRuns }}</strong></div><div><small>模型调用</small><strong>{{ selected.usage.requests }}</strong></div></div>
           <p class="muted">输入 {{ selected.usage.inputTokens.toLocaleString() }} · 输出 {{ selected.usage.outputTokens.toLocaleString() }} · 缓存命中 {{ selected.usage.cachedInputTokens.toLocaleString() }}（已包含在输入中）</p>
           <p v-if="selected.usage.estimatedRequests" class="muted">其中 {{ selected.usage.estimatedRequests }} 次调用包含本地估算<span v-if="selected.usage.unknownRequests">，{{ selected.usage.unknownRequests }} 次失败请求无法确认上游最终用量</span>。</p>
-          <p v-if="selected.status === 'active' && selected.nextRunAt" class="muted">下次执行：{{ when(selected.nextRunAt) }}</p>
+          <p v-if="selected.schedule?.type === 'idle'" class="muted">连续空闲 {{ selected.schedule.everyMinutes }} 分钟后发送任务指令</p>
+          <p v-if="selected.status === 'active' && selected.nextRunAt" class="muted">{{ selected.schedule?.type === 'idle' ? '保持空闲时预计执行' : '下次执行' }}：{{ when(selected.nextRunAt) }}</p>
           <p class="muted">模型：{{ selected.configuration.modelOverride || selected.configuration.providerId }} · 工作区：{{ selected.configuration.workspace?.name || '无' }}</p>
           <template v-if="selected.event">
             <h4>触发条件与记录</h4><p class="muted">{{ eventSource(selected) }}</p>

@@ -4,6 +4,7 @@ import type { ProviderDefinition } from './providers';
 export type AutomationSchedule =
   | { type: 'once'; at: number }
   | { type: 'interval'; everyMinutes: number; startAt: number }
+  | { type: 'idle'; everyMinutes: number }
   | { type: 'daily'; time: string; timeZone: string; weekDays?: number[] };
 
 export interface AutomationUsage {
@@ -63,6 +64,8 @@ export interface AutomationRecord {
   currentEvent?: AutomationEventOccurrence;
   recentEvents?: AutomationEventOccurrence[];
   nextRunAt?: number;
+  /** 连续空闲的起点；任务恢复活动或应用重启后重新计时。 */
+  idleSince?: number;
   currentRequestKey?: string;
   currentRunId?: string;
   lastRunId?: string;

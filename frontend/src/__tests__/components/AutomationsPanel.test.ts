@@ -32,6 +32,19 @@ afterEach(() => {
 })
 
 describe('自动任务的创建与继续', () => {
+  test('空闲重复任务提交分钟间隔和指令，无需首次时间或补跑策略', async () => {
+    const wrapper = mount(AutomationsPanel, { props: { open: true } }); await flushPromises()
+    await wrapper.get('[aria-label="自动任务执行方式"]').setValue('schedule')
+    await wrapper.get('[aria-label="自动任务重复方式"]').setValue('idle')
+    await wrapper.get('[aria-label="自动任务间隔分钟"]').setValue('5')
+    await wrapper.get('[aria-label="自动任务目标"]').setValue('检查待办并继续推进')
+    expect(wrapper.find('input[type="datetime-local"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('应用关闭期间错过时间')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    const created = rpc.mock.calls.find(call => call[0] === 'automations.create')?.[1]
+    expect(created).toMatchObject({ kind: 'schedule', objective: '检查待办并继续推进', schedule: { type: 'idle', everyMinutes: 5 } })
+    expect(created.missedRunPolicy).toBeUndefined(); wrapper.unmount()
+  })
   test('创建目标保留当前对话和目标内容，无需填写 Token 上限', async () => {
     const wrapper = mount(AutomationsPanel, { props: { open: true } }); await flushPromises()
     await wrapper.get('[aria-label="自动任务目标"]').setValue('整理和验证项目资料')

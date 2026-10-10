@@ -51,6 +51,11 @@ export class ApplicationAutomations {
         && [...this.records.values()].some(record => record.conversationId === notification.conversationId))
         void this.removeDeletedConversation(notification.conversationId).catch(error => this.reportError(error));
       if (notification.type === 'nodes.changed') void this.eventSources.nodesChanged().catch(error => this.reportError(error));
+      const message = notification.type === 'ui.message' ? notification.message as { command?: string; data?: { type?: string; data?: { conversationId?: string } } } : undefined;
+      if (message?.command === 'taskEvent' && message.data?.type !== 'progress' && message.data?.data?.conversationId)
+        void this.resetIdle(message.data.data.conversationId).catch(error => this.reportError(error));
+      if (notification.type === 'processes.changed') for (const conversationId of this.app.processes.activeConversationIds())
+        void this.resetIdle(conversationId).catch(error => this.reportError(error));
       const run = notification.type === 'run.created' ? notification.run as RunRecord : undefined;
       if (run) void this.created(run).catch(error => this.reportError(error));
       const event = notification.type === 'event' ? notification.event as { type: string; runId: string } : undefined;
@@ -93,9 +98,10 @@ export class ApplicationAutomations {
   }
   get keepsAlive() { return [...this.records.values()].some(record => record.status === 'active') || this.queues.size > 0; }
   private arm() {
-    const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey && record.nextRunAt !== undefined);
+    const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey
+      && (record.nextRunAt !== undefined || record.schedule?.type === 'idle'));
     if (!this.ready || this.closing || !due.length) { clearTimeout(this.timer); this.timer = undefined; this.timerAt = undefined; return; }
-    const delay = Math.max(1000, Math.min(30_000, Math.min(...due.map(record => record.nextRunAt!)) - Date.now()));
+    const delay = Math.max(1000, Math.min(30_000, Math.min(...due.map(record => record.nextRunAt ?? Date.now() + 30_000)) - Date.now()));
     const at = Date.now() + delay;
     // 列表查询、用量更新和其他任务的通知不能不断推迟已安排的触发时间。
     if (this.timer && this.timerAt! <= at) return;
@@ -134,7 +140,8 @@ export class ApplicationAutomations {
         delete current.finishRunId; delete current.finishStatus;
         if (current.kind === 'goal' && current.status === 'active') { current.status = 'paused'; current.pauseReason = 'restart'; }
         if (current.kind === 'schedule' && current.status === 'active' && current.schedule) {
-          if (previous?.status === 'completed') current.nextRunAt = nextScheduledTime(current.schedule, Date.now());
+          if (current.schedule.type === 'idle') { current.idleSince = Date.now(); current.nextRunAt = nextScheduledTime(current.schedule, current.idleSince); }
+          else if (previous?.status === 'completed') current.nextRunAt = nextScheduledTime(current.schedule, Date.now());
           else if (current.nextRunAt !== undefined && current.nextRunAt < Date.now() && current.missedRunPolicy === 'skip') current.nextRunAt = nextScheduledTime(current.schedule, Date.now());
           if (current.nextRunAt === undefined && !current.awaitingBackground) { current.status = 'completed'; current.completedAt = Date.now(); }
           if (current.awaitingBackground) { current.status = 'paused'; current.pauseReason = 'restart'; }
@@ -186,10 +193,10 @@ export class ApplicationAutomations {
     const agent = this.app.settings.find('agents', input.agentId);
     if (!agent) throw new Error('智能体不存在。');
     const schedule = input.kind === 'schedule' ? validateSchedule(input.schedule!) : undefined;
-    if (schedule && !['skip', 'once'].includes(input.missedRunPolicy ?? '')) throw new Error('请选择错过触发时间后跳过还是补一次。');
+    if (schedule && schedule.type !== 'idle' && !['skip', 'once'].includes(input.missedRunPolicy ?? '')) throw new Error('请选择错过触发时间后跳过还是补一次。');
     const event = input.kind === 'event' ? await this.eventSources.validate(actorId, input.event) : undefined;
     const eventSourceState = event ? await this.eventSources.sourceState(actorId, event) : undefined;
-    const first = schedule ? nextScheduledTime(schedule, Date.now() - 1) : event ? undefined : Date.now();
+    const first = schedule ? nextScheduledTime(schedule, Date.now() - (schedule.type === 'idle' ? 0 : 1)) : event ? undefined : Date.now();
     if (!event && first === undefined) throw new Error('请选择未来的执行时间。');
     const name = input.name?.trim() || input.objective.trim().split('\n')[0].slice(0, 80);
     const conversation = input.conversationId ? await this.app.conversation(actorId, input.conversationId)
@@ -202,6 +209,7 @@ export class ApplicationAutomations {
     const now = Date.now();
     const record: AutomationRecord = { version: 1, id: randomUUID(), kind: input.kind, name, objective: input.objective.trim(), conversationId: conversation.id,
       actorId, agentId: input.agentId, status: 'active', createdAt: now, updatedAt: now, usage: emptyUsage(), completedRuns: 0,
+      ...(schedule?.type === 'idle' ? { idleSince: now } : {}),
       ...(event ? { event, eventSourceState, recentEvents: [] } : {}),
       configuration: { providerId: input.providerId, modelOverride: input.modelOverride || channel.model, reasoningEffort: input.reasoningEffort,
         promptModeId, workspace: workspace ?? null }, nextRunAt: first, ...(schedule ? { schedule, missedRunPolicy: input.missedRunPolicy } : {}) };
@@ -214,7 +222,7 @@ export class ApplicationAutomations {
     const channel = await this.app.product.channel(input.providerId);
     if (!channel?.enabled || !this.app.settings.find('agents', input.agentId)) throw new Error('请选择可用的智能体和模型渠道。');
     const schedule = input.kind === 'schedule' ? validateSchedule(input.schedule!) : undefined;
-    if (schedule && (!['skip', 'once'].includes(input.missedRunPolicy ?? '') || nextScheduledTime(schedule, Date.now()) === undefined)) throw new Error('请选择未来触发时间及错过时间后的处理方式。');
+    if (schedule && schedule.type !== 'idle' && (!['skip', 'once'].includes(input.missedRunPolicy ?? '') || nextScheduledTime(schedule, Date.now()) === undefined)) throw new Error('请选择未来触发时间及错过时间后的处理方式。');
     const event = input.kind === 'event' ? await this.eventSources.validate(actorId, input.event) : undefined;
     const eventSourceState = event ? await this.eventSources.sourceState(actorId, event) : undefined;
     return this.mutate(id, async record => {
@@ -225,7 +233,8 @@ export class ApplicationAutomations {
       record.objective = input.objective.trim(); record.agentId = input.agentId;
       record.configuration = { ...record.configuration, providerId: input.providerId, modelOverride: input.modelOverride || channel.model,
         promptModeId: input.promptModeId || record.configuration.promptModeId, reasoningEffort: input.reasoningEffort || undefined };
-      if (schedule) { record.schedule = schedule; record.missedRunPolicy = input.missedRunPolicy; record.nextRunAt = nextScheduledTime(schedule, Date.now()); }
+      if (schedule) { record.schedule = schedule; record.missedRunPolicy = input.missedRunPolicy; record.nextRunAt = nextScheduledTime(schedule, Date.now());
+        if (schedule.type === 'idle') record.idleSince = Date.now(); else delete record.idleSince; }
       if (event) { record.event = event; record.eventSourceState = eventSourceState; delete record.nextRunAt; delete record.pendingEvent; }
       record.pauseReason = 'user'; record.awaitingBackground = false; record.followupPending = false;
       delete record.error; delete record.finishRunId; delete record.finishStatus;
@@ -251,6 +260,9 @@ export class ApplicationAutomations {
       const continueInterrupted = !!record.lastRunId && (record.awaitingBackground || ['error', 'restart', 'input'].includes(record.pauseReason ?? ''));
       record.status = 'active'; delete record.pauseReason; delete record.error; delete record.finishRunId; delete record.finishStatus;
       record.awaitingBackground = false;
+      if (record.schedule?.type === 'idle') {
+        record.idleSince = Date.now(); record.nextRunAt = nextScheduledTime(record.schedule, record.idleSince); return;
+      }
       if (record.kind === 'event') {
         record.event = await this.eventSources.validate(actorId, record.event);
         record.eventSourceState = await this.eventSources.sourceState(actorId, record.event);
@@ -298,7 +310,8 @@ export class ApplicationAutomations {
   }
   async tick(now = Date.now()) {
     if (this.closing || !this.ready) return;
-    const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey && record.nextRunAt !== undefined && record.nextRunAt <= now);
+    const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey
+      && (record.schedule?.type === 'idle' || record.nextRunAt !== undefined && record.nextRunAt <= now));
     await Promise.all(due.map(record => this.dispatch(record.id, now)));
   }
   private dispatch(id: string, now: number): Promise<void> {
@@ -310,7 +323,20 @@ export class ApplicationAutomations {
       const stored = await this.app.storage.getVersionedRecord(automationNamespace, id);
       const record = stored.value as AutomationRecord | null;
       if (!record) { this.records.delete(id); return; }
-      if (record.status !== 'active' || record.currentRequestKey || record.nextRunAt === undefined || record.nextRunAt > now || this.closing) return;
+      if (record.status !== 'active' || record.currentRequestKey || this.closing) return;
+      if (record.schedule?.type === 'idle' && !record.followupPending) {
+        // 活动期间清除起点，恢复空闲后才开始完整的一段等待，避免忙完立即补跑。
+        const occupied = await this.hasIdleActivity(record);
+        if (occupied || record.idleSince === undefined) {
+          if (occupied && record.idleSince === undefined && record.nextRunAt === undefined) return;
+          if (occupied) { delete record.idleSince; delete record.nextRunAt; }
+          else { record.idleSince = now; record.nextRunAt = nextScheduledTime(record.schedule, now); }
+          record.updatedAt = Date.now();
+          await this.app.storage.commitRecords([{ namespace: automationNamespace, id, ownerId: record.conversationId, expectedRevision: stored.revision, value: record }]);
+          this.changed(record); return;
+        }
+      }
+      if (record.nextRunAt === undefined || record.nextRunAt > now) return;
       if ((await this.app.storage.listRuns({ conversationId: record.conversationId, activeOnly: true, limit: 1 })).length) return;
       try {
         controller.signal.throwIfAborted();
@@ -322,7 +348,7 @@ export class ApplicationAutomations {
           const requestKey = `automation:${id}:${randomUUID()}`;
           const event = record.kind === 'event' && !record.followupPending ? record.pendingEvent : record.currentEvent;
           if (record.kind === 'event' && !event && !record.followupPending) return;
-          const started: AutomationRecord = { ...record, currentEvent: event, ...(record.kind === 'event' && !record.followupPending ? { pendingEvent: undefined } : {}), currentRequestKey: requestKey, nextRunAt: undefined, followupPending: false, awaitingBackground: false, pendingObjectiveChange: false, updatedAt: Date.now() };
+          const started: AutomationRecord = { ...record, currentEvent: event, ...(record.kind === 'event' && !record.followupPending ? { pendingEvent: undefined } : {}), currentRequestKey: requestKey, nextRunAt: undefined, idleSince: undefined, followupPending: false, awaitingBackground: false, pendingObjectiveChange: false, updatedAt: Date.now() };
           const { workspace, ...selection } = record.configuration;
           const input = { ...selection, requestKey, actorId: record.actorId, agentId: record.agentId, conversationId: record.conversationId, workspaceId: workspace?.id };
           if (event) traceEvent(started, { ...event, status: 'running' });
@@ -347,19 +373,36 @@ export class ApplicationAutomations {
     this.starts.set(id, { controller, done }); return done;
   }
   private async created(run: RunRecord) {
+    await this.resetIdle(run.conversationId);
     if (run.automationId) {
       const record = await this.read(run.automationId);
       if (record?.currentRequestKey === run.requestKey) await this.mutate(record.id, current => { if (current.currentRequestKey === run.requestKey) { current.currentRunId = run.id;
         if (current.currentEvent) { current.currentEvent.runId = run.id; traceEvent(current, { ...current.currentEvent, status: 'running' }); } } });
     } else {
-      for (const record of this.records.values()) if (record.status === 'active' && record.conversationId === run.conversationId)
+      for (const record of this.records.values()) if (record.status === 'active' && record.conversationId === run.conversationId && record.schedule?.type !== 'idle')
         await this.mutate(record.id, current => { current.status = 'paused'; current.pauseReason = 'user'; current.progress = '主人在此对话中开始了新一轮消息，自动执行已暂停。'; });
+    }
+  }
+  private async resetIdle(conversationId: string) {
+    const rootId = this.app.subagents.rootConversationId(conversationId);
+    for (const record of this.records.values()) if (record.status === 'active' && record.schedule?.type === 'idle' && record.conversationId === rootId
+      && !record.currentRequestKey && (record.idleSince !== undefined || record.nextRunAt !== undefined)) {
+      await this.mutate(record.id, current => { delete current.idleSince; delete current.nextRunAt; },
+        current => !this.closing && current.status === 'active' && current.schedule?.type === 'idle' && !current.currentRequestKey);
     }
   }
   private async hasBackground(record: AutomationRecord) {
     if (await this.app.subagents.feedback.continuation.hasPending(record.conversationId)) return true;
     for (const task of this.app.subagents.backgroundTasks()) if (await this.ownsBackground(record, task.metadata)) return true;
     return false;
+  }
+  private async hasIdleActivity(record: AutomationRecord): Promise<boolean> {
+    const belongs = (conversationId: string) => this.app.subagents.rootConversationId(conversationId) === record.conversationId;
+    if (this.app.subagents.hasActiveConversation(record.conversationId)
+      || this.app.terminals.list().some(task => belongs(task.metadata.conversationId))
+      || [...this.app.processes.activeConversationIds()].some(belongs)) return true;
+    if ((await this.app.storage.listRuns({ conversationId: record.conversationId, activeOnly: true, limit: 1 })).length) return true;
+    return this.app.subagents.feedback.continuation.hasPending(record.conversationId);
   }
   private async ownsBackground(record: AutomationRecord, metadata: { runId: string }) {
     const child = await this.app.subagents.get(record.actorId, metadata.runId);
@@ -382,6 +425,7 @@ export class ApplicationAutomations {
       }
       if (await this.hasBackground(current)) { current.awaitingBackground = true; delete current.nextRunAt; return; }
       if (current.kind === 'event') { delete current.currentEvent; current.nextRunAt = current.pendingEvent ? Date.now() : undefined; return; }
+      if (current.schedule?.type === 'idle') current.idleSince = Date.now();
       current.nextRunAt = current.kind === 'goal' ? Date.now() + 1000 : nextScheduledTime(current.schedule!, Date.now());
       if (current.nextRunAt === undefined) { current.status = 'completed'; current.completedAt = Date.now(); }
     });

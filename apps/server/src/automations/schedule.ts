@@ -7,8 +7,9 @@ export function validateSchedule(schedule: AutomationSchedule): AutomationSchedu
     if (!Number.isSafeInteger(schedule.at) || schedule.at <= 0) throw new Error('触发时间无效。');
     return { type: 'once', at: schedule.at };
   }
-  if (schedule.type === 'interval') {
+  if (schedule.type === 'interval' || schedule.type === 'idle') {
     if (!Number.isSafeInteger(schedule.everyMinutes) || schedule.everyMinutes < 1) throw new Error('执行间隔至少为 1 分钟。');
+    if (schedule.type === 'idle') return { type: 'idle', everyMinutes: schedule.everyMinutes };
     if (!Number.isSafeInteger(schedule.startAt) || schedule.startAt <= 0) throw new Error('首次执行时间无效。');
     return { type: 'interval', everyMinutes: schedule.everyMinutes, startAt: schedule.startAt };
   }
@@ -22,6 +23,7 @@ export function validateSchedule(schedule: AutomationSchedule): AutomationSchedu
 
 /** 返回严格晚于指定时刻的下一次触发；日历任务按所选时区处理夏令时。 */
 export function nextScheduledTime(schedule: AutomationSchedule, after: number): number | undefined {
+  if (schedule.type === 'idle') return after + schedule.everyMinutes * 60_000;
   if (schedule.type === 'once') return schedule.at > after ? schedule.at : undefined;
   if (schedule.type === 'interval') {
     const interval = schedule.everyMinutes * 60_000;
