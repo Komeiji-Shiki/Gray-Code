@@ -236,14 +236,6 @@ export class SubagentExecutionService {
     }
     await Promise.all(changed.map(item => this.save(item)));
   }
-  rootConversationId(conversationId: string): string {
-    for (let depth = 0; depth < MAX_SUBAGENT_NESTING_DEPTH; depth++) {
-      const record = this.byConversation.get(conversationId);
-      if (!record) break;
-      conversationId = record.parentConversationId;
-    }
-    return conversationId;
-  }
   backgroundTasks() {
     return [...this.live.values()].filter(live => live.record.background).map(({ record }) => ({ id: record.taskId!, type: 'background_subagent',
       startTime: record.createdAt, metadata: { conversationId: record.parentConversationId, agentName: record.agentName, runId: record.id, delivery: 'platform_history' } }));
