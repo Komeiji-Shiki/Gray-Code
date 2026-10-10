@@ -131,7 +131,8 @@ describe('纯文本错误体不丢失（SEC）', () => {
                 timeout: 1000,
                 options: {},
                 toolMode: 'function_call',
-                retryEnabled: true,
+                // 这里只验证单次错误正文；网络重试使用独立分钟级策略，不由 retryCount 控制。
+                retryEnabled: false,
                 retryCount: 0,
                 retryInterval: 10
             })
