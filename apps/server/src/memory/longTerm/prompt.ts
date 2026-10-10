@@ -24,7 +24,7 @@ export class LongMemoryPrompt {
     if(!app.product.runtimeSettings().isMemoryEnabled())return empty;
     const actor=app.actor(context.run.actorId);
     if(!actor||actor.role==='guest'||actor.role!=='owner'&&!actor.effects.includes('workspace_read'))return empty;
-    const turn=[...context.history.history.messages].reverse().find(message=>message.isUserInput&&!message.userFeedback);
+    const turn=context.history.history.messages.findLast(message=>message.isUserInput&&!message.userFeedback);
     if(!turn?.id||turn.memoryRedacted)return empty;
     const access=await this.service.access(context.run.actorId,{runId:context.run.id,conversationId:context.run.conversationId,workspaceId:context.run.workspaceId,
       ...(preview?{capturedConversation:context.history.metadata}:{})});
@@ -52,7 +52,10 @@ export class LongMemoryPrompt {
     }else{
       const result=await app.storage.longMemoryRead({query:{scopes:access.scopes,asOf:Date.now(),knownAt:snapshot.knownAt,limit:100,tokenBudget:32000,confirmedOnly:false},references:snapshot.records});
       if(result.unavailable.length){hits=await refresh();changed=true;}
-      else hits=snapshot.records.map(ref=>({record:result.records.find(record=>record.scopeId===ref.scopeId&&record.id===ref.id&&record.version===ref.version)!,score:ref.score,reasons:ref.reasons,conflicts:ref.conflicts}));
+      else{
+        const records=new Map(result.records.map(record=>[JSON.stringify([record.scopeId,record.id,record.version]),record]));
+        hits=snapshot.records.map(ref=>({record:records.get(JSON.stringify([ref.scopeId,ref.id,ref.version]))!,score:ref.score,reasons:ref.reasons,conflicts:ref.conflicts}));
+      }
     }
     if(!preview&&changed)await app.storage.commitRecords([{namespace:'long-memory-turns',id,ownerId:context.run.conversationId,expectedRevision:saved.revision,value:snapshot}]);
     const selected:LongMemoryHit[]=[];

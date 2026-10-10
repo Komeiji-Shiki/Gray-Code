@@ -1,8 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import type { ConversationNavigationCursor, ConversationNavigationItem, ConversationNavigationResult, ConversationSummary } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
-import { conversationWorkspace, workspaceDirectoryKey } from '../workspace/identity';
-import { ProjectNavigation, projectNavigationKey } from './projects';
+import { conversationWorkspaceIndex, workspaceDirectoryKey } from '../workspace/identity';
+import { ProjectNavigation, projectNavigationKey, type ProjectNavigationPreference } from './projects';
 import { NavigationOrderingStore } from './navigationOrdering';
 import { orderSidebarItems } from '../../../../shared/sidebarOrder';
 const namespace = 'conversation-navigation';
@@ -21,16 +21,27 @@ export class ConversationNavigation {
     };
     const included = (item: Parameters<typeof botPlatform>[0]) => (options.scope === 'bots') === ['discord', 'onebot'].includes(botPlatform(item) ?? '');
     const workspaces = this.app.settings.read('workspaces').workspaces.map(item => ({ ...item, uri: pathToFileURL(item.directory).toString() }));
+    const workspaceFor = conversationWorkspaceIndex(workspaces);
     const projects = await new ProjectNavigation(this.app).preferences();
-    const preference = (item: { workspaceId?: string; workspaceUri?: string }) => {
-      const workspace = conversationWorkspace(item, workspaces);
-      if (workspace?.managedConversationId) return undefined;
-      const direct = workspace && projects.get(projectNavigationKey({ workspaceId: workspace.id }));
-      if (direct) return direct;
-      const uri = workspace ? pathToFileURL(workspace.directory).toString() : item.workspaceUri;
+    const directoryCounts = new Map<string | undefined, number>();
+    const workspaceKeys = new Map(workspaces.map(item => [item.id, workspaceDirectoryKey(item.directory)]));
+    for (const key of workspaceKeys.values()) directoryCounts.set(key, (directoryCounts.get(key) ?? 0) + 1);
+    // 项目设置在本次查询中固定，每个项目只解析一次目录与偏好。
+    const workspacePreferences = new Map(workspaces.map(workspace => {
+      const direct = projects.get(projectNavigationKey({ workspaceId: workspace.id }));
       // 同一主目录存在多个显式工作区时，旧对话的目录设置不能覆盖这些独立项目。
-      if (workspace && workspaces.filter(value => workspaceDirectoryKey(value.directory) === workspaceDirectoryKey(uri)).length > 1) return undefined;
-      return uri ? projects.get(projectNavigationKey({ workspaceUri: uri })) : undefined;
+      const value = workspace.managedConversationId ? undefined : direct ?? ((directoryCounts.get(workspaceKeys.get(workspace.id)) ?? 0) > 1
+        ? undefined : projects.get(projectNavigationKey({ workspaceUri: workspace.uri })));
+      return [workspace.id, value] as const;
+    }));
+    const legacyPreferences = new Map<string, ProjectNavigationPreference | undefined>();
+    const preference = (item: { workspaceId?: string; workspaceUri?: string }) => {
+      const workspace = workspaceFor(item);
+      if (workspace) return workspacePreferences.get(workspace.id);
+      const uri = item.workspaceUri;
+      if (!uri) return undefined;
+      if (!legacyPreferences.has(uri)) legacyPreferences.set(uri, projects.get(projectNavigationKey({ workspaceUri: uri })));
+      return legacyPreferences.get(uri);
     };
     const hidden = this.app.subagents.childConversationIds();
     const pins = new Map<string, number>();
@@ -43,9 +54,10 @@ export class ConversationNavigation {
     const matching = new Map(matches?.matches.map(item => [item.id, item]) ?? []);
     const enrich = (item: Omit<ConversationSummary, 'revision'>): ConversationNavigationItem => {
       const hit = matching.get(item.id);
+      const workspace = workspaceFor(item);
       return { ...item,
-        automaticWorkspace: !!conversationWorkspace(item, workspaces)?.managedConversationId,
-        workspaceId: conversationWorkspace(item, workspaces)?.id,
+        automaticWorkspace: !!workspace?.managedConversationId,
+        workspaceId: workspace?.id,
         workspaceIdentity: workspaceDirectoryKey(item.workspaceUri),
         botPlatform: botPlatform(item),
         projectName: preference(item)?.name,
@@ -57,13 +69,17 @@ export class ConversationNavigation {
     };
     const pinned: ConversationNavigationItem[] = [];
     if (pins.size) {
-      const summaries = await this.app.productUi.conversations.getConversationMetadataBatch([...pins.keys()]);
-      for (const item of summaries) {
-        if (!item || query && !matching.has(item.id)) continue;
-        const metadata = await this.app.storage.getConversation(item.id);
-        const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
-        const summary = { ...item, botPlatform: botPlatform({ botPlatform: origin }) };
-        if (included(summary)) pinned.push(enrich(summary));
+      const ids = [...pins.keys()];
+      // 旧宿主的批量摘要最多返回 200 条，置顶数量不能因此被静默截断。
+      for (let offset = 0; offset < ids.length; offset += 200) {
+        const summaries = await this.app.productUi.conversations.getConversationMetadataBatch(ids.slice(offset, offset + 200));
+        for (const item of summaries) {
+          if (!item || query && !matching.has(item.id)) continue;
+          const metadata = await this.app.storage.getConversation(item.id);
+          const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
+          const summary = { ...item, workspaceId: typeof metadata?.workspaceId === 'string' ? metadata.workspaceId : undefined, botPlatform: botPlatform({ botPlatform: origin }) };
+          if (included(summary)) pinned.push(enrich(summary));
+        }
       }
       pinned.sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0));
     }
@@ -75,14 +91,16 @@ export class ConversationNavigation {
     while (orderedOffset < ordering.conversations.length && items.length < 30) {
       const ids = ordering.conversations.slice(orderedOffset, orderedOffset + 30 - items.length);
       const summaries = await this.app.productUi.conversations.getConversationMetadataBatch(ids);
+      const summariesById = new Map(summaries.filter(Boolean).map(summary => [summary.id, summary]));
       orderedOffset += ids.length;
       for (const id of ids) {
-        const item = summaries.find(summary => summary?.id === id);
+        const item = summariesById.get(id);
         if (!item || pins.has(id) || hidden.has(id) || query && !matching.has(id)) continue;
         const metadata = await this.app.storage.getConversation(id);
         const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
-        const summary = { ...item, botPlatform: botPlatform({ botPlatform: origin }) };
-        if (included(summary) && (options.scope === 'bots' || !preference(item)?.removed)) items.push(enrich(summary));
+        // 旧批量摘要只有目录 URI，显式项目 ID 必须取自已有的元数据读取。
+        const summary = { ...item, workspaceId: typeof metadata?.workspaceId === 'string' ? metadata.workspaceId : undefined, botPlatform: botPlatform({ botPlatform: origin }) };
+        if (included(summary) && (options.scope === 'bots' || !preference(summary)?.removed)) items.push(enrich(summary));
       }
     }
     let recentStarted = !!options.cursor?.recent;

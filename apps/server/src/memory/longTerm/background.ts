@@ -63,10 +63,14 @@ export class MemoryBackground {
     for(let index=start;index<end;index++)if(index===start||candidate(view.messages[index]))indices.push(index);
     const selected=await view.expand(indices);
     if(!messageText(view.messages[start]).trim())return null;
-    const candidates=selected.filter(candidate);
+    const candidates=new Set(selected.filter(candidate));
     const sources:LongMemorySourceInput[]=[];let characters=0;
-    for(const item of candidates){
-      const origin=sourceMessageOrigin(item,view.messages);
+    // 来源沿原历史顺序识别回合，避免每个工具结果都复制和扫描此前全部消息。
+    let previousInput:PlatformMessage|undefined;
+    for(const item of view.messages){
+      if(item.isUserInput)previousInput=item;
+      if(!candidates.has(item))continue;
+      const origin=sourceMessageOrigin(item,previousInput?[previousInput,item]:[item]);
       if(scope.realm==='real'&&origin==='fiction')continue;
       const text=sourceMessageText(item);if(!text.trim())continue;
       if(text.length>32000||characters+text.length>64000)throw new Error('最近回合的来源较长，请使用记忆工具选择有关摘录后整理。');

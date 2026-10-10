@@ -1,6 +1,6 @@
 import type { NavigationOrdering, NavigationOrderKind } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
-import { conversationWorkspace, workspaceDirectoryKey } from '../workspace/identity';
+import { conversationWorkspaceIndex, workspaceDirectoryKey } from '../workspace/identity';
 import { conversationOrderGroup } from '../../../../shared/sidebarOrder';
 
 const namespace = 'conversation-navigation-order';
@@ -43,6 +43,7 @@ export class NavigationOrderingStore {
     if (input.kind === 'conversations' || input.kind === 'pinned') {
       const groups = new Set<string>();
       const { workspaces } = this.app.settings.read('workspaces');
+      const workspaceFor = conversationWorkspaceIndex(workspaces);
       const hidden = this.app.subagents.childConversationIds();
       for (const id of input.ids) {
         if (hidden.has(id)) throw new Error('子任务不在当前侧边栏列表中。');
@@ -52,7 +53,7 @@ export class NavigationOrderingStore {
         if ((scope === 'bots') !== !!botPlatform) throw new Error('只能调整同一列表内的显示顺序。');
         const pin = await this.app.storage.getRecord('conversation-navigation', id) as { pinnedAt?: number } | null;
         if ((input.kind === 'pinned') !== !!pin?.pinnedAt) throw new Error('对话的置顶状态已变化，请刷新后重试。');
-        const workspace = conversationWorkspace(conversation, workspaces);
+        const workspace = workspaceFor(conversation);
         groups.add(conversationOrderGroup({ workspaceId: workspace?.id, workspaceUri: conversation.workspaceUri,
           workspaceIdentity: workspaceDirectoryKey(conversation.workspaceUri), automaticWorkspace: !!workspace?.managedConversationId, botPlatform }));
       }

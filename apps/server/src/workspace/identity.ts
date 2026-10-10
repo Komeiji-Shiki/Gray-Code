@@ -16,9 +16,18 @@ export function workspaceDirectoryKey(value: unknown): string | undefined {
   const key = directory.replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? key.toLowerCase() : key;
 }
-export function conversationWorkspace(value: { workspaceId?: unknown; workspaceUri?: unknown }, workspaces: readonly WorkspaceDefinition[]) {
-  if (typeof value.workspaceId === 'string' && value.workspaceId) return workspaces.find(workspace => workspace.id === value.workspaceId);
-  const key = workspaceDirectoryKey(value.workspaceUri);
-  const matches = key === undefined ? [] : workspaces.filter(workspace => workspaceDirectoryKey(workspace.directory) === key);
-  return matches.length === 1 ? matches[0] : undefined;
+/** 批量摘要共用当前设置的索引；同目录的多个工作区仍须用显式 ID 区分。 */
+export function conversationWorkspaceIndex(workspaces: readonly WorkspaceDefinition[]) {
+  const byId = new Map<string, WorkspaceDefinition>();
+  const byDirectory = new Map<string, WorkspaceDefinition | undefined>();
+  for (const workspace of workspaces) {
+    if (!byId.has(workspace.id)) byId.set(workspace.id, workspace);
+    const key = workspaceDirectoryKey(workspace.directory);
+    if (key !== undefined) byDirectory.set(key, byDirectory.has(key) ? undefined : workspace);
+  }
+  return (value: { workspaceId?: unknown; workspaceUri?: unknown }) => {
+    if (typeof value.workspaceId === 'string' && value.workspaceId) return byId.get(value.workspaceId);
+    const key = workspaceDirectoryKey(value.workspaceUri);
+    return key === undefined ? undefined : byDirectory.get(key);
+  };
 }

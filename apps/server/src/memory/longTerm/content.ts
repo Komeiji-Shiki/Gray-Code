@@ -15,7 +15,10 @@ export function sourceMessageText(message:PlatformMessage):string{
   }).join('\n');
 }
 export function sourceMessageOrigin(message: PlatformMessage, history: PlatformMessage[]): 'user' | 'model' | 'tool' | 'fiction' {
-  const input = message.isUserInput ? message : history.slice(0, history.indexOf(message) + 1).findLast(item => item.isUserInput);
+  let input = message.isUserInput ? message : undefined;
+  if (!input) for (let index = history.indexOf(message); index >= 0; index--) {
+    if (history[index].isUserInput) { input = history[index]; break; }
+  }
   if (message.characterTurn || message.characterMode || message.characterGreeting || message.turnPlatformMode === 'character'
     || input?.characterTurn || input?.characterMode || input?.turnPlatformMode === 'character') return 'fiction';
   return message.role === 'model' ? 'model' : message.parts.some(part => part.functionResponse) ? 'tool' : 'user';

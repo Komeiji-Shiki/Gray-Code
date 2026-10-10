@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { RecordMutation } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
-import { conversationWorkspace, workspaceDirectoryKey } from '../workspace/identity';
+import { conversationWorkspaceIndex, workspaceDirectoryKey } from '../workspace/identity';
 import { deleteConversation } from './delete';
 
 export interface ProjectNavigationTarget { workspaceId?: string; workspaceUri?: string }
@@ -51,6 +51,7 @@ export class ProjectNavigation {
   private async removalPlan(actorId: string, target: ProjectNavigationTarget) {
     const resolved = this.target(actorId, target);
     const { workspaces } = this.app.settings.read('workspaces');
+    const workspaceFor = conversationWorkspaceIndex(workspaces), targetKey = projectNavigationKey(resolved);
     const hidden = this.app.subagents.childConversationIds();
     const conversations: Array<{ id: string; createdAt: number }> = [];
     let cursor: { updatedAt: number; id: string } | undefined;
@@ -58,9 +59,9 @@ export class ProjectNavigation {
       const page = await this.app.storage.listConversations({ limit: 200, cursor });
       for (const item of page.items) {
         if (item.botPlatform || hidden.has(item.id)) continue;
-        const workspace = conversationWorkspace(item, workspaces);
+        const workspace = workspaceFor(item);
         const matches = resolved.workspaceId ? workspace?.id === resolved.workspaceId
-          : !workspace && projectNavigationKey({ workspaceUri: item.workspaceUri }) === projectNavigationKey(resolved);
+          : !workspace && projectNavigationKey({ workspaceUri: item.workspaceUri }) === targetKey;
         if (matches) conversations.push({ id: item.id, createdAt: item.createdAt });
       }
       cursor = page.nextCursor;

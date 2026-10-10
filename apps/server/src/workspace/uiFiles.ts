@@ -90,24 +90,30 @@ export function inputFileHandlers(app: PlatformApplication, client: ClientSessio
       const limit = Number.isFinite(data.limit) ? Math.min(200, Math.max(1, Math.floor(data.limit))) : 50;
       const editor = app.files.editorContext(client.clientId, target);
       const opened = editor.openFiles; const activeFilePath = editor.activeFile ?? null;
+      const openedPaths = new Set(opened);
       const files: { path: string; name: string; isDirectory: boolean; isOpen?: boolean }[] = [];
       const added = new Set<string>();
       if (!query) for (const file of [...opened].reverse()) {
         if (files.length >= limit) break; added.add(file); files.push({ path: file, name: path.basename(file), isDirectory: false, isOpen: true });
       }
-      const pending = ['.'];
+      let pending = ['.'];
       while (pending.length && files.length < limit) {
-        // 无匹配的查询会扫完整个工作区；被新查询取代后在下一个目录前退出，已发出的单次列目录仍会完成。
-        signal?.throwIfAborted();
-        const directory = pending.shift()!;
-        let entries; try { entries = await app.files.list(target, directory); } catch { continue; }
-        for (const entry of entries) {
-          if (entry.kind === 'symlink' || excluded.has(entry.name.toLowerCase())) continue;
-          if (entry.kind === 'directory') pending.push(entry.path);
-          if (added.has(entry.path) || !entry.path.toLowerCase().includes(query)) continue;
-          added.add(entry.path); files.push({ path: entry.path, name: entry.name, isDirectory: entry.kind === 'directory', isOpen: opened.includes(entry.path) });
+        // 按层遍历保留广度优先顺序，释放上一层目录时不反复移动整个待查队列。
+        const next: string[] = [];
+        for (const directory of pending) {
           if (files.length >= limit) break;
+          // 被新查询取代后在下一个目录前退出，已发出的单次列目录仍会完成。
+          signal?.throwIfAborted();
+          let entries; try { entries = await app.files.list(target, directory); } catch { continue; }
+          for (const entry of entries) {
+            if (entry.kind === 'symlink' || excluded.has(entry.name.toLowerCase())) continue;
+            if (entry.kind === 'directory') next.push(entry.path);
+            if (added.has(entry.path) || !entry.path.toLowerCase().includes(query)) continue;
+            added.add(entry.path); files.push({ path: entry.path, name: entry.name, isDirectory: entry.kind === 'directory', isOpen: openedPaths.has(entry.path) });
+            if (files.length >= limit) break;
+          }
         }
+        pending = next;
       }
       if (query) files.sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.path.length - b.path.length);
       return { files, activeFilePath };
