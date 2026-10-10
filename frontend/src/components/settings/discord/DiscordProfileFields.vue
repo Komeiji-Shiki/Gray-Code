@@ -11,6 +11,11 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: DiscordReplyProfile] }>();
 const effective = computed(() => ({ ...props.inherited, ...props.modelValue }));
+const inheritedOutput = computed<DiscordOutputSettings>(() => {
+  const output = { ...props.output, ...props.inherited.output };
+  // 回复配置由两种 Bot 共用，Discord 只继承自身支持的发送方式。
+  return { ...output, longReplies: output.longReplies === 'split' || output.longReplies === 'file' ? output.longReplies : props.output.longReplies };
+});
 const agent = computed(() => props.settings.agents.find(item => item.id === effective.value.agentId));
 const provider = computed(() => props.settings.providers.find(item => item.id === (effective.value.providerId ?? agent.value?.providerId)));
 const characterMode = computed(() => props.modelValue.character === undefined ? 'inherit' : props.modelValue.character === null ? 'none' : 'custom');
@@ -65,8 +70,8 @@ watch(() => character.value?.characterId, async (id, _previous, onCleanup) => {
       <label><span>关键词扫描范围<small>扫描最近几条消息；条目或世界书自己的范围优先。0 不扫描历史消息，常驻条目与额外来源仍可参与激活。增大有助于延续较早话题，也可能命中已经转移的话题。</small></span><input type="number" min="0" step="1" :value="character.scanDepth" @change="setCharacter('scanDepth', Number(($event.target as HTMLInputElement).value))" /></label>
       <label><span>世界书最大注入 Token<small>留空不设默认预算；0 表示不注入。增大可加入更多已命中的设定，同时占用更多上下文和输入 Token。</small></span><input type="number" min="0" step="1" :value="character.worldTokenBudget ?? ''" placeholder="由主人填写" @change="setCharacter('worldTokenBudget', ($event.target as HTMLInputElement).value === '' ? undefined : Number(($event.target as HTMLInputElement).value))" /></label>
     </div>
-    <label><span>单独配置回复显示</span><input type="checkbox" :checked="!!modelValue.output" @change="set('output', ($event.target as HTMLInputElement).checked ? { ...output, ...inherited.output } : undefined)" /></label>
-    <DiscordOutputFields v-if="modelValue.output" :model-value="modelValue.output" :inherited="{ ...output, ...inherited.output }" @update:model-value="set('output', $event)" />
+    <label><span>单独配置回复显示</span><input type="checkbox" :checked="!!modelValue.output" @change="set('output', ($event.target as HTMLInputElement).checked ? { ...inheritedOutput } : undefined)" /></label>
+    <DiscordOutputFields v-if="modelValue.output" :model-value="modelValue.output" :inherited="inheritedOutput" @update:model-value="set('output', $event)" />
     <BotConversationFields :model-value="modelValue" :inherited="inherited" @update:model-value="emit('update:modelValue', $event)" />
   </div>
 </template>
