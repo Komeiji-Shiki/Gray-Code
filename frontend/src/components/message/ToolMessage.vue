@@ -321,9 +321,8 @@ function syncPendingDiffOrphanState(): void {
   }
 }
 
-// 工具状态 / diff 会话视图变化时同步孤儿记录；pendingDiffViewsByToolId 覆盖
-// 会话级（pending diff 增删、处理状态）变化，props.tools 覆盖原始状态变化。
-watch([() => props.tools, pendingDiffViewsByToolId], syncPendingDiffOrphanState, { immediate: true })
+// 直接订阅工具、响应和待处理会话，避免展示倒计时每 50ms 变化时重复扫描孤儿。
+watchEffect(syncPendingDiffOrphanState)
 
 // 正在处理确认的工具 ID 集合
 

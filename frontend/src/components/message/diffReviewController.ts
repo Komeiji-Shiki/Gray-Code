@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { onExtensionCommand, sendToExtension, showNotification } from '../../utils/vscode'
 
@@ -29,6 +29,15 @@ export const globalApplyDiffConfig = ref<ApplyDiffAutoSaveConfig>({
 })
 
 export const toolIdToPendingDiffs = ref<Map<string, PendingDiffSession[]>>(new Map())
+// 会话集合只随后端状态变化重建；倒计时与各工具卡按 ID 查询时复用同一份索引。
+const allPendingDiffSessions = computed(() => Array.from(toolIdToPendingDiffs.value.values()).flatMap(sessions => sessions))
+const pendingDiffSessionsById = computed(() => {
+  const sessions = new Map<string, PendingDiffSession>()
+  for (const session of allPendingDiffSessions.value) {
+    if (!sessions.has(session.id)) sessions.set(session.id, session)
+  }
+  return sessions
+})
 export const diffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
 export const persistedDiffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
 export const seenDiffToolIds = ref<Set<string>>(new Set())
@@ -120,7 +129,7 @@ export function getDiffActionError(sessionId: string): string | undefined {
 }
 
 export function getAllPendingDiffSessions(): PendingDiffSession[] {
-  return Array.from(toolIdToPendingDiffs.value.values()).flatMap((sessions) => sessions)
+  return allPendingDiffSessions.value
 }
 
 export function getPendingDiffSessions(toolId: string): PendingDiffSession[] {
@@ -128,7 +137,7 @@ export function getPendingDiffSessions(toolId: string): PendingDiffSession[] {
 }
 
 export function getPendingDiffSession(sessionId: string): PendingDiffSession | undefined {
-  return getAllPendingDiffSessions().find((session) => session.id === sessionId)
+  return pendingDiffSessionsById.value.get(sessionId)
 }
 
 export function hasPendingDiffSession(sessionId: string): boolean {

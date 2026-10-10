@@ -39,14 +39,22 @@ export function useSettingsSearch(options: SearchOptions) {
       anchor: `[data-search-tool="${encodeURIComponent(tool.name)}"]`,
     }))
   }))
+  // 标签、关键词和页签顺序只随目录或语言变化；输入字符时仅做包含匹配。
+  const searchableEntries = computed(() => {
+    const tabOrder = new Map(options.tabs.value.map((tab, index) => [tab.id, index]))
+    return [...options.index, ...toolEntries.value]
+      .sort((a, b) => (tabOrder.get(a.tab) ?? 99) - (tabOrder.get(b.tab) ?? 99))
+      .map(entry => ({
+        entry,
+        texts: [entry.label ?? t(entry.labelKey), ...entry.keywords].map(normalize),
+      }))
+  })
   const searchResults = computed(() => {
     const query = normalizedQuery.value
     if (!query) return []
-    const tabOrder = new Map(options.tabs.value.map((tab, index) => [tab.id, index]))
-    return [...options.index, ...toolEntries.value]
-      .filter(entry => normalize(entry.label ?? t(entry.labelKey)).includes(query)
-        || entry.keywords.some(keyword => normalize(keyword).includes(query)))
-      .sort((a, b) => (tabOrder.get(a.tab) ?? 99) - (tabOrder.get(b.tab) ?? 99))
+    return searchableEntries.value
+      .filter(({ texts }) => texts.some(text => text.includes(query)))
+      .map(({ entry }) => entry)
   })
   const tabsWithMatches = computed(() => new Set(searchResults.value.map(entry => entry.tab)))
   const tabIcon = (tabId: SettingsTab) => options.tabs.value.find(tab => tab.id === tabId)?.icon || 'codicon-settings-gear'

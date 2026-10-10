@@ -1,11 +1,10 @@
 /**
  * MessageTaskCards 拆分：渠道 / 模式 / 模型选择的加载与持久化编排。
  *
- * 原实现内联在主组件里，此处按「渠道配置加载 + 提示词模式选择」边界整体搬出。
- * 函数体与原组件逐字一致，保证渠道配置加载（并行拉取、单条失败容忍）、
- * 模式偏好持久化与模型默认选中逻辑的运行时行为不变。
+ * 渠道配置并行加载、单条失败跳过；沿用模式偏好与模型默认选中规则。
+ * 资源仅由需要选择器的卡片加载，过期模型响应不会覆盖当前渠道。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useChatStore, useSettingsStore } from '@/stores'
 import { loadState, saveState } from '@/utils/vscode'
 import { t } from '@/i18n'
@@ -32,6 +31,9 @@ export function useTaskCardChannels() {
   const isLoadingModes = ref(false)
   const promptModeOptions = ref<PromptMode[]>([])
   const isLoadingModels = ref(false)
+  let disposed = false
+  let modelRequestId = 0
+  onScopeDispose(() => { disposed = true })
 
   const channelOptions = computed<ChannelOption[]>(() =>
     channelConfigs.value
@@ -89,6 +91,7 @@ export function useTaskCardChannels() {
     isLoadingModes.value = true
     try {
       const result = await configService.getPromptModes()
+      if (disposed) return
       const modes = Array.isArray(result?.modes) ? result.modes : []
       promptModeOptions.value = modes
 
@@ -110,11 +113,12 @@ export function useTaskCardChannels() {
       saveState(PLAN_EXECUTION_MODE_STATE_KEY, preferredExecutionModeId)
       saveState(PLAN_GENERATION_MODE_STATE_KEY, preferredGenerationModeId)
     } catch (error) {
+      if (disposed) return
       console.error('[task-cards] Failed to load prompt modes:', error)
       selectedPlanExecutionModeId.value = 'code'
       selectedPlanGenerationModeId.value = 'plan'
     } finally {
-      isLoadingModes.value = false
+      if (!disposed) isLoadingModes.value = false
     }
   }
 
@@ -122,6 +126,7 @@ export function useTaskCardChannels() {
     isLoadingChannels.value = true
     try {
       const ids = await configService.listConfigIds()
+      if (disposed) return
 
       // 并行拉取全部渠道配置（原为串行 N 次 IPC）；单条失败仅跳过该条，不拖垮整批
       const results = await Promise.all(ids.map(async (id) => {
@@ -132,6 +137,7 @@ export function useTaskCardChannels() {
           return null
         }
       }))
+      if (disposed) return
       const loaded = results.filter((c): c is ChannelConfig => !!c)
 
       channelConfigs.value = loaded
@@ -141,9 +147,10 @@ export function useTaskCardChannels() {
         selectedChannelId.value = loaded[0].id
       }
     } catch (error) {
+      if (disposed) return
       console.error(t('components.message.tool.planCard.loadChannelsFailed'), error)
     } finally {
-      isLoadingChannels.value = false
+      if (!disposed) isLoadingChannels.value = false
     }
   }
 
@@ -152,9 +159,12 @@ export function useTaskCardChannels() {
   }
 
   async function loadModelsForChannel(configId: string) {
+    const requestId = ++modelRequestId
+    const isCurrent = () => !disposed && requestId === modelRequestId && selectedChannelId.value === configId
     if (!configId) {
       modelOptions.value = []
       selectedModelId.value = ''
+      isLoadingModels.value = false
       return
     }
 
@@ -166,6 +176,8 @@ export function useTaskCardChannels() {
       const storedModels = cfg?.models
       const localModels = Array.isArray(storedModels) ? storedModels : []
       let models = localModels.length > 0 ? localModels : await configService.getChannelModels(configId)
+      // 切换渠道或卸载卡片后，旧请求不能覆盖新渠道的模型及加载状态。
+      if (!isCurrent()) return
 
       // 2) 确保当前配置的 model 一定能显示/被选中
       const current = (cfg?.model || '').trim()
@@ -180,12 +192,13 @@ export function useTaskCardChannels() {
         selectedModelId.value = current || models[0]?.id || ''
       }
     } catch (error) {
+      if (!isCurrent()) return
       console.error(t('components.message.tool.planCard.loadModelsFailed'), error)
       const current = (getSelectedChannelConfig()?.model || '').trim()
       modelOptions.value = current ? [{ id: current, name: current }] : []
       if (!selectedModelId.value) selectedModelId.value = current
     } finally {
-      isLoadingModels.value = false
+      if (isCurrent()) isLoadingModels.value = false
     }
   }
 

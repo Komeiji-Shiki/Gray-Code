@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomScrollbar, Modal } from '../common'
 import { useI18n } from '@/i18n'
@@ -28,6 +28,8 @@ const availableModels = ref<ModelInfo[]>([])
 const selectedModelIds = ref<Set<string>>(new Set())
 const isLoading = ref(false)
 const error = ref<string>('')
+let modelRequestId = 0
+onBeforeUnmount(() => { modelRequestId++ })
 
 // 筛选关键词
 const filterKeyword = ref('')
@@ -97,8 +99,14 @@ function confirm() {
 }
 
 // 加载可用模型
-async function loadModels() {
-  if (!props.configId) return
+async function loadModels(configId: string) {
+  const requestId = ++modelRequestId
+  const isCurrent = () => requestId === modelRequestId && props.visible && props.configId === configId
+  if (!configId) {
+    availableModels.value = []
+    isLoading.value = false
+    return
+  }
   
   isLoading.value = true
   error.value = ''
@@ -106,22 +114,27 @@ async function loadModels() {
   
   try {
     const models = await sendToExtension<ModelInfo[]>(MESSAGE_NAMES['models.getModels'], {
-      configId: props.configId
+      configId
     })
+    // 关闭重开或切换渠道后，旧响应不能覆盖当前列表、错误或加载状态。
+    if (!isCurrent()) return
     availableModels.value = models || []
   } catch (err: any) {
+    if (!isCurrent()) return
     error.value = err.message || t('components.settings.modelSelectionDialog.error')
     console.error('Failed to load models:', err)
   } finally {
-    isLoading.value = false
+    if (isCurrent()) isLoading.value = false
   }
 }
 
-// 监听面板显示状态
-watch(() => props.visible, (visible) => {
+// 打开弹窗和切换渠道都加载当前目录，关闭时立即作废在途请求。
+watch([() => props.visible, () => props.configId], ([visible, configId]) => {
   if (visible) {
-    loadModels()
+    void loadModels(configId)
   } else {
+    modelRequestId++
+    isLoading.value = false
     // 关闭时清空选择
     selectedModelIds.value.clear()
     availableModels.value = []
@@ -160,7 +173,7 @@ watch(() => props.visible, (visible) => {
       <div v-if="error" class="error-state" role="alert">
         <i class="codicon codicon-error" aria-hidden="true"></i>
         <span>{{ error }}</span>
-        <button type="button" class="retry-btn" @click="loadModels">
+        <button type="button" class="retry-btn" @click="loadModels(configId)">
           {{ t('components.settings.modelSelectionDialog.retry') }}
         </button>
       </div>

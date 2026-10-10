@@ -533,14 +533,12 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
 }
 
 onMounted(() => {
-  loadChannels()
-  void loadPromptModes()
   void refreshPlanSourceStatuses(taskCards.value, chatStore.currentConversationId)
   void autoOpenPendingCardTabs(taskCards.value)
 
   // 设置面板中渠道/模型变更后刷新（新增模型无需重启扩展即可在下拉框看到）
   unsubscribeConfigChanged = onExtensionCommand('channels.configChanged', () => {
-    loadChannels()
+    if (needsTaskOptions.value) void loadChannels()
   })
 })
 
@@ -565,6 +563,13 @@ watch(
 )
 
 const hasAny = computed(() => taskCards.value.length > 0)
+// 普通工具消息也会挂载本组件；只有能选择执行/生成渠道的卡片才需要读取目录。
+const needsTaskOptions = computed(() => taskCards.value.some(card => card.kind !== 'progress'))
+watch(needsTaskOptions, needed => {
+  if (!needed) return
+  void loadChannels()
+  void loadPromptModes()
+}, { immediate: true })
 </script>
 
 <template>

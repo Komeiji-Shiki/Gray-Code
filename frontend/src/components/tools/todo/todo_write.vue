@@ -132,6 +132,8 @@ const sourceLabel = computed(() =>
 
 
 watchEffect(() => {
+  // 默认关闭调试时不订阅回放快照，也不构造只供日志使用的列表和字符串。
+  if (!isPerfEnabled()) return
   const toolId = typeof props.toolId === 'string' ? props.toolId : ''
   const todoSnapshot = snapshotTodoState.value.todos || []
   const ids = todoSnapshot.map(t => t.id)
@@ -151,9 +153,7 @@ watchEffect(() => {
   })
 
   if (!toolId) {
-    if (isPerfEnabled()) {
-      console.warn('[todo-debug][todo_write.vue] Missing toolId for todo panel', { toolName: props.toolName || null })
-    }
+    console.warn('[todo-debug][todo_write.vue] Missing toolId for todo panel', { toolName: props.toolName || null })
   }
 })
 
