@@ -28,7 +28,7 @@ import type { Content } from '../types';
 export interface HistorySegmentCacheEntry {
     messages: Content[];
     lastAccess: number;
-    /** 该段估算字节数（JSON 序列化长度，用于字节软上限） */
+    /** 该段估算字节数（JSON 文本长度，用于字节软上限） */
     estimatedBytes: number;
 }
 
@@ -73,11 +73,12 @@ export class HistorySegmentCache {
         return entry.messages;
     }
 
-    set(conversationId: string, segmentFile: string, revision: string | number, messages: Content[]): void {
+    set(conversationId: string, segmentFile: string, revision: string | number, messages: Content[], sourceEstimatedBytes?: number): void {
         if (this.maxEntries <= 0) return;
         const key = HistorySegmentCache.buildKey(conversationId, segmentFile, revision);
         const previous = this.entries.get(key);
-        const estimatedBytes = HistorySegmentCache.estimateBytes(messages);
+        // 读段已经持有原始 JSON 文本时复用长度，避免刚解析完又完整序列化一次。
+        const estimatedBytes = sourceEstimatedBytes ?? HistorySegmentCache.estimateBytes(messages);
         if (previous) {
             this.totalBytes -= previous.estimatedBytes;
         }

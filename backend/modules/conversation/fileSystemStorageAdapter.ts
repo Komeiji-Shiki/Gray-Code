@@ -276,7 +276,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
         const result = await this.readHistorySegment(segmentUri);
         if (result.value) {
-            this.segmentCache.set(conversationId, segment.file, cacheKey, result.value);
+            this.segmentCache.set(conversationId, segment.file, cacheKey, result.value, result.estimatedBytes);
         }
         return result;
     }
@@ -345,12 +345,12 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
     }
 
-    private async readHistorySegment(uri: any): Promise<StorageReadResult<ConversationHistory>> {
+    private async readHistorySegment(uri: any): Promise<StorageReadResult<ConversationHistory> & { estimatedBytes?: number }> {
         try {
             const content = await this.vscode.workspace.fs.readFile(uri);
             const text = Buffer.from(content).toString('utf8');
             if (!text.trim()) {
-                return { value: [] };
+                return { value: [], estimatedBytes: 2 };
             }
 
             const messages: ConversationHistory = [];
@@ -368,7 +368,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                 }
             }
 
-            return { value: messages };
+            // 本仓库写出的紧凑 NDJSON 用换行代替数组逗号；补两个括号即可沿用缓存原有估算口径。
+            // 外部段的空白和 CRLF 同样计入软预算，不为缓存再遍历、序列化完整消息。
+            return { value: messages, estimatedBytes: text.length + 2 };
         } catch (error: any) {
             if (isNotFoundError(error)) {
                 return {
