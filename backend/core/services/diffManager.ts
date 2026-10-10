@@ -19,13 +19,12 @@ import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from '../../tools/file/DiffCodeLensProvider';
 import {
-    applyDiffToContent,
     applyStructuredDiffHunksBestEffort,
-    normalizeLineEndings,
-    countLineBreaks,
+    type LegacyDiffBlock,
     type StructuredDiffHunk,
     type StructuredHunkPlan
 } from '../../tools/file/apply_diff';
+import { applyLegacyDiffsBestEffort } from '../../tools/file/diff/apply';
 import { DiffReviewSession } from '../../tools/file/DiffReviewSession';
 import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from '../../tools/file/unifiedDiff';
 import { resolveDiffTargetViewColumn } from '../../tools/file/diffViewColumn';
@@ -1238,10 +1237,11 @@ export class DiffManager {
             let tempContent = diff.originalContent;
             const session = provider.getSession(sessionId);
             if (session) {
+                const blocksByIndex = new Map(session.blocks.map(block => [block.index, block]));
                 // 本次需要应用的块（未被拒绝）
                 const applyIndices = new Set<number>();
                 for (let i = 0; i < diff.rawDiffs.length; i++) {
-                    const blockInfo = session.blocks.find(b => b.index === i);
+                    const blockInfo = blocksByIndex.get(i);
                     if (blockInfo && !blockInfo.rejected) {
                         applyIndices.add(i);
                     }
@@ -1260,7 +1260,7 @@ export class DiffManager {
                         tempContent = r.newContent;
 
                         for (const h of r.blocks) {
-                            const blockInfo = session.blocks.find(b => b.index === h.index);
+                            const blockInfo = blocksByIndex.get(h.index);
                             if (blockInfo) {
                                 blockInfo.startLine = h.startLine;
                                 blockInfo.endLine = h.endLine;
@@ -1278,7 +1278,7 @@ export class DiffManager {
 
                         // 更新各块在当前内容中的范围
                         for (const h of r.appliedHunks) {
-                            const blockInfo = session.blocks.find(b => b.index === h.index);
+                            const blockInfo = blocksByIndex.get(h.index);
                             if (blockInfo) {
                                 blockInfo.startLine = h.startLine;
                                 blockInfo.endLine = h.endLine;
@@ -1288,34 +1288,15 @@ export class DiffManager {
                         console.warn('[DiffManager] Failed to recompute unified diff content after rejecting a block:', e);
                     }
                 } else {
-                    // legacy search/replace diffs（向后兼容）
-                    let lineDelta = 0;
-                    for (let i = 0; i < diff.rawDiffs.length; i++) {
-                        const blockInfo = session.blocks.find(b => b.index === i);
-                        const d = diff.rawDiffs[i];
-                        if (!blockInfo || blockInfo.rejected || !isLegacySearchReplaceDiff(d)) {
-                            continue;
-                        }
-
-                        const replaceLines = d.replace.split('\n').length;
-
-                        // start_line 相对原始文件：前序 hunk 应用改变了行数后必须累计偏移，
-                        // 否则第二个及以后的 hunk 整体错位
-                        const adjustedStartLine = typeof d.start_line === 'number' && d.start_line > 0
-                            ? d.start_line + lineDelta
-                            : d.start_line;
-
-                        const result = applyDiffToContent(tempContent, d.search, d.replace, adjustedStartLine);
-                        if (result.success && result.matchedLine !== undefined) {
-                            tempContent = result.result;
-
-                            // 更新此块在当前内容中的范围
-                            blockInfo.startLine = result.matchedLine;
-                            blockInfo.endLine = result.matchedLine + replaceLines - 1;
-
-                            // 累计行数变化：replace 行数 - search 行数（replaceLines 是展示行数，勿用于偏移）
-                            lineDelta += countLineBreaks(normalizeLineEndings(d.replace)) - countLineBreaks(normalizeLineEndings(d.search));
-                        }
+                    // 预览与最终保存复用工具的重放引擎，行号偏移和换行处理只维护一份。
+                    const indices = [...applyIndices].filter(index => isLegacySearchReplaceDiff(diff.rawDiffs![index]));
+                    const hunks = indices.map(index => diff.rawDiffs![index] as LegacyDiffBlock);
+                    const result = applyLegacyDiffsBestEffort(tempContent, hunks);
+                    tempContent = result.newContent;
+                    for (const block of result.blocks) {
+                        const blockInfo = blocksByIndex.get(indices[block.index])!;
+                        blockInfo.startLine = block.startLine;
+                        blockInfo.endLine = block.endLine;
                     }
                 }
 
@@ -1368,18 +1349,18 @@ export class DiffManager {
             return finalContent;
         }
 
-        const rejectedBlocks = session.blocks.filter(b => b.rejected);
-        if (rejectedBlocks.length === 0) {
+        if (!session.blocks.some(b => b.rejected)) {
             return finalContent;
         }
 
         // 有被拒绝的块，重新计算内容
         finalContent = diff.originalContent;
+        const blocksByIndex = new Map(session.blocks.map(block => [block.index, block]));
 
         // 需要应用的块（未被拒绝）
         const applyIndices = new Set<number>();
         for (let i = 0; i < diff.rawDiffs.length; i++) {
-            const blockInfo = session.blocks.find(b => b.index === i);
+            const blockInfo = blocksByIndex.get(i);
             if (blockInfo && !blockInfo.rejected) {
                 applyIndices.add(i);
             }
@@ -1409,19 +1390,8 @@ export class DiffManager {
                 console.warn('[DiffManager] Failed to recompute final suggested content for unified diff:', e);
             }
         } else {
-            // legacy search/replace diffs
-            for (let i = 0; i < diff.rawDiffs.length; i++) {
-                const blockInfo = session.blocks.find(b => b.index === i);
-                const d = diff.rawDiffs[i];
-                if (!blockInfo || blockInfo.rejected || !isLegacySearchReplaceDiff(d)) {
-                    continue;
-                }
-
-                const result = applyDiffToContent(finalContent, d.search, d.replace, d.start_line);
-                if (result.success) {
-                    finalContent = result.result;
-                }
-            }
+            const hunks = [...applyIndices].map(index => diff.rawDiffs![index]).filter(isLegacySearchReplaceDiff);
+            finalContent = applyLegacyDiffsBestEffort(finalContent, hunks).newContent;
         }
 
         return finalContent;
