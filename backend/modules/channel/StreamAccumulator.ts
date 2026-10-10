@@ -397,21 +397,20 @@ export class StreamAccumulator {
                 this.thinkingStartTime = Date.now();
             }
 
-            const thoughtParts = this.parts.filter(candidate => candidate.thought === true);
             let existingThought: ContentPart | undefined;
-
-            if (incomingReasoningId) {
-                // 有 item id 时优先精确匹配；若首个最终事件才带 id，允许它
-                // 接管此前尚未标注 id 的增量 part。
-                existingThought = [...thoughtParts].reverse().find(candidate =>
-                    candidate.openaiResponsesReasoning?.id === incomingReasoningId
-                ) || [...thoughtParts].reverse().find(candidate =>
-                    !candidate.openaiResponsesReasoning?.id
-                );
-            } else {
-                // 部分兼容端点省略 item_id，只能使用最近的思考 part 作为回退。
-                existingThought = [...thoughtParts].reverse()[0];
+            let unassignedThought: ContentPart | undefined;
+            // 通常连续增量属于末尾思考段，倒序直接查找，避免每个片段分配过滤和反转数组。
+            // 有 id 时仍优先精确匹配；最终事件才补 id 时接管最近的无 id 思考段。
+            for (let index = this.parts.length - 1; index >= 0; index--) {
+                const candidate = this.parts[index];
+                if (candidate.thought !== true) continue;
+                if (!incomingReasoningId || candidate.openaiResponsesReasoning?.id === incomingReasoningId) {
+                    existingThought = candidate;
+                    break;
+                }
+                if (!unassignedThought && !candidate.openaiResponsesReasoning?.id) unassignedThought = candidate;
             }
+            existingThought ??= unassignedThought;
 
             const summaryIndex = options?.reasoningSummaryIndex;
             if (typeof summaryIndex === 'number' && Number.isInteger(summaryIndex) && summaryIndex >= 0 && incomingMetadata.summary?.length) {

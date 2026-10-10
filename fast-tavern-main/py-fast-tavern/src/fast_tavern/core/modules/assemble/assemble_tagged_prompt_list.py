@@ -58,16 +58,23 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
     enabled_prompts = [p for p in (preset_prompts or []) if p and p.get("enabled") is not False]
     relative_prompts = [p for p in enabled_prompts if p.get("position") == "relative"]
 
+    # 插槽条目只分组、排序一次，避免每个骨架块重新扫描全部世界书。
+    slot_identifiers = {str(prompt.get("identifier")) for prompt in relative_prompts}
+    slot_entries_by_identifier: dict[str, list[WorldBookEntry]] = {}
+    if slot_identifiers:
+        for entry in active_entries:
+            if not entry or _is_fixed_worldbook_entry(entry):
+                continue
+            position = str(entry.get("position"))
+            identifier = position_map.get(position) or position
+            if identifier in slot_identifiers:
+                slot_entries_by_identifier.setdefault(identifier, []).append(entry)
+    for entries in slot_entries_by_identifier.values():
+        entries.sort(key=lambda x: _to_finite_number(x.get("order")))
+
     for prompt in relative_prompts:
         # 1) worldbook slot entries (position != fixed)
-        slot_entries = [
-            e
-            for e in (active_entries or [])
-            if e
-            and (not _is_fixed_worldbook_entry(e))
-            and (position_map.get(str(e.get("position"))) or str(e.get("position"))) == str(prompt.get("identifier"))
-        ]
-        slot_entries.sort(key=lambda x: _to_finite_number(x.get("order")))
+        slot_entries = slot_entries_by_identifier.get(str(prompt.get("identifier")), [])
 
         for entry in slot_entries:
             result.append(

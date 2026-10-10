@@ -54,7 +54,7 @@ export function validateChunkedFrames(
                 }
                 if (lineEnd === -1) {
                     // trailer 行不完整：从终止块起点续扫（trailer 量小，重复扫描可忽略）
-                    return { complete: false, corrupt: false, validatedOffset: sizeEnd };
+                    return { complete: false, corrupt: false, validatedOffset: offset };
                 }
                 if (lineEnd === cursor) {
                     // 空行：终止帧结束。仅当与数据末尾对齐才算完整；

@@ -25,49 +25,45 @@ function isVueReactiveProxy(value: any): boolean {
  * - 存在非普通对象（Date/Map/Set/RegExp/函数等）→ 是（保持原有 JSON 化语义）
  * - 纯 JSON 结构（对象/数组/字符串/数字/布尔/null，含 base64 大字符串）→ 否，直接透传
  *
- * 遍历为引用级检查，不复制字符串，开销远小于 JSON.stringify；visited 防止循环引用死循环。
+ * 遍历为引用级检查，不复制字符串；visited 只保留当前祖先，共享引用不等于循环引用。
  */
 export function requiresJsonRoundTrip(value: any, visited?: Set<object>): boolean {
-  if (value === null || typeof value !== 'object') return false
+  const valueType = typeof value
+  if (value === null || valueType !== 'object') {
+    return valueType === 'function' || valueType === 'symbol'
+  }
+  if (isVueReactiveProxy(value)) return true
+  const isArray = Array.isArray(value)
+  const proto = Object.getPrototypeOf(value)
+  if (!isArray && proto !== Object.prototype && proto !== null) return true
+  const keys = isArray ? [] : Object.keys(value)
   // 小 payload 短路：≤2 个基本类型属性的扁平对象必然可结构化克隆，
   // 高频小消息（如 { focused: bool }）无需分配 visited Set 和深遍历。
-  // 响应式 Proxy 必须排除（走完整检查返回 true，保持原有 JSON 解包语义）。
-  if (!Array.isArray(value) && !isVueReactiveProxy(value)) {
-    const proto = Object.getPrototypeOf(value)
-    if (proto === Object.prototype || proto === null) {
-      const keys = Object.keys(value)
-      if (keys.length <= 2) {
-        let flat = true
-        for (const key of keys) {
-          const v = value[key]
-          if (v !== null && (typeof v === 'object' || typeof v === 'function')) {
-            flat = false
-            break
-          }
-        }
-        if (flat) return false
+  if (!isArray && keys.length <= 2) {
+    let flat = true
+    for (const key of keys) {
+      const v = value[key], type = typeof v
+      if (v !== null && (type === 'object' || type === 'function' || type === 'symbol')) {
+        flat = false
+        break
       }
     }
+    if (flat) return false
   }
   const set = visited ?? new Set()
   if (set.has(value)) return true
   set.add(value)
 
-  if (isVueReactiveProxy(value)) return true
-
-  const proto = Object.getPrototypeOf(value)
-  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return true
-
-  if (Array.isArray(value)) {
+  if (isArray) {
     for (const item of value) {
       if (requiresJsonRoundTrip(item, set)) return true
     }
-    return false
+  } else {
+    for (const key of keys) {
+      if (requiresJsonRoundTrip(value[key], set)) return true
+    }
   }
-
-  for (const key of Object.keys(value)) {
-    if (requiresJsonRoundTrip(value[key], set)) return true
-  }
+  set.delete(value)
   return false
 }
 

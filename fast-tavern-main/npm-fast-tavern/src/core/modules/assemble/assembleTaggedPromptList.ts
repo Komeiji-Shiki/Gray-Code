@@ -41,16 +41,27 @@ export function assembleTaggedPromptList(params: {
   // 1) relative prompts：作为“骨架块”输出（包含 chatHistory、charBefore、charAfter 等占位块）
   const relativePrompts = enabledPrompts.filter((p) => p.position === 'relative');
 
+  // 插槽条目只分组、排序一次，避免每个骨架块重新扫描全部世界书。
+  const slotIdentifiers = new Set(relativePrompts.map(prompt => prompt.identifier));
+  const slotEntriesByIdentifier = new Map<string, WorldBookEntry[]>();
+  if (slotIdentifiers.size) {
+    for (const entry of activeEntries || []) {
+      if (!entry || isFixedWorldBookEntry(entry)) continue;
+      const position = String(entry.position);
+      const identifier = positionMap[position] || position;
+      if (!slotIdentifiers.has(identifier)) continue;
+      let entries = slotEntriesByIdentifier.get(identifier);
+      if (!entries) slotEntriesByIdentifier.set(identifier, entries = []);
+      entries.push(entry);
+    }
+  }
+  for (const entries of slotEntriesByIdentifier.values()) {
+    entries.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
   for (const prompt of relativePrompts) {
     // 1) 世界书：插槽条目（position != fixed）
-    const slotEntries = (activeEntries || [])
-      .filter((e) => {
-        if (!e) return false;
-        if (isFixedWorldBookEntry(e)) return false;
-        const mapped = positionMap[String(e.position)] || String(e.position);
-        return mapped === prompt.identifier;
-      })
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const slotEntries = slotEntriesByIdentifier.get(prompt.identifier) || [];
 
     for (const entry of slotEntries) {
       result.push({

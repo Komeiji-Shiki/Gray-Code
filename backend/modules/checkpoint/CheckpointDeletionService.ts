@@ -280,6 +280,10 @@ export class CheckpointDeletionService {
                                 return current; // 无变更，跳过写回
                             }
 
+                            // 批量删除只建立一次索引，避免逐个候选重复扫描整个存档列表。
+                            const checkpointsById = new Map<string, CheckpointRecord>();
+                            for (const cp of list) if (!checkpointsById.has(cp.id)) checkpointsById.set(cp.id, cp);
+
                             // 空 ID 列表 = 删除该对话全部检查点
                             const deleteSet = new Set(
                                 item.checkpointIds.length === 0 ? list.map(cp => cp.id) : item.checkpointIds
@@ -301,7 +305,7 @@ export class CheckpointDeletionService {
                             // CP-DEL-1: backupDir 越界的记录绝不删除（进 rejectedIds 上报前端 + 告警）
                             const toDelete = [...deleteSet].filter(id => !rejectedIds.has(id));
                             for (const id of toDelete) {
-                                const cp = list.find(c => c.id === id);
+                                const cp = checkpointsById.get(id);
                                 if (cp && !isSafeCheckpointDirName(cp.backupDir)) {
                                     console.warn(`[CheckpointManager] Refusing to delete checkpoint ${id}: unsafe backupDir ${cp.backupDir}`);
                                     rejectedIds.add(id);
@@ -312,7 +316,7 @@ export class CheckpointDeletionService {
                             // CP-BATCH-1: 请求中不存在的 checkpointId（记录已被并发删除/从未来过）不计入
                             // deletedIds——safeToDelete 先过滤 list 中存在性，避免虚报删除成功。
                             const safeToDelete = toDelete.filter(
-                                id => !rejectedIds.has(id) && list.some(cp => cp.id === id)
+                                id => !rejectedIds.has(id) && checkpointsById.has(id)
                             );
                             if (safeToDelete.length === 0) {
                                 return current; // 无变更，跳过写回
@@ -320,10 +324,11 @@ export class CheckpointDeletionService {
 
                             result.deletedIds = safeToDelete;
                             backupDirsToDelete = safeToDelete
-                                .map(id => list.find(cp => cp.id === id)?.backupDir)
+                                .map(id => checkpointsById.get(id)?.backupDir)
                                 .filter((dir): dir is string => !!dir);
 
-                            return list.filter(cp => !safeToDelete.includes(cp.id));
+                            const deletedIds = new Set(safeToDelete);
+                            return list.filter(cp => !deletedIds.has(cp.id));
                         });
 
                         // 删除备份目录（写回成功后才删）；失败只留孤儿目录，不影响增量链正确性
@@ -423,6 +428,8 @@ export class CheckpointDeletionService {
                         }
                         const candidateIds = new Set(candidates.map(cp => cp.id));
                         const rejectedIds = new Set<string>();
+                        const checkpointsById = new Map<string, CheckpointRecord>();
+                        for (const cp of list) if (!checkpointsById.has(cp.id)) checkpointsById.set(cp.id, cp);
 
                         // 闸门 1：引用计数（refCount>0 → 拒绝，除非 force）
                         const referenceCounts = options?.referenceCounts;
@@ -448,7 +455,7 @@ export class CheckpointDeletionService {
                         // 闸门 3：CP-DEL-1 backupDir 越界 → 拒绝 + 告警
                         const toDelete = [...candidateIds].filter(id => !rejectedIds.has(id));
                         for (const id of toDelete) {
-                            const cp = list.find(c => c.id === id);
+                            const cp = checkpointsById.get(id);
                             if (cp && !isSafeCheckpointDirName(cp.backupDir)) {
                                 console.warn(`[CheckpointManager] Refusing to delete checkpoint ${id}: unsafe backupDir ${cp.backupDir}`);
                                 rejectedIds.add(id);
@@ -464,9 +471,10 @@ export class CheckpointDeletionService {
 
                         result.deletedIds = safeToDelete;
                         backupDirsToDelete = safeToDelete
-                            .map(id => list.find(cp => cp.id === id)?.backupDir)
+                            .map(id => checkpointsById.get(id)?.backupDir)
                             .filter((dir): dir is string => !!dir);
-                        return list.filter(cp => !safeToDelete.includes(cp.id));
+                        const deletedIds = new Set(safeToDelete);
+                        return list.filter(cp => !deletedIds.has(cp.id));
                     });
 
                     // 删除备份目录（写回成功后才删）；失败只留孤儿目录，不影响增量链正确性

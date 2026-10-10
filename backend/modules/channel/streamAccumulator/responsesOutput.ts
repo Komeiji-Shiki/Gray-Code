@@ -31,9 +31,18 @@ export function mergeResponsesMessagePart(parts: ContentPart[], incoming: Conten
  * 对兼容端点省略的 reasoning 元数据仍保留 item.done 已取得的值。
  */
 export function reconcileResponsesOutput(previous: ContentPart[], snapshot: ContentPart[]): { parts: ContentPart[]; delta: ContentPart[] } {
+    // 终态批量回填共用首项索引，缺少 call id 的记录也保留原 find/some 的匹配结果。
+    const callsById = new Map<string | undefined, ContentPart['functionCall']>();
+    const reasoningById = new Map<string, ContentPart>();
+    for (const part of previous) {
+        const callId = part.functionCall?.id;
+        if (!callsById.has(callId)) callsById.set(callId, part.functionCall);
+        const reasoningId = part.openaiResponsesReasoning?.id;
+        if (reasoningId && !reasoningById.has(reasoningId)) reasoningById.set(reasoningId, part);
+    }
     const parts = snapshot.map(part => {
         if (part.functionCall) {
-            const old = previous.find(candidate => candidate.functionCall?.id === part.functionCall?.id)?.functionCall;
+            const old = callsById.get(part.functionCall.id);
             // 终态可能省略先前完整 item 的 async 扩展；显式新值仍以终态为准。
             return { ...part, functionCall: { ...part.functionCall,
                 ...(part.functionCall.async === undefined && old?.async !== undefined ? { async: old.async } : {}) } };
@@ -44,7 +53,7 @@ export function reconcileResponsesOutput(previous: ContentPart[], snapshot: Cont
             return { ...part, openaiResponsesMessage: { ...old?.openaiResponsesMessage, ...part.openaiResponsesMessage } };
         }
         const id = part.openaiResponsesReasoning?.id;
-        const old = id ? previous.find(candidate => candidate.openaiResponsesReasoning?.id === id) : undefined;
+        const old = id ? reasoningById.get(id) : undefined;
         if (!old) return part;
         return { ...old, ...part,
             openaiResponsesReasoning: { ...old.openaiResponsesReasoning, ...part.openaiResponsesReasoning },
@@ -60,6 +69,6 @@ export function reconcileResponsesOutput(previous: ContentPart[], snapshot: Cont
         const before = text(previous), after = text(parts);
         if (after.startsWith(before) && after.length > before.length) delta.push({ text: after.slice(before.length), ...(thought ? { thought: true } : {}) });
     }
-    for (const part of parts) if (part.functionCall && !previous.some(old => old.functionCall?.id === part.functionCall?.id)) delta.push(part);
+    for (const part of parts) if (part.functionCall && !callsById.has(part.functionCall.id)) delta.push(part);
     return { parts, delta };
 }

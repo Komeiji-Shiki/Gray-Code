@@ -1377,18 +1377,23 @@ export function restoreNode(
         nodes[id] = cleaned;
     }
     const next: ConversationBranchGraph = { ...graph, nodes };
-    for (const id of toRestore) {
-        const summaries = next.candidateSummaries ?? [];
-        const summary = summaries.find(s => s.nodeId === id);
-        if (summary?.deleted) {
-            const cleanedSummary: BranchCandidateSummary = { ...summary };
-            delete cleanedSummary.deleted;
-            delete cleanedSummary.deletedAt;
-            next.candidateSummaries = summaries.map(s =>
-                s.nodeId === id ? cleanedSummary : s
-            );
+    const summaries = next.candidateSummaries ?? [];
+    const restoredSummaries = new Map<string, BranchCandidateSummary | undefined>();
+    let summariesChanged = false;
+    // 同一 nodeId 仍由首项决定是否恢复；恢复时所有同 ID 摘要沿用首项，保持旧记录语义。
+    for (const summary of summaries) {
+        if (!toRestore.has(summary.nodeId) || restoredSummaries.has(summary.nodeId)) continue;
+        if (!summary.deleted) {
+            restoredSummaries.set(summary.nodeId, undefined);
+            continue;
         }
+        const cleanedSummary: BranchCandidateSummary = { ...summary };
+        delete cleanedSummary.deleted;
+        delete cleanedSummary.deletedAt;
+        restoredSummaries.set(summary.nodeId, cleanedSummary);
+        summariesChanged = true;
     }
+    if (summariesChanged) next.candidateSummaries = summaries.map(summary => restoredSummaries.get(summary.nodeId) ?? summary);
     return next;
 }
 
