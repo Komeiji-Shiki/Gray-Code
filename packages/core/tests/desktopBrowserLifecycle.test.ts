@@ -61,7 +61,7 @@ const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 function fixture() {
   const unsubscribe = jest.fn();
   const app = { actor: () => ({ id: 'owner' }), requireOwner() {}, subscribe: () => unsubscribe,
-    storage: { listRecords: jest.fn(async () => [] as string[]), getRecord: jest.fn(), commitRecords: jest.fn(), putRecord: jest.fn() } } as unknown as PlatformApplication;
+    storage: { readRecordPage: jest.fn(async () => []), getRecord: jest.fn(), commitRecords: jest.fn(), putRecord: jest.fn() } } as unknown as PlatformApplication;
   const browser = new DesktopBrowser(app, () => undefined, jest.fn());
   return { browser, unsubscribe, app };
 }

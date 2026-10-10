@@ -74,8 +74,8 @@ test('区域读取和连续动作沿用有效引用，导航后失效', async ()
   expect(f.sendCommand).toHaveBeenCalledWith('DOM.focus', { backendNodeId: 3 }, undefined);
   await f.page.action({ action: 'press', ref: inputRef, key: 'Enter' }, signal());
   const current = await f.page.snapshot(signal(), { compact: false });
-  f.contents.emit('did-start-navigation');
-  await expect(f.page.snapshot(signal(), { ref: (current.nodes as SnapshotNode[])[0].ref })).rejects.toThrow('元素引用不存在');
+  f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  await expect(f.page.snapshot(signal(), { ref: (current.nodes as SnapshotNode[])[0].ref })).rejects.toMatchObject({ code: 'BROWSER_TARGET_MISSING' });
 });
 
 test('默认节点预算明确报告截断，并允许按需扩大读取', async () => {
@@ -388,7 +388,7 @@ test('连续分页在页面未变时复用同一棵树，变化、换筛选、�
   // 分页保留先前观察到的元素引用，直到节点或文档真正改变。
   expect(second).toMatchObject({ total: 30, offset: 10, returned: 10, nextOffset: 20, partial: false });
   expect((second.nodes as SnapshotNode[]).map(node => node.name)).toEqual(Array.from({ length: 10 }, (_, index) => `条目 ${index + 10}`));
-  await expect(f.page.action({ action: 'press', ref: (first.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).resolves.toBeUndefined();
+  await expect(f.page.action({ action: 'press', ref: (first.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).resolves.toEqual({});
   f.change();
   expect(await f.page.snapshot(signal(), { offset: 20, maxNodes: 10, compact: false })).toMatchObject({ offset: 20, returned: 10, truncated: false });
   expect(f.reads()).toBe(2);
@@ -404,7 +404,10 @@ test('连续分页在页面未变时复用同一棵树，变化、换筛选、�
     return f.reads() - before;
   };
   expect(await pages(() => {})).toBe(1);
-  expect(await pages(() => f.contents.emit('did-start-navigation'))).toBe(2);
+  expect(await pages(() => {
+    f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    f.contents.emit('dom-ready');
+  })).toBe(2);
   expect(await pages(() => f.contents.debugger.emit('message', {}, 'Page.frameAttached', { frameId: 'late-frame' }))).toBe(2);
   expect(await pages(page => f.page.action({ action: 'press', ref: (page.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal()))).toBe(2);
   // 标记不可用时无法证明未变，退回每次完整读取。
