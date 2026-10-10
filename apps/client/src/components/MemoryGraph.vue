@@ -11,16 +11,26 @@ const horizontal = computed(() => viewportWidth.value >= 760);
 const width = computed(() => horizontal.value ? 890 : Math.max(290, Math.min(400, viewportWidth.value - 12)));
 const sides = computed(() => ({ dependency: props.graph.nodes.filter(node => node.side === 'dependency'), dependent: props.graph.nodes.filter(node => node.side === 'dependent' || node.side === 'related') }));
 const height = computed(() => Math.max(300, (horizontal.value ? Math.max(sides.value.dependency.length, sides.value.dependent.length, 1) : props.graph.nodes.length) * rowHeight + 40));
-const layout = computed(() => props.graph.nodes.map(node => {
-  if (!horizontal.value) {
-    const index = node.side === 'dependency' ? sides.value.dependency.findIndex(row => row.key === node.key)
-      : node.side === 'selected' ? sides.value.dependency.length : sides.value.dependency.length + 1 + sides.value.dependent.findIndex(row => row.key === node.key);
-    return { ...node, x: (width.value - nodeWidth) / 2, y: 20 + index * rowHeight };
+const layout = computed(() => {
+  // 行号只按分组计算一次；扩展关系图时无需为每个节点重新扫描同组节点。
+  const indices = { dependency: new Map<string, number>(), dependent: new Map<string, number>() };
+  for (const group of ['dependency', 'dependent'] as const) {
+    for (const [index, node] of sides.value[group].entries()) {
+      if (!indices[group].has(node.key)) indices[group].set(node.key, index);
+    }
   }
-  const column = node.side === 'dependency' ? 0 : node.side === 'selected' ? 1 : 2;
-  const rows = node.side === 'selected' ? [node] : node.side === 'dependency' ? sides.value.dependency : sides.value.dependent;
-  return { ...node, x: 20 + column * 300, y: (height.value - rows.length * rowHeight) / 2 + rows.findIndex(row => row.key === node.key) * rowHeight + 12 };
-}));
+  return props.graph.nodes.map(node => {
+    if (!horizontal.value) {
+      const index = node.side === 'dependency' ? indices.dependency.get(node.key)!
+        : node.side === 'selected' ? sides.value.dependency.length : sides.value.dependency.length + 1 + indices.dependent.get(node.key)!;
+      return { ...node, x: (width.value - nodeWidth) / 2, y: 20 + index * rowHeight };
+    }
+    const column = node.side === 'dependency' ? 0 : node.side === 'selected' ? 1 : 2;
+    const rowCount = node.side === 'selected' ? 1 : node.side === 'dependency' ? sides.value.dependency.length : sides.value.dependent.length;
+    const index = node.side === 'selected' ? 0 : (node.side === 'dependency' ? indices.dependency : indices.dependent).get(node.key)!;
+    return { ...node, x: 20 + column * 300, y: (height.value - rowCount * rowHeight) / 2 + index * rowHeight + 12 };
+  });
+});
 const paths = computed(() => {
   const nodes = new Map(layout.value.map(node => [node.key, node]));
   return props.graph.edges.flatMap(edge => {

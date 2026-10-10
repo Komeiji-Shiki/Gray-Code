@@ -52,6 +52,9 @@ export function useNavigationFocus(root: Readonly<Ref<HTMLElement | undefined>>,
       event.preventDefault(); event.stopPropagation(); dismiss();
       return;
     }
+    const menuNavigation = container.getAttribute('role') === 'menu' && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key);
+    // 文本输入不参与焦点导航，避免每次按键都读取所有控件及其祖先的样式。
+    if (event.key !== 'Tab' && !menuNavigation) return;
     const elements = focusableElements(container);
     const active = document.activeElement;
     if (event.key === 'Tab') {
@@ -60,7 +63,7 @@ export function useNavigationFocus(root: Readonly<Ref<HTMLElement | undefined>>,
         event.preventDefault(); (event.shiftKey ? last : first)?.focus();
         if (!first) container.focus();
       }
-    } else if (container.getAttribute('role') === 'menu' && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && elements.length) {
+    } else if (menuNavigation && elements.length) {
       event.preventDefault();
       const index = elements.findIndex(element => element === active);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? elements.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + elements.length) % elements.length;

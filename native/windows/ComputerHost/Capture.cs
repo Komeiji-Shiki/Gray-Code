@@ -15,12 +15,13 @@ namespace GrayCode.ComputerHost {
     public object bounds;
   }
   internal static class WindowCapture {
+    private static readonly ImageCodecInfo jpegCodec=Array.Find(ImageCodecInfo.GetImageEncoders(),item=>item.MimeType=="image/jpeg");
     // 前台窗口按实际物理区域采集，系统文件对话框也适用。后台窗口先让窗口自己绘制，
     // 画不出内容且本任务持有该窗口的控制权时，才切到前台采集一次。
     internal static object Visible(Observation observation,Dictionary<string,object> args,ControlState control) {
-      DesktopWindows.RequireInteractive();var window=observation.window;DesktopWindows.Verify(window,false);
+      DesktopWindows.RequireInteractive();var window=observation.window;var current=DesktopWindows.Verify(window,false);
       var handle=DesktopWindows.Parse(window.id);string notice=null;
-      if(!DesktopWindows.Describe(handle,false).foreground) {
+      if(!current.foreground) {
         Win32.Rect backgroundBounds;long backgroundAt;
         using(var background=Background(handle,window,out backgroundBounds,out backgroundAt)) {
           // 先决定是否采用后台画面；准备切前台时，空白图像无需缩放、编码和生成 base64。
@@ -100,14 +101,15 @@ namespace GrayCode.ComputerHost {
       var width=original.Width;var height=original.Height;
       var maxWidth=Math.Max(320,Math.Min(2560,Json.Number(args,"width",1600)));var maxHeight=Math.Max(240,Math.Min(2160,Json.Number(args,"height",1200)));
       var factor=Math.Min(1,Math.Min((double)maxWidth/width,(double)maxHeight/height));var imageWidth=Math.Max(1,(int)Math.Round(width*factor));var imageHeight=Math.Max(1,(int)Math.Round(height*factor));
-      using(var scaled=new Bitmap(imageWidth,imageHeight,PixelFormat.Format32bppArgb)) {
-        using(var graphics=Graphics.FromImage(scaled)){graphics.InterpolationMode=InterpolationMode.HighQualityBicubic;graphics.DrawImage(original,new Rectangle(0,0,imageWidth,imageHeight));}
+      // 原尺寸截图直接编码；只有缩放时才分配位图，原始画面仍由调用方释放。
+      using(var scaled=imageWidth==width&&imageHeight==height?null:new Bitmap(imageWidth,imageHeight,PixelFormat.Format32bppArgb)) {
+        if(scaled!=null)using(var graphics=Graphics.FromImage(scaled)){graphics.InterpolationMode=InterpolationMode.HighQualityBicubic;graphics.DrawImage(original,new Rectangle(0,0,imageWidth,imageHeight));}
+        var image=scaled??original;
         using(var stream=new MemoryStream()) {
           var jpeg=Json.Text(args,"format")=="jpeg";
           if(jpeg) {
-            ImageCodecInfo codec=null;foreach(var item in ImageCodecInfo.GetImageEncoders())if(item.MimeType=="image/jpeg"){codec=item;break;}
-            using(var parameters=new EncoderParameters(1)){parameters.Param[0]=new EncoderParameter(Encoder.Quality,(long)Math.Max(50,Math.Min(95,Json.Number(args,"quality",85))));scaled.Save(stream,codec,parameters);}
-          } else scaled.Save(stream,ImageFormat.Png);
+            using(var parameters=new EncoderParameters(1)){parameters.Param[0]=new EncoderParameter(Encoder.Quality,(long)Math.Max(50,Math.Min(95,Json.Number(args,"quality",85))));image.Save(stream,jpegCodec,parameters);}
+          } else image.Save(stream,ImageFormat.Png);
           // 直接使用编码流的有效区间，避免 ToArray 再复制一份整张图片。
           return new CaptureResult {capturedAt=capturedAt,bounds=Json.Rect(bounds),width=imageWidth,height=imageHeight,mimeType=jpeg?"image/jpeg":"image/png",data=Convert.ToBase64String(stream.GetBuffer(),0,(int)stream.Length)};
         }

@@ -55,8 +55,12 @@ export class DesktopBrowser implements BrowserHost {
     this.transfers = new BrowserTransfers(application);
     this.unsubscribe = application.subscribe(event => {
       if (event.type !== 'file.changed') return;
-      for (const tab of this.tabs.values()) {
-        if (!tab.lease && [...this.previewRoots.values()].some(root => root.tabId === tab.id && root.workspaceId === event.workspaceId && root.files.has(String(event.absolute)))) tab.view.webContents.reloadIgnoringCache();
+      const absolute = String(event.absolute);
+      // 每个预览标签只有一个目录记录，按记录直接查找标签，避免标签与目录之间的重复遍历。
+      for (const root of this.previewRoots.values()) {
+        if (root.workspaceId !== event.workspaceId || !root.files.has(absolute)) continue;
+        const tab = this.tabs.get(root.tabId);
+        if (tab && !tab.lease) tab.view.webContents.reloadIgnoringCache();
       }
     });
   }
@@ -97,14 +101,6 @@ export class DesktopBrowser implements BrowserHost {
       const value = session.fromPartition(this.profiles.partition(profile));
       value.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       value.setPermissionCheckHandler(() => false);
-      value.on('will-download', (event, item, contents) => {
-        const tab = [...this.tabs.values()].find(tab => tab.view.webContents === contents);
-        if (this.transfers.receive(contents, item)) return;
-        if (tab?.page.automated) {
-          tab.blockedDownload = { filename: item.getFilename(), url: item.getURL() };
-          event.preventDefault(); tab.page.log('error', `下载需要保存路径：${tab.blockedDownload.filename}。使用 browser_files 的 download 操作。`);
-        }
-      });
       if (!(await value.protocol.isProtocolHandled('graycode-preview'))) await value.protocol.handle('graycode-preview', async request => {
         try {
           const url = new URL(request.url); const root = this.previewRoots.get(url.host);
@@ -119,8 +115,17 @@ export class DesktopBrowser implements BrowserHost {
           return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
         } catch { return new Response('Preview path is unavailable.', { status: 403 }); }
       });
+      // 协议初始化失败后允许重试；监听只在成功后注册，不能随重试重复添加。
+      value.on('will-download', (event, item, contents) => {
+        const tab = [...this.tabs.values()].find(tab => tab.view.webContents === contents);
+        if (this.transfers.receive(contents, item)) return;
+        if (tab?.page.automated) {
+          tab.blockedDownload = { filename: item.getFilename(), url: item.getURL() };
+          event.preventDefault(); tab.page.log('error', `下载需要保存路径：${tab.blockedDownload.filename}。使用 browser_files 的 download 操作。`);
+        }
+      });
       return value;
-    })());
+    })().catch(error => { this.sessions.delete(profile.id); throw error; }));
     return { session: await this.sessions.get(profile.id)!, profileId: profile.id };
   }
   private async create(actorId: string, profileId?: string, foreground = false, signal?: AbortSignal): Promise<OwnedTab> {

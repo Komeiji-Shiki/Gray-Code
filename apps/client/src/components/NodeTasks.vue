@@ -14,9 +14,10 @@ const answers = ref<Record<string, string[]>>({}); const error = ref(''); const 
 const capabilities = computed(() => props.peer.capabilities);
 const pending = computed(() => dispatches.value.filter(value => value.state === 'pending'));
 const labels: Record<string, string> = { queued:'等待执行', running:'正在执行', awaiting_approval:'等待审批', awaiting_input:'等待回答', completed:'已完成', failed:'失败', cancelled:'已取消', interrupted:'已中断' };
-let refreshTimer: ReturnType<typeof setTimeout> | undefined; let generation = 0; let refreshAgain = false;
+let refreshTimer: ReturnType<typeof setTimeout> | undefined; let generation = 0; let refreshAgain = false; let disposed = false;
 const remote = <T = any>(method: string, params: Record<string, unknown> = {}) => call<T>('nodes.request', { peerId: props.peer.id, method, params });
 async function detail(id: string) {
+  if (disposed) return;
   const current = ++generation; props.draft.selectedRunId = id;
   const value = await remote('tasks.get', { id }); if (current === generation) result.value = value;
 }
@@ -26,14 +27,19 @@ async function showDiff(id: string) {
   diff.value = { id, ...content };
 }
 async function refresh() {
-  dispatches.value = await call('nodes.dispatches', { peerId: props.peer.id });
+  if (disposed) return;
+  const incoming = await call<NodeTaskDispatch[]>('nodes.dispatches', { peerId: props.peer.id });
+  if (disposed) return;
+  dispatches.value = incoming;
   if (props.peer.state !== 'online') return;
-  rows.value = await remote('tasks.list');
+  const runs = await remote<RunRecord[]>('tasks.list');
+  if (disposed) return;
+  rows.value = runs;
   if (props.draft.selectedRunId) await detail(props.draft.selectedRunId);
 }
 async function perform(action: () => Promise<void>) {
-  if (busy.value) return; busy.value = true; error.value = '';
-  try { await action(); } catch (cause) { error.value = (cause as Error).message; } finally { busy.value = false; if (refreshAgain && props.visible) { refreshAgain = false; void perform(refresh); } }
+  if (disposed || busy.value) return; busy.value = true; error.value = '';
+  try { await action(); } catch (cause) { if (!disposed) error.value = (cause as Error).message; } finally { busy.value = false; if (!disposed && refreshAgain && props.visible) { refreshAgain = false; void perform(refresh); } }
 }
 async function start() {
   const text = props.draft.text;
@@ -50,7 +56,7 @@ const off = subscribe(event => {
   if (!props.visible || event.type !== 'nodes.event' || event.peerId !== props.peer.id || !['event','message.persisted','run.created','tasks.changed'].includes(event.notification?.type)) return;
   if (!refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = undefined; if (!busy.value) void perform(refresh); else refreshAgain = true; }, 250);
 });
-onUnmounted(() => { off(); clearTimeout(refreshTimer); generation++; });
+onUnmounted(() => { disposed = true; refreshAgain = false; off(); clearTimeout(refreshTimer); generation++; });
 </script>
 <template>
   <div class="node-tasks">

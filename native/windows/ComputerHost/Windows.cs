@@ -92,13 +92,14 @@ namespace GrayCode.ComputerHost {
       },IntPtr.Zero);
       return new {capturedAt=Json.Now,windows=windows,displays=displays,coordinateSystem="physical-screen-pixels"};
     }
-    internal static void Verify(WindowIdentity observed,bool foreground,bool allowMinimized=false) {
+    internal static WindowIdentity Verify(WindowIdentity observed,bool foreground,bool allowMinimized=false) {
       var current=Describe(Parse(observed.id),false);
       if(observed.processStartedAt==null)throw new ComputerException("PROCESS_IDENTITY_UNAVAILABLE","无法核实目标进程身份，请由用户检查目标权限。");
       if(current.processId!=observed.processId||current.processStartedAt!=observed.processStartedAt||current.className!=observed.className||current.title!=observed.title||current.dpi!=observed.dpi||current.monitorId!=observed.monitorId||!Json.Same(current.NativeBounds,observed.NativeBounds)||!Json.Same(current.FrameBounds,observed.FrameBounds))
         throw new ComputerException("OBSERVATION_STALE","窗口身份、位置或尺寸已经变化，请重新观察。");
       if(current.minimized&&!allowMinimized)throw new ComputerException("WINDOW_MINIMIZED","窗口已最小化，请先恢复并重新观察。");
       if(foreground&&!current.foreground)throw new ComputerException("FOCUS_CHANGED","目标窗口没有前台焦点，请先用 focusWindow 切换到该窗口并重新观察。");
+      return current;
     }
   }
 }
