@@ -1,4 +1,4 @@
-import type { ModelToolCall, PlatformMessage, RunRecord, ToolDeclaration, ToolOutcome } from '@graycode/contracts';
+import type { ModelToolCall, RunRecord, ToolDeclaration, ToolOutcome } from '@graycode/contracts';
 import type { PlatformStorage } from '../storage/client';
 
 export const NATIVE_ASYNC_NAMESPACE = 'native-tool-calls';
@@ -55,11 +55,10 @@ export class NativeAsyncTools {
   }
   pendingIds(conversationId: string) { return this.pending(conversationId).map(value => value.record.call.id); }
 
-  launch(run: RunRecord, call: ModelToolCall, history: PlatformMessage[], execute: () => Promise<ToolOutcome>): boolean {
+  launch(run: RunRecord, call: ModelToolCall, usedHandles: ReadonlySet<string>, execute: () => Promise<ToolOutcome>): boolean {
     if (this.has(run.id, call.id)) return false;
     const handle = call.args.task_handle;
-    const reused = typeof handle === 'string' && (history.some(message => message.parts.some(part =>
-      (part.functionCall as ModelToolCall | undefined)?.args?.task_handle === handle)) || [...this.calls.values()].some(value =>
+    const reused = typeof handle === 'string' && (usedHandles.has(handle) || [...this.calls.values()].some(value =>
       value.record.run.conversationId === run.conversationId && value.record.handle === handle));
     let resolve!: () => void;
     const done = new Promise<void>(complete => { resolve = complete; });
@@ -143,8 +142,11 @@ export class NativeAsyncTools {
   async wait(conversationId: string, handles: unknown, signal: AbortSignal): Promise<ToolOutcome> {
     if (!Array.isArray(handles) || !handles.length || handles.some(handle => typeof handle !== 'string') || new Set(handles).size !== handles.length)
       return { success: false, code: 'INVALID_ARGUMENTS', error: '请提供非空且不重复的 task_handles。' };
-    const selected = handles.map(handle => [...this.calls.values()].find(value =>
-      value.record.run.conversationId === conversationId && value.record.handle === handle));
+    // 多个句柄共用一次索引；无效的重复句柄仍按最早受理的调用匹配。
+    const byHandle = new Map<string, PendingTool>();
+    for (const value of this.calls.values()) if (value.record.run.conversationId === conversationId && !byHandle.has(value.record.handle))
+      byHandle.set(value.record.handle, value);
+    const selected = handles.map(handle => byHandle.get(handle));
     if (selected.some(value => !value)) {
       const history = await this.storage.readHistoryOutline(conversationId);
       const responded = new Set(history.entries.flatMap(message => (message.responses ?? []).map(response => response.id)));

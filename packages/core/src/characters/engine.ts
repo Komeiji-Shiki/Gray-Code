@@ -112,9 +112,15 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
       activated.push({ ...node, score, sticky, text: expandCharacterMacros(entry.content, input.macros) });
     }
     const eligible = new Set(activated.map(node => node.key));
-    const groups = [...new Set(activated.flatMap(node => node.entry.group ?? []))];
-    for (const group of groups) {
-      const members = activated.filter(node => eligible.has(node.key) && node.entry.group?.includes(group));
+    // 分组只遍历一次已激活条目，保持组首次出现和条目顺序，避免每个组重新扫描整批候选。
+    const groups = new Map<string, typeof activated>();
+    for (const node of activated) for (const group of new Set(node.entry.group ?? [])) {
+      const members = groups.get(group);
+      if (members) members.push(node);
+      else groups.set(group, [node]);
+    }
+    for (const [group, grouped] of groups) {
+      const members = grouped.filter(node => eligible.has(node.key));
       if (!members.length) continue;
       if (activeGroups.has(group)) { for (const member of members) eligible.delete(member.key); continue; }
       let choices = members;

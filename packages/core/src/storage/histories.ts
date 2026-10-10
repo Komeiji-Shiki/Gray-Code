@@ -347,9 +347,13 @@ export class HistoryStore {
     let length = tail ? Number((this.db.prepare('SELECT count(*) AS n FROM segment_entries WHERE segment_id=?').get(tail.segment_id) as { n: number }).n) : 0;
     let total = info.message_count;
     const insertEntry = this.db.prepare('INSERT INTO segment_entries(segment_id,ordinal,body_hash,message_id,role,timestamp) VALUES(?,?,?,?,?,?)');
+    const writeSpan = this.db.prepare(`INSERT INTO history_spans(history_id,start_index,segment_id,segment_offset,count) VALUES(?,?,?,?,?)
+      ON CONFLICT(history_id,start_index) DO UPDATE SET count=excluded.count`);
+    let pendingSpan: SpanRow | undefined;
     for (const entry of entries) {
       // Appending after a fork never overwrites a prefix visible to another history.
       if (!tail || tail.segment_offset + tail.count !== length || length >= SEGMENT_ENTRIES) {
+        if (pendingSpan) writeSpan.run(id, pendingSpan.start_index, pendingSpan.segment_id, pendingSpan.segment_offset, pendingSpan.count);
         const segmentId = Number(this.db.prepare('INSERT INTO segments DEFAULT VALUES').run().lastInsertRowid);
         tail = { start_index: total, segment_id: segmentId, segment_offset: 0, count: 0 };
         length = 0;
@@ -358,10 +362,10 @@ export class HistoryStore {
       tail.count++;
       length++;
       total++;
-      this.db.prepare(`INSERT INTO history_spans(history_id,start_index,segment_id,segment_offset,count) VALUES(?,?,?,?,?)
-        ON CONFLICT(history_id,start_index) DO UPDATE SET count=excluded.count`)
-        .run(id, tail.start_index, tail.segment_id, tail.segment_offset, tail.count);
+      pendingSpan = tail;
     }
+    // 同一段的计数只在段结束时写入一次，批量导入仍通过外层事务一起发布。
+    if (pendingSpan) writeSpan.run(id, pendingSpan.start_index, pendingSpan.segment_id, pendingSpan.segment_offset, pendingSpan.count);
     this.db.prepare('UPDATE histories SET message_count=?,revision=revision+1 WHERE id=?').run(total, id);
     if (indexed) {
       const insert = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');

@@ -421,6 +421,18 @@ export class PlatformRuntime {
         const early = new Map<string, { call: FunctionCall }>();
         const earlyController = new AbortController();
         const earlySignal = AbortSignal.any([signal, executionController.signal, earlyController.signal]);
+        let usedTaskHandles: Set<string> | undefined;
+        const historyTaskHandles = () => {
+          if (!usedTaskHandles) {
+            // 同一模型迭代的历史快照不变，按需扫描一次；普通调用的同名参数也沿用原有占用语义。
+            usedTaskHandles = new Set<string>();
+            for (const message of state.history.messages) for (const part of message.parts) {
+              const handle = (part.functionCall as FunctionCall | undefined)?.args?.task_handle;
+              if (typeof handle === 'string') usedTaskHandles.add(handle);
+            }
+          }
+          return usedTaskHandles;
+        };
         const request: ModelInput = { ...this.modelInput(run, agent, workspace, actor, catalog, state.history.messages, selection, signal),
           runId: run.id,
           pendingToolCallIds: this.nativeTools.pendingIds(run.conversationId),
@@ -430,7 +442,7 @@ export class PlatformRuntime {
             const saved = structuredClone(call);
             // 排队调用可能跨过后续模型迭代，工具的审批与副作用记录仍归属发出它的原始轮次。
             const toolRun = structuredClone(run);
-            const accepted = this.nativeTools.launch(run, saved, state.history.messages, async () => earlySignal.aborted
+            const accepted = this.nativeTools.launch(run, saved, historyTaskHandles(), async () => earlySignal.aborted
               ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
               : this.executeTool(toolRun, agent, workspace, catalog, saved, earlySignal, request, true));
             if (accepted) early.set(call.id, { call: saved });
@@ -554,7 +566,7 @@ export class PlatformRuntime {
             index++;
             if (!this.nativeTools.has(run.id, next.id)) {
               const toolRun = structuredClone(run);
-              this.nativeTools.launch(run, next, page.messages,
+              this.nativeTools.launch(run, next, historyTaskHandles(),
                 () => this.executeTool(toolRun, agent, workspace, catalog, next, earlySignal, request, true));
             }
             await this.nativeTools.publish(run.id, [next]); continue;

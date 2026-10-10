@@ -76,7 +76,8 @@ export class MemoryJobs {
         snippets.add(source.id);
       }
       // 每条派生记录必须依赖本任务读取过的来源，不能写入无关记忆。
-      for(const record of write.records??[])if(!job.dependencies.some(ref=>record.dependencies.some(parent=>JSON.stringify(parent)===JSON.stringify(ref)))
+      const dependencies = new Set(job.dependencies.map(ref => JSON.stringify(ref)));
+      for(const record of write.records??[])if(!record.dependencies.some(parent=>dependencies.has(JSON.stringify(parent)))
         &&!record.dependencies.some(ref=>ref.kind==='source'&&snippets.has(ref.id)))invalid('后台记忆缺少任务来源。');
       if(write.remove?.length)invalid('自动整理只提交候选记忆，删除走显式操作。');
       const result=this.store.write(write);
