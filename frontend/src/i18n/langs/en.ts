@@ -1267,11 +1267,11 @@ const en: LanguageMessages = {
                         enableTitle: 'Enable auto retry',
                         retryCount: {
                             label: 'Retry Count',
-                            hint: 'Maximum retry attempts when API returns error (1-10)'
+                            hint: 'Maximum retries for ordinary API errors (1-10); network failures use up to 3 retries'
                         },
                         retryInterval: {
                             label: 'Retry Interval (ms)',
-                            hint: 'Wait time between each retry (1000-60000 milliseconds)'
+                            hint: 'Wait time for ordinary errors (1000-60000 ms); network failures wait 5, 15, then 30 minutes'
                         }
                     },
                     enabled: {

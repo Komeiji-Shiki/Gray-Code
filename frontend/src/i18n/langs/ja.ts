@@ -1267,11 +1267,11 @@ const ja: LanguageMessages = {
                         enableTitle: '自動リトライを有効化',
                         retryCount: {
                             label: 'リトライ回数',
-                            hint: 'API がエラーを返した場合の最大リトライ回数（1-10）'
+                            hint: '通常の API エラーの最大リトライ回数（1-10）。ネットワーク障害は最大 3 回'
                         },
                         retryInterval: {
                             label: 'リトライ間隔 (ms)',
-                            hint: '各リトライ間の待機時間（1000-60000 ミリ秒）'
+                            hint: '通常エラーの待機時間（1000-60000 ミリ秒）。ネットワーク障害は順に 5、15、30 分待機'
                         }
                     },
                     enabled: {

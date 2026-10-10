@@ -47,7 +47,7 @@ export class ResponsesWebSocket {
       error.httpStatus = response.statusCode; error.retryAfterMs = retryAfterMilliseconds(String(response.headers['retry-after'] ?? ''));
       response.resume(); this.fail(error);
     });
-    socket.on('error', () => this.fail(new Error('Responses WebSocket 连接失败。')));
+    socket.on('error', error => this.fail(new ChannelError(ErrorType.NETWORK_ERROR, 'Responses WebSocket 连接失败。', error)));
     socket.on('close', () => this.fail(new Error('Responses WebSocket 连接已关闭，当前任务不能继续复用响应。')));
     socket.on('open', () => this.pulse());
   }

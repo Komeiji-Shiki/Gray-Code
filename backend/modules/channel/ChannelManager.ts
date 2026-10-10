@@ -23,6 +23,7 @@ import type {
 } from './types';
 import { ChannelError, ErrorType } from './types';
 import { isRetryableError as isRetryableErrorType } from '../../core/errors';
+import { isNetworkModelFailure, modelRetryInterval, NETWORK_RETRY_DELAYS_MS } from '../../core/modelRetry';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
 import { ChannelHttpExecutor } from './channelManager/channelHttpExecutor';
@@ -365,8 +366,7 @@ export class ChannelManager {
         // 7. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
         const retryEnabled = request.skipRetry ? false : (config.retryEnabled ?? true);  // 默认启用重试
-        // 钳制兜底：配置来源可能绕过 TS 类型（webview/导入），负值 retryCount 会让
-        // totalAttempts <= 0、NaN 会让 for 循环零次执行（误报网络错误）；至少尝试一次
+        // 配置来源可能绕过 TS 类型（webview/导入），普通重试次数至少为零。
         const maxRetries = Math.max(0, Math.floor(config.retryCount ?? 3));  // 默认3次
         const retryInterval = Math.max(0, config.retryInterval ?? 3000);  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
@@ -380,7 +380,10 @@ export class ChannelManager {
         
         // 8. 执行 HTTP 调用（带重试）
         let lastError: any;
-        for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+        let networkRetries = 0;
+        let retryAttempt = 0;
+        let retryLimit = maxRetries;
+        for (let attempt = 1; ; attempt++) {
             // 在每次重试前检查是否已取消
             if (request.abortSignal?.aborted) {
                 throw new ChannelError(
@@ -395,21 +398,23 @@ export class ChannelManager {
                 // 检查 HTTP 状态（与流式 response.ok 一致：接受全部 2xx）
                 if (httpResponse.status < 200 || httpResponse.status >= 300) {
                     const upstreamMessage = extractUpstreamErrorMessage(httpResponse.body);
-                    throw new ChannelError(
+                    const error = new ChannelError(
                         ErrorType.API_ERROR,
                         upstreamMessage
                             ? `HTTP ${httpResponse.status}: ${upstreamMessage}`
                             : t('modules.channel.errors.apiError', { status: httpResponse.status }),
                         httpResponse.body
                     );
+                    error.httpStatus = httpResponse.status;
+                    throw error;
                 }
                 
                 // 如果是重试成功，通知前端
                 if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrySuccess',
-                        attempt: attempt - 1,
-                        maxAttempts: maxRetries,
+                        attempt: retryAttempt,
+                        maxAttempts: retryLimit,
                         createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
@@ -445,15 +450,19 @@ export class ChannelManager {
                 // 获取错误详情
                 const errorMessage = error instanceof Error ? error.message : '未知错误';
                 const errorDetails = error instanceof ChannelError ? error.details : undefined;
+                const network = isNetworkModelFailure(error);
+                const completedRetries = network ? networkRetries : attempt - 1;
+                retryLimit = network ? NETWORK_RETRY_DELAYS_MS.length : maxRetries;
+                const delay = network ? modelRetryInterval(error, networkRetries, retryInterval) : retryInterval;
                 
                 // 检查是否可重试
-                if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
+                if (!retryEnabled || !this.isRetryableError(error) || completedRetries >= retryLimit) {
                     // 不能重试或已达到最大重试次数
                     if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                         this.retryStatusCallback({
                             type: 'retryFailed',
-                            attempt: Math.min(maxRetries, attempt - 1),
-                            maxAttempts: maxRetries,
+                            attempt: Math.min(retryLimit, completedRetries),
+                            maxAttempts: retryLimit,
                             error: errorMessage,
                             errorDetails,
                             createdAt: Date.now(),
@@ -471,22 +480,24 @@ export class ChannelManager {
                     );
                 }
                 
+                retryAttempt = completedRetries + 1;
+                if (network) networkRetries++;
                 // 通知前端正在重试
                 if (this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrying',
-                        attempt,
-                        maxAttempts: maxRetries,
+                        attempt: retryAttempt,
+                        maxAttempts: retryLimit,
                         error: errorMessage,
                         errorDetails,
-                        nextRetryIn: retryInterval,
+                        nextRetryIn: delay,
                         createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
                 
                 // 等待后重试（支持取消）
-                await this.delay(retryInterval, request.abortSignal);
+                await this.delay(delay, request.abortSignal);
             }
         }
         
@@ -638,9 +649,12 @@ export class ChannelManager {
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
+        let networkRetries = 0;
+        let retryAttempt = 0;
+        let retryLimit = maxRetries;
         // 是否已向调用方产出过 chunk：已产出内容后流中途出错不再重试
         let yieldedAny = false;
-        for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+        for (let attempt = 1; ; attempt++) {
             // 缓存保活定时器（每次重试都重新计时）
             let keepAliveTimer: NodeJS.Timeout | undefined;
             
@@ -662,8 +676,8 @@ export class ChannelManager {
                 if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrySuccess',
-                        attempt: attempt - 1,
-                        maxAttempts: maxRetries,
+                        attempt: retryAttempt,
+                        maxAttempts: retryLimit,
                         createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
@@ -785,15 +799,19 @@ export class ChannelManager {
                 // 获取错误详情
                 const errorMessage = error instanceof Error ? error.message : '未知错误';
                 const errorDetails = error instanceof ChannelError ? error.details : undefined;
+                const network = isNetworkModelFailure(error);
+                const completedRetries = network ? networkRetries : attempt - 1;
+                retryLimit = network ? NETWORK_RETRY_DELAYS_MS.length : maxRetries;
+                const delay = network ? modelRetryInterval(error, networkRetries, retryInterval) : retryInterval;
                 
                 // 检查是否可重试
-                if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
+                if (!retryEnabled || !this.isRetryableError(error) || completedRetries >= retryLimit) {
                     // 不能重试或已达到最大重试次数
                     if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                         this.retryStatusCallback({
                             type: 'retryFailed',
-                            attempt: Math.min(maxRetries, attempt - 1),
-                            maxAttempts: maxRetries,
+                            attempt: Math.min(retryLimit, completedRetries),
+                            maxAttempts: retryLimit,
                             error: errorMessage,
                             errorDetails,
                             createdAt: Date.now(),
@@ -811,15 +829,17 @@ export class ChannelManager {
                     );
                 }
                 
+                retryAttempt = completedRetries + 1;
+                if (network) networkRetries++;
                 // 通知前端正在重试
                 if (this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrying',
-                        attempt,
-                        maxAttempts: maxRetries,
+                        attempt: retryAttempt,
+                        maxAttempts: retryLimit,
                         error: errorMessage,
                         errorDetails,
-                        nextRetryIn: retryInterval,
+                        nextRetryIn: delay,
                         createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
@@ -831,7 +851,7 @@ export class ChannelManager {
                     clearInterval(keepAliveTimer);
                     keepAliveTimer = undefined;
                 }
-                await this.delay(retryInterval, request.abortSignal);
+                await this.delay(delay, request.abortSignal);
             } finally {
                 // 清理保活循环定时器（兜底）
                 if (keepAliveTimer) {

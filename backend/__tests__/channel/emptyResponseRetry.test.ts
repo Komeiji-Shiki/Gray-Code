@@ -13,6 +13,7 @@ import { ChannelManager } from '../../modules/channel';
 import { createProxyFetch, proxyStreamFetch } from '../../modules/channel/proxyFetch';
 import { ChannelError, ErrorType } from '../../modules/channel';
 import type { GenerateRequest } from '../../modules/channel';
+import { ChannelHttpExecutor } from '../../modules/channel/channelManager/channelHttpExecutor';
 
 // mock 代理 fetch 模块：ChannelManager 只用 createProxyFetch / proxyStreamFetch 两个导出
 jest.mock('../../modules/channel/proxyFetch', () => ({
@@ -60,6 +61,25 @@ const sse = (payload: unknown) => `data: ${typeof payload === 'string' ? payload
 beforeEach(() => {
     mockCreateProxyFetch.mockReset();
     mockProxyStreamFetch.mockReset();
+});
+
+test.each(['stream', 'non-stream'])('旧渠道 %s 网络故障的等待与状态使用 5、15、30 分钟', async transport => {
+    const failure = new ChannelError(ErrorType.NETWORK_ERROR, '连接失败');
+    const request = transport === 'non-stream' ? jest.spyOn(ChannelHttpExecutor.prototype, 'executeRequest').mockRejectedValue(failure)
+        : jest.spyOn(ChannelHttpExecutor.prototype, 'executeStreamRequest').mockImplementation(async function* () { throw failure; });
+    const manager = createManager();
+    const statuses: any[] = [];
+    manager.setRetryStatusCallback(status => statuses.push(status));
+    jest.useFakeTimers();
+    try {
+        const result = transport === 'non-stream' ? manager.generate(REQUEST) : (async () => { for await (const _ of manager.generateStream(REQUEST)) { /* 等待失败 */ } })();
+        const pending = expect(result).rejects.toBe(failure);
+        await jest.runAllTimersAsync(); await pending;
+        expect(request).toHaveBeenCalledTimes(4);
+        expect(statuses.filter(status => status.type === 'retrying').map(status => [status.attempt, status.maxAttempts, status.nextRetryIn]))
+            .toEqual([[1, 3, 300_000], [2, 3, 900_000], [3, 3, 1_800_000]]);
+        expect(statuses.at(-1)).toMatchObject({ type: 'retryFailed', attempt: 3, maxAttempts: 3 });
+    } finally { jest.useRealTimers(); request.mockRestore(); }
 });
 
 describe('非流式空响应自动重试', () => {

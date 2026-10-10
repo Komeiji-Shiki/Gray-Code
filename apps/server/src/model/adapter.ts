@@ -13,7 +13,7 @@ import { repairDuplicateFunctionResponses } from "../../../../backend/modules/co
 import { extractUpstreamErrorMessage, partHasContent } from "../../../../backend/modules/channel/channelManager/channelResponseHelpers";
 import { ChannelError, ErrorType } from "../../../../backend/modules/channel/types";
 import { isRetryableError } from "../../../../backend/core/errors";
-import { isPermanentModelFailure, isTransientRateLimit, modelRetryInterval, retryAfterMilliseconds } from '../../../../backend/core/modelRetry';
+import { isNetworkModelFailure, isPermanentModelFailure, isTransientRateLimit, modelRetryInterval, NETWORK_RETRY_DELAYS_MS, retryAfterMilliseconds } from '../../../../backend/core/modelRetry';
 import { createHash } from 'node:crypto';
 import type { Content } from "../../../../backend/modules/conversation/types";
 import type { GenerateRequest } from "../../../../backend/modules/channel/types";
@@ -214,17 +214,27 @@ export class ProviderModelAdapter implements ModelProvider {
     let captured: Promise<void> | undefined;
     if (native) {
       await this.waitRateLimit(prepared.rateLimitKey, input.signal);
-      try { socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal); }
-      catch (error) {
-        if (isTransientRateLimit(error) && error instanceof Error) {
-          const retry = config as ChannelConfig & { retryEnabled?: boolean; retryCount?: number; retryInterval?: number };
-          const delayMs = modelRetryInterval(error, 0, retry.retryInterval ?? 3000);
-          this.rateLimits.set(prepared.rateLimitKey, Math.max(this.rateLimits.get(prepared.rateLimitKey) ?? 0, Date.now() + delayMs));
-          Object.assign(error, { modelRetry: { kind: 'rate_limit', resumeSafe: true,
-            remainingRetries: this.services.channel && retry.retryEnabled !== false ? Math.min(retry.retryCount ?? 3, input.retryCount ?? Infinity) : 0,
-            delayMs } });
+      const networkRetryBudget = this.services.channel && config.retryEnabled !== false ? Math.min(NETWORK_RETRY_DELAYS_MS.length, input.retryCount ?? Infinity) : 0;
+      // 握手尚未发送模型输入，可以重连；连接建立后的原生请求仍禁止自动重放。
+      for (let attempt = 0; ; attempt++) {
+        try { socket = this.sockets.get(input.runId!)?.socket ?? await ResponsesWebSocket.connect(options, this.services.proxyUrl?.(), input.signal); break; }
+        catch (error) {
+          if (isNetworkModelFailure(error) && !input.signal.aborted && attempt < networkRetryBudget) {
+            const delay = modelRetryInterval(error, attempt, 0);
+            input.onRetry?.({ attempt: attempt + 1, maxAttempts: networkRetryBudget, error: error instanceof Error ? error.message : String(error), nextRetryIn: delay });
+            await retryDelay(delay, input.signal);
+            continue;
+          }
+          if (isTransientRateLimit(error) && error instanceof Error) {
+            const retry = config as ChannelConfig & { retryEnabled?: boolean; retryCount?: number; retryInterval?: number };
+            const delayMs = modelRetryInterval(error, 0, retry.retryInterval ?? 3000);
+            this.rateLimits.set(prepared.rateLimitKey, Math.max(this.rateLimits.get(prepared.rateLimitKey) ?? 0, Date.now() + delayMs));
+            Object.assign(error, { modelRetry: { kind: 'rate_limit', resumeSafe: true,
+              remainingRetries: this.services.channel && retry.retryEnabled !== false ? Math.min(retry.retryCount ?? 3, input.retryCount ?? Infinity) : 0,
+              delayMs } });
+          }
+          throw error;
         }
-        throw error;
       }
       const formatInput = (messages: PlatformMessage[]) => formatter.buildRequest({ configId: config.id, conversationId: input.conversationId,
         history: messages as Content[], dynamicContextStrategy: 'preserve', skipTools: true }, config).body.input;
@@ -266,7 +276,8 @@ export class ProviderModelAdapter implements ModelProvider {
     const configured = !!this.services.channel && config.retryEnabled !== false;
     const configuredRetries = configured ? Math.max(0, Math.floor(Number(config.retryCount ?? 3)) || 0) : 0;
     const retryBudget = Math.min(configuredRetries, input.retryCount ?? configuredRetries);
-    const maxRetries = native ? 0 : retryBudget;
+    const networkRetryBudget = configured ? Math.min(NETWORK_RETRY_DELAYS_MS.length, input.retryCount ?? Infinity) : 0;
+    let networkRetries = 0;
     const interval = Math.max(0, Number(config.retryInterval ?? 3000) || 0);
     const limitKey = prepared.rateLimitKey;
     for (let attempt = 0; ; attempt++) {
@@ -275,14 +286,18 @@ export class ProviderModelAdapter implements ModelProvider {
         await this.waitRateLimit(limitKey, input.signal);
         return await this.receive(input, prepared, native, socket, attempt === 0 ? source : undefined, state);
       } catch (error) {
+        const network = isNetworkModelFailure(error);
+        const retryAttempt = network ? networkRetries : attempt;
+        const maxRetries = native ? 0 : network ? networkRetryBudget : retryBudget;
         const limited = isTransientRateLimit(error);
-        const delay = modelRetryInterval(error, attempt, interval);
+        const delay = modelRetryInterval(error, retryAttempt, interval);
         if (limited) this.rateLimits.set(limitKey, Math.max(this.rateLimits.get(limitKey) ?? 0, Date.now() + delay));
         if (limited && error instanceof Error) Object.assign(error, { modelRetry: { kind: 'rate_limit',
-          remainingRetries: retryBudget - attempt, resumeSafe: state.issued === 0, delayMs: delay } });
+          remainingRetries: Math.max(0, retryBudget - attempt), resumeSafe: state.issued === 0, delayMs: delay } });
         const retryable = error instanceof ChannelError && isRetryableError(error.type) && !isPermanentModelFailure(error);
-        if (!retryable || attempt >= maxRetries || input.signal.aborted || state.visible || state.issued > 0) throw error;
-        input.onRetry?.({ attempt: attempt + 1, maxAttempts: maxRetries, error: error.message, nextRetryIn: delay });
+        if (!retryable || retryAttempt >= maxRetries || input.signal.aborted || state.visible || state.issued > 0) throw error;
+        if (network) networkRetries++;
+        input.onRetry?.({ attempt: retryAttempt + 1, maxAttempts: maxRetries, error: error.message, nextRetryIn: delay });
         if (!limited) await retryDelay(delay, input.signal);
       }
     }

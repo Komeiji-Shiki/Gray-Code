@@ -5,6 +5,9 @@ import type { ModelInput, ProviderDefinition } from '@graycode/contracts';
 import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
 import { buildChannelConfig } from '../../../apps/server/src/model/capabilities';
 import type { ChannelConfig } from '../../../backend/modules/config/types';
+import { ChannelHttpExecutor } from '../../../backend/modules/channel/channelManager/channelHttpExecutor';
+import { ChannelError, ErrorType } from '../../../backend/modules/channel/types';
+import { ResponsesWebSocket } from '../../../apps/server/src/model/responsesWebSocket';
 
 type Reply = { status?: number; chunks?: unknown[]; done?: boolean; body?: unknown; headers?: Record<string, string> };
 const thinking = (text: string) => ({ choices: [{ delta: { reasoning_content: text }, finish_reason: null }] });
@@ -34,7 +37,40 @@ describe('模型适配器按渠道设置重试空回复', () => {
         reasoningLevels: [], reasoningSignature: 'none', compatibility: { deepSeekUserId: false, openCodeSession: false, deepSeekVision: false, nativePdf: false } } };
     channel = { ...buildChannelConfig(profile, input(), ''), retryEnabled: true, retryCount: 2, retryInterval: 1 } as ChannelConfig;
   });
-  afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  afterEach(async () => { jest.useRealTimers(); jest.restoreAllMocks(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+
+  test.each(['stream', 'non-stream', 'native'])('%s 网络故障按 5、15、30 分钟补试三次后结束', async transport => {
+    profile.stream = transport !== 'non-stream';
+    const failure = new ChannelError(ErrorType.NETWORK_ERROR, '连接失败');
+    const request = transport === 'native' ? jest.spyOn(ResponsesWebSocket, 'connect').mockRejectedValue(failure)
+      : transport === 'non-stream' ? jest.spyOn(ChannelHttpExecutor.prototype, 'executeRequest').mockRejectedValue(failure)
+      : jest.spyOn(ChannelHttpExecutor.prototype, 'executeStreamRequest').mockImplementation(async function* () { throw failure; });
+    if (transport === 'native') {
+      profile.protocol = 'openai-responses';
+      channel = { ...buildChannelConfig(profile, input(), ''), retryEnabled: true, retryCount: 2, responsesWebSocketEnabled: true } as ChannelConfig;
+    }
+    jest.useFakeTimers();
+    const retries: Array<{ attempt: number; maxAttempts: number; nextRetryIn: number }> = [];
+    const started = Date.now();
+    const pending = expect(adapter().generate(input({ ...(transport === 'native' ? { runId: 'network-retry' } : {}), onRetry: status => retries.push(status) })))
+      .rejects.toBe(failure);
+    await jest.runAllTimersAsync(); await pending;
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(retries.map(status => [status.attempt, status.maxAttempts, status.nextRetryIn])).toEqual([[1, 3, 300_000], [2, 3, 900_000], [3, 3, 1_800_000]]);
+    expect(Date.now() - started).toBe(3_000_000);
+  });
+
+  test('网络等待可立即取消，关闭重试后不再进入等待', async () => {
+    const failure = new ChannelError(ErrorType.TIMEOUT_ERROR, '请求超时');
+    const request = jest.spyOn(ChannelHttpExecutor.prototype, 'executeStreamRequest').mockImplementation(async function* () { throw failure; });
+    const controller = new AbortController();
+    await expect(adapter().generate(input({ signal: controller.signal, onRetry: () => controller.abort(new Error('停止等待')) }))).rejects.toThrow('停止等待');
+    expect(request).toHaveBeenCalledTimes(1);
+    channel.retryEnabled = false;
+    const retry = jest.fn();
+    await expect(adapter().generate(input({ onRetry: retry }))).rejects.toBe(failure);
+    expect(request).toHaveBeenCalledTimes(2); expect(retry).not.toHaveBeenCalled();
+  });
 
   test('只有思考的回复按空回复重试，并通知调用方丢弃已显示的思考', async () => {
     replies = [{ chunks: [thinking('只想了一下'), stop] }, { chunks: [thinking('重新思考'), content('正文'), stop] }];

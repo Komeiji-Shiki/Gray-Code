@@ -1269,11 +1269,11 @@ const zhCN = {
                         enableTitle: '启用自动重试',
                         retryCount: {
                             label: '重试次数',
-                            hint: 'API 返回错误时的最大重试次数（1-10）'
+                            hint: '普通 API 错误的最大重试次数（1-10）；网络故障固定最多重试 3 次'
                         },
                         retryInterval: {
                             label: '重试间隔 (ms)',
-                            hint: '每次重试之间的等待时间（1000-60000 毫秒）'
+                            hint: '普通错误的等待时间（1000-60000 毫秒）；网络故障依次等待 5、15、30 分钟'
                         }
                     },
                     enabled: {
