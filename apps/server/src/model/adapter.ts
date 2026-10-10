@@ -294,10 +294,10 @@ export class ProviderModelAdapter implements ModelProvider {
         if (limited) this.rateLimits.set(limitKey, Math.max(this.rateLimits.get(limitKey) ?? 0, Date.now() + delay));
         if (limited && error instanceof Error) Object.assign(error, { modelRetry: { kind: 'rate_limit',
           remainingRetries: Math.max(0, retryBudget - attempt), resumeSafe: state.issued === 0, delayMs: delay } });
-        const retryable = error instanceof ChannelError && isRetryableError(error.type) && !isPermanentModelFailure(error);
+        const retryable = (network || error instanceof ChannelError && isRetryableError(error.type)) && !isPermanentModelFailure(error);
         if (!retryable || retryAttempt >= maxRetries || input.signal.aborted || state.visible || state.issued > 0) throw error;
         if (network) networkRetries++;
-        input.onRetry?.({ attempt: retryAttempt + 1, maxAttempts: maxRetries, error: error.message, nextRetryIn: delay });
+        input.onRetry?.({ attempt: retryAttempt + 1, maxAttempts: maxRetries, error: error instanceof Error ? error.message : String(error), nextRetryIn: delay });
         if (!limited) await retryDelay(delay, input.signal);
       }
     }

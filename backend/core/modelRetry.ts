@@ -4,11 +4,16 @@ import { ErrorType } from './errorTypes';
 export const NETWORK_RETRY_DELAYS_MS = [5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
 
 export function isNetworkModelFailure(error: unknown): boolean {
-    const value = error as { type?: string; code?: string; httpStatus?: number; message?: string; cause?: { code?: string } };
+    const value = error as { type?: string; code?: string; httpStatus?: number; message?: string; cause?: { code?: string }; details?: unknown };
     if (value?.type === ErrorType.CANCELLED_ERROR || isPermanentModelFailure(error) || isTransientRateLimit(error)) return false;
     const status = value?.httpStatus ?? Number(value?.message?.match(/http\s+(\d{3})\b/i)?.[1]);
+    // 上游代理的等待超时可能只有 API 错误正文，没有本机 TIMEOUT_ERROR 类型。
+    const details = value?.details as { message?: string; error?: { message?: string } | string } | string | undefined;
+    const text = [value?.message ?? String(error), typeof details === 'string' ? details : details?.message,
+        typeof details === 'object' ? typeof details?.error === 'string' ? details.error : details?.error?.message : undefined].join(' ');
     return value?.type === ErrorType.NETWORK_ERROR || value?.type === ErrorType.TIMEOUT_ERROR
         || [408, 502, 504].includes(status)
+        || /\b(?:request|api\s+response)\s+(?:timed\s*out|timeout)\b|\btimeout\s+(?:while\s+)?waiting\s+for\s+(?:api\s+)?response\b/i.test(text)
         || /^(?:ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/.test(value?.code ?? value?.cause?.code ?? '');
 }
 

@@ -72,6 +72,29 @@ describe('模型适配器按渠道设置重试空回复', () => {
     expect(request).toHaveBeenCalledTimes(2); expect(retry).not.toHaveBeenCalled();
   });
 
+  test.each([
+    ['普通错误', new Error('Request timed out while waiting for API response')],
+    ['API 错误', new ChannelError(ErrorType.API_ERROR, 'Request timed out while waiting for API response')],
+    ['上游错误详情', new ChannelError(ErrorType.API_ERROR, '上游请求失败', { error: { message: 'Request timed out while waiting for API response' } })],
+    ['原始错误正文', new ChannelError(ErrorType.API_ERROR, '上游请求失败', 'Request timed out while waiting for API response')],
+  ])('%s 中的 API 响应等待超时也按网络故障重试', async (_kind, failure) => {
+    const request = jest.spyOn(ChannelHttpExecutor.prototype, 'executeStreamRequest').mockImplementation(async function* () { throw failure; });
+    jest.useFakeTimers();
+    const delays: number[] = [];
+    const pending = expect(adapter().generate(input({ onRetry: status => delays.push(status.nextRetryIn) }))).rejects.toBe(failure);
+    await jest.runAllTimersAsync(); await pending;
+    expect(request).toHaveBeenCalledTimes(4); expect(delays).toEqual([300_000, 900_000, 1_800_000]);
+  });
+
+  test('真实 API 错误响应里的等待超时进入网络重试', async () => {
+    replies = [{ status: 500, body: { error: { message: 'Request timed out while waiting for API response' } } }];
+    const controller = new AbortController();
+    const retry = jest.fn(() => controller.abort(new Error('停止等待')));
+    await expect(adapter().generate(input({ signal: controller.signal, onRetry: retry }))).rejects.toThrow('停止等待');
+    expect(requests).toBe(1);
+    expect(retry).toHaveBeenCalledWith(expect.objectContaining({ maxAttempts: 3, nextRetryIn: 300_000 }));
+  });
+
   test('只有思考的回复按空回复重试，并通知调用方丢弃已显示的思考', async () => {
     replies = [{ chunks: [thinking('只想了一下'), stop] }, { chunks: [thinking('重新思考'), content('正文'), stop] }];
     const deltas: unknown[] = []; const retries: unknown[] = [];
