@@ -9,10 +9,12 @@ import { PLATFORM_RUNTIME_EXTERNALS } from './desktop-runtime-dependencies.mjs';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// 一次桌面构建沿用同一份来源身份，避免再次扫描 Git 或源码归档。
+export const distribution = readDistributionInfo(root);
 const common = {
   absWorkingDir: root, bundle: true, platform: 'node', format: 'cjs',
   target: 'node24', sourcemap: true, logLevel: 'warning',
-  define: { __GRAYCODE_DISTRIBUTION__: JSON.stringify(readDistributionInfo(root)) },
+  define: { __GRAYCODE_DISTRIBUTION__: JSON.stringify(distribution) },
 };
 await build({ ...common, entryPoints: ['packages/contracts/src/index.ts'], outfile: 'packages/contracts/dist/index.cjs' });
 for (const [entry, output] of [

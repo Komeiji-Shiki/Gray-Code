@@ -1,12 +1,10 @@
-import './build-platform.mjs';
+import { distribution } from './build-platform.mjs';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { readDistributionInfo } from './distribution-info.mjs';
 import { DESKTOP_RUNTIME_EXTERNALS } from './desktop-runtime-dependencies.mjs';
 const require = createRequire(import.meta.url);
-const distribution = readDistributionInfo();
 const buildInfo = { ...distribution, buildTime: new Date().toISOString() };
 for (const name of ['main', 'preload', 'desktopDialogPreload']) {
   const result = await build({ entryPoints: [`apps/desktop/src/${name === 'main' ? 'bootstrap' : name}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
