@@ -4,10 +4,11 @@ import { lstat, readdir } from 'node:fs/promises';
 import type { ConversationCommit, ConversationState, WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformStorage, ToolContext } from '@graycode/core';
 import { WorkspaceFiles } from './files';
-import { fileHash, type DirectoryChange, type FileChange, type FileTransaction } from './fileTransaction';
+import { fileHash, readFileVersion, type DirectoryChange, type FileChange, type FileTransaction } from './fileTransaction';
 
 export const operationNamespace = 'workspace-operations';
 export const changeNamespace = 'workspace-changes';
+const chunkNamespace = 'workspace-file-chunks';
 export interface WorkspaceOperation {
   id: string; conversationId: string; workspace: WorkspaceDefinition; createdAt: number;
   runId?: string; toolCallId?: string; messageId?: string; changes: FileChange[];
@@ -15,7 +16,8 @@ export interface WorkspaceOperation {
   writeGrants?: ToolContext['fileWriteGrants'];
 }
 export type RequestedFileChange = { path: string; expectedHash: string | null } &
-  ({ text: string | null; bytes?: never } | { bytes: Uint8Array; text?: never });
+  ({ text: string | null; bytes?: never; sourceFile?: never } | { bytes: Uint8Array; text?: never; sourceFile?: never }
+    | { sourceFile: string; text?: never; bytes?: never });
 type ConversationVersion = Pick<ConversationState, 'metadata' | 'metadataToken'> & { historyRevision: number };
 
 /** SQLite 与文件系统不能共用事务；先保存恢复记录，成功后原子提交对话与操作结果。 */
@@ -75,9 +77,26 @@ export class WorkspaceChanges {
       if (!state) throw new Error('当前对话已删除。');
       context.signal.throwIfAborted();
       const changes: FileChange[] = [];
+      const savedChunks = new Set<string>();
+      const saveChunk = async (bytes: Uint8Array) => {
+        const id = `${context.conversationId}:${fileHash(bytes)}`;
+        if (!savedChunks.has(id)) {
+          // 与操作记录一同归属对话；备份沿用 records，删除对话会一并回收这些内容对象。
+          await this.storage.putRecord({ namespace: chunkNamespace, id, ownerId: context.conversationId, value: bytes });
+          savedChunks.add(id);
+        }
+        return id;
+      };
       for (const request of requested) {
-        const before = await transaction.capture(request.path);
+        const streaming = request.sourceFile !== undefined;
+        const before = await transaction.capture(request.path, false, streaming ? { saveChunk, signal: context.signal } : undefined);
         if (before.hash !== request.expectedHash) throw new Error(`FILE_CONFLICT: ${request.path} 已变化。`);
+        if (request.sourceFile !== undefined) {
+          const after = await readFileVersion(request.sourceFile, { saveChunk, signal: context.signal });
+          if (after.hash === null || after.link !== undefined) throw new Error('流式写入来源必须是普通文件。');
+          changes.push({ path: request.path, before, after: { ...after, mode: before.mode } });
+          continue;
+        }
         const bytes = request.bytes !== undefined ? request.bytes : request.text === null ? null : Buffer.from(request.text);
         changes.push({ path: request.path, before, after: { bytes, hash: bytes === null ? null : fileHash(bytes), mode: before.mode } });
       }
@@ -91,7 +110,7 @@ export class WorkspaceChanges {
     commit: Pick<ConversationCommit, 'messages' | 'metadata' | 'records' | 'snapshot'> = {},
     identity: Pick<WorkspaceOperation, 'runId' | 'toolCallId' | 'messageId' | 'writeGrants'> = {}, requestedDirectories: DirectoryChange[] = []): Promise<WorkspaceOperation> {
     const directoryMap = new Map(requestedDirectories.map(item => [item.path, item]));
-    for (const file of [...changes.filter(item => item.after.bytes !== null).map(item => path.dirname(item.path)),
+    for (const file of [...changes.filter(item => item.after.hash !== null).map(item => path.dirname(item.path)),
       ...requestedDirectories.filter(item => item.after).map(item => item.path)]) {
       let directory = file;
       while (directory !== '.' && directory !== path.dirname(directory) && !await transaction.directoryExists(directory)) {
@@ -109,7 +128,7 @@ export class WorkspaceChanges {
       expectedRevision: null, ownerId: state.metadata.id, value: operation }] });
     try {
       await transaction.applyDirectories(directories.filter(item => item.after));
-      await transaction.apply(changes);
+      await transaction.apply(changes, id => this.readChunk(id));
       await transaction.applyDirectories(directories.filter(item => !item.after).reverse());
       await this.storage.commitConversation({ ...base, ...commit, workspaceOperationId: operation.id,
         records: [...(commit.records ?? []), { namespace: changeNamespace, id: operation.id, ownerId: state.metadata.id, value: operation },
@@ -134,16 +153,22 @@ export class WorkspaceChanges {
   private async rollback(transaction: FileTransaction, operation: WorkspaceOperation): Promise<void> {
     const undo: FileChange[] = [];
     for (const change of [...operation.changes].reverse()) {
-      const current = await transaction.capture(change.path, change.entryOnly);
+      const current = await transaction.capture(change.path, change.entryOnly, { hashOnly: true });
       if (current.hash === change.before.hash) continue;
       if (current.hash !== change.after.hash) throw new Error(`FILE_CONFLICT: ${change.path} 在中断后发生变化，未覆盖该文件。`);
       undo.push({ path: change.path, entryOnly: change.entryOnly, before: current, after: change.before });
     }
-    await transaction.apply(undo);
+    await transaction.apply(undo, id => this.readChunk(id));
     for (const directory of [...(operation.directories ?? [])].reverse()) {
       const current = await transaction.directoryExists(directory.path);
       if (current !== directory.before) await transaction.applyDirectories([{ path: directory.path, before: current, after: directory.before }]);
     }
+  }
+
+  private async readChunk(id: string): Promise<Uint8Array> {
+    const bytes = await this.storage.getRecord(chunkNamespace, id);
+    if (!(bytes instanceof Uint8Array)) throw new Error('文件快照内容块缺失。');
+    return bytes;
   }
 
   async recover(): Promise<{ recovered: string[]; conflicts: { operationId: string; error: string }[] }> {

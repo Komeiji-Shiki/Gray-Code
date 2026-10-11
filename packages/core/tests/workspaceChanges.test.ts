@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { WorkspaceChanges, operationNamespace, type WorkspaceOperation } from '../../../apps/server/src/workspace/changes';
+import { WorkspaceChanges, operationNamespace, changeNamespace, type WorkspaceOperation } from '../../../apps/server/src/workspace/changes';
+import { PlatformStorage, type ToolContext } from '@graycode/core';
 import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
 import { readFileVersion, fileHash, type FileChange, type FileTransaction } from '../../../apps/server/src/workspace/fileTransaction';
 import { fixture, metadata } from './fixtures';
@@ -102,5 +103,51 @@ describe('workspace file change coordination', () => {
     await files.updateDocument(workspace, 'dirty.txt', 'client', 'local draft', opened.version);
     await expect(files.write(workspace, 'dirty.txt', 'tool overwrite', opened.baseHash)).rejects.toThrow('DOCUMENT_DIRTY');
     expect(await readFile(path.join(f.source, 'dirty.txt'), 'utf8')).toBe('disk');
+  });
+
+  test('下载来源按块提交、覆盖并在重启后恢复旧正文，删除对话同时回收内容记录', async () => {
+    const workspace = workspaceOf(f.source); const files = new WorkspaceFiles();
+    await f.store.createConversation(metadata('streamed'));
+    const now = Date.now(); const runId = 'streamed-run';
+    await f.store.createRun({ id: runId, requestKey: runId, actorId: 'owner', agentId: 'default', conversationId: 'streamed', workspaceId: workspace.id,
+      status: 'queued', iteration: 0, catalogVersion: 'fixture', createdAt: now, updatedAt: now }, { id: 'streamed-input', role: 'user', parts: [{ text: 'download' }] });
+    const context = { actorId: 'owner', runId, conversationId: 'streamed', toolCallId: 'streamed-call', workspace,
+      signal: new AbortController().signal, progress: jest.fn(), askUser: jest.fn() } as ToolContext;
+    const oldBytes = Buffer.alloc(1024 * 1024 + 17, 0x31);
+    const downloadedBytes = Buffer.alloc(2 * 1024 * 1024 + 31, 0x42);
+    const source = path.join(f.root, 'download-source.bin'); const target = path.join(f.source, 'downloads', 'saved.bin');
+    await mkdir(path.dirname(target)); await writeFile(target, oldBytes); await writeFile(source, downloadedBytes);
+    const coordinator = new WorkspaceChanges(f.store, files);
+    const result = await coordinator.write(context, [{ path: 'downloads/saved.bin', sourceFile: source, expectedHash: fileHash(oldBytes) }]);
+    expect((await readFile(target)).equals(downloadedBytes)).toBe(true);
+    const operation = await f.store.getRecord(changeNamespace, result.operationId) as WorkspaceOperation;
+    expect(operation.changes[0].before.bytes).toBeNull(); expect(operation.changes[0].before.chunks).toHaveLength(2);
+    expect(operation.changes[0].after.bytes).toBeNull(); expect(operation.changes[0].after.chunks).toHaveLength(3);
+    expect(JSON.stringify(operation)).not.toContain(source);
+    await expect(coordinator.write(context, [{ path: 'downloads/saved.bin', sourceFile: source, expectedHash: null }])).rejects.toThrow('FILE_CONFLICT');
+    expect((await readFile(target)).equals(downloadedBytes)).toBe(true);
+    await f.store.appendRunEvent({ runId, type: 'run.cancelled', payload: {}, update: { status: 'cancelled' } });
+    await f.store.putRecord({ namespace: operationNamespace, id: 'streamed', ownerId: 'streamed', value: operation });
+    await f.store.close(); f.store = await PlatformStorage.open(f.data);
+    expect(await new WorkspaceChanges(f.store, files).recover()).toEqual({ recovered: [operation.id], conflicts: [] });
+    expect((await readFile(target)).equals(oldBytes)).toBe(true);
+    expect((await f.store.backupInventory()).find(unit => unit.kind === 'conversation' && unit.id === 'streamed')!.records).toBeGreaterThan(1);
+    await f.store.deleteConversation('streamed');
+    expect(await f.store.listRecords('workspace-file-chunks')).toEqual([]);
+  });
+
+  test('流式创建空文件仍表示存在，缺失内容块不会删除已存在的目标文件', async () => {
+    const workspace = workspaceOf(f.source); const files = new WorkspaceFiles();
+    const empty = await readFileVersion(path.join(f.root, 'absent'), { saveChunk: async () => 'unused' });
+    expect(empty.hash).toBeNull();
+    await writeFile(path.join(f.root, 'empty-source'), '');
+    const after = await readFileVersion(path.join(f.root, 'empty-source'), { saveChunk: async () => 'unused' });
+    expect(after).toMatchObject({ bytes: null, hash: fileHash(Buffer.alloc(0)), chunks: [] });
+    await files.transaction(workspace, transaction => transaction.apply([{ path: 'empty.bin', before: version(null), after }], async () => Buffer.alloc(0)));
+    expect(await readFile(path.join(f.source, 'empty.bin'))).toEqual(Buffer.alloc(0));
+    await writeFile(path.join(f.source, 'existing.bin'), 'keep');
+    await expect(files.transaction(workspace, async transaction => transaction.apply([{ path: 'existing.bin', before: await transaction.capture('existing.bin'),
+      after: { bytes: null, chunks: ['missing'], hash: fileHash(Buffer.from('new')) } }], async () => { throw new Error('missing chunk'); }))).rejects.toThrow('missing chunk');
+    expect(await readFile(path.join(f.source, 'existing.bin'), 'utf8')).toBe('keep');
   });
 });

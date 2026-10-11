@@ -17,7 +17,7 @@ import type {
   DocumentState,
   WorkspaceDefinition,
 } from "@graycode/contracts";
-import { readFileVersion, replaceFileVersion, type FileTransaction } from './fileTransaction';
+import { readFileVersion, replaceFileVersion, type FileTransaction, type FileVersionReadOptions } from './fileTransaction';
 
 const textLimit = 2 * 1024 * 1024;
 const digest = (text: string) =>
@@ -185,11 +185,11 @@ export class WorkspaceFiles {
       const ignoredDrafts = new Set(confirmed ? dirty.map(([key]) => key) : []);
       const resolve = (file: string, entryOnly = false, directory = false) => this.resolveGranted(workspace, file, options.writeGrants, entryOnly, directory);
       // 同一阶段按已解析的真实路径读取版本；预检与实际写入阶段仍分别重新解析目标。
-      const captureAbsolute = (absolute: string) => {
+      const captureAbsolute = (absolute: string, readOptions?: FileVersionReadOptions) => {
         this.checkDrafts(absolute, options.clientId, ignoredDrafts);
-        return readFileVersion(absolute);
+        return readFileVersion(absolute, readOptions);
       };
-      const capture = async (file: string, entryOnly = false) => captureAbsolute(await resolve(file, entryOnly));
+      const capture = async (file: string, entryOnly = false, readOptions?: FileVersionReadOptions) => captureAbsolute(await resolve(file, entryOnly), readOptions);
       const directoryExists = async (directory: string) => {
         try {
           if (!(await stat(await resolve(directory, false, true))).isDirectory()) throw new Error('目录路径已被文件占用。');
@@ -206,7 +206,7 @@ export class WorkspaceFiles {
           else await rmdir(absolute);
           this.changed(workspace.id, change.path, absolute);
         }
-      }, apply: async changes => {
+      }, apply: async (changes, readChunk) => {
         const seen = new Set<string>();
         // 整批预检通过后才动文件；操作日志负责处理中途失败和重启恢复。
         for (const change of changes) {
@@ -214,13 +214,13 @@ export class WorkspaceFiles {
           const key = this.key(absolute);
           if (seen.has(key)) throw new Error('同一批次不能重复修改同一个文件。');
           seen.add(key);
-          if ((await captureAbsolute(absolute)).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改，请重新读取。`);
+          if ((await captureAbsolute(absolute, { hashOnly: true })).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改，请重新读取。`);
         }
         for (const change of changes) {
           const absolute = await resolve(change.path, change.entryOnly);
-          if ((await captureAbsolute(absolute)).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改。`);
+          if ((await captureAbsolute(absolute, { hashOnly: true })).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改。`);
           if (change.before.hash === change.after.hash) continue;
-          await replaceFileVersion(absolute, change.after);
+          await replaceFileVersion(absolute, change.after, readChunk);
           this.changed(workspace.id, change.path, absolute);
         }
       } });
