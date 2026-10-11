@@ -113,6 +113,17 @@ export function getCoveredContinuationIntentFromResponse(
   return null;
 }
 
+/**
+ * 工具结果是否带有用户确认后的计划执行授权。
+ * 未确认的 create_plan/update_plan 结果本身也有 planPath，这里只认确认时写入的字段。
+ */
+export function isApprovedPlanExecutionResponse(response: unknown): boolean {
+  const record = asRecord(response);
+  if (!record) return false;
+  return record.continuationApproved === true && record.continuationIntent === 'implement_now'
+    || hasMeaningfulValue(record.planExecutionPrompt);
+}
+
 export function getHiddenContinuationApprovalRequirement(
   hiddenFunctionResponse: HiddenFunctionResponseData | undefined
 ): { intent: PendingApprovalGateContinuationIntent; approvalId?: string } | null {

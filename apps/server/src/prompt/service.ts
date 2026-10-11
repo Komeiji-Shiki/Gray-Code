@@ -23,6 +23,15 @@ import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm
 import { filterPromptModeToolNames } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
 import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
+import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
+
+/** 当前分支里用户已确认执行的计划，执行提示要求模型继续回写计划与进度。 */
+function hasApprovedPlanExecution(history: readonly PlatformMessage[]): boolean {
+  return history.some(message => message.parts.some(part => {
+    const response = part.functionResponse as { name?: string; response?: unknown } | undefined;
+    return (response?.name === 'create_plan' || response?.name === 'update_plan') && isApprovedPlanExecutionResponse(response.response);
+  }));
+}
 
 /** Capture each turn once. Tool iterations reuse the captured prompt; history retains prior snapshots. */
 export class PlatformPromptService {
@@ -142,7 +151,7 @@ export class PlatformPromptService {
       systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
       // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
-      toolNames: [...new Set([...filterPromptModeToolNames(mode, input.agent.toolNames)
+      toolNames: [...new Set([...filterPromptModeToolNames(mode, input.agent.toolNames, { planExecution: hasApprovedPlanExecution(input.history) })
         .filter(name => !profileToolNames || profileToolNames.has(name)),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])],
       toolApproval: {

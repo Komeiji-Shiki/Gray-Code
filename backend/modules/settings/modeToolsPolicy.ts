@@ -24,13 +24,29 @@ const DOCUMENT_TOOL_NAMES: ReadonlySet<string> = new Set([
     'compare_review_documents'
 ]);
 
-/** 显式策略优先；未定制且继承 Code 工具集的模式默认省去文档工作流工具。 */
-export function filterPromptModeToolNames(mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>, names: string[]): string[] {
+/**
+ * 已确认的计划进入实现阶段后，执行提示要求模型回写计划 TODO 并维护进度文档；
+ * 这些同步工具在执行期间随 Code 模式发送，其余文档工具仍只属于各自的模式。
+ */
+const PLAN_EXECUTION_TOOL_NAMES: ReadonlySet<string> = new Set([
+    'update_plan',
+    'create_progress',
+    'update_progress',
+    'record_progress_milestone'
+]);
+
+/** 显式策略优先；未定制且继承 Code 工具集的模式默认省去文档工作流工具，计划执行期间保留同步工具。 */
+export function filterPromptModeToolNames(
+    mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>,
+    names: string[],
+    options: { planExecution?: boolean } = {}
+): string[] {
     if (mode.toolPolicy) {
         const allowed = new Set(upgradeToolNames(mode.toolPolicy));
         return names.filter(name => allowed.has(name));
     }
-    return mode.toolPolicyCustomized === true ? names : names.filter(name => !DOCUMENT_TOOL_NAMES.has(name));
+    if (mode.toolPolicyCustomized === true) return names;
+    return names.filter(name => !DOCUMENT_TOOL_NAMES.has(name) || options.planExecution === true && PLAN_EXECUTION_TOOL_NAMES.has(name));
 }
 
 /**
