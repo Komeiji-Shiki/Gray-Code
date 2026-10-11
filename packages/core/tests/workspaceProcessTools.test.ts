@@ -45,7 +45,7 @@ function fixture(real = false) {
     files,
     publish: jest.fn(),
     conversation: jest.fn(async () => {}),
-    product: { runtimeSettings: () => ({ getToolsEnabled: () => ({}) }) },
+    product: { runtimeSettings: () => ({ getToolsEnabled: () => ({}), isToolEnabled: () => true }) },
     storage: {
       commitRecords: jest.fn(async (entries) => {
         for (const entry of entries) {

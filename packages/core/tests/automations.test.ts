@@ -63,11 +63,15 @@ describe('持久目标和定时触发', () => {
   test('普通前台消息重置空闲等待而保留监听，暂停编辑和重启重新等待', async () => {
     const task = await create({ kind: 'schedule', schedule: { type: 'idle', everyMinutes: 2 } });
     let release!: () => void;
-    generate = async () => { await new Promise<void>(resolve => { release = resolve; }); return answer(); };
+    let started!: () => void;
+    // 任务记录先于模型调用变为活跃；等手动运行真正进入模型调用后再推进时钟，避免负载下的时序竞争。
+    const modelStarted = new Promise<void>(resolve => { started = resolve; });
+    generate = async () => { started(); await new Promise<void>(resolve => { release = resolve; }); return answer(); };
     now += 60_000;
     const run = await app.runtime.start({ requestKey: 'idle-manual', actorId: 'owner', agentId: 'default', conversationId: 'auto-chat', providerId,
       promptModeId: 'automation-test', message: { role: 'user', parts: [{ text: '先处理这件事' }] } });
     await until(task.id, record => record.status === 'active' && record.idleSince === undefined);
+    await modelStarted;
     now += 180_000; await app.automations.tick(now); expect(calls).toHaveLength(1);
     release(); await app.runtime.wait(run.id); generate = async () => answer();
     await app.automations.tick(now);
