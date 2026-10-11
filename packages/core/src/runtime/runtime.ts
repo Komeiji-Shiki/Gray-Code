@@ -644,7 +644,7 @@ export class PlatformRuntime {
       const readOnly = typeof entry.tool.parallelRead === 'function' ? entry.tool.parallelRead(preparedArgs) : entry.tool.parallelRead;
       if (!readOnly) return false;
       const effects = entry.tool.effects(preparedArgs);
-      return effects.every(effect => effect === 'public_read' || effect === 'workspace_read') && !needsApproval(agent, call.name, effects);
+      return effects.every(effect => effect === 'public_read' || effect === 'workspace_read' || effect === 'private_browser') && !needsApproval(agent, call.name, effects);
     } catch { return false; }
   }
 

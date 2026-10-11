@@ -27,7 +27,7 @@ const visible = ref(40)
 watch(() => props.result, () => { visible.value = 40 })
 const tabId = computed(() => text(data.value.tabId || (props.toolName === 'browser_tabs' || props.toolName === 'browser_action' ? data.value.id : '') || props.args?.tabId))
 const profileName = (id: unknown) => text(profiles.value.find(profile => profile.id === id)?.name || id)
-const fullNodeStates = (node: unknown) => Object.entries(record(node)).filter(([key]) => ['checked', 'selected', 'disabled', 'expanded', 'required', 'readonly', 'level', 'multiline'].includes(key))
+const fullNodeStates = (node: unknown) => Object.entries(record(node)).filter(([key]) => ['checked', 'selected', 'disabled', 'expanded', 'required', 'readonly', 'level', 'multiline', 'focused', 'busy', 'hasPopup', 'textTruncated'].includes(key))
 function logTime(value: unknown) {
   const time = numeric(value)
   return time !== undefined && !Number.isNaN(new Date(time).getTime()) ? new Date(time).toLocaleTimeString(actualLanguage.value) : ''
@@ -79,6 +79,8 @@ function logTime(value: unknown) {
               <div v-else class="snapshot-node" :style="{ paddingLeft: `${Math.min(numeric(record(node).depth) || 0, 12) * 8}px` }">
                 <div class="automation-item-head"><code v-if="record(node).ref" class="automation-code">[{{ text(record(node).ref) }}]</code><span class="automation-badge">{{ text(record(node).role) }}</span><strong>{{ text(record(node).name) }}</strong></div>
                 <pre v-if="record(node).value !== undefined" class="automation-pre">{{ text(record(node).value) }}</pre>
+                <pre v-if="record(node).text !== undefined" class="automation-pre">{{ text(record(node).text) }}</pre>
+                <p v-if="Array.isArray(record(node).context)" class="automation-muted">{{ records(record(node).context).map(item => text(item.name)).join(' › ') }}</p>
                 <p v-if="record(node).description" class="automation-muted">{{ text(record(node).description) }}</p>
                 <a v-if="toolLink(record(node).url)" class="automation-link" :href="toolLink(record(node).url)" target="_blank" rel="noopener noreferrer">{{ text(record(node).url) }}</a>
                 <div v-if="fullNodeStates(node).length" class="automation-meta"><span v-for="[key, value] in fullNodeStates(node)" :key="key">{{ toolFieldLabel(key) }}: {{ typeof value === 'boolean' ? t(`components.tools.structured.${value ? 'yes' : 'no'}`) : text(value) }}</span></div>
@@ -107,6 +109,11 @@ function logTime(value: unknown) {
           <div class="automation-meta"><span v-if="numeric(data.count) !== undefined">{{ toolFieldLabel('count') }} · {{ data.count }}</span><span v-if="fileSize(data.bytes)">{{ t('components.tools.automation.size') }} · {{ fileSize(data.bytes) }}</span></div>
         </section>
         <VisualObservation :value="observation" />
+        <pre v-if="typeof data.text === 'string'" class="automation-pre">{{ data.text }}</pre>
+        <div v-if="data.nextChar !== undefined" class="automation-meta">nextChar <code>{{ data.nextChar }}</code></div>
+        <pre v-if="data.dialog" class="automation-pre">{{ JSON.stringify(data.dialog, null, 2) }}</pre>
+        <pre v-if="data.fileChooser" class="automation-pre">{{ JSON.stringify(data.fileChooser, null, 2) }}</pre>
+        <pre v-if="Array.isArray(data.downloads) && data.downloads.length" class="automation-pre">{{ JSON.stringify(data.downloads, null, 2) }}</pre>
         <p v-if="data.truncated === true || snapshot.truncated === true" class="automation-notice">{{ t('components.tools.automation.truncated') }}</p>
         <p v-if="!Object.keys(data).filter(key => key !== 'success').length && !error && !record(result).error" class="automation-empty">{{ t(record(result).success === true ? 'components.tools.structured.noOutput' : 'components.tools.structured.empty') }}</p>
       </template>

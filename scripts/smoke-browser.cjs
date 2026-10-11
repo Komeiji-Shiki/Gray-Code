@@ -50,6 +50,13 @@ function fixtureHtml(origin, crossOrigin) {
   ${'<section role="group">'.repeat(35)}<button aria-label="Deep component" onclick="this.textContent='Deep clicked'">Deep component</button>${'</section>'.repeat(35)}
   <a href="${origin}/paper">Read paper here</a><a target="_blank" href="${origin}/paper">Open paper tab</a>
   <a href="${origin}/delayed-paper">Read delayed paper</a>
+  <button onclick="document.getElementById('dialog-state').textContent=confirm('Confirm fixture?')?'Accepted':'Cancelled'">Confirm fixture</button>
+  <button onclick="document.getElementById('dialog-state').textContent=prompt('Fixture text','default')">Prompt fixture</button><p id="dialog-state">No dialog</p>
+  <button onclick="document.getElementById('file').click()">Choose fixture file</button><input id="file" type="file" hidden onchange="document.getElementById('upload-state').textContent=this.files[0].name"><p id="upload-state">No file</p>
+  <form action="${origin}/posted" method="post" target="_blank"><input type="hidden" name="token" value="fixture-body"><button>Post popup</button></form>
+  <button onclick="const child=window.open('${origin}/opener');child.fixtureValue='opener preserved'">Open callback popup</button>
+  <a href="${origin}/download">Download fixture</a>
+  <p aria-label="Long fixture">${'abcdefghij'.repeat(800)}</p>
   <button id="large" onclick="this.textContent='Large clicked'">Large surface</button></main>
   <script>
   let changed=0;
@@ -80,7 +87,7 @@ async function run(output) {
   app.commandLine.appendSwitch('site-per-process');
   app.on('window-all-closed', () => {});
   const checks = [];
-  let browser, platform, parent, server, origin, crossOrigin, step = 0, modelTab, modelRef;
+  let browser, platform, parent, server, origin, crossOrigin, step = 0, modelTab, modelRef, downloadRequests = 0;
   const report = { checks };
   try {
     await app.whenReady();
@@ -126,6 +133,9 @@ async function run(output) {
           response.end('<main><h1>Delayed article body</h1></main>'); return;
         }
         if (request.url === '/paper') { response.end('<title>Quantum paper</title><h1>Quantum methods paper</h1>'); return; }
+        if (request.url === '/posted') { let body=''; for await (const chunk of request) body+=chunk; response.end(`<h1>${request.method} ${body}</h1>`); return; }
+        if (request.url === '/opener') { response.end('<h1>Child ready</h1><script>document.querySelector("h1").textContent=window.opener?"Has opener":"Missing opener"</script>'); return; }
+        if (request.url === '/download') { downloadRequests++; response.setHeader('Content-Type','application/octet-stream'); response.setHeader('Content-Disposition','attachment; filename="fixture.txt"'); response.end('fixture download'); return; }
         response.end(fixtureHtml(origin, crossOrigin));
       } catch (error) { response.statusCode = 500; response.end(String(error.stack ?? error)); }
     });
@@ -156,9 +166,10 @@ async function run(output) {
     };
     const action = async args => {
       const result = await tool('browser_action', { tabId, url, ...args });
-      assert.equal(result.success, true, JSON.stringify(result));
+      assert.equal(result.success, true, JSON.stringify({ args, code: result.code, error: result.error, dialog: result.data?.dialog, observationError: result.data?.observationError }));
       assert.equal(result.data.status, 'completed');
-      if (args.after === 'snapshot') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.attachments, undefined); }
+      if (args.after === 'none' || result.data.dialog) { assert.equal(result.attachments, undefined); }
+      else if (args.after === 'snapshot') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.attachments, undefined); }
       else { assert(result.data.observation, JSON.stringify(result)); assert.equal(result.data.url, result.data.observation.url); }
       if (args.after === 'both') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.data.url, result.data.snapshot.url); }
       return result;
@@ -295,6 +306,58 @@ async function run(output) {
     const back = await action({ action: 'back', url: navigated.data.url, after: 'both', snapshotOptions: { query: 'Search papers', role: 'searchbox' } });
     assert.equal(back.data.url, url); assert.equal(back.data.title, 'Research browser fixture');
     checks.push('click-and-back-refresh-url-title-and-observations');
+    const dialog = await action({ action: 'click', ref: await find('Confirm fixture', 'button') });
+    assert.equal(dialog.data.dialog.type, 'confirm');
+    await action({ action: 'dialog', accept: true, after: 'snapshot' });
+    assert((await read({ query: 'Accepted' })).data.total > 0);
+    checks.push('native-confirm-resume');
+    const chooser = await action({ action: 'click', ref: await find('Choose fixture file', 'button'), after: 'snapshot' });
+    assert(chooser.data.fileChooser?.ref, JSON.stringify({ chooser: chooser.data.fileChooser, pointer: chooser.data.pointer, state: (await tool('browser_read', { action: 'state', tabId })).data, errors: (await tool('browser_read', { action: 'logs', tabId })).data.entries.filter(entry => entry.kind === 'error') }));
+    const uploadPath = path.join(output, 'fixture-upload.txt'); await fs.writeFile(uploadPath, 'upload fixture');
+    const owned = browser.tabs.get(tabId);
+    await owned.page.upload(chooser.data.fileChooser.ref, [uploadPath], context.signal);
+    assert((await read({ query: 'fixture-upload.txt' })).data.total > 0);
+    checks.push('hidden-file-input-chooser-reference');
+    const longRef = await find('Long fixture', 'paragraph');
+    const longA = await tool('browser_read', { action: 'text', tabId, ref: longRef, maxChars: 3000 });
+    const longB = await tool('browser_read', { action: 'text', tabId, ref: longRef, startChar: longA.data.nextChar, maxChars: 6000 });
+    assert.equal(longA.data.text + longB.data.text, 'abcdefghij'.repeat(800));
+    checks.push('long-text-character-continuation');
+    for (const [label, expected] of [['Post popup','POST token=fixture-body'],['Open callback popup','Has opener']]) {
+      const opened = await action({ action: 'click', ref: await find(label, 'button'), after: 'snapshot' });
+      const id = opened.data.openedTabs[0].id;
+      const state = await tool('browser_read', { action: 'wait', tabId: id, query: expected, timeoutMs: 4000 });
+      assert.equal(state.data.conditionMet, true, JSON.stringify(state));
+      await tool('browser_tabs', { action: 'close', tabId: id });
+    }
+    checks.push('native-popup-post-body-and-opener');
+    await action({ action: 'click', ref: await find('Download fixture', 'link') });
+    const downloads = (await tool('browser_files', { action: 'list', tabId })).data.downloads;
+    assert.equal(downloads.length, 1); assert(downloads[0].downloadId);
+    const downloadDirectory = path.join(output, 'downloads'); await fs.mkdir(downloadDirectory);
+    context.workspace = { id: 'browser-downloads', name: 'Browser fixture', directory: downloadDirectory, deviceId: 'local' };
+    const fileConversation = await platform.createConversation('owner', 'Download fixture'); context.conversationId = fileConversation.id;
+    await platform.storage.createRun({ id: context.runId, requestKey: context.runId, actorId: 'owner', agentId: 'default', conversationId: fileConversation.id,
+      workspaceId: context.workspace.id, status: 'queued', iteration: 0, catalogVersion: 'fixture', createdAt: Date.now(), updatedAt: Date.now() },
+      { id: 'download-input', role: 'user', parts: [{ text: 'Save fixture download' }] });
+    await platform.storage.appendRunEvent({ runId: context.runId, type: 'run.started', payload: {}, update: { status: 'running' } });
+    const saveArgs = { action: 'download', tabId, downloadId: downloads[0].downloadId, path: 'saved.txt', expectedHash: null };
+    const saved = await tool('browser_files', saveArgs); assert.equal(saved.success, true, JSON.stringify(saved));
+    assert.equal(await fs.readFile(path.join(downloadDirectory, 'saved.txt'), 'utf8'), 'fixture download');
+    assert.deepEqual((await tool('browser_files', saveArgs)).data, saved.data);
+    assert.equal(downloadRequests, 1);
+    assert(!(await fs.readdir(path.join(output, 'data'))).some(name => name.startsWith('browser-transfer-')));
+    await platform.storage.appendRunEvent({ runId: context.runId, type: 'run.completed', payload: {}, update: { status: 'completed' } });
+    checks.push('ordinary-click-retains-download-and-saves-once-with-cleanup');
+    const promptResult = await action({ action: 'click', ref: await find('Prompt fixture', 'button') });
+    assert(promptResult.data.dialog, JSON.stringify((await tool('browser_read', { action: 'logs', tabId })).data.entries.filter(entry => entry.kind === 'error')));
+    await action({ action: 'dialog', accept: true, promptText: 'Prompt answered', after: 'snapshot' });
+    assert((await read({ query: 'Prompt answered' })).data.total > 0);
+    checks.push('native-prompt-resume');
+    await browser.call('owner', 'browser.takeover', { tabId });
+    assert.equal((await read({ query: 'Research catalog' })).success, true);
+    assert.equal((await browser.state('owner')).tabs.find(tab => tab.id === tabId).userControlled, true);
+    checks.push('read-during-manual-takeover');
     browser.finishRun(context.runId);
     const draft = await platform.product.draft();
     for (const name of ['browser_tabs', 'browser_read', 'browser_action']) await draft.settings.setToolAutoExec(name, true);

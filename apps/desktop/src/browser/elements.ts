@@ -55,7 +55,7 @@ export const checkedState = `function() {
 }`;
 
 // 文字引用用 Range 定位实际字形；命中检测穿过 Shadow DOM，可见区域提供可执行的定位结果。
-export const pointInElement = `function(allowDisabled) {
+export const pointInElement = `function() {
   if (!this.isConnected) return null;
   const text = this.nodeType === 3, element = text ? this.parentElement : this;
   if (!element || element.nodeType !== 1) return null;

@@ -84,7 +84,7 @@ export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backend
     siblings.push(node); children.set(node.parentId, siblings);
   }
   const root = backendNodeId === undefined ? undefined : nodes.find(node => node.backendDOMNodeId === backendNodeId);
-  if (backendNodeId !== undefined && !root) throw new Error('所选页面区域已经变化，请重新读取整个页面。');
+  if (backendNodeId !== undefined && !root) throw Object.assign(new Error('所选页面区域已经变化，请重新读取整个页面。'), { code: 'BROWSER_TARGET_MISSING' });
   const roots = root ? [root] : nodes.filter(node => !node.parentId || !byId.has(node.parentId));
   const pending = roots.reverse().map(node => ({ node, depth: 0, textContainer: undefined as string | undefined }));
   const visited = new Set<string>();
@@ -115,6 +115,23 @@ export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backend
   const paragraphs = new Map([...text].filter(([id, fragments]) => fragments.length > 1 || byId.get(id)?.clickable)
     .map(([id, fragments]) => [id, fragments.join('')]));
   const query = options.query?.toLocaleLowerCase();
+  const contextText = new Map<string, string>();
+  const describeContext = (ancestor: AxNode) => {
+    if (ancestor.name?.value) return ancestor.name.value.slice(0, 240);
+    if (!['row', 'listitem', 'form', 'region', 'group'].includes(ancestor.role?.value?.toLowerCase() ?? '')) return '';
+    if (contextText.has(ancestor.nodeId)) return contextText.get(ancestor.nodeId)!;
+    const fragments: string[] = [], pending = [...(children.get(ancestor.nodeId) ?? [])].reverse(), seen = new Set<string>();
+    let length = 0;
+    // 只附带少量所属行/区域文本，帮助区分同名按钮，不把整个表格重复写入每个匹配项。
+    while (pending.length && length < 240) {
+      const node = pending.pop()!;
+      if (seen.has(node.nodeId)) continue;
+      seen.add(node.nodeId);
+      if (node.name?.value && node.role?.value !== 'InlineTextBox') { fragments.push(node.name.value); length += node.name.value.length; }
+      else for (const child of [...(children.get(node.nodeId) ?? [])].reverse()) pending.push(child);
+    }
+    const text = fragments.join(' ').slice(0, 240); contextText.set(ancestor.nodeId, text); return text;
+  };
   for (const { node, depth, properties, interactive, textContainer } of ordered) {
     const role = node.role?.value ?? 'node';
     // 聚合正文的 ref 属于真实段落；链接、控件及其他语义节点仍保持各自的引用与点击目标。
@@ -140,6 +157,17 @@ export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backend
       ...(value !== undefined ? { value: excerpt(value) } : {}),
       ...Object.fromEntries(Object.entries(properties).filter(([key]) => snapshotProperties.has(key))) };
     if (textTruncated) row.textTruncated = true;
+    if (options.query || options.role) {
+      const context: Array<{ role: string; name: string }> = [], seen = new Set<string>();
+      let ancestor = byId.get(node.parentId ?? '');
+      while (ancestor && context.length < 3 && !seen.has(ancestor.nodeId)) {
+        seen.add(ancestor.nodeId);
+        const role = ancestor.role?.value ?? 'node', name = describeContext(ancestor);
+        if (name && role !== 'RootWebArea') context.push({ role, name });
+        ancestor = byId.get(ancestor.parentId ?? '');
+      }
+      if (context.length) row.context = context.reverse();
+    }
     yield { node, row };
   }
 }

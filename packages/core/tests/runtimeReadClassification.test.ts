@@ -1,13 +1,13 @@
 import { PlatformRuntime, RuntimeToolRegistry } from '@graycode/core';
 import { fixture, metadata } from './fixtures';
 
-test('按参数判定只读，混合工具的修改动作即使无权限effects也保持串行屏障', async () => {
+test.each([false, true])('按参数判定只读，私人浏览器=%s 时修改动作仍保持串行屏障', async privateBrowser => {
   const f = await fixture(); const tools = new RuntimeToolRegistry();
   let active = 0, maximum = 0, version = 0;
   const versions: number[] = [];
   tools.register({ declaration: { name: 'notes', description: 'mixed scoped notes', parameters: {
     type: 'object', properties: { action: { type: 'string', enum: ['read', 'append'] } }, required: ['action'],
-  } }, parallelRead: args => args.action === 'read', effects: () => [], execute: async args => {
+  } }, parallelRead: args => args.action === 'read', effects: () => privateBrowser ? ['private_browser'] : [], execute: async args => {
     if (args.action === 'append') { expect(active).toBe(0); version++; return { success: true }; }
     active++; maximum = Math.max(maximum, active);
     await new Promise(resolve => setTimeout(resolve, 15));

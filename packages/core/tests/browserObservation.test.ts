@@ -11,6 +11,14 @@ function fixture(nodes: AxNode[]) {
   const sendCommand = jest.fn(async (method: string, params?: any, sessionId?: string): Promise<any> => {
     if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main-frame', url: 'https://fixture.test/' } } };
     if (method === 'Accessibility.getFullAXTree') return { nodes };
+    if (method === 'Accessibility.queryAXTree') {
+      const root = nodes.find(node => node.backendDOMNodeId === params.backendNodeId), byId = new Map(nodes.map(node => [node.nodeId, node]));
+      return { nodes: nodes.filter(node => {
+        let parent: AxNode | undefined = node;
+        while (parent) { if (parent === root) return true; parent = byId.get(parent.parentId ?? ''); }
+        return false;
+      }) };
+    }
     if (method === 'Accessibility.getPartialAXTree') return { nodes: nodes.filter(node => node.backendDOMNodeId === params.backendNodeId) };
     if (method === 'DOM.resolveNode') return { object: { objectId: 'fixture-node' } };
     if (method === 'Runtime.callFunctionOn') return { result: { value: true } };
@@ -43,7 +51,7 @@ test.each(['screenshot', 'action', 'upload'] as const)('%s 在调试连接准备
   controller.abort(reason); await rejected;
   ready(); await f.page.connect();
   expect(f.sendCommand.mock.calls.map(([method]) => method)).toEqual([
-    'Page.enable', 'Runtime.enable', 'Network.enable', 'Accessibility.enable', 'Target.setAutoAttach',
+    'Page.enable', 'Runtime.enable', 'Network.enable', 'Accessibility.enable', 'Page.addScriptToEvaluateOnNewDocument', 'Page.addScriptToEvaluateOnNewDocument', 'Target.setAutoAttach',
   ]);
   expect(f.contents.capturePage).not.toHaveBeenCalled();
 });
@@ -68,6 +76,7 @@ test('区域读取和连续动作沿用有效引用，导航后失效', async ()
   expect(rows.map(row => row.name)).toEqual(['表单', '输入字段']);
   expect(rows.find(row => row.name === '表单')!.depth).toBe(0);
   expect(rows.map(row => row.ref)).toContain(region);
+  expect(f.sendCommand).toHaveBeenCalledWith('Accessibility.queryAXTree', { backendNodeId: 2 }, undefined);
   await f.page.action({ action: 'press', ref: region, key: 'Enter' }, signal());
   const inputRef = rows.find(row => row.name === '输入字段')!.ref!;
   await f.page.action({ action: 'press', ref: inputRef, key: 'Enter' }, signal());
@@ -76,6 +85,140 @@ test('区域读取和连续动作沿用有效引用，导航后失效', async ()
   const current = await f.page.snapshot(signal(), { compact: false });
   f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
   await expect(f.page.snapshot(signal(), { ref: (current.nodes as SnapshotNode[])[0].ref })).rejects.toMatchObject({ code: 'BROWSER_TARGET_MISSING' });
+});
+
+test('局部读取不清理区域外的有效引用，明确语义角色查询省去 DOM 线索采集', async () => {
+  const f = fixture([ax('1', '网页'), ax('2', '表单', '1'), ax('3', '区域外按钮', '1')]);
+  const full = await f.page.snapshot(signal(), { compact: false });
+  const refs = full.nodes as SnapshotNode[];
+  f.sendCommand.mockClear();
+  await f.page.snapshot(signal(), { ref: refs[1].ref, role: 'button' });
+  expect(f.sendCommand.mock.calls.some(([method]) => method === 'Accessibility.getFullAXTree' || method === 'DOMSnapshot.captureSnapshot')).toBe(false);
+  await expect(f.page.action({ action: 'press', ref: refs[2].ref, key: 'Enter' }, signal())).resolves.toEqual({});
+});
+
+test('筛选后的同名按钮附带所在行的少量上下文', async () => {
+  const f = fixture([
+    { ...ax('1', '网页'), role: { value: 'RootWebArea' } },
+    { ...ax('2', '', '1'), role: { value: 'row' } }, { ...ax('3', '订单甲', '2'), role: { value: 'cell' } }, ax('4', '编辑', '2'),
+    { ...ax('5', '', '1'), role: { value: 'row' } }, { ...ax('6', '订单乙', '5'), role: { value: 'cell' } }, ax('7', '编辑', '5'),
+  ]);
+  const found = await f.page.snapshot(signal(), { query: '编辑', role: 'button', compact: false });
+  expect((found.nodes as SnapshotNode[]).map(node => node.context)).toEqual([
+    [{ role: 'row', name: '订单甲 编辑' }], [{ role: 'row', name: '订单乙 编辑' }],
+  ]);
+});
+
+test('字符续读返回完整文本的后续片段和明确位置', async () => {
+  const f = fixture([ax('1', '正文')]), base = f.sendCommand.getMockImplementation()!;
+  const text = '长'.repeat(7000) + '最后一段';
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => {
+    if (method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('text.slice')) {
+      const [start, length] = params.arguments.map((argument: { value: number }) => argument.value);
+      return { result: { value: { text: text.slice(start, start + length), total: text.length } } };
+    }
+    return base(method, params, sessionId);
+  });
+  const ref = (await f.page.snapshot(signal(), { compact: false })).nodes[0] as SnapshotNode;
+  const first = await f.page.readText(signal(), { ref: ref.ref!, maxChars: 3000 });
+  const second = await f.page.readText(signal(), { ref: ref.ref!, startChar: first.nextChar, maxChars: 3000 });
+  const last = await f.page.readText(signal(), { ref: ref.ref!, startChar: second.nextChar, maxChars: 3000 });
+  expect(first).toMatchObject({ startChar: 0, returned: 3000, total: text.length, nextChar: 3000, truncated: true });
+  expect(first.text + second.text + last.text).toBe(text);
+  expect(last).toMatchObject({ startChar: 6000, nextChar: undefined, truncated: false });
+});
+
+test.each([
+  { action: 'fill', ref: 'unused' }, { action: 'check', ref: 'unused' }, { action: 'click', x: 1, y: 2, button: 'other' },
+  { action: 'press', ref: 'unused', key: 'Control+Unknown' }, { action: 'dialog' },
+])('无效参数在连接和输入之前拒绝：%p', async args => {
+  const f = fixture([]);
+  await expect(f.page.action(args, signal())).rejects.toMatchObject({ code: 'INVALID_ARGUMENTS' });
+  expect(f.sendCommand).not.toHaveBeenCalled();
+});
+
+test('原生提示框保留输入入口，在途页面脚本暂停时动作及时返回', async () => {
+  const f = fixture([]), base = f.sendCommand.getMockImplementation()!;
+  f.page.automated = true;
+  f.sendCommand.mockImplementation((method, params, sessionId) => {
+    if (method === 'Input.insertText') {
+      f.contents.debugger.emit('message', {}, 'Page.javascriptDialogOpening', { type: 'prompt', message: '请输入名称', defaultPrompt: '默认名', url: 'https://fixture.test/' });
+      return new Promise(() => {});
+    }
+    return base(method, params, sessionId);
+  });
+  expect(await f.page.action({ action: 'type', text: '触发提示框' }, signal())).toMatchObject({ dialog: { type: 'prompt', message: '请输入名称', defaultPrompt: '默认名' } });
+  expect(f.sendCommand.mock.calls.some(([method]) => method === 'Page.handleJavaScriptDialog')).toBe(false);
+  await f.page.action({ action: 'dialog', accept: true, promptText: '主人' }, signal());
+  expect(f.sendCommand).toHaveBeenCalledWith('Page.handleJavaScriptDialog', { accept: true, promptText: '主人' }, undefined);
+  expect(f.page.interactionState().dialog).toBeUndefined();
+});
+
+test('释放鼠标时打开 confirm，释放命令已派发而弹窗不会使清理超时覆盖动作结果', async () => {
+  const f = fixture([]), base = f.sendCommand.getMockImplementation()!;
+  f.contents.capturePage.mockResolvedValue({ isEmpty: () => false, getSize: () => ({ width: 800, height: 600 }), toPNG: () => Buffer.from('fixture') });
+  await f.page.screenshot(signal(), { width: 800, height: 600 });
+  f.sendCommand.mockImplementation((method, params, sessionId) => {
+    if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+      setImmediate(() => f.contents.debugger.emit('message', {}, 'Page.javascriptDialogOpening', { type: 'confirm', message: '确认操作？' }));
+      return new Promise(() => {});
+    }
+    return base(method, params, sessionId);
+  });
+  expect(await f.page.action({ action: 'click', x: 10, y: 20 }, signal())).toMatchObject({ pointer: { method: 'pointer' }, dialog: { type: 'confirm', message: '确认操作？' } });
+  expect(f.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mouseReleased' }), undefined);
+  expect(f.sendCommand.mock.calls.some(([method]) => method === 'Page.handleJavaScriptDialog')).toBe(false);
+});
+
+test('隐藏上传控件从文件选择事件获得引用，观察后仍可使用并在上传后清除状态', async () => {
+  const f = fixture([ax('1', '上传按钮')]), base = f.sendCommand.getMockImplementation()!;
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => {
+    if (method === 'Input.dispatchKeyEvent' && params.type === 'keyDown') f.contents.debugger.emit('message', {}, 'Page.fileChooserOpened', { backendNodeId: 99, frameId: 'main-frame', mode: 'selectMultiple' });
+    if (method === 'DOM.describeNode') return { node: { nodeName: 'INPUT', attributes: ['type', 'file', 'multiple', ''] } };
+    return base(method, params, sessionId);
+  });
+  const result = await f.page.action({ action: 'press', key: 'Enter' }, signal());
+  expect(result.fileChooser).toMatchObject({ ref: expect.any(String), multiple: true, frameId: 'main-frame' });
+  await f.page.snapshot(signal());
+  await f.page.upload(result.fileChooser!.ref, ['a.txt', 'b.txt'], signal());
+  expect(f.sendCommand).toHaveBeenCalledWith('DOM.setFileInputFiles', { backendNodeId: 99, files: ['a.txt', 'b.txt'] }, undefined);
+  expect(f.page.interactionState().fileChooser).toBeUndefined();
+});
+
+test('没有几何位置时只允许普通单次左键使用 DOM 点击', async () => {
+  const f = fixture([ax('1', '按钮')]), base = f.sendCommand.getMockImplementation()!;
+  const ref = (await f.page.snapshot(signal(), { compact: false })).nodes[0] as SnapshotNode;
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => {
+    if (method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('getClientRects')) return { result: { value: null } };
+    if (method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('element.click()')) return { result: { value: { tagName: 'button', name: '按钮' } } };
+    return base(method, params, sessionId);
+  });
+  for (const extra of [{ button: 'right' }, { button: 'middle' }, { clickCount: 2 }])
+    await expect(f.page.action({ action: 'click', ref: ref.ref, ...extra }, signal())).rejects.toMatchObject({ code: 'BROWSER_NO_GEOMETRY' });
+  expect(f.sendCommand.mock.calls.some(([method, params]) => method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('element.click()'))).toBe(false);
+  expect(await f.page.action({ action: 'click', ref: ref.ref }, signal())).toMatchObject({ pointer: { method: 'dom-click' } });
+});
+
+test('URL 与控件条件等待直接读状态，控件禁用时不会提前返回', async () => {
+  jest.useFakeTimers();
+  try {
+    const f = fixture([ax('1', '保存')]), base = f.sendCommand.getMockImplementation()!;
+    const ref = (await f.page.snapshot(signal(), { compact: false })).nodes[0] as SnapshotNode;
+    let url = 'https://fixture.test/', enabled = false;
+    jest.spyOn(f.contents, 'getURL').mockImplementation(() => url);
+    f.sendCommand.mockImplementation(async (method, params, sessionId) => method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('getComputedStyle')
+      ? { result: { value: { visible: true, enabled, disabled: !enabled, checked: false } } } : base(method, params, sessionId));
+    f.sendCommand.mockClear();
+    const changed = f.page.waitForSnapshot(signal(), { urlChanged: true, timeoutMs: 2000 });
+    await jest.advanceTimersByTimeAsync(200); url = 'https://fixture.test/result'; await jest.advanceTimersByTimeAsync(200);
+    expect(await changed).toMatchObject({ conditionMet: true, initialUrl: 'https://fixture.test/' });
+    expect(await f.page.waitForSnapshot(signal(), { url, timeoutMs: 2000 })).toMatchObject({ conditionMet: true, url });
+    const available = f.page.waitForSnapshot(signal(), { ref: ref.ref, state: 'enabled', timeoutMs: 2000 });
+    await jest.advanceTimersByTimeAsync(200); enabled = true; await jest.advanceTimersByTimeAsync(200);
+    expect(await available).toMatchObject({ conditionMet: true, elementState: { enabled: true } });
+    expect(await f.page.waitForSnapshot(signal(), { ref: ref.ref, state: 'unchecked', timeoutMs: 2000 })).toMatchObject({ conditionMet: true });
+    expect(f.sendCommand.mock.calls.some(([method]) => method === 'Accessibility.getFullAXTree' || method === 'DOMSnapshot.captureSnapshot')).toBe(false);
+  } finally { jest.useRealTimers(); }
 });
 
 test('默认节点预算明确报告截断，并允许按需扩大读取', async () => {
@@ -287,6 +430,24 @@ test('原生绘制表面不可用时建议读快照，不要求可能重复提�
     code: 'BROWSER_VIEW_REQUIRED', message: expect.stringContaining('snapshot'),
   });
   await expect(f.page.snapshot(signal())).resolves.toMatchObject({ format: 'compact' });
+});
+
+test('导航销毁绘制上下文时截图等待新文档后只重读一次，不重放输入', async () => {
+  const f = fixture([]), base = f.sendCommand.getMockImplementation()!;
+  f.contents.capturePage.mockResolvedValue({ isEmpty: () => false, getSize: () => ({ width: 800, height: 600 }), toPNG: () => Buffer.from('fixture') });
+  let attempts = 0;
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => {
+    if (method === 'Runtime.evaluate' && attempts++ === 0) {
+      f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+      setImmediate(() => f.contents.emit('dom-ready'));
+      throw new Error('Inspected target navigated or closed');
+    }
+    return base(method, params, sessionId);
+  });
+  await expect(f.page.screenshot(signal(), { width: 800, height: 600 })).resolves.toMatchObject({ attachment: { mimeType: 'image/png' } });
+  expect(attempts).toBe(2);
+  expect(f.sendCommand.mock.calls.some(([method]) => method.startsWith('Input.'))).toBe(false);
+  expect(f.contents.listenerCount('dom-ready')).toBe(1); expect(f.contents.listenerCount('destroyed')).toBe(0);
 });
 
 test('动作后快照等主文档解析与同步布局，后台无绘制帧也能读取', async () => {
