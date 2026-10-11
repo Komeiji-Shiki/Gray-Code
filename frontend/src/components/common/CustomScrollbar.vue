@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useScrollbarStyles } from './useScrollbarStyles'
 import { useScrollbarGeometry } from './useScrollbarGeometry'
-import { projectVirtualScrollbarMarkers } from './virtualScrollbarMarkers'
-import CustomScrollbarMarkers, { type MarkerItem } from './CustomScrollbarMarkers.vue'
+import { useScrollbarMarkers } from './useScrollbarMarkers'
+import { useScrollbarInput } from './useScrollbarInput'
+import CustomScrollbarMarkers from './CustomScrollbarMarkers.vue'
 import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import { t } from '../../i18n'
 
@@ -156,56 +157,22 @@ const showHScrollbar = ref(false)
 /** 横向滑块百分比位置（0-100，供 role="slider" 的 aria-valuenow 使用） */
 const hScrollRatio = ref(0)
 
-// ==================== Marker 状态 ====================
-const markerPositions = ref<MarkerItem[]>([])
 let layoutUpdateRafId: number | null = null
-interface LayoutUpdateOptions { preserveBottom?: boolean; updateMarkers?: boolean; forceMarkers?: boolean }
+interface LayoutUpdateOptions {
+  preserveBottom?: boolean
+  updateMarkers?: boolean
+  forceMarkers?: boolean
+}
 const pendingLayoutUpdateOptions = {
   preserveBottom: false,
   updateMarkers: false,
   forceMarkers: false
 }
 
-// marker 重扫节流：流式期间内容结构变更每帧都会触发调度，但 marker 位置只随
-// 结构/尺寸变化才有意义。用 ≥500ms 间隔 + 尾沿补偿限制全量重扫频率，
-// 避免流式期间每帧对 '.user-message' 等元素逐个 getBoundingClientRect()
-// （强制同步布局）并重建 markerPositions 响应式数组。
-const MARKER_SCAN_THROTTLE_MS = 500
-let lastMarkerScanAt = 0
-let pendingMarkerScanTimer: ReturnType<typeof setTimeout> | null = null
-
-// ==================== Tooltip 状态 ====================
-const tooltipVisible = ref(false)
-const tooltipContent = ref('')
-const tooltipIndex = ref(0)
-/** 当前 hover marker 的专属 tooltip 前缀（缺省回落 props.markerTooltipPrefix） */
-const tooltipMarkerPrefix = ref('')
-const tooltipTop = ref(0)
-let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null
-const tooltipRef = ref<HTMLElement | null>(null)
-let tooltipRafId: number | null = null
-
-// 拖动状态用 ref：模板据此在拖动期间给 .scroll-thumb-v / .scroll-thumb-h 挂 'dragging' 类（仅拖动时启用 will-change）
-const isDragging = ref(false)
-const isHDragging = ref(false)
-/** 虚拟轨道拖动中的比例，释放鼠标后才发起一次 seek。 */
-const virtualDragRatio = ref<number | null>(null)
-let startY = 0
-let startX = 0
-let startScrollTop = 0
-let startScrollLeft = 0
-let startVirtualScrollTop = 0
 let resizeObserver: ResizeObserver | null = null
 let mutationObserver: MutationObserver | null = null
 
 const isVirtualScroll = computed(() => props.virtualTotal > 0)
-const virtualMarkerTrackHeight = ref(0)
-const virtualMarkerPositions = computed(() => projectVirtualScrollbarMarkers(
-  props.virtualMarkers as Array<{ index: number; preview?: string }>, props.virtualTotal, virtualMarkerTrackHeight.value
-))
-watch(virtualMarkerPositions, positions => {
-  if (isVirtualScroll.value && props.markerSelector) markerPositions.value = positions
-})
 const virtualRowHeight = computed(() => Math.max(1, Number.isFinite(props.virtualEstimatedRowHeight) && props.virtualEstimatedRowHeight > 0
   ? props.virtualEstimatedRowHeight
   : 96))
@@ -218,7 +185,15 @@ const virtualRowHeight = computed(() => Math.max(1, Number.isFinite(props.virtua
  * 的像素估算法：真实内容高度与「行数 × 估算行高」无关，长消息（长思考）会让该估算值
  * 超过估算总高度而被钳制，滑块会在窗口尾部一大段范围内钉在底部不动。
  */
-const { getVerticalLayoutMetrics, getVirtualThumbRatio, emitVirtualSeekRatio, hasGlobalTail, isAtBottom } = useScrollbarGeometry(props, isVirtualScroll, virtualRowHeight, scrollContainer, index => emit('seek', index))
+const geometry = useScrollbarGeometry(
+  props, isVirtualScroll, virtualRowHeight, scrollContainer, index => emit('seek', index)
+)
+const { getVerticalLayoutMetrics, hasGlobalTail, isAtBottom } = geometry
+const {
+  markerPositions, tooltipVisible, tooltipContent, tooltipIndex, tooltipMarkerPrefix, tooltipTop, tooltipRef,
+  initializeMarkers, updateMarkers, requestMarkerScan, handleMarkerClick, handleMarkerMouseEnter,
+  handleMarkerMouseLeave, handleTooltipMouseEnter, handleTooltipWheel
+} = useScrollbarMarkers(props, scrollContainer, scrollTrack, isVirtualScroll, index => emit('seek', index))
 
 // 记录是否在底部（内容变化前检查）
 let wasAtBottom = true
@@ -243,6 +218,16 @@ let programmaticScrollTop: number | null = null
 const USER_SCROLL_COOLDOWN_MS = 250
 /** 最近一次用户滚动输入的时间（performance.now 时间轴） */
 let lastUserScrollInputAt = Number.NEGATIVE_INFINITY
+const {
+  isDragging, isHDragging, virtualDragRatio, handleThumbMouseDown, handleTrackClick,
+  handleHThumbMouseDown, handleHTrackClick, handleThumbKeydown
+} = useScrollbarInput({
+  props, scrollContainer, scrollTrack, hScrollTrack, thumbHeight, thumbWidth,
+  isVirtualScroll, virtualRowHeight, geometry,
+  onUserScrollInput: () => {
+    lastUserScrollInputAt = performance.now()
+  }
+})
 
 /** 贴底跟随写入阈值（px）：与目标位置差值小于该值时跳过写 scrollTop，避免每帧赋值 */
 const STICKY_FOLLOW_THRESHOLD = 2
@@ -354,192 +339,12 @@ function updateScrollbar() {
   }
 }
 
-// ==================== Marker 逻辑 ====================
-
-/**
- * 计算元素相对于滚动容器内容顶部的绝对偏移
- * 使用 getBoundingClientRect + scrollTop 换算，不依赖 offsetParent 链
- */
-function getContentOffset(element: HTMLElement, container: HTMLElement): number {
-  const elRect = element.getBoundingClientRect()
-  const containerRect = container.getBoundingClientRect()
-  return elRect.top - containerRect.top + container.scrollTop
-}
-
-/**
- * 扫描 markerSelector 匹配的元素，计算它们在轨道上的映射位置
- * 仅在内容/尺寸变化时调用（不在每次 scroll 事件中调用——位置是内容相关的，不是视口相关的）
- */
-function updateMarkers() {
-  if (!scrollContainer.value || !props.markerSelector || !scrollTrack.value) {
-    markerPositions.value = []
-    return
-  }
-
-  const container = scrollContainer.value
-  const trackHeight = scrollTrack.value.clientHeight
-
-  if (isVirtualScroll.value) {
-    // 页码改变只影响滑块；全局标记位置取决于总量、标记内容与轨道高度。
-    virtualMarkerTrackHeight.value = trackHeight
-    markerPositions.value = virtualMarkerPositions.value
-    return
-  }
-
-  // 内容不足以滚动时无需显示 marker
-  const scrollHeight = container.scrollHeight
-  const clientHeight = container.clientHeight
-  if (scrollHeight <= clientHeight || trackHeight <= 0) {
-    markerPositions.value = []
-    return
-  }
-
-  const elements = container.querySelectorAll(props.markerSelector)
-  const newPositions: MarkerItem[] = []
-
-  elements.forEach((el, idx) => {
-    const htmlEl = el as HTMLElement
-    const contentOffset = getContentOffset(htmlEl, container)
-    const preview = htmlEl.getAttribute('data-preview') || ''
-    // 颜色与 tooltip 前缀支持按元素覆盖：如总结截断点用黄色 marker + 专属前缀，
-    // 与普通用户消息的蓝色 marker 区分（元素缺省时回落 props 默认值）
-    const color = htmlEl.getAttribute('data-marker-color') || ''
-    const tooltipPrefix = htmlEl.getAttribute('data-marker-tooltip-prefix') || ''
-    // 映射到轨道位置：(元素在内容中的偏移 / 总内容高度) * 轨道高度
-    const trackPos = (contentOffset / scrollHeight) * trackHeight
-    newPositions.push({ top: trackPos, element: htmlEl, index: idx + 1, contentPreview: preview, color, tooltipPrefix })
-  })
-
-  markerPositions.value = newPositions
-}
-
 // 虚拟窗口滚动到新页或 marker 索引刷新时，滚动条本身没有 childList 变更，
 // 与内容变化共用布局帧，避免在 Vue 更新的微任务中强制布局；索引切换不受重扫节流影响。
 watch(
   () => [props.virtualTotal, props.virtualStart, props.virtualEnd, props.virtualMarkers, props.markerSelector] as const,
   () => scheduleLayoutUpdate({ forceMarkers: true })
 )
-
-/**
- * 点击 marker 跳转到对应元素
- */
-function handleMarkerClick(marker: MarkerItem, e: MouseEvent) {
-  e.stopPropagation()
-  if (!scrollContainer.value) return
-  if (typeof marker.targetIndex === 'number') {
-    emit('seek', marker.targetIndex)
-    return
-  }
-  marker.element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
-/**
- * 鼠标进入 marker 时显示 tooltip
- */
-function handleMarkerMouseEnter(marker: MarkerItem, _e: MouseEvent) {
-  if (tooltipHideTimer) {
-    clearTimeout(tooltipHideTimer)
-    tooltipHideTimer = null
-  }
-  tooltipContent.value = marker.contentPreview
-  tooltipIndex.value = marker.index
-  tooltipMarkerPrefix.value = marker.tooltipPrefix
-  tooltipVisible.value = true
-
-  // 需要在 DOM 渲染后再计算位置，保证 tooltipRef 已挂载并获取到真实高度
-  if (tooltipRafId) cancelAnimationFrame(tooltipRafId)
-  tooltipRafId = requestAnimationFrame(() => {
-    tooltipRafId = null
-    clampTooltipPosition(marker)
-  })
-}
-
-/**
- * 根据 marker 位置和 tooltip 实际高度，将 tooltip 钳制在可视区域内
- */
-function clampTooltipPosition(marker: MarkerItem) {
-  if (!scrollTrack.value || !scrollContainer.value) return
-
-  const trackRect = scrollTrack.value.getBoundingClientRect()
-  // marker 在屏幕上的绝对 Y 坐标
-  const markerScreenY = trackRect.top + marker.top
-
-  // tooltip 实际高度（如果还没渲染则取估算值）
-  const tipEl = tooltipRef.value
-  const tipHeight = tipEl ? tipEl.offsetHeight : 60
-
-  // 理想位置：tooltip 垂直居中于 marker
-  let idealTop = markerScreenY - tipHeight / 2
-
-  // 上下边界：以滚动容器的可视区域为准（而非整个 viewport），
-  // 避免被顶部标签栏等 UI 遮挡
-  const containerRect = scrollContainer.value.getBoundingClientRect()
-  const viewportTop = containerRect.top
-  const viewportBottom = containerRect.bottom
-  if (idealTop < viewportTop + 4) {
-    idealTop = viewportTop + 4
-  }
-  if (idealTop + tipHeight > viewportBottom - 4) {
-    idealTop = viewportBottom - 4 - tipHeight
-  }
-
-  // 转回轨道坐标系（tooltip 的 CSS top 是相对于 scroll-track 的）
-  tooltipTop.value = idealTop - trackRect.top
-}
-
-/**
- * 鼠标离开 marker 时延迟隐藏 tooltip
- */
-function handleMarkerMouseLeave() {
-  tooltipHideTimer = setTimeout(() => {
-    tooltipVisible.value = false
-    tooltipHideTimer = null
-  }, 150)
-}
-
-/**
- * 鼠标进入 tooltip 气泡本身时，取消隐藏
- */
-function handleTooltipMouseEnter() {
-  if (tooltipHideTimer) {
-    clearTimeout(tooltipHideTimer)
-    tooltipHideTimer = null
-  }
-}
-
-/**
- * tooltip 上的 wheel 事件转发给滚动容器，保持滚动体验
- */
-function handleTooltipWheel(e: WheelEvent) {
-  if (!scrollContainer.value) return
-  // 阻止默认行为（避免整个页面滚动），转发给内容容器
-  e.preventDefault()
-  scrollContainer.value.scrollBy({
-    top: e.deltaY,
-    behavior: 'auto'
-  })
-}
-
-/**
- * 节流版 marker 重扫：距上次扫描 ≥MARKER_SCAN_THROTTLE_MS 时立即执行；
- * 否则安排一次尾沿补偿扫描，保证流式结束后 marker 位置最终与 DOM 一致
- * （期间只合并请求，不逐帧全量重扫）。
- */
-function requestMarkerScan() {
-  if (!props.markerSelector || pendingMarkerScanTimer) return
-  const now = Date.now()
-  const elapsed = now - lastMarkerScanAt
-  if (elapsed >= MARKER_SCAN_THROTTLE_MS) {
-    lastMarkerScanAt = now
-    updateMarkers()
-  } else {
-    pendingMarkerScanTimer = setTimeout(() => {
-      pendingMarkerScanTimer = null
-      lastMarkerScanAt = Date.now()
-      updateMarkers()
-    }, MARKER_SCAN_THROTTLE_MS - elapsed)
-  }
-}
 
 function updateLayout(options: LayoutUpdateOptions = {}) {
   if (!scrollContainer.value) return
@@ -628,240 +433,9 @@ function handleUserScrollInput(event: Event): void {
   lastUserScrollInputAt = performance.now()
 }
 
-// 垂直滚动 - 鼠标按下滑块
-function handleThumbMouseDown(e: MouseEvent) {
-  if (!scrollContainer.value) return
-  
-  // 滚动条拖动也是用户滚动意图：标记冷静期，避免拖动中被贴底拉回
-  lastUserScrollInputAt = performance.now()
-  isDragging.value = true
-  startY = e.clientY
-  startScrollTop = scrollContainer.value.scrollTop
-  startVirtualScrollTop = getVerticalLayoutMetrics(scrollContainer.value).scrollTop
-  virtualDragRatio.value = isVirtualScroll.value ? getVirtualThumbRatio(scrollContainer.value) : null
-  
-  document.addEventListener('mousemove', handleMouseMove)
-  document.addEventListener('mouseup', handleMouseUp)
-  
-  e.preventDefault()
-}
-
-// 垂直滚动 - 鼠标移动
-function handleMouseMove(e: MouseEvent) {
-  if (!isDragging.value || !scrollContainer.value) return
-
-  const container = scrollContainer.value
-  const deltaY = e.clientY - startY
-  const scrollHeight = container.scrollHeight
-  const clientHeight = container.clientHeight
-  const trackHeight = scrollTrack.value?.clientHeight || clientHeight
-  const maxScrollTop = scrollHeight - clientHeight
-  const maxThumbTop = trackHeight - thumbHeight.value
-
-  if (isVirtualScroll.value) {
-    const virtualMaxThumbTop = Math.max(1, maxThumbTop)
-    const currentThumbTop = (startVirtualScrollTop / Math.max(1, getVerticalLayoutMetrics(container).maxScrollTop)) * virtualMaxThumbTop
-    virtualDragRatio.value = Math.max(0, Math.min(1, (currentThumbTop + deltaY) / virtualMaxThumbTop))
-    return
-  }
-
-  // 计算新的滚动位置
-  const scrollDelta = (deltaY / Math.max(1, maxThumbTop)) * maxScrollTop
-  container.scrollTop = startScrollTop + scrollDelta
-}
-
-// 垂直滚动 - 鼠标释放
-function handleMouseUp() {
-  if (isDragging.value && isVirtualScroll.value && virtualDragRatio.value !== null) {
-    emitVirtualSeekRatio(virtualDragRatio.value)
-  }
-  isDragging.value = false
-  virtualDragRatio.value = null
-  document.removeEventListener('mousemove', handleMouseMove)
-  document.removeEventListener('mouseup', handleMouseUp)
-}
-
-// 垂直滚动 - 点击轨道跳转
-function handleTrackClick(e: MouseEvent) {
-  if (!scrollTrack.value || !scrollContainer.value) return
-  if (e.target !== scrollTrack.value) return
-  
-  const container = scrollContainer.value
-  const trackRect = scrollTrack.value.getBoundingClientRect()
-  const clickY = e.clientY - trackRect.top
-  
-  const scrollHeight = container.scrollHeight
-  const clientHeight = container.clientHeight
-  const trackHeight = scrollTrack.value.clientHeight
-  const maxScrollTop = scrollHeight - clientHeight
-  
-  //计算目标滚动位置（点击位置居中）
-  const targetThumbTop = clickY - thumbHeight.value / 2
-  const maxThumbTop = trackHeight - thumbHeight.value
-  const ratio = Math.max(0, Math.min(1, targetThumbTop / Math.max(1, maxThumbTop)))
-
-  if (isVirtualScroll.value) {
-    emitVirtualSeekRatio(ratio)
-    return
-  }
-  
-  container.scrollTop = ratio * maxScrollTop
-}
-
-// 横向滚动 - 鼠标按下滑块
-function handleHThumbMouseDown(e: MouseEvent) {
-  if (!scrollContainer.value) return
-  
-  isHDragging.value = true
-  startX = e.clientX
-  startScrollLeft = scrollContainer.value.scrollLeft
-  
-  document.addEventListener('mousemove', handleHMouseMove)
-  document.addEventListener('mouseup', handleHMouseUp)
-  
-  e.preventDefault()
-}
-
-// 横向滚动 - 鼠标移动
-function handleHMouseMove(e: MouseEvent) {
-  if (!isHDragging.value || !scrollContainer.value) return
-  
-  const container = scrollContainer.value
-  const deltaX = e.clientX - startX
-  const scrollWidth = container.scrollWidth
-  const clientWidth = container.clientWidth
-  const maxScrollLeft = scrollWidth - clientWidth
-  const maxThumbLeft = clientWidth - thumbWidth.value
-  
-  // 计算新的滚动位置
-  const scrollDelta = (deltaX / maxThumbLeft) * maxScrollLeft
-  container.scrollLeft = startScrollLeft + scrollDelta
-}
-
-// 横向滚动 - 鼠标释放
-function handleHMouseUp() {
-  isHDragging.value = false
-  document.removeEventListener('mousemove', handleHMouseMove)
-  document.removeEventListener('mouseup', handleHMouseUp)
-}
-
-// 横向滚动 - 点击轨道跳转
-function handleHTrackClick(e: MouseEvent) {
-  if (!hScrollTrack.value || !scrollContainer.value) return
-  if (e.target !== hScrollTrack.value) return
-  
-  const container = scrollContainer.value
-  const trackRect = hScrollTrack.value.getBoundingClientRect()
-  const clickX = e.clientX - trackRect.left
-  
-  const scrollWidth = container.scrollWidth
-  const clientWidth = container.clientWidth
-  const maxScrollLeft = scrollWidth - clientWidth
-  
-  // 计算目标滚动位置（点击位置居中）
-  const targetThumbLeft = clickX - thumbWidth.value / 2
-  const maxThumbLeft = clientWidth - thumbWidth.value
-  const ratio = Math.max(0, Math.min(1, targetThumbLeft / maxThumbLeft))
-  
-  container.scrollLeft = ratio * maxScrollLeft
-}
-
-/**
- * 键盘操作滑块（role="slider" 的可访问性支持）：
- * 方向键步进 / PageUp·PageDown 翻页 / Home·End 跳转首尾
- */
-function handleThumbKeydown(e: KeyboardEvent) {
-  const container = scrollContainer.value
-  if (!container) return
-  const isHorizontal = (e.currentTarget as HTMLElement).classList.contains('scroll-thumb-h')
-
-  if (!isHorizontal && isVirtualScroll.value) {
-    e.preventDefault()
-    const current = getVerticalLayoutMetrics(container).scrollTop
-    const max = Math.max(0, props.virtualTotal * virtualRowHeight.value - container.clientHeight)
-    const page = Math.max(1, container.clientHeight)
-    let next = current
-    switch (e.key) {
-      case 'ArrowUp': next -= Math.max(virtualRowHeight.value, page * 0.1); break
-      case 'ArrowDown': next += Math.max(virtualRowHeight.value, page * 0.1); break
-      case 'PageUp': next -= page; break
-      case 'PageDown': next += page; break
-      case 'Home': next = 0; break
-      case 'End': next = max; break
-      default: return
-    }
-    emitVirtualSeekRatio(max > 0 ? Math.max(0, Math.min(1, next / max)) : 0)
-    lastUserScrollInputAt = performance.now()
-    return
-  }
-
-  const page = isHorizontal ? container.clientWidth : container.clientHeight
-  const step = Math.max(40, page * 0.1)
-  const current = isHorizontal ? container.scrollLeft : container.scrollTop
-  const max = Math.max(0, (isHorizontal ? container.scrollWidth - container.clientWidth : container.scrollHeight - container.clientHeight))
-
-  let next: number | null = null
-  switch (e.key) {
-    case 'ArrowUp':
-      // 方向键按滑块轴向过滤：水平滑块不响应垂直方向键。
-      // 过滤分支也要 preventDefault：滑块已获得焦点，按轴向外的方向键
-      // 不应触发浏览器默认滚动（页面/外层滚动容器），应无副作用
-      if (isHorizontal) {
-        e.preventDefault()
-        return
-      }
-      next = current - step
-      break
-    case 'ArrowDown':
-      if (isHorizontal) {
-        e.preventDefault()
-        return
-      }
-      next = current + step
-      break
-    case 'ArrowLeft':
-      // 垂直滑块不响应水平方向键（同样 preventDefault，见 ArrowUp 注释）
-      if (!isHorizontal) {
-        e.preventDefault()
-        return
-      }
-      next = current - step
-      break
-    case 'ArrowRight':
-      if (!isHorizontal) {
-        e.preventDefault()
-        return
-      }
-      next = current + step
-      break
-    case 'PageUp':
-      next = current - page
-      break
-    case 'PageDown':
-      next = current + page
-      break
-    case 'Home':
-      next = 0
-      break
-    case 'End':
-      next = max
-      break
-    default:
-      return
-  }
-  e.preventDefault()
-  const clamped = Math.max(0, Math.min(max, next))
-  if (clamped === current) return
-  if (isHorizontal) {
-    container.scrollLeft = clamped
-  } else {
-    container.scrollTop = clamped
-  }
-  // 键盘滚动同样是用户滚动意图：标记冷静期，避免被贴底跟随拉回
-  lastUserScrollInputAt = performance.now()
-}
-
-const { trackStyle, thumbStyle, hTrackStyle, hThumbStyle, wrapperStyle } = useScrollbarStyles(props, scrollTrack, virtualDragRatio, thumbHeight, thumbTop, thumbWidth, thumbLeft)
+const { trackStyle, thumbStyle, hTrackStyle, hThumbStyle, wrapperStyle } = useScrollbarStyles(
+  props, scrollTrack, virtualDragRatio, thumbHeight, thumbTop, thumbWidth, thumbLeft
+)
 
 // 组件挂载
 let initRafId: number | null = null
@@ -880,10 +454,7 @@ onMounted(() => {
     const runInitialUpdate = () => {
       updateScrollbar()
       // 初始化 marker（同步更新节流基准，避免紧随其后的首次变更触发重复扫描）
-      if (props.markerSelector) {
-        updateMarkers()
-        lastMarkerScanAt = Date.now()
-      }
+      initializeMarkers()
     }
     initRafId = requestAnimationFrame(runInitialUpdate)
     initFallbackTimer = setTimeout(runInitialUpdate, 100)
@@ -952,18 +523,6 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(layoutUpdateRafId)
     layoutUpdateRafId = null
   }
-  if (tooltipHideTimer) {
-    clearTimeout(tooltipHideTimer)
-    tooltipHideTimer = null
-  }
-  if (tooltipRafId) {
-    cancelAnimationFrame(tooltipRafId)
-    tooltipRafId = null
-  }
-  if (pendingMarkerScanTimer) {
-    clearTimeout(pendingMarkerScanTimer)
-    pendingMarkerScanTimer = null
-  }
   if (initRafId !== null) {
     cancelAnimationFrame(initRafId)
     initRafId = null
@@ -972,10 +531,6 @@ onBeforeUnmount(() => {
     clearTimeout(initFallbackTimer)
     initFallbackTimer = null
   }
-  document.removeEventListener('mousemove', handleMouseMove)
-  document.removeEventListener('mouseup', handleMouseUp)
-  document.removeEventListener('mousemove', handleHMouseMove)
-  document.removeEventListener('mouseup', handleHMouseUp)
 })
 
 // 内部滚动方法
