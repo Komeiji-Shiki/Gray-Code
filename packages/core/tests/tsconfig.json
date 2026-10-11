@@ -1,9 +1,8 @@
 {
-  // 平台 Jest 只转译不做类型检查；这里按服务端的严格度检查测试，并使用 core 的 Node 24 类型（与 jest.platform.config.cjs 一致）。
+  // 平台 Jest 只转译不做类型检查；这里按服务端的严格度检查测试。
   "extends": "../../../apps/server/tsconfig.json",
   "compilerOptions": {
     "types": ["node", "jest"],
-    "typeRoots": ["../node_modules/@types", "../../../node_modules/@types"],
     "baseUrl": "../../..",
     "paths": {
       "@graycode/contracts": ["packages/contracts/src/index.ts"],

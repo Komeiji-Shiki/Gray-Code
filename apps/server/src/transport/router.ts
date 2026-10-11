@@ -276,6 +276,10 @@ export class ApplicationRouter {
           ...(params.reasoningEffort
             ? { reasoningEffort: params.reasoningEffort }
             : {}),
+          // 与 runs.continue 一致：Web 与 CLI 经此入口也能指定提示词模式。
+          ...(params.promptModeId
+            ? { promptModeId: params.promptModeId }
+            : {}),
         };
         if (!params.requestKey || !String(params.text ?? "").trim())
           throw new Error("Supply a unique request key and a message.");

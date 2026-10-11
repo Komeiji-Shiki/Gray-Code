@@ -36,10 +36,10 @@ describe('Code 模式按会话阶段选择文档工具', () => {
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
 
-  async function send(history: PlatformMessage[]) {
+  async function send(history: PlatformMessage[], promptModeId = 'code') {
     const conversation = await router.call(owner, 'conversations.create', { title: 'Mode tools', workspaceId: 'project' }) as { id: string };
     if (history.length) await app.storage.appendHistory(conversation.id, history);
-    const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'mode-tools', agentId: 'default', promptModeId: 'code', text: '继续' }) as { id: string };
+    const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'mode-tools', agentId: 'default', promptModeId, text: '继续' }) as { id: string };
     expect((await app.runtime.wait(run.id))?.status).toBe('completed');
     return tools;
   }
@@ -48,6 +48,12 @@ describe('Code 模式按会话阶段选择文档工具', () => {
     const sent = await send([]);
     expect(sent).toContain('read_file');
     for (const name of [...SYNC_TOOLS, ...MODE_ONLY_TOOLS]) expect(sent).not.toContain(name);
+  });
+
+  test('runs.start 传入的模式决定工具集', async () => {
+    const sent = await send([], 'ask');
+    expect(sent).toContain('read_file');
+    expect(sent).not.toContain('write_file');
   });
 
   test('计划尚未确认时不因 planPath 提前开放同步工具', async () => {

@@ -1,6 +1,4 @@
 const path = require('node:path');
-// 平台运行在 Node 24（与 Electron 内置版本一致），类型来源与 core 构建一致。
-const coreTypeRoot = path.dirname(path.dirname(require.resolve('@types/node/package.json', { paths: [path.join(__dirname, 'packages/core')] })));
 
 module.exports = {
   preset: 'ts-jest',
@@ -26,7 +24,7 @@ module.exports = {
         target: 'ES2022', lib: ['ES2023'], module: 'commonjs', strict: false, strictNullChecks: true,
         noImplicitThis: true, strictFunctionTypes: true, strictBindCallApply: true,
         esModuleInterop: true, skipLibCheck: true, types: ['node', 'jest'],
-        typeRoots: [coreTypeRoot, path.join(__dirname, 'node_modules/@types')],
+        typeRoots: [path.join(__dirname, 'node_modules/@types')],
       },
     }],
   },
