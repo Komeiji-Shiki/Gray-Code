@@ -100,7 +100,7 @@ ${yamlList}`
                         : 'Name of the skill to read, taken from the available skills in the tool description.',
                 },
             },
-            required: ['name'],
+            required: [],
         },
     };
 }
@@ -112,7 +112,7 @@ ${yamlList}`
  * 返回的 basePath 让 AI 能定位同目录下的脚本等资源文件。
  */
 async function handleReadSkill(args: ToolArgs): Promise<ToolResult> {
-    const name = typeof args?.name === 'string' ? args.name : '';
+    const name = typeof args?.name === 'string' ? args.name.trim() : '';
     const skillsManager = getSkillsManager();
     
     if (!skillsManager) {
@@ -122,11 +122,14 @@ async function handleReadSkill(args: ToolArgs): Promise<ToolResult> {
         };
     }
     
+    const available = () => skillsManager.getSkillSummaries();
+    if (!name) return { success: true, data: { skills: available() } };
     const skill = skillsManager.getSkillByName(name);
     if (!skill) {
         return {
             success: false,
-            error: `Skill not found: "${name}". Use the available skills listed in the tool description.`,
+            error: `Skill not found: "${name}". Choose a name from data.skills, or call read_skill without name to list available skills.`,
+            data: { skills: available() },
         };
     }
     

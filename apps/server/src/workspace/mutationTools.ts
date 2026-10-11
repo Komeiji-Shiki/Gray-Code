@@ -13,6 +13,7 @@ import type { StructuredDiffHunk, LegacyDiffBlock } from '../../../../backend/to
 import { insertAtLine, splitContentLines, deleteLineRange } from '../../../../backend/tools/file/lineMutations';
 import { MAX_EDIT_FILE_BYTES } from '../../../../backend/tools/shared/fileSizeGuards';
 import { countSplitTextLines, normalizeLineEndingsToLF as normalize } from '../../../../shared/textLines';
+import { withBatchItems } from './batchItems';
 import { decodeTextBytes, detectTextEncoding, findUnencodableCharacter, isLegacyEncoding, roundTripsExactly, type TextDetectionResult } from '../../../../backend/tools/search/textEncodingRuntime';
 
 /** 原文件工具只负责参数和提案；文件效果统一交给宿主事务与审阅服务。 */
@@ -62,7 +63,7 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
       data: { results, successCount, failCount: results.length - successCount, totalCount: results.length },
       ...(successCount !== results.length ? { error: `${results.length - successCount} 个文件未完成修改。` } : {}) };
   }
-  return [
+  const tools: RuntimeTool[] = [
     { declaration: declaration(createWriteFileDeclaration(declarationOptions)), effects: () => ['workspace_write'],
       execute: (args, context) => batch([args], async entry => {
         context.signal.throwIfAborted();
@@ -116,4 +117,14 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
         return { ...result, data: { ...data, deletedPaths: data.results.filter(item => item.success).map(item => item.path), failedPaths: data.results.filter(item => !item.success).map(item => item.path) } };
       } },
   ];
+  return tools.map(tool => {
+    switch (tool.declaration.name) {
+      case 'insert_code':
+      case 'delete_code': return withBatchItems(tool, 'files');
+      case 'create_directory':
+      case 'delete_file': return withBatchItems(tool, 'paths');
+      case 'apply_diff': return withBatchItems(tool, format === 'unified' ? 'hunks' : 'diffs');
+      default: return tool;
+    }
+  });
 }

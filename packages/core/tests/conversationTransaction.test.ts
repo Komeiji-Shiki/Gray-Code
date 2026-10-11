@@ -2,6 +2,7 @@ import type { RunRecord } from '@graycode/contracts';
 import { PlatformStorage, type ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { conversationTools } from '../../../apps/server/src/conversations/tools';
+import { RuntimeToolRegistry } from '../src/runtime/tools';
 import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
 import { BackgroundContinuation } from '../../../apps/server/src/subagents/continuation';
 import { fixture, metadata } from './fixtures';
@@ -137,6 +138,29 @@ test('待办和活动工具跳过历史正文，元数据并发变更仍拒绝�
     expect(info).toHaveBeenCalledTimes(2); expect(full).not.toHaveBeenCalled(); expect(selected).not.toHaveBeenCalled();
     expect((await f.store.getConversation(run.conversationId))?.custom).toMatchObject({ unknownFutureField: '保留',
       todoList: [{ id: 'first', content: '第一步', status: 'completed' }] });
+    const registry = new RuntimeToolRegistry();
+    registry.register(tools.get('todo_update')!);
+    const entry = registry.catalog(['todo_update']).entries.get('todo_update')!;
+    const mixed = { ops: [
+      { op: 'set_status', id: 'first', status: 'invalid' },
+      { op: 'set_status', id: 'missing', status: 'completed' },
+      { op: 'set_status', id: 'first', status: 'in_progress' },
+    ] };
+    expect(entry.validate(mixed)).toBe(true);
+    const partial = await entry.tool.execute(mixed, context);
+    expect(partial).toMatchObject({ success: true, data: { appliedOps: 1, invalidOps: 1, partial: true, successCount: 1, failCount: 2,
+      results: [{ index: 0, success: false }, { index: 1, success: false }, { index: 2, success: true }] } });
+    expect((await f.store.getConversation(run.conversationId))?.custom).toMatchObject({
+      todoList: [{ id: 'first', content: '第一步', status: 'in_progress' }],
+    });
+    const beforeFailure = await f.store.getConversationInfo(run.conversationId);
+    expect(await entry.tool.execute({ ops: [{ op: 'remove', id: 'missing' }] }, context)).toMatchObject({
+      success: false, data: { appliedOps: 0, failCount: 1 },
+    });
+    expect(await entry.tool.execute({ ops: [{ op: 'invalid' }] }, context)).toMatchObject({
+      success: false, data: { appliedOps: 0, invalidOps: 1, failCount: 1 },
+    });
+    expect((await f.store.getConversationInfo(run.conversationId))?.metadataToken).toBe(beforeFailure?.metadataToken);
     const commit = f.store.commitConversation.bind(f.store);
     jest.spyOn(f.store, 'commitConversation').mockImplementationOnce(async value => {
       const current = (await f.store.getConversation(run.conversationId))!;

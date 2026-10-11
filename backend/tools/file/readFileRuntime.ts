@@ -141,9 +141,12 @@ interface ReadFileDebugInfo {
  * 单个文件读取结果
  */
 interface ReadResult {
+    index?: number;
     path: string;
     workspace?: string;
     success: boolean;
+    skipped?: boolean;
+    code?: string;
     type?: 'text' | 'multimodal' | 'binary';
     content?: string;
     lineCount?: number;      // 返回的行数（如果指定了范围）或总行数
@@ -553,16 +556,13 @@ export function createReadFileTool(
                 : undefined;
             
             const hasSinglePath = typeof typed.path === 'string' && typed.path.trim() !== '';
-            let batchFiles = Array.isArray(typed.files) ? typed.files : undefined;
+            const batchFiles = Array.isArray(typed.files) ? typed.files : undefined;
             // 某些 function-calling 客户端会把未提供的可选数组补成 []。当 path 有值时，
             // 空 files 应视为“未提供批量参数”，不能误判成单双模式冲突。
             const hasBatchFiles = !!batchFiles && batchFiles.length > 0;
 
             // 批量条数上限（发现 16）：超出截断并在结果中置 truncated 标记
             const batchFilesTruncated = !!batchFiles && batchFiles.length > MAX_BATCH_FILES;
-            if (batchFilesTruncated && batchFiles) {
-                batchFiles = batchFiles.slice(0, MAX_BATCH_FILES);
-            }
 
             if (hasSinglePath && hasBatchFiles) {
                 return { success: false, error: 'Provide either path or files, not both.' };
@@ -591,21 +591,17 @@ export function createReadFileTool(
                 }];
             }
 
-            const invalidRequestIndex = fileRequests.findIndex(file => file.path.trim() === '');
-            if (invalidRequestIndex !== -1) {
-                return { success: false, error: `files[${invalidRequestIndex}].path is required` };
-            }
-
             const results: ReadResult[] = [];
             const allMultimodal: MultimodalData[] = [];
-            let successCount = 0;
-            let failCount = 0;
             let multimodalBytes = 0;
             let multimodalTruncated = false;
 
             // 批量读取受控并发：替代逐文件串行 await（批量读大量文件时串行耗时线性增长）
             // mapWithConcurrency 保持输入顺序，聚合结果与 fileRequests 一一对应
-            const batchOutcomes = await mapWithConcurrency(fileRequests, BATCH_READ_CONCURRENCY, async (fileReq) => {
+            const processed = fileRequests.slice(0, MAX_BATCH_FILES);
+            const batchOutcomes = await mapWithConcurrency(processed, BATCH_READ_CONCURRENCY,
+                async (fileReq): Promise<{ result: ReadResult; multimodal?: MultimodalData[] }> => {
+                if (!fileReq.path.trim()) return { result: { path: fileReq.path, success: false, error: '文件路径不能为空。' } };
                 // 行范围只对文本文件有意义；非文本/多模态文件即使误传也忽略。
                 let lineRange: LineRange | undefined;
                 if (!isBinaryFile(fileReq.path) && (fileReq.startLine !== undefined || fileReq.endLine !== undefined)) {
@@ -636,43 +632,49 @@ export function createReadFileTool(
                 );
             });
 
-            for (const { result, multimodal } of batchOutcomes) {
-                results.push(result);
-
-                if (result.success) {
-                    successCount++;
-                    if (multimodal) {
-                        // 多模态附件累计字节上限（发现 16）：条数上限之外再加累计护栏，
-                        // 超限附件不再追加进 inlineData（文本结果仍保留），并标记截断。
-                        const size = typeof result.size === 'number' ? result.size : 0;
-                        if (multimodalBytes + size > MAX_BATCH_MULTIMODAL_BYTES) {
-                            multimodalTruncated = true;
-                        } else {
-                            multimodalBytes += size;
-                            allMultimodal.push(...multimodal);
-                        }
+            for (const [index, { result, multimodal }] of batchOutcomes.entries()) {
+                if (result.success && multimodal) {
+                    const size = typeof result.size === 'number' ? result.size : 0;
+                    if (multimodalBytes + size > MAX_BATCH_MULTIMODAL_BYTES) {
+                        multimodalTruncated = true;
+                        results.push({ ...result, index, success: false, skipped: true, code: 'MULTIMODAL_BUDGET',
+                            error: '本批附件超过 24 MiB，未向模型提供此文件内容；请单独读取或拆成更小批次。' });
+                        continue;
                     }
-                } else {
-                    failCount++;
+                    multimodalBytes += size;
+                    allMultimodal.push(...multimodal);
                 }
+                results.push({ ...result, index });
             }
-
-            const allSuccess = failCount === 0;
+            for (let index = processed.length; index < fileRequests.length; index++) {
+                results.push({ index, path: fileRequests[index].path, success: false, skipped: true, code: 'BATCH_LIMIT',
+                    error: '本次最多读取 20 个文件，此文件尚未读取；请在下一批重试。' });
+            }
+            const successCount = results.filter(result => result.success).length;
+            const failCount = results.filter(result => !result.success && !result.skipped).length;
+            const skippedCount = results.filter(result => result.skipped).length;
+            const allSuccess = failCount === 0 && skippedCount === 0;
             return {
                 success: allSuccess,
                 data: {
                     results,
                     successCount,
                     failCount,
-                    partial: successCount > 0 && failCount > 0,
+                    partial: successCount > 0 && !allSuccess,
                     totalCount: fileRequests.length,
+                    requestedCount: fileRequests.length,
+                    processedCount: processed.length,
+                    skippedCount,
+                    omittedPaths: results.filter(result => result.skipped).map(result => result.path),
                     multiRoot: isMultiRoot,
                     // 发现 16：files 超条数上限或多模态附件超累计字节上限时置位
                     truncated: batchFilesTruncated || multimodalTruncated,
                     multimodalTruncated
                 },
                 multimodal: allMultimodal.length > 0 ? allMultimodal : undefined,
-                error: allSuccess ? undefined : `${failCount} file${failCount === 1 ? '' : 's'} failed to read`
+                error: allSuccess ? undefined : skippedCount
+                    ? `${failCount} 个文件读取失败，${skippedCount} 个文件内容未提供，请按逐项原因重试。`
+                    : `${failCount} file${failCount === 1 ? '' : 's'} failed to read`
             };
         }
     };

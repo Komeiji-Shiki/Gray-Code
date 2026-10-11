@@ -34,6 +34,17 @@ const PLAN_TODOS: TodoItem[] = [
 ]
 
 describe('replayTodoStateFromMessages 增量重放', () => {
+  test('部分成功只重放回执确认的操作，失败状态不会被归一化成 pending', () => {
+    const state = replayTodoStateFromMessages([
+      assistantMsg(0, [tool('initial', 'todo_write', { todos: [{ id: 'a', content: 'A', status: 'completed' }] })]),
+      assistantMsg(1, [tool('partial', 'todo_update', { ops: [
+        { op: 'set_status', id: 'a', status: 'invalid' },
+        { op: 'set_content', id: 'a', content: '更新后的 A' },
+      ] }, { success: true, data: { partial: true, results: [{ index: 0, success: false }, { index: 1, success: true }] } })]),
+    ])
+    expect(state.todos).toEqual([{ id: 'a', content: '更新后的 A', status: 'completed' }])
+  })
+
   test('分段重放：全量结果 == 前缀状态 + 增量重放尾部', () => {
     const messages = [
       assistantMsg(0, [planTool('t1', 'create_plan', PLAN_TODOS)]),

@@ -85,13 +85,14 @@ export class PlatformSkills {
   tool(): RuntimeTool {
     const legacy = createSkillReadRuntime(() => null).generateReadSkillDeclaration();
     const declaration: ToolDeclaration = { ...legacy, description:
-      '按名称读取当前任务可用技能的完整正文。name 为空字符串时列出可用技能名称和说明；匹配任务时按需读取。技能范围由当前工作区、账号和对话配置决定。',
-      parameters: { ...legacy.parameters, properties: { name: { type: 'string', description: '技能名称；空字符串表示列出当前可用技能。' } } } };
+      '按名称读取当前任务可用技能的完整正文。省略 name 或传空字符串时列出可用技能；查找失败也返回可用名称。技能范围由当前工作区、账号和对话配置决定。',
+      parameters: { ...legacy.parameters, properties: { name: { type: 'string', description: '技能名称；省略时列出当前可用技能。' } } } };
     return { declaration, effects: () => ['workspace_read'], execute: async (args, context) => {
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
       const skills = await this.items(context.actorId, context.conversationId, context.workspace?.id, undefined, { workspace: context.workspace, actor: context.actor, signal: context.signal });
-      if (args.name === '') return { success: true, data: { skills: skills.filter(skill => skill.enabled)
+      if (!name) return { success: true, data: { skills: skills.filter(skill => skill.enabled)
         .map(({ name, description }) => ({ name, description })) } };
-      const selected = skills.find(skill => skill.name === args.name && skill.enabled);
+      const selected = skills.find(skill => skill.name === name && skill.enabled);
       const imported = selected && !selected.path ? this.app.product.importedSkills.find(skill => skill.id === selected.id) : undefined;
       if (selected && imported?.bundleId) {
         selected.basePath = await this.bundles.materialize(imported.bundleId);
@@ -102,7 +103,7 @@ export class PlatformSkills {
         getSkillSummaries: () => skills.filter(skill => skill.enabled).map(({ name, description }) => ({ name, description })),
         getEnabledSkills: () => skills.filter(skill => skill.enabled),
       }));
-      return reader.getReadSkillTool().handler(args);
+      return reader.getReadSkillTool().handler({ ...args, name });
     } };
   }
   async export(draft: ProductSettingsDraft, userOnly = false): Promise<PlatformSkillExport[]> {

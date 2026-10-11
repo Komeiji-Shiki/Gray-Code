@@ -6,6 +6,7 @@ import { createHistorySearchTool } from '../../../../backend/tools/history/histo
 import { createActivityStatsTool } from '../../../../backend/tools/activity/activityRuntime';
 import { DEFAULT_HISTORY_SEARCH_CONFIG, type HistorySearchToolConfig } from '../../../../backend/modules/settings/types';
 import type { PlatformApplication } from '../application';
+import { withBatchItems } from '../workspace/batchItems';
 
 /** 原对话工具操作已捕获的任务状态，成功后一次提交元数据。 */
 export function conversationTools(app: PlatformApplication, historyConfig: HistorySearchToolConfig = DEFAULT_HISTORY_SEARCH_CONFIG): RuntimeTool[] {
@@ -14,7 +15,7 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
       if (typeof context?.actorId !== 'string') throw new Error('活动查询缺少账号身份。');
       return app.activity.stats(context.actorId, query);
     })];
-  return tools.map(tool => ({
+  const runtimeTools: RuntimeTool[] = tools.map(tool => ({
     declaration: { name: tool.declaration.name, description: tool.declaration.description, parameters: tool.declaration.parameters },
     // 只访问所属任务，不读写工作区或其他账号的对话。
     effects: () => [],
@@ -60,4 +61,6 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
       return { ...result, attachments: multimodal };
     },
   }));
+  return runtimeTools.map(tool => tool.declaration.name === 'todo_update'
+    ? withBatchItems(tool, 'ops', { allowPartialSuccess: true }) : tool);
 }

@@ -201,8 +201,8 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
         batchPath,
         files: pick(
             lang,
-            '批量读取的文件列表，每一项可以单独设置行范围。',
-            'Files to read in batch mode; each item can have its own line range.'
+            '逐项读取的文件列表，可分别设置行范围。每次最多读取 20 项、提供 24 MiB 附件；失败或省略项返回 index、路径和原因，仅需重试这些项。',
+            'Files to read independently with optional per-file ranges. Each call reads up to 20 files and delivers up to 24 MiB of attachments. Failed or omitted items include their index, path and reason; retry only those items.'
         ),
         startLine: pick(
             lang,

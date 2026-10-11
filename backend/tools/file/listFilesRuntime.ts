@@ -220,8 +220,8 @@ function createTool(): Tool {
             name: 'list_files',
             readOnly: true,
             description: isZh
-                ? '列出一个或多个目录中的文件和子目录。文本文件的条目在能统计时会带 lineCount（行数），可据此决定是否用 read_file 按行范围读取。'
-                : 'List files and subdirectories in one or more directories. Text file entries include lineCount when it can be counted, which helps you decide whether to read the file with a line range in read_file.',
+                ? '列出一个或多个目录中的文件和子目录，省略 paths 时列出工作区根目录。文本文件在能统计时带 lineCount；批量失败项单独报告。'
+                : 'List files and subdirectories; omit paths for the workspace root. Text files include lineCount when available. Batch failures are reported per item.',
             category: 'file',
             parameters: {
                 type: 'object',
@@ -241,7 +241,7 @@ function createTool(): Tool {
                         default: false
                     }
                 },
-                required: ['paths']
+                required: []
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {

@@ -10,6 +10,7 @@ import { FileReadAccess } from './readAccess';
 import { NodeFileHost } from './fileHost';
 import { normalizeToolArgs } from '../../../../backend/tools/coerceToolArgs';
 import { SEARCH_IN_FILES_REPLACE_APPROVAL } from '../../../../backend/modules/settings/modeToolsPolicy';
+import { withBatchItems } from './batchItems';
 
 /**
  * 桌面与 Web 版默认启用多模态工具：渠道设置不再提供该开关，
@@ -56,7 +57,7 @@ export function readOnlySearchTool(app: PlatformApplication): RuntimeTool {
 /** parameters 用于参数规范化与校验；只读声明省略的替换参数仍按完整 schema 处理，交给审批拒绝而不是被静默剥离。 */
 function readTool(app: PlatformApplication, factory: (host: NodeFileHost) => Tool, declaration: Tool['declaration'],
   parameters = declaration.parameters): RuntimeTool {
-  return { declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters },
+  const tool: RuntimeTool = { declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters },
     ...(parameters !== declaration.parameters ? { validationSchema: parameters } : {}),
     normalizeArgs: args => normalizeToolArgs(declaration.name, args, parameters, {
       paramAliases: declaration.paramAliases, compatParams: declaration.compatParams,
@@ -75,5 +76,8 @@ function readTool(app: PlatformApplication, factory: (host: NodeFileHost) => Too
         // 平台版默认启用多模态：此前未注入能力，read_file 声明支持图片却在执行时一律拒绝。
         multimodalEnabled: true, capability: readMultimodalCapability(app, context) });
       return { ...result, attachments: multimodal };
-    } } as RuntimeTool;
+    } };
+  if (declaration.name === 'read_file') return withBatchItems(tool, 'files', { exclusiveWith: 'path' });
+  if (declaration.name === 'list_files') return withBatchItems(tool, 'paths');
+  return tool;
 }

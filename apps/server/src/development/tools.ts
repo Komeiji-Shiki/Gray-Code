@@ -9,16 +9,18 @@ import { createSymbolOutline, parseSymbolOutlineOptions, MAX_SYMBOL_PATHS, type 
 import { createReferencePage, parseReferencePageOptions, referenceSnippet } from '../../../../backend/tools/lsp/referencePage';
 import { createDefinitionPage, definitionSnippet, parseDefinitionPageOptions } from '../../../../backend/tools/lsp/definitionPage';
 import { FileReadAccess } from '../workspace/readAccess';
+import { withBatchItems } from '../workspace/batchItems';
 import type { PlatformApplication } from '../application';
 /** 保留原声明、批量限制、定义代码范围和按文件分组的引用结果。 */
 export function languageTools(app: PlatformApplication): RuntimeTool[] {
-  return [createGetSymbolsToolDeclaration(), createGotoDefinitionToolDeclaration(), createFindReferencesToolDeclaration()].map(declaration => ({
+  const tools: RuntimeTool[] = [createGetSymbolsToolDeclaration(), createGotoDefinitionToolDeclaration(), createFindReferencesToolDeclaration()].map(declaration => ({
     declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters },
     // 语言服务可能需要启动受管进程；原生异步只提前等待请求，授权与审批仍走完整执行入口。
     nativeAsync: true,
     effects: () => ['workspace_read', 'process_execute'],
     execute: (args, context) => executeNavigation(app, declaration.name, args, context),
   }));
+  return tools.map(tool => tool.declaration.name === 'get_symbols' ? withBatchItems(tool, 'paths') : tool);
 }
 async function executeNavigation(app: PlatformApplication, name: string, args: Record<string, unknown>, context: ToolContext) {
   if (!context.workspace) throw new Error('代码导航需要选择工作区。');

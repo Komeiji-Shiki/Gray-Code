@@ -291,7 +291,7 @@ export const toolMeta: Record<string, ToolMeta> = {
   'list_files': {
     descriptionDynamic: true,
     parameters: {
-      "paths": {"type":"array","items":{"type":"string"},"required":true},
+      "paths": {"type":"array","items":{"type":"string"}},
       "recursive": {"type":"boolean","default":false},
     },
     parametersDynamic: true,
@@ -404,7 +404,7 @@ export const toolMeta: Record<string, ToolMeta> = {
   'read_skill': {
     descriptionDynamic: true,
     parameters: {
-      "name": {"type":"string","required":true},
+      "name": {"type":"string"},
     },
     parametersDynamic: true,
     source: "backend/tools/skills/readSkillRuntime.ts",
@@ -534,7 +534,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/subagents/createDeclaration.ts",
   },
   'todo_update': {
-    description: "按顺序修改当前会话的待办事项。add 需要 id 和 content，status 默认 pending；set_status 需要 id 和 status；set_content 需要 id 和 content；cancel/remove 只需 id。结果返回数量、无效操作和未找到的 ID，不重复返回整张清单。",
+    description: "按顺序修改当前会话的待办事项。add 需要 id 和 content，status 默认 pending；set_status 需要 id 和 status；set_content 需要 id 和 content；cancel/remove 只需 id。逐项返回 results（index 从 0 开始）、成功数量和失败原因；部分成功会保存有效操作，失败项可单独重试。",
     parameters: {
       "ops": {"type":"array","description":"依次应用到当前待办清单的操作。","items":{"type":"object"},"required":true},
     },

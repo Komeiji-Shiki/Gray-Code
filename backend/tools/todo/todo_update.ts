@@ -111,9 +111,11 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
         removed: number;
         invalidOps: number;
         notFoundIds: string[];
+        results: Array<{ index: number; op?: string; id?: string; success: boolean; error?: string }>;
     };
 } {
     const notFoundIds: string[] = [];
+    const results: Array<{ index: number; op?: string; id?: string; success: boolean; error?: string }> = [];
     let invalidOps = 0;
     let added = 0;
     let updated = 0;
@@ -128,22 +130,29 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
     }
 
     const ops = Array.isArray(rawOps) ? rawOps : [];
-    for (const opAny of ops) {
+    for (const [index, opAny] of ops.entries()) {
+        const outcome: typeof results[number] = { index, success: false };
+        results.push(outcome);
         if (!opAny || typeof opAny !== 'object') {
             invalidOps++;
+            outcome.error = '操作必须是对象。';
             continue;
         }
 
         const op = (opAny as Record<string, unknown>).op;
         const id = (opAny as Record<string, unknown>).id;
+        if (typeof op === 'string') outcome.op = op;
+        if (typeof id === 'string') outcome.id = id.trim();
 
         if (typeof op !== 'string') {
             invalidOps++;
+            outcome.error = '需要提供 op。';
             continue;
         }
 
-        if (op !== 'add' && (typeof id !== 'string' || !id.trim())) {
+        if (typeof id !== 'string' || !id.trim()) {
             invalidOps++;
+            outcome.error = '需要提供非空的待办 id。';
             continue;
         }
 
@@ -155,6 +164,12 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
             const status = (opAny as Record<string, unknown>).status;
             if (!addId || typeof content !== 'string') {
                 invalidOps++;
+                outcome.error = 'add 需要 id 和 content。';
+                continue;
+            }
+            if (status !== undefined && !isTodoStatus(status)) {
+                invalidOps++;
+                outcome.error = '待办 status 无效。';
                 continue;
             }
             const nextStatus: TodoStatus = isTodoStatus(status) ? status : 'pending';
@@ -169,24 +184,28 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
                 if (!current) {
                     // theoretically unreachable, but keep safe
                     invalidOps++;
+                    outcome.error = '待办已不存在。';
                     continue;
                 }
                 current.content = content;
                 current.status = nextStatus;
                 updated++;
             }
+            outcome.success = true;
             continue;
         }
 
         const idx = indexById.get(normalizedId);
         if (idx === undefined) {
             notFoundIds.push(normalizedId);
+            outcome.error = `待办 ${normalizedId} 不存在。`;
             continue;
         }
 
         const current = result[idx];
         if (!current) {
             notFoundIds.push(normalizedId);
+            outcome.error = `待办 ${normalizedId} 不存在。`;
             continue;
         }
 
@@ -194,12 +213,14 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
             const status = (opAny as Record<string, unknown>).status;
             if (!isTodoStatus(status)) {
                 invalidOps++;
+                outcome.error = 'set_status 需要有效的 status。';
                 continue;
             }
             if (current.status !== status) {
                 current.status = status;
                 updated++;
             }
+            outcome.success = true;
             continue;
         }
 
@@ -207,12 +228,14 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
             const content = (opAny as Record<string, unknown>).content;
             if (typeof content !== 'string') {
                 invalidOps++;
+                outcome.error = 'set_content 需要 content。';
                 continue;
             }
             if (current.content !== content) {
                 current.content = content;
                 updated++;
             }
+            outcome.success = true;
             continue;
         }
 
@@ -221,6 +244,7 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
                 current.status = 'cancelled';
                 cancelled++;
             }
+            outcome.success = true;
             continue;
         }
 
@@ -228,23 +252,26 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
             result[idx] = null;
             indexById.delete(normalizedId);
             removed++;
+            outcome.success = true;
             continue;
         }
 
         invalidOps++;
+        outcome.error = `不支持的待办操作：${op}。`;
     }
 
     const finalTodos = result.filter((t): t is TodoItem => !!t);
     return {
         todos: finalTodos,
         stats: {
-            appliedOps: Array.isArray(rawOps) ? rawOps.length : 0,
+            appliedOps: results.filter(result => result.success).length,
             added,
             updated,
             cancelled,
             removed,
             invalidOps,
-            notFoundIds
+            notFoundIds,
+            results
         }
     };
 }
@@ -258,7 +285,7 @@ export function createTodoUpdateToolDeclaration(): ToolDeclaration {
           + 'set_status 需要 id 和 status；'
           + 'set_content 需要 id 和 content；'
           + 'cancel/remove 只需 id。'
-          + '结果返回数量、无效操作和未找到的 ID，不重复返回整张清单。',
+          + '逐项返回 results（index 从 0 开始）、成功数量和失败原因；部分成功会保存有效操作，失败项可单独重试。',
         category: 'todo',
         parameters: {
             type: 'object',
@@ -318,16 +345,21 @@ async function todoUpdateHandler(args: Record<string, unknown>, context?: ToolCo
         const { todos, stats } = await withTodoWriteLock(conversationId, async () => {
             const existing = await loadExistingTodos(context);
             const { todos: nextTodos, stats: nextStats } = applyOps(existing, rawOps);
-            await saveTodos(context, nextTodos);
+            if (nextStats.appliedOps > 0) await saveTodos(context, nextTodos);
             return { todos: nextTodos, stats: nextStats };
         });
 
         const counts = countByStatus(todos);
 
         return {
-            success: true,
+            success: stats.appliedOps > 0 || rawOps.length === 0,
+            ...(rawOps.length > 0 && stats.appliedOps === 0 ? { error: '没有待办操作成功，请按 results 修正失败项。' } : {}),
             data: {
                 ...stats,
+                partial: stats.appliedOps > 0 && stats.appliedOps < rawOps.length,
+                totalCount: rawOps.length,
+                successCount: stats.appliedOps,
+                failCount: rawOps.length - stats.appliedOps,
                 total: todos.length,
                 counts
             }

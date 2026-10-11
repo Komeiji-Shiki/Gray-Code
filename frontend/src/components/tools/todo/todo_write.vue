@@ -49,7 +49,14 @@ const resultData = computed(() => (props.result as any)?.data || {})
 
 const toolWarnings = computed<string[]>(() => {
   const w = resultData.value?.warnings
-  return Array.isArray(w) ? w.filter((s: unknown) => typeof s === 'string' && s.trim()) : []
+  const warnings = Array.isArray(w) ? w.filter((s: unknown) => typeof s === 'string' && s.trim()) : []
+  const results = resultData.value?.results
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (item?.success === false && typeof item.error === 'string') warnings.push(`#${item.index + 1}: ${item.error}`)
+    }
+  }
+  return warnings
 })
 
 // 只重放到本卡片的位置；store 按停止位置缓存，其他消息流式输出时历史卡片不再逐批重新遍历。

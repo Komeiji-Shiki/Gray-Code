@@ -134,4 +134,33 @@ describe('read_file batch requests', () => {
         expect(mixed).toMatchObject({ success: false, error: 'Provide either path or files, not both.' });
         expect(host.readFile).not.toHaveBeenCalled();
     });
+
+    test('空路径只影响该项，超过批量上限的文件逐项列出且不读取', async () => {
+        const files = [{ path: '' }, ...Array.from({ length: 22 }, () => ({ path: 'a.txt' }))];
+        const result = await createReadFileTool().handler({ files }) as any;
+        expect(result).toMatchObject({ success: false, data: {
+            requestedCount: 23, processedCount: 20, totalCount: 23, successCount: 19, failCount: 1, skippedCount: 3,
+            partial: true, truncated: true, omittedPaths: ['a.txt', 'a.txt', 'a.txt'],
+        } });
+        expect(result.data.results[0]).toMatchObject({ index: 0, success: false });
+        expect(result.data.results.slice(20)).toEqual([20, 21, 22].map(index => expect.objectContaining({
+            index, path: 'a.txt', success: false, skipped: true, code: 'BATCH_LIMIT',
+        })));
+        expect(host.readFile).toHaveBeenCalledTimes(19);
+    });
+
+    test('附件预算超限的文件不计成功，仍保留已提供附件及准确的重试路径', async () => {
+        const bytes = Buffer.alloc(5 * 1024 * 1024);
+        host.stat.mockResolvedValue({ size: bytes.length, type: 1 });
+        host.readFile.mockResolvedValue(bytes);
+        const result = await createReadFileTool().handler({ files: Array.from({ length: 5 }, (_, index) => ({ path: `${index}.pdf` })) }, {
+            multimodalEnabled: true, capability: { supportsImages: true, supportsDocuments: true, supportsHistoryMultimodal: true },
+        }) as any;
+        expect(result).toMatchObject({ success: false, data: {
+            requestedCount: 5, processedCount: 5, successCount: 4, failCount: 0, skippedCount: 1,
+            partial: true, multimodalTruncated: true, omittedPaths: ['4.pdf'],
+        } });
+        expect(result.data.results[4]).toMatchObject({ index: 4, path: '4.pdf', success: false, skipped: true, code: 'MULTIMODAL_BUDGET' });
+        expect(result.multimodal).toHaveLength(4);
+    });
 });

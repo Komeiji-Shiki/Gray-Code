@@ -34,6 +34,9 @@ GrayCode 集成代码检索、文件修改、差异审阅、终端和 Git 工作
 - **`goto_definition`**：沿用每页最多 500 个位置、正文合计最多 60,000 字符的预算，保留语言服务的定义顺序；用 `maxResults` 缩小页面、`offset` / `nextOffset` 续查。`definitionCount` 是当前页数量，`totalCount` 是全部数量。超长单个定义标记 `contentTruncated`，其 `path` / `line` / `endLine` 仍指向源码范围，可据此读取剩余代码；文件或语言索引变化后从 0 重查。新增分页参数会使升级后的工具请求前缀改变一次。
 
 ### 安全修改与 Diff 审阅
+- **批量逐项处理**：文件读取、目录列举、符号读取、代码插入/删除、创建目录、删除文件和结构化差异的单项参数错误分别返回，其他有效项继续执行。`results[].index` 对应原请求中从 0 开始的位置；只需修正重试失败项，文件修改仍经过原有审阅与冲突保护。
+- **读取省略信息**：`read_file` 一次最多读取 20 项、提供 24 MiB 附件。超限项保留在 results 中，标记 `skipped`、原因和路径，不计入成功数；`requestedCount` / `processedCount` / `skippedCount` 分别说明请求数量、已处理数量和未提供内容数量，`omittedPaths` 列出应拆批重读的路径。省略 `list_files.paths` 时列出工作区根目录。
+- **待办更新回执**：`todo_update.appliedOps` 只统计成功操作，results 逐项给出位置与原因。全部失败返回失败且不写入清单；部分成功保存有效操作并标记 partial，失败项不会在界面上被重放成已完成。旧版待办记录继续可读。
 - **工具选择**：读取使用 `read_file`，局部修改使用 `apply_diff`，新建或完整重写使用 `write_file`，删除使用 `delete_file`。文件修改沿用现有文件事务与 Diff 冲突保护：审阅期间文件被其他操作改变时拒绝覆盖，有未保存草稿时也会明确提示。
 - **原编码保留**：`apply_diff`、`write_file` 与搜索替换按原文件编码和 BOM 写回。旧编码必须能够逐字节还原原文件，新内容也必须能用原编码表示；无法满足时明确拒绝修改。
 - **替换参数**：`search_in_files(mode: "replace")` 必须显式提供 `replace`，省略会拒绝而不修改文件；`replace: ""` 才表示删除匹配内容。替换不支持 `offset` 分页。

@@ -114,6 +114,8 @@ const failCount = computed(() => {
   return readResults.value.filter(r => !r.success).length
 })
 
+const skippedCount = computed(() => Number((props.result as any)?.data?.skippedCount ?? 0))
+
 // 获取行范围摘要文本
 function getLineRangeSummary(result: ReadResult): string | null {
   if (result.startLine === undefined && result.endLine === undefined) {
@@ -250,6 +252,10 @@ onBeforeUnmount(() => {
         <span v-if="failCount > 0" class="stat error">
           <span class="codicon codicon-error"></span>
           {{ failCount }}
+        </span>
+        <span v-if="skippedCount > 0" class="stat">
+          <span class="codicon codicon-warning"></span>
+          {{ t('components.tools.presentation.searchReplace.skipped', { count: skippedCount }) }}
         </span>
         <span class="stat total">{{ t('components.tools.file.readFilePanel.total', { count: hasResult ? readResults.length : fileRequests.length }) }}</span>
       </div>

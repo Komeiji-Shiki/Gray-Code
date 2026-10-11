@@ -11,6 +11,8 @@ import { createListFilesTool } from '../../../backend/tools/file/listFilesRuntim
 import { createReadFileTool } from '../../../backend/tools/file/readFileRuntime';
 import { MAX_LINE_COUNT_FILE_BYTES } from '../../../backend/tools/shared/fileSizeGuards';
 import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
+import { RuntimeToolRegistry } from '../src/runtime/tools';
+import { PlatformSkills } from '../../../apps/server/src/skills/service';
 
 let directory: string;
 let files: WorkspaceFiles;
@@ -19,13 +21,65 @@ let context: ToolContext;
 let host: NodeFileHost;
 const propose = jest.fn();
 
+test('批量文件工具逐项校验并保持原始位置，默认目录入口可以执行', async () => {
+  await writeFile(path.join(directory, 'sample.txt'), 'one\ntwo\nthree\n');
+  const tools = [...readTools(app), ...mutationTools(app, 'unified')];
+  const registry = new RuntimeToolRegistry();
+  for (const tool of tools) registry.register(tool);
+  const invoke = async (name: string, args: Record<string, unknown>) => {
+    const entry = registry.catalog([name]).entries.get(name)!;
+    const normalized = entry.normalizeArguments(args);
+    const prepared = entry.tool.normalizeArgs?.(normalized).args ?? normalized;
+    expect(entry.validate(prepared)).toBe(true);
+    return entry.tool.execute(prepared, context) as Promise<any>;
+  };
+  const read = await invoke('read_file', { files: [
+    { path: 'sample.txt', startLine: 0 }, null, { path: 'sample.txt', startLine: 2, endLine: 2 },
+  ] });
+  expect(read.data).toMatchObject({ partial: true, successCount: 1, failCount: 2, totalCount: 3 });
+  expect(read.data.results.map((item: any) => [item.index, item.success])).toEqual([[0, false], [1, false], [2, true]]);
+  expect(read.data.results[2].content).toBe('   2 | two');
+  for (const [name, valid, invalid] of [
+    ['insert_code', { path: 'sample.txt', line: 2, content: 'inserted' }, { path: 'sample.txt', line: 0, content: 'bad' }],
+    ['delete_code', { path: 'sample.txt', start_line: 2, end_line: 2 }, { path: 'sample.txt', start_line: 0, end_line: 1 }],
+  ] as const) {
+    const result = await invoke(name, { files: [invalid, valid] });
+    expect(result.data).toMatchObject({ partial: true, successCount: 1, failCount: 1 });
+    expect(result.data.results[1]).toMatchObject({ index: 1, success: true, status: 'accepted' });
+  }
+  const diff = await invoke('apply_diff', { path: 'sample.txt', hunks: [
+    { oldContent: 123, newContent: 'invalid' }, { oldContent: 'two', newContent: 'updated' },
+  ] });
+  expect(diff.data).toMatchObject({ appliedCount: 1, failedCount: 1, diffCount: 2, partial: true });
+  expect(diff.data.results.map((item: any) => [item.index, item.success])).toEqual([[0, false], [1, true]]);
+  // 有效修改仍经过原审阅入口，失败项不会创建修改提案。
+  expect(propose).toHaveBeenCalledTimes(3);
+  const listed = await invoke('list_files', {});
+  expect(listed.success).toBe(true);
+  expect(listed.data.results).toHaveLength(1);
+  const partialList = await invoke('list_files', { paths: [false, '.'] });
+  expect(partialList.data.results.map((item: any) => [item.index, item.success])).toEqual([[0, false], [1, true]]);
+});
+
+test('技能默认入口和查找失败都返回当前可用目录', async () => {
+  const skills = new PlatformSkills(app);
+  jest.spyOn(skills, 'items').mockResolvedValue([{ id: 'sample', name: 'sample', description: '示例技能', enabled: true } as any]);
+  const tool = skills.tool();
+  const registry = new RuntimeToolRegistry();
+  registry.register(tool);
+  expect(registry.catalog(['read_skill']).entries.get('read_skill')!.validate({})).toBe(true);
+  expect(await tool.execute({}, context)).toMatchObject({ success: true, data: { skills: [{ name: 'sample' }] } });
+  expect(await tool.execute({ name: 'missing' }, context)).toMatchObject({ success: false, data: { skills: [{ name: 'sample' }] } });
+});
+
 beforeEach(async () => {
   await mkdir('.tmp', { recursive: true });
   directory = await mkdtemp(path.resolve('.tmp', 'text-lines-'));
   files = new WorkspaceFiles();
   propose.mockReset().mockResolvedValue({ status: 'accepted', id: 'proposal' });
-  app = { files, diffs: { propose }, product: { runtimeSettings: () => ({
+  app = { files, diffs: { propose }, actor: () => ({ id: 'owner', role: 'owner' }), product: { runtimeSettings: () => ({
     getFindFilesConfig: () => ({ excludePatterns: [] }), getListFilesConfig: () => ({ ignorePatterns: [] }),
+    getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }),
   }) } } as unknown as PlatformApplication;
   context = { actorId: 'owner', runId: 'text-lines', signal: new AbortController().signal,
     workspace: { id: 'workspace', name: 'Fixture', directory, deviceId: 'local' },

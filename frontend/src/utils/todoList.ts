@@ -268,7 +268,12 @@ export function replayTodoStateFromMessages(
         if (tool.name === 'todo_update') {
           const opsInput = (tool.args as any)?.ops
           if (Array.isArray(opsInput)) {
-            list = applyTodoUpdateOps(list, opsInput)
+            // 新回执逐项确认执行结果，不能把失败项按原调用参数重放成已完成；旧记录仍按原规则读取。
+            const results = (mergedResult as any)?.data?.results
+            const applied = Array.isArray(results)
+              ? results.filter(item => item?.success === true).map(item => opsInput[item.index])
+              : opsInput
+            list = applyTodoUpdateOps(list, applied)
             markTouched()
           }
         }

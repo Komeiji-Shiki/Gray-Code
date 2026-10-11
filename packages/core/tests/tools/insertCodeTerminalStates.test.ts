@@ -126,11 +126,11 @@ describe('insert_code 终态语义（diff 审阅）', () => {
     test('边界：line 非正整数返回校验错误（不进入 diff 审阅）', async () => {
         const result = await runInsertCode([{ path: 'sample.ts', line: 0, content: 'X' }]);
         expect(result.success).toBe(false);
-        expect(result.error).toBe('1 个文件未完成修改。');
+        expect(result.error).toContain('1 个条目未完成');
         expect(result.data.results[0]).toMatchObject({
             path: 'sample.ts',
             success: false,
-            error: expect.stringContaining('插入行号或内容无效')
+            error: expect.stringContaining('files[0]/line')
         });
         expect(propose).not.toHaveBeenCalled();
     });
