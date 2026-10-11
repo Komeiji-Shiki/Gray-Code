@@ -49,6 +49,14 @@ export function filterPromptModeToolNames(
     return names.filter(name => !DOCUMENT_TOOL_NAMES.has(name) || options.planExecution === true && PLAN_EXECUTION_TOOL_NAMES.has(name));
 }
 
+/** search_in_files 的 replace 操作按此名称参与审批，受限模式可以单独拒绝它而保留搜索。 */
+export const SEARCH_IN_FILES_REPLACE_APPROVAL = 'search_in_files.replace';
+
+/** 本轮实际授予的工具里没有通用写工具时，拒绝借 search_in_files 的 replace 修改文件。 */
+export function searchReplaceRestriction(toolNames: readonly string[]): Record<string, 'deny'> {
+    return isSearchInFilesReplaceForbidden(toolNames) ? { [SEARCH_IN_FILES_REPLACE_APPROVAL]: 'deny' } : {};
+}
+
 /**
  * 检查路径是否允许在指定 GrayCode 文档目录下写入
  *

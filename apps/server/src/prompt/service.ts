@@ -20,7 +20,7 @@ import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
-import { filterPromptModeToolNames } from '../../../../backend/modules/settings/modeToolsPolicy';
+import { filterPromptModeToolNames, searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
 import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
@@ -147,16 +147,18 @@ export class PlatformPromptService {
     const resumed = typeof input.previousTurn?.turnDynamicContext === 'string' ? deserializePromptContextCache(input.previousTurn.turnDynamicContext) : undefined;
     // 旧回合的缓存可能把频道环境放在独立 user 消息中，续跑时改由当前发言承载。
     const beforeHistoryMessages = withoutStandaloneBotEnvironment((resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], botEnvironment);
+    const toolNames = [...new Set([...filterPromptModeToolNames(mode, input.agent.toolNames, { planExecution: hasApprovedPlanExecution(input.history) })
+      .filter(name => !profileToolNames || profileToolNames.has(name)),
+      ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])];
     return {
       systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
       // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
-      toolNames: [...new Set([...filterPromptModeToolNames(mode, input.agent.toolNames, { planExecution: hasApprovedPlanExecution(input.history) })
-        .filter(name => !profileToolNames || profileToolNames.has(name)),
-        ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])],
+      toolNames,
       toolApproval: {
         ...engineeringLogActionRestrictions(mode.toolPolicy ?? []),
         ...engineeringLogActionRestrictions(profile?.toolNames ?? []),
+        ...searchReplaceRestriction(toolNames),
       },
       promptContext: { beforeHistoryMessages,
         afterHistoryMessages: [...((resumed ?? bundle).afterHistoryMessages as PlatformMessage[]).filter(message => botEnvironment?.version !== 1

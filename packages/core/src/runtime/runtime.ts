@@ -673,10 +673,11 @@ export class PlatformRuntime {
       if (!entry.validate(call.args)) return finish({ success: false, code: 'INVALID_ARGUMENTS', error: `Tool arguments do not match its schema: ${JSON.stringify(entry.validate.errors)}` });
       const effects = entry.tool.effects(call.args);
       const approvalName = entry.tool.approvalName?.(call.args);
-      const approvalRule = agent.toolApproval?.[call.name] ?? (approvalName ? agent.toolApproval?.[approvalName] : undefined);
+      // 合并工具按操作继承的 deny 是模式或旧清单划定的范围，新名称上的 auto/ask 不能覆盖它。
+      const ruleDenied = agent.toolApproval?.[call.name] === 'deny' || !!approvalName && agent.toolApproval?.[approvalName] === 'deny';
       const actor = await this.services.actor(run.actorId, run);
       const denied = actor ? authorizeEffects(actor, effects, workspace, call.name) : 'Run account no longer exists.';
-      if (denied || approvalRule === 'deny') return finish({ success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' });
+      if (denied || ruleDenied) return finish({ success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' });
       let approval = needsApproval(agent, call.name, effects, approvalName);
       let reviewReason: string | undefined;
       const reviewed = !approval && !!agent.reviewerProviderId && (agent.reviewerToolNames

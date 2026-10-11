@@ -7,7 +7,7 @@ import { buildLastSentHistoryProjection, restoreLastSentHistory } from '../../..
 import { ensureSubAgentTranscriptTracking, getSubAgentSummaryCoverage, getSubAgentTranscriptIndex } from '../../../../backend/tools/subagents/executor/historyMetadata';
 import type { PlatformApplication } from '../application';
 import { configuredAgent } from '../settings/agent';
-import { filterPromptModeToolNames } from '../../../../backend/modules/settings/modeToolsPolicy';
+import { filterPromptModeToolNames, searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
 import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { createSubagentRecord } from './profile';
@@ -140,7 +140,7 @@ export class LegacySubagents {
     agent.toolNames = filterPromptModeToolNames(mode, agent.toolNames)
       .filter(name => !profileToolNames || profileToolNames.has(name));
     agent.toolApproval = { ...agent.toolApproval, ...engineeringLogActionRestrictions(mode.toolPolicy ?? []),
-      ...engineeringLogActionRestrictions(profile?.toolNames ?? []) };
+      ...engineeringLogActionRestrictions(profile?.toolNames ?? []), ...searchReplaceRestriction(agent.toolNames) };
     const workspaceId = source.state.metadata.workspaceId;
     const workspace = typeof workspaceId === 'string' ? this.app.workspace(actorId, workspaceId, []) : undefined;
     const modelSelection = { providerId: provider.id, modelOverride: selected?.modelId || undefined };

@@ -9,6 +9,7 @@ import { getMultimodalCapability, type MultimodalCapability } from '../../../../
 import { FileReadAccess } from './readAccess';
 import { NodeFileHost } from './fileHost';
 import { normalizeToolArgs } from '../../../../backend/tools/coerceToolArgs';
+import { SEARCH_IN_FILES_REPLACE_APPROVAL } from '../../../../backend/modules/settings/modeToolsPolicy';
 
 /**
  * 桌面与 Web 版默认启用多模态工具：渠道设置不再提供该开关，
@@ -41,6 +42,9 @@ export function readTools(app: PlatformApplication): RuntimeTool[] {
       }),
       parallelRead: true,
       nativeAsync: declaration.name === 'search_in_files' ? false : true,
+      ...(declaration.name === 'search_in_files'
+        ? { approvalName: (args: Record<string, unknown>) => args.mode === 'replace' ? SEARCH_IN_FILES_REPLACE_APPROVAL : declaration.name }
+        : {}),
       effects: args => declaration.name === 'search_in_files' && args.mode === 'replace' ? ['workspace_write'] : ['workspace_read'],
       execute: async (args, context: ToolContext) => {
         const readAccess = declaration.name === 'search_in_files' && args.mode === 'replace' ? undefined : new FileReadAccess(app, context);

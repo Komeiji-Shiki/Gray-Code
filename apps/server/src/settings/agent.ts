@@ -42,6 +42,16 @@ export function upgradeAgentToolNames(agent: AgentDefinition): AgentDefinition {
   return { ...upgraded, toolNames: upgradeToolNames(upgraded.toolNames) };
 }
 
+type ToolEnablement = Pick<SettingsManager, 'getToolsEnabled' | 'isToolEnabled'>;
+
+/**
+ * 合并工具中某个操作是否启用：用户单独设置过新名称时以新名称为准，否则沿用该操作原工具的启用项。
+ * 工具清单、工程日志和终端的 argv / input 操作共用这一条规则。
+ */
+export function mergedOperationEnabled(preferences: ToolEnablement, toolName: string, legacyName: string): boolean {
+  return preferences.isToolEnabled(Object.hasOwn(preferences.getToolsEnabled(), toolName) ? toolName : legacyName);
+}
+
 /** 桌面与 Bot 共用工具启用和审批配置，任务开始时捕获一次。 */
 export function configuredAgent(app: PlatformApplication, agent: AgentDefinition): AgentDefinition {
   agent = upgradeAgentToolNames(agent);
@@ -51,12 +61,8 @@ export function configuredAgent(app: PlatformApplication, agent: AgentDefinition
   const names = agent.id === 'default' ? app.tools.names().filter(name => !name.startsWith('mcp_')) : agent.toolNames;
   // 审批规则覆盖完整内置目录：环境工具之后由提示词准备追加，执行时仍需要同一套规则。
   const selected = agent.id === 'default' ? names.filter(name => defaultToolName(app, name)) : names;
-  const enabled = preferences.getToolsEnabled();
-  return { ...agent, toolNames: [...new Set([...selected, ...mcpNames])].filter(name => {
-    if (name === 'engineering_log' && !Object.hasOwn(enabled, name)) {
-      return Object.values(ENGINEERING_LOG_LEGACY_NAMES).some(legacy => preferences.isToolEnabled(legacy));
-    }
-    return preferences.isToolEnabled(name);
-  }),
+  return { ...agent, toolNames: [...new Set([...selected, ...mcpNames])].filter(name => name === 'engineering_log'
+    ? Object.values(ENGINEERING_LOG_LEGACY_NAMES).some(legacy => mergedOperationEnabled(preferences, name, legacy))
+    : preferences.isToolEnabled(name)),
     toolApproval: { ...toolApprovalRules(preferences, names, mcpNames), ...agent.toolApproval } };
 }

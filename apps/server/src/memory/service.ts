@@ -15,6 +15,7 @@ import {
   type EngineeringLogAction,
 } from '../../../../backend/tools/memory/engineeringLog';
 import type { PlatformApplication } from '../application';
+import { mergedOperationEnabled } from '../settings/agent';
 import { DatabaseMemoryStore } from './store';
 
 const emptyHost: MemoryToolHost = { getGlobalMemoryManager: () => null, getMemoryManagerForWorkspace: async () => null,
@@ -72,11 +73,9 @@ export class PlatformMemory {
   private execute(args: Record<string, unknown>, context: ToolContext) {
     const execute = async () => {
       context.signal.throwIfAborted();
+      // 按操作的 deny 由运行器统一拒绝；这里只核对旧工具关闭后合并入口不能重新开放该操作。
       const legacyName = ENGINEERING_LOG_LEGACY_NAMES[args.action as EngineeringLogAction];
-      const preferences = this.app.product.runtimeSettings();
-      const enabled = preferences.getToolsEnabled();
-      const selectedName = Object.hasOwn(enabled, 'engineering_log') ? 'engineering_log' : legacyName;
-      if (!preferences.isToolEnabled(selectedName) || context.agent?.toolApproval?.[legacyName] === 'deny') {
+      if (!mergedOperationEnabled(this.app.product.runtimeSettings(), 'engineering_log', legacyName)) {
         return { success: false, code: 'PERMISSION_DENIED', error: `工程日志操作 ${args.action} 已禁用。` };
       }
       const source = { origin: 'model_tool', runId: context.runId, conversationId: context.conversationId, toolCallId: context.toolCallId };

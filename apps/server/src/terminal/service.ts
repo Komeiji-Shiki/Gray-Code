@@ -13,6 +13,7 @@ import { stat } from 'node:fs/promises';
 import { computerHostExecutable } from '../computer/native';
 import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
+import { mergedOperationEnabled } from '../settings/agent';
 import { TerminalTaskPort } from './tasks';
 import { TerminalOutputBuffer } from './output';
 import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../../../../shared/processOutput';
@@ -108,8 +109,7 @@ export class PlatformTerminals {
     config: ExecuteCommandToolConfig,
   ) {
     if (this.closing) throw new Error('宿主正在关闭，不能启动新命令。');
-    const enabled = this.app.product.runtimeSettings().getToolsEnabled();
-    if (args.mode === 'argv' && !Object.hasOwn(enabled, 'execute_command') && enabled.run_command === false) {
+    if (args.mode === 'argv' && !mergedOperationEnabled(this.app.product.runtimeSettings(), 'execute_command', 'run_command')) {
       throw new Error('argv 命令已被原 run_command 工具设置关闭；请在工具设置中启用 execute_command。');
     }
     if (!context.workspace || !context.conversationId) throw new Error('请先为任务选择工作区。');
@@ -470,8 +470,7 @@ export class PlatformTerminals {
     return nextActions.length ? { ...data, nextActions } : data;
   }
   async manageTask(args: Record<string, unknown>, context: ToolContext) {
-    const enabled = this.app.product.runtimeSettings().getToolsEnabled();
-    if (args.action === 'input' && !Object.hasOwn(enabled, 'terminal_task') && enabled.process_session === false) {
+    if (args.action === 'input' && !mergedOperationEnabled(this.app.product.runtimeSettings(), 'terminal_task', 'process_session')) {
       throw new Error('终端输入已被原 process_session 工具设置关闭；请在工具设置中启用 terminal_task。');
     }
     if (!context.conversationId || !context.workspace) throw new Error('请先为当前会话选择工作区。');

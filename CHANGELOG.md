@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Changed
+  - 只授予搜索的受限模式（如 Ask）重新拒绝 `search_in_files` 的 replace，修复 1.x 已有的这条防护在平台中缺失的问题；合并工具按操作继承的 deny 不再被新名称上的自动执行覆盖，旧工具启用项的兼容判断收拢为一处。
   - `main` 专注 2.x 独立平台，移除 1.x 扩展入口、仅扩展可达的宿主代码、构建发布配置与专用测试；1.x 继续保留在 `v1-extension` 分支，平台仍使用的共享算法、类型与旧数据读取路径继续保留。
   - 终端统一使用 `execute_command` 与 `terminal_task`：新增直接传入参数数组的 `argv` 模式和任务输入，保留原 Shell 执行、后台通知、取消、超时及持久会话能力。移除重复的 `run_command`、`process_session`、`workspace_files`、`search_files` 模型入口，文件修改沿用原有文件事务和 Diff 冲突保护，字面量搜索统一由 `search_in_files` 提供并保留编码覆盖。
   - 工程日志的七个操作合并为 `engineering_log`，个人长期记忆保留独立入口；旧 Agent、模式与子代理清单在读取时升级，原工程日志操作范围、启用项和审批设置继续生效，旧消息卡片与存储格式保持兼容。
