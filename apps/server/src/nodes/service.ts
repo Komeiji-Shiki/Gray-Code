@@ -107,13 +107,16 @@ export class ExecutionNodes {
           if (!peer || peer.revokedAt || peer.direction !== 'incoming' || peer.nodeId !== nodeId || !peer.tokenHash
             || !timingSafeEqual(Buffer.from(nodeHash(token), 'hex'), Buffer.from(peer.tokenHash, 'hex'))) throw new Error('设备凭据已失效。');
           this.executor.validateGrant(peer.grant);
-          if (this.incoming.has(peer.id)) throw new Error('同一设备已经连接，请先关闭旧连接，检查是否复制了设备数据。');
+          if (this.incoming.get(peer.id)?.wire.online) throw new Error('同一设备已经连接，请先关闭旧连接，检查是否复制了设备数据。');
           return peer.id;
         },
         connected: (id, socket) => {
           const peer = this.registry.peers.get(id)!; const connectionId = randomUUID();
+          // 旧连接掉线后的释放可能仍在进行：接受重连，但新连接的请求和释放都排在旧释放之后，远程控制等状态不会被迟到的旧释放覆盖。
+          const ready = this.incoming.get(id)?.releasing ?? Promise.resolve();
           const wire = new NodeWire(socket, {
             request: async (method, params) => {
+              await ready;
               if (method === 'pair.revoke') {
                 await this.registry.revoke(peer); await this.executor.revoked(peer.id); this.changed();
                 // 先返回撤销结果，再结束此连接；重试时仍以服务端撤销记录为准。
@@ -123,7 +126,7 @@ export class ExecutionNodes {
             },
             close: () => {
               const connection = this.incoming.get(id); if (!connection || connection.wire !== wire) return;
-              connection.releasing = this.executor.disconnected(id).catch(error => this.app.publish({ type: 'notification', message: String(error) })).finally(() => {
+              connection.releasing = ready.then(() => this.executor.disconnected(id)).catch(error => this.app.publish({ type: 'notification', message: String(error) })).finally(() => {
                 if (this.incoming.get(id) === connection) this.incoming.delete(id); this.changed();
               }); this.changed();
             },
