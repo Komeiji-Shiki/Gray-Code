@@ -11,7 +11,7 @@
  */
 import {
     extractSummaryAnchorText
-} from '../../modules/api/chat/services/SummarizeService';
+} from '../../modules/api/chat/services/SummaryAlgorithms';
 import type { Content } from '../../modules/conversation/types';
 
 function userMessage(text: string): Content {

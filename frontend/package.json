@@ -7,14 +7,14 @@
     "node": ">=24.11.0"
   },
   "scripts": {
-    "dev": "vite",
-    "dev:local": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "dev": "vite --config vite.platform.config.ts",
+    "dev:local": "vite --config vite.platform.config.ts --host 127.0.0.1 --port 5173 --strictPort",
     "typecheck": "vue-tsc --noEmit",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "npm run build:platform",
     "build:platform": "vue-tsc --noEmit && vite build --config vite.platform.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview",
+    "preview": "vite preview --config vite.platform.config.ts",
     "build:platform:trial": "vite build --config vite.platform.config.ts"
   },
   "dependencies": {

@@ -19,7 +19,6 @@
 
 <p align="center">
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github&label=Releases" alt="Latest Release" /></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
   <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue?style=flat-square" alt="AGPL-3.0-only with Cubism exception" /></a>
@@ -95,11 +94,9 @@ The [user guide](https://github.com/Komeiji-Shiki/Gray-Code/wiki) covers setup a
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for architecture, and [CHANGELOG.md](CHANGELOG.md) for release history.
 
-## 1.x Extension Installation and Updates
+## 1.x Extension
 
-GrayCode requires VS Code `^1.84.0` or newer. Install it from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode), or download `graycode-*.vsix` from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) and run `Extensions: Install from VSIX...` from the Command Palette.
-
-The extension can check GitHub Releases automatically. You can also check or update manually under **Settings → General → Automatic Updates**. Extension source and build instructions are available on the [v1-extension branch](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension).
+Installation, update and development instructions for the 1.x VS Code extension are maintained on the [`v1-extension` branch](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension). `main` contains the standalone desktop and Web platform; extension entry points and dedicated builds have been removed.
 
 ## Community
 

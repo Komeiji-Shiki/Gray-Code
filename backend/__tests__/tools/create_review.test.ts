@@ -1,33 +1,30 @@
-const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
+const mockPrepareParent = jest.fn().mockResolvedValue(undefined)
 const mockStat = jest.fn().mockRejectedValue({ code: 'FileNotFound' })
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
 const mockResolveUriWithInfo = jest.fn()
 const mockSyncProgressFromReviewArtifact = jest.fn().mockResolvedValue([])
 
-jest.mock('vscode', () => ({
-  workspace: {
-    fs: {
-      createDirectory: mockCreateDirectory,
-      stat: mockStat,
-      writeFile: mockWriteFile
-    }
-  },
-  Uri: {
-    file: (fsPath: string) => ({ fsPath })
+jest.mock('../../../backend/tools/shared/artifactHost', () => {
+  const actual = jest.requireActual('../../../backend/tools/shared/artifactHost')
+  return {
+    ...actual,
+    documentWriteFile: (...args: any[]) => mockWriteFile(...args),
+    documentStat: (...args: any[]) => mockStat(...args),
+    ensureParentDir: (...args: any[]) => mockPrepareParent(...args),
+    ensureParentDirWithFs: (...args: any[]) => mockPrepareParent(...args),
+    getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
+    resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
+    isScopedPathAllowedWithMultiRoot: (value: string, validator: (path: string) => boolean) =>
+      actual.withArtifactHost({ workspaces: () => mockGetAllWorkspaces() }, () => actual.isScopedPathAllowedWithMultiRoot(value, validator))
   }
-}))
-
-jest.mock('../../../backend/tools/utils', () => ({
-  getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
-  resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args)
-}))
+})
 
 jest.mock('../../../backend/tools/progress/autoSyncRuntime', () => ({
   syncProgressFromReviewArtifact: (...args: any[]) => mockSyncProgressFromReviewArtifact(...args)
 }))
 
-import { createCreateReviewTool } from '../../../backend/tools/review/create_review'
+import { createCreateReviewTool } from '../../../backend/tools/review/create_reviewRuntime'
 
 describe('create_review tool', () => {
   beforeEach(() => {
@@ -89,9 +86,7 @@ describe('create_review tool', () => {
         status: 'in_progress'
       })
     )
-    expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.graycode/review'
-    })
+    expect(mockPrepareParent).toHaveBeenCalledWith('D:/workspace/.graycode/review/workspace-review.md')
     expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/review/workspace-review.md')
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromReviewArtifact).toHaveBeenCalledWith({

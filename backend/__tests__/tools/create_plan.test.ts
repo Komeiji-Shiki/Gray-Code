@@ -1,4 +1,4 @@
-const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
+const mockPrepareParent = jest.fn().mockResolvedValue(undefined)
 const mockReadFile = jest.fn()
 const mockStat = jest.fn()
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
@@ -7,31 +7,28 @@ const mockResolveUriWithInfo = jest.fn()
 const mockNormalizeLineEndingsToLF = jest.fn((input: string) => input.replace(/\r\n?/g, '\n'))
 const mockSyncProgressFromPlanArtifact = jest.fn().mockResolvedValue([])
 
-jest.mock('vscode', () => ({
-  workspace: {
-    fs: {
-      createDirectory: mockCreateDirectory,
-      readFile: mockReadFile,
-      stat: mockStat,
-      writeFile: mockWriteFile
-    }
-  },
-  Uri: {
-    file: (fsPath: string) => ({ fsPath })
+jest.mock('../../../backend/tools/shared/artifactHost', () => {
+  const actual = jest.requireActual('../../../backend/tools/shared/artifactHost')
+  return {
+    ...actual,
+    documentReadFile: (...args: any[]) => mockReadFile(...args),
+    documentWriteFile: (...args: any[]) => mockWriteFile(...args),
+    documentStat: (...args: any[]) => mockStat(...args),
+    ensureParentDir: (...args: any[]) => mockPrepareParent(...args),
+    ensureParentDirWithFs: (...args: any[]) => mockPrepareParent(...args),
+    getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
+    resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
+    normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input),
+    isScopedPathAllowedWithMultiRoot: (value: string, validator: (path: string) => boolean) =>
+      actual.withArtifactHost({ workspaces: () => mockGetAllWorkspaces() }, () => actual.isScopedPathAllowedWithMultiRoot(value, validator))
   }
-}))
-
-jest.mock('../../../backend/tools/utils', () => ({
-  getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
-  resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
-  normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
-}))
+})
 
 jest.mock('../../../backend/tools/progress/autoSyncRuntime', () => ({
   syncProgressFromPlanArtifact: (...args: any[]) => mockSyncProgressFromPlanArtifact(...args)
 }))
 
-import { createCreatePlanTool } from '../../../backend/tools/plan/create_plan'
+import { createCreatePlanTool } from '../../../backend/tools/plan/create_planRuntime'
 
 describe('create_plan tool', () => {
   beforeEach(() => {
@@ -80,9 +77,7 @@ describe('create_plan tool', () => {
     expect(data.content).toContain('`#api-1`')
     expect(data.content).toContain('`#api-2`')
 
-    expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.graycode/plans'
-    })
+    expect(mockPrepareParent).toHaveBeenCalledWith('D:/workspace/.graycode/plans/api-plan.plan.md')
     expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/plans/api-plan.plan.md')
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromPlanArtifact).toHaveBeenCalledWith({

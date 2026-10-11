@@ -1,7 +1,7 @@
 import type { Tool, ToolResult } from '../types';
 import { parseArgs } from '../types';
 import { validateRegexPattern } from '../../core/services/regexGuard';
-import type { LockHolder } from '../../core/fileWriteLockManager';
+import type { LockHolder } from '../types';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
 import {escapeRegExp,detectSuspectedRegexIntent,createSuspectedRegexSuggestion} from '../shared/textUtils';

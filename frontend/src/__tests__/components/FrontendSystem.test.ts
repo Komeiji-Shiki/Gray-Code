@@ -4,8 +4,6 @@ import { describe, expect, test } from 'vitest'
 import AppSource from '../../App.vue?raw'
 import SettingsPanelSource from '../../components/settings/SettingsPanel.vue?raw'
 import ToolItemSource from '../../components/message/toolMessage/ToolItem.vue?raw'
-import ViteConfigSource from '../../../vite.config.ts?raw'
-import { resolveWebviewAssetFileName } from '../../build/webviewAssetNaming'
 import { resolveAppearancePalette } from '../../../../shared/appearance'
 import { semanticTokens } from '../../../../shared/appearanceTokens'
 
@@ -140,15 +138,6 @@ describe('frontend visual and async architecture contracts', () => {
     expect(base).toMatch(/\n\.titlebar \{[^}]*background: var\(--gc-surface-chrome\)/)
     // 紧凑密度必须改写外壳实际读取的字号 token。
     expect(base).toMatch(/\.application\[data-density="compact"\] \{\s*--gc-font-size-ui: 12px;/)
-  })
-
-  test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {
-    expect(ViteConfigSource).toContain('assetFileNames: resolveWebviewAssetFileName')
-    expect(resolveWebviewAssetFileName({ name: 'index.css' })).toBe('index.css')
-    expect(resolveWebviewAssetFileName({ names: ['index.css'] })).toBe('index.css')
-    expect(resolveWebviewAssetFileName({ name: 'MessageList.css' })).toBe('assets/[name]-[hash][extname]')
-    expect(resolveWebviewAssetFileName({ names: ['SettingsPanel.css'] })).toBe('assets/[name]-[hash][extname]')
-    expect(resolveWebviewAssetFileName({ name: 'file-icons.woff2' })).toBe('assets/[name][extname]')
   })
 
   test('App and SettingsPanel keep heavy views behind dynamic import boundaries', () => {

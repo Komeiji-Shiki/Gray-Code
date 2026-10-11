@@ -1,18 +1,8 @@
-/**
- * Tests for settings import/export subsystem fixes:
- * - #15: VSCode settings merge strategy
- * - #16: Channel config id preservation
- * - #18: MACHINE_SCOPE_KEYS filtering
- * - #19: Built-in mode toolPolicy not force-rolled back
- * - #20: Skill id validation
- * - #21: defaultValue not exported
- * - #22: reloadAndNotify fires change events
- */
+/** 共享设置的策略迁移、重载通知与技能标识校验。 */
 
 import { SettingsManager } from '../../../backend/modules/settings/SettingsManager';
 import { createMemorySettingsStorage, createSettingsManager } from '../__fixtures__/settingsFixtures';
 import {
-    MACHINE_SCOPE_KEYS,
     BUILTIN_MODE_TOOL_POLICIES,
     DEFAULT_SYSTEM_PROMPT_CONFIG,
     DESIGN_MODE_ID,
@@ -23,14 +13,11 @@ import {
     PLAN_PROMPT_MODE,
     ASK_PROMPT_MODE,
     REVIEW_PROMPT_MODE,
-    CODE_PROMPT_MODE,
     DEFAULT_MODE_ID,
     type PromptMode,
     type SettingsChangeEvent,
 } from '../../../backend/modules/settings/types';
-import { SkillsManager } from '../../../backend/modules/skills/SkillsManager';
-import { SettingsExporter, SETTINGS_EXPORT_KEYS } from '../../../backend/modules/settings/SettingsExporter';
-import * as vscode from 'vscode';
+import { SkillsRuntime } from '../../../backend/modules/skills/SkillsRuntime';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -47,58 +34,43 @@ function makeCodeModeConfig(): any {
 }
 
 // ---------------------------------------------------------------------------
-// #20: SkillsManager.validateSkillId
+// #20: SkillsRuntime.validateSkillId
 // ---------------------------------------------------------------------------
 
-describe('SkillsManager.validateSkillId (#20)', () => {
+describe('SkillsRuntime.validateSkillId (#20)', () => {
     test('accepts valid lowercase-hyphen ids', () => {
-        expect(SkillsManager.validateSkillId('my-skill')).toBe(true);
-        expect(SkillsManager.validateSkillId('a')).toBe(true);
-        expect(SkillsManager.validateSkillId('abc123')).toBe(true);
-        expect(SkillsManager.validateSkillId('a-b-c')).toBe(true);
-        expect(SkillsManager.validateSkillId('a'.repeat(64))).toBe(true);
+        expect(SkillsRuntime.validateSkillId('my-skill')).toBe(true);
+        expect(SkillsRuntime.validateSkillId('a')).toBe(true);
+        expect(SkillsRuntime.validateSkillId('abc123')).toBe(true);
+        expect(SkillsRuntime.validateSkillId('a-b-c')).toBe(true);
+        expect(SkillsRuntime.validateSkillId('a'.repeat(64))).toBe(true);
     });
 
     test('rejects empty or non-string input', () => {
-        expect(SkillsManager.validateSkillId('')).toBe(false);
-        expect(SkillsManager.validateSkillId(null as any)).toBe(false);
-        expect(SkillsManager.validateSkillId(undefined as any)).toBe(false);
+        expect(SkillsRuntime.validateSkillId('')).toBe(false);
+        expect(SkillsRuntime.validateSkillId(null as any)).toBe(false);
+        expect(SkillsRuntime.validateSkillId(undefined as any)).toBe(false);
     });
 
     test('rejects ids that start or end with hyphen', () => {
-        expect(SkillsManager.validateSkillId('-start')).toBe(false);
-        expect(SkillsManager.validateSkillId('end-')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('-start')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('end-')).toBe(false);
     });
 
     test('rejects consecutive hyphens', () => {
-        expect(SkillsManager.validateSkillId('a--b')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('a--b')).toBe(false);
     });
 
     test('rejects uppercase or special chars', () => {
-        expect(SkillsManager.validateSkillId('MySkill')).toBe(false);
-        expect(SkillsManager.validateSkillId('my_skill')).toBe(false);
-        expect(SkillsManager.validateSkillId('my skill')).toBe(false);
-        expect(SkillsManager.validateSkillId('../evil')).toBe(false);
-        expect(SkillsManager.validateSkillId('a\\b')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('MySkill')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('my_skill')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('my skill')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('../evil')).toBe(false);
+        expect(SkillsRuntime.validateSkillId('a\\b')).toBe(false);
     });
 
     test('rejects ids longer than 64 chars', () => {
-        expect(SkillsManager.validateSkillId('a'.repeat(65))).toBe(false);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// #18: MACHINE_SCOPE_KEYS definition
-// ---------------------------------------------------------------------------
-
-describe('MACHINE_SCOPE_KEYS (#18)', () => {
-    test('contains proxy and storagePath', () => {
-        expect(MACHINE_SCOPE_KEYS).toContain('proxy');
-        expect(MACHINE_SCOPE_KEYS).toContain('storagePath');
-    });
-
-    test('is a readonly array of two entries', () => {
-        expect(MACHINE_SCOPE_KEYS.length).toBe(2);
+        expect(SkillsRuntime.validateSkillId('a'.repeat(65))).toBe(false);
     });
 });
 
@@ -236,57 +208,6 @@ describe('reloadAndNotify (#22)', () => {
 
         const config = manager.getSystemPromptConfig();
         expect(config.currentModeId).toBe('design');
-    });
-});
-
-// ---------------------------------------------------------------------------
-// #21: collectVSCodeSettings ignores defaultValue
-// (Tested through internal logic — mock-dependent; covered by integration)
-// This test validates the VSCode config inspection fallback chain principle.
-// ---------------------------------------------------------------------------
-
-describe('VSCode settings value resolution (#21)', () => {
-    test('collectVSCodeSettings reads explicit scope values and excludes defaultValue', () => {
-        const inspect = jest.fn((key: string) => {
-            if (key === 'ui') {
-                return {
-                    globalValue: undefined,
-                    workspaceValue: undefined,
-                    workspaceFolderValue: { language: 'en' },
-                    defaultValue: { language: 'zh-CN' },
-                };
-            }
-            if (key === 'toolsEnabled') {
-                return { defaultValue: ['read_file'] };
-            }
-            return undefined;
-        });
-        (vscode.workspace as any).getConfiguration = jest.fn(() => ({ inspect }));
-
-        const exporter = Object.create(SettingsExporter.prototype) as SettingsExporter;
-        const result = exporter.collectVSCodeSettings();
-
-        expect(result.ui).toEqual({ language: 'en' });
-        expect(result).not.toHaveProperty('toolsEnabled');
-        expect(inspect).toHaveBeenCalledWith('ui');
-    });
-});
-
-// ---------------------------------------------------------------------------
-// #15 + #18 combined: import respects merge strategy + filters machine keys
-// ---------------------------------------------------------------------------
-
-describe('Import merge strategy (#15, #18)', () => {
-    test('production export key list excludes all machine-scope keys', () => {
-        for (const machineKey of MACHINE_SCOPE_KEYS) {
-            expect(SETTINGS_EXPORT_KEYS).not.toContain(machineKey);
-        }
-        expect(SETTINGS_EXPORT_KEYS).toContain('toolsConfig');
-        expect(SETTINGS_EXPORT_KEYS).toContain('checkForUpdates');
-        // 回归保护：proxy 虽是 ALL_CONFIG_KEYS 成员（VSCodeSettingsStorage MACHINE_KEYS），
-        // 但属于机器作用域，必须被 SETTINGS_EXPORT_KEYS 过滤掉。
-        expect(SETTINGS_EXPORT_KEYS).not.toContain('proxy');
-        expect(SETTINGS_EXPORT_KEYS).not.toContain('storagePath');
     });
 });
 

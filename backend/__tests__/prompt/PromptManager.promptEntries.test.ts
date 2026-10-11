@@ -1,5 +1,4 @@
-import { clearGlobalContext, setGlobalSettingsManager } from '../../core/settingsContext';
-import { PromptManager } from '../../modules/prompt';
+import { createPromptAssembler } from '../__fixtures__/promptFixtures';
 import type { ResolvedPromptModeSnapshot, SystemPromptConfig } from '../../modules/settings/types';
 
 const mode: ResolvedPromptModeSnapshot = {
@@ -98,14 +97,11 @@ function createSettingsManagerMock(
     } as any;
 }
 
-describe('PromptManager prompt entries', () => {
-    afterEach(() => {
-        clearGlobalContext();
-    });
+describe('PromptAssembler prompt entries', () => {
 
     test('builds system prompt and splits non-system prompt context around chat history entry', () => {
-        setGlobalSettingsManager(createSettingsManagerMock());
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        const settings = createSettingsManagerMock();
+        const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
         const runtime = {
             todoList: [
                 { id: 'a', content: 'Do the thing', status: 'pending' }
@@ -149,8 +145,8 @@ describe('PromptManager prompt entries', () => {
                     : entry
             )
         };
-        setGlobalSettingsManager(createSettingsManagerMock(fakeThoughtMode));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        const settings = createSettingsManagerMock(fakeThoughtMode);
+        const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
         const bundle = manager.getPromptContextBundle(fakeThoughtMode, { todoList: [] });
 
@@ -170,8 +166,8 @@ describe('PromptManager prompt entries', () => {
                     : entry
             )
         };
-        setGlobalSettingsManager(createSettingsManagerMock(fakeThoughtOnUser));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        const settings = createSettingsManagerMock(fakeThoughtOnUser);
+        const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
         const bundle = manager.getPromptContextBundle(fakeThoughtOnUser, { todoList: [] });
 
@@ -189,8 +185,8 @@ describe('PromptManager prompt entries', () => {
                     : entry
             )
         };
-        setGlobalSettingsManager(createSettingsManagerMock(dynamicAssistantMode));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        const settings = createSettingsManagerMock(dynamicAssistantMode);
+        const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
         const runtime = {
             todoList: [
                 { id: 'a', content: 'Do the thing', status: 'pending' }
@@ -219,8 +215,8 @@ describe('PromptManager prompt entries', () => {
             dynamicTemplateEnabled: true,
             dynamicTemplate: 'Legacy dynamic {{$TODO_LIST}}'
         };
-        setGlobalSettingsManager(createSettingsManagerMock(legacyMode));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        const settings = createSettingsManagerMock(legacyMode);
+        const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
         const systemPrompt = manager.getSystemPrompt(legacyMode, true, { todoList: [] });
         const bundle = manager.getPromptContextBundle(legacyMode, { todoList: [{ id: 'a', content: 'Legacy todo', status: 'pending' }] });
@@ -242,10 +238,10 @@ describe('PromptManager prompt entries', () => {
             dynamicTemplateEnabled: false,
             dynamicTemplate: ''
         };
-        setGlobalSettingsManager(createSettingsManagerMock(emptyMode, {
+        const settings = createSettingsManagerMock(emptyMode, {
             template: 'global system fallback'
-        }));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        });
+        const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
         expect(manager.getSystemPrompt(emptyMode, true, {})).toBe('');
     });

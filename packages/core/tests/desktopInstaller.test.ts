@@ -53,6 +53,31 @@ describe('安装版更新与配套数据回退', () => {
   });
   afterEach(async () => { await fs.rm(root, TEMP_DIR_REMOVE_OPTIONS); });
 
+  test('下载成功的更新包经显式安装步骤交给桌面更新器', async () => {
+    await expect(installer.prepare(path.join(root, 'feed'), asset.Version)).resolves.toMatchObject({ downloaded: true });
+    expect(await fs.readFile(path.join(installed, 'packages', asset.FileName))).toEqual(bytes);
+    expect(manager.waitExitThenApplyUpdate).not.toHaveBeenCalled();
+    await installer.apply();
+    expect(manager.waitExitThenApplyUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ TargetFullRelease: asset }), false, true, ['--data', data]);
+  });
+
+  test('更新包下载失败时保留当前程序且不安装', async () => {
+    manager.downloadUpdateAsync.mockRejectedValueOnce(new Error('HTTP 404'));
+    await expect(installer.prepare(path.join(root, 'feed'), asset.Version)).rejects.toThrow('HTTP 404');
+    expect(manager.waitExitThenApplyUpdate).not.toHaveBeenCalled();
+    expect(options.restart).not.toHaveBeenCalled();
+    expect(await fs.readFile(options.executable, 'utf8')).toBe('current executable');
+  });
+
+  test('更新包下载内容为空时拒绝安装并保留当前程序', async () => {
+    downloadBytes = Buffer.alloc(0);
+    await expect(installer.prepare(path.join(root, 'feed'), asset.Version)).rejects.toThrow('校验失败');
+    expect(manager.waitExitThenApplyUpdate).not.toHaveBeenCalled();
+    expect(options.restart).not.toHaveBeenCalled();
+    expect(await fs.readFile(options.executable, 'utf8')).toBe('current executable');
+  });
+
   test('校验失败只移除坏的下载缓存，当前安装和数据保持可用', async () => {
     downloadBytes = Buffer.from('corrupt');
     await expect(installer.prepare(path.join(root, 'feed'), asset.Version)).rejects.toThrow('校验失败');

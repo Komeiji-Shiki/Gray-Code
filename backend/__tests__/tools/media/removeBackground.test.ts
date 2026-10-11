@@ -5,8 +5,8 @@
  * - mask 缩放使用显式 fit: 'fill'：遮罩无裁切拉伸到原图尺寸，
  *   宽高比不一致时不再因默认 fit: 'cover' 裁切导致主体缺失/错位
  */
-import * as vscode from 'vscode';
-import { createRemoveBackgroundTool } from '../../../tools/media/remove_background';
+import { createRemoveBackgroundRuntime } from '../../../tools/media/remove_backgroundRuntime';
+import { TaskManager } from '../../../tools/taskManager';
 import { createProxyFetch } from '../../../modules/channel/proxyFetch';
 import { getSharp } from '../../../modules/dependencies/runtime';
 
@@ -19,6 +19,12 @@ jest.mock('../../../modules/dependencies/runtime', () => ({
 
 const mockCreateProxyFetch = createProxyFetch as jest.Mock;
 const mockGetSharp = getSharp as jest.Mock;
+const { createRemoveBackgroundTool } = createRemoveBackgroundRuntime({
+    getAllWorkspaces: () => [{ name: 'ws' }],
+    readImageFile: async () => ({ data: Buffer.from('fake-image-bytes'), mimeType: 'image/png', ext: 'png' }),
+    saveImage: async () => {},
+    tasks: TaskManager
+});
 
 /**
  * sharp 链式 mock：记录所有 resize 调用参数，metadata 返回 10x20，
@@ -71,16 +77,7 @@ function mockMaskApiResponse() {
 beforeEach(() => {
     mockCreateProxyFetch.mockReset();
     mockGetSharp.mockReset();
-    // 单工作区：相对路径解析到工作区内，无需 outside-workspace 审批
-    (vscode.workspace as any).workspaceFolders = [
-        { uri: vscode.Uri.file('C:/workspace'), name: 'ws', index: 0 }
-    ];
-    (vscode.workspace.fs.readFile as jest.Mock).mockReset();
-    (vscode.workspace.fs.writeFile as jest.Mock).mockReset();
-    (vscode.workspace.fs.createDirectory as jest.Mock).mockReset();
-    (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from('fake-image-bytes'));
-    (vscode.workspace.fs.writeFile as jest.Mock).mockResolvedValue(undefined);
-    (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
+
 });
 
 describe('remove_background mask 缩放', () => {

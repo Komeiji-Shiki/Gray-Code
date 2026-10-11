@@ -1,29 +1,21 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { workspace } from '../__mocks__/vscode'
 import {
     FILE_TREE_MAX_NODES,
     getIgnoreRegexCacheStats,
-    getWorkspaceFileTree
-} from '../../modules/prompt/fileTree'
+    getSingleWorkspaceFileTree
+} from '../../modules/prompt/workspaceFileTree'
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory'
 
 describe('fileTree buildFileTree', () => {
     let root: string
-    let originalFolders: any
 
     beforeEach(() => {
         root = fs.mkdtempSync(path.join(os.tmpdir(), 'graycode-filetree-test-'))
-        originalFolders = workspace.workspaceFolders
-        workspace.workspaceFolders = [{
-            name: 'ws',
-            uri: { fsPath: root, toString: () => 'file://' + root.replace(/\\/g, '/') }
-        }] as any
     })
 
     afterEach(() => {
-        workspace.workspaceFolders = originalFolders
         fs.rmSync(root, TEMP_DIR_REMOVE_OPTIONS)
     })
 
@@ -39,15 +31,15 @@ describe('fileTree buildFileTree', () => {
         }
 
         const budget = 5
-        const tree = getWorkspaceFileTree(10, [], budget)
+        const tree = getSingleWorkspaceFileTree(root, 10, [], budget)
         const lines = tree.split('\n').filter(l => l.length > 0)
 
         // 5 个节点 + 1 行截断标记
         expect(lines).toHaveLength(budget + 1)
         expect(lines[lines.length - 1]).toContain(`file tree truncated: exceeded ${budget} nodes`)
         // 默认预算（FILE_TREE_MAX_NODES）不截断
-        expect(getWorkspaceFileTree(10)).toContain('f7.txt')
-        expect(getWorkspaceFileTree(10)).not.toContain('truncated')
+        expect(getSingleWorkspaceFileTree(root, 10)).toContain('f7.txt')
+        expect(getSingleWorkspaceFileTree(root, 10)).not.toContain('truncated')
         expect(FILE_TREE_MAX_NODES).toBeGreaterThan(0)
     })
 
@@ -57,18 +49,18 @@ describe('fileTree buildFileTree', () => {
         const clock = jest.spyOn(Date, 'now').mockReturnValue(10000)
         const reads = jest.spyOn(jest.requireActual<typeof fs>('fs'), 'readdirSync')
         try {
-            const initial = getWorkspaceFileTree(2)
+            const initial = getSingleWorkspaceFileTree(root, 2)
             const initialReads = reads.mock.calls.length
             fs.unlinkSync(path.join(root, 'src', 'old.txt'))
             write('src/new.txt')
             expect(fs.statSync(root).mtimeMs).toBe(rootMtimeMs)
 
             clock.mockReturnValue(14999)
-            expect(getWorkspaceFileTree(2)).toBe(initial)
+            expect(getSingleWorkspaceFileTree(root, 2)).toBe(initial)
             expect(reads.mock.calls).toHaveLength(initialReads)
 
             clock.mockReturnValue(15000)
-            const refreshed = getWorkspaceFileTree(2)
+            const refreshed = getSingleWorkspaceFileTree(root, 2)
             expect(refreshed).toContain('new.txt')
             expect(refreshed).not.toContain('old.txt')
             expect(reads.mock.calls.length).toBeGreaterThan(initialReads)
@@ -84,7 +76,7 @@ describe('fileTree buildFileTree', () => {
         write('keep.log', 'keep')
         write('other.txt', 'other')
 
-        const tree = getWorkspaceFileTree(10)
+        const tree = getSingleWorkspaceFileTree(root, 10)
 
         expect(tree).toContain('keep.log')
         expect(tree).not.toContain('a.log')
@@ -96,7 +88,7 @@ describe('fileTree buildFileTree', () => {
         write('build/keep.txt', 'x')
         write('src/main.txt', 'y')
 
-        const tree = getWorkspaceFileTree(10)
+        const tree = getSingleWorkspaceFileTree(root, 10)
 
         expect(tree).not.toContain('build/')
         expect(tree).not.toContain('keep.txt')
@@ -112,11 +104,11 @@ describe('fileTree buildFileTree', () => {
         const customPatterns = ['*.zz3', '*.zz4']
 
         const before = getIgnoreRegexCacheStats()
-        getWorkspaceFileTree(10, customPatterns)
+        getSingleWorkspaceFileTree(root, 10, customPatterns)
         const afterFirst = getIgnoreRegexCacheStats()
         // 文件树结果缓存（TTL 内同参数零磁盘 I/O）会短路第二次同参数调用、不触发任何
         // shouldIgnore 求值——改用不同 maxDepth 绕过结果缓存，让正则缓存路径真正被执行
-        getWorkspaceFileTree(11, customPatterns)
+        getSingleWorkspaceFileTree(root, 11, customPatterns)
         const afterSecond = getIgnoreRegexCacheStats()
 
         // 第一次调用完成全部编译（gitignore 2 条 + 自定义 2 条）

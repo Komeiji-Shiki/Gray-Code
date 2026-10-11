@@ -10,10 +10,9 @@
  * 混合多轮 + 随机模糊对比（固定 seed）。
  */
 
-import { ContextTrimService } from '../../modules/api/chat/services/ContextTrimService';
+import { computeValidSuffixMap } from '../../modules/api/chat/services/contextTrim/historyNormalization';
 import { validateHistoryIntegrity } from '../../modules/channel/HistoryIntegrityValidator';
 import type { Content } from '../../modules/conversation/types';
-import { createContextTrimHarness } from '../__fixtures__/harnessFixtures';
 
 describe('computeValidSuffixMap 与 validateHistoryIntegrity 语义等价', () => {
 
@@ -34,88 +33,74 @@ describe('computeValidSuffixMap 与 validateHistoryIntegrity 语义等价', () =
     }
 
     /** 断言 validSuffixMap 与「逐候选 slice + validateHistoryIntegrity」完全一致 */
-    function assertEquivalent(service: ContextTrimService, history: Content[]) {
-        const map = (service as any).computeValidSuffixMap(history) as boolean[];
+    function assertEquivalent(history: Content[]) {
+        const map = computeValidSuffixMap(history) as boolean[];
         const expected = history.map((_, i) => validateHistoryIntegrity(history.slice(i)).valid);
         expect(map).toEqual(expected);
     }
 
-    test('正常跨消息配对：call 在左、response 在右', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('正常跨消息配对：call 在左、response 在右', () => {        const history = [
             msg('model', [callPart('x')]),
             msg('user', [responsePart('x')]),
             msg('model', [textPart('done')])
         ];
         // slice(0) valid；slice(1)=[response] 孤儿 invalid；slice(2) valid
-        assertEquivalent(service, history);
+        assertEquivalent(history);
     });
 
-    test('跨消息乱序配对：response 在左、call 在右（正向判孤儿，旧实现误判 valid）', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('跨消息乱序配对：response 在左、call 在右（正向判孤儿，旧实现误判 valid）', () => {        const history = [
             msg('user', [responsePart('x')]),
             msg('model', [callPart('x')])
         ];
         // slice(0)=[response, call]：正向中 response 先出现时 call 未 seen → 孤儿 → invalid
         // slice(1)=[call]：valid
-        assertEquivalent(service, history);
-        const map = (service as any).computeValidSuffixMap(history) as boolean[];
+        assertEquivalent(history);
+        const map = computeValidSuffixMap(history) as boolean[];
         expect(map[0]).toBe(false);
         expect(map[1]).toBe(true);
     });
 
-    test('同消息正常配对：同一消息内 call part 在 response part 之前', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('同消息正常配对：同一消息内 call part 在 response part 之前', () => {        const history = [
             msg('model', [callPart('x'), responsePart('x')]),
             msg('model', [textPart('done')])
         ];
-        assertEquivalent(service, history);
-        const map = (service as any).computeValidSuffixMap(history) as boolean[];
+        assertEquivalent(history);
+        const map = computeValidSuffixMap(history) as boolean[];
         expect(map[0]).toBe(true);
     });
 
-    test('同消息乱序配对：同一消息内 response part 在 call part 之前（正向判孤儿）', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('同消息乱序配对：同一消息内 response part 在 call part 之前（正向判孤儿）', () => {        const history = [
             msg('model', [responsePart('x'), callPart('x')]),
             msg('model', [textPart('done')])
         ];
-        assertEquivalent(service, history);
-        const map = (service as any).computeValidSuffixMap(history) as boolean[];
+        assertEquivalent(history);
+        const map = computeValidSuffixMap(history) as boolean[];
         expect(map[0]).toBe(false);
     });
 
-    test('重复 functionCall id', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('重复 functionCall id', () => {        const history = [
             msg('model', [callPart('x')]),
             msg('model', [callPart('x')]),
             msg('user', [responsePart('x')])
         ];
-        assertEquivalent(service, history);
-        const map = (service as any).computeValidSuffixMap(history) as boolean[];
+        assertEquivalent(history);
+        const map = computeValidSuffixMap(history) as boolean[];
         // slice(1)=[call x, response x] 恰好配对 → valid；slice(0) 重复 call → invalid
         expect(map[1]).toBe(true);
         expect(map[0]).toBe(false);
     });
 
-    test('重复 functionResponse id', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('重复 functionResponse id', () => {        const history = [
             msg('model', [callPart('x')]),
             msg('user', [responsePart('x')]),
             msg('user', [responsePart('x')])
         ];
-        assertEquivalent(service, history);
-        const map = (service as any).computeValidSuffixMap(history) as boolean[];
+        assertEquivalent(history);
+        const map = computeValidSuffixMap(history) as boolean[];
         expect(map[0]).toBe(false);
     });
 
-    test('多轮工具循环 + 尾部孤儿 response + 中间普通文本', () => {
-        const { service } = createContextTrimHarness();
-        const history = [
+    test('多轮工具循环 + 尾部孤儿 response + 中间普通文本', () => {        const history = [
             msg('user', [textPart('hi')]),
             msg('model', [callPart('a')]),
             msg('user', [responsePart('a')]),
@@ -124,12 +109,10 @@ describe('computeValidSuffixMap 与 validateHistoryIntegrity 语义等价', () =
             msg('model', [textPart('done')]),
             msg('user', [responsePart('orphan')])  // 无配对 call 的孤儿响应
         ];
-        assertEquivalent(service, history);
+        assertEquivalent(history);
     });
 
-    test('随机模糊对比（固定 seed，覆盖随机 call/response 顺序与 id 复用）', () => {
-        const { service } = createContextTrimHarness();
-        // 简单 LCG 伪随机（固定 seed 保证可复现）
+    test('随机模糊对比（固定 seed，覆盖随机 call/response 顺序与 id 复用）', () => {        // 简单 LCG 伪随机（固定 seed 保证可复现）
         let seed = 42;
         const rand = () => {
             seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -151,7 +134,7 @@ describe('computeValidSuffixMap 与 validateHistoryIntegrity 语义等价', () =
                 }
                 history.push(msg(rand() > 0.5 ? 'model' : 'user', parts));
             }
-            assertEquivalent(service, history);
+            assertEquivalent(history);
         }
     });
 });

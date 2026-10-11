@@ -6,7 +6,7 @@
  * - 弹窗完成后的后续 notify 仍被去重拦截
  * - TTL 过期后去重键被清理，可再次弹窗
  */
-import { WindowsAgentStopNotificationService } from '../../modules/notifications/WindowsAgentStopNotificationService'
+import { WindowsAgentStopNotificationService } from '../../modules/notifications/AgentStopNotificationRuntime'
 import type {
   AgentStopNotificationPayload,
   WindowsToastAdapter,
@@ -61,6 +61,8 @@ function makeService(adapter: WindowsToastAdapter, dedupeTtlMs = 5000): WindowsA
     } as any,
     adapter,
     platform: 'win32',
+    getWindowTitle: () => 'GrayCode test',
+    focusWindow: async () => {},
     getWindowState: () => ({ focused: false }),
     onDidChangeWindowState: () => ({ dispose: () => {} }),
     executeCommand: async () => {},

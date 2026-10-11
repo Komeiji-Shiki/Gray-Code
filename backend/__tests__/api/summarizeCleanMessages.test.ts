@@ -1,5 +1,5 @@
 /**
- * SummarizeService.cleanMessagesForSummarize 回归测试。
+ * SummaryAlgorithms.cleanMessagesForSummarize 回归测试。
  *
  * 背景：总结请求曾把用户消息里的内联图片（inlineData）连同字节原样发给总结模型，
  * 既浪费输入 token，也让不支持多模态的总结渠道直接报错。
@@ -8,13 +8,13 @@
  * 总结模型只感知"这里有图片/文件"，不需要真实载荷。
  */
 
-import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
+import { SummaryAlgorithms } from '../../modules/api/chat/services/SummaryAlgorithms';
 
-function createService(): SummarizeService {
-    return new SummarizeService({} as any, {} as any, {} as any, {} as any);
+function createService(): SummaryAlgorithms {
+    return new SummaryAlgorithms();
 }
 
-describe('SummarizeService.cleanMessagesForSummarize - no images to summarize model', () => {
+describe('SummaryAlgorithms.cleanMessagesForSummarize - no images to summarize model', () => {
     const config = { type: 'gemini' } as any;
 
     test('inlineData（内联图片）替换为 [Image: ...] 文本占位符', () => {

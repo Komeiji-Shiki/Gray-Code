@@ -19,7 +19,6 @@
 
 <p align="center">
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github&label=Releases" alt="Latest Release" /></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
   <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue?style=flat-square" alt="AGPL-3.0-only with Cubism exception" /></a>
@@ -97,11 +96,9 @@ GrayCode 针对 DeepSeek 视觉模型（如官方 Vision 模型）的接口限�
 
 开发环境与贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)，项目结构见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 1.x 扩展安装与更新
+## 1.x 扩展
 
-GrayCode 要求 VS Code `^1.84.0` 或更高版本。推荐从 [VS Code 插件市场](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode) 安装；也可以从 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 下载 `graycode-*.vsix`，在命令面板执行 `Extensions: Install from VSIX...`。
-
-扩展支持自动检查 GitHub Releases，并可在 **设置 → 通用 → 自动更新** 中手动检查或一键更新。扩展源码与构建说明见 [`v1-extension`](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension) 分支。
+1.x VS Code 扩展的安装、更新与开发说明保留在 [`v1-extension`](https://github.com/Komeiji-Shiki/Gray-Code/tree/v1-extension) 分支。`main` 已移除扩展入口与专用构建，集中维护独立桌面与 Web 平台。
 
 ## 社区
 

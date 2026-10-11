@@ -1,31 +1,28 @@
-const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
+const mockPrepareParent = jest.fn().mockResolvedValue(undefined)
 const mockReadFile = jest.fn()
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
 const mockResolveUriWithInfo = jest.fn()
 const mockNormalizeLineEndingsToLF = jest.fn((input: string) => input.replace(/\r\n?/g, '\n'))
 
-jest.mock('vscode', () => ({
-  workspace: {
-    fs: {
-      createDirectory: mockCreateDirectory,
-      readFile: mockReadFile,
-      writeFile: mockWriteFile
-    }
-  },
-  Uri: {
-    file: (fsPath: string) => ({ fsPath })
+jest.mock('../../../backend/tools/shared/artifactHost', () => {
+  const actual = jest.requireActual('../../../backend/tools/shared/artifactHost')
+  return {
+    ...actual,
+    documentReadFile: (...args: any[]) => mockReadFile(...args),
+    documentWriteFile: (...args: any[]) => mockWriteFile(...args),
+    ensureParentDir: (...args: any[]) => mockPrepareParent(...args),
+    ensureParentDirWithFs: (...args: any[]) => mockPrepareParent(...args),
+    getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
+    resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
+    normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input),
+    isScopedPathAllowedWithMultiRoot: (value: string, validator: (path: string) => boolean) =>
+      actual.withArtifactHost({ workspaces: () => mockGetAllWorkspaces() }, () => actual.isScopedPathAllowedWithMultiRoot(value, validator))
   }
-}))
-
-jest.mock('../../../backend/tools/utils', () => ({
-  getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
-  resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
-  normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
-}))
+})
 
 import { buildProgressDocument } from '../../../backend/tools/progress/documentLayout'
-import { createCreateProgressTool } from '../../../backend/tools/progress/create_progress'
+import { createCreateProgressTool } from '../../../backend/tools/progress/create_progressRuntime'
 
 describe('create_progress tool', () => {
   beforeEach(() => {
@@ -76,9 +73,7 @@ describe('create_progress tool', () => {
       currentProgress: '尚无里程碑记录'
     })
 
-    expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.graycode'
-    })
+    expect(mockPrepareParent).toHaveBeenCalledWith('D:/workspace/.graycode/progress.md')
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
 
     const writtenContent = Buffer.from(mockWriteFile.mock.calls[0][1]).toString('utf-8')

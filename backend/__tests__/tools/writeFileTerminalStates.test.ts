@@ -1,88 +1,28 @@
-/**
- * write_file handler 的 diff 审阅终态组装测试（发现 04 / 任务 02#20-A）。
- *
- * 覆盖四条终态路径：
- *  - 接受（waitForDiffResolution → 'none'，finalDiff accepted）
- *  - 拒绝（waitForDiffResolution → 'rejected'）
- *  - 取消/中断（waitForDiffResolution → 'abort' / 'user'）
- *  - autoSave 失败（waitForDiffResolution → 'none'，finalDiff 存在且状态非 accepted，带 autoSaveError）
- *
- * 重点断言：wasAccepted 判定、status/success/error/autoSaveError 字段语义，
- * 以及 resolveDiffOutcome 保存的 diffContentId 与 pendingDiffId 是否真实回传到结果。
- */
+/** 平台完整写入的 Diff 终态、参数边界与换行行为。 */
+import { createMutationToolFixture } from '../__fixtures__/mutationToolFixture';
 
-import * as vscode from 'vscode';
-import { registerWriteFile } from '../../tools/file/write_file';
-
-const mockDiffManager = {
-    createPendingDiff: jest.fn(),
-    getDiff: jest.fn(),
-    waitForDiffResolution: jest.fn(),
-    prewarmDocument: jest.fn()
-};
-
-const mockDiffStorageManager = {
-    saveGlobalDiff: jest.fn(),
-    saveGlobalDiffDeferred: jest.fn()
-};
-
-jest.mock('../../core/services/diffManager', () => ({
-    getDiffManager: () => mockDiffManager
-}));
-
-jest.mock('../../modules/conversation', () => ({
-    getDiffStorageManager: () => mockDiffStorageManager
-}));
-
-jest.mock('fs', () => ({
-    existsSync: jest.fn(),
-    mkdirSync: jest.fn(),
-    writeFileSync: jest.fn(),
-    readFileSync: jest.fn(),
-    unlinkSync: jest.fn(),
-    promises: {
-        mkdir: jest.fn(),
-        writeFile: jest.fn(),
-        stat: jest.fn(),
-        readFile: jest.fn()
-    }
-}));
+const fixture = createMutationToolFixture('write_file');
+const propose = fixture.propose;
 
 describe('write_file 终态语义（diff 审阅）', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-
-        (vscode.workspace as any).workspaceFolders = [{
-            name: 'project',
-            uri: vscode.Uri.file('/workspace/project')
-        }];
-
-        // 已存在文件：stat 成功 + readFile 返回原始内容（与写入内容不同 → 进入 diff 审阅）
-        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({ size: 1024 });
-        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(
-            new TextEncoder().encode('original content')
-        );
-
-        mockDiffManager.createPendingDiff.mockResolvedValue({ id: 'pending-diff-1', status: 'pending' });
-        mockDiffManager.prewarmDocument.mockReturnValue(undefined);
-        mockDiffStorageManager.saveGlobalDiff.mockResolvedValue({ diffId: 'content-id-1' });
+    beforeEach(async () => {
+        await fixture.reset('original content');
     });
+    afterEach(async () => { await fixture.restore(); });
 
     async function runWriteFile(args: Record<string, unknown>, context?: Record<string, unknown>) {
-        const tool = registerWriteFile();
-        return tool.handler(args, context as any);
+        return fixture.run(args);
     }
 
     function assertCommonPassthrough(entry: any) {
-        // resolveDiffOutcome 保存 diff 内容得到的 id 与 pending diff id 应恒回传
-        expect(entry.diffContentId).toBe('content-id-1');
+        // 平台提案同时作为内容和待审阅标识。
+        expect(entry.diffContentId).toBe('pending-diff-1');
         expect(entry.pendingDiffId).toBe('pending-diff-1');
         expect(entry.path).toBe('sample.ts');
     }
 
     test('接受：status=accepted、success=true、无 error、action=modified', async () => {
-        mockDiffManager.waitForDiffResolution.mockResolvedValue('none');
-        mockDiffManager.getDiff.mockReturnValue({ id: 'pending-diff-1', status: 'accepted' });
+        propose.mockResolvedValue({ id: 'pending-diff-1', status: 'accepted' });
 
         const result = await runWriteFile({ path: 'sample.ts', content: 'new content' }, { toolId: 'tool-1' });
         const entry = result.data.results[0];
@@ -97,21 +37,20 @@ describe('write_file 终态语义（diff 审阅）', () => {
         });
         expect(entry.error).toBeUndefined();
         expect(entry.autoSaveError).toBeUndefined();
-        expect(entry.cancelled).toBeUndefined();
+        expect(entry.cancelled).toBe(false);
         assertCommonPassthrough(entry);
-        expect(mockDiffManager.createPendingDiff).toHaveBeenCalledTimes(1);
+        expect(propose).toHaveBeenCalledTimes(1);
     });
 
-    test('拒绝：status=rejected、success=false、cancelled=false、error=拒绝文案', async () => {
-        mockDiffManager.waitForDiffResolution.mockResolvedValue('rejected');
-        mockDiffManager.getDiff.mockReturnValue({ id: 'pending-diff-1', status: 'rejected' });
+    test('拒绝：status=rejected、success=false、cancelled=false', async () => {
+        propose.mockResolvedValue({ id: 'pending-diff-1', status: 'rejected' });
 
         const result = await runWriteFile({ path: 'sample.ts', content: 'new content' }, { toolId: 'tool-1' });
         const entry = result.data.results[0];
 
         expect(result.success).toBe(false);
         expect(result.cancelled).toBe(false);
-        expect(result.error).toBe('1 file failed to write');
+        expect(result.error).toBe('1 个文件未完成修改。');
 
         expect(entry).toMatchObject({
             path: 'sample.ts',
@@ -120,48 +59,45 @@ describe('write_file 终态语义（diff 审阅）', () => {
             status: 'rejected',
             cancelled: false
         });
-        expect(entry.error).toBe('Diff was rejected by user');
+        expect(entry.error).toBeUndefined();
         expect(entry.autoSaveError).toBeUndefined();
         assertCommonPassthrough(entry);
     });
 
-    test('新文件拒绝后的清理失败会在结果中明确透传', async () => {
-        const cleanupError = 'Failed to clean up pre-created file "sample.ts": file is locked';
-        mockDiffManager.waitForDiffResolution.mockResolvedValue('rejected');
-        mockDiffManager.getDiff.mockReturnValue({
-            id: 'pending-diff-1',
-            status: 'rejected',
-            cleanupError
+    test('新文件在审阅前不预创建，拒绝后仍然不存在', async () => {
+        await fixture.setContent(null);
+        propose.mockImplementation(async () => {
+            expect(await fixture.exists()).toBe(false);
+            return { id: 'pending-diff-1', status: 'rejected' };
         });
 
         const result = await runWriteFile({ path: 'sample.ts', content: 'new content' }, { toolId: 'tool-1' });
         const entry = result.data.results[0];
 
         expect(result.success).toBe(false);
-        expect(entry.cleanupError).toBe(cleanupError);
-        expect(entry.error).toBe(`Diff was rejected by user. ${cleanupError}`);
+        expect(entry.status).toBe('rejected');
+        expect(await fixture.exists()).toBe(false);
     });
 
     test.each([
         ['abort', 'Write was cancelled by user'],
         ['user', 'Write was interrupted by user']
-    ])('取消/中断（reason=%s）：cancelled=true、status=rejected、error=%s', async (reason, expectedError) => {
-        mockDiffManager.waitForDiffResolution.mockResolvedValue(reason);
-        // 中断路径下 finalDiff 内容不影响 wasInterrupted 判定
-        mockDiffManager.getDiff.mockReturnValue(undefined);
+    ])('取消/中断（reason=%s）：cancelled=true、status=cancelled、error=%s', async (reason, expectedError) => {
+        propose.mockResolvedValue({ id: 'pending-diff-1', status: 'cancelled', error: expectedError });
+        // 取消回执保留审阅端口附带的原因。
 
         const result = await runWriteFile({ path: 'sample.ts', content: 'new content' }, { toolId: 'tool-1' });
         const entry = result.data.results[0];
 
         expect(result.success).toBe(false);
         expect(result.cancelled).toBe(true);
-        expect(result.error).toBe('Write was cancelled by user');
+        expect(result.error).toBe('1 个文件未完成修改。');
 
         expect(entry).toMatchObject({
             path: 'sample.ts',
             success: false,
             action: 'modified',
-            status: 'rejected',
+            status: 'cancelled',
             cancelled: true
         });
         expect(entry.error).toBe(expectedError);
@@ -169,46 +105,45 @@ describe('write_file 终态语义（diff 审阅）', () => {
         assertCommonPassthrough(entry);
     });
 
-    test('autoSave 失败：success=false、status=rejected、error/autoSaveError 透传', async () => {
+    test('autoSave 失败：success=false、status=rejected、error 透传', async () => {
         const autoSaveError = 'Auto-save failed while accepting diff. The diff was rejected to unblock tool execution.';
-        mockDiffManager.waitForDiffResolution.mockResolvedValue('none');
-        mockDiffManager.getDiff.mockReturnValue({ id: 'pending-diff-1', status: 'rejected', autoSaveError });
+        propose.mockResolvedValue({ id: 'pending-diff-1', status: 'rejected', error: autoSaveError });
 
         const result = await runWriteFile({ path: 'sample.ts', content: 'new content' }, { toolId: 'tool-1' });
         const entry = result.data.results[0];
 
         expect(result.success).toBe(false);
         expect(result.cancelled).toBe(false);
-        expect(result.error).toBe('1 file failed to write');
+        expect(result.error).toBe('1 个文件未完成修改。');
 
         expect(entry).toMatchObject({
             path: 'sample.ts',
             success: false,
             status: 'rejected'
         });
-        // wasAccepted=false（finalDiff 存在但状态非 accepted），错误来源应为 autoSaveError
+        // 保存失败使用审阅回执的 error。
         expect(entry.error).toBe(autoSaveError);
-        expect(entry.autoSaveError).toBe(autoSaveError);
-        expect(entry.cancelled).toBeUndefined();
+        expect(entry.autoSaveError).toBeUndefined();
+        expect(entry.cancelled).toBe(false);
         assertCommonPassthrough(entry);
     });
 
-    test('边界：空 path 返回 path is required', async () => {
-        const result = await runWriteFile({ path: '   ', content: 'x' });
-        expect(result).toEqual({ success: false, error: 'path is required' });
-        expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
+    test('边界：缺少 path 返回参数错误且不进入审阅', async () => {
+        const result = await runWriteFile({ content: 'x' });
+        expect(result).toMatchObject({ success: false, data: { results: [{ error: expect.stringContaining('需要 path 和完整 content') }] } });
+        expect(propose).not.toHaveBeenCalled();
     });
 
-    test('边界：content 非字符串返回 content is required', async () => {
+    test('边界：content 非字符串返回参数错误且不进入审阅', async () => {
         const result = await runWriteFile({ path: 'sample.ts', content: 123 });
-        expect(result).toEqual({ success: false, error: 'content is required' });
-        expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ success: false, data: { results: [{ error: expect.stringContaining('需要 path 和完整 content') }] } });
+        expect(propose).not.toHaveBeenCalled();
     });
 
-    test('工具契约说明确认前预创建、拒绝清理范围和失败报告', () => {
-        const description = registerWriteFile().declaration.description;
-        expect(description).toContain('确认前先创建一个空文件');
-        expect(description).toContain('本次新建且仍为空的父目录');
-        expect(description).toContain('清理失败');
+    test('工具契约说明在内存中预览，用户接受后才创建文件', () => {
+        const description = fixture.tool.declaration.description;
+        expect(description).toContain('只在内存中预览');
+        expect(description).toContain('用户接受后才创建文件和所需的父目录');
+        expect(description).not.toContain('确认前先创建一个空文件');
     });
 });

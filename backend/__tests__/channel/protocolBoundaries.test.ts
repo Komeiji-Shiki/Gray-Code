@@ -1,7 +1,6 @@
 import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
 import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
-import { ChannelManager } from '../../modules/channel/ChannelManager';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { createOpenAIConfig, createOpenAIResponsesConfig, createAnthropicConfig } from '../__fixtures__/channelFixtures';
 
@@ -34,11 +33,6 @@ describe('provider protocol boundaries', () => {
             const result = formatter.buildRequest(request, config as never);
             expect(result.body.stream).toBe(stream);
             expect(result.stream).toBe(stream);
-            const manager = Object.create(ChannelManager.prototype) as any;
-            manager.configManager = { getConfig: jest.fn().mockResolvedValue(config) };
-            manager.generateStream = jest.fn().mockReturnValue('stream');
-            manager.generateNonStream = jest.fn().mockResolvedValue('json');
-            await expect(manager.generate(request)).resolves.toBe(stream ? 'stream' : 'json');
         }
     });
 

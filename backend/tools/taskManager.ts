@@ -127,7 +127,7 @@ function enqueueBackgroundTaskResult(
  * 任务类型
  *
  * 全仓实际取值清单（与 registerTask()/emitEvent() 调用处一致）：
- * - 'terminal'             终端命令（backend/tools/terminal/processRunner.ts）
+ * - 'terminal'             终端命令（backend/tools/terminal/processRunnerRuntime.ts）
  * - 'image_generation'     图像生成（backend/tools/media/generate_image.ts）
  * - 'background_subagent'  后台 SubAgent 任务（backend/tools/subagents/subagents.ts、detachedTaskBridge.ts）
  * - 'agent_message'        agent_send_message 入队轻量通知（backend/tools/subagents/agentSendMessage.ts；

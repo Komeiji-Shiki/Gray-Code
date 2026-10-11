@@ -36,7 +36,6 @@ import type {
     ConversationBranchGraph,
     ConversationBranchNode,
 } from '../../modules/conversation/branch/types';
-import { createChatFlowHarness } from '../__fixtures__/harnessFixtures';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
@@ -562,20 +561,6 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             { id: 'm2', role: 'model', parts: [{ text: 'a2' }] },
         ] as Content[];
 
-        test('删除成功后分支图同步由 ConversationManager 内部完成（决策 6 收敛，orchestrator 不再重复调用）', async () => {
-            const { flowService, conversationManager } = createChatFlowHarness();
-            conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
-            conversationManager.deleteToMessage.mockResolvedValue(2);
-            conversationManager.getHistoryRef.mockResolvedValue(fourMessageHistory.slice(0, 2));
-
-            const result = await flowService.handleDeleteToMessage({ conversationId: 'c1', targetIndex: 2 });
-
-            expect(result).toEqual({ success: true, deletedCount: 2 });
-            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith(
-                'c1', 2, undefined, { deletedMessageIds: [] }
-            );
-        });
-
         test('manager 内部图同步失败仅告警，不阻断硬删除', async () => {
             // 决策 6 收敛后：失败容错在 ConversationManager.deleteToMessage 内部（catch + log.warn），
             // ChatFlowService 只见删除结果，不感知图同步。用 outer 真实 manager/service 验证。
@@ -597,31 +582,6 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             expect(deletedCount).toBe(2);
             const history = await manager.getMessagesRaw('c1');
             expect(history.map(m => m.id)).toEqual([ids[0], ids[1]]);
-        });
-
-        test('无全局 BranchService 时不影响原有删除行为', async () => {
-            const { flowService, conversationManager } = createChatFlowHarness();
-            setGlobalBranchService(undefined);
-            conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
-            conversationManager.deleteToMessage.mockResolvedValue(2);
-            conversationManager.getHistoryRef.mockResolvedValue(fourMessageHistory.slice(0, 2));
-
-            const result = await flowService.handleDeleteToMessage({ conversationId: 'c1', targetIndex: 2 });
-            expect(result).toEqual({ success: true, deletedCount: 2 });
-        });
-
-        test('删除到对话开头（targetIndex=0）：同样由 manager 内部完成，orchestrator 不重复调用', async () => {
-            const { flowService, conversationManager } = createChatFlowHarness();
-            conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
-            conversationManager.deleteToMessage.mockResolvedValue(4);
-            conversationManager.getHistoryRef.mockResolvedValue([]);
-
-            const result = await flowService.handleDeleteToMessage({ conversationId: 'c1', targetIndex: 0 });
-
-            expect(result).toEqual({ success: true, deletedCount: 4 });
-            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith(
-                'c1', 0, undefined, { deletedMessageIds: [] }
-            );
         });
     });
 

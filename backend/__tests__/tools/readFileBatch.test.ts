@@ -1,26 +1,26 @@
 import * as path from 'path';
-import * as vscode from 'vscode';
-import { createReadFileTool } from '../../tools/file/read_file';
+import { createReadFileTool as createRuntimeReadFileTool } from '../../tools/file/readFileRuntime';
+import { createFileToolHostMock } from '../__fixtures__/mockFixtures';
 import { normalizeToolArgs } from '../../tools/coerceToolArgs';
 import * as iconv from 'iconv-lite';
 
 const encoder = new TextEncoder();
 const GBK_SCRIPT = '@echo off\r\nrem 启动游戏并等待退出\r\necho 正在运行\r\n';
+const { host, setWorkspaces } = createFileToolHostMock();
+const createReadFileTool = () => createRuntimeReadFileTool(host);
 
 function workspaceFilePath(relativePath: string): string {
-    return path.join(path.resolve('/workspace/project'), relativePath);
+    return path.join(path.resolve('/workspace/project'), relativePath).replaceAll('\\', '/');
 }
 
 describe('read_file batch requests', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        (vscode.workspace as any).workspaceFolders = [{
-            name: 'project',
-            uri: vscode.Uri.file(path.resolve('/workspace/project'))
-        }];
+        setWorkspaces([{ name: 'project', fsPath: path.resolve('/workspace/project') }]);
 
-        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({ size: 64, type: vscode.FileType.File });
-        (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: { fsPath: string }) => {
+        host.stat.mockResolvedValue({ size: 64, type: 1 });
+        host.readFile.mockImplementation(async (value: unknown) => {
+            const uri = value as { fsPath: string };
             if (uri.fsPath === workspaceFilePath('a.txt')) {
                 return encoder.encode('a1\na2\na3');
             }
@@ -132,6 +132,6 @@ describe('read_file batch requests', () => {
 
         expect(empty).toMatchObject({ success: false, error: 'files must contain at least one file request.' });
         expect(mixed).toMatchObject({ success: false, error: 'Provide either path or files, not both.' });
-        expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
+        expect(host.readFile).not.toHaveBeenCalled();
     });
 });

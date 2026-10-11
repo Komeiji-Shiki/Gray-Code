@@ -7,34 +7,7 @@
  * - 性能冒烟：大文件全量重写不允许卡死（旧实现 O(D²) Map 拷贝会超时/爆内存）
  */
 
-jest.mock('fs', () => ({
-    readFileSync: jest.fn(),
-    writeFileSync: jest.fn(),
-    existsSync: jest.fn(),
-    unlinkSync: jest.fn()
-}));
-
-jest.mock('../../tools/file/DiffCodeLensProvider', () => ({
-    getDiffCodeLensProvider: () => ({
-        removeSession: jest.fn(),
-        getSession: jest.fn(),
-        getSessionByFilePath: jest.fn()
-    })
-}));
-
-jest.mock('../../core/settingsContext', () => ({
-    getGlobalSettingsManager: () => null
-}));
-
-jest.mock('../../tools/file/apply_diff', () => ({
-    applyDiffToContent: jest.fn()
-}));
-
-jest.mock('../../tools/file/unifiedDiff', () => ({
-    applyUnifiedDiffHunks: jest.fn()
-}));
-
-import { myersDiffLines, countDeletedLines, type DiffOp } from '../../core/services/diffManager';
+import { myersDiffLines, countDeletedLines, type DiffOp } from '../../core/services/diff/diffAlgorithm';
 
 /** 用 ops 重建原始行序列（equal + delete） */
 function rebuildOriginal(ops: DiffOp[]): string[] {

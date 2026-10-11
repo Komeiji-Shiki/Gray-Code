@@ -8,7 +8,7 @@
 import {
     SubAgentConcurrencyLimiter,
     SubAgentQueueCancelledError
-} from '../../tools/subagents';
+} from '../../tools/subagents/concurrencyLimiter';
 import { SubAgentQueueTimeoutError } from '../../tools/subagents/concurrencyLimiter';
 
 /** 让微任务队列排空，用于断言"仍在排队" */

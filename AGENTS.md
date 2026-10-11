@@ -4,7 +4,8 @@
 
 ## 项目速览
 
-- **GrayCode** 是本地优先的 AI 工作台。`main` 是 2.x 独立平台（Electron 桌面 + Web 服务）；1.x VS Code 扩展在 `v1-extension` 分支，`main` 只保留扩展的构建入口（`webview/`、`extension.ts`、根 `npm run build`）。
+- **GrayCode** 是本地优先的 AI 工作台。`main` 维护 2.x 独立平台（Electron 桌面 + Web 服务），使用 `build:desktop` 或 `build` 构建、`desktop` 启动；1.x VS Code 扩展的源码、测试与发布配置保留在 `v1-extension` 分支。
+- **平台调用链**：`backend/` 保留平台复用的业务模块和工具实现，宿主能力由 `apps/server` 注入。修改平台行为时，从实际注册与调用入口确认依赖；不要恢复已经移除的 VS Code 包装层。
 - **技术栈**：TypeScript；Node.js ≥ 24.11（与 Electron 内置的 Node 24 一致，主版本记录在 `.nvmrc`）；npm；Electron、Vue 3（Pinia）、esbuild、Jest、Vitest、MCP SDK。
 - **原生**：`native/windows/ComputerHost` 是 .NET Framework 4 的 C# 电脑操作宿主，由 `scripts/build-computer-host.mjs` 调用系统自带的 csc.exe 构建；桌面发行面向 Windows x64。
 - **语言**：文档与提交信息用中文（英文入口是 `README_EN.md`）。
@@ -21,7 +22,6 @@
 | `frontend` | 聊天、设置、角色与工具结果界面（独立 package.json 与锁文件） |
 | `backend` | 仍被平台复用的业务模块（MCP、配置、提示词等）、共享工具实现与语言包 |
 | `shared` | 跨宿主聊天协议、外观色板与其他纯函数 |
-| `webview/`、`extension.ts` | 保留的 VS Code 宿主入口；独立桌面不从这里启动 |
 | `native/windows/ComputerHost` | Windows 电脑操作宿主（C#） |
 | `fast-tavern-main` | 独立的提示词引擎（`npm-fast-tavern` 与 `py-fast-tavern` 两套实现） |
 | `scripts/` | 构建、打包、冒烟验证、i18n 同步、工具元数据生成与检查 |
@@ -47,8 +47,6 @@ npm run package:desktop         # 生成桌面便携包（要求已提交的干�
 npm run package:installer       # 从便携输出生成安装与更新交付物
 ```
 
-根 `npm run build` 是保留的 VS Code 扩展构建；独立桌面用 `build:desktop` / `desktop`。
-
 ## 修改边界
 
 - **core 不依赖宿主**：`packages/core` 不导入 Electron、VS Code、frontend、webview 或 backend；宿主能力经应用服务与端口注入。`scripts/build-platform.mjs` 构建时检查这条边界，越界直接报错。
@@ -58,8 +56,17 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 - **存储格式向后兼容**：格式变更保持旧记录可读；优化时沿用既有结构与读取路径，不另建平行存储。
 - **受管进程**：只停止自己启动并持有的子进程；按 PID 操作前先确认仍是同一个进程，停止时只结束自己的进程树。
 - **避免多余抽象**：不新建只做转发或改名的包装层；已有正式依赖（如 MCP SDK）实现的协议，不再自己实现一份。
-- **风格跟随现状**：命名、错误处理与日志沿用所在目录的既有模式，不为一次改动引入新的风格体系。
+- **校验只在边界做一次**：RPC 入口、工具参数 schema、工作区路径解析和存储读写是信任边界，在那里校验；内部调用不重复校验同一字段，也不为类型上不可能出现的状态写兜底分支。新增防护前先确认现有边界确实没有覆盖。
+- **风格跟随现状**：命名、错误处理与日志沿用所在目录的既有模式，不为一次改动引入新的风格体系。但不要延续压缩式写法：新代码单行保持在约 160 列内，省略空格或把多条语句挤在一行的旧代码不作为模仿对象；工具 schema 按字段分行。
+- **文件规模**：单个源文件超过约 1000 行时，新增功能优先按职责拆出模块，而不是继续追加。
 - **注释写原因与边界**，不复述代码表面含义。
+
+## 工具与提示词
+
+- **工具声明是每次请求都发送的前缀**：默认 Agent 会把全部启用工具的说明和 schema 发给模型，新增或修改时控制长度。枚举值不在说明里重复列举；结果字段只解释模型容易误读的部分；跨工具共用的句子提取成常量（如 `backend/tools/shared/batchingGuidance.ts`）。
+- **环境工具按环境追加**：Bot 附件、上下文笔记等只在特定会话有意义的工具由 `apps/server/src/prompt/service.ts` 追加，并登记在 `apps/server/src/settings/agent.ts` 的环境工具表里，不进入默认 Agent 的常驻清单。没有对应宿主能力（如内置浏览器）时也不常驻。
+- **先扩展参数，再加工具**：新增工具前确认现有工具无法用一个参数或 action 覆盖。功能相近的工具族会让模型选择困难，也会让说明成倍增长。
+- **工具说明的语言**：平台工具的说明直接写在 `apps/server` 或其调用的 `backend/tools` 工厂里；保留双语的动态说明经 `backend/tools/localization/dynamicDescriptions.ts` 按语言生成，新增说明应覆盖中文。
 
 ## 前端与 i18n
 
@@ -82,6 +89,8 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 - Never 提交密钥、令牌或含密钥的配置；密钥放本机设置或环境变量。
 - Never 把本机绝对路径、个人笔记写进将提交的文件；临时脚本放 `.tmp/` 或用完即删。
 - Never 顺手整文件重排或格式化无关代码；缩进与引号跟随所在文件既有风格。
+- Never 不带配置直接 `npx jest backend/...`：backend 测试必须用 `--config jest.backend.config.js`（或 `npm test`），否则会按 Babel 解析 TypeScript，整批报语法错误。
+- Never 把临时探针或一次性测试留在 `packages/core/tests/`、`backend/__tests__/` 等测试目录；用完删除，需要长期防回归的场景写成正式测试。
 
 ## 验证
 
@@ -96,11 +105,12 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 
 ```powershell
 npx jest --config jest.platform.config.cjs --runInBand packages/core/tests/externalAgents.test.ts
+npx jest --config jest.backend.config.js backend/__tests__/tools
 npm --prefix frontend test -- src/__tests__/components/StaticGuards.test.ts
 ```
 
 - **真实流程**：类型与组件测试不能代替真实流程。桌面改动先 `npm run build:desktop`，再运行 `npx electron scripts/smoke-desktop.cjs`：它用隔离数据目录和合成模型端点覆盖启动、发送与工具循环、审批、重生成与分支切换、编辑器、设置、截图和退出，报告与截图写到 `.tmp/desktop-smoke-*`（`GRAYCODE_SMOKE_OUTPUT` 只能指向 `.tmp/` 下以 `desktop-smoke-` 开头的目录）。改动涉及脚本没覆盖的场景（如取消运行、工作树）时再手动跑一遍。浏览器交互用 `node scripts/smoke-browser.cjs`。MCP/ACP 测试使用真实本机 stdio/HTTP 夹具，只关闭自己启动的子进程。
-- **CI**：`ci.yml` 在 PR 与 `main` 推送时，在 Ubuntu 上跑 `npm run ci`，在 Windows 上构建桌面并跑进程生命周期、真实 MCP 夹具与 `smoke-desktop.cjs`；`desktop.yml` 手动触发，打包便携版与安装包；`nightly-build.yml` 每两天打包最新 Windows 桌面版，成功发布后只保留最新 nightly；`release.yml` 只构建 1.x VSIX。
+- **CI**：`ci.yml` 在 PR 与 `main` 推送时，在 Ubuntu 上跑 `npm run ci`，在 Windows 上构建桌面并跑进程生命周期、真实 MCP 夹具与 `smoke-desktop.cjs`；`desktop.yml` 手动触发，打包便携版与安装包；`nightly-build.yml` 每两天打包最新 Windows 桌面版，成功发布后只保留最新 nightly。1.x 扩展发布配置随 `v1-extension` 分支维护。
 
 ## 提交与协作
 
@@ -109,5 +119,5 @@ npm --prefix frontend test -- src/__tests__/components/StaticGuards.test.ts
 - 向仓库提交贡献时按 DCO 1.1 使用 `git commit -s`；新贡献默认 AGPL-3.0-only 并含限定的 Cubism 例外（见 [LICENSING.md](LICENSING.md)）。
 - 用户可感知的变化按批次补记 `CHANGELOG.md`。
 - 新增第三方依赖：保留原始许可，并按 `resources/licenses/README.md` 记录来源。
-- 文档各归其位：README 面向用户入口，`wiki/` 是手册，PROJECT_STRUCTURE.md 讲架构，CONTRIBUTING.md 讲流程；行为变化同步更新对应文档。
+- 文档各归其位：README 面向用户入口，`wiki/` 是手册，PROJECT_STRUCTURE.md 讲架构与依赖边界，CONTRIBUTING.md 讲流程；行为变化同步更新对应文档。单次优化的实现细节写进提交信息或 `CHANGELOG.md`，不追加到 PROJECT_STRUCTURE.md。
 - 完成后的说明写清：解决了什么问题、最终行为、做过哪些验证、数据格式是否兼容、还有哪些环境限制。

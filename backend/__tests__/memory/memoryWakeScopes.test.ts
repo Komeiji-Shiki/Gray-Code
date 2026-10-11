@@ -1,5 +1,10 @@
+import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
+import { createEngineeringLogTool } from '../../tools/memory/engineeringLog';
+import type { MemoryEngine } from '../../modules/memory/MemoryEngine';
+
+let memory: Awaited<ReturnType<typeof memoryEngineFixture>>;
 /**
- * memory_wake / memory_recall 工具双作用域（全局 + 工作区）回归测试：
+ * engineering_log wake / recall 双作用域（全局 + 工作区）回归测试：
  * 1. 无工作区：wake 只输出全局段（行为与旧版一致）
  * 2. 有工作区且工作区有记忆：输出包含全局段 + 工作区段（带标注）
  * 3. 有工作区但工作区无记忆：只输出全局段
@@ -7,74 +12,47 @@
  * 5. 双作用域都为空：输出 No memories yet
  * 6. memory_recall 合并两个作用域的命中结果并标注来源
  */
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs';
-import {
-    MemoryManager,
-    setGlobalMemoryManager,
-    setWorkspaceMemoryBaseDir,
-    getMemoryManagerForWorkspace,
-} from '../../modules/memory';
-import { createMemoryWakeTool } from '../../tools/memory/memory_wake';
-import { createMemoryRecallTool } from '../../tools/memory/memory_recall';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
-
-function uriOf(fsPath: string): string {
-    return 'file:///' + fsPath.replace(/\\/g, '/');
-}
 
 async function wake(activeWorkspaceUri?: string): Promise<any> {
-    const tool = createMemoryWakeTool();
+    const tool = createEngineeringLogTool(memory.host);
     return await tool.handler(
-        {},
+        { action: 'wake' },
         activeWorkspaceUri ? { activeWorkspaceUri } as any : undefined
     ) as any;
 }
 
 /** 带参数的 wake 调用（part/snapshotT 续读场景） */
 async function wakeWith(args: Record<string, unknown>, activeWorkspaceUri?: string): Promise<any> {
-    const tool = createMemoryWakeTool();
+    const tool = createEngineeringLogTool(memory.host);
     return await tool.handler(
-        args,
+        { ...args, action: 'wake' },
         activeWorkspaceUri ? { activeWorkspaceUri } as any : undefined
     ) as any;
 }
 
 async function recall(regex: string, activeWorkspaceUri?: string): Promise<any> {
-    const tool = createMemoryRecallTool();
+    const tool = createEngineeringLogTool(memory.host);
     return await tool.handler(
-        { regex },
+        { action: 'recall', regex },
         activeWorkspaceUri ? { activeWorkspaceUri } as any : undefined
     ) as any;
 }
 
 describe('memory 工具双作用域（全局 + 工作区）', () => {
-    let globalDir: string;
-    let wsBaseDir: string;
-    let wsDir: string;
-    let globalMm: MemoryManager;
+    let globalMm: MemoryEngine;
 
-    beforeEach(() => {
-        globalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-global-'));
-        wsBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-ws-base-'));
-        wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-ws-'));
-        globalMm = new MemoryManager(globalDir);
-        setWorkspaceMemoryBaseDir(wsBaseDir);
+    beforeEach(async () => {
+        memory = await memoryEngineFixture();
+        globalMm = memory.engine;
     });
 
-    afterEach(() => {
-        setGlobalMemoryManager(null);
-        setWorkspaceMemoryBaseDir(null);
-        for (const dir of [globalDir, wsBaseDir, wsDir]) {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    afterEach(async () => {
+        await memory.cleanup();
     });
 
     test('无工作区：wake 只输出全局段（行为与旧版一致）', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
-        setGlobalMemoryManager(globalMm);
 
         const result = await wake();
         expect(result.success).toBe(true);
@@ -87,46 +65,43 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
     test('有工作区且工作区有记忆：输出包含全局段 + 工作区段（带标注）', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.note('workspace-memory-beta');
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('--- Global memory ---');
         expect(result.data.text).toContain('global-memory-alpha');
         expect(result.data.text).toContain('--- Workspace memory (');
         expect(result.data.text).toContain('workspace-memory-beta');
-        expect(result.data.workspace).toEqual({ uri: uriOf(wsDir), totalMemories: 1 });
+        expect(result.data.workspace).toEqual({ uri: memory.workspaceUri, totalMemories: 1 });
     });
 
     test('有工作区但工作区无记忆：只输出全局段', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
-        setGlobalMemoryManager(globalMm);
 
         // 触发工作区 manager 惰性创建（无记忆）
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         expect(wsMm).not.toBeNull();
         expect(await wsMm!.totalEntries()).toBe(0);
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('global-memory-alpha');
         expect(result.data.text).not.toContain('Workspace memory');
-        expect(result.data.workspace).toEqual({ uri: uriOf(wsDir), totalMemories: 0 });
+        expect(result.data.workspace).toEqual({ uri: memory.workspaceUri, totalMemories: 0 });
     });
 
     test('全局与工作区记忆互不干扰：wake 两段各含自己的内容', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.note('workspace-memory-beta');
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
 
         // 按段首标注切开，校验两段内容互不混入
@@ -139,9 +114,8 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
 
     test('双作用域都为空：输出 No memories yet 且顶层只有一页', async () => {
         await globalMm.init();
-        setGlobalMemoryManager(globalMm);
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('No memories yet');
         expect(result.data.text).toContain('You are awake.');
@@ -153,14 +127,13 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
     test('首次 wake 的 snapshotT=0 按未指定处理，不会遮蔽已有记忆', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-visible');
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.note('workspace-memory-visible');
 
         // 可选数值参数在部分模型/客户端中会以 0 占位；首次调用必须读取当前快照，
         // 不能把显式 0 当成“只读取零条记忆”的真实历史快照。
-        const result = await wakeWith({ part: 1, snapshotT: 0 }, uriOf(wsDir));
+        const result = await wakeWith({ part: 1, snapshotT: 0 }, memory.workspaceUri);
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('global-memory-visible');
         expect(result.data.text).toContain('workspace-memory-visible');
@@ -174,12 +147,11 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
     test('memory_recall 合并全局与工作区命中并标注来源', async () => {
         await globalMm.init();
         await globalMm.note('shared-topic-aaa');
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.note('shared-topic-bbb');
 
-        const result = await recall('shared-topic', uriOf(wsDir));
+        const result = await recall('shared-topic', memory.workspaceUri);
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('--- Global memory ---');
         expect(result.data.text).toContain('shared-topic-aaa');
@@ -200,15 +172,14 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         // 缩小分页（每 part 2 行）便于构造多段：全局 5 条 → 3 段，工作区 4 条 → 2 段
         await globalMm.updateConfig({ partLines: 2 });
         for (let i = 0; i < 5; i++) await globalMm.note(`gl-${i}`);
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.updateConfig({ partLines: 2 });
         for (let i = 0; i < 4; i++) await wsMm!.note(`ws-${i}`);
 
         // 模型沿用全局快照总数（5）续读 part=2；工作区实际只有 4 条 → T= 不匹配，
         // 不应被误判为「已读完」而跳过——用工作区自身总数重试后 part 2 内容不丢
-        const result = await wakeWith({ part: 2, snapshotT: 5 }, uriOf(wsDir));
+        const result = await wakeWith({ part: 2, snapshotT: 5 }, memory.workspaceUri);
         expect(result.success).toBe(true);
 
         // 全局 part 2 正常返回
@@ -230,18 +201,17 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         await globalMm.init();
         await globalMm.updateConfig({ partLines: 2 });
         for (let i = 0; i < 5; i++) await globalMm.note(`gl-${i}`);
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.updateConfig({ partLines: 2 });
         for (let i = 0; i < 4; i++) await wsMm!.note(`ws-${i}`);
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
         // 两段各自的第 1 部分都输出了，且都未读完 → 提示 nextPart=2
         expect(result.data.text).toContain('gl-0');
         expect(result.data.text).toContain('ws-0');
-        expect(result.data.text).toContain('Not awake yet. Run: memory_wake part=2');
+        expect(result.data.text).toContain('Not awake yet. Run: engineering_log action=wake part=2');
         expect(result.data.awake).toBe(false);
         expect(result.data.totalMemories).toBe(9);
     });
@@ -250,13 +220,12 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         await globalMm.init();
         await globalMm.note('g-alpha');
         await globalMm.note('g-beta');
-        setGlobalMemoryManager(globalMm);
 
-        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        const wsMm = await memory.host.getMemoryManagerForWorkspace(memory.workspaceUri);
         await wsMm!.note('w-alpha');
         await wsMm!.note('w-beta');
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('You are awake.');
         expect(result.data.text).toContain('[Global] Compress:');
@@ -271,18 +240,17 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.blocks).toBeUndefined();
     });
 
-    test('只读 wake 不创建工作区记忆目录（createIfMissing=false）', async () => {
+    test('只读 wake 不创建工作区记忆作用域（createIfMissing=false）', async () => {
         await globalMm.init();
         await globalMm.note('global-only');
-        setGlobalMemoryManager(globalMm);
 
-        // 工作区目录从未被创建（不调用 getMemoryManagerForWorkspace）
-        expect(fs.readdirSync(wsBaseDir)).toHaveLength(0);
+        // 工作区宿主尚未初始化。
+        expect(memory.hasWorkspace()).toBe(false);
 
-        const result = await wake(uriOf(wsDir));
+        const result = await wake(memory.workspaceUri);
         expect(result.success).toBe(true);
-        // 只读 wake 不应创建目录 / scope.json
-        expect(fs.readdirSync(wsBaseDir)).toHaveLength(0);
+        // 只读 wake 不应要求宿主创建作用域。
+        expect(memory.hasWorkspace()).toBe(false);
         // 输出只有全局段，且没有工作区元信息
         expect(result.data.text).toContain('global-only');
         expect(result.data.text).not.toContain('Workspace memory');

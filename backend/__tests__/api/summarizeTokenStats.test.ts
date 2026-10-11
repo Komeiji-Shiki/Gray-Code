@@ -1,9 +1,9 @@
-import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
+import { SummaryAlgorithms } from '../../modules/api/chat/services/SummaryAlgorithms';
 import type { Content } from '../../modules/conversation/types';
 
-describe('SummarizeService summary token statistics', () => {
+describe('SummaryAlgorithms summary token statistics', () => {
     test('separates main-context compression from summarizer request usage', () => {
-        const service = new SummarizeService({} as any, {} as any, {} as any, {} as any);
+        const service = new SummaryAlgorithms();
         const user: Content = { role: 'user', parts: [{ text: 'x'.repeat(400) }] };
         const model: Content = {
             role: 'model',

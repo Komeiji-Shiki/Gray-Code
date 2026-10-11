@@ -5,12 +5,10 @@
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { createGetActivityStatsTool } from '../../tools/activity/activity_stats';
 import { createActivityStatsTool } from '../../tools/activity/activityRuntime';
 import {
     ActivityStore,
-    setGlobalActivityTracker,
-    getGlobalActivityTracker,
+    getActivityStats,
     toDateStr
 } from '../../modules/activity';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
@@ -24,6 +22,8 @@ function localTime(date: Date, hour = 10, minute = 0): number {
 describe('get_activity_stats tool', () => {
     let dir: string;
     let store: ActivityStore;
+    let activeStore: ActivityStore;
+    const createGetActivityStatsTool = () => createActivityStatsTool(query => getActivityStats(activeStore, query));
 
     beforeEach(async () => {
         dir = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-activity-tool-'));
@@ -43,20 +43,11 @@ describe('get_activity_stats tool', () => {
         await store.appendSample(tY);
         await store.flushDay(toDateStr(tY));
 
-        setGlobalActivityTracker({ getStore: () => store } as any);
+        activeStore = store;
     });
 
     afterEach(async () => {
-        setGlobalActivityTracker(null);
         await fs.rm(dir, TEMP_DIR_REMOVE_OPTIONS);
-    });
-
-    test('returns error when tracker is not initialized', async () => {
-        setGlobalActivityTracker(null);
-        const tool = createGetActivityStatsTool();
-        const result = await tool.handler({});
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('not initialized');
     });
 
     test('returns daily stats with readable local times by default (7d range)', async () => {
@@ -126,7 +117,7 @@ describe('get_activity_stats tool', () => {
                 await many.appendSample(midnight.getTime() + i * 30 * 60_000);
             }
             await many.flushDay();
-            setGlobalActivityTracker({ getStore: () => many } as any);
+            activeStore = many;
 
             const tool = createGetActivityStatsTool();
             const result = await tool.handler({});
@@ -136,7 +127,7 @@ describe('get_activity_stats tool', () => {
             expect(data.today.sessions).toHaveLength(24);
             expect(data.today.sessionsOmitted).toBe(6);
         } finally {
-            setGlobalActivityTracker({ getStore: () => store } as any);
+            activeStore = store;
             await fs.rm(manyDir, TEMP_DIR_REMOVE_OPTIONS);
         }
     });
@@ -185,10 +176,6 @@ describe('get_activity_stats tool', () => {
         const result = await tool.handler({ range: 'invalid' });
         expect(result.success).toBe(true);
         expect(result.data.daily).toHaveLength(7);
-    });
-
-    test('global tracker accessor works', () => {
-        expect(getGlobalActivityTracker()).not.toBeNull();
     });
 });
 

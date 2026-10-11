@@ -8,67 +8,18 @@
  * - 替换模式 matches 收集预算上限（MAX_REPLACE_MATCHES=20000）：超出截断收集并置 truncated，
  *   替换本身仍完整执行
  */
-import * as vscode from 'vscode';
-import { createSearchInFilesTool } from '../../../tools/search/search_in_files';
-import { DiffManager } from '../../../core/services/diffManager';
+import { createSearchDeclaration } from '../../../tools/search/declarationRuntime';
+import { createFileToolHostMock } from '../../__fixtures__/mockFixtures';
 
-// vscode mock 未提供 RelativePattern，测试内补齐（运行时与生产代码共享同一 mock 实例）
-class FakeRelativePattern {
-    constructor(public base: any, public pattern: string) {}
-}
-(vscode as any).RelativePattern = FakeRelativePattern;
-
-// DiffManager / DiffCodeLensProvider 依赖 vscode.EventEmitter 与 registerTextDocumentContentProvider，
-// 测试内补齐最小实现（替换模式走 diff 审阅链路时需要）
-class FakeEventEmitter<T = any> {
-    private listeners: Array<(e: T) => any> = [];
-    event(listener: (e: T) => any): { dispose: () => void } {
-        this.listeners.push(listener);
-        return { dispose: () => { /* noop */ } };
-    }
-    fire(e: T): void {
-        for (const l of this.listeners) {
-            l(e);
-        }
-    }
-    dispose(): void {
-        this.listeners = [];
-    }
-}
-(vscode as any).EventEmitter = FakeEventEmitter;
-(vscode.workspace as any).registerTextDocumentContentProvider = jest.fn(() => ({ dispose: jest.fn() }));
-
-// DiffManager 接受/拒绝 diff 时会构造 WorkspaceEdit 并通过 applyEdit 应用，测试内补齐
-class FakeWorkspaceEdit {
-    replace(_uri: any, _range: any, _newText: string): void { /* noop */ }
-}
-(vscode as any).WorkspaceEdit = FakeWorkspaceEdit;
-
-/** 生成与 diff absolutePath 匹配的假文本文档（避免 rejectDiff 落入写盘分支） */
-function makeFakeDocument(fsPath: string, content: string) {
-    return {
-        uri: makeFileUri(fsPath),
-        getText: () => content,
-        positionAt: (offset: number) => ({ line: 0, character: offset }),
-        isDirty: false,
-        save: async () => true
-    };
-}
-
-const findFilesMock = vscode.workspace.findFiles as jest.Mock;
-const readFileMock = vscode.workspace.fs.readFile as jest.Mock;
-const statMock = vscode.workspace.fs.stat as jest.Mock;
+const { host, setWorkspaces } = createFileToolHostMock();
+const findFilesMock = host.findFiles;
+const readFileMock = host.readFile;
+const statMock = host.stat;
+const reviewMock = host.review;
+const createSearchInFilesTool = () => createSearchDeclaration(host).createSearchInFilesTool();
 
 function makeFileUri(fsPath: string) {
     return { fsPath, scheme: 'file', path: fsPath.replace(/\\/g, '/') };
-}
-
-function setWorkspaces(folders: Array<{ name: string; fsPath: string }>) {
-    (vscode.workspace as any).workspaceFolders = folders.map((f, index) => ({
-        name: f.name,
-        uri: makeFileUri(f.fsPath),
-        index
-    }));
 }
 
 function makeContext(overrides?: any) {
@@ -79,12 +30,9 @@ beforeEach(() => {
     findFilesMock.mockReset();
     readFileMock.mockReset();
     statMock.mockReset();
-    statMock.mockResolvedValue({ size: 100 });
-    (vscode.workspace as any).workspaceFolders = [];
-    (vscode.workspace as any).textDocuments = [];
-    (vscode.workspace.openTextDocument as jest.Mock).mockReset();
-    (vscode.workspace.applyEdit as jest.Mock).mockReset();
-    (vscode.workspace.applyEdit as jest.Mock).mockResolvedValue(true);
+    statMock.mockResolvedValue({ size: 100, type: 1 });
+    reviewMock.mockReset().mockResolvedValue({ wasAccepted: true, wasInterrupted: false, pendingDiffId: 'test-diff' });
+    setWorkspaces([]);
 });
 
 describe('ReDoS 防护（正则源串长度与构造异常）', () => {
@@ -215,24 +163,11 @@ describe('替换模式 matches 收集预算上限', () => {
         const files = ['first.txt', 'second.txt'].map(name => makeFileUri(`C:/gc-test-repo1/${name}`));
         findFilesMock.mockResolvedValue(files);
         readFileMock.mockResolvedValue(Buffer.from('xx'));
-        statMock.mockResolvedValue({ size: 2 });
-        const documents = files.map(file => makeFakeDocument(file.fsPath, 'xx'));
-        (vscode.workspace as any).textDocuments = documents;
-        (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(async uri =>
-            documents.find(doc => doc.uri.fsPath === uri.fsPath) ?? makeFakeDocument(uri.fsPath ?? uri.path ?? 'virtual-diff', 'xx'));
-        const pending = createSearchInFilesTool().handler({ query: 'x', mode: 'replace', replace: 'y' }, makeContext());
-        const dm = DiffManager.getInstance();
+        statMock.mockResolvedValue({ size: 2, type: 1 });
         for (const decision of decisions) {
-            let diff: ReturnType<typeof dm.getPendingDiffs>[number] | undefined;
-            for (let attempt = 0; attempt < 100 && !diff; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, 10));
-                diff = dm.getPendingDiffs()[0];
-            }
-            expect(diff).toBeDefined();
-            if (decision === 'accepted') await dm.acceptDiff(diff!.id, false);
-            else await dm.rejectDiff(diff!.id);
+            reviewMock.mockResolvedValueOnce({ wasAccepted: decision === 'accepted', wasInterrupted: false, pendingDiffId: 'test-diff' });
         }
-        const result = await pending;
+        const result = await createSearchInFilesTool().handler({ query: 'x', mode: 'replace', replace: 'y' }, makeContext());
         expect(result.success).toBe(true);
         expect(result.data).toMatchObject({ filesModified, totalReplacements, proposedReplacements: 4,
             filesRejected: decisions.filter(value => value === 'rejected').length });
@@ -245,31 +180,14 @@ describe('替换模式 matches 收集预算上限', () => {
         findFilesMock.mockResolvedValue([fileUri]);
         const content = 'x'.repeat(25000);
         readFileMock.mockResolvedValue(Buffer.from(content, 'utf8'));
-        statMock.mockResolvedValue({ size: content.length });
+        statMock.mockResolvedValue({ size: content.length, type: 1 });
 
         const tool = createSearchInFilesTool();
-        const handlerPromise = tool.handler(
+        const result = await tool.handler(
             { query: 'x', mode: 'replace', replace: 'y' },
             makeContext()
         );
-        // 让 diff 审阅链路找到对应文本文档（acceptDiff 走内存编辑路径，不写磁盘）
-        const fakeDoc = makeFakeDocument('C:/gc-test-repo1/big.txt', content);
-        (vscode.workspace as any).textDocuments = [fakeDoc];
-        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(fakeDoc);
-
-        // 等待 handler 进入 waitForDiffResolution（diff 视图等待确认），然后接受所有 pending diff
-        const dm = DiffManager.getInstance();
-        let pendings: any[] = [];
-        for (let i = 0; i < 30 && pendings.length === 0; i++) {
-            await new Promise(r => setTimeout(r, 100));
-            pendings = dm.getPendingDiffs();
-        }
-        expect(pendings.length).toBe(1);
-        for (const d of pendings) {
-            await dm.acceptDiff(d.id, false);
-        }
-
-        const result = await handlerPromise;
+        expect(reviewMock).toHaveBeenCalledTimes(1);
         expect(result.success).toBe(true);
         const data = result.data;
         // matches 被预算截断到 20000 且置 truncated
@@ -287,29 +205,14 @@ describe('替换模式 matches 收集预算上限', () => {
         findFilesMock.mockResolvedValue([fileUri]);
         const content = 'x'.repeat(100);
         readFileMock.mockResolvedValue(Buffer.from(content, 'utf8'));
-        statMock.mockResolvedValue({ size: content.length });
+        statMock.mockResolvedValue({ size: content.length, type: 1 });
 
         const tool = createSearchInFilesTool();
-        const handlerPromise = tool.handler(
+        const result = await tool.handler(
             { query: 'x', mode: 'replace', replace: 'y' },
             makeContext()
         );
-        const fakeDoc = makeFakeDocument('C:/gc-test-repo1/small.txt', content);
-        (vscode.workspace as any).textDocuments = [fakeDoc];
-        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(fakeDoc);
-
-        const dm = DiffManager.getInstance();
-        let pendings: any[] = [];
-        for (let i = 0; i < 30 && pendings.length === 0; i++) {
-            await new Promise(r => setTimeout(r, 100));
-            pendings = dm.getPendingDiffs();
-        }
-        expect(pendings.length).toBe(1);
-        for (const d of pendings) {
-            await dm.acceptDiff(d.id, false);
-        }
-
-        const result = await handlerPromise;
+        expect(reviewMock).toHaveBeenCalledTimes(1);
         expect(result.success).toBe(true);
         const data = result.data;
         expect(data.truncated).toBe(false);

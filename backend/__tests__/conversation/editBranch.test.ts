@@ -1,22 +1,6 @@
 /**
- * TREE-03 + TREE-05 编辑用户消息分支测试（第六阶段：树状 reroll 与候选切换）。
- *
- * 覆盖：
- * - 编辑保留原分支（决策 7 / TREE-03 语义）：旧用户节点及其 model 子树完整保留进 sidecar，
- *   新用户节点 kind='edit'（编辑后文本）激活，主历史截断到旧用户节点之前并追加编辑后消息
- *   （id 对齐新用户节点，BR-01 同源）；
- * - 编辑后生成新回答：finishReroll 等价回填——模型候选节点重命名对齐消息 id、内容 + 摘要更新、
- *   续接节点、BR-05 主历史 id 链 == 活跃路径；
- * - 编辑目标校验（resolveEditTargetNode 纯函数）：缺失 → NODE_NOT_FOUND；非 user / 不在活跃路径 /
- *   根节点 → INVALID_BRANCH_RELATION；缺省取活跃路径最后一条可编辑用户消息（含 functionResponse 跳过）；
- * - 失败收敛：流式已有部分输出时保留候选；完全无输出时移除空模型占位，旧分支仍可切回；
- * - 与 reroll 并存：编辑分支后可再 reroll 编辑出的回答；reroll 分支后也可再编辑；
- * - 每父节点候选上限（决策 4）：编辑候选同样计入，超限拒绝不自动删；
- * - webview handler：chat.editBranchStream 注册 + 入参校验。
- *
- * 编排说明：BranchService 目前没有 startEditBranch 公共方法（修复批次边界外），
- * handleEditBranchStream 的编排（editCandidate → createRerollCandidate → 截断 → 追加 → finishReroll）
- * 在测试中复刻为 runEditBranchFlow 助手，验证其组合语义；目标校验使用导出的纯函数 resolveEditTargetNode。
+ * 编辑候选、原地编辑与主历史同步的共享分支行为。
+ * 夹具组合真实 BranchService 和 ConversationManager；旧 Webview 与 ChatFlow 专属入口不再参与。
  */
 
 import * as fsp from 'fs/promises';
@@ -37,15 +21,6 @@ import {
     importLinearHistory,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import { resolveEditTargetNode, buildEditUserParts } from '../../modules/api/chat/services/ChatFlowService';
-import type { AttachmentData } from '../../modules/api/chat/types';
-import type { ContentPart } from '../../modules/conversation/types';
-import { BranchError } from '../../modules/conversation/branch/types';
-import { ChannelError, ErrorType } from '../../modules/channel/types';
-import { registerChatHandlers, editBranchStream } from '../../../webview/handlers/ChatHandlers';
-import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
-import { createMessageHandlerRegistry } from '../../../webview/handlers';
-import type { HandlerContext, MessageHandler } from '../../../webview/types';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user q1) → model(a1) → user(q2) → model(a2)（编辑目标 U2 非根节点） */
@@ -59,7 +34,7 @@ function branchedHistory(): ConversationHistory {
 }
 
 /**
- * 复刻 ChatFlowService.handleEditBranchStream 的编排（TREE-03 / TREE-03-R 流程）：
+ * 组合 BranchService 与 ConversationManager 的编辑操作（TREE-03 / TREE-03-R）：
  * 解析目标 → 非根节点：editCandidate（新 user 节点）→ createRerollCandidate（模型候选占位）→
  * 主历史截断到旧用户节点之前 → 追加编辑后用户消息（id 对齐新用户节点）；
  * 根节点（TREE-03-R）：原地改写根节点 + 截断其后 + 模型候选。
@@ -70,12 +45,14 @@ async function runEditBranchFlow(
     manager: ConversationManager,
     conversationId: string,
     newText: string,
-    userNodeId?: string,
+    userNodeId: string,
 ): Promise<{ newUserNodeId: string; modelCandidateNodeId: string; parentNodeId: string | null }> {
     await service.ensureMainHistoryRepresentedInGraph(conversationId);
     const graphResult = await service.getBranchGraph(conversationId);
     const history = await manager.getMessagesRaw(conversationId);
-    const target = resolveEditTargetNode(graphResult.graph, history, userNodeId);
+    // 夹具显式传入合法节点；这里只取共享图中的父链，不复制已移除的宿主目标校验。
+    const targetNode = (graphResult.graph ?? importLinearHistory(history)).nodes[userNodeId];
+    const target = { nodeId: targetNode.id, parentNodeId: targetNode.parentId };
 
     // TREE-03-R：根节点（parentNodeId === null）编辑重生成——改写根节点 + 截断其后 + 模型候选
     if (target.parentNodeId === null) {
@@ -86,7 +63,7 @@ async function runEditBranchFlow(
                 isUserInput: true,
                 tokenCountByChannel: {},
             } as any);
-            await service.updateActiveNodeParts(conversationId, target.nodeId, [{ text: newText }]);
+            await service.updateActiveNodeParts(conversationId, userNodeId, [{ text: newText }]);
         }
         const modelCreated = await service.createRerollCandidate(conversationId, target.nodeId, {
             parts: [],
@@ -142,23 +119,6 @@ async function simulateToolLoopOutput(manager: ConversationManager, conversation
         modelVersion: 'gemini-x',
     } as any);
     return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
-}
-
-/** 断言同步抛出的 BranchError 的错误码（BranchError.message 不含 code，需单独断言） */
-function expectBranchError(fn: () => void, code: string, messagePattern?: RegExp): void {
-    try {
-        fn();
-        throw new Error('expected to throw');
-    } catch (error: any) {
-        if (error instanceof Error && error.message === 'expected to throw') {
-            throw error;
-        }
-        expect(error).toBeInstanceOf(BranchError);
-        expect(error.code).toBe(code);
-        if (messagePattern) {
-            expect(error.message).toMatch(messagePattern);
-        }
-    }
 }
 
 describe('编辑用户消息分支（编排组合）', () => {
@@ -411,59 +371,6 @@ describe('编辑用户消息分支（编排组合）', () => {
         expect(consistency.historyIds).toEqual([u1, m1, editResult.newUserNodeId, answerBId]);
     });
 
-    test('编辑目标校验（resolveEditTargetNode 纯函数）：缺失 / 非 user / 不在活跃路径 / 根节点', async () => {
-        const [u1, m1, u2, m2] = await seedConversation('c1');
-        // 先建基线图（活跃路径 = 全量历史），进入图模式校验
-        const history = await manager.getMessagesRaw('c1');
-        await service.saveBranchGraph('c1', importLinearHistory(history));
-        const graph = (await service.getBranchGraph('c1')).graph!;
-
-        // 节点缺失 → NODE_NOT_FOUND
-        expectBranchError(() => resolveEditTargetNode(graph, history, 'no-such-node'), 'NODE_NOT_FOUND');
-        // 非 user（M2）→ INVALID_BRANCH_RELATION
-        expectBranchError(() => resolveEditTargetNode(graph, history, m2), 'INVALID_BRANCH_RELATION', /not a user node/);
-        // 根节点 U1（无父节点可挂「新 user 编辑节点」）：branch 模式放行（TREE-03-R：
-        // 原地改写根节点 + 截断其后 + 新建模型候选重新生成），parentNodeId=null
-        expect(resolveEditTargetNode(graph, history, u1)).toEqual({ nodeId: u1, parentNodeId: null });
-        // keep 模式（原地改写）同样放行根节点
-        expect(resolveEditTargetNode(graph, history, u1, 'keep')).toEqual({ nodeId: u1, parentNodeId: null });
-
-        // 缺省：活跃路径最后一条可编辑用户消息 = U2
-        expect(resolveEditTargetNode(graph, history)).toEqual({ nodeId: u2, parentNodeId: m1 });
-
-        // 编辑后 U2 不再在活跃路径上 → 再次显式编辑被拒绝
-        const result = await runEditBranchFlow(service, manager, 'c1', 'edited q2', u2);
-        const graphAfter = (await service.getBranchGraph('c1')).graph!;
-        expectBranchError(() => resolveEditTargetNode(graphAfter, history, u2), 'INVALID_BRANCH_RELATION', /not on the active path/);
-        // 缺省 → 新编辑节点
-        expect(resolveEditTargetNode(graphAfter, history).nodeId).toBe(result.newUserNodeId);
-    });
-
-    test('线性模式（无分支图）目标校验：主历史为活跃路径，父节点跳过 functionResponse', async () => {
-        const [, , u2] = await seedConversation('c1');
-        const history = await manager.getMessagesRaw('c1');
-
-        // 线性模式：显式目标 U2 的父节点 = 前一个非 FR 消息 M1
-        expect(resolveEditTargetNode(null, history, u2)).toEqual({ nodeId: u2, parentNodeId: history[1].id! });
-        // 根节点（首条消息）：branch/keep 均放行（TREE-03-R）
-        expect(resolveEditTargetNode(null, history, history[0].id!)).toEqual({ nodeId: history[0].id!, parentNodeId: null });
-        expect(resolveEditTargetNode(null, history, history[0].id!, 'keep')).toEqual({ nodeId: history[0].id!, parentNodeId: null });
-        // 缺省 = 最后一条可编辑用户消息 U2
-        expect(resolveEditTargetNode(null, history).nodeId).toBe(u2);
-
-        // 带 functionResponse 的历史：FR 不参与父节点解析
-        const historyWithFr = [
-            { id: 'q1-id', role: 'user' as const, parts: [{ text: 'q1' }], timestamp: 1 },
-            { id: 'a1-id', role: 'model' as const, parts: [{ text: 'a1' }], timestamp: 2 },
-            { id: 'fr-id', role: 'user' as const, parts: [{ functionResponse: { id: 'c1', name: 'read_file', response: { ok: true } } }], timestamp: 3, isFunctionResponse: true },
-            { id: 'q2-id', role: 'user' as const, parts: [{ text: 'q2' }], timestamp: 4 },
-        ];
-        expect(resolveEditTargetNode(null, historyWithFr, 'q2-id')).toEqual({
-            nodeId: 'q2-id',
-            parentNodeId: 'a1-id', // 跳过 FR，父节点为 M1
-        });
-    });
-
     test('TREE-05：有分支图时 append 增量并入图（切回候选后继续对话不破坏图）', async () => {
         const [, , , m2] = await seedConversation('c1');
         // 建图（活跃路径 = 全量历史 [U1, M1, U2, M2]）
@@ -564,275 +471,6 @@ describe('编辑用户消息分支（编排组合）', () => {
     });
 });
 
-describe('webview handler：chat.editBranchStream', () => {
-    let tempDir: string;
-    let manager: ConversationManager;
-    let responses: Array<{ requestId: string; data: unknown }>;
-    let errors: Array<{ requestId: string; code: string; message: string }>;
-
-    function makeCtx(overrides: Record<string, unknown> = {}): HandlerContext {
-        return {
-            conversationManager: manager,
-            storagePathManager: {
-                getEffectiveDataPath: () => tempDir,
-            } as unknown as HandlerContext['storagePathManager'],
-            streamAbortControllers: new StreamAbortManager(),
-            sendResponse: (requestId, data) => { responses.push({ requestId, data }); },
-            sendError: (requestId, code, message) => { errors.push({ requestId, code, message }); },
-            ...overrides,
-        } as unknown as HandlerContext;
-    }
-
-    beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'edit-branch-handler-'));
-        manager = new ConversationManager(new MemoryStorageAdapter());
-        responses = [];
-        errors = [];
-        setGlobalBranchService(undefined);
-    });
-
-    afterEach(async () => {
-        setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
-    });
-
-    test('注册表包含 chat.editBranchStream', () => {
-        const registry = createMessageHandlerRegistry();
-        expect(registry.has('chat.editBranchStream')).toBe(true);
-        expect(typeof registry.get('chat.editBranchStream')).toBe('function');
-    });
-
-    test('registerChatHandlers 独立注册（空表也能注册 editBranchStream）', () => {
-        const registry = new Map<string, MessageHandler>();
-        registerChatHandlers(registry);
-        expect(registry.get('chat.editBranchStream')).toBeDefined();
-    });
-
-    test('入参校验：缺少 conversationId/configId/newText → EDIT_BRANCH_INVALID_ARGS', async () => {
-        await manager.createConversation('c1', 'T');
-        await editBranchStream({ conversationId: 'c1' }, 'req-1', makeCtx());
-        expect(errors).toEqual([{ requestId: 'req-1', code: 'EDIT_BRANCH_INVALID_ARGS', message: expect.stringContaining('required') }]);
-        expect(responses).toHaveLength(0);
-
-        errors = [];
-        await editBranchStream({ conversationId: 'c1', configId: 'cfg', newText: '   ' }, 'req-2', makeCtx());
-        expect(errors).toHaveLength(1);
-        expect(errors[0].code).toBe('EDIT_BRANCH_INVALID_ARGS');
-    });
-
-    // R6a-FIX H1：editBranchStream 与 rerollStream 同模式接线——abortManager.create 注册控制器、
-    // 透传 abortSignal / summarizeAbortSignal、finally 注销（停止按钮/扩展关闭可取消，isActive 生效）
-    test('H1：editBranchStream 注册 AbortController、透传 abortSignal、结束清理（isActive 生命周期）', async () => {
-        const abortManager = new StreamAbortManager();
-        let receivedAbortSignal: AbortSignal | undefined;
-        let receivedSummarySignal: AbortSignal | undefined;
-        let isActiveDuringStream = false;
-        const fakeChatHandler = {
-            handleEditBranchStream: async function* (request: any) {
-                receivedAbortSignal = request.abortSignal;
-                receivedSummarySignal = request.summarizeAbortSignal;
-                isActiveDuringStream = abortManager.isActive(request.conversationId);
-                yield { conversationId: request.conversationId, chunk: { text: 'x' } } as any;
-            },
-        } as any;
-
-        const ctx = makeCtx({
-            chatHandler: fakeChatHandler,
-            streamAbortControllers: abortManager,
-        });
-
-        await editBranchStream(
-            { conversationId: 'c1', newText: 'edited', configId: 'cfg' },
-            'req-h1',
-            ctx
-        );
-
-        // 流期间已注册控制器并透传 signal
-        expect(isActiveDuringStream).toBe(true);
-        expect(receivedAbortSignal).toBeDefined();
-        expect(receivedAbortSignal!.aborted).toBe(false);
-        expect(receivedSummarySignal).toBeDefined();
-        // 结束后 finally 清理：isActive 归 false，无残留控制器
-        expect(abortManager.isActive('c1')).toBe(false);
-        expect(abortManager.get('c1')).toBeUndefined();
-        expect(abortManager.getSummary('c1')).toBeUndefined();
-        expect(responses).toEqual([{ requestId: 'req-h1', data: { started: true } }]);
-        expect(errors).toHaveLength(0);
-    });
-
-    // R6a-FIX H1：停止按钮路径（abortManager.cancel）→ 取消时透出 cancelled 结尾、不报错、控制器已清理
-    test('H1：取消后（signal.aborted）透出 cancelled 结尾事件并清理控制器，不产生错误', async () => {
-        const abortManager = new StreamAbortManager();
-        let capturedSignal: AbortSignal | undefined;
-        const fakeChatHandler = {
-            handleEditBranchStream: async function* (request: any) {
-                capturedSignal = request.abortSignal;
-                // 模拟工具循环感知取消后抛 AbortError（与真实 runToolLoop 一致）
-                await new Promise<void>((_resolve, reject) => {
-                    request.abortSignal.addEventListener('abort', () => {
-                        const err = new Error('The operation was aborted.');
-                        err.name = 'AbortError';
-                        reject(err);
-                    });
-                });
-            },
-        } as any;
-
-        const ctx = makeCtx({
-            chatHandler: fakeChatHandler,
-            streamAbortControllers: abortManager,
-        });
-
-        const pending = editBranchStream(
-            { conversationId: 'c1', newText: 'edited', configId: 'cfg' },
-            'req-h2',
-            ctx
-        );
-        // 生产「停止」按钮路径：cancel 会 abort controller 并从 map 移除
-        abortManager.cancel('c1');
-        await pending;
-
-        expect(capturedSignal).toBeDefined();
-        expect(capturedSignal!.aborted).toBe(true);
-        // 取消路径：不产生 EDIT_BRANCH_ERROR，控制器已清理
-        expect(errors).toHaveLength(0);
-        expect(abortManager.isActive('c1')).toBe(false);
-        expect(abortManager.get('c1')).toBeUndefined();
-
-    });
-    test('attachments 透传：编辑请求携带附件列表（丢图回归：webview 层必须把附件转给后端）', async () => {
-        const abortManager = new StreamAbortManager();
-        let receivedRequest: any;
-        const fakeChatHandler = {
-            handleEditBranchStream: async function* (request: any) {
-                receivedRequest = request;
-                yield { conversationId: 'c1' }; // complete（无 content）
-            },
-        } as any;
-
-        const ctx = makeCtx({
-            chatHandler: fakeChatHandler,
-            streamAbortControllers: abortManager,
-        });
-
-        const attachments = [
-            { id: 'att-1', name: 'pic.png', type: 'image', size: 100, mimeType: 'image/png', data: 'aGVsbG8=' },
-        ];
-        await editBranchStream(
-            { conversationId: 'c1', newText: 'edited', attachments, configId: 'cfg' },
-            'req-att-1',
-            ctx
-        );
-
-        expect(receivedRequest).toBeDefined();
-        expect(receivedRequest.attachments).toEqual(attachments);
-        // 非数组/缺失时归一化为 undefined（后端走保留原消息附件分支）
-        receivedRequest = undefined;
-        const pending = editBranchStream(
-            { conversationId: 'c1', newText: 'edited', attachments: 'not-an-array' as any, configId: 'cfg' },
-            'req-att-2',
-            ctx
-        );
-        await pending;
-        expect(receivedRequest!.attachments).toBeUndefined();
-    });
-
-    test('方案 B：流失败透传底层 ChannelError.type（EDIT_BRANCH_ERROR + type=TIMEOUT_ERROR，前端据此判断可重试）', async () => {
-        const posted: Array<{ type: string; data: any }> = [];
-        const fakeChatHandler = {
-            handleEditBranchStream: async function* (): AsyncGenerator<any> {
-                throw new ChannelError(ErrorType.TIMEOUT_ERROR, 'request timed out');
-            },
-        } as any;
-
-        const ctx = makeCtx({
-            chatHandler: fakeChatHandler,
-            view: { webview: { postMessage: (msg: any) => posted.push(msg) } } as any,
-        });
-
-        await editBranchStream({ conversationId: 'c1', newText: 'edited', configId: 'cfg' }, 'req-type-1', ctx);
-
-        // 请求侧错误码仍为 EDIT_BRANCH_ERROR
-        expect(errors).toEqual([{ requestId: 'req-type-1', code: 'EDIT_BRANCH_ERROR', message: 'request timed out' }]);
-        // 流式 error chunk 携带底层 type
-        const errorMsg = posted.find(m => m.type === 'streamChunk' && m.data?.type === 'error');
-        expect(errorMsg).toBeDefined();
-        expect(errorMsg!.data.error).toEqual({ code: 'EDIT_BRANCH_ERROR', message: 'request timed out', type: 'TIMEOUT_ERROR' });
-    });
-});
-
-
-describe('buildEditUserParts 附件保留（编辑保存丢图回归）', () => {
-    const buildViaAttachments = (
-        message: string,
-        attachments: AttachmentData[] | undefined,
-        originalParts: ContentPart[],
-    ): ContentPart[] =>
-        buildEditUserParts(message, attachments, originalParts, (msg, atts) =>
-            Array.isArray(atts) && atts.length > 0
-                ? [
-                      ...atts.map(att => ({ inlineData: { mimeType: att.mimeType, data: att.data, id: att.id, name: att.name } })),
-                      ...(msg ? [{ text: msg }] : []),
-                  ]
-                : msg
-                  ? [{ text: msg }]
-                  : [],
-        );
-
-    const attachment: AttachmentData = {
-        id: 'att-1',
-        name: 'pic.png',
-        type: 'image',
-        size: 100,
-        mimeType: 'image/png',
-        data: 'aGVsbG8=',
-    };
-
-    const originalPartsWithImage: ContentPart[] = [
-        { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=', id: 'att-old', name: 'old.png' } },
-        { text: '旧问题' },
-    ];
-
-    test('显式传入 attachments：按传入列表重建（inlineData + text）', () => {
-        const parts = buildViaAttachments('新问题', [attachment], originalPartsWithImage);
-        expect(parts).toEqual([
-            { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=', id: 'att-1', name: 'pic.png' } },
-            { text: '新问题' },
-        ]);
-    });
-
-    test('显式传入空数组：用户主动删光附件 → 只保留文本 parts', () => {
-        const parts = buildViaAttachments('新问题', [], originalPartsWithImage);
-        expect(parts).toEqual([{ text: '新问题' }]);
-    });
-
-    test('未传 attachments（旧前端）：保留原消息 inlineData 附件 + 替换文本（丢图回归修复）', () => {
-        const parts = buildViaAttachments('新问题', undefined, originalPartsWithImage);
-        expect(parts).toEqual([
-            { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=', id: 'att-old', name: 'old.png' } },
-            { text: '新问题' },
-        ]);
-    });
-
-    test('未传 attachments 且原消息无附件：纯文本 parts', () => {
-        const parts = buildViaAttachments('新问题', undefined, [{ text: '旧问题' }]);
-        expect(parts).toEqual([{ text: '新问题' }]);
-    });
-
-    test('未传 attachments 且原消息有多个 inlineData：全部保留（顺序不变）', () => {
-        const parts = buildViaAttachments('新问题', undefined, [
-            { inlineData: { mimeType: 'image/png', data: 'AAA' } },
-            { inlineData: { mimeType: 'image/jpeg', data: 'BBB' } },
-            { text: '旧问题' },
-        ]);
-        expect(parts).toEqual([
-            { inlineData: { mimeType: 'image/png', data: 'AAA' } },
-            { inlineData: { mimeType: 'image/jpeg', data: 'BBB' } },
-            { text: '新问题' },
-        ]);
-    });
-});
-
 describe('keep 模式：原地编辑（保持当前分支）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
@@ -859,25 +497,23 @@ describe('keep 模式：原地编辑（保持当前分支）', () => {
     }
 
     /**
-     * 复刻 ChatFlowService.handleEditBranchStream 的 keep 模式编排（真·原地保存）：
+     * 组合真实消息更新与活跃图节点更新，验证原地保存：
      * 解析目标 → 更新主历史消息 → 同步图节点内容。不截断、不软删、不创建候选。
      * 返回目标消息索引。
      */
     async function runEditInPlaceFlow(
         conversationId: string,
         newText: string,
-        userNodeId?: string,
+        userNodeId: string,
     ): Promise<{ targetIndex: number }> {
         await service.ensureMainHistoryRepresentedInGraph(conversationId);
-        const graphResult = await service.getBranchGraph(conversationId);
         const history = await manager.getMessagesRaw(conversationId);
-        const target = resolveEditTargetNode(graphResult.graph, history, userNodeId, 'keep');
-        const targetIndex = history.findIndex(message => message.id === target.nodeId);
+        const targetIndex = history.findIndex(message => message.id === userNodeId);
         if (targetIndex === -1) {
             throw new Error('target not found');
         }
 
-        // 建图（图节点内容同步需要；与 ChatFlowService keep 模式一致）
+        // 建图（图节点内容同步需要）
         await service.ensureBranchGraph(conversationId);
 
         await manager.updateMessage(conversationId, targetIndex, {
@@ -885,7 +521,7 @@ describe('keep 模式：原地编辑（保持当前分支）', () => {
             isUserInput: true,
             tokenCountByChannel: {},
         });
-        await service.updateActiveNodeParts(conversationId, target.nodeId, [{ text: newText }]);
+        await service.updateActiveNodeParts(conversationId, userNodeId, [{ text: newText }]);
         return { targetIndex };
     }
 

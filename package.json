@@ -3,294 +3,15 @@
   "displayName": "Gray Code",
   "description": "GrayCode is a local-first AI workspace with a standalone desktop app, coding tools, bots, and extensible agents.",
   "version": "2.0.0-pre.5",
-  "publisher": "Komeiji-Shiki",
   "icon": "resources/icon.png",
   "engines": {
-    "node": ">=24.11.0",
-    "vscode": "^1.84.0"
+    "node": ">=24.11.0"
   },
-  "categories": [
-    "AI",
-    "Chat",
-    "Education",
-    "Programming Languages",
-    "Snippets",
-    "Testing"
-  ],
-  "main": "./dist/extension.js",
+  "main": "./apps/desktop/dist/main.cjs",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
-  "contributes": {
-    "commands": [
-      {
-        "command": "graycode.openChat",
-        "title": "GrayCode: 打开聊天面板"
-      },
-      {
-        "command": "graycode.context.addSelectionToInput",
-        "title": "GrayCode: 添加选中代码到输入框"
-      },
-      {
-        "command": "graycode.newChat",
-        "title": "新建对话",
-        "icon": "$(add)"
-      },
-      {
-        "command": "graycode.showHistory",
-        "title": "对话历史",
-        "icon": "$(history)"
-      },
-      {
-        "command": "graycode.showUsage",
-        "title": "用量统计",
-        "icon": "$(graph)"
-      },
-      {
-        "command": "graycode.showSettings",
-        "title": "设置",
-        "icon": "$(settings-gear)"
-      },
-      {
-        "command": "graycode.exportSettings",
-        "title": "导出设置",
-        "icon": "$(export)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.importSettings",
-        "title": "导入设置",
-        "icon": "$(import)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.migrateConversationHistories",
-        "title": "迁移旧对话历史",
-        "icon": "$(history)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.runIntegrityCheck",
-        "title": "运行存档完整性检查",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.acceptAll",
-        "title": "Accept All Changes",
-        "icon": "$(check-all)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.rejectAll",
-        "title": "Reject All Changes",
-        "icon": "$(close-all)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.acceptBlock",
-        "title": "Accept Diff Block...",
-        "icon": "$(check)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.rejectBlock",
-        "title": "Reject Diff Block...",
-        "icon": "$(close)",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.acceptCurrentBlock",
-        "title": "Accept Current Diff Block",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.rejectCurrentBlock",
-        "title": "Reject Current Diff Block",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.nextBlock",
-        "title": "Go to Next Diff Block",
-        "category": "GrayCode"
-      },
-      {
-        "command": "graycode.diff.prevBlock",
-        "title": "Go to Previous Diff Block",
-        "category": "GrayCode"
-      }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "graycode.newChat",
-          "when": "view == graycode.chatView",
-          "group": "navigation@1"
-        },
-        {
-          "command": "graycode.showHistory",
-          "when": "view == graycode.chatView",
-          "group": "navigation@2"
-        },
-        {
-          "command": "graycode.showUsage",
-          "when": "view == graycode.chatView",
-          "group": "navigation@3"
-        },
-        {
-          "command": "graycode.showSettings",
-          "when": "view == graycode.chatView",
-          "group": "navigation@4"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "graycode.diff.acceptAll",
-          "when": "graycode.hasPendingDiff",
-          "group": "navigation@1"
-        },
-        {
-          "command": "graycode.diff.rejectAll",
-          "when": "graycode.hasPendingDiff",
-          "group": "navigation@2"
-        },
-        {
-          "command": "graycode.diff.acceptBlock",
-          "when": "graycode.hasPendingDiff",
-          "group": "navigation@3"
-        },
-        {
-          "command": "graycode.diff.rejectBlock",
-          "when": "graycode.hasPendingDiff",
-          "group": "navigation@4"
-        }
-      ]
-    },
-    "keybindings": [
-      {
-        "command": "graycode.diff.acceptCurrentBlock",
-        "key": "ctrl+shift+y",
-        "mac": "cmd+shift+y",
-        "when": "graycode.hasPendingDiff && editorTextFocus"
-      },
-      {
-        "command": "graycode.diff.rejectCurrentBlock",
-        "key": "ctrl+shift+n",
-        "mac": "cmd+shift+n",
-        "when": "graycode.hasPendingDiff && editorTextFocus"
-      },
-      {
-        "command": "graycode.diff.nextBlock",
-        "key": "alt+]",
-        "mac": "alt+]",
-        "when": "graycode.hasPendingDiff && editorTextFocus"
-      },
-      {
-        "command": "graycode.diff.prevBlock",
-        "key": "alt+[",
-        "mac": "alt+[",
-        "when": "graycode.hasPendingDiff && editorTextFocus"
-      }
-    ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "graycode",
-          "title": "Gray Code",
-          "icon": "resources/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "graycode": [
-        {
-          "type": "webview",
-          "id": "graycode.chatView",
-          "name": "Gray Code",
-          "icon": "resources/icon.svg"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "Gray Code",
-      "properties": {
-        "graycode.activeChannelId": {
-          "type": "string",
-          "default": "",
-          "scope": "machine",
-          "description": "当前激活的模型渠道 ID（按机器保存，不参与 Settings Sync）"
-        },
-        "graycode.lastReadAnnouncementVersion": {
-          "type": "string",
-          "default": "",
-          "description": "用户上次查看的公告版本（可同步）"
-        },
-        "graycode.checkForUpdates": {
-          "type": "boolean",
-          "default": true,
-          "description": "启动后自动检查更新（可同步）"
-        },
-        "graycode.updateChannel": {
-          "type": "string",
-          "enum": [
-            "stable",
-            "nightly"
-          ],
-          "default": "stable",
-          "description": "更新渠道：stable 为正式发布版；nightly 为每日自动构建（预览版，版本号高于正式版，仅供测试）（可同步）"
-        },
-        "graycode.toolsConfig": {
-          "type": "object",
-          "default": {},
-          "description": "GrayCode 工具与提示词等配置（可同步）"
-        },
-        "graycode.ui": {
-          "type": "object",
-          "default": {},
-          "description": "GrayCode UI 配置（可同步）"
-        },
-        "graycode.toolsEnabled": {
-          "type": "object",
-          "default": {},
-          "description": "工具启用状态（可同步）"
-        },
-        "graycode.toolAutoExec": {
-          "type": "object",
-          "default": {},
-          "description": "工具自动执行配置（可同步）"
-        },
-        "graycode.maxToolIterations": {
-          "type": "number",
-          "default": 200,
-          "description": "单回合最大工具调用次数（可同步，-1 表示无限制）"
-        },
-        "graycode.defaultToolMode": {
-          "type": "string",
-          "default": "function_call",
-          "enum": [
-            "function_call",
-            "xml",
-            "json"
-          ],
-          "description": "默认工具模式（可同步）"
-        },
-        "graycode.proxy": {
-          "type": "object",
-          "default": {
-            "enabled": false
-          },
-          "scope": "machine",
-          "description": "代理设置（按机器保存，不参与 Settings Sync）"
-        },
-        "graycode.storagePath": {
-          "type": "object",
-          "default": {},
-          "scope": "machine",
-          "description": "自定义数据存储路径（按机器保存，不参与 Settings Sync）"
-        }
-      }
-    }
-  },
   "scripts": {
     "build:desktop": "node scripts/build-desktop.mjs && npm --workspace @graycode/client run build && npm --prefix frontend run build:platform && node scripts/renderer-budget.mjs",
     "package:desktop": "npm run license:check && npm run package:source && npm run build:desktop && node scripts/package-desktop.mjs",
@@ -301,16 +22,12 @@
     "test:platform": "npm run build:platform && jest --config jest.platform.config.cjs",
     "benchmark:platform": "npm run build:platform && node scripts/benchmark-platform.mjs",
     "platform": "node apps/server/dist/main.cjs",
-    "vscode:prepublish": "npm run build",
-    "compile": "npm run build:backend",
     "typecheck": "tsc -p packages/core/tsconfig.json && tsc -p ./ --noEmit",
     "typecheck:test": "tsc -p packages/core/tsconfig.json && tsc -p tsconfig.test.json --noEmit",
     "typecheck:all": "npm run typecheck:platform && tsc -p ./ --noEmit && tsc -p tsconfig.test.json --noEmit && npm run typecheck:desktop && npm --prefix frontend run typecheck",
-    "build:backend": "node esbuild.config.js",
-    "watch": "node esbuild.config.js --watch",
-    "build:frontend": "npm --prefix frontend run build",
+    "build:frontend": "npm --prefix frontend run build:platform",
     "dev:frontend": "npm --prefix frontend run dev:local",
-    "build": "npm run build:backend && npm --prefix frontend run build",
+    "build": "npm run build:desktop",
     "test": "jest --config jest.backend.config.js",
     "test:watch": "jest --config jest.backend.config.js --watch",
     "test:coverage": "jest --config jest.backend.config.js --coverage",
@@ -335,7 +52,6 @@
     "ignore": "^7.0.5",
     "jsonc-parser": "^3.3.1",
     "minimatch": "^3.1.5",
-    "node-notifier": "^10.0.1",
     "tree-kill": "^1.2.2"
   },
   "devDependencies": {
@@ -344,7 +60,6 @@
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.84.0",
     "@vscode/codicons": "^0.0.43",
-    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.27.2",
     "jest": "^29.7.0",
     "ts-jest": "^29.4.6",
@@ -352,9 +67,6 @@
     "undici-types": "^6.21.0"
   },
   "overrides": {
-    "node-notifier": {
-      "uuid": "11.1.1"
-    },
     "svelte": "5.57.1"
   },
   "keywords": [

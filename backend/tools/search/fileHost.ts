@@ -1,6 +1,6 @@
 import type { ToolContext } from '../types';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
-import type { LockHolder } from '../../core/fileWriteLockManager';
+import type { LockHolder } from '../types';
 
 export interface FileLocation { fsPath: string; scheme: string }
 export interface FileWorkspace { name: string; uri: FileLocation }

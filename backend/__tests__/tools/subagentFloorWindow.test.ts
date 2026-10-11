@@ -1,6 +1,6 @@
 import type { Content } from '../../modules/conversation/types';
 import { createRunContentWindow } from '../../tools/subagents/eventBus/contentWindow';
-import { SubAgentRunEventBus } from '../../tools/subagents/runEventBus';
+import { bumpContentRevision } from '../../tools/subagents/eventBus/transcript';
 import type { SubAgentRunSnapshot } from '../../tools/subagents/eventBus/types';
 
 const text = (id: string, role: Content['role'], value = id): Content => ({ id, role, parts: [{ text: value }] });
@@ -17,7 +17,7 @@ function snapshot(contents: Content[]): SubAgentRunSnapshot {
     contents: contents.map((content, index) => ({ ...content, index })), events: [], contextCompactions: [] };
 }
 
-test('legacy/VSCode 尾窗与上翻共享全局楼层，Invocation与工具响应不计楼且保留原索引', () => {
+test('旧格式尾窗与上翻共享全局楼层，Invocation与工具响应不计楼且保留原索引', () => {
   const run = snapshot(history()); const before = JSON.stringify(run);
   const tail = createRunContentWindow(run, { limit: 2 })!;
   const older = createRunContentWindow(run, { endIndex: tail.startIndex, limit: 4 })!;
@@ -39,16 +39,18 @@ test('只排除正式调用说明；提及标题的真实输入和总结正常�
 });
 
 test('删除与重试替换后全局楼层按新修订重算，旧窗口保持原快照', () => {
-  const bus = new SubAgentRunEventBus();
-  bus.createRun('floors', 'Worker', {}, { initialContents: history() });
-  const before = bus.getContentWindow('floors', { limit: 2 })!;
-  bus.replaceContents('floors', history().filter(content => content.id !== 'answer'));
-  const deleted = bus.getContentWindow('floors', { limit: 2 })!;
+  const run = snapshot(history());
+  const before = createRunContentWindow(run, { limit: 2 })!;
+  run.contents = snapshot(history().filter(content => content.id !== 'answer')).contents;
+  bumpContentRevision(run);
+  const deleted = createRunContentWindow(run, { limit: 2 })!;
   expect(deleted.floorIndices).toEqual([1, 2, 5, 6]);
   expect(deleted.contentRevision).toBeGreaterThan(before.contentRevision);
-  bus.replaceContents('floors', history().slice(0, 2));
-  bus.appendContent('floors', text('retried-answer', 'model'));
-  const retried = bus.getContentWindow('floors', { limit: 1 })!;
+  run.contents = snapshot(history().slice(0, 2)).contents;
+  bumpContentRevision(run);
+  run.contents.push({ ...text('retried-answer', 'model'), index: run.contents.length });
+  bumpContentRevision(run);
+  const retried = createRunContentWindow(run, { limit: 1 })!;
   expect(retried).toMatchObject({ startIndex: 2, endIndex: 3, totalCount: 3, floorIndices: [1, 2] });
   expect(retried.contents[0]).toMatchObject({ id: 'retried-answer', index: 2 });
   expect(before.floorIndices).toEqual([1, 2, 4, 6, 7]);

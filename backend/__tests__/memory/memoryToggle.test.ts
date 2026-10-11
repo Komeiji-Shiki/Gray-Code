@@ -1,6 +1,6 @@
-import { clearGlobalContext, setGlobalSettingsManager } from '../../core/settingsContext';
-import { MEMORY_TOOL_NAMES } from '../../modules/memory';
-import { PromptManager } from '../../modules/prompt';
+import { MEMORY_TOOL_NAMES } from '../../modules/memory/types';
+import { PromptAssembler, type PromptAssemblyHost } from '../../modules/prompt/PromptAssembler';
+import { generateMemorySection } from '../../modules/prompt/commonSections';
 import { SettingsManager, type SettingsStorage } from '../../modules/settings/SettingsManager';
 import type { GlobalSettings, ResolvedPromptModeSnapshot } from '../../modules/settings/types';
 
@@ -42,11 +42,25 @@ const entriesMode: ResolvedPromptModeSnapshot = {
     ],
 };
 
-describe('permanent memory toggle', () => {
-    afterEach(() => {
-        clearGlobalContext();
-    });
+function promptAssembler(settings: SettingsManager): PromptAssembler {
+    const sections: PromptAssemblyHost['sections'] = {
+        wrapSection: (name, text) => text ? `====\n\n${name}\n\n${text}` : '',
+        cleanupEmptyLines: text => text.replace(/\n{3,}/g, '\n\n').trim(),
+        getUserLanguage: () => 'zh-CN',
+        generateStaticEnvironmentSection: () => '',
+        generateContextBadgeFormatSection: () => '',
+        generateMemorySection: () => generateMemorySection(settings),
+        generateFileTreeSection: () => '',
+        generateOpenTabsSection: () => '',
+        generateActiveEditorSection: () => '',
+        generateDiagnosticsSection: () => '',
+        generatePinnedFilesSection: () => '',
+        getContext: () => ({}),
+    };
+    return new PromptAssembler({ settings: () => settings, workspacePaths: () => [], sections });
+}
 
+describe('permanent memory toggle', () => {
     test('defaults to enabled and disables every memory tool as one group', async () => {
         const manager = new SettingsManager(new TestSettingsStorage());
         await manager.initialize();
@@ -75,9 +89,7 @@ describe('permanent memory toggle', () => {
         const manager = new SettingsManager(new TestSettingsStorage());
         await manager.initialize();
         await manager.updateMemoryConfig({ enabled: true, systemPrompt: 'CUSTOM MEMORY INSTRUCTIONS' });
-        setGlobalSettingsManager(manager);
-
-        const promptManager = new PromptManager({ includeWorkspaceFiles: false });
+        const promptManager = promptAssembler(manager);
         const enabledPrompt = promptManager.getSystemPrompt(mode);
         expect(enabledPrompt).toContain('CUSTOM MEMORY INSTRUCTIONS');
 
@@ -92,14 +104,12 @@ describe('permanent memory toggle', () => {
     test('default guidance defers routine compression without hiding wake blockers', async () => {
         const manager = new SettingsManager(new TestSettingsStorage());
         await manager.initialize();
-        setGlobalSettingsManager(manager);
-
-        const promptManager = new PromptManager({ includeWorkspaceFiles: false });
+        const promptManager = promptAssembler(manager);
         const prompt = promptManager.getSystemPrompt(legacyMode);
 
-        expect(prompt).toContain('Compression is maintenance and must not interrupt the user\'s task.');
-        expect(prompt).toContain('finish the current deliverable first and call memory_compress afterwards');
-        expect(prompt).toContain('Only when memory_wake fails because a required summary is missing');
+        expect(prompt).toContain('Successful pendingCompression is deferred maintenance');
+        expect(prompt).toContain('finish the current deliverable before action=compress');
+        expect(prompt).toContain('Only compress immediately when wake cannot finish without a missing summary');
         expect(prompt).not.toContain('before your next step');
     });
 });

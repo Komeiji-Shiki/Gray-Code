@@ -1,118 +1,59 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "type": "npm",
-            "script": "build",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": {
-                "owner": "esbuild",
-                "fileLocation": ["relative", "${workspaceFolder}"],
-                "pattern": {
-                    "regexp": "^(.+?):(\\d+):(\\d+):\\s+(ERROR|WARNING):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
-        },
-        {
-            "label": "Backend Watch",
-            "type": "npm",
-            "script": "watch",
-            "isBackground": true,
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": {
-                "owner": "esbuild-watch",
-                "fileLocation": ["relative", "${workspaceFolder}"],
-                "pattern": [
-                    {
-                        "regexp": "^\\s*[✘X]\\s*\\[(ERROR|WARNING)\\]\\s*(.*)$",
-                        "severity": 1,
-                        "message": 2
-                    },
-                    {
-                        "regexp": "^\\s*(.*?):(\\d+):(\\d+):\\s*$",
-                        "file": 1,
-                        "line": 2,
-                        "column": 3
-                    }
-                ],
-                "background": {
-                    "activeOnStart": true,
-                    "beginsPattern": ".*watching for changes.*",
-                    "endsPattern": ".*rebuild (done|failed).*"
-                }
-            }
-        },
-        {
-            "label": "Build Backend",
-            "type": "npm",
-            "script": "build:backend",
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": {
-                "owner": "esbuild",
-                "fileLocation": ["relative", "${workspaceFolder}"],
-                "pattern": {
-                    "regexp": "^(.+?):(\\d+):(\\d+):\\s+(ERROR|WARNING):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
-        },
-        {
-            "label": "Build Frontend",
-            "type": "npm",
-            "script": "build:frontend",
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Frontend Dev Server (Vite)",
-            "type": "npm",
-            "script": "dev:frontend",
-            "isBackground": true,
-            "presentation": {
-                "reveal": "silent",
-                "panel": "dedicated"
-            },
-            "problemMatcher": {
-                "base": "$tsc-watch",
-                "background": {
-                    "activeOnStart": true,
-                    "beginsPattern": ".+",
-                    "endsPattern": ".*(ready in|Local:).*"
-                }
-            }
-        },
-        {
-            "label": "Local Dev (Backend Watch + Vite)",
-            "dependsOn": [
-                "Backend Watch",
-                "Frontend Dev Server (Vite)"
-            ],
-            "dependsOrder": "parallel",
-            "problemMatcher": []
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent"
+      },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+):\\s+(ERROR|WARNING):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
         }
-    ]
+      }
+    },
+    {
+      "label": "Build Frontend",
+      "type": "npm",
+      "script": "build:frontend",
+      "group": "build",
+      "presentation": {
+        "reveal": "silent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend Dev Server (Vite)",
+      "type": "npm",
+      "script": "dev:frontend",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      },
+      "problemMatcher": {
+        "base": "$tsc-watch",
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".+",
+          "endsPattern": ".*(ready in|Local:).*"
+        }
+      }
+    }
+  ]
 }

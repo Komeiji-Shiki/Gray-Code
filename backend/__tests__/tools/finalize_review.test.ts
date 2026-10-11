@@ -5,27 +5,26 @@ const mockResolveUriWithInfo = jest.fn()
 const mockNormalizeLineEndingsToLF = jest.fn((input: string) => input.replace(/\r\n?/g, '\n'))
 const mockSyncProgressFromReviewArtifact = jest.fn().mockResolvedValue([])
 
-jest.mock('vscode', () => ({
-  workspace: {
-    fs: {
-      readFile: mockReadFile,
-      writeFile: mockWriteFile
-    }
+jest.mock('../../../backend/tools/shared/artifactHost', () => {
+  const actual = jest.requireActual('../../../backend/tools/shared/artifactHost')
+  return {
+    ...actual,
+    documentReadFile: (...args: any[]) => mockReadFile(...args),
+    documentWriteFile: (...args: any[]) => mockWriteFile(...args),
+    getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
+    resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
+    normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input),
+    isScopedPathAllowedWithMultiRoot: (value: string, validator: (path: string) => boolean) =>
+      actual.withArtifactHost({ workspaces: () => mockGetAllWorkspaces() }, () => actual.isScopedPathAllowedWithMultiRoot(value, validator))
   }
-}))
-
-jest.mock('../../../backend/tools/utils', () => ({
-  getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
-  resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
-  normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
-}))
+})
 
 jest.mock('../../../backend/tools/progress/autoSyncRuntime', () => ({
   syncProgressFromReviewArtifact: (...args: any[]) => mockSyncProgressFromReviewArtifact(...args)
 }))
 
 import { appendReviewMilestone, buildInitialReviewDocument } from '../../../backend/tools/review/reviewDocumentSection'
-import { createFinalizeReviewTool } from '../../../backend/tools/review/finalize_review'
+import { createFinalizeReviewTool } from '../../../backend/tools/review/finalize_reviewRuntime'
 
 describe('finalize_review tool', () => {
   beforeEach(() => {

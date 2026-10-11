@@ -9,6 +9,5 @@ export function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
   return isScopedPathAllowedWithMultiRoot(pathStr, isDesignPathAllowed);
 }
 
-// design 保留本地 fs.promises.mkdir 实现：远程/虚拟工作区下与 vscode.workspace.fs 行为
-// 有差异，且 create/update 测试基于 fs.promises.mkdir mock；详见 shared/pathPolicy.ts 说明。
+// 目录创建由当前工作区宿主负责，文档工具只传入目标文件路径。
 export { ensureParentDirWithFs as ensureParentDir };

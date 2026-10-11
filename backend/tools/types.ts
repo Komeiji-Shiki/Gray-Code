@@ -377,3 +377,13 @@ export interface Tool {
  * 工具注册函数
  */
 export type ToolRegistration = () => Tool;
+
+/** 共享文件操作端口传递的写锁持有者身份。 */
+export interface LockHolder {
+    /** 'main' = 主会话；'subagent' = 子代理 run；'checkpoint' = 存档操作 */
+    kind: 'main' | 'subagent' | 'checkpoint';
+    /** 唯一标识：conversationId 或 runId */
+    id: string;
+    /** 展示名：撞车提示中告知对方是谁在占用（如 agent 名称或 'main session'） */
+    label: string;
+}

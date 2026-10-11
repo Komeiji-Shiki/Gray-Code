@@ -16,7 +16,6 @@
  * - storageWriteQueues.ts：分段历史写 / 元数据读改写串行队列与挂起超时；
  * - storageIds.ts：存储 ID 安全校验；
  * - memoryStorageAdapter.ts：内存存储适配器；
- * - vscodeStorageAdapter.ts：VS Code globalState 存储适配器；
  * - fileSystemStorageAdapter.ts：workspace.fs 文件系统存储适配器；
  * - segmentedHistoryUtils.ts：分段历史索引与文件系统纯工具函数。
  */
@@ -25,5 +24,4 @@ export * from './storageTypes';
 export { withHangTimeout, withMetadataWriteSerialized } from './storageWriteQueues';
 export { assertSafeStorageId } from './storageIds';
 export { MemoryStorageAdapter } from './memoryStorageAdapter';
-export { VSCodeStorageAdapter } from './vscodeStorageAdapter';
 export { FileSystemStorageAdapter } from './fileSystemStorageAdapter';

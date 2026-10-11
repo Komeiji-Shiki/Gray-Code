@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import type { SkillExportData } from '../../../../backend/modules/settings/SettingsExporter';
+import type { SkillExportData } from '../../../../backend/modules/skills/types';
 import type { PlatformApplication } from '../application';
 
 export interface SkillResourceFile { path: string; data: string; sha256: string; executable?: boolean }

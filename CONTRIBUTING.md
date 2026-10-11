@@ -1,6 +1,6 @@
 # 参与 GrayCode 开发
 
-当前主线以 2.0 独立平台为中心。先阅读[架构导航](PROJECT_STRUCTURE.md)，确认修改属于运行核心、应用服务、宿主还是界面。保留的扩展构建和桌面构建是不同入口。
+当前主线维护 2.0 独立平台。先阅读[架构导航](PROJECT_STRUCTURE.md)，确认修改属于运行核心、应用服务、宿主还是界面。1.x 扩展开发与发布请切换到 `v1-extension` 分支。
 
 ## 贡献许可与来源
 
@@ -102,7 +102,7 @@ npm run package:desktop
 
 默认输出是 release/desktop/GrayCode-win32-x64。打包前检查目标程序占用和必要产物，收集独立运行依赖、原生电脑宿主、调试器与许可证。build-info.json 记录提交、工作区是否有修改和构建时间；验收应记录实际包的构建身份。
 
-build:desktop:trial 与各 package-only 参数用于快速编译，不是完整验证的替代品。根 build 仍是保留的扩展构建；独立桌面使用 build:desktop。
+build:desktop:trial 与各 package-only 参数用于快速编译，不是完整验证的替代品。根 build 与 build:desktop 均构建独立桌面。
 
 ## 文档与发行
 

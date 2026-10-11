@@ -82,7 +82,7 @@ const out = await packager({
   prune: false,
   afterCopy: [({ buildPath }) => import('node:fs/promises').then(async (fsp) => {
     const fs = require('node:fs');
-    // 1. 仓库根 package.json 的 main 指向 VSCode 扩展入口；暂存包改写为桌面入口。
+    // 1. 暂存包使用桌面主进程入口。
     const file = `${buildPath}/package.json`;
     const pkg = JSON.parse(await fsp.readFile(file, 'utf8'));
     pkg.main = 'apps/desktop/dist/main.cjs';

@@ -4,6 +4,8 @@ import { pathToFileURL } from 'node:url';
 import type { ModelInput } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { TokenCountService } from '../../../backend/modules/channel/TokenCountService';
+import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
+import { PINNED_FILE_MAX_BYTES, PINNED_FILE_MAX_TOTAL_BYTES } from '../../../backend/modules/prompt/pinnedFiles';
 import type { PromptPreviewResult } from '../../../shared/promptPreview';
 import { fixture } from './fixtures';
 
@@ -26,7 +28,7 @@ describe('当前完整提示词的只读预览', () => {
         { id: 'suffix', name: '最后要求', role: 'user', type: 'prompt', enabled: true, order: 3, content: '最后的预设条目。' },
       ] });
     await app.product.save(draft);
-    const settings = app.settings.snapshot(); settings.settings.agents[0].toolNames = ['workspace_files'];
+    const settings = app.settings.snapshot(); settings.settings.agents[0].toolNames = ['read_file'];
     settings.settings.workspaces.push({ id: 'preview-workspace', name: '预览项目', deviceId: 'local', directory: f.root });
     await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
     await writeFile(path.join(f.root, 'context.txt'), '固定文件的完整内容。');
@@ -40,6 +42,30 @@ describe('当前完整提示词的只读预览', () => {
   afterEach(async () => { jest.restoreAllMocks(); await app.close(); await f.cleanup(); });
   const request = () => ({ conversationId: 'preview-chat', configId: providerId, modelOverride: 'fixture-model', promptModeId: 'preview-preset', message: '当前尚未发送的草稿。' });
   const preview = (data: Record<string, unknown> = request()) => app.productUi.call(client, 'prompt.preview', data) as Promise<PromptPreviewResult>;
+
+  test('累计读取超过总字节预算时跳过剩余固定文件', async () => {
+    const names = ['one.txt', 'two.txt', 'three.txt'];
+    // 平台预算计入文件标题和截断标记，留出标题空间后前两份内容仍可完整保留。
+    await Promise.all(names.map(name => writeFile(path.join(f.root, name), 'B'.repeat(PINNED_FILE_MAX_BYTES - 256))));
+    const state = await app.storage.readConversationState('preview-chat');
+    await app.storage.commitConversation({
+      conversationId: 'preview-chat', expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
+      metadata: { ...state.metadata, custom: { ...state.metadata.custom as object,
+        inputPinnedFiles: names.map(name => ({ id: name, path: name, workspaceUri: pathToFileURL(f.root).toString(), addedAt: 1, enabled: true })) } }
+    });
+    const agent = app.settings.read('agents').agents[0];
+    const prepared = await new PlatformPromptService(app).prepare({
+      agent, actor: app.actor('owner')!, workspace: app.workspace('owner', 'preview-workspace', ['workspace_read']),
+      conversation: await app.conversation('owner', 'preview-chat'), history: [],
+      request: { actorId: 'owner', agentId: agent.id, conversationId: 'preview-chat', requestKey: 'pinned-budget',
+        providerId, promptModeId: 'preview-preset', message: { role: 'user', parts: [{ text: '读取固定文件。' }] } }
+    });
+    const text = JSON.stringify(prepared.promptContext);
+    expect(text).toContain('File: one.txt');
+    expect(text).toContain('File: two.txt');
+    expect(text).not.toContain('File: three.txt');
+    expect(PINNED_FILE_MAX_TOTAL_BYTES).toBe(PINNED_FILE_MAX_BYTES * 2);
+  });
 
   test('预览和渠道切换均保留所有历史图片，不修改原历史', async () => {
     await app.storage.appendHistory('preview-chat', [{ role: 'user', parts: [
@@ -66,7 +92,7 @@ describe('当前完整提示词的只读预览', () => {
     expect(await app.storage.readConversationState('preview-chat')).toEqual(before);
     expect(await app.storage.listRuns({})).toEqual([]); expect(generated).toEqual([]);
     const text = JSON.stringify(result.body);
-    for (const content of ['完整系统要求', '历史中的原始要求', '之前的模型回复', '当前尚未发送的草稿', '固定文件的完整内容', 'workspace_files', '最后的预设条目']) expect({ content, included: text.includes(content) }).toMatchObject({ included: true });
+    for (const content of ['完整系统要求', '历史中的原始要求', '之前的模型回复', '当前尚未发送的草稿', '固定文件的完整内容', 'read_file', '最后的预设条目']) expect({ content, included: text.includes(content) }).toMatchObject({ included: true });
     expect(result.estimatedTokens).toBeGreaterThan(0);
     const started = await app.productUi.call(client, 'chatStream', { ...request(), streamId: 'actual-send' }) as { runId: string };
     expect(await app.runtime.wait(started.runId)).toMatchObject({ status: 'completed' });

@@ -10,15 +10,11 @@
  * - 默认逻辑（无 dynamicTemplate，含 Current Time）
  * - entries 组装模式（动态 user 条目）
  * - 旧缓存（无 sectionValues）与模板指纹变化时的全量退化
- * - createTurnDynamicContext 的 preserve/single 分支
  */
-import { clearGlobalContext, setGlobalSettingsManager } from '../../core/settingsContext';
-import { PromptManager } from '../../modules/prompt';
-import type { DynamicContextDiffBase, PromptContextBundle } from '../../modules/prompt/PromptManager';
+import { createPromptAssembler } from '../__fixtures__/promptFixtures';
+import type { DynamicContextDiffBase, PromptContextBundle } from '../../modules/prompt/PromptAssembler';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../modules/prompt/promptContextCache';
 import type { ResolvedPromptModeSnapshot, SystemPromptConfig } from '../../modules/settings/types';
-import type { Content } from '../../modules/conversation/types';
-import { ToolIterationLoopService } from '../../modules/api/chat/services/ToolIterationLoopService';
 
 const runtimeWithTodo = (content: string) => ({
     todoList: [
@@ -95,15 +91,12 @@ function diffBaseFrom(bundle: PromptContextBundle): DynamicContextDiffBase {
     };
 }
 
-describe('PromptManager 动态上下文跨回合差分', () => {
-    afterEach(() => {
-        clearGlobalContext();
-    });
+describe('PromptAssembler 动态上下文跨回合差分', () => {
 
     describe('legacy 模板模式', () => {
         test('无基准（首轮）时完整发送并带出 sectionValues 与模板指纹', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(legacyTemplateMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const bundle = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'));
 
@@ -115,8 +108,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('全部 section 与上一轮相同 → 当前轮不发送动态消息', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(legacyTemplateMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'));
             const second = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'), { diffBase: diffBaseFrom(first) });
@@ -129,8 +122,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('部分变化 → 只发送变化的 section，未变化的省略', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(legacyTemplateMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'));
             const second = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task B'), { diffBase: diffBaseFrom(first) });
@@ -143,8 +136,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('模板指纹变化 → 强制全量发送（模型需要看到新说明）', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(legacyTemplateMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'));
             const staleFingerprint: DynamicContextDiffBase = {
@@ -158,8 +151,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('旧缓存（无 sectionValues）→ 无基准，全量发送', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(legacyTemplateMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const second = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'), { diffBase: {} });
 
@@ -170,8 +163,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
 
     describe('默认逻辑（无 dynamicTemplate）', () => {
         test('全部 section 相同 → 整条动态消息省略（Current Time 不触发发送）', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(defaultMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(defaultMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(defaultMode, runtimeWithTodo('task A'));
             expect(first.text).toContain('Current Time');
@@ -183,8 +176,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('部分变化 → 前缀说明 + Current Time + 变化的 section', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(defaultMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(defaultMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(defaultMode, runtimeWithTodo('task A'));
             const second = manager.getPromptContextBundle(defaultMode, runtimeWithTodo('task B'), { diffBase: diffBaseFrom(first) });
@@ -198,8 +191,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
 
     describe('entries 组装模式', () => {
         test('差分后没有变化的动态条目整条省略，sectionValues 与指纹照常缓存', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(entriesMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
             const dynamicMessage = first.messages.find(message => message.parts?.[0]?.text?.includes('Dynamic context'));
@@ -222,8 +215,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
                 ...entriesMode.promptEntries!,
                 { id: 'static-user', name: 'Static', type: 'prompt', enabled: true, role: 'user', order: 30, content: '固定提示内容' }
             ] };
-            setGlobalSettingsManager(createSettingsManagerMock(mode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(mode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(mode, { todoList: [] });
             const bundle = manager.getPromptContextBundle(mode, { todoList: [] }, { diffBase: diffBaseFrom(first) });
             expect(bundle.messages).toEqual([{ role: 'user', parts: [{ text: '固定提示内容' }] }]);
@@ -235,8 +228,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
                 ...entriesMode.promptEntries!,
                 { id: 'skills-user', name: 'Skills', type: 'prompt', enabled: true, role: 'user', order: 30, content: 'Available skills:\n{{$SKILLS}}' }
             ] };
-            setGlobalSettingsManager(createSettingsManagerMock(mode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(mode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(mode, { ...runtimeWithTodo('task A'), skills: [{ id: 's', name: 'Skill A', description: 'before' }] });
             const second = manager.getPromptContextBundle(mode, { ...runtimeWithTodo('task A'), skills: [{ id: 's', name: 'Skill A', description: 'after' }] }, { diffBase: diffBaseFrom(first) });
             expect(second.text).toContain('Available skills:');
@@ -246,8 +239,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('动态内容被清空时明确发送清空信息，下一轮不再重复', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(entriesMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
             const cleared = manager.getPromptContextBundle(entriesMode, { todoList: [] }, { diffBase: diffBaseFrom(first) });
             expect(cleared.text).toContain('The following dynamic sections are now empty: TODO_LIST');
@@ -256,8 +249,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('变化的 section 在 entries 模式下正常发送', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(entriesMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
             const second = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task B'), { diffBase: diffBaseFrom(first) });
@@ -270,8 +263,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
     });
 
         test('LOW-3：动态条目 role 翻转（content 不变）→ 指纹变化 → 强制全量发送', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(entriesMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
 
             // content / section 值完全相同，仅 role 从 user 改为 assistant（entry 层；渲染为 model）
@@ -294,8 +287,8 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
         test('LOW-3：动态条目 fakeThought 增删（content 不变）→ 指纹变化 → 强制全量发送', () => {
-            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
-            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const settings = createSettingsManagerMock(entriesMode);
+            const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
 
             // content 不变，仅新增 fakeThought（伪造思考）
@@ -359,112 +352,5 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(restored.sectionValues).toBeUndefined();
             expect(restored.dynamicTemplateFingerprint).toBeUndefined();
         });
-    });
-});
-
-describe('ToolIterationLoopService.createTurnDynamicContext 差分基准', () => {
-    afterEach(() => {
-        clearGlobalContext();
-    });
-
-    function createService(history: Content[]) {
-        const conversationManager = {
-            getHistoryRef: jest.fn().mockResolvedValue(history),
-            getCustomMetadata: jest.fn().mockResolvedValue([
-                { id: 'a', content: 'task A', status: 'pending' }
-            ]),
-            getMetadata: jest.fn().mockResolvedValue(null)
-        };
-        const service = new ToolIterationLoopService(
-            {} as any,
-            conversationManager as any,
-            {} as any,
-            {} as any,
-            {} as any,
-            {} as any,
-            {} as any,
-            {} as any
-        );
-        return { service, conversationManager };
-    }
-
-    test('preserve：以上一轮缓存为基准，全部相同 → 新回合动态消息为空', async () => {
-        setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
-        const firstBundle = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'));
-        const history: Content[] = [
-            {
-                id: 'msg-1',
-                role: 'user',
-                isUserInput: true,
-                turnDynamicContext: serializePromptContextCache(firstBundle),
-                turnDynamicContextStrategy: 'preserve',
-                parts: [{ text: 'first user' }]
-            }
-        ];
-        const { service } = createService(history);
-        service.setPromptManager(manager);
-
-        const cache = await service.createTurnDynamicContext('conv-1', 'msg-2', legacyTemplateMode, 'preserve');
-        const restored = deserializePromptContextCache(cache);
-
-        // 与上一轮完全相同：差分后无动态消息，但 sectionValues 仍完整缓存供下轮对比
-        expect(restored.beforeHistoryMessages).toHaveLength(0);
-        expect(restored.contextText).toBe('');
-        expect(restored.sectionValues?.['TODO_LIST']).toContain('task A');
-    });
-
-    test('preserve：上一轮是旧缓存（无 sectionValues）→ 全量发送', async () => {
-        setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
-        const legacyCache = serializePromptContextCache({
-            messages: [{ role: 'user', parts: [{ text: 'old ctx' }] }],
-            beforeHistoryMessages: [{ role: 'user', parts: [{ text: 'old ctx' }] }],
-            dynamicSnapshotMessages: [],
-            text: 'old ctx',
-            dynamicSnapshotText: '',
-            historyPlacement: 'legacy'
-        });
-        const history: Content[] = [
-            {
-                id: 'msg-1',
-                role: 'user',
-                isUserInput: true,
-                turnDynamicContext: legacyCache,
-                parts: [{ text: 'first user' }]
-            }
-        ];
-        const { service } = createService(history);
-        service.setPromptManager(manager);
-
-        const cache = await service.createTurnDynamicContext('conv-1', 'msg-2', legacyTemplateMode, 'preserve');
-        const restored = deserializePromptContextCache(cache);
-
-        expect(restored.beforeHistoryMessages).toHaveLength(1);
-        expect(restored.contextText).toContain('task A');
-    });
-
-    test('single：不取历史基准，始终全量发送', async () => {
-        setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
-        const manager = new PromptManager({ includeWorkspaceFiles: false });
-        const history: Content[] = [
-            {
-                id: 'msg-1',
-                role: 'user',
-                isUserInput: true,
-                turnDynamicContext: 'unused cache',
-                parts: [{ text: 'first user' }]
-            }
-        ];
-        const { service, conversationManager } = createService(history);
-        service.setPromptManager(manager);
-
-        const cache = await service.createTurnDynamicContext('conv-1', 'msg-2', legacyTemplateMode, 'single');
-        const restored = deserializePromptContextCache(cache);
-
-        expect(restored.beforeHistoryMessages).toHaveLength(1);
-        expect(restored.contextText).toContain('task A');
-        // single 不读历史基准（getHistoryRef 甚至不会被调用）
-        expect(conversationManager.getHistoryRef).not.toHaveBeenCalled();
     });
 });

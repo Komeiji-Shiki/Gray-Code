@@ -7,8 +7,7 @@
  *   只有用户 abortSignal 实际中止时 AbortError 才识别为用户取消，
  *   未中止的 AbortError（createFetchSignal 请求超时签名）报为任务错误
  */
-import * as vscode from 'vscode';
-import { createGenerateImageTool } from '../../../tools/media/generate_image';
+import { createGenerateImageRuntime } from '../../../tools/media/generate_imageRuntime';
 import { TaskManager } from '../../../tools/taskManager';
 import { createProxyFetch } from '../../../modules/channel/proxyFetch';
 
@@ -17,11 +16,15 @@ jest.mock('../../../modules/channel/proxyFetch', () => ({
 }));
 
 const mockCreateProxyFetch = createProxyFetch as jest.Mock;
+const { createGenerateImageTool } = createGenerateImageRuntime({
+    getAllWorkspaces: () => [],
+    readImageFile: async () => null,
+    saveImage: async () => {},
+    tasks: TaskManager
+});
 
 beforeEach(() => {
-    mockCreateProxyFetch.mockReset();
-    (vscode.workspace as any).workspaceFolders = [];
-});
+    mockCreateProxyFetch.mockReset();});
 
 describe('generate_image 单张模式参数缺失', () => {
     test('返回错误的同时注销任务，不残留 running 任务', async () => {

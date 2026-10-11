@@ -6,7 +6,7 @@
 
 import type { Content, ForegroundWorkTransition, SummaryTokenStats } from '../../conversation/types';
 import type { StreamChunk } from '../../channel/types';
-import type { CheckpointRecord } from '../../checkpoint';
+import type { CheckpointRecord } from '../../checkpoint/types';
 import type { DynamicContextStrategy } from '../../settings/types';
 
 

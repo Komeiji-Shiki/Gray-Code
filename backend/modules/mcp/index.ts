@@ -42,10 +42,8 @@ export { McpClient } from './McpClient';
 
 // 存储适配器
 export {
-    MementoMcpStorageAdapter,
     InMemoryMcpStorageAdapter,
     FileSystemMcpStorageAdapter,
-    VSCodeFileSystemMcpStorageAdapter
 } from './storage';
 
 // 工具适配器

@@ -1,21 +1,6 @@
 /**
- * TREE-04/06 候选切换全链测试（第六阶段：切换重建主历史）。
- *
- * 覆盖（TREE-14 切换部分）：
- * - handler 级 switchBranchCandidate 编排：切图（BranchService）→ 主历史重写
- *   （ConversationManager.rewriteHistoryFromBranchGraph）→ 检查点清理
- *   （CheckpointService.deleteCheckpointsFromIndex，会话锁之外）→ 响应
- *   { rewritten: true, activePathLength, historyLength, branchGraph }；
- * - 切换后主历史与图活跃路径一致（BR-05 校验通过）；切回旧候选恢复旧内容；
- * - functionResponse 依附正确（决策 8：FR 拆分回独立消息，id 链不含 FR）；
- * - 切换后继续对话 append 到新活跃尾（appendHistoryToGraph 已接线）；
- * - 检查点清理的分歧索引正确（新路径为旧路径前缀 / 分歧位 / 完全一致三种形态）；
- * - 主历史重写幂等（相同路径 rewritten=false 不落盘）；无图线性模式 no-op；
- *   损坏图拒绝重写（BRANCH_STORAGE_CORRUPT）；
- * - 重写失败回滚图状态（切回切换前活跃尾）并透出明确错误码。
- *
- * 存储组合：历史走 MemoryStorageAdapter，sidecar 走真实临时目录（注入 baseDir），
- * 风格与 branchReroll.test.ts / branchService.test.ts 一致。
+ * BranchService 切图与 ConversationManager 重写主历史的组合测试。
+ * 保留内容、父链、工具响应、幂等、同步缺口及写入失败断言；分歧索引直接取真实重写结果。
  */
 
 import * as fsp from 'fs/promises';
@@ -34,9 +19,6 @@ import {
     isFunctionResponseMessage,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import { switchBranchCandidate } from '../../../webview/handlers/BranchHandlers';
-import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
-import type { HandlerContext } from '../../../webview/types';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
@@ -102,30 +84,11 @@ class FailingMetadataStorage extends MemoryStorageAdapter {
     }
 }
 
-describe('候选切换全链（handler 编排）', () => {
+describe('候选切换与主历史重写（共享服务组合）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
     let service: BranchService;
-    let responses: Array<{ requestId: string; data: unknown }>;
-    let errors: Array<{ requestId: string; code: string; message: string }>;
-    let checkpointDeleteSpy: jest.Mock;
-
-    function makeCtx(overrides: Record<string, unknown> = {}): HandlerContext {
-        return {
-            conversationManager: manager,
-            storagePathManager: {
-                getEffectiveDataPath: () => tempDir,
-            } as unknown as HandlerContext['storagePathManager'],
-            streamAbortControllers: new StreamAbortManager() as unknown as Map<string, AbortController>,
-            sendResponse: (requestId, data) => { responses.push({ requestId, data }); },
-            sendError: (requestId, code, message) => { errors.push({ requestId, code, message }); },
-            checkpointManager: {
-                deleteCheckpointsFromIndex: checkpointDeleteSpy,
-            } as unknown as HandlerContext['checkpointManager'],
-            ...overrides,
-        } as unknown as HandlerContext;
-    }
 
     beforeEach(async () => {
         tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-switch-'));
@@ -133,9 +96,6 @@ describe('候选切换全链（handler 编排）', () => {
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
-        responses = [];
-        errors = [];
-        checkpointDeleteSpy = jest.fn(async () => 0);
     });
 
     afterEach(async () => {
@@ -150,19 +110,13 @@ describe('候选切换全链（handler 编排）', () => {
         return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
     }
 
-    /** 调用 handler 级 switchBranchCandidate，返回本次响应数据（同一测试内可多次切换） */
-    async function doSwitch(
-        conversationId: string,
-        nodeId: string,
-        ctx: HandlerContext = makeCtx()
-    ): Promise<Record<string, unknown>> {
-        await switchBranchCandidate({ conversationId, nodeId }, 'req-switch', ctx);
-        expect(errors).toHaveLength(0);
-        expect(responses.length).toBeGreaterThan(0);
-        return responses[responses.length - 1]!.data as Record<string, unknown>;
+    /** 只组合两个真实服务调用，返回重写结果；不模拟旧 IPC 响应、回滚或检查点清理。 */
+    async function doSwitch(conversationId: string, nodeId: string) {
+        await service.switchBranchCandidate(conversationId, nodeId);
+        return manager.rewriteHistoryFromBranchGraph(conversationId);
     }
 
-    test('切图 + 主历史重写 + 响应（rewritten/activePathLength/branchGraph）+ 检查点清理（分歧索引=新历史长度）', async () => {
+    test('切图与主历史重写保持活跃路径一致，并返回准确分歧索引', async () => {
         const [userNodeId, modelNodeId] = await seedConversation('c1');
         const r1 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
         await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
@@ -170,17 +124,15 @@ describe('候选切换全链（handler 编排）', () => {
 
         const data = await doSwitch('c1', r1.nodeId);
 
-        // 响应契约：rewritten / activePathLength / historyLength / branchGraph
+        // 直接检查共享服务返回的历史重写结果。
         expect(data).toMatchObject({
-            success: true,
-            nodeId: r1.nodeId,
             rewritten: true,
             activePathLength: 3,
             historyLength: 3,
         });
-        expect((data.branchGraph as { graph: { activeTailNodeId: string | null } }).graph.activeTailNodeId)
-            .toBe(r1.nodeId);
-        expect(data.activePathIds).toEqual([userNodeId, modelNodeId, r1.nodeId]);
+        const switchedGraph = (await service.getBranchGraph('c1')).graph!;
+        expect(switchedGraph.activeTailNodeId).toBe(r1.nodeId);
+        expect(activePath(switchedGraph)).toEqual([userNodeId, modelNodeId, r1.nodeId]);
 
         // 主历史已重写 = 新活跃路径（候选内容来自 sidecar，主历史里原本没有）
         const history = await manager.getMessagesRaw('c1');
@@ -194,28 +146,27 @@ describe('候选切换全链（handler 编排）', () => {
         expect(validate((await service.getBranchGraph('c1')).graph!).valid).toBe(true);
 
         // 检查点清理：旧历史 [U, M] 是新的 [U, M, r1] 的前缀 → 分歧索引 = min(旧,新) = 2（R8a-L2）
-        expect(checkpointDeleteSpy).toHaveBeenCalledWith('c1', 2, undefined);
+        expect(data.divergenceIndex).toBe(2);
     });
 
-    test('检查点清理分歧索引：从分歧位（非前缀）清理', async () => {
+    test('重写分歧索引：非前缀路径从第一个不同节点开始', async () => {
         const [userNodeId, modelNodeId] = await seedConversation('c1');
         const r1 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
         const r2 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
 
         // 先切到 r1（历史 = [U, M, r1]）
         await doSwitch('c1', r1.nodeId);
-        checkpointDeleteSpy.mockClear();
 
         // 再切到 r2：旧 [U, M, r1] vs 新 [U, M, r2] → 分歧在索引 2
         const data = await doSwitch('c1', r2.nodeId);
         expect(data.rewritten).toBe(true);
         const history = await manager.getMessagesRaw('c1');
         expect(history.map(m => m.id)).toEqual([userNodeId, modelNodeId, r2.nodeId]);
-        expect(checkpointDeleteSpy).toHaveBeenCalledWith('c1', 2, undefined);
+        expect(data.divergenceIndex).toBe(2);
         expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
     });
 
-    test('检查点清理索引回退边界：切回祖先（旧分支更长）→ 分歧索引=新历史长度，清理尾部检查点（BCP-08）', async () => {
+    test('重写分歧索引边界：切回祖先与重复切换（BCP-08）', async () => {
         const [userNodeId, modelNodeId] = await seedConversation('c1');
         // reroll 产生含 functionCall + FR + 续接节点的新候选（主历史 = [U, newA, FR, B]）
         const started = await service.startReroll('c1', modelNodeId);
@@ -230,13 +181,12 @@ describe('候选切换全链（handler 编排）', () => {
         const history = await manager.getMessagesRaw('c1');
         expect(history.map(m => m.id)).toEqual([userNodeId, modelNodeId]);
         expect(history[1]!.parts).toEqual([{ text: 'a1' }]); // 旧回答内容恢复
-        expect(checkpointDeleteSpy).toHaveBeenCalledWith('c1', 1, undefined);
+        expect(data.divergenceIndex).toBe(1);
         expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
 
         // 同一路径再次切换（幂等）：完全一致 → 不再清理
-        checkpointDeleteSpy.mockClear();
-        await doSwitch('c1', modelNodeId);
-        expect(checkpointDeleteSpy).not.toHaveBeenCalled();
+        const unchanged = await doSwitch('c1', modelNodeId);
+        expect(unchanged.divergenceIndex).toBeNull();
     });
 
     test('切回旧候选恢复旧内容；切回新候选 functionResponse 依附正确（决策 8）', async () => {
@@ -296,8 +246,7 @@ describe('候选切换全链（handler 编排）', () => {
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
 
         // 空占位已经物理移除，继续引用旧 ID 必须明确 NODE_NOT_FOUND，且不改主历史。
-        await switchBranchCandidate({ conversationId: 'c1', nodeId: candidateNodeId }, 'req-empty', makeCtx());
-        expect(errors[errors.length - 1]).toMatchObject({ code: 'NODE_NOT_FOUND' });
+        await expect(service.switchBranchCandidate('c1', candidateNodeId)).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
     });
 
@@ -335,15 +284,15 @@ describe('候选切换全链（handler 编排）', () => {
         // 切到已有模型节点 M：无图 → 先建线性基线 [U, M] → 切换目标即原活跃路径
         const data = await doSwitch('c1', modelNodeId);
 
-        // 主历史与活跃路径一致 → 无变更（rewritten=true 表示编排完成，historyRewrite 未落盘）
-        expect(data.rewritten).toBe(true);
+        // 直接调用重写服务：未写入历史时 rewritten 为 false。
+        expect(data.rewritten).toBe(false);
         expect(data.activePathLength).toBe(2);
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
         // 图已建立且一致
         expect(await repo.exists('c1')).toBe(true);
         expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
         // 完全一致 → 检查点无需清理
-        expect(checkpointDeleteSpy).not.toHaveBeenCalled();
+        expect(data.divergenceIndex).toBeNull();
     });
     test('含 FR 的活跃路径重复切换：FR id 复用 → 第二次 rewritten=false、检查点不误删（R8a-H1/L1）', async () => {
         const [userNodeId, modelNodeId] = await seedConversation('c1');
@@ -355,7 +304,6 @@ describe('候选切换全链（handler 编排）', () => {
 
         // 切回旧候选（清掉工具循环历史）→ 再切回新候选（FR 从图重建，无旧 FR 可复用 → 新 id）
         await doSwitch('c1', modelNodeId);
-        checkpointDeleteSpy.mockClear();
         await doSwitch('c1', newAId);
 
         let history = await manager.getMessagesRaw('c1');
@@ -368,13 +316,12 @@ describe('候选切换全链（handler 编排）', () => {
         expect(frMessages[0]!.timestamp).toBe(node.timestamp ?? node.createdAt);
 
         // 同一路径再次切换（幂等重试）：FR id 复用 → 主历史与活跃路径完全一致
-        checkpointDeleteSpy.mockClear();
-        await doSwitch('c1', newAId);
+        const unchanged = await doSwitch('c1', newAId);
         history = await manager.getMessagesRaw('c1');
         expect(history.map(m => m.id)).toEqual([userNodeId, newAId, frId, finished.activeTailNodeId!]);
         expect(history.filter(m => isFunctionResponseMessage(m))[0]!.id).toBe(frId); // FR id 未重新生成
         // 完全一致 → divergenceIndex=null → 不清理检查点（内容未变、索引仍有效的检查点不被误删）
-        expect(checkpointDeleteSpy).not.toHaveBeenCalled();
+        expect(unchanged.divergenceIndex).toBeNull();
         expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
     });
 
@@ -412,18 +359,15 @@ describe('候选切换全链（handler 编排）', () => {
         expect((await service.getBranchGraph('c1')).graph!.nodes[q2Id]).toBeUndefined();
 
         // 切换被拒绝：明确错误码，主历史保持原样（未入图消息不丢），图回滚到切换前活跃尾 r2
-        await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-m2', makeCtx());
-        expect(responses).toHaveLength(0);
-        expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-m2', code: 'BRANCH_OPERATION_CONFLICT' });
-        expect(errors[0].message).toContain('not yet synced');
+        const refused = service.switchBranchCandidate('c1', r1.nodeId);
+        await expect(refused).rejects.toMatchObject({ code: 'BRANCH_OPERATION_CONFLICT' });
+        await expect(refused).rejects.toThrow('not yet synced');
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, q2Id]);
         const graphAfterReject = (await service.getBranchGraph('c1')).graph!;
         expect(graphAfterReject.activeTailNodeId).toBe(r2.nodeId);
 
         // 同步收敛（模拟 appendHistoryToGraph 完成）后重试切换成功：消息保留为图分支，未被替换丢弃
         await service.appendHistoryToGraph('c1', (await manager.getMessagesRaw('c1')).slice(2));
-        errors.length = 0;
         const data = await doSwitch('c1', r1.nodeId);
         expect(data.rewritten).toBe(true);
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, r1.nodeId]);
@@ -478,12 +422,10 @@ describe('候选切换全链（handler 编排）', () => {
 
         // 切换被拒绝：R8a-M2 FR 校验报出未同步 FR（明确错误码 + not yet synced + FR 数量），
         // 主历史保持原样（FR 内容不丢），图回滚到切换前活跃尾 newA
-        await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-m2-fr', makeCtx());
-        expect(responses).toHaveLength(0);
-        expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-m2-fr', code: 'BRANCH_OPERATION_CONFLICT' });
-        expect(errors[0].message).toContain('not yet synced');
-        expect(errors[0].message).toContain('functionResponse');
+        const refusedFr = service.switchBranchCandidate('c1', r1.nodeId);
+        await expect(refusedFr).rejects.toMatchObject({ code: 'BRANCH_OPERATION_CONFLICT' });
+        await expect(refusedFr).rejects.toThrow('not yet synced');
+        await expect(refusedFr).rejects.toThrow('functionResponse');
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, newAId, frId]);
         graph = (await service.getBranchGraph('c1')).graph!;
         expect(graph.activeTailNodeId).toBe(newAId);
@@ -494,7 +436,6 @@ describe('候选切换全链（handler 编排）', () => {
         graph = (await service.getBranchGraph('c1')).graph!;
         expect(graph.nodes[newAId]!.parts.some(p => p.functionResponse?.id === 'call-1')).toBe(true);
 
-        errors.length = 0;
         const data = await doSwitch('c1', r1.nodeId);
         expect(data.rewritten).toBe(true);
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, r1.nodeId]);
@@ -509,42 +450,26 @@ describe('候选切换全链（handler 编排）', () => {
         expect(second.divergenceIndex).toBeNull();
     });
 
-    test('metadata 写失败：重写前失效 trim 状态 → saveHistory 未执行、图回滚，图/历史一致（R8a-M1）', async () => {
+    test('元数据写失败会在主历史保存前中断重写，恢复后可以重试（R8a-M1）', async () => {
         const failingStorage = new FailingMetadataStorage();
         const mgr = new ConversationManager(failingStorage);
         const customService = new BranchService(mgr, repo);
         setGlobalBranchService(customService);
-
         await mgr.createConversation('c1', 'T');
         await mgr.addBatch('c1', linearHistory());
         const [userNodeId, modelNodeId] = (await mgr.getMessagesRaw('c1')).map(m => m.id!);
         const r1 = await customService.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
-        const r2 = await customService.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
-        // 当前活跃 = r2
+        await customService.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
 
-        // 注入 metadata 写失败：重写流程中 invalidateContextManagementState → saveMetadata 抛错
         failingStorage.failMetadata = true;
-        const ctx = makeCtx({ conversationManager: mgr });
-        await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-m1', ctx);
-
-        // 明确错误透出（非 BranchError → INTERNAL_ERROR）
-        expect(responses).toHaveLength(0);
-        expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-m1', code: 'INTERNAL_ERROR' });
-        expect(errors[0].message).toContain('simulated metadata write failure');
-
-        // 主历史未被重写（saveHistory 未执行）：仍为切换前状态 [U, M]
+        await customService.switchBranchCandidate('c1', r1.nodeId);
+        await expect(mgr.rewriteHistoryFromBranchGraph('c1')).rejects.toThrow('simulated metadata write failure');
         expect((await mgr.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
-        // 图回滚到切换前活跃尾 r2：图/历史一致（无「图=新路径、历史=旧路径」的永久分裂）
-        const graph = (await customService.getBranchGraph('c1')).graph!;
-        expect(validate(graph).valid).toBe(true);
-        expect(graph.activeTailNodeId).toBe(r2.nodeId);
-        expect(graph.nodes[modelNodeId]!.activeChildId).toBe(r2.nodeId);
+        expect(validate((await customService.getBranchGraph('c1')).graph!).valid).toBe(true);
 
-        // 自愈：metadata 恢复后重试切换成功
         failingStorage.failMetadata = false;
-        errors.length = 0;
-        const data = await doSwitch('c1', r1.nodeId, ctx);
+        await customService.switchBranchCandidate('c1', r1.nodeId);
+        const data = await mgr.rewriteHistoryFromBranchGraph('c1');
         expect(data.rewritten).toBe(true);
         expect((await mgr.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, r1.nodeId]);
         expect(await customService.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
@@ -644,94 +569,4 @@ describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => 
         await expect(manager.rewriteHistoryFromBranchGraph('c1'))
             .rejects.toMatchObject({ code: 'BRANCH_OPERATION_CONFLICT' });
     });
-});
-
-describe('切换失败语义（handler 回滚）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
-    let manager: ConversationManager;
-    let service: BranchService;
-    let responses: Array<{ requestId: string; data: unknown }>;
-    let errors: Array<{ requestId: string; code: string; message: string }>;
-
-    function makeCtx(overrides: Record<string, unknown> = {}): HandlerContext {
-        return {
-            conversationManager: manager,
-            storagePathManager: {
-                getEffectiveDataPath: () => tempDir,
-            } as unknown as HandlerContext['storagePathManager'],
-            streamAbortControllers: new StreamAbortManager() as unknown as Map<string, AbortController>,
-            sendResponse: (requestId, data) => { responses.push({ requestId, data }); },
-            sendError: (requestId, code, message) => { errors.push({ requestId, code, message }); },
-            ...overrides,
-        } as unknown as HandlerContext;
-    }
-
-    beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-switch-fail-'));
-        repo = new BranchGraphRepository(tempDir);
-        manager = new ConversationManager(new MemoryStorageAdapter());
-        service = new BranchService(manager, repo);
-        setGlobalBranchService(service);
-        responses = [];
-        errors = [];
-    });
-
-    afterEach(async () => {
-        setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
-    });
-
-    test('主历史重写失败：图状态回滚到切换前活跃尾，透出明确错误码', async () => {
-        const [userNodeId, modelNodeId] = await seedConversationFor(manager, 'c1');
-        const r1 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
-        const r2 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
-        // 当前活跃 = r2
-
-        // 注入重写失败（模拟服务端缺陷/IO 异常）
-        (manager as unknown as { rewriteHistoryFromBranchGraph: unknown }).rewriteHistoryFromBranchGraph =
-            async () => { throw new Error('simulated rewrite failure'); };
-
-        await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-fail', makeCtx());
-
-        // 明确错误码：非 BranchError → INTERNAL_ERROR，透出原始信息（L-6 语义）
-        expect(responses).toHaveLength(0);
-        expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-fail', code: 'INTERNAL_ERROR' });
-        expect(errors[0].message).toContain('simulated rewrite failure');
-
-        // 图状态回滚到切换前活跃尾 r2（图/历史不长期不一致）
-        const graph = (await service.getBranchGraph('c1')).graph!;
-        expect(validate(graph).valid).toBe(true);
-        expect(graph.activeTailNodeId).toBe(r2.nodeId);
-        expect(graph.nodes[modelNodeId]!.activeChildId).toBe(r2.nodeId);
-        // 主历史保持切换前状态
-        const history = await manager.getMessagesRaw('c1');
-        expect(history.map(m => m.id)).toEqual([userNodeId, modelNodeId]);
-    });
-
-    test('线性模式（无图）重写失败：回滚锚点取旧历史尾，图回到线性路径', async () => {
-        const [userNodeId, modelNodeId] = await seedConversationFor(manager, 'c1');
-        expect(await repo.exists('c1')).toBe(false);
-
-        (manager as unknown as { rewriteHistoryFromBranchGraph: unknown }).rewriteHistoryFromBranchGraph =
-            async () => { throw new Error('boom'); };
-
-        await switchBranchCandidate({ conversationId: 'c1', nodeId: modelNodeId }, 'req-fail2', makeCtx());
-
-        expect(errors).toHaveLength(1);
-        expect(errors[0].code).toBe('INTERNAL_ERROR');
-        // 图回到旧历史尾（线性路径 M）
-        const graph = (await service.getBranchGraph('c1')).graph!;
-        expect(validate(graph).valid).toBe(true);
-        expect(activePath(graph)).toEqual([userNodeId, modelNodeId]);
-        expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
-    });
-
-    /** 与顶层 describe 同名辅助（避免闭包依赖）：建会话并写入线性历史 */
-    async function seedConversationFor(mgr: ConversationManager, conversationId: string): Promise<string[]> {
-        await mgr.createConversation(conversationId, 'T');
-        await mgr.addBatch(conversationId, linearHistory());
-        return (await mgr.getMessagesRaw(conversationId)).map(m => m.id!);
-    }
 });

@@ -10,7 +10,7 @@
  * - 大文件 + 短 search 的性能冒烟（countMatches 不生成分割数组、上限保护生效）
  */
 
-import { applyDiffToContent } from '../../tools/file/apply_diff';
+import { applyDiffToContent } from '../../tools/file/diff/apply';
 
 describe('applyDiffToContent', () => {
     test('replaces the unique match and reports the matched line', () => {

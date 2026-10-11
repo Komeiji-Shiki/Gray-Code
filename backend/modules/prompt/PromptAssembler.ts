@@ -21,7 +21,6 @@ import type { Content, ContentPart } from '../conversation'
 import type { SettingsManager } from '../settings/SettingsManager'
 import type { PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings'
 import { promptContextMessagesToText } from './promptContextCache'
-import type { PromptContextSectionBuilder } from './contextSections'
 import {
     DYNAMIC_PROMPT_PLACEHOLDERS,
     getReferencedPromptPlaceholders as getTemplateReferencedPlaceholders,
@@ -135,10 +134,20 @@ export interface DynamicContextDiffBase {
 export interface PromptAssemblyHost {
     settings: () => SettingsManager | null | undefined
     workspacePaths: () => string[]
-    sections: Pick<PromptContextSectionBuilder, 'wrapSection' | 'cleanupEmptyLines' | 'getUserLanguage' |
-        'generateStaticEnvironmentSection' | 'generateContextBadgeFormatSection' | 'generateMemorySection' |
-        'generateFileTreeSection' | 'generateOpenTabsSection' | 'generateActiveEditorSection' |
-        'generateDiagnosticsSection' | 'generatePinnedFilesSection' | 'getContext'>
+    sections: {
+        wrapSection(title: string, content: string | null): string
+        cleanupEmptyLines(text: string): string
+        getUserLanguage(): string
+        generateStaticEnvironmentSection(): string
+        generateContextBadgeFormatSection(): string
+        generateMemorySection(): string
+        generateFileTreeSection(maxDepth: number, ignorePatterns: string[]): string
+        generateOpenTabsSection(maxTabs: number, ignorePatterns: string[]): string
+        generateActiveEditorSection(ignorePatterns: string[]): string
+        generateDiagnosticsSection(): string
+        generatePinnedFilesSection(runtimePinnedFiles?: unknown): string
+        getContext(): PromptContext
+    }
 }
 
 /** Host-independent preset renderer. Hosts supply context readers; assembly and caching are shared. */

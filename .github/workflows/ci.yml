@@ -1,7 +1,7 @@
 name: CI
 
 # PR 与 main 分支推送的质量门禁（E-01）：
-# 平台服务、桌面、客户端与扩展的类型检查、测试和 i18n 校验，
+# 平台服务、桌面、客户端与共享模块的类型检查、测试和 i18n 校验，
 # 与本地 `npm run ci` 使用同一入口。
 # nightly（schedule）与 release（打 tag）由各自 workflow 负责，本 workflow 只做日常 PR/main 验证。
 

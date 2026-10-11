@@ -1,21 +1,4 @@
-/**
- * 分支竞态测试骨架（第六阶段 TREE-13/TREE-14）。
- *
- * 覆盖：
- * - TREE-13 互斥矩阵（服务层 + 守卫层）：
- *   · isConversationStreaming 守卫：真实 StreamAbortManager create → true /
- *     delete → false（模拟流式开始 / 结束），会话粒度隔离；
- *   · 流式期间变更类分支操作（reroll / switch / delete）集成被拒 BRANCH_BUSY，
- *     图状态不被改动；只读操作不受影响；
- *   · BranchService 写锁互斥（BR-07 runExclusive）：并发 reroll + 删除非活跃候选、
- *     并发 switch 两个候选——全部串行化、图 validate 通过、无丢失更新。
- * - TREE-14 迟到 chunk 隔离（R6 基础用例）：主历史追加与派生图同步分别验证；
- *   同步前保留原图与新候选，切换被拒绝；同步后可以继续切换且消息仍可追溯。
- *
- * 存储组合：历史走 MemoryStorageAdapter，sidecar 走真实临时目录（注入 baseDir）。
- * 注：handler 层的 BRANCH_BUSY 矩阵单测在 backend/__tests__/webview/branchHandlers.test.ts；
- * 本文件补充服务层并发与「流式期间 + 迟到 chunk」的集成骨架。
- */
+/** 分支服务写锁与历史/图异步同步的共享行为。旧宿主流式守卫单独从本夹具移除。 */
 
 import * as fsp from 'fs/promises';
 import * as os from 'os';
@@ -37,17 +20,6 @@ import {
     childrenIndex,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import {
-    BRANCH_BUSY_STREAMING_MESSAGE,
-    createRerollCandidate,
-    deleteBranchCandidate,
-    getBranchGraph,
-    getBranchGraphMeta,
-    isConversationStreaming,
-    switchBranchCandidate,
-} from '../../../webview/handlers/BranchHandlers';
-import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
-import type { HandlerContext } from '../../../webview/types';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
@@ -58,7 +30,7 @@ function linearHistory(): ConversationHistory {
     ];
 }
 
-describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
+describe('分支竞态（服务写锁 + 迟到历史隔离）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -78,21 +50,6 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
         return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
     }
 
-    /** 构造 handler 级 ctx（streamAbortControllers 注入真实 StreamAbortManager，与生产一致） */
-    function makeCtx(abortManager: StreamAbortManager, sendResponse?: (requestId: string, data: unknown) => void) {
-        return {
-            conversationManager: manager,
-            storagePathManager: {
-                getEffectiveDataPath: () => tempDir,
-            } as unknown as HandlerContext['storagePathManager'],
-            streamAbortControllers: abortManager,
-            sendResponse: sendResponse || (() => undefined),
-            sendError: (requestId: string, code: string, message: string) => {
-                throw new Error(`[${requestId}] ${code}: ${message}`);
-            },
-        } as unknown as HandlerContext;
-    }
-
     beforeEach(async () => {
         tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-race-'));
         repo = new BranchGraphRepository(tempDir);
@@ -104,106 +61,6 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
     afterEach(async () => {
         setGlobalBranchService(undefined);
         await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
-    });
-
-    describe('守卫层：isConversationStreaming（真实 StreamAbortManager）', () => {
-        let abortManager: StreamAbortManager;
-
-        beforeEach(() => {
-            abortManager = new StreamAbortManager();
-        });
-
-        test('create 后 true，delete 后 false（模拟流式开始 / 结束）；会话粒度隔离', () => {
-            const ctx = makeCtx(abortManager);
-            expect(isConversationStreaming(ctx, 'c1')).toBe(false);
-
-            abortManager.create('c1'); // 流式开始
-            expect(isConversationStreaming(ctx, 'c1')).toBe(true);
-            expect(isConversationStreaming(ctx, 'other')).toBe(false); // 其他会话不受影响
-
-            abortManager.delete('c1'); // 流式结束（正常结束 / 取消都会清 controller）
-            expect(isConversationStreaming(ctx, 'c1')).toBe(false);
-        });
-
-    });
-
-    describe('流式期间互斥矩阵（集成：真实 BranchService + BranchHandlers）', () => {
-        let abortManager: StreamAbortManager;
-        let ctx: HandlerContext;
-
-        beforeEach(async () => {
-            abortManager = new StreamAbortManager();
-            ctx = makeCtx(abortManager);
-        });
-
-        test('流式中 reroll / switch / delete 全部被拒 BRANCH_BUSY，图状态不被改动', async () => {
-            const ids = await seedConversation('c1');
-            const r1 = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a1' }] });
-            const r2 = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a2' }] });
-            const before = JSON.stringify((await service.getBranchGraph('c1')).graph);
-
-            abortManager.create('c1'); // 流式进行中
-
-            // 收集错误而非抛错：注入带收集能力的 sendError
-            const errors: Array<{ requestId: string; code: string; message: string }> = [];
-            ctx.sendError = (requestId: string, code: string, message: string) => {
-                errors.push({ requestId, code, message });
-            };
-
-            await createRerollCandidate(
-                { conversationId: 'c1', parentNodeId: ids[1], parts: [{ text: 'a3' }] },
-                'req-r1', ctx
-            );
-            await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-s1', ctx);
-            await deleteBranchCandidate({ conversationId: 'c1', nodeId: r2.nodeId }, 'req-d1', ctx);
-
-            expect(errors.map(e => e.code)).toEqual(['BRANCH_BUSY', 'BRANCH_BUSY', 'BRANCH_BUSY']);
-            expect(errors.every(e => e.message === BRANCH_BUSY_STREAMING_MESSAGE)).toBe(true);
-
-            // 图未被部分写入污染：与流式前完全一致（reroll 未建、switch 未切、delete 未删）
-            const after = JSON.stringify((await service.getBranchGraph('c1')).graph);
-            expect(after).toBe(before);
-            expect(validate((await service.getBranchGraph('c1')).graph!).valid).toBe(true);
-        });
-
-        test('流式中只读操作（getBranchGraph / getBranchGraphMeta）放行', async () => {
-            await seedConversation('c1');
-            abortManager.create('c1');
-
-            const responses: Array<{ requestId: string; data: unknown }> = [];
-            ctx.sendResponse = (requestId: string, data: unknown) => { responses.push({ requestId, data }); };
-
-            await getBranchGraph({ conversationId: 'c1' }, 'req-g1', ctx);
-            await getBranchGraphMeta({ conversationId: 'c1' }, 'req-g2', ctx);
-
-            expect(responses.map(r => r.requestId)).toEqual(['req-g1', 'req-g2']);
-        });
-
-        test('流式结束后放行：delete 后 reroll / switch / delete 全部成功', async () => {
-            const ids = await seedConversation('c1');
-            const r1 = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a1' }] });
-            const r2 = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a2' }] });
-
-            abortManager.create('c1'); // 流式开始
-            abortManager.delete('c1'); // 流式结束
-
-            const responses: Array<{ requestId: string; data: unknown }> = [];
-            ctx.sendResponse = (requestId: string, data: unknown) => { responses.push({ requestId, data }); };
-
-            await createRerollCandidate(
-                { conversationId: 'c1', parentNodeId: ids[1], parts: [{ text: 'a3' }] },
-                'req-r2', ctx
-            );
-            await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-s2', ctx);
-            await deleteBranchCandidate({ conversationId: 'c1', nodeId: r2.nodeId }, 'req-d2', ctx);
-
-            expect(responses).toHaveLength(3);
-            expect(responses.every(r => (r.data as { success?: boolean }).success === true)).toBe(true);
-            const graph = (await service.getBranchGraph('c1')).graph!;
-            expect(validate(graph).valid).toBe(true);
-            expect(graph.activeTailNodeId).toBe(r1.nodeId); // switch 生效
-            expect(graph.nodes[r2.nodeId]!.deleted).toBe(true); // delete 生效
-        });
     });
 
     describe('服务层写锁互斥矩阵（BR-07 runExclusive 串行化）', () => {
@@ -291,34 +148,22 @@ describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
 
         test('未同步的迟到消息阻止切换，同步后可以继续选择新候选', async () => {
             const ids = await seedConversation('c1');
-            const abortManager = new StreamAbortManager();
-
-            // 旧流结束 → reroll 放行并建新候选
-            abortManager.create('c1');
-            abortManager.delete('c1');
             const reroll = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a2' }] });
-
-            // 迟到的旧流 chunk 到达（流式结束但网络层仍可能有残留 chunk）
             await appendBeforeGraphSync('c1', [{ role: 'model', parts: [{ text: 'stale' }], timestamp: 301 }]);
 
             const graph = (await service.getBranchGraph('c1')).graph!;
             expect(validate(graph).valid).toBe(true);
             expect(graph.activeTailNodeId).toBe(reroll.nodeId);
-            // 同步缺口存在时必须拒绝，不能为了切换候选而丢掉已写入的历史。
             const history = await manager.getMessagesRaw('c1');
             const beforeGraph = JSON.stringify(graph);
-            const responses: Array<{ requestId: string; data: unknown }> = [];
-            const ctx = makeCtx(abortManager, (requestId, data) => { responses.push({ requestId, data }); });
-            await expect(switchBranchCandidate({ conversationId: 'c1', nodeId: reroll.nodeId }, 'req-late1', ctx))
-                .rejects.toThrow('BRANCH_OPERATION_CONFLICT');
-            expect(responses).toHaveLength(0);
+            await expect(service.switchBranchCandidate('c1', reroll.nodeId))
+                .rejects.toMatchObject({ code: 'BRANCH_OPERATION_CONFLICT' });
             expect(await manager.getMessagesRaw('c1')).toEqual(history);
             expect(JSON.stringify((await service.getBranchGraph('c1')).graph)).toBe(beforeGraph);
 
             await service.appendHistoryToGraph('c1', [history[2]]);
-            await switchBranchCandidate({ conversationId: 'c1', nodeId: reroll.nodeId }, 'req-after-sync', ctx);
-            expect(responses).toHaveLength(1);
-            expect((responses[0].data as { success?: boolean }).success).toBe(true);
+            const switched = await service.switchBranchCandidate('c1', reroll.nodeId);
+            expect(switched.nodeId).toBe(reroll.nodeId);
             const synced = (await service.getBranchGraph('c1')).graph!;
             expect(synced.nodes[reroll.nodeId].parts).toEqual([{ text: 'a2' }]);
             expect(synced.nodes[history[2].id!].parts).toEqual([{ text: 'stale' }]);

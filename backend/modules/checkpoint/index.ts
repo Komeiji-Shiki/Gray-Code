@@ -17,7 +17,6 @@
  * checkpoint → settings 仅允许 type-only import 且一律走 settings 门面（'../settings'）。
  */
 
-export { CheckpointManager } from './CheckpointManager';
 export type {
     CheckpointRecord,
     FileChange,
@@ -26,10 +25,7 @@ export type {
     CheckpointExcludedNote,
     BatchCheckpointDeleteItem,
     BatchCheckpointDeleteResult
-} from './CheckpointManager';
-export { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from './CheckpointManifestRepository';
-export { CheckpointQueryService } from './CheckpointQueryService';
-export { CheckpointRetentionService } from './CheckpointRetentionService';
+} from './types';
 export { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY, CheckpointAbortError, throwIfAborted } from './checkpointConcurrency';
 export type { CheckpointManifest, CheckpointSummary, CheckpointOperationProgress } from './types';
 export type { CheckpointExclusionConfig } from './types';

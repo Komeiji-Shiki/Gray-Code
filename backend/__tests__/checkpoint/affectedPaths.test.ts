@@ -21,7 +21,6 @@ import {
     type SnapshotBuildOptions
 } from '../../modules/checkpoint';
 import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
-import { createToolLoopHarness } from '../__fixtures__/harnessFixtures';
 import {
     extractAffectedPaths,
     isPathWithin,
@@ -336,115 +335,5 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
         } finally {
             await fs.rm(rootDir, TEMP_DIR_REMOVE_OPTIONS);
         }
-    });
-});
-
-describe('CP-PARTIAL-1 链路透传（ToolIterationLoopService 批次检查点）', () => {
-    const config = { type: 'custom', toolMode: 'function_call', model: 'test-model' } as never;
-
-    function makeTool(name: string) {
-        return {
-            declaration: {
-                name,
-                description: `${name} stub`,
-                parameters: { type: 'object', properties: {}, required: [] }
-            },
-            handler: async () => ({ success: true, data: { output: 'ok' } })
-        };
-    }
-
-    function seedCheckpointRecords(checkpointService: { createToolExecutionCheckpoint: jest.Mock }) {
-        let seq = 0;
-        checkpointService.createToolExecutionCheckpoint.mockImplementation(
-            async (_cid: string, messageIndex: number, toolName: string, phase: 'before' | 'after') => ({
-                id: `cp-${phase}-${++seq}`,
-                conversationId: _cid,
-                messageIndex,
-                toolName,
-                phase,
-                timestamp: Date.now(),
-                backupDir: 'backup',
-                fileCount: 0,
-                contentHash: 'h'
-            } as CheckpointRecord)
-        );
-    }
-
-    async function collectOutputs(service: ReturnType<typeof createToolLoopHarness>['service'], options: Record<string, unknown>) {
-        const outputs: unknown[] = [];
-        for await (const output of service.runToolLoop({
-            conversationId: 'conv-cp-partial',
-            configId: 'cfg-1',
-            config,
-            maxIterations: 2,
-            ...options
-        })) {
-            outputs.push(output);
-        }
-        return outputs;
-    }
-
-    afterEach(() => {
-        jest.restoreAllMocks();
-    });
-
-    test('纯主循环批次：before/after 选项透传受影响路径（同一路径去重）', async () => {
-        const applyTool = makeTool('apply_diff');
-        async function* stream() {
-            yield { delta: [{ text: 'hello' }] };
-            yield { delta: [{ functionCall: { id: 'call_1', name: 'apply_diff', args: { path: 'a.ts' } } }] };
-            yield { delta: [{ functionCall: { id: 'call_2', name: 'apply_diff', args: { path: 'a.ts' } } }] };
-            yield { delta: [{ functionCall: { id: 'call_3', name: 'apply_diff', args: { path: 'b.ts' } } }] };
-            yield { delta: [], done: true };
-        }
-        const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager, checkpointService } = createToolLoopHarness(channelManager, {
-            getTool: () => applyTool
-        });
-        seedCheckpointRecords(checkpointService);
-        // 注入工作区 URI（harness 默认 getMetadata 返回 null = 未绑定工作区）
-        (conversationManager.getMetadata as jest.Mock).mockResolvedValue({ workspaceUri: 'file:///C:/test-ws' });
-
-        await collectOutputs(service, {});
-
-        expect(checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
-        const cpCalls = (checkpointService.createToolExecutionCheckpoint as jest.Mock).mock.calls;
-        expect(cpCalls[0][2]).toBe('tool_batch');
-        expect(cpCalls[1][2]).toBe('tool_batch');
-        const workspaceRootFsPath = workspaceUriToFsPath('file:///C:/test-ws')!;
-        const expected = [path.resolve(workspaceRootFsPath, 'a.ts'), path.resolve(workspaceRootFsPath, 'b.ts')];
-        // 去重：两个 apply_diff 同一路径只保留一次；before/after 都透传
-        expect(cpCalls[0][5].affectedPaths).toEqual(expected);
-        expect(cpCalls[1][5].affectedPaths).toEqual(expected);
-    });
-
-    test('批内含副作用不可知工具（execute_command）→ 回退全量（options 不传 affectedPaths）', async () => {
-        const tools: Record<string, ReturnType<typeof makeTool>> = {
-            write_file: makeTool('write_file'),
-            execute_command: makeTool('execute_command')
-        };
-        async function* stream() {
-            yield { delta: [{ text: 'hello' }] };
-            yield { delta: [{ functionCall: { id: 'call_1', name: 'write_file', args: { path: 'a.ts' } } }] };
-            yield { delta: [{ functionCall: { id: 'call_2', name: 'execute_command', args: { command: 'x' } } }] };
-            yield { delta: [], done: true };
-        }
-        const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager, checkpointService } = createToolLoopHarness(channelManager, {
-            getTool: (name?: string) => tools[name ?? ''] ?? makeTool('stub')
-        });
-        seedCheckpointRecords(checkpointService);
-        (conversationManager.getMetadata as jest.Mock).mockResolvedValue({ workspaceUri: 'file:///C:/test-ws' });
-
-        await collectOutputs(service, {});
-
-        // 任一工具无法确定 → 整批回退全量：after（全部工具已知后创建）的 options 不含 affectedPaths
-        const cpCalls = (checkpointService.createToolExecutionCheckpoint as jest.Mock).mock.calls;
-        const afterCall = cpCalls.find(c => c[3] === 'after');
-        expect(afterCall).toBeDefined();
-        expect(afterCall![5]).not.toHaveProperty('affectedPaths');
-        expect(afterCall![5].batchToolNames).toEqual(
-            expect.arrayContaining(['write_file', 'execute_command'])
-        );
     });
 });

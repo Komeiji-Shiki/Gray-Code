@@ -1,6 +1,6 @@
 # GrayCode 项目结构与架构
 
-本文描述 2.0 独立平台当前源码。主入口是 apps/desktop 和 apps/server；旧目录中仍有共享业务和扩展兼容代码，目录名称不能直接等同于运行边界。
+本文描述 2.0 独立平台当前源码。主入口是 apps/desktop 和 apps/server，backend 保留平台复用的共享业务；1.x 扩展源码在 v1-extension 分支维护。
 
 ## 入口导航
 
@@ -55,12 +55,11 @@ packages/core 不导入 Electron、VS Code、frontend、webview 或 backend。�
 | apps/server | 模型适配、提示词、工作区、Git、终端、MCP、ACP、Bot、节点和自动任务 |
 | apps/desktop | Electron 窗口、内置浏览器、电脑捕获、预加载、安装更新与数据位置 |
 | apps/client | 桌面/Web 外壳、文件树、编辑器、面板与远程控制界面 |
-| frontend | 成熟聊天、设置、角色与工具结果界面；也供扩展入口复用 |
-| backend/modules | 仍被平台复用的模型格式器、配置、提示词、MCP 与其他业务；也包含扩展路径 |
-| backend/tools | 共享工具实现及宿主适配；例如 readFileRuntime 与 VS Code 外壳分开 |
+| frontend | 聊天、设置、角色与工具结果界面 |
+| backend/modules | 平台复用的模型格式器、配置、提示词、MCP 与其他业务 |
+| backend/tools | 共享工具实现与宿主接口，由平台提供工作区、存储和进程能力 |
 | shared | 聊天协议、纯函数和跨宿主共用逻辑 |
 | native/windows/ComputerHost | .NET Framework 电脑操作、窗口身份、捕获、输入与 UI Automation |
-| webview、extension.ts | 保留的 VS Code 宿主入口，独立桌面不从该入口启动 |
 | fast-tavern-main | TypeScript 与 Python 的独立提示词引擎 |
 | scripts | 构建、依赖收集、打包、检查与基准入口 |
 | wiki | 随源码维护的用户手册和合成界面截图 |
@@ -137,7 +136,7 @@ packages/core 不导入 Electron、VS Code、frontend、webview 或 backend。�
 
 工作区进程、终端、MCP 和 ACP 持有实际子进程对象，停止只处理所持有的进程树。结束命令保留结果记录并释放句柄。应用关闭依次停止入口与任务，清理等待、连接、受管进程，最后关闭存储。
 
-Windows 原生宿主提供独立的 `--process-snapshot` 只读入口。桌面终端使用进程快照和创建时间核对后代，身份未知的记录保留在查询结果中；可能属于本命令时再通过原 CIM 查询核对。源码运行或扩展没有原生宿主时继续使用 CIM。
+Windows 原生宿主提供独立的 `--process-snapshot` 只读入口。桌面终端使用进程快照和创建时间核对后代，身份未知的记录保留在查询结果中；可能属于本命令时再通过原 CIM 查询核对。源码运行没有原生宿主时继续使用 CIM。
 
 Bot、节点、自动任务与子任务复用运行核心。事务领取、稳定请求身份、事件序号和完成回执负责恢复与去重。节点断线补取状态和结果，不盲目重发命令。
 

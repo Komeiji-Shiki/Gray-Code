@@ -1,13 +1,11 @@
-import * as path from 'path';
-import * as vscode from 'vscode';
-import {
-    createGetSymbolsTool,
-    GET_SYMBOLS_RETRY_DELAY_MS,
-    GET_SYMBOLS_TIMEOUT_MS
-} from '../../tools/lsp/get_symbols';
+import { fileURLToPath } from 'node:url';
+import { SymbolKind } from 'vscode-languageserver-protocol';
+import { createLanguageToolFixture } from '../__fixtures__/languageToolFixture';
 
-const executeCommandMock = vscode.commands.executeCommand as jest.Mock;
-const openTextDocumentMock = vscode.workspace.openTextDocument as jest.Mock;
+const fixture = createLanguageToolFixture('get_symbols');
+const executeCommandMock = fixture.provider;
+const openTextDocumentMock = fixture.openDocument;
+const createGetSymbolsTool = fixture.createTool;
 
 function documentSymbol(
     name: string,
@@ -32,25 +30,21 @@ function documentSymbol(
     };
 }
 
-describe('get_symbols LSP lifecycle', () => {
+describe('get_symbols 平台工具与语言服务', () => {
     beforeEach(() => {
         jest.useRealTimers();
-        executeCommandMock.mockReset();
-        openTextDocumentMock.mockReset().mockResolvedValue({});
-        (vscode.workspace as any).workspaceFolders = [{
-            name: 'project',
-            uri: vscode.Uri.file(path.resolve('workspace/project'))
-        }];
+        fixture.reset();
     });
 
     afterEach(() => {
+        fixture.restore();
         jest.useRealTimers();
     });
 
     test('打开大型文件激活语言服务并转换层级 DocumentSymbol', async () => {
         executeCommandMock.mockResolvedValue([
-            documentSymbol('ChatFlowService', vscode.SymbolKind.Class, 100, 2300, [
-                documentSymbol('handleChatStream', vscode.SymbolKind.Method, 1100, 1250)
+            documentSymbol('ChatFlowService', SymbolKind.Class, 100, 2300, [
+                documentSymbol('handleChatStream', SymbolKind.Method, 1100, 1250)
             ])
         ]);
 
@@ -62,8 +56,9 @@ describe('get_symbols LSP lifecycle', () => {
         expect(result.success).toBe(true);
         expect(openTextDocumentMock).toHaveBeenCalledTimes(1);
         expect(executeCommandMock).toHaveBeenCalledWith(
-            'vscode.executeDocumentSymbolProvider',
-            expect.anything()
+            'textDocument/documentSymbol',
+            expect.objectContaining({ textDocument: { uri: expect.any(String) } }),
+            expect.any(Object)
         );
         expect(result.data.totalSymbolCount).toBe(2);
         expect(result.data.results[0].symbols[0]).toMatchObject({
@@ -77,8 +72,8 @@ describe('get_symbols LSP lifecycle', () => {
 
     test('默认只返回顶层，海量嵌套符号明确折叠而不是预算截断', async () => {
         executeCommandMock.mockResolvedValue([
-            documentSymbol('Root', vscode.SymbolKind.Class, 1, 900, Array.from({ length: 700 }, (_, index) =>
-                documentSymbol(`member${index}`, vscode.SymbolKind.Property, index + 2, index + 2)))
+            documentSymbol('Root', SymbolKind.Class, 1, 900, Array.from({ length: 700 }, (_, index) =>
+                documentSymbol(`member${index}`, SymbolKind.Property, index + 2, index + 2)))
         ]);
         const result = await createGetSymbolsTool().handler({ paths: ['src/main.ts'] }, {} as any);
         expect(result.data).toMatchObject({ maxDepth: 1, totalSymbolCount: 1, truncated: false });
@@ -90,17 +85,17 @@ describe('get_symbols LSP lifecycle', () => {
     });
 
     test('显式展开按行列排序，kinds 不剪断未匹配父节点下的匹配项，也不隐式增加深度', async () => {
-        const early = documentSymbol('zEarlier', vscode.SymbolKind.Method, 5, 9, [
-            documentSymbol('local', vscode.SymbolKind.Variable, 6, 6)
+        const early = documentSymbol('zEarlier', SymbolKind.Method, 5, 9, [
+            documentSymbol('local', SymbolKind.Variable, 6, 6)
         ]);
-        const late = documentSymbol('aLater', vscode.SymbolKind.Method, 15, 18);
+        const late = documentSymbol('aLater', SymbolKind.Method, 15, 18);
         executeCommandMock.mockResolvedValue([
-            documentSymbol('aLast', vscode.SymbolKind.Function, 40, 45, [
-                documentSymbol('key', vscode.SymbolKind.Variable, 41, 41, [documentSymbol('localMember', vscode.SymbolKind.Property, 41, 41)]),
-                documentSymbol('value', vscode.SymbolKind.Constant, 42, 42),
-                documentSymbol('i', vscode.SymbolKind.Variable, 43, 43)
+            documentSymbol('aLast', SymbolKind.Function, 40, 45, [
+                documentSymbol('key', SymbolKind.Variable, 41, 41, [documentSymbol('localMember', SymbolKind.Property, 41, 41)]),
+                documentSymbol('value', SymbolKind.Constant, 42, 42),
+                documentSymbol('i', SymbolKind.Variable, 43, 43)
             ]),
-            documentSymbol('zFirst', vscode.SymbolKind.Class, 1, 30, [late, early])
+            documentSymbol('zFirst', SymbolKind.Class, 1, 30, [late, early])
         ]);
         const tool = createGetSymbolsTool();
         const expanded = await tool.handler({ paths: ['src/main.ts'], maxDepth: 2 }, {} as any);
@@ -119,7 +114,7 @@ describe('get_symbols LSP lifecycle', () => {
 
     test('平面 SymbolInformation 按源顺序保留；范围包含和容器名不能作为折叠依据', async () => {
         const flat = (name: string, start: number, end: number, column = 0, uri = 'file:///main.ts') => ({
-            name, kind: vscode.SymbolKind.Function, containerName: 'notARealParent',
+            name, kind: SymbolKind.Function, containerName: 'notARealParent',
             location: { uri, range: { start: { line: start, character: column }, end: { line: end, character: column + 1 } } }
         });
         executeCommandMock.mockResolvedValue([
@@ -145,7 +140,7 @@ describe('get_symbols LSP lifecycle', () => {
         { count: 500, flat: true }, { count: 501, flat: true }
     ])('只有实际超过500个可返回符号才截断：%j', async ({ count, flat }) => {
         executeCommandMock.mockResolvedValue(Array.from({ length: count }, (_, index) => {
-            const symbol = documentSymbol(`symbol${index}`, vscode.SymbolKind.Variable, index + 1, index + 1);
+            const symbol = documentSymbol(`symbol${index}`, SymbolKind.Variable, index + 1, index + 1);
             return flat ? { name: symbol.name, kind: symbol.kind, location: { range: symbol.range } } : symbol;
         }).reverse());
         const result = await createGetSymbolsTool().handler({ paths: ['src/main.ts'], maxDepth: 1000 }, {} as any);
@@ -157,31 +152,33 @@ describe('get_symbols LSP lifecycle', () => {
     });
 
     test('嵌套展开共享500预算，极深层级不递归溢出', async () => {
-        let symbol = documentSymbol('leaf', vscode.SymbolKind.Variable, 6000, 6000);
-        for (let depth = 5999; depth >= 1; depth--) symbol = documentSymbol(`node${depth}`, vscode.SymbolKind.Function, depth, 6000, [symbol]);
+        let symbol = documentSymbol('leaf', SymbolKind.Variable, 6000, 6000);
+        for (let depth = 5999; depth >= 1; depth--) symbol = documentSymbol(`node${depth}`, SymbolKind.Function, depth, 6000, [symbol]);
         executeCommandMock.mockResolvedValue([symbol]);
         const result = await createGetSymbolsTool().handler({ paths: ['src/main.ts'], maxDepth: 6000 }, {} as any);
         expect(result.data.results[0]).toMatchObject({ symbolCount: 500, availableSymbolCount: 6000, collapsedSymbolCount: 0, truncated: true });
     });
 
     test('多文件成功、空结果和失败混合仍按输入顺序聚合', async () => {
-        openTextDocumentMock.mockImplementation(async (uri: vscode.Uri) => {
-            if (uri.fsPath.endsWith('broken.ts')) throw new Error('cannot open file');
+        openTextDocumentMock.mockImplementation(async (absolute: string) => {
+            if (absolute.endsWith('broken.ts')) throw new Error('cannot open file');
             return {};
         });
-        executeCommandMock.mockImplementation(async (_command: string, uri: vscode.Uri) => uri.fsPath.endsWith('empty.ts') ? null : [
-            documentSymbol('Root', vscode.SymbolKind.Class, 1, 3, [documentSymbol('hidden', vscode.SymbolKind.Property, 2, 2)])
+        executeCommandMock.mockImplementation(async (_method: string, params: { textDocument: { uri: string } }) =>
+            fileURLToPath(params.textDocument.uri).endsWith('empty.ts') ? null : [
+            documentSymbol('Root', SymbolKind.Class, 1, 3, [documentSymbol('hidden', SymbolKind.Property, 2, 2)])
         ]);
         const result = await createGetSymbolsTool().handler({ paths: ['src/main.ts', 'src/broken.ts', 'src/empty.ts'] }, {} as any);
         expect(result.success).toBe(false);
         expect(result.data).toMatchObject({ successCount: 2, failCount: 1, totalCount: 3, totalSymbolCount: 1, truncated: false });
         expect(result.data.results.map((file: any) => file.path)).toEqual(['src/main.ts', 'src/broken.ts', 'src/empty.ts']);
         expect(result.data.results[2]).toMatchObject({ symbols: [], availableSymbolCount: 0, collapsedSymbolCount: 0, truncated: false });
-        expect(result.error).toContain('src/broken.ts: cannot open file');
+        expect(result.error).toContain('src/broken.ts:');
+        expect(result.error).toContain('cannot open file');
     });
 
     test('文件预算保持20，折叠不会掩盖文件预算截断', async () => {
-        executeCommandMock.mockResolvedValue([documentSymbol('Root', vscode.SymbolKind.Class, 1, 3)]);
+        executeCommandMock.mockResolvedValue([documentSymbol('Root', SymbolKind.Class, 1, 3)]);
         const result = await createGetSymbolsTool().handler({ paths: Array.from({ length: 21 }, (_, index) => `src/file${index}.ts`) }, {} as any);
         expect(result.data).toMatchObject({ successCount: 20, totalCount: 21, totalSymbolCount: 20, truncated: true });
         expect(result.data.results).toHaveLength(20);
@@ -195,20 +192,6 @@ describe('get_symbols LSP lifecycle', () => {
         expect(executeCommandMock).not.toHaveBeenCalled();
     });
 
-    test('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
-        jest.useFakeTimers();
-        executeCommandMock
-            .mockRejectedValueOnce(new Error('TypeScript language service is not ready'))
-            .mockResolvedValueOnce([documentSymbol('ready', vscode.SymbolKind.Function, 1, 3)]);
-
-        const resultPromise = createGetSymbolsTool().handler({ paths: ['src/ready.ts'] }, {} as any);
-        await jest.advanceTimersByTimeAsync(GET_SYMBOLS_RETRY_DELAY_MS);
-        const result = await resultPromise;
-
-        expect(result.success).toBe(true);
-        expect(executeCommandMock).toHaveBeenCalledTimes(2);
-    });
-
     test('provider 挂起时按时返回具体失败原因，而不是无限等待', async () => {
         jest.useFakeTimers();
         executeCommandMock.mockImplementation(() => new Promise(() => undefined));
@@ -216,12 +199,12 @@ describe('get_symbols LSP lifecycle', () => {
         const resultPromise = createGetSymbolsTool().handler({
             paths: ['backend/modules/api/chat/ChatFlowService.ts']
         }, {} as any);
-        await jest.advanceTimersByTimeAsync(GET_SYMBOLS_TIMEOUT_MS);
+        await jest.advanceTimersByTimeAsync(30_000);
         const result = await resultPromise;
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('ChatFlowService.ts');
-        expect(result.error).toContain(`timed out after ${GET_SYMBOLS_TIMEOUT_MS}ms`);
+        expect(result.error).toContain('语言服务请求超时：textDocument/documentSymbol');
         expect(executeCommandMock).toHaveBeenCalledTimes(1);
     });
 
@@ -230,11 +213,11 @@ describe('get_symbols LSP lifecycle', () => {
         executeCommandMock.mockRejectedValue(new Error('tsserver crashed'));
 
         const resultPromise = createGetSymbolsTool().handler({ paths: ['src/broken.ts'] }, {} as any);
-        await jest.advanceTimersByTimeAsync(GET_SYMBOLS_RETRY_DELAY_MS);
         const result = await resultPromise;
 
         expect(result.success).toBe(false);
-        expect(result.error).toContain('src/broken.ts: tsserver crashed');
+        expect(result.error).toContain('src/broken.ts:');
+        expect(result.error).toContain('tsserver crashed');
         expect(result.data.failCount).toBe(1);
     });
 });

@@ -5,12 +5,10 @@
  * 当上一回合约 350k token 时，裁剪器会整体丢弃上一回合，只留下约 20k 的后台回执回合。
  */
 
-import { ContextTrimService } from '../../modules/api/chat/services/ContextTrimService';
+import { identifyConversationRounds } from '../../modules/api/chat/services/contextTrim/roundDetection';
 import type { Content } from '../../modules/conversation/types';
 
-function createService(): ContextTrimService {
-    return new ContextTrimService({} as any, {} as any, {} as any, {} as any);
-}
+
 
 describe('ContextTrimService.identifyRounds - background task receipt', () => {
     test('后台任务回执是原任务的异步延续，不创建新的裁剪回合', () => {
@@ -38,7 +36,7 @@ describe('ContextTrimService.identifyRounds - background task receipt', () => {
             }
         ];
 
-        const rounds = createService().identifyRounds(history);
+        const rounds = identifyConversationRounds(history);
 
         expect(rounds).toEqual([
             { startIndex: 0, endIndex: 4, tokenCount: 20000 }
@@ -55,7 +53,7 @@ describe('ContextTrimService.identifyRounds - background task receipt', () => {
             { role: 'model', parts: [{ text: '新回答' }] }
         ];
 
-        const rounds = createService().identifyRounds(history);
+        const rounds = identifyConversationRounds(history);
 
         expect(rounds.map(round => [round.startIndex, round.endIndex])).toEqual([
             [0, 4],

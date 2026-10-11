@@ -65,3 +65,13 @@ export interface SkillsChangeEvent {
  */
 export type SkillsChangeListener = (event: SkillsChangeEvent) => void;
 
+
+/** 跨宿主导入和导出技能时使用的持久化结构。 */
+export interface SkillExportData {
+    id: string;
+    name: string;
+    description: string;
+    content: string;
+    source: string;
+    enabled: boolean;
+}

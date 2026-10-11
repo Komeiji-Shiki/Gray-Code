@@ -1,7 +1,4 @@
 import { GeminiFormatter } from '../../modules/channel/formatters/gemini';
-import { StreamResponseProcessor } from '../../modules/api/chat/handlers/StreamResponseProcessor';
-import type { StreamChunk } from '../../modules/channel/types';
-import { TOOL_CALL_END, TOOL_CALL_START } from '../../tools/jsonFormatter';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { formatHistoryForAPI } from '../../modules/conversation/manager/historyFormatting';
@@ -71,33 +68,6 @@ describe('Responses output item metadata roundtrip', () => {
         h.add({ type: 'response.completed', response: { status: 'completed' } });
         expect(h.visible.map(part => part.text ?? '').join('')).toBe('Hello');
         expect(h.replay(h.accumulator.getFinalContent()).slice(1)).toEqual([item]);
-    });
-
-    test.each(['xml', 'json'] as const)('terminal snapshots keep parsed %s tool structure instead of restoring raw tool markup', async toolMode => {
-        const formatter = new OpenAIResponsesFormatter();
-        const processor = new StreamResponseProcessor({ providerType: 'openai-responses', toolMode,
-            conversationId: 'prompt-tools', requestStartTime: Date.now() });
-        const markup = toolMode === 'xml'
-            ? '<tool_use><tool_name>read_file</tool_name><parameters><path>a.txt</path></parameters></tool_use>'
-            : `${TOOL_CALL_START}\n{"tool":"read_file","parameters":{"path":"a.txt"}}\n${TOOL_CALL_END}`;
-        const text = `Before ${markup} After`;
-        const item = message('msg_prompt', 'commentary', [text]);
-        const events = [
-            { type: 'response.output_item.added', output_index: 0, item: { ...item, content: [], status: 'in_progress' } },
-            { type: 'response.output_text.delta', output_index: 0, item_id: item.id, content_index: 0, delta: text },
-            { type: 'response.output_text.done', output_index: 0, item_id: item.id, content_index: 0, text },
-            done(item, 0),
-            { type: 'response.completed', response: { status: 'completed', output: [item] } },
-        ];
-        async function* stream() { for (const event of events) yield formatter.parseStreamChunk(event); }
-        const received: StreamChunk[] = [];
-        for await (const update of processor.processStream(stream())) received.push(update.chunk);
-        const snapshot = received.at(-1)?.contentSnapshot;
-        expect(snapshot?.parts.filter(part => part.functionCall)).toHaveLength(1);
-        expect(snapshot?.parts.find(part => part.functionCall)?.functionCall).toMatchObject({ name: 'read_file', args: { path: 'a.txt' } });
-        expect(snapshot?.parts.map(part => part.text ?? '').join('')).toBe('Before  After');
-        expect(processor.getContent().parts.filter(part => part.functionCall)).toHaveLength(1);
-        expect(received.flatMap(chunk => chunk.delta).filter(part => part.functionCall)).toHaveLength(1);
     });
 
     test('completed backfills encrypted reasoning and phase, replacing in canonical output order without duplicate tools/text', () => {

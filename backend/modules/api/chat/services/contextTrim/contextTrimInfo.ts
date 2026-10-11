@@ -10,7 +10,7 @@ import type { Content } from '../../../../conversation/types';
 import type { ContextConversationStore } from './ports';
 import type { ConversationManager, GetHistoryOptions } from '../../../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../../../config/configs/base';
-import type { PromptManager } from '../../../../prompt';
+import type { PromptAssembler } from '../../../../prompt/PromptAssembler';
 import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../../settings/types';
 import type { Logger } from '../../../../../core/logger';
 import type { ContextTrimInfo } from '../../utils';
@@ -43,7 +43,7 @@ export interface ContextTrimEvaluationOptions {
 
 export interface ContextTrimInfoDeps {
     conversationManager: ContextConversationStore;
-    promptManager: Pick<PromptManager, 'getSystemPrompt' | 'getDynamicContextText'>;
+    promptManager: Pick<PromptAssembler, 'getSystemPrompt' | 'getDynamicContextText'>;
     tokenEstimationService: TokenEstimationService;
     messageBuilderService: MessageBuilderService;
     log: Logger;

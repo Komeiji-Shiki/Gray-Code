@@ -1,284 +1,104 @@
-/**
- * LOG 旧格式（320B/条 与 1024B/条）→ 当前格式（LOG_REC=4096B/条）迁移回归测试：
- * 1. 旧格式文件打开后数据无损（文本/日期/id 完整），文件被重写为当前格式（LOG_REC 对齐）
- * 2. 迁移幂等：首次访问触发一次原子替换，再次访问不重复重写
- * 3. 旧格式 + 撕裂尾巴：完整记录无损迁移，尾巴被丢弃
- * 4. 当前格式文件不受影响（不触发重写，字节不变）
- * 5. 歧义尺寸（5120 = 16×320 = 5×1024；4096 = 4×1024）：内容判别，旧格式正确迁移
- * 6. 320 对齐但内容非旧格式（垃圾）：不迁移、不抛错（fail-open），文件保持原样
- * 7. 迁移后 wake/recall 输出完整
- * 8. 迁移后可正常追加/编辑/删除
- */
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs';
-import { MemoryManager } from '../../modules/memory/MemoryManager';
+import { readFile, writeFile } from 'node:fs/promises';
+import { legacyMemoryImportFixture } from '../__fixtures__/legacyMemoryImport';
 import { LOG_REC } from '../../modules/memory/types';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
-// 早期固定宽度（LOG_REC=320 时代）
-const OLD_REC = 320;
-// 上一代固定宽度（LOG_REC=1024 时代）：与当前宽度 4096 不互质（1024 × 4 = 4096），
-// 4096 对齐的文件必须靠内容探测才能区分两代格式
-const LEGACY_REC = 1024;
+describe('旧 LOG 只读导入平台数据库', () => {
+    let memory: Awaited<ReturnType<typeof legacyMemoryImportFixture>>;
+    beforeEach(async () => { memory = await legacyMemoryImportFixture(); });
+    afterEach(async () => { await memory.cleanup(); });
 
-/** 构造一条 320B 旧记录（「#id date text」+ 空格填充 + 换行） */
-function oldRecord(id: number, date: string, text: string): Buffer {
-    const rec = Buffer.alloc(OLD_REC);
-    const line = Buffer.from(`#${id} ${date} ${text}`, 'utf-8');
-    if (line.length > OLD_REC - 1) throw new Error(`fixture too long: ${line.length} bytes`);
-    line.copy(rec);
-    rec.fill(0x20, line.length, OLD_REC - 1);
-    rec[OLD_REC - 1] = 0x0a;
-    return rec;
-}
-
-/** 构造一条 1024B 旧记录（上一代格式） */
-function legacyRecord(id: number, date: string, text: string): Buffer {
-    const rec = Buffer.alloc(LEGACY_REC);
-    const line = Buffer.from(`#${id} ${date} ${text}`, 'utf-8');
-    if (line.length > LEGACY_REC - 1) throw new Error(`fixture too long: ${line.length} bytes`);
-    line.copy(rec);
-    rec.fill(0x20, line.length, LEGACY_REC - 1);
-    rec[LEGACY_REC - 1] = 0x0a;
-    return rec;
-}
-
-/** 以指定宽度构造 LOG 文件（创建目录 + LOG.txt），可选追加撕裂尾巴，返回目录 */
-function makeLogWith(rec: number, texts: string[], tail?: Buffer): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-migrate-'));
-    const records = texts.map((t, i) =>
-        rec === OLD_REC ? oldRecord(i, '2024-01-01', t) : legacyRecord(i, '2024-01-01', t));
-    fs.writeFileSync(path.join(dir, 'LOG.txt'), Buffer.concat([...records, ...(tail ? [tail] : [])]));
-    return dir;
-}
-
-/** 构造旧格式 LOG 文件（320B/条） */
-function makeOldLog(texts: string[], tail?: Buffer): string {
-    return makeLogWith(OLD_REC, texts, tail);
-}
-
-/** 构造上一代格式 LOG 文件（1024B/条） */
-function makeLegacyLog(texts: string[], tail?: Buffer): string {
-    return makeLogWith(LEGACY_REC, texts, tail);
-}
-
-/** 以新宽度（LOG_REC）解析 LOG 文件全部记录，供断言迁移结果 */
-function readNewFormat(dir: string): Array<{ id: number; date: string; text: string }> {
-    const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-    const out: Array<{ id: number; date: string; text: string }> = [];
-    for (let i = 0; i + LOG_REC <= buf.length; i += LOG_REC) {
-        const str = buf.subarray(i, i + LOG_REC).toString('utf-8').trimEnd();
-        if (!str) continue;
-        const m = str.match(/^#(\d+) (\S+) (.+)$/);
-        if (m) out.push({ id: parseInt(m[1], 10), date: m[2], text: m[3] });
-    }
-    return out;
-}
-
-describe('MemoryManager LOG 旧格式迁移', () => {
-    test('旧格式文件：打开后数据无损（含多字节文本），文件被重写为新格式', async () => {
+    test('320字节旧记录完整导入，保留多字节文本和原文件', async () => {
         const texts = ['alpha', 'x'.repeat(270), '记忆-β'];
-        const dir = makeOldLog(texts);
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries(); // 读取触发迁移
-            expect(entries.map(e => e.text)).toEqual(texts);
-            expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
-            expect(entries.every(e => e.date === '2024-01-01')).toBe(true);
-
-            // 文件已重写为当前格式：LOG_REC 对齐、非 320 对齐，且内容按当前宽度可完整解析
-            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-            expect(buf.length % LOG_REC).toBe(0);
-            expect(buf.length % OLD_REC).not.toBe(0);
-            const parsed = readNewFormat(dir);
-            expect(parsed.map(e => e.text)).toEqual(texts);
-            expect(parsed.map(e => e.id)).toEqual([0, 1, 2]);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+        const original = await memory.writeLog(texts, 320);
+        expect((await memory.run()).issues).toEqual([]);
+        const entries = await memory.entries();
+        expect(entries.map(entry => entry.text)).toEqual(texts);
+        expect(entries.map(entry => entry.id)).toEqual([0, 1, 2]);
+        expect(entries.every(entry => entry.date === '2024-01-01')).toBe(true);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('迁移幂等：首次访问触发一次原子替换，再次访问不重复重写', async () => {
-        const dir = makeOldLog(['a', 'b']);
-        try {
-            // 通过 require 拿到底层 CJS 模块对象（与 memoryManagerFixes.test.ts 同法）
-            const fsPromises = require('fs/promises') as typeof import('fs/promises');
-            const realRename = fsPromises.rename;
-            const renameSpy = jest.spyOn(fsPromises, 'rename').mockImplementation(async (...args: any[]) => {
-                return (realRename as any)(...(args as [any, any]));
-            });
-            try {
-                const mm = new MemoryManager(dir);
-                await mm.init();
-                await mm.listEntries(); // 第一次：迁移（rename 一次）
-                const sizeAfterFirst = fs.statSync(path.join(dir, 'LOG.txt')).size;
-                expect(sizeAfterFirst).toBe(2 * LOG_REC);
-                await mm.wake();        // 第二次：不应再重写
-                await mm.totalEntries();
-                expect(fs.statSync(path.join(dir, 'LOG.txt')).size).toBe(sizeAfterFirst);
-                expect(renameSpy).toHaveBeenCalledTimes(1);
-            } finally {
-                renameSpy.mockRestore();
-            }
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('重复导入幂等，不重复写记录，也不改写来源', async () => {
+        const original = await memory.writeLog(['a', 'b'], 320);
+        expect((await memory.run()).imported).toEqual([memory.directory]);
+        expect((await memory.run()).skipped).toEqual([memory.directory]);
+        expect(await memory.entries()).toHaveLength(2);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('旧格式 + 撕裂尾巴：完整记录无损迁移，撕裂尾巴被丢弃', async () => {
-        const dir = makeOldLog(['a', 'b'], Buffer.from('partial-garbage-tail'));
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries();
-            expect(entries.map(e => e.text)).toEqual(['a', 'b']);
-            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-            expect(buf.length % LOG_REC).toBe(0);
-            expect(readNewFormat(dir).map(e => e.text)).toEqual(['a', 'b']);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('旧格式有撕裂尾巴时报告错误，保留完整来源供用户处理', async () => {
+        const original = await memory.writeLog(['a', 'b'], 320, Buffer.from('partial-garbage-tail'));
+        expect((await memory.run()).issues.length).toBeGreaterThan(0);
+        expect(await memory.entries()).toEqual([]);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('新格式文件不受影响（不触发重写，字节不变）', async () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-migrate-'));
-        try {
-            const fsPromises = require('fs/promises') as typeof import('fs/promises');
-            const realRename = fsPromises.rename;
-            const renameSpy = jest.spyOn(fsPromises, 'rename').mockImplementation(async (...args: any[]) => {
-                return (realRename as any)(...(args as [any, any]));
-            });
-            try {
-                const mm = new MemoryManager(dir);
-                await mm.init();
-                await mm.note('hello');
-                await mm.note('world');
-                const before = fs.readFileSync(path.join(dir, 'LOG.txt'));
-                await mm.listEntries();
-                await mm.wake();
-                expect(fs.readFileSync(path.join(dir, 'LOG.txt')).equals(before)).toBe(true);
-                expect(renameSpy).not.toHaveBeenCalled();
-            } finally {
-                renameSpy.mockRestore();
-            }
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('当前格式直接导入，来源字节保持不变', async () => {
+        const original = await memory.writeLog(['hello', 'world'], LOG_REC);
+        expect((await memory.run()).issues).toEqual([]);
+        expect((await memory.entries()).map(entry => entry.text)).toEqual(['hello', 'world']);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('歧义尺寸（5120 = 16×320 = 5×1024）：内容判别，旧格式正确迁移', async () => {
-        const texts = Array.from({ length: 16 }, (_, i) => `memory-${i}`);
-        const dir = makeOldLog(texts); // 16 条 × 320 = 5120，同时是 320 与 1024 的倍数
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries();
-            expect(entries.map(e => e.text)).toEqual(texts);
-            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-            expect(buf.length).toBe(16 * LOG_REC);
-            expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('5120字节的歧义尺寸按内容识别为16条320字节记录', async () => {
+        const texts = Array.from({ length: 16 }, (_, index) => `memory-${index}`);
+        const original = await memory.writeLog(texts, 320);
+        expect((await memory.run()).issues).toEqual([]);
+        expect((await memory.entries()).map(entry => entry.text)).toEqual(texts);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('320 对齐但内容非旧格式（垃圾）：不迁移、不抛错（fail-open）', async () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-migrate-'));
-        try {
-            const garbage = Buffer.alloc(320, 0x58); // 'X' × 320
-            fs.writeFileSync(path.join(dir, 'LOG.txt'), garbage);
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries(); // 不抛错
-            expect(entries).toHaveLength(0);
-            // 文件未被改动
-            expect(fs.readFileSync(path.join(dir, 'LOG.txt')).equals(garbage)).toBe(true);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('320字节对齐的垃圾不会被当作有效记忆导入', async () => {
+        const garbage = Buffer.alloc(640, 0x78);
+        await writeFile(memory.logPath, garbage);
+        expect((await memory.run()).issues.length).toBeGreaterThan(0);
+        expect(await memory.entries()).toEqual([]);
+        expect(await readFile(memory.logPath)).toEqual(garbage);
     });
 
-    test('迁移后 wake/recall 输出完整', async () => {
-        const dir = makeOldLog(['alpha-1', 'beta-2', 'alpha-3']);
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const wake = await mm.wake();
-            expect(wake.totalMemories).toBe(3);
-            expect(wake.blocks.map(b => b.text.slice(11))).toEqual(['alpha-1', 'beta-2', 'alpha-3']);
-            const recall = await mm.recall('alpha');
-            expect(recall.totalHits).toBe(2);
-            expect(recall.lines.map(l => l.split(' ').slice(2).join(' '))).toEqual(['alpha-1', 'alpha-3']);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('导入后 wake 与 recall 输出完整', async () => {
+        await memory.writeLog(['alpha-1', 'beta-2', 'alpha-3'], 320);
+        expect((await memory.run()).issues).toEqual([]);
+        const engine = await memory.engine();
+        const wake = await engine.wake();
+        expect(wake.totalMemories).toBe(3);
+        expect(wake.blocks.map(block => block.text.slice(11))).toEqual(['alpha-1', 'beta-2', 'alpha-3']);
+        const recall = await engine.recall('alpha');
+        expect(recall.totalHits).toBe(2);
+        expect(recall.lines.map(line => line.split(' ').slice(2).join(' '))).toEqual(['alpha-1', 'alpha-3']);
     });
 
-    test('迁移后可正常追加/编辑/删除', async () => {
-        const dir = makeOldLog(['a', 'b', 'c']);
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            await mm.listEntries(); // 迁移
-            const { id } = await mm.note('d');
-            expect(id).toBe(3);
-            await mm.updateEntry(0, 'A');
-            expect((await mm.listEntries()).map(e => e.text)).toEqual(['A', 'b', 'c', 'd']);
-            await mm.deleteEntry(1);
-            expect((await mm.listEntries()).map(e => e.text)).toEqual(['A', 'c', 'd']);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('导入后可继续追加、编辑和删除', async () => {
+        await memory.writeLog(['a', 'b', 'c'], 320);
+        expect((await memory.run()).issues).toEqual([]);
+        const engine = await memory.engine();
+        expect((await engine.note('d')).id).toBe(3);
+        await engine.updateEntry(0, 'A');
+        expect((await engine.listEntries()).map(entry => entry.text)).toEqual(['A', 'b', 'c', 'd']);
+        await engine.deleteEntry(1);
+        expect((await engine.listEntries()).map(entry => entry.text)).toEqual(['A', 'c', 'd']);
     });
 
-    test('上一代格式（1024B/条）：打开后数据无损迁移到当前宽度', async () => {
+    test('1024字节上一代记录无损导入', async () => {
         const texts = ['alpha', 'x'.repeat(600), '记忆-β'];
-        const dir = makeLegacyLog(texts);
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries(); // 读取触发迁移
-            expect(entries.map(e => e.text)).toEqual(texts);
-            expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
-
-            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-            expect(buf.length).toBe(3 * LOG_REC);
-            expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+        const original = await memory.writeLog(texts, 1024);
+        expect((await memory.run()).issues).toEqual([]);
+        expect((await memory.entries()).map(entry => entry.text)).toEqual(texts);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('上一代格式尺寸恰好是当前宽度整数倍（4×1024 = 4096）：内容判别后正确迁移', async () => {
+    test('4096字节歧义尺寸按内容识别为4条1024字节记录', async () => {
         const texts = ['m0', 'm1', 'm2', 'm3'];
-        const dir = makeLegacyLog(texts); // 4096 字节：同时整除 LOG_REC=4096 与 LEGACY_REC=1024
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries();
-            expect(entries.map(e => e.text)).toEqual(texts);
-            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-            expect(buf.length).toBe(4 * LOG_REC);
-            expect(readNewFormat(dir).map(e => e.text)).toEqual(texts);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+        const original = await memory.writeLog(texts, 1024);
+        expect((await memory.run()).issues).toEqual([]);
+        expect((await memory.entries()).map(entry => entry.text)).toEqual(texts);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 
-    test('上一代格式 + 撕裂尾巴：完整记录无损迁移，尾巴被丢弃', async () => {
-        const dir = makeLegacyLog(['a', 'b'], Buffer.from('partial-garbage-tail'));
-        try {
-            const mm = new MemoryManager(dir);
-            await mm.init();
-            const entries = await mm.listEntries();
-            expect(entries.map(e => e.text)).toEqual(['a', 'b']);
-            const buf = fs.readFileSync(path.join(dir, 'LOG.txt'));
-            expect(buf.length).toBe(2 * LOG_REC);
-            expect(readNewFormat(dir).map(e => e.text)).toEqual(['a', 'b']);
-        } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
-        }
+    test('1024字节旧记录有撕裂尾巴时不修复或发布部分数据', async () => {
+        const original = await memory.writeLog(['a', 'b'], 1024, Buffer.from('partial-garbage-tail'));
+        expect((await memory.run()).issues.length).toBeGreaterThan(0);
+        expect(await memory.entries()).toEqual([]);
+        expect(await readFile(memory.logPath)).toEqual(original);
     });
 });

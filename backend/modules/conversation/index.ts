@@ -13,7 +13,6 @@ export { FileUsageIndexStore } from './UsageIndexStore';
 export {
     IStorageAdapter,
     MemoryStorageAdapter,
-    VSCodeStorageAdapter,
     FileSystemStorageAdapter
 } from './storage';
 export type {

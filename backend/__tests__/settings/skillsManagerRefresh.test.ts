@@ -1,12 +1,11 @@
 /**
- * SkillsManager.refresh 回归测试：
+ * SkillsRuntime.refresh 回归测试：
  * refresh 清空并重扫 skills 后，应基于新扫描结果重建 enabledSkillIds——
  * 磁盘上已删除的 skill 不再视为启用，仍存在的 skill 保留启用状态。
  */
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
-import { SkillsManager } from '../../modules/skills/SkillsManager';
 import { SkillsRuntime } from '../../modules/skills/SkillsRuntime';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
@@ -22,18 +21,18 @@ function writeSkill(dir: string, id: string, description = 'test skill'): string
     return skillFile;
 }
 
-describe('SkillsManager.refresh', () => {
+describe('SkillsRuntime.refresh', () => {
     let root: string;
     let workspacePath: string;
     let projectSkills: string;
-    let manager: SkillsManager;
+    let manager: SkillsRuntime;
 
     beforeEach(() => {
         root = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-refresh-'));
         workspacePath = path.join(root, 'workspace');
         fs.mkdirSync(workspacePath, { recursive: true });
         projectSkills = path.join(workspacePath, '.graycode', 'skills');
-        manager = new SkillsManager({ workspacePath, globalStoragePath: path.join(root, 'global') });
+        manager = new SkillsRuntime({ workspacePath, globalStoragePath: path.join(root, 'global'), includeUserSkills: false });
     });
 
     afterEach(() => {

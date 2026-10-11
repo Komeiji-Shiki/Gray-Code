@@ -22,14 +22,9 @@ import { PassThrough } from 'stream';
 import { StringDecoder } from 'string_decoder';
 import { TextDecoder } from 'util';
 import * as cp from 'child_process';
-import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../../tools/types';
 
 let mockSettingsManager: any = null;
-
-jest.mock('../../core/settingsContext', () => ({
-    getGlobalSettingsManager: () => mockSettingsManager,
-}));
 
 jest.mock('child_process', () => ({
     spawn: jest.fn(),
@@ -45,28 +40,36 @@ jest.mock('tree-kill', () =>
     }),
 );
 
-// 保留真实 getShellConfig 等实现，仅隔离 shell 可用性检测（避免真实 where/which/execSync）
-jest.mock('../../tools/terminal/shellConfig', () => {
-    const actual = jest.requireActual('../../tools/terminal/shellConfig');
-    return {
-        ...actual,
-        checkShellAvailability: jest.fn(async () => ({ available: true })),
-        checkShellAvailabilitySync: jest.fn(() => true),
-    };
-});
-
-import { decodeWithMode, pushOutputLines, type StreamDecodeMode } from '../../tools/terminal/outputDecoder';
-import * as shellModule from '../../tools/terminal/shellConfig';
-import { getShellConfig } from '../../tools/terminal/shellConfig';
-import * as outputModule from '../../tools/terminal/outputDecoder';
-import * as promptModule from '../../tools/terminal/promptDescriptions';
-import { createExecuteCommandTool } from '../../tools/terminal/execute_command';
-import { killTerminalProcess, getActiveTerminalProcesses, type TerminalProcess } from '../../tools/terminal/processRunner';
-import { createTerminalRuntime } from '../../tools/terminal/processRunnerRuntime';
+import { createOutputRuntime, type StreamDecodeMode } from '../../tools/terminal/outputDecoderRuntime';
+import { createShellRuntime } from '../../tools/terminal/shellConfigRuntime';
+import { createTerminalPrompts } from '../../tools/terminal/promptDescriptionsRuntime';
+import { createTerminalRuntime, type TerminalProcess } from '../../tools/terminal/processRunnerRuntime';
+import { getDefaultExecuteCommandConfig } from '../../modules/settings/types/toolsTypes';
 import { TaskManager } from '../../tools/taskManager';
 import type { ProcessRecord } from '../../tools/terminal/processTree';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
+const getConfig = () => mockSettingsManager?.getExecuteCommandConfig() ?? getDefaultExecuteCommandConfig();
+let workspaceFolders: Array<{ name: string; fsPath: string }> = [];
+// 注入真实运行器，只替换 Shell 探测和进程端口；不再加载扩展的全局服务。
+const shellModule = { ...createShellRuntime({ getConfig }), checkShellAvailability: jest.fn(async () => ({ available: true })) };
+const outputModule = createOutputRuntime({ getConfig });
+const promptModule = createTerminalPrompts({
+    shells: shellModule,
+    getMaxOutputLines: outputModule.getMaxOutputLines,
+    roots: () => workspaceFolders.map((folder) => ({ name: folder.name, path: folder.fsPath })),
+});
+const { getShellConfig } = shellModule;
+const { decodeWithMode, pushOutputLines } = outputModule;
+const { createExecuteCommandTool, killTerminalProcess, getActiveTerminals } = createTerminalRuntime({
+    getConfig,
+    shells: shellModule,
+    output: outputModule,
+    prompts: promptModule,
+    tasks: TaskManager,
+    getAllWorkspaces: () => workspaceFolders,
+    parseWorkspacePath: (value) => ({ workspace: workspaceFolders[0], relativePath: value }),
+});
 const spawnMock = jest.mocked(cp.spawn);
 const osModule = require('os') as typeof os;
 
@@ -110,11 +113,11 @@ let tmpDir: string;
 
 beforeAll(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exec-smoke-'));
-    (vscode.workspace as any).workspaceFolders = [{ name: 'test-ws', index: 0, uri: { fsPath: tmpDir, scheme: 'file' } }];
+    workspaceFolders = [{ name: 'test-ws', fsPath: tmpDir }];
 });
 
 afterAll(() => {
-    (vscode.workspace as any).workspaceFolders = [];
+    workspaceFolders = [];
     fs.rmSync(tmpDir, TEMP_DIR_REMOVE_OPTIONS);
 });
 
@@ -250,13 +253,13 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
     });
 
     test('无工作区时返回错误，不 spawn', async () => {
-        (vscode.workspace as any).workspaceFolders = [];
+        workspaceFolders = [];
         try {
             const result = await runCommand({ command: 'echo hi' });
             expect(result.success).toBe(false);
             expect(result.error).toContain('No workspace folder open');
         } finally {
-            (vscode.workspace as any).workspaceFolders = [{ name: 'test-ws', index: 0, uri: { fsPath: tmpDir, scheme: 'file' } }];
+            workspaceFolders = [{ name: 'test-ws', fsPath: tmpDir }];
         }
         expect(spawnMock).not.toHaveBeenCalled();
     });
@@ -396,7 +399,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 0 });
         await flush();
 
-        const active = getActiveTerminalProcesses();
+        const active = [...getActiveTerminals().values()];
         expect(active).toHaveLength(1);
 
         const killPromise = killTerminalProcess(active[0].id);

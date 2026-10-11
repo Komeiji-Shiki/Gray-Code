@@ -1,5 +1,5 @@
 /**
- * MemoryManager.deleteEntry 回归测试：
+ * MemoryEngine.deleteEntry 回归测试：
  * 1. 删除中间条目：仅该条被移除，其后的记录 id 前移一格、文本/日期保留（真·单条删除，不连坐）
  * 2. 删除最后一条：后续 id 不变
  * 3. 删除唯一一条：LOG 清空
@@ -7,21 +7,11 @@
  * 5. 删除后树摘要被清空（覆盖块的下层文件被截断）
  * 6. 删除后继续 note 追加：新记录 id 连续无冲突
  */
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs';
-import { MemoryManager } from '../../modules/memory/MemoryManager';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
+import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
 
-function setup(): { mm: MemoryManager; dir: string } {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-delete-entry-'));
-    const mm = new MemoryManager(dir, { entryChars: 280 } as any);
-    return { mm, dir };
-}
-
-describe('MemoryManager.deleteEntry', () => {
+describe('MemoryEngine.deleteEntry', () => {
     test('删除中间条目：仅该条被移除，其后记录 id 前移、文本与日期保留', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             await mm.note('first');
@@ -40,12 +30,12 @@ describe('MemoryManager.deleteEntry', () => {
             // 日期保留（非空且与删除前一致）
             expect(entries[1].date).toBeTruthy();
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 
     test('删除最后一条：后续 id 不变', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             await mm.note('a');
@@ -57,12 +47,12 @@ describe('MemoryManager.deleteEntry', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1]);
             expect(entries.map(e => e.text)).toEqual(['a', 'b']);
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 
     test('删除唯一一条：LOG 清空', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             await mm.note('only');
@@ -71,28 +61,28 @@ describe('MemoryManager.deleteEntry', () => {
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(0);
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 
     test('非法 id：负数 / 越界抛错且不改变数据', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             await mm.note('a');
             await mm.note('b');
 
-            await expect(mm.deleteEntry(-1)).rejects.toThrow('No memory at index');
-            await expect(mm.deleteEntry(2)).rejects.toThrow('No memory at index');
+            await expect(mm.deleteEntry(-1)).rejects.toThrow('Invalid delete range');
+            await expect(mm.deleteEntry(2)).rejects.toThrow('Invalid delete range');
             const entries = await mm.listEntries();
             expect(entries).toHaveLength(2);
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 
     test('删除后继续追加：新记录 id 连续无冲突', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             await mm.note('a');
@@ -107,12 +97,12 @@ describe('MemoryManager.deleteEntry', () => {
             expect(entries.map(e => e.id)).toEqual([0, 1, 2]);
             expect(entries.map(e => e.text)).toEqual(['b', 'c', 'd']);
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 
     test('删除中间条目后树摘要被清空（覆盖块的树文件被截断）', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             for (const t of ['m1', 'm2', 'm3', 'm4']) {
@@ -126,12 +116,12 @@ describe('MemoryManager.deleteEntry', () => {
             const summary = await (mm as any).treeGet(0, 4);
             expect(summary).toBeNull();
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 
     test('删除最后一条时覆盖被删记录的尾部树摘要被截断、未覆盖块的摘要保留', async () => {
-        const { mm, dir } = setup();
+        const { engine: mm, cleanup } = await memoryEngineFixture({ entryChars: 280 });
         try {
             await mm.init();
             for (const t of ['m1', 'm2', 'm3', 'm4']) {
@@ -160,7 +150,7 @@ describe('MemoryManager.deleteEntry', () => {
             const entries = await mm.listEntries();
             expect(entries.map(e => e.text)).toEqual(['m1', 'm2', 'm3', 'm5', 'm6']);
         } finally {
-            fs.rmSync(dir, TEMP_DIR_REMOVE_OPTIONS);
+            await cleanup();
         }
     });
 });

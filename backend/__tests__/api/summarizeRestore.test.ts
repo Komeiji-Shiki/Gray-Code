@@ -1,18 +1,16 @@
 /**
- * 逻辑截断恢复（restoreSummarizedMessages / 删除总结自动恢复）回归测试。
+ * 共享逻辑截断恢复与删除总结自动恢复回归测试。
  *
  * 覆盖：
  * - restoreSummarizedRange 纯函数：取消覆盖区间 isSummarized 标记、区间边界（上一个总结）、幂等
  * - ConversationManager.deleteMessage 删除总结消息 → 自动恢复其覆盖的原文（取消标记）
  * - ConversationManager.deleteMessagesInRange 删除区间含多个总结 → 从晚到早逐个恢复
- * - SummarizeService.restoreSummarizedMessages：取消标记 + 删除总结消息本身（恢复按钮 API）
  * - 恢复后原文重新成为活跃消息（无 isSummarized 标记）
  */
 
 import { ConversationManager } from '../../modules/conversation/ConversationManager';
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import { restoreSummarizedRange } from '../../modules/conversation/TranscriptMutation';
-import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
 import type { Content } from '../../modules/conversation/types';
 import { setGlobalBranchService } from '../../modules/conversation/branch/BranchService';
 
@@ -156,68 +154,5 @@ describe('ConversationManager 删除总结消息自动恢复原文', () => {
         // sum-1 的覆盖区（late）已恢复
         expect(result[3].parts[0].text).toBe('late');
         expect(result[3].isSummarized).toBeUndefined();
-    });
-});
-
-describe('SummarizeService.restoreSummarizedMessages（恢复按钮 API）', () => {
-    /**
-     * 保持本地的 createHarness（createHarness 收敛批次）：liveHistory 以 getter 返回 + 动态 getHistoryRef，
-     * 返回结构与共享的 createSummarizeHarness（数组引用）不同，不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
-     */
-    function createHarness(history: Content[]) {
-        let liveHistory = JSON.parse(JSON.stringify(history)) as Content[];
-        const mutateContents = jest.fn(async (mutator: (h: Content[]) => Content[]) => {
-            const copy = JSON.parse(JSON.stringify(liveHistory)) as Content[];
-            const next = mutator(copy);
-            if (next !== copy) {
-                const persisted = JSON.parse(JSON.stringify(next)) as Content[];
-                liveHistory.splice(0, liveHistory.length, ...persisted);
-                return persisted;
-            }
-            return copy;
-        });
-        const conversationManager = {
-            getTranscriptRepository: jest.fn(() => ({ mutateContents })),
-            getHistoryRef: jest.fn(async () => JSON.parse(JSON.stringify(liveHistory))),
-        };
-        const service = new SummarizeService(
-            { getConfig: jest.fn() } as any,
-            { generate: jest.fn() } as any,
-            conversationManager as any,
-            { findLastSummaryIndex: jest.fn(() => -1), identifyRounds: jest.fn(() => []) } as any,
-        );
-        return { service, liveHistory: () => liveHistory, mutateContents };
-    }
-
-    test('恢复：取消覆盖区间标记 + 删除总结消息，返回恢复数', async () => {
-        const { service, liveHistory } = createHarness(summarizedHistory());
-        const structuralSync = jest.fn(async () => ({ synced: true, deferred: false }));
-        setGlobalBranchService({ syncMainHistoryAfterStructuralMutation: structuralSync } as any);
-
-        const result = await service.restoreSummarizedMessages('conv1', 'sum-1');
-
-        expect(result.success).toBe(true);
-        expect(result.restoredCount).toBe(2);
-        expect(result.removedSummaryId).toBe('sum-1');
-
-        const history = liveHistory();
-        expect(history).toHaveLength(5);
-        expect(history[1].isSummarized).toBeUndefined();
-        expect(history[2].isSummarized).toBeUndefined();
-        // 总结消息已删除
-        expect(history.some((m) => m.id === 'sum-1')).toBe(false);
-        expect(structuralSync).toHaveBeenCalledWith('conv1', 'summary_restored');
-    });
-
-    test('总结消息不存在时成功返回 0，不落盘', async () => {
-        const { service, mutateContents, liveHistory } = createHarness(summarizedHistory());
-
-        const result = await service.restoreSummarizedMessages('conv1', 'no-such-summary');
-
-        expect(result.success).toBe(true);
-        expect(result.restoredCount).toBe(0);
-        // mutateContents 回调返回原引用 → 不写回
-        expect(liveHistory()).toHaveLength(6);
-        expect(mutateContents).toHaveBeenCalledTimes(1);
     });
 });

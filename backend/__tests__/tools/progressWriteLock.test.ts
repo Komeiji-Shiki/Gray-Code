@@ -5,12 +5,11 @@
  *      （design + plan / review 同时同步）不互相覆盖；update_progress 与
  *      record_progress_milestone 并发写不互相覆盖。
  *
- * 说明：vscode.workspace.fs 由 backend/__tests__/__mocks__/vscode.ts 提供，
- *      这里把它 mock 成带固定延迟的内存文件系统，让「读 → 改 → 写」的并发窗口
- *      真实出现——修复前两个写者会基于同一旧盘面计算并互相覆盖。
+ * 说明：文档宿主使用带固定延迟的内存文件系统，让读取、修改、写入之间的
+ *      并发窗口真实出现；两个写者可能基于同一份旧内容计算并互相覆盖。
  */
 
-import * as vscode from 'vscode';
+import type { ArtifactDocumentPath } from '../../tools/shared/artifactHost';
 import {
   withProgressWriteLock,
   getProgressWriteQueueSize,
@@ -19,33 +18,36 @@ import {
   syncProgressFromDesignArtifact,
   syncProgressFromPlanArtifact,
   syncProgressFromReviewArtifact,
-} from '../../tools/progress/autoSync';
-import { createUpdateProgressTool } from '../../tools/progress/update_progress';
-import { createRecordProgressMilestoneTool } from '../../tools/progress/record_progress_milestone';
+} from '../../tools/progress/autoSyncRuntime';
+import { createUpdateProgressTool } from '../../tools/progress/update_progressRuntime';
+import { createRecordProgressMilestoneTool } from '../../tools/progress/record_progress_milestoneRuntime';
 import { validateProgressDocument } from '../../tools/progress/documentLayout';
 import type { ProgressDocumentMetadataV1 } from '../../tools/progress/schema';
 
 const PROGRESS_RELATIVE_PATH = '.graycode/progress.md';
 const READ_DELAY_MS = 5;
 const WRITE_DELAY_MS = 5;
+const mockReadFile = jest.fn();
+const mockWriteFile = jest.fn();
+
+jest.mock('../../tools/shared/artifactHost', () => ({
+  ...jest.requireActual('../../tools/shared/artifactHost'),
+  getAllWorkspaces: () => [{ name: 'ws1' }],
+  resolveUriWithInfo: (relative: string) => ({ uri: { fsPath: `/workspace/ws1/${relative}` } }),
+  documentReadFile: (...args: any[]) => mockReadFile(...args),
+  documentWriteFile: (...args: any[]) => mockWriteFile(...args),
+  ensureParentDir: async () => undefined,
+}));
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function createWorkspaceFolder(name: string) {
-  return {
-    name,
-    uri: { fsPath: `/workspace/${name}`, scheme: 'file', path: `/workspace/${name}` },
-    index: 0,
-  };
-}
-
 /** 内存文件系统：读/写都带固定延迟 */
 const files = new Map<string, Buffer>();
 
-function progressUri(): vscode.Uri {
-  return vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0].uri, PROGRESS_RELATIVE_PATH);
+function progressUri(): ArtifactDocumentPath {
+  return { fsPath: `/workspace/ws1/${PROGRESS_RELATIVE_PATH}` };
 }
 
 function readProgressMetadata(): ProgressDocumentMetadataV1 {
@@ -61,9 +63,8 @@ function readProgressMetadata(): ProgressDocumentMetadataV1 {
 
 beforeEach(() => {
   files.clear();
-  (vscode.workspace.workspaceFolders as any) = [createWorkspaceFolder('ws1')];
   jest.clearAllMocks();
-  (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: any) => {
+  mockReadFile.mockImplementation(async (uri: ArtifactDocumentPath) => {
     await delay(READ_DELAY_MS);
     if (!files.has(uri.fsPath)) {
       const err: any = new Error('ENOENT: no such file or directory');
@@ -72,11 +73,10 @@ beforeEach(() => {
     }
     return new Uint8Array(files.get(uri.fsPath)!);
   });
-  (vscode.workspace.fs.writeFile as jest.Mock).mockImplementation(async (uri: any, data: Uint8Array) => {
+  mockWriteFile.mockImplementation(async (uri: ArtifactDocumentPath, data: Uint8Array) => {
     await delay(WRITE_DELAY_MS);
     files.set(uri.fsPath, Buffer.from(data));
   });
-  (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
 });
 
 describe('withProgressWriteLock - 单元语义', () => {

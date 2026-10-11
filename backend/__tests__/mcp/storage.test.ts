@@ -122,60 +122,10 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import {
-    MementoMcpStorageAdapter,
     FileSystemMcpStorageAdapter,
-    VSCodeFileSystemMcpStorageAdapter,
 } from '../../modules/mcp/storage';
 import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
-function makeMemento(initial: Record<string, unknown> = {}) {
-    const store = new Map<string, unknown>(Object.entries(initial));
-    return {
-        store,
-        get: jest.fn(<T,>(key: string, defaultValue: T): T => (store.has(key) ? (store.get(key) as T) : defaultValue)),
-        update: jest.fn(async (key: string, value: unknown) => {
-            store.set(key, value);
-        }),
-    };
-}
-
-describe('MementoMcpStorageAdapter（MCP M3 补测：串行队列）', () => {
-    test('并发 save 同一 id：read-modify-write 不交错，最终为最后一次写入', async () => {
-        const memento = makeMemento();
-        const storage = new MementoMcpStorageAdapter(memento as any);
-
-        // 同时发起 5 次同 id 保存（不同 name）：若无串行队列，read-modify-write 交错会丢更新
-        await Promise.all([
-            storage.saveConfig(makeConfig({ id: 'race', name: 'N1' })),
-            storage.saveConfig(makeConfig({ id: 'race', name: 'N2' })),
-            storage.saveConfig(makeConfig({ id: 'race', name: 'N3' })),
-            storage.saveConfig(makeConfig({ id: 'race', name: 'N4' })),
-            storage.saveConfig(makeConfig({ id: 'race', name: 'N5' })),
-        ]);
-
-        const all = await storage.getAllConfigs();
-        expect(all).toHaveLength(1);
-        expect(all[0].name).toBe('N5');
-    });
-
-    test('并发 save 不同 id：全部保留', async () => {
-        const storage = new MementoMcpStorageAdapter(makeMemento() as any);
-        await Promise.all(['a', 'b', 'c'].map(id => storage.saveConfig(makeConfig({ id }))));
-        const all = await storage.getAllConfigs();
-        expect(all.map(c => c.id).sort()).toEqual(['a', 'b', 'c']);
-    });
-
-    test('save + delete 并发交错不复活已删配置', async () => {
-        const storage = new MementoMcpStorageAdapter(makeMemento() as any);
-        await storage.saveConfig(makeConfig({ id: 'd' }));
-        await Promise.all([
-            storage.deleteConfig('d'),
-            storage.saveConfig(makeConfig({ id: 'e' })),
-        ]);
-        expect(await storage.getConfig('d')).toBeNull();
-        expect(await storage.getConfig('e')).not.toBeNull();
-    });
-});
 
 describe('FileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename 原子写 / 损坏抛错）', () => {
     let dir: string;
@@ -224,101 +174,5 @@ describe('FileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename 原子写 / �
         await storage.deleteConfig('k1');
         const all = await storage.getAllConfigs();
         expect(all.map(c => c.id)).toEqual(['k2']);
-    });
-});
-
-describe('VSCodeFileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename / EPERM 回退 / 损坏抛错）', () => {
-    function makeUri(fsPath: string) {
-        return {
-            fsPath,
-            scheme: 'file',
-            path: fsPath.replace(/\\/g, '/'),
-            with: (change: { path?: string }) => makeUri(change.path ?? fsPath),
-        };
-    }
-
-    function makeVscodeFs(overrides: Partial<Record<string, jest.Mock>> = {}) {
-        const store = new Map<string, string>();
-        return {
-            readFile: jest.fn(async (uri: { fsPath: string }) => {
-                const raw = store.get(uri.fsPath);
-                if (raw === undefined) {
-                    const err = new Error('EntryNotFound') as NodeJS.ErrnoException;
-                    err.code = 'EntryNotFound';
-                    throw err;
-                }
-                return Buffer.from(raw, 'utf-8');
-            }),
-            writeFile: jest.fn(async (uri: { fsPath: string }, data: Uint8Array) => {
-                store.set(uri.fsPath, Buffer.from(data).toString('utf-8'));
-            }),
-            rename: jest.fn(async (from: { fsPath: string }, to: { fsPath: string }) => {
-                if (overrides.rename) {
-                    await overrides.rename(from, to);
-                    return;
-                }
-                const raw = store.get(from.fsPath);
-                if (raw === undefined) throw new Error('EntryNotFound');
-                store.set(to.fsPath, raw);
-                store.delete(from.fsPath);
-            }),
-            store,
-        };
-    }
-
-    test('save 走 tmp 写入 → rename(tmp, file, { overwrite: true })', async () => {
-        const vfs = makeVscodeFs();
-        const uri = makeUri(path.join(os.tmpdir(), 'vs-servers.json'));
-        const storage = new VSCodeFileSystemMcpStorageAdapter(uri as any, vfs as any);
-
-        await storage.saveConfig(makeConfig({ id: 'v1' }));
-
-        // 先写 tmp、再 rename 到主文件（原子替换序列）——uri.with() 每次返回新对象，
-        // 用 objectContaining 按 fsPath 断言而非整对象引用比较
-        const tmpUri = uri.with({ path: uri.path + '.tmp' });
-        expect(vfs.writeFile).toHaveBeenCalledWith(
-            expect.objectContaining({ fsPath: tmpUri.fsPath }),
-            expect.any(Uint8Array)
-        );
-        expect(vfs.rename).toHaveBeenCalledWith(
-            expect.objectContaining({ fsPath: tmpUri.fsPath }),
-            expect.objectContaining({ fsPath: uri.fsPath }),
-            { overwrite: true }
-        );
-        expect(vfs.store.has(uri.fsPath)).toBe(true);
-        expect(vfs.store.has(tmpUri.fsPath)).toBe(false);
-    });
-
-    test('rename EPERM（Windows 占用）时回退直接写主文件', async () => {
-        const vfs = makeVscodeFs({
-            rename: jest.fn(async () => {
-                const err = new Error('EPERM') as NodeJS.ErrnoException;
-                err.code = 'EPERM';
-                throw err;
-            }),
-        });
-        const uri = makeUri(path.join(os.tmpdir(), 'vs-servers-eperm.json'));
-        const storage = new VSCodeFileSystemMcpStorageAdapter(uri as any, vfs as any);
-
-        await expect(storage.saveConfig(makeConfig({ id: 'v2' }))).resolves.toBeUndefined();
-        // 回退直写主文件（非原子但至少成功）
-        expect(vfs.writeFile).toHaveBeenCalledWith(uri, expect.any(Uint8Array));
-    });
-
-    test('损坏 JSON：抛 corrupted 且不覆盖原内容', async () => {
-        const vfs = makeVscodeFs();
-        const uri = makeUri(path.join(os.tmpdir(), 'vs-servers-broken.json'));
-        vfs.store.set(uri.fsPath, '{ nope }');
-        const storage = new VSCodeFileSystemMcpStorageAdapter(uri as any, vfs as any);
-
-        await expect(storage.getAllConfigs()).rejects.toThrow(/corrupted/);
-        expect(vfs.store.get(uri.fsPath)).toBe('{ nope }');
-    });
-
-    test('文件不存在（EntryNotFound）视为无配置', async () => {
-        const vfs = makeVscodeFs();
-        const uri = makeUri(path.join(os.tmpdir(), 'vs-servers-missing.json'));
-        const storage = new VSCodeFileSystemMcpStorageAdapter(uri as any, vfs as any);
-        expect(await storage.getAllConfigs()).toEqual([]);
     });
 });

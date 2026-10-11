@@ -1,7 +1,7 @@
 import { expandReplacementTemplate } from '../../../shared/regexReplacement';
 import { evaluateTextSearch, presentToolMatch, type TextSearchInput } from '../../../shared/textSearch';
 import type { TextSearchWorker } from './textSearchWorker';
-import type { LockHolder } from '../../core/fileWriteLockManager';
+import type { LockHolder } from '../types';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 import type { SearchMatch, SkippedFileInfo } from './searchPassRuntime';
 import { normalizeLineEndingsToLF, escapeRegExp } from '../shared/textUtils';

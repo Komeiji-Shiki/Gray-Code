@@ -1,4 +1,5 @@
-import { applyStructuredDiffHunksBestEffort, normalizeLineEndings } from '../../tools/file/apply_diff';
+import { applyStructuredDiffHunksBestEffort } from '../../tools/file/diff/apply';
+import { normalizeLineEndings } from '../../tools/file/diff/parse';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff } from '../../tools/file/unifiedDiff';
 
 describe('diff application algorithms', () => {

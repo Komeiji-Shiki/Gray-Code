@@ -6,7 +6,7 @@ import type { RuntimeTool } from '@graycode/core';
 import { SkillsRuntime } from '../../../../backend/modules/skills/SkillsRuntime';
 import type { Skill } from '../../../../backend/modules/skills/types';
 import type { SkillConfigItem } from '../../../../backend/modules/settings/types/skillsTypes';
-import type { SkillExportData } from '../../../../backend/modules/settings/SettingsExporter';
+import type { SkillExportData } from '../../../../backend/modules/skills/types';
 import { createSkillReadRuntime } from '../../../../backend/tools/skills/readSkillRuntime';
 import type { PlatformApplication } from '../application';
 import type { ProductSettingsDraft } from '../settings/product';

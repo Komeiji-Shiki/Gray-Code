@@ -26,9 +26,6 @@ export {
     formatterRegistry
 } from './formatters';
 
-// 核心管理器
-export { ChannelManager } from './ChannelManager';
-
 // 流式处理工具
 export { StreamAccumulator } from './StreamAccumulator';
 

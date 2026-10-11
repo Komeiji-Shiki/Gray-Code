@@ -1,4 +1,4 @@
-import { createShowWindowsNotificationTool, createShowWindowsNotificationToolDeclaration } from '../../tools/notification/show_windows_notification'
+import { createShowWindowsNotificationTool, createShowWindowsNotificationToolDeclaration } from '../../tools/notification/showWindowsNotificationRuntime'
 import type { WindowsToastAdapter, WindowsToastRequest, WindowsToastShowResult } from '../../modules/notifications/types'
 
 class FakeToastAdapter implements WindowsToastAdapter {
