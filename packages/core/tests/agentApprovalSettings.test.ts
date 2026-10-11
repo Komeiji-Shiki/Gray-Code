@@ -86,3 +86,33 @@ test('便携配置替换导入时，另一台机器已恢复默认的工具不�
     expect(rules().delete_file).toBe('ask');
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('默认 Agent 不预先携带环境工具，普通对话不发送 Bot 附件和笔记工具，审批规则仍覆盖完整目录', async () => {
+  const f = await fixture(); await f.store.close();
+  let declarations: { name: string }[] = [];
+  const app = await PlatformApplication.open({ dataDirectory: f.data,
+    models: { generate: async input => { declarations = input.tools; return { role: 'model', parts: [{ text: 'ok' }] }; } } });
+  try {
+    const original = app.settings.snapshot().settings.agents[0];
+    const agent = configuredAgent(app, original);
+    for (const name of ['bot_read_attachment', 'bot_send_attachment', 'context_notes', 'context_history', 'new_context', 'browser_action'])
+      expect(agent.toolNames).not.toContain(name);
+    expect(agent.toolNames).toContain('read_file');
+    expect(agent.toolApproval?.browser_action).toBeDefined();
+    expect(configuredAgent(app, { ...original, id: 'custom', toolNames: ['bot_read_attachment'] }).toolNames).toEqual(['bot_read_attachment']);
+
+    const draft = app.settings.snapshot();
+    draft.settings.workspaces.push({ id: 'project', name: 'Fixture', directory: f.source, deviceId: 'local' });
+    await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
+    const router = new ApplicationRouter(app), owner = { actorId: 'owner', clientId: 'default-tools' };
+    const conversation = await router.call(owner, 'conversations.create', { title: 'Tools', workspaceId: 'project' }) as { id: string };
+    const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'tools', agentId: 'default', text: 'hi' }) as { id: string };
+    expect((await app.runtime.wait(run.id))?.status).toBe('completed');
+    const tools = declarations.map(tool => tool.name);
+    // 提示词准备仍按环境补上常驻的上下文状态工具。
+    expect(tools).toContain('context_status');
+    for (const name of ['bot_read_attachment', 'context_notes', 'new_context']) expect(tools).not.toContain(name);
+    // 每个声明都随每次请求发送；单个工具超过这个体积时应先拆分参数或精简说明。
+    expect(declarations.filter(declaration => JSON.stringify(declaration).length > 4000).map(declaration => declaration.name)).toEqual([]);
+  } finally { await app.close(); await f.cleanup(); }
+});

@@ -37,6 +37,8 @@ export interface RuntimeTool {
   validationSchema?: ToolDeclaration['parameters'];
   /** 宿主提供纯参数规范化；在校验、效果分类和审批前执行，警告随结果返回。 */
   normalizeArgs?: (args: Record<string, unknown>) => { args: Record<string, unknown>; warnings: string[] };
+  /** 合并工具按操作继承旧审批项；新工具的显式规则优先，分类不得读取外部状态。 */
+  approvalName?: (args: Record<string, unknown>) => string;
   /** 明确独立的读取允许同批并行；混合工具可按参数纯分类，实际效果与审批仍限制并行。 */
   parallelRead?: boolean | ((args: Record<string, unknown>) => boolean);
   /** 支持待完成调用的生命周期；实际执行仍经过完整授权和审批。 */
@@ -145,8 +147,8 @@ export function authorizeEffects(actor: ActorIdentity, effects: ToolEffect[], wo
   return null;
 }
 
-export function needsApproval(agent: AgentDefinition, toolName: string, effects: ToolEffect[]): boolean {
-  const rule = agent.toolApproval?.[toolName];
+export function needsApproval(agent: AgentDefinition, toolName: string, effects: ToolEffect[], legacyToolName?: string): boolean {
+  const rule = agent.toolApproval?.[toolName] ?? (legacyToolName ? agent.toolApproval?.[legacyToolName] : undefined);
   if (rule === 'ask') return true;
   if (rule === 'auto') return false;
   if (effects.some(effect => ['data_delete', 'high_risk', 'administration', 'external_send'].includes(effect))) return true;

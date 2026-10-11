@@ -25,18 +25,18 @@ export function createCreateDesignToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_design',
     description:
-      'Create a new Markdown design document under .graycode/design/**.md. This tool only writes the design; it does not create a plan or change any code. If the target file already exists, the call fails; use update_design to revise an existing design.',
+      '在 .graycode/design/**.md 创建 Markdown 设计文档。目标已存在时调用失败，修改请用 update_design；创建后需要用户确认。',
     category: 'design',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Optional design title, also used to build the default file name.' },
-        overview: { type: 'string', description: 'Optional one-line overview.' },
-        design: { type: 'string', description: 'Design content in Markdown.' },
+        title: { type: 'string', description: '可选的设计标题，也用于生成默认文件名。' },
+        overview: { type: 'string', description: '可选的一行概述。' },
+        design: { type: 'string', description: '设计内容，使用 Markdown。' },
         path: {
           type: 'string',
           description:
-            'Optional output path. It must be under .graycode/design/**.md (in a multi-root workspace, workspace/.graycode/design/**.md). If omitted, the path is derived from the title.'
+            '可选的输出路径，必须位于 .graycode/design/**.md 下（多根工作区为 workspace/.graycode/design/**.md）。不传时根据标题生成。'
         }
       },
       required: ['design']

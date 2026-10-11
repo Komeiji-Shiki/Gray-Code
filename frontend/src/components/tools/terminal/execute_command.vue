@@ -51,6 +51,11 @@ const autoScroll = ref(true)
 
 // 获取命令参数
 const command = computed(() => (props.args.command as string) || '')
+const commandArgs = computed(() =>
+  props.args.mode === 'argv' && Array.isArray(props.args.args)
+    ? props.args.args.filter((argument): argument is string => typeof argument === 'string')
+    : [],
+)
 const cwd = computed(() => (props.args.cwd as string) || '')
 const shell = computed(() => (props.args.shell as string) || 'default')
 
@@ -289,14 +294,17 @@ onBeforeUnmount(() => {
     <!-- 命令信息 -->
     <div class="command-info">
       <div class="command-row">
-        <span class="prompt">$</span>
+        <span class="prompt">{{ args.mode === 'argv' ? 'argv' : '$' }}</span>
         <code class="command-text">{{ command }}</code>
+      </div>
+      <div v-if="commandArgs.length" class="command-arguments">
+        <code v-for="(argument, index) in commandArgs" :key="index">{{ JSON.stringify(argument) }}</code>
       </div>
       <div v-if="cwd" class="meta-row">
         <span class="codicon codicon-folder-opened"></span>
         <span class="meta-text">{{ cwd }}</span>
       </div>
-      <div v-if="shell !== 'default'" class="meta-row">
+      <div v-if="args.mode !== 'argv' && shell !== 'default'" class="meta-row">
         <span class="codicon codicon-terminal-bash"></span>
         <span class="meta-text">{{ shell }}</span>
       </div>
@@ -482,6 +490,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm, 8px);
+}
+
+.command-arguments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-family: var(--gc-font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .prompt {

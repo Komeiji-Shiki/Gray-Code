@@ -49,7 +49,7 @@ async function memoryZoomHandler(args: Record<string, unknown>, context?: ToolCo
         if (context?.activeWorkspaceUri && !workspaceUriToScopeKey(context.activeWorkspaceUri)) {
             return { success: false, error: 'Workspace memory is unavailable (workspace URI could not be resolved).' };
         }
-        return { success: false, error: 'Workspace memory is not initialized for this workspace. Write a memory_note first.' };
+        return { success: false, error: 'Workspace memory is not initialized. Write with engineering_log action=note first.' };
     }
 
     try {

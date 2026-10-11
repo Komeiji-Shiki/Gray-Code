@@ -88,34 +88,36 @@ export function createRecordProgressMilestoneToolDeclaration(): ToolDeclaration 
     name: 'record_progress_milestone',
     strict: true,
     description:
-      'Record a project-level milestone in .graycode/progress.md and return the refreshed progress snapshot. It is meant for project progress points, not for review findings or plan content. If milestoneId is omitted, the next ID (PG1, PG2, ...) is generated, and an existing ID makes the call fail. status defaults to completed, in which case completedAt defaults to now. latestConclusion, currentBlocker and nextAction also update the document summary.',
+      '在 .graycode/progress.md 追加项目里程碑并返回进度快照。省略 milestoneId 时自动编号，重复 ID 会失败。' +
+      'status 默认 completed，此时 completedAt 默认当前时间。latestConclusion、currentBlocker、nextAction 同步更新摘要。',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional target path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
+          description: '可选的目标路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。'
         },
-        milestoneId: { type: 'string' },
-        title: { type: 'string' },
-        status: { type: 'string', enum: [...PROGRESS_MILESTONE_STATUSES] },
-        summary: { type: 'string' },
-        relatedTodoIds: { type: 'array', items: { type: 'string' } },
-        relatedReviewMilestoneIds: { type: 'array', items: { type: 'string' } },
+        milestoneId: { description: '可选的里程碑 ID。', type: 'string' },
+        title: { description: '里程碑标题。', type: 'string' },
+        status: { description: '里程碑状态。', type: 'string', enum: [...PROGRESS_MILESTONE_STATUSES] },
+        summary: { description: '里程碑摘要。', type: 'string' },
+        relatedTodoIds: { description: '相关 TODO 的 ID 数组。', type: 'array', items: { type: 'string' } },
+        relatedReviewMilestoneIds: { description: '相关审查里程碑的 ID 数组。', type: 'array', items: { type: 'string' } },
         relatedArtifacts: {
           type: 'object',
+          description: '相关的设计、计划和审查文档路径。',
           properties: {
-            design: { type: 'string' },
-            plan: { type: 'string' },
-            review: { type: 'string' }
+            design: { description: '设计文档路径。', type: 'string' },
+            plan: { description: '计划文档路径。', type: 'string' },
+            review: { description: '审查文档路径。', type: 'string' }
           }
         },
-        startedAt: { type: 'string' },
-        completedAt: { type: 'string' },
-        nextAction: { type: 'string' },
-        latestConclusion: { type: 'string' },
-        currentBlocker: { type: 'string' }
+        startedAt: { description: '开始时间，使用 ISO 时间字符串。', type: 'string' },
+        completedAt: { description: '完成时间，使用 ISO 时间字符串。', type: 'string' },
+        nextAction: { description: '下一步行动。', type: 'string' },
+        latestConclusion: { description: '最新结论。', type: 'string' },
+        currentBlocker: { description: '当前的阻塞问题。', type: 'string' }
       },
       required: ['title', 'summary']
     }

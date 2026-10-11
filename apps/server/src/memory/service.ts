@@ -7,22 +7,16 @@ import { MemoryEngine } from '../../../../backend/modules/memory/MemoryEngine';
 import { DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../../../backend/modules/memory/types';
 import { AsyncLock } from '../../../../backend/modules/memory/AsyncLock';
 import type { MemoryToolHost } from '../../../../backend/tools/memory/host';
-import { createMemoryWakeRuntime } from '../../../../backend/tools/memory/memory_wakeRuntime';
-import { createMemoryNoteRuntime } from '../../../../backend/tools/memory/memory_noteRuntime';
-import { createMemoryRecallRuntime } from '../../../../backend/tools/memory/memory_recallRuntime';
-import { createMemoryCompressRuntime } from '../../../../backend/tools/memory/memory_compressRuntime';
-import { createMemoryZoomRuntime } from '../../../../backend/tools/memory/memory_zoomRuntime';
-import { createMemoryForgetRuntime } from '../../../../backend/tools/memory/memory_forgetRuntime';
-import { createMemoryConfigRuntime } from '../../../../backend/tools/memory/memory_configRuntime';
+import {
+  createEngineeringLogTool,
+  engineeringLogMutation,
+  engineeringLogValidationSchema,
+  ENGINEERING_LOG_LEGACY_NAMES,
+  type EngineeringLogAction,
+} from '../../../../backend/tools/memory/engineeringLog';
 import type { PlatformApplication } from '../application';
 import { DatabaseMemoryStore } from './store';
 
-function tools(host: MemoryToolHost) {
-  return [createMemoryWakeRuntime(host).createMemoryWakeTool(), createMemoryNoteRuntime(host).createMemoryNoteTool(),
-    createMemoryRecallRuntime(host).createMemoryRecallTool(), createMemoryCompressRuntime(host).createMemoryCompressTool(),
-    createMemoryZoomRuntime(host).createMemoryZoomTool(), createMemoryForgetRuntime(host).createMemoryForgetTool(),
-    createMemoryConfigRuntime(host).createMemoryConfigTool()];
-}
 const emptyHost: MemoryToolHost = { getGlobalMemoryManager: () => null, getMemoryManagerForWorkspace: async () => null,
   getMemoryManagerForTool: async () => null, getWorkspaceFolderName: () => null, workspaceUriToScopeKey: () => null };
 
@@ -44,7 +38,7 @@ export class PlatformMemory {
   }
   async engine(actorId: string, workspace?: WorkspaceDefinition, source?: Record<string, unknown>, storedScope?: MemoryScopeDefinition) {
     const actor = this.app.actor(actorId);
-    if (!actor || actor.role === 'guest') throw new Error('此账号不能使用私人长期记忆。');
+    if (!actor || actor.role === 'guest') throw new Error('此账号不能使用工程日志。');
     if (storedScope && storedScope.actorId !== actorId) throw new Error('记忆作用域不属于当前账号。');
     if (workspace) this.app.workspace(actorId, workspace.id, ['workspace_read']);
     const configId = this.scope(actorId).id;
@@ -67,17 +61,24 @@ export class PlatformMemory {
     return { engine, store };
   }
   declarations(): RuntimeTool[] {
-    return tools(emptyHost).map(tool => ({ declaration: tool.declaration as ToolDeclaration,
-      effects: args => tool.declaration.name === 'memory_note' || tool.declaration.name === 'memory_forget' ||
-        tool.declaration.name === 'memory_compress' && args.summary !== undefined ||
-        tool.declaration.name === 'memory_config' && ['wakeLines', 'entryChars', 'partChars', 'partLines'].some(key => Object.hasOwn(args, key))
-        ? ['workspace_write'] : ['workspace_read'],
-      execute: (args, context) => this.execute(tool.declaration.name, args, context),
-    }));
+    return [{
+      declaration: createEngineeringLogTool(emptyHost).declaration as ToolDeclaration,
+      validationSchema: engineeringLogValidationSchema(emptyHost),
+      approvalName: args => ENGINEERING_LOG_LEGACY_NAMES[args.action as EngineeringLogAction],
+      effects: args => engineeringLogMutation(args) ? ['workspace_write'] : ['workspace_read'],
+      execute: (args, context) => this.execute(args, context),
+    }];
   }
-  private execute(name: string, args: Record<string, unknown>, context: ToolContext) {
+  private execute(args: Record<string, unknown>, context: ToolContext) {
     const execute = async () => {
       context.signal.throwIfAborted();
+      const legacyName = ENGINEERING_LOG_LEGACY_NAMES[args.action as EngineeringLogAction];
+      const preferences = this.app.product.runtimeSettings();
+      const enabled = preferences.getToolsEnabled();
+      const selectedName = Object.hasOwn(enabled, 'engineering_log') ? 'engineering_log' : legacyName;
+      if (!preferences.isToolEnabled(selectedName) || context.agent?.toolApproval?.[legacyName] === 'deny') {
+        return { success: false, code: 'PERMISSION_DENIED', error: `工程日志操作 ${args.action} 已禁用。` };
+      }
       const source = { origin: 'model_tool', runId: context.runId, conversationId: context.conversationId, toolCallId: context.toolCallId };
       const global = (await this.engine(context.actorId, undefined, source)).engine;
       const workspace = context.workspace;
@@ -97,14 +98,11 @@ export class PlatformMemory {
         getWorkspaceFolderName: requested => workspace && requested === uri ? workspace.name || path.basename(workspace.directory) : null,
         workspaceUriToScopeKey: requested => requested === uri ? this.scope(context.actorId, workspace).workspaceKey ?? null : null,
       };
-      const tool = tools(host).find(tool => tool.declaration.name === name)!;
-      const result = await tool.handler(args, { activeWorkspaceUri: uri });
+      const result = await createEngineeringLogTool(host).handler(args, { activeWorkspaceUri: uri });
       return { success: result.success, data: result.data, error: result.error };
     };
-    const mutation = name === 'memory_note' || name === 'memory_forget' || name === 'memory_compress' && args.summary !== undefined ||
-      name === 'memory_config' && ['wakeLines', 'entryChars', 'partChars', 'partLines'].some(key => Object.hasOwn(args, key));
-    if (!mutation) return execute();
-    const target = name === 'memory_config' || args.scope === 'global' ? undefined : context.workspace;
+    if (!engineeringLogMutation(args)) return execute();
+    const target = args.action === 'config' || args.scope === 'global' ? undefined : context.workspace;
     return this.serialized(context.actorId, execute, this.scope(context.actorId, target).id);
   }
 }

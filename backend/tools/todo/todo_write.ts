@@ -42,22 +42,24 @@ export function createTodoWriteToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_write',
         strict: true,  // API 端强制 schema 校验
-        description: 'Create or replace the TODO list for the current conversation. Use it to set up the list, or to rewrite it as a whole; the todos you pass replace the previous list. To change the status or content of individual items, use todo_update. The result reports item counts, not the full list.',
+        description: '创建或整体替换当前会话的待办清单，传入的 todos 会替换旧清单。'
+          + '修改单项状态或内容请用 todo_update。'
+          + '结果返回各状态数量，不重复返回整张清单。',
         category: 'todo',
         parameters: {
             type: 'object',
             properties: {
                 todos: {
                     type: 'array',
-                    description: 'The complete list of TODO items.',
+                    description: '完整的待办事项数组。',
                     items: {
                         type: TODO_ITEM_SCHEMA.type,
                         properties: {
-                            id: { ...TODO_ITEM_SCHEMA.properties.id, description: 'Unique ID of the item.' },
-                            content: { ...TODO_ITEM_SCHEMA.properties.content, description: 'What the item is about.' },
+                            id: { ...TODO_ITEM_SCHEMA.properties.id, description: '事项的唯一 ID。' },
+                            content: { ...TODO_ITEM_SCHEMA.properties.content, description: '事项内容。' },
                             status: {
                                 type: TODO_STATUS_SCHEMA.type,
-                                description: 'Status of the item.',
+                                description: '事项状态。',
                                 enum: [...TODO_STATUS_SCHEMA.enum]
                             }
                         },

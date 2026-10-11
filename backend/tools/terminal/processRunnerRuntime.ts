@@ -4,82 +4,24 @@ import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { TextDecoder } from 'util';
+import crossSpawn from 'cross-spawn';
 import type { Tool, ToolResult, ToolContext } from '../types';
-import type { TaskManager, TaskEvent } from '../taskManager';
-import { getActualLanguage } from '../../i18n';
-import { resolveLocalizationLanguage } from '../localization/types';
-import type { createShellRuntime, ShellType } from './shellConfigRuntime';
-import type { createOutputRuntime, StreamDecodeState } from './outputDecoderRuntime';
-import type { createTerminalPrompts } from './promptDescriptionsRuntime';
-import type { ExecuteCommandToolConfig } from '../../modules/settings/types/toolsTypes';
-import { ProcessTreeTracker, describeProcessTree, type ProcessTreePort, type ProcessTreeReport } from './processTree';
+import type { ShellType } from './shellConfigRuntime';
+import type { StreamDecodeState } from './outputDecoderRuntime';
+import { ProcessTreeTracker, type ProcessTreeReport } from './processTree';
+import { createExecuteCommandDeclaration } from './commandDeclaration';
+import { setTerminalProcessPriority, terminateProcessTreeWithEscalation, abortReason, interruptionOf } from './processControl';
+import type { TerminalProcess, TerminalOutputEvent, TerminalInterruptReason, createTerminalRuntimeHost } from './runtimeTypes';
+import { writeProcessInput } from './processInput';
+import { ProcessSessionError } from '../../../shared/processOutput';
+export type { TerminalProcess, TerminalOutputEvent, TerminalInterruptReason, createTerminalRuntimeHost } from './runtimeTypes';
 
-/** 前台命令被终止的原因，随结果返回给模型。 */
-export type TerminalInterruptReason = 'timeout' | 'user_cancelled' | 'task_cancelled' | 'host_closing' | 'stopped' | 'conversation_removed';
-
-/**
- * 终端进程信息
- */
-export interface TerminalProcess {
-    id: string;
-    command: string;
-    cwd: string;
-    shell: ShellType;
-    process: cp.ChildProcess;
-    output: string[];
-    startTime: number;
-    endTime?: number;
-    exitCode?: number;
-    killed?: boolean;
-    /** 是否因超时被强制终止（与用户取消区分：超时算失败，不算成功/取消） */
-    timedOut?: boolean;
-    error?: string;
-    /** 因输出行数上限被丢弃的旧行数（长运行进程的内存护栏，配合截断提示展示总量） */
-    omittedOutputLines?: number;
-    interruptReason?: TerminalInterruptReason;
-    /** Windows 上记录后代链，终止时补杀 taskkill /T 够不到的脱链后代。 */
-    tracker?: ProcessTreeTracker;
-    cleanup?: Promise<ProcessTreeReport | undefined>;
-}
-
-/**
- * 终端输出事件类型
- */
-export interface TerminalOutputEvent {
-    terminalId: string;
-    type: 'start' | 'output' | 'error' | 'exit';
-    data?: string;
-    command?: string; // start 事件时包含命令
-    cwd?: string; // start 事件时包含工作目录
-    shell?: string; // start 事件时包含 shell 类型
-    exitCode?: number;
-    killed?: boolean;
-    duration?: number;
-}
-export interface createTerminalRuntimeHost {
-    getConfig(): ExecuteCommandToolConfig;
-    getAllWorkspaces(): Array<{ name: string; fsPath: string }>;
-    parseWorkspacePath(value: string): { workspace?: { name: string; fsPath: string }; relativePath: string };
-    shells: ReturnType<typeof createShellRuntime>;
-    output: ReturnType<typeof createOutputRuntime>;
-    prompts: ReturnType<typeof createTerminalPrompts>;
-    tasks: Pick<
-        typeof TaskManager,
-        'onTaskEventByType' | 'generateTaskId' | 'unregisterTask' | 'registerTask' | 'getTask' | 'emitEvent' | 'cancelTask'
-    >;
-    /** 可选：Windows 进程快照与终止端口。未提供时只用 tree-kill 终止根进程树。 */
-    processTree?: ProcessTreePort;
-}
 /** 注入宿主服务；进程、解码状态和事件均归属于当前实例。 */
 export function createTerminalRuntime(host: createTerminalRuntimeHost) {
     const { getAllWorkspaces, parseWorkspacePath } = host;
     const TaskManager = host.tasks;
-    const { getShellConfig, checkShellAvailability, getAvailableShellsDescription, getDefaultShellName, getEnabledShellTypesForEnum } = host.shells;
+    const { getShellConfig, checkShellAvailability } = host.shells;
     const { createOutputLineBuffer, pushOutputLines, getLastLines, getMaxOutputLines, decodeWithMode, flushDecodeState } = host.output;
-    const { getAllWorkspaceRoots, getOSName, getCwdParameterDescription, getExecuteCommandShellGuidanceDescription } = host.prompts;
-
-    // TODO(02#05): `(process as any).setPriority` 访问 Node 未在 @types/node 暴露的 POSIX API
-    // （仅 POSIX 有效），运行时已做可选链守卫；保留 as any 避免引入不准确的全局类型声明。
 
     // tree-kill library, used to terminate process trees cross-platform
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -87,9 +29,6 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
 
     /** 终端任务类型常量 */
     const TASK_TYPE_TERMINAL = 'terminal';
-
-    /** killTerminalProcess 等待进程 close 的超时（毫秒）：超时后 SIGKILL 强杀；强杀后继续等真实 close（SIGKILL 必达），同阈值再作最终兜底，保证等待不永久挂起 */
-    const KILL_WAIT_CLOSE_TIMEOUT_MS = 10_000;
 
     /**
      * 活动终端进程管理
@@ -122,16 +61,6 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
     }
 
     /**
-     * 订阅终端任务事件（使用 TaskManager）
-     * 这是统一事件系统的入口，可用于未来替换 terminalEmitter
-     * @param listener 监听器函数
-     * @returns 取消订阅函数
-     */
-    function onTerminalTaskEvent(listener: (event: TaskEvent) => void): () => void {
-        return TaskManager.onTaskEventByType(TASK_TYPE_TERMINAL, listener);
-    }
-
-    /**
      * 发送终端输出事件
      */
     function emitTerminalOutput(event: TerminalOutputEvent): void {
@@ -148,116 +77,26 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
     /**
      * 创建执行命令工具
      */
-    function createExecuteCommandDeclaration(): Tool['declaration'] {
-        const osName = getOSName();
-        const osArch = os.arch();
-        const osRelease = os.release();
-        // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
-        const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
-
-        // 获取工作区信息
-        const workspaceRoots = getAllWorkspaceRoots();
-        const isMultiRoot = workspaceRoots.length > 1;
-
-        // 生成工作区说明
-        let workspaceDescription = '';
-        if (isMultiRoot) {
-            // cwd 的多根写法由 cwd 参数说明负责，这里只列出各工作区的实际路径。
-            workspaceDescription = isZh
-                ? '\n\n工作区（多根，cwd 的写法见参数说明）：\n' + workspaceRoots.map((ws) => `- ${ws.name}: ${ws.path}`).join('\n')
-                : '\n\nWorkspaces (multi-root; see the cwd parameter for how to write cwd):\n' +
-                  workspaceRoots.map((ws) => `- ${ws.name}: ${ws.path}`).join('\n');
-        }
-
-        // shellConfig 的 getAvailableShellsDescription 只有英文文案（'- No available Shell' / '(default)'），
-        // 中文分支做最小本地化映射，避免中文请求收到中英混排。
-        const availableShellsText = isZh
-            ? getAvailableShellsDescription().replace('- No available Shell', '- 无可用 Shell').replace('(default)', '（默认）')
-            : getAvailableShellsDescription();
-
-        // 1.2.2-fix：cwd 参数描述复用统一规则生成器（promptDescriptions 内部已按语言生成）。
-        // 为什么要改：旧描述过短，模型经常不知道应填工作区相对路径还是绝对路径。
-        // 怎么改：按单根/多根工作区动态生成 schema 字段说明。
-        // 目的：让只读取参数 schema 的模型也能正确选择 cwd。
-        const cwdDescription = getCwdParameterDescription(workspaceRoots, isMultiRoot);
-        const defaultTimeout = host.getConfig().defaultTimeout;
-
-        return {
-            name: 'execute_command',
-            category: 'terminal',
-            strict: true, // API 端强制 schema 校验
-            description: isZh
-                ? `执行 Shell 命令并返回输出。
-
-当前环境：
-- 操作系统：${osName} (${osArch})，版本 ${osRelease}
-- 默认 Shell：${getDefaultShellName()}
-
-可用的 Shell：
-${availableShellsText}${workspaceDescription}
-
-${getExecuteCommandShellGuidanceDescription()}`
-                : `Run a shell command and return its output.
-
-Current environment:
-- OS: ${osName} (${osArch}), version ${osRelease}
-- Default shell: ${getDefaultShellName()}
-
-Available shells:
-${availableShellsText}${workspaceDescription}
-
-${getExecuteCommandShellGuidanceDescription()}`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    command: {
-                        type: 'string',
-                        description: isZh ? '要执行的命令文本。' : 'The command text to run.',
-                    },
-                    cwd: {
-                        type: 'string',
-                        description: cwdDescription,
-                    },
-                    shell: {
-                        type: 'string',
-                        description: isZh
-                            ? `要使用的 Shell 类型，可选值：${getEnabledShellTypesForEnum().join(', ')}。`
-                            : `Shell type to use: ${getEnabledShellTypesForEnum().join(', ')}.`,
-                        enum: getEnabledShellTypesForEnum(),
-                        default: 'default',
-                    },
-                    timeout: {
-                        type: 'number',
-                        description: isZh
-                            ? `前台命令的超时时间，单位毫秒，当前默认 ${defaultTimeout}，0 表示不限时。后台命令不受此限制。`
-                            : `Foreground timeout in milliseconds; the current default is ${defaultTimeout}, and 0 disables it. Background commands are not subject to it.`,
-                        default: defaultTimeout,
-                    },
-                    background: {
-                        type: 'boolean',
-                        description: isZh
-                            ? '在后台运行命令。只用于用户不必等待的长时间任务，例如构建、服务器或批处理。工具会立即返回 taskId，最终输出稍后以 "[Background task completed]" 用户消息送达，不要等待或轮询。'
-                            : 'Run the command in the background. Use this only for long-running work the user should not have to wait for, such as builds, servers or batch jobs. The tool returns a taskId right away, and the final output arrives later as a "[Background task completed]" user message; do not wait or poll for it.',
-                    },
-                },
-                required: ['command'],
-            },
-        };
-    }
-
     function createExecuteCommandTool(declaration?: Tool['declaration']): Tool {
         return {
-            declaration: declaration ?? createExecuteCommandDeclaration(),
+            declaration: declaration ?? createExecuteCommandDeclaration(host),
             handler: async (args, context?: ToolContext): Promise<ToolResult> => {
                 const config = host.getConfig();
                 const command = args.command as string;
+                const mode = args.mode === 'argv' ? 'argv' : 'shell';
+                const argv = mode === 'argv';
+                const commandArgs = argv ? (args.args as string[]) : undefined;
                 const cwd = args.cwd as string | undefined;
                 const shell = (args.shell as ShellType) || 'default';
                 // 超时钳制：仅接受有限非负数（0 = 显式不超时）；负数/NaN/非数字回退默认 60000，
                 // 避免非法值把 timeout>0 判为 false 而意外禁用超时。
                 const rawTimeout = args.timeout;
                 const timeout =
-                    typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout >= 0 ? Math.floor(rawTimeout) : config.defaultTimeout;
+                    typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout >= 0
+                        ? Math.floor(rawTimeout)
+                        : argv
+                          ? 0
+                          : config.defaultTimeout;
                 // 修改原因：长耗时命令会阻塞主对话，用户只能干等。
                 // 修改方式：background=true 时进程启动后立即返回；不挂外部 abortSignal、不设 timeout，
                 //          退出时结果经 TaskManager 完成事件回流。
@@ -272,6 +111,9 @@ ${getExecuteCommandShellGuidanceDescription()}`,
 
                 if (!command) {
                     return { success: false, error: 'command is required' };
+                }
+                if (argv && (!Array.isArray(commandArgs) || commandArgs.some((value) => typeof value !== 'string' || value.includes('\0')))) {
+                    return { success: false, error: 'argv mode requires an array of string arguments without null characters.' };
                 }
 
                 const workspaces = getAllWorkspaces();
@@ -289,7 +131,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
 
                 // 检查 shell 是否启用
                 const shellInfo = config.shells.find((s) => s.type === actualShellType);
-                if (shellInfo && !shellInfo.enabled) {
+                if (!argv && shellInfo && !shellInfo.enabled) {
                     return {
                         success: false,
                         error: `Shell "${actualShellType}" is not enabled, please enable it in settings and try again`,
@@ -297,7 +139,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                 }
 
                 // 检查 shell 可用性
-                const availability = await checkShellAvailability(actualShellType, shellInfo?.path);
+                const availability = argv ? { available: true, reason: undefined } : await checkShellAvailability(actualShellType, shellInfo?.path);
                 if (!availability.available) {
                     return {
                         success: false,
@@ -341,7 +183,9 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                 }
 
                 // 获取 shell 配置
-                const shellConfig = getShellConfig(shell);
+                const shellConfig = argv
+                    ? { shell: command, shellArgs: [] as string[], prependCommand: undefined, appendCommand: undefined }
+                    : getShellConfig(shell);
 
                 return new Promise((resolve) => {
                     // 检查是否已经取消
@@ -370,11 +214,12 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                         const isWindows = os.platform() === 'win32';
 
                         // 构建命令参数
-                        const spawnArgs = shellConfig.shellArgs ? [...shellConfig.shellArgs, finalCommand] : [finalCommand];
+                        const spawnArgs = commandArgs ?? (shellConfig.shellArgs ? [...shellConfig.shellArgs, finalCommand] : [finalCommand]);
 
                         // 注入环境变量以便更好地支持 UTF-8（主要针对 Windows 上的 Unix 工具）
                         const env = { ...process.env };
-                        if (isWindows) {
+                        if (argv) env.FORCE_COLOR = '0';
+                        if (isWindows && !argv) {
                             // 很多工具（如 git, node, python）在 Windows 上通过这些变量识别编码
                             if (!env.LANG) env.LANG = 'en_US.UTF-8';
                             if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = 'utf-8';
@@ -382,7 +227,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
 
                         // 启动进程
                         const spawnedAt = Date.now();
-                        const proc = cp.spawn(shellConfig.shell, spawnArgs, {
+                        const proc = (argv ? crossSpawn : cp.spawn)(shellConfig.shell, spawnArgs, {
                             cwd: workingDir,
                             shell: false,
                             env,
@@ -391,7 +236,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                             // 避免 Node.js 二次转义；命令引号由模型按 cmd 语法负责
                             // （本模块不再预包外层引号，见上方 CMD /s /c 注释）。
                             // @ts-ignore - windowsVerbatimArguments is a valid option on Windows
-                            windowsVerbatimArguments: isWindows && isCmdWithS,
+                            windowsVerbatimArguments: !argv && isWindows && isCmdWithS,
                         });
 
                         // CPU 友好：后台命令降优先级（Windows: BELOW_NORMAL_PRIORITY_CLASS；
@@ -400,7 +245,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                         // CPU，跑测试/长任务时不再抢占前台交互（主进程/渲染进程为 normal，竞争时
                         // 自动让路），空闲时仍全速。前台命令保持 normal：模型同步等待，降级会
                         // 无谓拖慢。detach 转后台的进程保持启动时优先级（罕见场景，不动态调整）。
-                        setTerminalProcessPriority(proc.pid, background);
+                        if (!argv || background) setTerminalProcessPriority(proc.pid, background);
 
                         // 创建终端进程信息
                         const terminalProcess: TerminalProcess = {
@@ -408,10 +253,18 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                             command,
                             cwd: workingDir,
                             shell,
+                            mode,
+                            args: commandArgs,
                             process: proc,
                             output: [],
                             startTime: Date.now(),
                         };
+                        // stdin 的错误独立于 ChildProcess；保留错误供 input 回执使用，避免未处理的 EPIPE。
+                        const inputError = (error: Error) => {
+                            terminalProcess.inputError = error;
+                        };
+                        proc.stdin?.on('error', inputError);
+                        proc.once('close', () => proc.stdin?.off('error', inputError));
                         if (host.processTree && isWindows && proc.pid) {
                             // 采样用 spawn 前的时间做身份下限；终止时只处理能追溯到本 Shell 的后代。
                             terminalProcess.tracker = new ProcessTreeTracker(host.processTree, proc.pid, spawnedAt);
@@ -505,7 +358,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                         // 后台命令不挂外部 signal：用户停止当前对话流不得连带杀掉后台命令（任务条可单独取消）
                         // detach 转后台时也会移除该监听，保持同样的脱钩语义
                         let removeExternalAbortListener: (() => void) | undefined;
-                        if (externalAbortSignal && !background) {
+                        if (externalAbortSignal && !background && !argv) {
                             const abortHandler = () => {
                                 // 外部取消覆盖先前的超时原因：结果仍按用户/任务取消处理（见 isExternalAbort）
                                 terminalProcess.interruptReason = abortReason(externalAbortSignal.reason);
@@ -537,7 +390,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                         // 默认按 UTF-8 解码；Windows 上所有 shell 均支持自动降级到 GBK。
                         // 跨 chunk 前缀缓冲由 outputDecoder 内部自管（StreamDecodeState.pendingBytes），
                         // 不再依赖 StringDecoder 的隐藏缓冲状态，GBK 中途切换不再丢字节。
-                        const canUseGbkFallback = isWindows;
+                        const canUseGbkFallback = isWindows && !argv;
                         const stdoutGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
                         const stderrGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
                         const stdoutDecodeModeRef: StreamDecodeState = { mode: 'utf8' };
@@ -674,7 +527,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                             }
 
                             // 检查是否是外部 abortSignal 触发的终止
-                            const isExternalAbort = externalAbortSignal?.aborted && terminalProcess.killed;
+                            const isExternalAbort = !argv && externalAbortSignal?.aborted && terminalProcess.killed;
 
                             // 被用户杀死的进程也算成功（不显示错误）；
                             // 但超时强杀的进程必须报失败（即使 close 恰以 0 退出码晚于超时回调到达），
@@ -761,6 +614,11 @@ ${getExecuteCommandShellGuidanceDescription()}`,
 
                             terminalProcess.endTime = Date.now();
                             terminalProcess.error = err.message;
+                            if (argv) {
+                                terminalProcess.exitCode = -1;
+                                pushOutputLines(terminalProcess, [err.message]);
+                                emitTerminalOutput({ terminalId, type: 'error', data: err.message });
+                            }
 
                             const errMaxLines = getMaxOutputLines();
                             const lastOutput = errMaxLines === -1 ? terminalProcess.output : getLastLines(terminalProcess.output, errMaxLines);
@@ -774,6 +632,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                                 // 使用 TaskManager 注销任务
                                 TaskManager.unregisterTask(terminalId, 'error', {
                                     error: err.message,
+                                    ...(argv ? { exitCode: -1 } : {}),
                                     duration,
                                     background: effectiveBackground,
                                     conversationId: context?.conversationId,
@@ -800,6 +659,7 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                                     cwd: workingDir,
                                     shell,
                                     output: lastOutput.join('\n'),
+                                    ...(argv ? { exitCode: -1 } : {}),
                                 },
                                 error: `Failed to execute command: ${err.message} (cwd: ${workingDir})`,
                             });
@@ -822,11 +682,23 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                             });
                         }
 
-                        // 前台模式：注册 detach 回调。
-                        // 用户在命令运行期间发送新消息时（webview 调 terminal.detachToBackground），
-                        // 把该命令转入后台：工具立即返回、模型先响应用户，进程继续运行，
-                        // 完成后结果经 TaskManager 完成事件回流为 [Background task completed] 回执。
-                        if (!background) {
+                        if (argv && !background) {
+                            // argv 会话沿用原先的短等待：返回后仍持有同一进程，显式 timeout 继续生效。
+                            const yieldTimer = setTimeout(
+                                () =>
+                                    resolve({
+                                        success: true,
+                                        data: { taskId: terminalId, terminalId, command, args: commandArgs, mode, cwd: workingDir, running: true },
+                                    }),
+                                300,
+                            );
+                            yieldTimer.unref();
+                            proc.once('close', () => clearTimeout(yieldTimer));
+                            proc.once('error', () => clearTimeout(yieldTimer));
+                        }
+                        // 用户在前台 Shell 命令运行期间发送新消息时，转入后台并立即响应用户。
+                        // argv 会话本身已经返回，无需登记 detach；完成通知仍只由 background 决定。
+                        if (!background && !argv) {
                             const detach = (): boolean => {
                                 if (terminalProcess.endTime !== undefined || effectiveBackground) {
                                     return false;
@@ -883,174 +755,6 @@ ${getExecuteCommandShellGuidanceDescription()}`,
                     }
                 });
             },
-        };
-    }
-
-    /**
-     * 调整终端进程的 CPU 优先级（尽力而为，失败静默）。
-     *
-     * Windows：用 PowerShell 设置 shell 进程的优先级类（BELOW_NORMAL / NORMAL）。
-     * Windows 上子进程在创建时继承父进程的优先级类，因此 cmd/powershell 后续启动的
-     * node/jest 等子进程树同样降级——后台跑测试/长任务时让出 CPU 给前台交互，
-     * 空闲时仍全速执行。
-     * POSIX：process.setPriority（nice 值），子进程同样继承。
-     *
-     * 注：Node 的 spawn priority 选项在 Windows 上实测不生效，且 @types/node 24 类型
-     * 定义缺失，故采用 spawn 后外部设置。spawn→设置的竞态窗口（毫秒级）内启动的
-     * 子进程可能继承 normal，可接受。
-     */
-    function setTerminalProcessPriority(pid: number | undefined, background: boolean): void {
-        if (!pid) return;
-        try {
-            if (os.platform() === 'win32') {
-                const priorityClass = background ? 'BelowNormal' : 'Normal';
-                cp.exec(
-                    `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'"`,
-                    { windowsHide: true, timeout: 5000 },
-                    () => {
-                        /* 失败静默：优先级是软约束 */
-                    },
-                );
-            } else {
-                // POSIX：belowNormal ≈ nice +5，normal = 0
-                const setPriority = (process as any).setPriority as ((pid: number, p: number | string) => void) | undefined;
-                setPriority?.(pid, background ? 'belowNormal' : 'normal');
-            }
-        } catch {
-            // 忽略：优先级设置失败不影响命令执行
-        }
-    }
-
-    /**
-     * 以「SIGTERM → 等待 KILL_WAIT_CLOSE_TIMEOUT_MS → SIGKILL 升级」终止进程树。
-     *
-     * 修改原因：超时/取消路径此前只发一次 SIGTERM——POSIX 上进程树捕获/忽略 SIGTERM 时
-     *          'close' 永不触发，execute_command 的 Promise 永不 resolve，模型工具循环挂死。
-     * 修改方式：与 killTerminalProcess 的强杀流程共用同一升级逻辑（幂等：进程已退出或
-     *          close 已触发时不再重复发信号；SIGKILL 不可捕获、close 必达，等待不永久挂起）。
-     * 修改目的：SIGTERM 免疫进程最终被 SIGKILL 强杀，等待方必然收到 close。
-     */
-    function terminateProcessTreeWithEscalation(terminalProcess: TerminalProcess): Promise<void> {
-        // 超时与取消可能先后触发，同一进程只执行一轮终止与清理。
-        return terminating.get(terminalProcess) ?? terminating.set(terminalProcess, terminateProcessTree(terminalProcess)).get(terminalProcess)!;
-    }
-    const terminating = new WeakMap<TerminalProcess, Promise<void>>();
-    function terminateProcessTree(terminalProcess: TerminalProcess): Promise<void> {
-        const proc = terminalProcess.process;
-        return new Promise<void>((resolve) => {
-            // close 已处理（endTime 已落定）：不会再触发，直接返回
-            if (terminalProcess.endTime !== undefined) {
-                resolve();
-                return;
-            }
-            // Shell 已退出但 close 未到：管道被后代占用。此时 PID 可能已被复用，不再按 PID 发信号。
-            const exited = proc.exitCode !== null || proc.signalCode != null;
-
-            let settled = false;
-            const timers: NodeJS.Timeout[] = [];
-            const later = (callback: () => void, delay: number) => {
-                const timer = setTimeout(callback, delay);
-                timer.unref?.();
-                timers.push(timer);
-            };
-
-            const onClose = (): void => {
-                if (settled) return;
-                settled = true;
-                for (const timer of timers) clearTimeout(timer);
-                resolve();
-            };
-
-            // 先注册 close 监听再发信号，避免进程在两者之间退出导致漏监听
-            proc.once('close', onClose);
-            // 无法归属的进程仍占用管道时，关闭本端管道让 close 到达，前台命令不再挂起。
-            const releasePipes = () => {
-                if (!settled) {
-                    proc.stdout?.destroy();
-                    proc.stderr?.destroy();
-                }
-            };
-
-            let rootKilled: Promise<void> = Promise.resolve();
-            if (!exited) {
-                later(() => {
-                    try {
-                        proc.kill('SIGKILL');
-                    } catch {
-                        // 可能已退出，忽略
-                    }
-                    // 修改原因：发 SIGKILL 后立即 onClose() 会让等待方在 close 处理器（落定
-                    //          endTime/exitCode/output）执行前就返回，拿到 stale 结果。
-                    // 修改方式：SIGKILL 不可捕获——发完信号不 resolve，继续等真实 close；
-                    //          若管道仍被其他进程占用而 close 迟迟未达，关闭本端管道后再兜底 resolve。
-                    later(() => {
-                        releasePipes();
-                        later(onClose, 1000);
-                    }, KILL_WAIT_CLOSE_TIMEOUT_MS);
-                }, KILL_WAIT_CLOSE_TIMEOUT_MS);
-
-                const pid = proc.pid;
-                rootKilled = new Promise<void>((done) => {
-                    if (pid) {
-                        // 使用 tree-kill 终止进程树（Windows: taskkill /F /T；Unix: 递归发信号）
-                        treeKill(pid, 'SIGTERM', (err) => {
-                            if (err) {
-                                // tree-kill 失败：回退到直接 SIGKILL
-                                try {
-                                    proc.kill('SIGKILL');
-                                } catch {
-                                    // 忽略错误，进程可能已经退出
-                                }
-                            }
-                            done();
-                        });
-                    } else {
-                        // 没有 PID，使用默认方式
-                        try {
-                            proc.kill('SIGTERM');
-                        } catch {
-                            // 忽略错误，进程可能已经退出
-                        }
-                        done();
-                    }
-                });
-            }
-
-            const tracker = terminalProcess.tracker;
-            if (tracker) {
-                // 根进程树终止后补杀脱链后代并核实；此时 close 仍未到说明管道被占用，顺带报告无法归属的孤儿。
-                terminalProcess.cleanup = rootKilled.then(() => tracker.cleanup({ pipeHeld: () => terminalProcess.endTime === undefined }));
-                // 根进程已退出而 close 仍未到时关闭管道；根进程仍在运行则交给上面的 SIGKILL 升级。
-                void terminalProcess.cleanup.then(() =>
-                    later(() => {
-                        if (proc.exitCode === null && proc.signalCode == null) return;
-                        releasePipes();
-                        later(onClose, 1000);
-                    }, 1000),
-                );
-            } else if (exited) {
-                later(() => {
-                    releasePipes();
-                    later(onClose, 1000);
-                }, 2000);
-            }
-        });
-    }
-
-    /** 外部取消的原因：任务层取消（如生成失败）与用户点击停止、宿主关闭分开报告。 */
-    function abortReason(reason: unknown): TerminalInterruptReason {
-        const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : '';
-        if ((reason instanceof Error && reason.name === 'AbortError') || !message) return 'user_cancelled';
-        if (/shutting down|正在关闭|正在退出/i.test(message)) return 'host_closing';
-        if (/cancelled by user|user cancel|用户/i.test(message)) return 'user_cancelled';
-        return 'task_cancelled';
-    }
-
-    function interruptionOf(terminalProcess: TerminalProcess, processTree: ProcessTreeReport | undefined) {
-        return {
-            reason: terminalProcess.interruptReason ?? 'stopped',
-            processTree: processTree ?? { verified: false },
-            summary: describeProcessTree(processTree),
         };
     }
 
@@ -1135,24 +839,6 @@ ${getExecuteCommandShellGuidanceDescription()}`,
     }
 
     /**
-     * 通过 TaskManager 取消终端任务
-     * 这是统一的取消接口
-     */
-    async function cancelTerminalTask(terminalId: string): Promise<{
-        success: boolean;
-        error?: string;
-    }> {
-        // 先尝试杀掉进程（等待 close，输出/exitCode 落定后返回）
-        const killResult = await killTerminalProcess(terminalId);
-        if (killResult.success) {
-            return { success: true };
-        }
-
-        // 如果进程不存在，尝试通过 TaskManager 取消
-        return TaskManager.cancelTask(terminalId);
-    }
-
-    /**
      * 将正在前台等待的终端命令转入后台。
      *
      * 用户在命令执行期间发送新消息时调用：等待中的 execute_command 立即返回
@@ -1207,65 +893,23 @@ ${getExecuteCommandShellGuidanceDescription()}`,
     }
 
     /**
-     * 获取所有活动终端
-     */
-    function getActiveTerminalProcesses(): Array<{
-        id: string;
-        command: string;
-        cwd: string;
-        shell: ShellType;
-        running: boolean;
-        startTime: number;
-    }> {
-        const result: Array<{ id: string; command: string; cwd: string; shell: ShellType; running: boolean; startTime: number }> = [];
-        for (const [id, proc] of activeProcesses as Map<string, TerminalProcess>) {
-            result.push({
-                id,
-                command: proc.command,
-                cwd: proc.cwd,
-                shell: proc.shell,
-                running: proc.endTime === undefined,
-                startTime: proc.startTime,
-            });
-        }
-        return result;
-    }
-
-    /**
-     * 清理已完成的终端进程
-     */
-    function cleanupTerminals(): void {
-        for (const [id, proc] of activeProcesses as Map<string, TerminalProcess>) {
-            if (proc.endTime !== undefined) {
-                activeProcesses.delete(id);
-            }
-        }
-    }
-
-    /**
-     * 注册执行命令工具
-     */
-    function registerExecuteCommand(): Tool {
-        return createExecuteCommandTool();
-    }
-
-    /**
      * 导出活动终端 Map（用于其他模块）
      */
     function getActiveTerminals(): Map<string, TerminalProcess> {
         return activeProcesses;
     }
+    async function inputTerminalProcess(terminalId: string, text: string, signal?: AbortSignal): Promise<void> {
+        const terminalProcess = activeProcesses.get(terminalId);
+        if (!terminalProcess) throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
+        await writeProcessInput(terminalProcess.process, text, signal, terminalProcess.inputError);
+    }
     return {
         onTerminalOutput,
-        onTerminalTaskEvent,
         createExecuteCommandTool,
         killTerminalProcess,
-        cancelTerminalTask,
         detachRunningTerminalsToBackground,
         getTerminalOutput,
-        getActiveTerminalProcesses,
-        cleanupTerminals,
-        registerExecuteCommand,
         getActiveTerminals,
+        inputTerminalProcess,
     };
 }

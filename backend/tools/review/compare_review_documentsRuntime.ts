@@ -220,14 +220,14 @@ export function createCompareReviewDocumentsToolDeclaration(): ToolDeclaration {
     name: 'compare_review_documents',
     readOnly: true,
     description:
-      'Compare two review documents under .graycode/review/**.md without modifying them. The result lists findings that were added, removed or carried over, changes in tracking status, and differences in summary statistics.',
+      '只读比较 .graycode/review/**.md 中两份审查文档，返回新增、移除、延续的发现，以及跟踪状态和摘要统计的变化。',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        basePath: { type: 'string', description: 'Path of the earlier review document to compare from.' },
-        targetPath: { type: 'string', description: 'Path of the later review document to compare against.' },
-        includeUnchanged: { type: 'boolean', description: 'Whether to also list carried-over findings that did not change. Defaults to false.' }
+        basePath: { type: 'string', description: '作为比较起点的较早审查文档路径。' },
+        targetPath: { type: 'string', description: '要与之比较的较新审查文档路径。' },
+        includeUnchanged: { type: 'boolean', description: '是否同时列出没有变化的延续问题，默认为 false。' }
       },
       required: ['basePath', 'targetPath']
     }

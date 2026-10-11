@@ -33,18 +33,19 @@ export function createCreateReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_review',
     description:
-      'Create a Markdown review document under .graycode/review/**.md and start a review with it. It belongs to Review mode and only writes the review document, never project code. Each review uses one document, and a conversation can have only one review in progress; finalize the current review before creating another. If the target file already exists, the call fails; continue that review with record_review_milestone or finalize_review, or choose a different path.',
+      '在 .graycode/review/**.md 创建 Markdown 审查文档。每次审查一份文档，同一会话只能有一个进行中的审查。' +
+      '目标已存在时调用失败；用 record_review_milestone 或 finalize_review 继续当前审查，结束后才能新建。',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Optional review title, also used to build the default file name.' },
-        overview: { type: 'string', description: 'Optional one-line overview of the review.' },
-        review: { type: 'string', description: 'Initial review content in Markdown, such as scope and approach.' },
+        title: { type: 'string', description: '可选的审查标题，也用于生成默认文件名。' },
+        overview: { type: 'string', description: '可选的一行审查概述。' },
+        review: { type: 'string', description: '初始审查内容，使用 Markdown，例如审查范围和方法。' },
         path: {
           type: 'string',
           description:
-            'Optional output path. It must be under .graycode/review/**.md (in a multi-root workspace, workspace/.graycode/review/**.md). If omitted, the path is derived from the title.'
+            '可选的输出路径，必须位于 .graycode/review/**.md 下（多根工作区为 workspace/.graycode/review/**.md）。不传时根据标题生成。'
         }
       },
       required: ['review']

@@ -117,7 +117,10 @@ export function createAskUserTool(): RuntimeTool {
     declaration: {
       name: 'ask_user',
       description:
-        'Ask the user up to three optional questions and keep working on anything that does not depend on the answers. options are suggestions only; the user can type their own answer. If no answer arrives within a few minutes, decide on your own within your existing permissions. Never use this for approvals, irreversible decisions or information you cannot proceed without.',
+        '向用户提出最多三个可选问题，并继续处理不依赖回答的工作。'
+          + 'options 只提供建议，用户仍可自由输入。'
+          + '几分钟内未收到回答时，在现有授权内自行判断。'
+          + '需要批准、不可逆决策或缺少便无法继续的信息不能用本工具询问。',
       parameters: {
         type: 'object',
         additionalProperties: false,

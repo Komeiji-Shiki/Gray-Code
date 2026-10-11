@@ -32,6 +32,7 @@ const RETIRED_PROMPT_DIGESTS: Record<RetiredPromptKind, readonly string[]> = {
         '86f9268ae0f80bf4c5e793399499282f6b002fe62fc862f52f41479f3bc0adac',
         '8e695ca17711372c87b29c32bf18cd8f50698b176b62f74caef62c30dc38fc99',
         '92881e4199f3fea0fc9d2099921b1e5dabbe15b39ca4ba4b636882f791b467b7',
+        '9393b4e257f58ae894ece7435da3efb7f60fc8b3a289c788a1cf3259840050f4',
         '99b8fd0cdfdaa5f523200f215c6ae4ca92e1f7dd6c41ff9306453a85a6d02c31',
         'a4e9d6d83b066d2feccc80e369ee26652ff0473833d382d078ade7e7d9a17c7c',
         'a98e2d14ba0bbc8c7538fc8f0c8984ceb2e24a82911c797956949849098bbb87',
@@ -116,6 +117,7 @@ const RETIRED_PROMPT_DIGESTS: Record<RetiredPromptKind, readonly string[]> = {
     ],
     memory: [
         '25d1080a7f4de3b2b50a0bb7a0ea0bb8ead3435eb682a87ec5b01d2ae63885b5',
+        '5b99a12753a24079066236200461b64fc4da543613f38d3ebc7fa6c65aff8729',
         '7dbd661cc6c4a3d7b7151c0d8e03e859e13460f7fa1b80893203d1faf8fa7915',
         'ab4a9d537b921c3fae79cc07001e9a7a4ac6132f5eca54c191b5c5a0803234ac',
         'b9cf705e2f706dfbbf5bbc266969d301f834b105e85d63ad09ca5807d6783e5d',

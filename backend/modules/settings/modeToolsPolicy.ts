@@ -3,6 +3,36 @@
  * 定义不同模式下允许使用的工具和路径规则
  */
 
+import type { PromptMode } from './types/promptTypes';
+import { upgradeToolNames } from '../../../shared/toolNameUpgrades';
+
+/** 文档工具保留注册，由模式决定是否随请求发送声明。 */
+const DOCUMENT_TOOL_NAMES: ReadonlySet<string> = new Set([
+    'create_design',
+    'update_design',
+    'create_plan',
+    'update_plan',
+    'create_progress',
+    'update_progress',
+    'record_progress_milestone',
+    'validate_progress_document',
+    'create_review',
+    'record_review_milestone',
+    'finalize_review',
+    'reopen_review',
+    'validate_review_document',
+    'compare_review_documents'
+]);
+
+/** 显式策略优先；未定制且继承 Code 工具集的模式默认省去文档工作流工具。 */
+export function filterPromptModeToolNames(mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>, names: string[]): string[] {
+    if (mode.toolPolicy) {
+        const allowed = new Set(upgradeToolNames(mode.toolPolicy));
+        return names.filter(name => allowed.has(name));
+    }
+    return mode.toolPolicyCustomized === true ? names : names.filter(name => !DOCUMENT_TOOL_NAMES.has(name));
+}
+
 /**
  * 检查路径是否允许在指定 GrayCode 文档目录下写入
  *

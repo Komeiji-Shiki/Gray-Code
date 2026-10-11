@@ -24,21 +24,21 @@ export function createUpdateDesignToolDeclaration(): ToolDeclaration {
   return {
     name: 'update_design',
     description:
-      'Revise an existing Markdown design document under .graycode/design/**.md. Use it when the user wants to change the current design rather than start a new one. The content you pass replaces the whole document, and the file must already exist.',
+      '替换 .graycode/design/**.md 中已有设计的完整正文，目标必须存在；修改后需要用户重新确认。',
     category: 'design',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path of the existing design document, under .graycode/design/**.md (in a multi-root workspace, workspace/.graycode/design/**.md).'
+          description: '已有设计文档的路径，位于 .graycode/design/**.md 下（多根工作区为 workspace/.graycode/design/**.md）。'
         },
-        title: { type: 'string', description: 'Optional updated design title.' },
-        overview: { type: 'string', description: 'Optional updated one-line overview.' },
-        design: { type: 'string', description: 'The complete updated design in Markdown.' },
+        title: { type: 'string', description: '可选的新标题。' },
+        overview: { type: 'string', description: '可选的新的一行概述。' },
+        design: { type: 'string', description: '修改后的完整设计内容，使用 Markdown。' },
         changeSummary: {
           type: 'string',
-          description: 'Optional short summary of what changed in this revision.'
+          description: '可选的本次修改摘要。'
         }
       },
       required: ['path', 'design']

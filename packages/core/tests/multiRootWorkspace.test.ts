@@ -25,7 +25,7 @@ describe('多根工作区的文件、任务与旧检查点', () => {
     generate = async () => ({ role: 'model', parts: [{ text: 'done' }] });
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: input => generate(input) } });
     const draft = app.settings.snapshot();
-    draft.settings.agents[0].toolNames = ['workspace_files'];
+    draft.settings.agents[0].toolNames = ['write_file'];
     draft.settings.workspaces.push({ id: 'multi', name: '共同项目', directory: alpha, deviceId: 'local', roots: [{ name: 'alpha', directory: alpha }, { name: 'beta', directory: beta }] });
     draft.settings.accounts.push({ id: 'reader', role: 'member', displayName: '读取账号', effects: ['workspace_read'], workspaceIds: ['multi'] });
     await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision }); router = new ApplicationRouter(app);
@@ -72,12 +72,13 @@ describe('多根工作区的文件、任务与旧检查点', () => {
     generate = async () => {
       if (++calls > 1) return { role: 'model', parts: [{ text: 'written once' }] };
       started(); await gate;
-      return { role: 'model', parts: [{ functionCall: { id: 'write-captured', name: 'workspace_files', args: {
-        action: 'write', path: '@beta/old-task.txt', content: 'captured beta', expectedHash: null, oldText: null, newText: null,
+      return { role: 'model', parts: [{ functionCall: { id: 'write-captured', name: 'write_file', args: {
+        path: '@beta/old-task.txt', content: 'captured beta',
       } } }] };
     };
     const settings = await app.product.draft();
     await settings.settings.updateCheckpointConfig({ enabled: true, beforeTools: ['write_file'], afterTools: ['write_file'] });
+    await settings.settings.updateApplyDiffConfig({ autoSave: true, autoApplyWithoutDiffView: true });
     await app.product.save(settings);
     const conversation = await rpc<{ id: string }>('conversations.create', { title: 'captured' });
     const run = await rpc<RunRecord>('runs.start', { conversationId: conversation.id, requestKey: 'captured', agentId: 'default', text: 'write' });

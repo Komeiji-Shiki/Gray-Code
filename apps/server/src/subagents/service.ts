@@ -16,6 +16,7 @@ import { LegacySubagents } from './legacy';
 import { SubagentRuntimeTimer } from './runtimeTimer';
 import { getRunContentRange } from '../../../../backend/tools/subagents/eventBus/contentWindow';
 import type { SubAgentRunContentWindowOptions } from '../../../../backend/tools/subagents/eventBus/types';
+import { upgradeAgentToolNames } from '../settings/agent';
 
 interface LiveSubagent {
   record: PlatformSubagent;
@@ -120,13 +121,14 @@ export class SubagentExecutionService {
     if (this.live.has(record.id)) throw new Error('请先停止子代理，再重试旧记录。');
     await this.app.conversations.replaceImportedSubagentHistory(context.actorId, record.conversationId, messages);
     record.parentConfiguration = structuredClone(context.parentConfiguration);
+    record.profile = upgradeAgentToolNames(record.profile);
     record.profile.toolNames = record.profile.toolNames.filter(name => context.agent.toolNames.includes(name));
     record.background = true; await this.save(record); this.launch(record);
   }
   agent(id: string, actorId?: string, conversationId?: string): AgentDefinition | null {
     const record = this.byAgent.get(id);
     if (!record || record.conversationId !== conversationId || !actorId || record.actorId !== actorId && this.app.actor(actorId)?.role !== 'owner') return null;
-    return structuredClone(record.profile);
+    return upgradeAgentToolNames(structuredClone(record.profile));
   }
   private manifest(record: PlatformSubagent) {
     const live = this.live.get(record.id);
@@ -401,6 +403,7 @@ export class SubagentExecutionService {
       record.maxRuntime = maxRuntime;
       record.parentConfiguration = undefined;
       record.status = 'queued';
+      record.profile = upgradeAgentToolNames(record.profile);
       record.profile.toolNames = record.profile.toolNames.filter(name => context.agent!.toolNames.includes(name));
     } else {
       record = createSubagentRecord(this.app, args, context as SubagentLaunchContext, depth);

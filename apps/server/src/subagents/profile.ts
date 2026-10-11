@@ -3,6 +3,7 @@ import { DEFAULT_SUBAGENTS_CONFIG } from '../../../../backend/modules/settings/t
 import { MAX_SUBAGENT_NESTING_DEPTH } from '../../../../backend/tools/subagents/types';
 import { resolveSubagentMaxRuntime } from '../../../../shared/subagentRuntime';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
+import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
 import { GENERAL_WORKER_SYSTEM_PROMPT, SUBAGENT_COMPLETION_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from '../../../../backend/tools/subagents/executor/prompts';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
@@ -24,12 +25,13 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
   const selection = inherit ? structuredClone(context.modelSelection) : { providerId: config!.channel.channelId, modelOverride: config!.channel.modelId };
   if (!app.settings.find('providers', selection.providerId)) throw new Error('子代理渠道不存在。');
   const tools = config?.tools ?? { mode: 'all' };
+  const whitelist = tools.mode === 'whitelist' ? new Set(upgradeToolNames(tools.whitelist ?? tools.list ?? [])) : undefined;
   const toolNames = context.agent.toolNames.filter(name => {
-    if (/^(memory_|todo_)/.test(name) || !app.product.runtimeSettings().isToolEnabled(name) || depth >= MAX_SUBAGENT_NESTING_DEPTH && name === 'subagents') return false;
+    if (/^(memory_|todo_)/.test(name) || name === 'engineering_log' || !app.product.runtimeSettings().isToolEnabled(name) || depth >= MAX_SUBAGENT_NESTING_DEPTH && name === 'subagents') return false;
     if (tools.mode === 'builtin') return !isMcpToolName(name);
     if (tools.mode === 'mcp') return isMcpToolName(name);
     // 设置页和预设写入具名列表；list 只兼容旧配置，显式 [] 不能回退到旧授权。
-    if (tools.mode === 'whitelist') return (tools.whitelist ?? tools.list ?? []).includes(name);
+    if (whitelist) return whitelist.has(name);
     if (tools.mode === 'blacklist') return !(tools.blacklist ?? tools.list ?? []).includes(name);
     return true;
   });

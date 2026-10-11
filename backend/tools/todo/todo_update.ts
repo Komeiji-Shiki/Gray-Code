@@ -253,27 +253,35 @@ export function createTodoUpdateToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_update',
         description:
-            'Update individual items in the current conversation\'s TODO list without rewriting the whole list. Operations run in order. add needs id and content, and status defaults to pending; set_status needs id and status; set_content needs id and content; cancel and remove need only id. The result reports summary counts, invalid operations and ids that were not found, not the full list.',
+            '按顺序修改当前会话的待办事项。'
+          + 'add 需要 id 和 content，status 默认 pending；'
+          + 'set_status 需要 id 和 status；'
+          + 'set_content 需要 id 和 content；'
+          + 'cancel/remove 只需 id。'
+          + '结果返回数量、无效操作和未找到的 ID，不重复返回整张清单。',
         category: 'todo',
         parameters: {
             type: 'object',
             properties: {
                 ops: {
                     type: 'array',
-                    description: 'Operations to apply to the current TODO list, in order.',
+                    description: '依次应用到当前待办清单的操作。',
                     items: {
                         type: 'object',
                         properties: {
                             op: {
                                 type: 'string',
-                                description: 'Operation type. add creates an item, or overwrites it if the id already exists; cancel sets the status to cancelled; remove deletes the item.',
+                                description: '操作类型。'
+          + 'add 新增事项，ID 已存在时覆盖；'
+          + 'cancel 将状态设为 cancelled；'
+          + 'remove 删除事项。',
                                 enum: ['add', 'set_status', 'set_content', 'cancel', 'remove']
                             },
-                            id: { type: 'string', description: 'ID of the target item.' },
-                            content: { type: 'string', description: 'Item content, used by add and set_content.' },
+                            id: { type: 'string', description: '目标事项 ID。' },
+                            content: { type: 'string', description: '事项内容，供 add 和 set_content 使用。' },
                             status: {
                                 type: TODO_STATUS_SCHEMA.type,
-                                description: 'Item status, used by add and set_status.',
+                                description: '事项状态，供 add 和 set_status 使用。',
                                 enum: [...TODO_STATUS_SCHEMA.enum]
                             }
                         },

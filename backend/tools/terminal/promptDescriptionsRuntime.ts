@@ -8,7 +8,7 @@ export type WorkspaceRootPromptInfo = { name: string; path: string };
 export interface createTerminalPromptsHost { roots(): WorkspaceRootPromptInfo[]; shells: ReturnType<typeof createShellRuntime>; getMaxOutputLines(): number; workspaceBinding?: 'task' }
 /** 注入宿主服务；进程、解码状态和事件均归属于当前实例。 */
 export function createTerminalPrompts(host: createTerminalPromptsHost) {
-const { getDefaultShellType, getUnavailableShellsDescription } = host.shells;
+const { getDefaultShellType } = host.shells;
 const { getMaxOutputLines } = host;
 
 
@@ -40,13 +40,12 @@ function getDeclarationLanguage(): LocalizationLanguage {
 }
 
 
-/** 只列出当前可选 Shell 的差异规则，共用的 POSIX 和引号说明只出现一次。 */
+/** 只列出当前可选 Shell 的差异规则，共用的 POSIX 和引号说明只出现一次；可选 Shell 本身由 shell 参数的枚举表达。 */
 function getExecuteCommandShellGuidanceDescription(): string {
     const lang = getDeclarationLanguage();
     const zh = lang === 'zh-CN';
     const enabled = new Set(host.shells.getEnabledShellTypesForEnum());
     const posix = ['sh', 'bash', 'gitbash', 'wsl', 'zsh'].filter(name => enabled.has(name));
-    const unavailable = getUnavailableShellsDescription();
     const maxOutputLines = getMaxOutputLines();
     const output = maxOutputLines === -1
         ? (zh ? '默认不截断输出。' : 'Output is not truncated by default.')
@@ -56,7 +55,6 @@ function getExecuteCommandShellGuidanceDescription(): string {
             ? `command 是交给所选 Shell 解析的文本，不是 argv 数组。省略 shell 或填 default 时使用 ${getDefaultShellType()}。只能选择 shell 参数列出的类型，并按所选 Shell 的语法和转义规则书写，不要混用。`
             : `command is text parsed by the selected shell, not an argv array. Omitting shell or passing default uses ${getDefaultShellType()}. Choose only a shell listed for the shell parameter, and follow that shell's syntax and escaping rules without mixing them.`,
         output,
-        unavailable === '- 无' ? '' : (zh ? '已启用但可能不可用的 Shell：\n' : 'Enabled shells that may be unavailable:\n') + unavailable,
         enabled.has('powershell') ? getPowerShellGuidanceDescription(lang) : '',
         enabled.has('cmd') ? getCmdGuidanceDescription(lang) : '',
         posix.length ? getPosixShellGuidanceDescription(posix, lang) : '',

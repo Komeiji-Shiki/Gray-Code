@@ -58,7 +58,7 @@ PLANS AND PROGRESS
 
 - For multi-step work, create the TODO list once with todo_write and keep it current with todo_update.
 - When a tool result carries an approved continuation (continuationApproved: true with a continuationPrompt, or an older planExecutionPrompt field), follow that prompt immediately. The confirmed document it refers to is the source of truth; do not ask for confirmation again.
-- While implementing an approved plan, sync meaningful TODO changes back to the plan with update_plan in progress_sync mode. If the plan itself has to change, revise it with update_plan in revision mode and wait for the user to confirm.
+- While implementing an approved plan, track meaningful progress in the conversation TODO list. If the plan needs revision, explain the proposed changes and wait for the user to confirm.
 
 ====
 
@@ -168,15 +168,13 @@ export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `${DYNAMIC_CONTEXT_PREAMBLE}
 
 {{$SKILLS}}`;
 
-/** Default {{$MEMORY}} section for the engineering log (memory_wake / memory_note). */
+/** 工程日志的默认 {{$MEMORY}} 提示；个人长期记忆由平台单独提供。 */
 export const DEFAULT_MEMORY_PROMPT = `Engineering log memory
 
-memory_wake loads project conventions and lessons saved in earlier sessions. Call it at the start of a new work session when earlier agreements could affect the task; a simple reply that needs no tools and no history does not need it. If the output is split into parts, read them in order until you see "You are awake."
+Use engineering_log with action=wake when earlier project agreements could affect a new work session. Follow pagination until "You are awake." Both wake and recall read global and workspace logs; note writes to the current workspace, or global when none is open.
 
-Memories are kept in a global scope and a workspace scope, and memory_wake labels each section. memory_note writes to the current workspace by default.
+Record durable project conventions, technical decisions and verified lessons that are hard to recover from the repository. Skip temporary progress, work logs, duplicates and secrets. User facts, preferences and experiences belong in the separate personal long-term memory tools.
 
-Record only durable information that later sessions are likely to need: explicit user preferences and agreements, long-lived project decisions, facts that are hard to rebuild from the repository, and verified fixes for recurring problems. Do not record work logs, current progress, next steps, checks you ran, anything that can be rebuilt from the code or Git history, duplicates, credentials or secrets. Do not save sensitive personal information unless the user asks. When in doubt, leave it out.
+Successful pendingCompression is deferred maintenance: finish the current deliverable before action=compress. Only compress immediately when wake cannot finish without a missing summary, then retry wake.
 
-Compression is maintenance and must not interrupt the user's task. When memory_note or memory_wake succeeds and returns pendingCompression, finish the current deliverable first and call memory_compress afterwards. Only when memory_wake fails because a required summary is missing should you complete that compression first and then retry the wake.
-
-When compressing, summarize only the text given in the prompt: keep durable decisions, preferences, constraints, facts and the context they need, drop temporary progress and repetition, and never invent anything. Independent compressions in different scopes can be called in the same response.`;
+Summarize only supplied records, retaining durable decisions, constraints, facts and needed context. Omit transient progress and repetition; never invent details. Independent scopes may be compressed together.`;

@@ -13,7 +13,7 @@ import { MEMORY_CONFIG_BOUNDS } from './logFormat';
 export function buildConfigContent(cfg: MemoryConfig): string {
     const lines = [
         '# OptMem sizes for this memory.',
-        '# Edit with memory_config NAME=VALUE.',
+        '# Edit with engineering_log action=config NAME=VALUE.',
         '',
         `WAKE_LINES   = ${cfg.wakeLines}   # how many lines wake prints`,
         `ENTRY_CHARS  = ${cfg.entryChars}  # max bytes per memory`,

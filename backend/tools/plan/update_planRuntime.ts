@@ -46,40 +46,42 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
     name: 'update_plan',
     strict: true,
     description:
-      'Update an existing Markdown plan document under .graycode/plans/**.md. revision mode (the default) rewrites the plan, which then needs to be confirmed again. progress_sync only updates TODO status during implementation and leaves the plan body unchanged, so send only path, todos, updateMode and the optional changeSummary. sourceArtifact and other carry-over fields (such as sourcePath, planContent or continuationIntent) only make sense in revision mode and should not be sent with progress_sync; a sourceArtifact sent there is ignored with a warning, and fields outside this schema make the call fail.',
+      '修改 .graycode/plans/**.md 中已有计划。默认 revision 重写正文并要求用户重新确认。' +
+      'progress_sync 只更新 TODO 状态，保留正文，只传 path、todos、updateMode 和可选的 changeSummary；' +
+      'sourceArtifact 会被忽略并给出警告，schema 外字段会导致调用失败。',
     category: 'plan',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path of the existing plan document, under .graycode/plans/**.md. Reuse the path of the approved plan.'
+          description: '已有计划文档的路径，位于 .graycode/plans/**.md 下。请沿用已批准计划的路径。'
         },
-        title: { type: 'string', description: 'Optional updated plan title.' },
-        overview: { type: 'string', description: 'Optional updated one-line overview.' },
-        plan: { type: 'string', description: 'The complete updated plan in Markdown. Required in revision mode and not used in progress_sync.' },
+        title: { type: 'string', description: '可选的新标题。' },
+        overview: { type: 'string', description: '可选的新的一行概述。' },
+        plan: { type: 'string', description: '修改后的完整计划内容，使用 Markdown。revision 模式下必填，progress_sync 模式下不使用。' },
         todos: {
           type: 'array',
-          description: 'The complete TODO checklist; it replaces the previous one.',
+          description: '完整 TODO 清单，替换原有清单。',
           items: TODO_ITEM_SCHEMA
         },
         updateMode: {
           type: 'string',
-          description: 'revision (default) rewrites the plan and requires confirmation again. progress_sync only updates TODO status and accepts only path, todos, updateMode and changeSummary.',
+          description: '默认 revision 重写正文；progress_sync 仅同步 TODO 状态。',
           enum: ['revision', 'progress_sync']
         },
         sourceArtifact: {
           type: 'object',
-          description: 'Optional confirmed design or review document to link the plan to; if omitted, the existing link is kept. Only used in revision mode, and ignored with a warning in progress_sync.',
+          description: 'revision 下可更新关联的已确认来源文档，省略时保留原关联。',
           properties: {
-            type: { type: 'string', enum: ['design', 'review'] },
-            path: { type: 'string' }
+            type: { description: '来源文档类型。', type: 'string', enum: ['design', 'review'] },
+            path: { description: '来源文档路径。', type: 'string' }
           },
           required: ['type', 'path']
         },
         changeSummary: {
           type: 'string',
-          description: 'Optional short summary of what changed in this update.'
+          description: '可选的本次修改摘要。'
         }
       },
       required: ['path', 'todos']

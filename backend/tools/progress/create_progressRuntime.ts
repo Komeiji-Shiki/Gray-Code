@@ -49,17 +49,18 @@ export function createCreateProgressToolDeclaration(): ToolDeclaration {
     name: 'create_progress',
     strict: true,
     description:
-      'Create the project progress document at .graycode/progress.md, which tracks project status, phase, related documents, TODOs, milestones, risks and a change log. The result is a short progress snapshot rather than the full Markdown. If a valid progress document already exists, the call returns its snapshot with a warning instead of creating a second file; if the existing file is invalid, the call fails. status defaults to active and phase to design.',
+      '在 .graycode/progress.md 创建项目进度文档，记录状态、阶段、关联文档、TODO、里程碑、风险与日志，返回摘要快照。有效文档已存在时返回其快照并提示，文件无效时失败。' +
+      'status 默认为 active，phase 默认为 design。',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional output path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
+          description: '可选的输出路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。'
         },
-        projectName: { type: 'string', description: 'Optional readable project name. Defaults to the name of the first workspace folder.' },
-        projectId: { type: 'string', description: 'Optional stable project ID. Defaults to a slug of the project name.' },
+        projectName: { type: 'string', description: '可选的项目名称，默认取第一个工作区文件夹的名称。' },
+        projectId: { type: 'string', description: '可选的稳定项目 ID，默认由项目名称生成 slug。' },
         ...PROGRESS_TOOL_PROPERTIES,
       }
     }

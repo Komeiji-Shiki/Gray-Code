@@ -26,7 +26,7 @@ export interface RuntimeServices {
   questionTimeoutMs?: number;
   preparePrompt?: (input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; automationId?: string; signal?: AbortSignal }) => Promise<{
-    systemPrompt: string; toolNames: string[]; messageMetadata?: Record<string, unknown>; messageParts?: PlatformMessage['parts']; turnContext?: Record<string, unknown>; promptContext?: ModelInput['promptContext'];
+    systemPrompt: string; toolNames: string[]; toolApproval?: AgentDefinition['toolApproval']; messageMetadata?: Record<string, unknown>; messageParts?: PlatformMessage['parts']; turnContext?: Record<string, unknown>; promptContext?: ModelInput['promptContext'];
   }>;
   transformOutput?: (input: { run: RunRecord; message: PlatformMessage; request: ModelInput }) => Promise<PlatformMessage>;
   prepareModel?: (context: ModelRequestContext) => Promise<{ history: ConversationState; messages: PlatformMessage[] }>;
@@ -264,7 +264,8 @@ export class PlatformRuntime {
       role: 'user', parts: structuredClone(prepared?.messageParts ?? source.parts), id: source.id || randomUUID(),
       timestamp: now, parentId: history.at(-1)?.id ?? null, actorId: actor.id, isUserInput: true, runId: run.id, requestKey: run.requestKey } : undefined;
     const selection = { ...modelSelection, retryCount: scope?.modelRetryCount, promptContext: prepared?.promptContext, turnContext: prepared?.turnContext };
-    const configuredAgent = { ...agent, systemPrompt: prepared?.systemPrompt ?? agent.systemPrompt };
+    const configuredAgent = { ...agent, systemPrompt: prepared?.systemPrompt ?? agent.systemPrompt,
+      toolApproval: { ...agent.toolApproval, ...prepared?.toolApproval } };
     return { actor, workspace, state, catalog, modelSelection, prepared, run, message, selection, configuredAgent };
   }
   /** 预览与发送共用回合捕获和权限检查，但不创建任务与历史记录。 */
@@ -644,7 +645,8 @@ export class PlatformRuntime {
       const readOnly = typeof entry.tool.parallelRead === 'function' ? entry.tool.parallelRead(preparedArgs) : entry.tool.parallelRead;
       if (!readOnly) return false;
       const effects = entry.tool.effects(preparedArgs);
-      return effects.every(effect => effect === 'public_read' || effect === 'workspace_read' || effect === 'private_browser') && !needsApproval(agent, call.name, effects);
+      return effects.every(effect => effect === 'public_read' || effect === 'workspace_read' || effect === 'private_browser')
+        && !needsApproval(agent, call.name, effects, entry.tool.approvalName?.(preparedArgs));
     } catch { return false; }
   }
 
@@ -670,13 +672,16 @@ export class PlatformRuntime {
       }
       if (!entry.validate(call.args)) return finish({ success: false, code: 'INVALID_ARGUMENTS', error: `Tool arguments do not match its schema: ${JSON.stringify(entry.validate.errors)}` });
       const effects = entry.tool.effects(call.args);
+      const approvalName = entry.tool.approvalName?.(call.args);
+      const approvalRule = agent.toolApproval?.[call.name] ?? (approvalName ? agent.toolApproval?.[approvalName] : undefined);
       const actor = await this.services.actor(run.actorId, run);
       const denied = actor ? authorizeEffects(actor, effects, workspace, call.name) : 'Run account no longer exists.';
-      if (denied || agent.toolApproval?.[call.name] === 'deny') return finish({ success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' });
-      let approval = needsApproval(agent, call.name, effects);
+      if (denied || approvalRule === 'deny') return finish({ success: false, code: 'PERMISSION_DENIED', error: denied ?? 'This tool is disabled by its approval rule.' });
+      let approval = needsApproval(agent, call.name, effects, approvalName);
       let reviewReason: string | undefined;
       const reviewed = !approval && !!agent.reviewerProviderId && (agent.reviewerToolNames
-        ? agent.reviewerToolNames.includes(call.name) : effects.some(effect => !['public_read', 'workspace_read'].includes(effect)));
+        ? agent.reviewerToolNames.includes(call.name) || !!approvalName && agent.reviewerToolNames.includes(approvalName)
+        : effects.some(effect => !['public_read', 'workspace_read'].includes(effect)));
       if (reviewed) {
         if (!this.services.review) throw new Error('The configured operation reviewer is unavailable.');
         const review = await this.services.review({ agent, toolName: call.name, args: call.args, effects, signal });

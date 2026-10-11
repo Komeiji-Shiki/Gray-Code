@@ -67,7 +67,10 @@ export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {
       declaration: {
         name: 'bot_read_attachment',
         description:
-          'Inspect or read TXT/MD documents received in this Bot conversation. Documents are not added to context automatically. Use list or stat to check the byte size first, then read only the ranges you need with a character offset and limit. read returns 4000 characters by default; when nextOffset is returned, pass it as offset to read the next part. If the account has permission, the returned local path can also be opened with shell or file tools.',
+          '查看或读取当前 Bot 会话收到的 TXT/MD 文档。'
+          + '文档不会自动加入上下文，先用 list 或 stat 查看字节大小，再按字符 offset 和 limit 读取所需片段。'
+          + 'read 默认返回 4000 字符，返回 nextOffset 时将其作为下次 offset。'
+          + '账号有权限时，也可用终端或文件工具打开返回的本地路径。',
         parameters: {
           type: 'object',
           properties: {
@@ -138,7 +141,10 @@ export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {
       declaration: {
         name: 'bot_send_attachment',
         description:
-          'Send an image or document from an authorized local path to the Bot conversation that started this task. The destination is fixed to that conversation. Images are displayed as images; other files are sent as documents. Inspect the returned delivery status: queued or unknown delivery must be handled through the outbox, not by calling this tool again.',
+          '将有权访问的本地图片或文档发送到发起本任务的 Bot 会话，接收方固定为该会话。'
+          + '图片按图片展示，其他文件按文档发送。'
+          + '检查返回的投递状态；'
+          + 'queued 或 unknown 应通过发件箱处理，不能重复调用本工具发送。',
         parameters: { type: 'object', properties: { path: { type: 'string', minLength: 1 } }, required: ['path'], additionalProperties: false },
       },
       effects: () => ['workspace_read', 'external_send'],

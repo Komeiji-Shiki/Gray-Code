@@ -330,6 +330,7 @@ const sharedJa = {
                 },
                 toolDescriptions: {
                     context_status: backendJa.tools.runtimeControl.contextStatusDescription,
+                    engineering_log: backendJa.tools.runtimeControl.engineeringLogDescription,
                     office_create: backendJa.tools.office.createDescription,
                     office_edit: backendJa.tools.office.editDescription,
                     office_read: backendJa.tools.office.readDescription,
@@ -337,6 +338,7 @@ const sharedJa = {
                 },
                 toolDisplayNames: {
                     context_status: backendJa.tools.runtimeControl.contextStatusName,
+                    engineering_log: backendJa.tools.runtimeControl.engineeringLogName,
                     office_create: backendJa.tools.office.createName,
                     office_edit: backendJa.tools.office.editName,
                     office_read: backendJa.tools.office.readName,

@@ -71,7 +71,7 @@ async function memoryForgetHandler(args: Record<string, unknown>, context?: Tool
                 success: true,
                 data: {
                     removed: result.removed,
-                    message: `Removed memory #${id}. Later ids may have been renumbered; run memory_wake to refresh before further deletes.`,
+                    message: `Removed memory #${id}. Later ids may have changed; run engineering_log action=wake before further deletes.`,
                 },
             };
         }
@@ -89,7 +89,7 @@ async function memoryForgetHandler(args: Record<string, unknown>, context?: Tool
                 success: true,
                 data: {
                     removed: result.removed,
-                    message: `Removed ${result.removed} raw memories #${lo}-#${hi}. Later ids may have been renumbered; run memory_wake to refresh before further deletes.`,
+                    message: `Removed ${result.removed} raw memories #${lo}-#${hi}. Later ids may have changed; run engineering_log action=wake before further deletes.`,
                 },
             };
         }
@@ -100,7 +100,7 @@ async function memoryForgetHandler(args: Record<string, unknown>, context?: Tool
             success: true,
             data: {
                 gone: result.gone,
-                message: `Forgot ${result.gone} summaries, from ${result.firstId} up. Run memory_compress to rebuild.`,
+                message: `Forgot ${result.gone} summaries, from ${result.firstId} up. Run engineering_log action=compress to rebuild.`,
             },
         };
     } catch (e: any) {

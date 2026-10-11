@@ -32,25 +32,25 @@ export function createFinalizeReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'finalize_review',
     description:
-      'Finish the review in progress: record the final conclusion and decision, tidy the structure of its document under .graycode/review/**.md and update the final summary. path must be the document of the review currently in progress. After this call, no more milestones can be recorded unless the review is reopened with reopen_review.',
+      '结束当前会话进行中的审查，写入最终结论与决定，整理文档并更新摘要。path 必须指向当前审查；之后须先用 reopen_review 才能继续记录里程碑。',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Path of the review document, under .graycode/review/**.md.' },
-        conclusion: { type: 'string', description: 'Final conclusion of the review.' },
+        path: { type: 'string', description: '审查文档路径，位于 .graycode/review/**.md 下。' },
+        conclusion: { type: 'string', description: '审查的最终结论。' },
         overallDecision: {
           type: 'string',
           enum: ['accepted', 'conditionally_accepted', 'rejected', 'needs_follow_up'],
-          description: 'Optional overall decision.'
+          description: '可选的总体决定。'
         },
         recommendedNextAction: {
           type: 'string',
-          description: 'Optional recommended next step to show in the summary.'
+          description: '可选，要显示在摘要中的建议下一步。'
         },
         reviewedModules: {
           type: 'array',
-          description: 'Optional modules covered by the review, merged into the summary.',
+          description: '可选，本次审查覆盖的模块数组，会合并到摘要。',
           items: { type: 'string' }
         }
       },

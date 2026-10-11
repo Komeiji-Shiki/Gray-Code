@@ -18,6 +18,7 @@ import type {
 } from "@graycode/contracts";
 import { PlatformStorage, RuntimeToolRegistry } from "@graycode/core";
 import { revealSettingsFields, sealSettingsFields } from './sealedFields';
+import { upgradeAgentToolNames } from './agent';
 
 export interface SecretCodec {
   encrypt(value: string): Promise<Uint8Array>;
@@ -380,7 +381,7 @@ export class SettingsService<T = never> {
     for (const agent of settings.agents) {
       if (agent.modelId !== undefined && (typeof agent.modelId !== 'string' || !agent.modelId.trim())) throw new Error('智能体默认模型格式无效。');
       if (agent.reviewerApi !== undefined && agent.reviewerApi !== 'systemone') throw new Error('审核接口类型无效。');
-      this.tools.catalog(agent.toolNames);
+      this.tools.catalog(upgradeAgentToolNames(agent).toolNames);
       if (agent.reviewerToolNames !== undefined && (!Array.isArray(agent.reviewerToolNames) || agent.reviewerToolNames.some(name => typeof name !== 'string' || !name))) throw new Error('审核工具列表无效。');
       if (
         agent.providerId &&

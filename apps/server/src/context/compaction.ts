@@ -15,6 +15,7 @@ import type { CapturedBotEnvironment } from '../bots/prompt';
 import { PlatformPromptService } from '../prompt/service';
 import type { PlatformApplication } from '../application';
 import type { CapturedContext } from './captured';
+import { configuredAgent } from '../settings/agent';
 
 export type ModelPrefix = Pick<ModelInput, 'conversationId' | 'providerId' | 'modelOverride' | 'reasoningEffort' | 'systemPrompt' | 'tools' | 'promptContext' | 'taskContext' | 'turnContext'>;
 export interface ContextBoundaryResult { summaryContent: Content; insertIndex: number; removedCount: number }
@@ -103,9 +104,10 @@ export async function manualSummaryPrefix(app: PlatformApplication, frame: Captu
   const saved = run ? await app.storage.getRecord('model-requests', `${run.id}:${run.iteration}`) as { prefix?: ModelPrefix } | null : undefined;
   if (saved?.prefix) return { ...structuredClone(saved.prefix), providerId, modelOverride: modelOverride ?? (saved.prefix.providerId === providerId ? saved.prefix.modelOverride : undefined) };
   const { agents } = app.settings.read('agents');
-  const agent = agents.find(item => item.id === run?.agentId) ?? agents[0];
+  const storedAgent = agents.find(item => item.id === run?.agentId) ?? agents[0];
   const actor = app.actor(run?.actorId ?? actorId);
-  if (!agent || !actor) throw new Error('无法恢复当前会话使用的模型前缀。');
+  if (!storedAgent || !actor) throw new Error('无法恢复当前会话使用的模型前缀。');
+  const agent = configuredAgent(app, storedAgent);
   const previousTurn = frame.state.history.messages.findLast(isHistoricalUserInput);
   const workspace = typeof frame.state.metadata.workspaceId === 'string' ? app.settings.find('workspaces', frame.state.metadata.workspaceId) : undefined;
   const prepared = await new PlatformPromptService(app).prepare({ agent, actor, workspace, conversation: frame.state.metadata,

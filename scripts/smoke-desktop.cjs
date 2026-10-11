@@ -174,9 +174,9 @@ async function main() {
     const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
     const completed = body.messages.filter(message => message.role === 'tool').length;
     let tool;
-    if (!completed) tool = call('smoke-write', 'workspace_files', { action: 'write', path: 'generated.txt', content: 'Desktop model/tool integration verified.', expectedHash: null });
+    if (!completed) tool = call('smoke-write', 'write_file', { path: 'generated.txt', content: 'Desktop model/tool integration verified.' });
     else if (completed === 1) tool = call('smoke-question', 'ask_user', { questions: [{ title: '选择验证结果标签', options: ['已验证', '继续检查'] }] });
-    else if (answerReceived && completed === 2) tool = call('smoke-command', 'run_command', { command: 'powershell.exe', args: ['-NoProfile', '-Command', 'Remove-Item -LiteralPath generated.txt'] });
+    else if (answerReceived && completed === 2) tool = call('smoke-command', 'execute_command', { mode: 'argv', command: 'powershell.exe', args: ['-NoProfile', '-Command', 'Remove-Item -LiteralPath generated.txt'] });
     else if (answerReceived && completed === 3) tool = [
       call('smoke-read-batch', 'read_file', { files: [{ path: 'generated.txt' }, { path: 'missing-fixture.txt' }] }),
       call('smoke-context-status', 'context_status', {}),
@@ -203,6 +203,8 @@ async function main() {
   await ui('config.updateConfig', { configId, updates: { url: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'smoke-only', model: 'smoke-model',
     models: [{ id: 'smoke-model', name: 'smoke-model' }], preferStream: false, timeout: 10000 } });
   await ui('settings.setActiveChannelId', { channelId: configId });
+  // 写文件由既有 Diff 配置自动应用，后续仍单独验证危险命令的审批拒绝。
+  await ui('tools.updateApplyDiffConfig', { config: { autoSave: true, autoApplyWithoutDiffView: true } });
   // 夹具按中文标签操作设置；显式保存语言，避免英文 runner 的自动检测改变控件文案。
   await ui('updateUISettings', { ui: { language: 'zh-CN' } });
   const saved = await ui('ui.settings.save');

@@ -31,25 +31,26 @@ export function createShowWindowsNotificationToolDeclaration(): ToolDeclaration 
     name: 'show_windows_notification',
     strict: true,
     category: 'notification',
-    description: 'Show a Windows system notification with a title and message. Use it to reach the user outside the chat, for example when a long task finishes, user action is needed, or an important status changes. On other platforms the tool reports that notifications are not supported.',
+    description: '显示包含标题和正文的 Windows 系统通知，用于长任务完成、需要用户操作或重要状态变化时在聊天外提醒用户。'
+          + '其他系统会返回不支持通知。',
     parameters: {
       type: 'object',
       properties: {
         title: {
           type: 'string',
-          description: 'Notification title; keep it short and clear.'
+          description: '简短、清楚的通知标题。'
         },
         message: {
           type: 'string',
-          description: 'Notification body, summarizing what the user needs to know.'
+          description: '通知正文，说明用户需要知道的内容。'
         },
         silent: {
           type: 'boolean',
-          description: 'Whether to play the notification without sound; default true.'
+          description: '是否静音，默认 true。'
         },
         openChatOnClick: {
           type: 'boolean',
-          description: 'Whether clicking the notification opens the GrayCode chat view; default true.'
+          description: '点击通知时是否打开 GrayCode 聊天界面，默认 true。'
         }
       },
       required: ['title', 'message']

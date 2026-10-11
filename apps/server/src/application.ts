@@ -69,7 +69,6 @@ import { SettingsService, type SecretCodec } from "./settings/service";
 import { WorkspaceFiles } from "./workspace/files";
 import { WorkspaceFileActions } from './workspace/fileActions';
 import { WorkspaceProcesses } from "./workspace/processes";
-import { workspaceTools } from "./workspace/tools";
 import { WorkspaceGit } from "./workspace/git";
 import { WorkspaceSearch } from './workspace/search';
 import { WorkspaceChanges } from './workspace/changes';
@@ -258,8 +257,6 @@ export class PlatformApplication {
         if (notification.type === 'event' && event?.runId && ['run.completed', 'run.failed', 'run.cancelled'].includes(event.type ?? '')) this.browser?.finishRun(event.runId);
       });
     }
-    for (const tool of workspaceTools(this.files, this.processes, this.changes))
-      this.tools.register(tool);
     for (const tool of mutationTools(this, DEFAULT_APPLY_DIFF_CONFIG.format)) this.tools.register(tool);
     for (const tool of languageTools(this)) this.tools.register(tool);
     for (const tool of readTools(this)) this.tools.register(tool);

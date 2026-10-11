@@ -330,6 +330,7 @@ const sharedZhCN = {
                 },
                 toolDescriptions: {
                     context_status: backendZhCN.tools.runtimeControl.contextStatusDescription,
+                    engineering_log: backendZhCN.tools.runtimeControl.engineeringLogDescription,
                     office_create: backendZhCN.tools.office.createDescription,
                     office_edit: backendZhCN.tools.office.editDescription,
                     office_read: backendZhCN.tools.office.readDescription,
@@ -337,6 +338,7 @@ const sharedZhCN = {
                 },
                 toolDisplayNames: {
                     context_status: backendZhCN.tools.runtimeControl.contextStatusName,
+                    engineering_log: backendZhCN.tools.runtimeControl.engineeringLogName,
                     office_create: backendZhCN.tools.office.createName,
                     office_edit: backendZhCN.tools.office.editName,
                     office_read: backendZhCN.tools.office.readName,

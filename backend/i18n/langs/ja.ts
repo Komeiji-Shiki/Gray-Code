@@ -705,6 +705,8 @@ const ja: BackendLanguageMessages = {
             thresholdTokens: 'しきい値トークン数', contextId: 'コンテキスト ID', initial: '初期コンテキスト',
         },
         runtimeControl: {
+            engineeringLogName: '開発ログ',
+            engineeringLogDescription: 'プロジェクトの規約や技術的な経験を読み取り、記録、整理します。',
             contextStatusName: 'コンテキスト状態',
             contextStatusDescription: '現在のトークン使用量と要約方針を確認',
             terminalTaskName: 'バックグラウンド端末タスク',

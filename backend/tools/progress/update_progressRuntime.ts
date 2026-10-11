@@ -68,14 +68,14 @@ export function createUpdateProgressToolDeclaration(): ToolDeclaration {
     name: 'update_progress',
     strict: true,
     description:
-      'Update the existing project progress document at .graycode/progress.md. Only the fields you pass are changed: activeArtifacts updates only the keys you provide, todos and risks replace their whole lists, and appendLog adds entries to the end of the log. The result is a short progress snapshot that lists the changed sections.',
+      '修改 .graycode/progress.md 的传入字段：activeArtifacts 按键更新，todos 和 risks 整体替换，appendLog 追加日志。返回进度快照和修改的字段。',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional target path. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
+          description: '可选的目标路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。'
         },
         ...PROGRESS_TOOL_PROPERTIES,
         appendLog: PROGRESS_LOG_APPEND_SCHEMA,

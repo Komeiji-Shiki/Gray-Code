@@ -14,7 +14,7 @@ import type { SubAgentToolsConfig } from '../../../backend/modules/settings/type
 import { encodeMcpToolName } from '../../../shared/mcpToolNameCodec';
 import { fixture } from './fixtures';
 
-const FILE_TOOLS = ['workspace_files', 'read_file', 'list_files', 'find_files', 'search_in_files', 'search_files',
+const FILE_TOOLS = ['read_file', 'list_files', 'find_files', 'search_in_files',
   'write_file', 'apply_diff', 'insert_code', 'delete_code', 'create_directory', 'delete_file'];
 const MCP_TOOL = encodeMcpToolName('fixture', 'read_file');
 const OTHER_MCP_TOOL = encodeMcpToolName('other', 'read_file');
@@ -77,11 +77,12 @@ describe('子代理设置保存到模型请求的工具范围', () => {
       url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, apiKey: '', timeout: 3000 });
     await draft.configs.updateConfig(providerId, { preferStream: false, options: { stream: false } });
     await draft.settings.updateSummarizeConfig({ method: 'summary' });
+    await draft.settings.updateApplyDiffConfig({ autoSave: true, autoApplyWithoutDiffView: true });
     workspace = { id: 'tool-config-workspace', name: '隔离工作区', deviceId: 'local', directory: f.source };
     draft.app.workspaces.push(workspace);
     agent = { ...draft.app.agents[0], id: 'tool-config-parent', name: '工具范围测试', providerId,
       toolNames: [...FILE_TOOLS, 'subagents', 'execute_command', 'get_symbols', 'goto_definition', 'find_references', MCP_TOOL, OTHER_MCP_TOOL, 'mcp_probe'],
-      toolApproval: { workspace_files: 'auto' }, maxIterations: 8 };
+      toolApproval: { write_file: 'auto' }, maxIterations: 8 };
     draft.app.agents.push(agent);
     await subagentSettingsHandlers(draft, app)['subagents.create']({ type: 'editor', name: '并行修改者', enabled: true,
       channel: { channelId: providerId }, tools: { mode: 'all' }, systemPrompt: '只处理分配的任务。' });
@@ -102,8 +103,8 @@ describe('子代理设置保存到模型请求的工具范围', () => {
   test('设置页具名白名单保留所有勾选文件工具，读取/写入及请求前缀均正常', async () => {
     await saveTools({ mode: 'whitelist', whitelist: [...FILE_TOOLS] });
     await writeFile(path.join(f.source, 'source.txt'), '文件读取证据', 'utf8');
-    childCalls = [{ name: 'workspace_files', args: { action: 'read', path: 'source.txt' } },
-      { name: 'workspace_files', args: { action: 'write', path: 'created.txt', content: '子代理写入证据', expectedHash: null } }];
+    childCalls = [{ name: 'read_file', args: { path: 'source.txt' } },
+      { name: 'write_file', args: { path: 'created.txt', content: '子代理写入证据' } }];
     const child = await dispatch();
     expect(child.profile.toolNames).toEqual([...FILE_TOOLS].sort());
     const inputs = childInputs(child.conversationId);
@@ -143,15 +144,15 @@ describe('子代理设置保存到模型请求的工具范围', () => {
   });
 
   test.each([
-    { mode: 'blacklist', blacklist: ['workspace_files', 'write_file'] },
-    { mode: 'blacklist', list: ['workspace_files', 'write_file'] },
+    { mode: 'blacklist', blacklist: ['delete_file', 'write_file'] },
+    { mode: 'blacklist', list: ['delete_file', 'write_file'] },
   ] as SubAgentToolsConfig[])('具名和旧黑名单都排除配置项：%j', async tools => {
     await saveTools(tools);
     const child = await dispatch();
-    expect(child.profile.toolNames).not.toContain('workspace_files');
+    expect(child.profile.toolNames).not.toContain('delete_file');
     expect(child.profile.toolNames).not.toContain('write_file');
     expect(child.profile.toolNames).toContain('read_file');
-    expect(names(childInputs(child.conversationId)[0])).not.toContain('workspace_files');
+    expect(names(childInputs(child.conversationId)[0])).not.toContain('delete_file');
   });
 
   test('显式空黑名单优先于遗留 list，仍与父范围和全局关闭取交集', async () => {
@@ -160,7 +161,7 @@ describe('子代理设置保存到模型请求的工具范围', () => {
     const child = await dispatch();
     expect(child.profile.toolNames).toContain('read_file');
     expect(child.profile.toolNames).not.toContain('write_file');
-    expect(child.profile.toolNames).not.toContain('run_command');
+    expect(child.profile.toolNames).not.toContain('terminal_task');
   });
 
   test('General Worker 继承捕获的父工具集合，不继承另一个代理的白名单、不补全集', async () => {
@@ -168,15 +169,15 @@ describe('子代理设置保存到模型请求的工具范围', () => {
     const draft = await app.product.draft(); await draft.settings.setToolEnabled('write_file', false); await app.product.save(draft);
     const general = await dispatch('General Worker');
     expect(general.profile.toolNames).toEqual(context().agent!.toolNames.filter(name => name !== 'write_file'));
-    expect(general.profile.toolNames).toContain('workspace_files');
-    expect(general.profile.toolNames).not.toContain('run_command');
+    expect(general.profile.toolNames).toContain('read_file');
+    expect(general.profile.toolNames).not.toContain('terminal_task');
     const emptyParent = { ...context(), agent: { ...agent, toolNames: [] } } as SubagentLaunchContext;
     expect(createSubagentRecord(app, { agentName: 'General Worker' }, emptyParent, 1).profile.toolNames).toEqual([]);
     expect(createSubagentRecord(app, { agentName: 'General Worker' }, context() as SubagentLaunchContext, 2).profile.toolNames).not.toContain('subagents');
   });
 
   test('工具名称精确匹配：内置旧名和编码 MCP 名均可用，不把 namespace 或另一服务的同名工具当授权', async () => {
-    await saveTools({ mode: 'whitelist', whitelist: ['goto_definition', MCP_TOOL, 'default.read_file', 'run_command'] });
+    await saveTools({ mode: 'whitelist', whitelist: ['goto_definition', MCP_TOOL, 'default.read_file', 'terminal_task'] });
     const child = await dispatch();
     expect(child.profile.toolNames).toEqual(['goto_definition', MCP_TOOL]);
     expect(names(childInputs(child.conversationId)[0])).not.toContain(OTHER_MCP_TOOL);
@@ -203,13 +204,13 @@ describe('子代理设置保存到模型请求的工具范围', () => {
     parent = await app.runtime.start({ actorId: 'reader', agentId: agent.id, conversationId: parent.conversationId, workspaceId: workspace.id,
       requestKey: 'reader-parent', message: { role: 'user', parts: [{ text: '只读验证' }] } });
     await app.runtime.wait(parent.id);
-    await saveTools({ mode: 'whitelist', whitelist: ['workspace_files'] });
-    childCalls = [{ name: 'workspace_files', args: { action: 'write', path: 'denied.txt', content: '不可写', expectedHash: null } },
-      { name: 'write_file', args: { path: 'undeclared.txt', content: '不可写' } }];
+    await saveTools({ mode: 'whitelist', whitelist: ['write_file'] });
+    childCalls = [{ name: 'write_file', args: { path: 'denied.txt', content: '不可写' } },
+      { name: 'apply_diff', args: { path: 'undeclared.txt', hunks: [{ oldContent: '', newContent: '不可写' }] } }];
     const child = await dispatch();
     const history = (await app.storage.readFullHistory(child.conversationId)).messages;
     const outcomes = history.flatMap(message => message.parts).flatMap(part => part.functionResponse ? [(part.functionResponse as { response: unknown }).response] : []);
-    expect(child.profile.toolNames).toEqual(['workspace_files']);
+    expect(child.profile.toolNames).toEqual(['write_file']);
     expect(outcomes).toMatchObject([
       { success: false, code: 'PERMISSION_DENIED' },
       { success: false, code: 'UNKNOWN_TOOL' },

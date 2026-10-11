@@ -82,6 +82,7 @@ import './memory/memory_compress'
 import './memory/memory_zoom'
 import './memory/memory_forget'
 import './memory/memory_config'
+import './memory/engineering_log'
 
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'

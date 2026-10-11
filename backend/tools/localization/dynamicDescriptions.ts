@@ -5,8 +5,8 @@
  * - 为 read_file 与 5 个图片工具（generate_image / remove_background / crop_image /
  *   resize_image / rotate_image）生成语言感知的模型可见说明（zh-CN 中文 / en 英文）。
  * - 这些工具的顶层说明依赖运行时信息（多模态能力、渠道类型、工具模式、动态任务上限、
- *   宽高比/尺寸参数开关、多根工作区名称等），不能由静态本地化目录覆盖；
- *   目录（catalogs）只负责参数说明，本模块负责动态工具的顶层说明与动态参数说明。
+ *   宽高比/尺寸参数开关、多根工作区名称等），由工具工厂调用本模块统一生成，
+ *   同时提供顶层说明与对应参数说明。
  * - 语言选择由调用方（各工具工厂）通过 getActualLanguage() + resolveLocalizationLanguage()
  *   完成，本模块函数接收 LocalizationLanguage，保持纯函数、便于测试。
  * - ja 由 resolveLocalizationLanguage 映射到 en（本阶段日文暂用英文模型说明）。

@@ -121,7 +121,7 @@ export class MemoryEngine {
             for (const [a, b] of [[lo, mid], [mid, hi]] as Array<[number, number]>) {
                 const s = await this.treeGet(a, b);
                 if (s === null) {
-                    die(`The summary of #${a}-${b - 1} is blank. Run: memory_forget ${a}-${b - 1}`);
+                    die(`The summary of #${a}-${b - 1} is blank. Run: engineering_log action=forget blockId=${a}-${b - 1}`);
                 }
                 halves.push(`  #${a}-${b - 1} ${s}`);
             }
@@ -136,11 +136,11 @@ export class MemoryEngine {
         //          提示语必须使用同一预算并按字节计，否则模型按 entryChars 生成超长摘要必然被拒。
         const summaryLimit = this.summaryLimit();
         const urgency = required
-            ? 'This block is required before memory_wake can finish.'
-            : 'Deferred maintenance: do not interrupt the current user task. Compress it after the current deliverable, or when memory_wake later requires it.';
+            ? 'This block is required before engineering_log action=wake can finish.'
+            : 'Deferred maintenance: finish the current deliverable first, unless engineering_log action=wake requires this block.';
         const prompt = `${urgency}\nCompress memories #${lo}-${hi - 1} into one line of at most ${summaryLimit} bytes.\n` +
             `Preserve durable decisions, preferences, constraints, and facts with their context. Drop transient progress and repetition. Invent nothing.\n\n${body}${tail}\n` +
-            `Run: memory_compress "${blockId}" "<your line>"`;
+            `Run: engineering_log action=compress blockId="${blockId}" summary="<your line>"`;
 
         return { blockId, lo, hi, prompt, remaining, required };
     }
@@ -222,7 +222,7 @@ export class MemoryEngine {
         const now = await this.logLen();
         const snapshotT = T ?? now;
         if (snapshotT > now) {
-            die(`T=${snapshotT}, but the log holds ${plural(now, 'memory')}. Run memory_wake.`);
+            die(`T=${snapshotT}, but the log holds ${plural(now, 'memory')}. Run engineering_log action=wake.`);
         }
 
         if (snapshotT === 0) {
@@ -254,9 +254,9 @@ export class MemoryEngine {
                 const lastId = await this.rawEntryIdAt(hi - 1);
                 const truncated = lastId === null && (await this.logLen()) <= hi - 1;
                 if (lastId !== null || truncated) {
-                    die(`The log changed while reading #${lo}-${hi - 1}. Run memory_wake again.`);
+                    die(`The log changed while reading #${lo}-${hi - 1}. Run engineering_log action=wake again.`);
                 }
-                die(`Record #${hi - 1} is corrupted. Run memory_wake again.`);
+                die(`Record #${hi - 1} is corrupted. Run engineering_log action=wake again.`);
             }
             for (const e of entries) {
                 lines.push(`#${e.id} ${e.date} ${e.text}`);
@@ -282,13 +282,13 @@ export class MemoryEngine {
                     throw new Error(
                         `Cannot wake: the memory context needs #${lo}-${hi - 1}, ` +
                         `which is not compressed yet.\nDo the ${plural(pc, 'compression')} below, ` +
-                        `then run memory_wake again.\n\n${nap.prompt}`
+                        `then run engineering_log action=wake again.\n\n${nap.prompt}`
                     );
                 }
                 s = await this.treeGet(lo, hi); // 并行会话可能已完成
             }
             if (s === null) {
-                die(`The summary of #${lo}-${hi - 1} is blank. Run: memory_forget ${lo}-${hi - 1}`);
+                die(`The summary of #${lo}-${hi - 1} is blank. Run: engineering_log action=forget blockId=${lo}-${hi - 1}`);
             }
             lines.push(`#${lo}-${hi - 1} ${s}`);
         }
@@ -300,7 +300,7 @@ export class MemoryEngine {
         const k = part ?? 1;
         // 非整数 part（如 1.5）会绕过区间校验后以 parts[1.5] 取 undefined 抛裸 TypeError
         if (!Number.isInteger(k) || k < 1 || k > parts.length) {
-            die(`No part ${k}: the memory has ${plural(parts.length, 'part')}. Run memory_wake.`);
+            die(`No part ${k}: the memory has ${plural(parts.length, 'part')}. Run engineering_log action=wake.`);
         }
 
         const awake = k >= parts.length;
@@ -433,7 +433,7 @@ export class MemoryEngine {
                 // 而不是静默返回 done:0（已压缩的块重复提交仍幂等返回 done:0）。
                 const existing = await this.treeGet(lo, hi);
                 if (existing === null) {
-                    die(`Wrong block: ${blockId}. Nothing is pending for compression. Run memory_compress.`);
+                    die(`Wrong block: ${blockId}. Nothing is pending for compression. Run engineering_log action=compress.`);
                 }
                 return { done: 0 };
             }
@@ -441,7 +441,7 @@ export class MemoryEngine {
                 const existing = await this.treeGet(lo, hi);
                 if (existing === null) {
                     die(`Wrong block: ${blockId}. Blocks are built in order; the next is ` +
-                        `${todo[0][0]}-${todo[0][1] - 1}. Run memory_compress.`);
+                        `${todo[0][0]}-${todo[0][1] - 1}. Run engineering_log action=compress.`);
                 }
             } else {
                 const trimmed = (summary || '').trim();
@@ -489,7 +489,7 @@ export class MemoryEngine {
         const [lo, hi] = this.parseBlockId(blockId);
         const T = await this.logLen();
         if (lo >= T) {
-            die(`#${blockId} is beyond the memory: it holds ${plural(T, 'memory')}. Run memory_wake.`);
+            die(`#${blockId} is beyond the memory: it holds ${plural(T, 'memory')}. Run engineering_log action=wake.`);
         }
         const mid = (lo + hi) >> 1;
         const halves: WakeBlock[] = [];

@@ -1,6 +1,6 @@
 import type { RuntimeTool } from '@graycode/core';
 import type { PlatformTerminals } from './service';
-import { ProcessSessionError } from '../workspace/processes';
+import { ProcessSessionError } from '../../../../shared/processOutput';
 import { t } from '../../../../backend/i18n';
 
 export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
@@ -8,14 +8,23 @@ export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
     declaration: {
       name: 'terminal_task',
       description:
-        '管理 execute_command 启动的后台任务。list 列出本会话在当前账号和工作区下的任务；status 查看运行状态和退出码；read 从 cursor 处读取新增输出（按 UTF-16 字符位置），下次传入返回的 nextCursor，outputLost 表示较早的输出已被丢弃；stop 终止任务的进程，不会重新执行命令。同一会话的后续运行仍可使用原 taskId。任务完成会自动通知，一般无需查询，只在诊断或需要中间输出时读取。本工具调用成功不代表命令成功，请看 exitCode 和 error。run_command 的会话请用 process_session。',
+        '管理 execute_command 创建的任务，同一账号、会话和工作区的后续运行可继续使用 taskId。' +
+        'list 列出任务，status 查询状态，read 从 UTF-16 绝对 cursor 处续读，下次使用 nextCursor；hasMore 表示仍有未读输出，outputLost 表示较早输出已被丢弃。' +
+        'input 原样写入 stdin，stop 终止该任务的进程树。background=true 有自动完成通知，其他 argv 会话按需读取。' +
+        '查询状态成功不代表命令成功，请检查 exitCode 和 error；argv 续读遇到非零退出会返回 COMMAND_EXIT_NONZERO。',
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'status', 'read', 'stop'] },
+          action: { type: 'string', enum: ['list', 'status', 'read', 'input', 'stop'] },
           taskId: { type: 'string', minLength: 1 },
+          text: { type: 'string', description: '仅用于 input：原样写入的文字，提交一行时自行在末尾包含换行符（\\n）。' },
           cursor: { type: 'integer', minimum: 0 },
-          maxChars: { type: 'integer', minimum: 1, maximum: 256000, default: 12000 },
+          maxChars: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 256000,
+            description: '每次读取的 UTF-16 字符上限；Shell 任务默认 12000，argv 会话默认返回全部保留输出。',
+          },
           offset: { type: 'integer', minimum: 0, description: 'list 的分页位置，传入上次返回的 nextOffset 即可读取下一页。' },
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
         },
@@ -23,8 +32,10 @@ export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
         additionalProperties: false,
       },
     },
-    parallelRead: (args) => args.action !== 'stop',
-    effects: (args) => (args.action === 'stop' ? ['process_execute'] : ['workspace_read']),
+    parallelRead: (args) => ['list', 'status', 'read'].includes(String(args.action)),
+    approvalName: (args) => (args.action === 'input' ? 'process_session' : 'terminal_task'),
+    effects: (args) =>
+      args.action === 'input' ? ['process_execute', 'high_risk'] : args.action === 'stop' ? ['process_execute'] : ['workspace_read'],
     execute: async (args, context) => {
       try {
         return await terminals.manageTask(args, context);
@@ -34,7 +45,7 @@ export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
             success: false,
             code: error.code,
             error: error.message,
-            ...(error.code === 'INVALID_CURSOR'
+            ...(['INVALID_CURSOR', 'EXITED', 'INPUT_CLOSED'].includes(error.code)
               ? {
                   data: {
                     taskId: args.taskId,
@@ -42,7 +53,11 @@ export function terminalTaskTool(terminals: PlatformTerminals): RuntimeTool {
                       {
                         tool: 'terminal_task',
                         args: { action: 'read', taskId: args.taskId },
-                        when: t('tools.terminal.nextActions.terminalResetCursor'),
+                        when: t(
+                          error.code === 'INVALID_CURSOR'
+                            ? 'tools.terminal.nextActions.terminalResetCursor'
+                            : 'tools.terminal.nextActions.processInspect',
+                        ),
                       },
                     ],
                   },

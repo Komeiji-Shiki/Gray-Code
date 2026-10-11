@@ -179,6 +179,7 @@ export const REVIEW_MODE_TOOL_POLICY: string[] = [
     'subagents',
     'create_review',
     'validate_review_document',
+    'compare_review_documents',
     'create_progress',
     'update_progress',
     'record_progress_milestone',

@@ -157,9 +157,9 @@ async function memoryWakeHandler(args: Record<string, unknown>, context?: ToolCo
             if (globalSkipped || wsSkipped) {
                 // 两个作用域都为空是因为续读越界（都已读完全部 part），
                 // 不应误导为「没有记忆」——按旧行为报错让模型重新 wake
-                throw new Error(`No part ${part}: memory already fully read. Run memory_wake.`);
+                throw new Error(`No part ${part}: memory already fully read. Run engineering_log action=wake.`);
             }
-            lines.push('No memories yet. Record the first with memory_note.');
+            lines.push('No memories yet. Record the first with engineering_log action=note.');
             lines.push('You are awake.');
         } else {
             // 全局段（双段并存时加段首标注，便于模型区分两个作用域）
@@ -182,13 +182,13 @@ async function memoryWakeHandler(args: Record<string, unknown>, context?: ToolCo
 
             if (!awake) {
                 if (globalResult && !globalResult.awake && (!wsResult || wsResult.awake)) {
-                    lines.push(`Not awake yet. Run: memory_wake part=${globalResult.part + 1} snapshotT=${globalResult.totalMemories}`);
+                    lines.push(`Not awake yet. Run: engineering_log action=wake part=${globalResult.part + 1} snapshotT=${globalResult.totalMemories}`);
                 } else if (wsResult && !wsResult.awake && (!globalResult || globalResult.awake)) {
-                    lines.push(`Not awake yet. Run: memory_wake part=${wsResult.part + 1} snapshotT=${wsResult.totalMemories}`);
+                    lines.push(`Not awake yet. Run: engineering_log action=wake part=${wsResult.part + 1} snapshotT=${wsResult.totalMemories}`);
                 } else {
                     // 两个作用域都未完：共用同一个 part 参数推进（已读完的作用域会自动跳过）
                     const nextPart = Math.max(globalResult?.part ?? 1, wsResult?.part ?? 1) + 1;
-                    lines.push(`Not awake yet. Run: memory_wake part=${nextPart}`);
+                    lines.push(`Not awake yet. Run: engineering_log action=wake part=${nextPart}`);
                 }
             } else {
                 lines.push('You are awake.');

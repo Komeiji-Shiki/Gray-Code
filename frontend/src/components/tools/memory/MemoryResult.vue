@@ -2,13 +2,13 @@
 /**
  * MemoryResult — 记忆系列工具的统一结果展示组件
  *
- * 覆盖 memory_wake / memory_note / memory_recall / memory_compress /
- *       memory_zoom / memory_forget / memory_config
+ * 展示 engineering_log，并保留旧 memory_* 工具的历史卡片。
  *
  * 展示模型传入的参数（args）和工具返回的文本结果（data.text），
  * 确保用户展开工具卡片后能看到完整的输入和输出。
  */
 import { computed } from 'vue'
+import { getToolDisplayName } from '../../../utils/toolLocalization'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -58,6 +58,9 @@ const stats = computed(() => {
 
 /** 工具标题 */
 const toolTitle = computed(() => {
+  if (props.toolName === 'engineering_log') {
+    return `${getToolDisplayName('engineering_log')} · ${getToolDisplayName(`memory_${props.args.action}`)}`
+  }
   const titles: Record<string, string> = {
     memory_wake: 'Memory Wake',
     memory_note: 'Memory Note',
@@ -72,6 +75,7 @@ const toolTitle = computed(() => {
 
 /** 工具图标 */
 const toolIcon = computed(() => {
+  if (props.toolName === 'engineering_log') return 'codicon-book'
   const icons: Record<string, string> = {
     memory_wake: 'codicon-bell',
     memory_note: 'codicon-edit',

@@ -40,86 +40,88 @@ export function createRecordReviewMilestoneToolDeclaration(): ToolDeclaration {
   return {
     name: 'record_review_milestone',
     description:
-      'Add a milestone to the review in progress and update the summary, findings and statistics of its document under .graycode/review/**.md. path must be the document of the review currently in progress in this conversation. After finalize_review, milestones can no longer be recorded unless the review is reopened with reopen_review.',
+      '为当前会话进行中的审查追加里程碑，更新文档摘要、发现与统计。path 必须指向当前审查；结束后须先用 reopen_review 重新打开。',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Path of the review document, under .graycode/review/**.md.' },
-        milestoneId: { type: 'string', description: 'Optional milestone ID. Generated automatically if omitted.' },
-        milestoneTitle: { type: 'string', description: 'Milestone title.' },
-        summary: { type: 'string', description: 'Milestone summary in Markdown.' },
-        status: { type: 'string', enum: ['in_progress', 'completed'], description: 'Milestone status.' },
-        conclusion: { type: 'string', description: 'Optional latest conclusion to show in the review summary.' },
+        path: { type: 'string', description: '审查文档路径，位于 .graycode/review/**.md 下。' },
+        milestoneId: { type: 'string', description: '可选的里程碑 ID，不传时自动生成。' },
+        milestoneTitle: { type: 'string', description: '里程碑标题。' },
+        summary: { type: 'string', description: '里程碑摘要，使用 Markdown。' },
+        status: { type: 'string', enum: ['in_progress', 'completed'], description: '里程碑状态。' },
+        conclusion: { type: 'string', description: '可选，要显示在审查摘要中的最新结论。' },
         evidenceFiles: {
           type: 'array',
-          description: 'Optional file paths that serve as evidence. Use them when you cannot point to specific lines.',
+          description: '可选的证据文件路径数组。无法指出具体行号时使用。',
           items: { type: 'string' }
         },
         evidence: {
           type: 'array',
-          description: 'Optional evidence references, each with a file path and optional lines, symbol or excerpt hash.',
+          description: '可选的证据引用数组，每项包含文件路径，以及可选的行号、符号或片段哈希。',
           items: {
             type: 'object',
             properties: {
-              path: { type: 'string' },
-              lineStart: { type: 'number' },
-              lineEnd: { type: 'number' },
-              symbol: { type: 'string' },
-              excerptHash: { type: 'string' }
+              path: { description: '证据文件路径。', type: 'string' },
+              lineStart: { description: '可选的起始行号，从 1 开始。', type: 'number' },
+              lineEnd: { description: '可选的结束行号，从 1 开始。', type: 'number' },
+              symbol: { description: '可选的符号名。', type: 'string' },
+              excerptHash: { description: '可选的证据片段哈希。', type: 'string' }
             },
             required: ['path']
           }
         },
         findings: {
           type: 'array',
-          description: 'Optional findings as plain text, merged into the findings section. Prefer structuredFindings.',
+          description: '可选的纯文本问题数组，会合并到问题区。优先使用 structuredFindings。',
           items: { type: 'string' }
         },
         structuredFindings: {
           type: 'array',
-          description: 'Optional structured findings, merged into the findings section. Keep each title short and put the explanation in description.',
+          description: '可选的结构化问题数组，会合并到问题区。标题保持简短，详细说明写在 description 中。',
           items: {
             type: 'object',
             properties: {
-              id: { type: 'string', description: 'Optional short, stable finding ID. Leave it out unless you already have one.' },
-              severity: { type: 'string', enum: ['high', 'medium', 'low'] },
+              id: { type: 'string', description: '可选的简短、稳定的问题 ID。没有现成的 ID 时省略。' },
+              severity: { description: '严重程度。', type: 'string', enum: ['high', 'medium', 'low'] },
               category: {
                 type: 'string',
+                description: '问题类别。',
                 enum: ['html', 'css', 'javascript', 'accessibility', 'performance', 'maintainability', 'docs', 'test', 'other']
               },
-              title: { type: 'string', description: 'Short label for the issue, not a full sentence, file path or recommendation.' },
-              description: { type: 'string', description: 'Detailed explanation of the finding, including reasoning, impact and context.' },
-              evidenceFiles: { type: 'array', description: 'Optional file paths that serve as evidence for this finding.', items: { type: 'string' } },
+              title: { type: 'string', description: '简短的问题标签，不要写成完整句子、文件路径或建议。' },
+              description: { type: 'string', description: '问题的详细说明，包括推理过程、影响和背景。' },
+              evidenceFiles: { type: 'array', description: '可选，作为该问题证据的文件路径数组。', items: { type: 'string' } },
               evidence: {
                 type: 'array',
+                description: '可选，该问题的证据引用数组。',
                 items: {
                   type: 'object',
                   properties: {
-                    path: { type: 'string' },
-                    lineStart: { type: 'number' },
-                    lineEnd: { type: 'number' },
-                    symbol: { type: 'string' },
-                    excerptHash: { type: 'string' }
+                    path: { description: '证据文件路径。', type: 'string' },
+                    lineStart: { description: '可选的起始行号，从 1 开始。', type: 'number' },
+                    lineEnd: { description: '可选的结束行号，从 1 开始。', type: 'number' },
+                    symbol: { description: '可选的符号名。', type: 'string' },
+                    excerptHash: { description: '可选的证据片段哈希。', type: 'string' }
                   },
                   required: ['path']
                 }
               },
-              relatedMilestoneIds: { type: 'array', description: 'Optional IDs of related milestones.', items: { type: 'string' } },
-              recommendation: { type: 'string', description: 'Optional suggestion for fixing or handling the finding.' },
-              trackingStatus: { type: 'string', enum: ['open', 'accepted_risk', 'fixed', 'wont_fix', 'duplicate'] }
+              relatedMilestoneIds: { type: 'array', description: '可选，相关里程碑的 ID 数组。', items: { type: 'string' } },
+              recommendation: { type: 'string', description: '可选的修复或处理建议。' },
+              trackingStatus: { description: '跟踪状态。', type: 'string', enum: ['open', 'accepted_risk', 'fixed', 'wont_fix', 'duplicate'] }
             },
             required: ['title']
           }
         },
         reviewedModules: {
           type: 'array',
-          description: 'Optional modules covered by the review, merged into the review summary.',
+          description: '可选，本次审查覆盖的模块数组，会合并到审查摘要。',
           items: { type: 'string' }
         },
         recommendedNextAction: {
           type: 'string',
-          description: 'Optional recommended next step to show in the review summary.'
+          description: '可选，要显示在审查摘要中的建议下一步。'
         }
       },
       required: ['path', 'milestoneTitle', 'summary']

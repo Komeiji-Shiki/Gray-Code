@@ -8,7 +8,7 @@ const topic = {
   type: 'array',
   items: { type: 'string', maxLength: 120 },
   maxItems: 8,
-  description: '从宽到窄的主题路径，例如 ["项目","晴川","部署"]。',
+  description: '从宽到窄的主题路径。',
 };
 const kinds = { type: 'string', enum: ['fact', 'preference', 'experience', 'project', 'procedure', 'event', 'summary'] };
 const time = { type: 'number', description: 'UTC Unix 毫秒时间戳；没有明确的时间依据时省略。' };
@@ -22,8 +22,8 @@ const query = {
   scopeId,
   topic,
   text: { type: 'string', maxLength: 32000 },
-  asOf: time,
-  knownAt: time,
+  asOf: { ...time, description: '事实有效时间，UTC Unix 毫秒。' },
+  knownAt: { ...time, description: '当时已知信息的截止时间，UTC Unix 毫秒。' },
   limit: { type: 'integer', minimum: 1, maximum: 50 },
   tokenBudget: { type: 'integer', minimum: 256, maximum: 16000 },
   confirmedOnly: { type: 'boolean' },
@@ -37,13 +37,13 @@ const fields = {
   value: { type: 'string', maxLength: 4000 },
   topic,
   entities: { type: 'array', items: { type: 'string' }, maxItems: 64 },
-  validFrom: time,
+  validFrom: { ...time, description: '事实生效时间，UTC Unix 毫秒；无依据时省略。' },
   validTo: time,
-  eventAt: time,
+  eventAt: { ...time, description: '事件发生时间，UTC Unix 毫秒；无依据时省略。' },
   confidence: { type: 'string', enum: ['confirmed', 'inferred', 'disputed'] },
   sourceMessageId: {
     type: 'string',
-    description: '本会话中的原消息 ID，省略时为本轮用户输入。填 last_assistant 表示引用本轮已保存的模型文字，此时必须提供逐字的 quote。',
+    description: '本会话原消息 ID，默认本轮用户输入；last_assistant 引用本轮已保存的模型文字，须提供逐字 quote。',
   },
   quote: { type: 'string', maxLength: 32000, description: '原消息中相关片段的逐字摘录。' },
   supersedes: { type: 'array', items: { type: 'string' }, maxItems: 128 },
@@ -60,7 +60,7 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_topics',
         description:
-          '查看可访问的记忆范围、主题目录和摘要。先定位相关主题再逐层深入，不要遍历全库；返回 nextCursor 时，把它作为 cursor 传入即可继续读取当前层。来源和权限由服务端校验。',
+          '浏览个人长期记忆的授权范围、主题和摘要。按需逐层深入；nextCursor 用作 cursor 续读当前层。',
         parameters: schema({
           scopeId,
           topic,
@@ -93,7 +93,7 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_search',
         description:
-          '在可访问的记忆范围内搜索，可按主题、类别以及 asOf、knownAt 两个时间筛选。结果先按账号、剧情和时序过滤，再合并关键词与语义匹配，总量受 tokenBudget 限制。',
+          '搜索个人长期记忆，支持主题、类别和时间筛选；结合关键词与语义匹配，结果受 tokenBudget 限制。',
         parameters: schema({ ...query, kinds: { type: 'array', items: kinds } }, ['text']),
       },
       effects: () => ['workspace_read'],
@@ -107,7 +107,8 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_read',
         description:
-          '按 ids 读取记忆，includeSources=true 时附带来源。正文过长时用 page 分段读取，其中 sourceId 指定要读的来源；返回 nextOffset 时，保持同一 version、把它作为 offset 传入即可继续读取。结果中出现 omitted 或 requiredTokenBudget 说明预算不足；已失效的内容不会返回。',
+          '按 ids 读取个人长期记忆，includeSources 附带来源。长文用 page 分段，sourceId 指定来源；' +
+          'nextOffset 用作 offset 续读同一 version。omitted 或 requiredTokenBudget 表示预算不足。',
         parameters: {
           ...schema(
             {
@@ -159,7 +160,7 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_remember',
         description:
-          '按当前用户的明确要求保存事实、偏好、经历、项目知识或任务经验。必须选定范围并引用真实消息；模型自己的推断保持未确认状态，角色剧情使用独立的范围。要明确修改已有事实时用 memory_revise。',
+          '按用户明确要求保存个人长期记忆，引用真实消息；模型推断保持未确认，角色剧情使用独立范围。修改已有记录用 memory_revise。',
         parameters: schema(fields, ['scopeId', 'text', 'kind', 'topic']),
       },
       effects: () => ['workspace_write'],
@@ -172,7 +173,8 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_revise',
         description:
-          '修订已读取的记忆，保留编号和历史，需要传入当前的 expectedVersion。三种修改方式任选其一：用唯一匹配的 oldText/newText 局部替换，用 append 追加，或用 text 替换全文。来源要求与 memory_remember 相同；修订后旧摘要会失效。validFrom 是事实生效的时间，eventAt 是事件发生的时间；attribute、value、validTo、eventAt 可设为 null 清除。',
+          '修订已读取的个人长期记忆，expectedVersion 使用当前版本。text、oldText/newText、append 三选一；' +
+          '来源要求同 memory_remember，保留历史并使旧摘要失效。attribute、value、validTo、eventAt 可用 null 清除。',
         parameters: {
           ...schema(
             {
@@ -184,7 +186,7 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
               attribute: { anyOf: [fields.attribute, { type: 'null' }] },
               value: { anyOf: [fields.value, { type: 'null' }] },
               validTo: { anyOf: [time, { type: 'null' }] },
-              eventAt: { anyOf: [time, { type: 'null' }] },
+              eventAt: { anyOf: [fields.eventAt, { type: 'null' }] },
               id: { type: 'string' },
               expectedVersion: { type: 'integer', minimum: 1 },
             },
@@ -203,7 +205,8 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_remove',
         description:
-          '按用户明确的忘记或撤回要求移除记忆。先用 operation=preview 查看对同源事实、来源摘录和派生摘要的影响，再用 apply 删除正文和索引，并取消之后才会完成的相关后台任务。action=delete 会连同被取代的旧事实一起删除，retract 用于撤回错误说法。原始对话仍保留供用户查看，但之后的模型上下文会排除相关来源及依赖它们的内容。',
+          '按用户明确要求删除或撤回个人长期记忆。先 preview 影响，再 apply 并传当前 expectedVersion。' +
+          'delete 包含被取代的旧事实；retract 撤回错误说法。删除来源及派生内容后，原对话仍供用户查看，模型上下文排除相关内容。',
         parameters: schema(
           {
             scopeId,
@@ -245,7 +248,7 @@ export function longMemoryTools(service: PlatformLongMemory): RuntimeTool[] {
       declaration: {
         name: 'memory_summarize',
         description:
-          '把已经读取的记忆保存为某个主题的分层摘要。recordIds 只能引用同一范围内实际存在的记录，摘要不替代原始事实。可以再对下层摘要做总结，但任何来源被修订或删除都会使上层摘要失效。不必为了形式立即整理所有记忆。',
+          '按需汇总已读取的个人长期记忆。recordIds 引用同一范围内的事实或下层摘要；保留原记录，来源修订或删除后摘要失效。',
         parameters: schema(
           {
             scopeId,

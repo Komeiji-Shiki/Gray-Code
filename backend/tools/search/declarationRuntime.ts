@@ -9,6 +9,7 @@ import type {SearchFileHost,FileLocation} from './fileHost';
 import {createSearchPass,type SearchMatch,type SearchBudget,type SearchPageState,type SearchPassResult,type SearchQueryFallbackInfo,type SearchPathWarningInfo} from './searchPassRuntime';
 import {createReplacePass,type ReplaceResult,type SkippedFileInfo} from './replacePassRuntime';
 import { TextSearchWorker } from './textSearchWorker';
+import { normalizeTextEncodingName } from './textEncodingRuntime';
 interface SearchInFilesArgs {
     mode?: 'search' | 'replace';
     query?: string;
@@ -18,6 +19,7 @@ interface SearchInFilesArgs {
     keywordFallback?: boolean;
     includeIgnored?: boolean;
     caseSensitive?: boolean;
+    encoding?: string;
     maxResults?: number;
     offset?: number;
     context?: number;
@@ -157,6 +159,12 @@ function createSearchInFilesTool(): Tool {
                             ? '是否区分大小写。search 模式默认不区分，便于定位；replace 模式默认区分，避免误替换。可以显式传值覆盖，例如在 replace 模式下传 false，替换不区分大小写搜到的内容。'
                             : 'Whether matching is case-sensitive. Search mode defaults to false so matches are easier to find; replace mode defaults to true to avoid unintended replacements. Pass a value to override, for example false in replace mode to replace matches found case-insensitively.'
                     },
+                    encoding: {
+                        type: 'string',
+                        description: isZh
+                            ? '仅 search 模式：指定文本编码，例如 gbk、shift_jis、big5。省略时逐文件自动识别，命中文件的非 UTF-8 编码在 encodings 中返回。'
+                            : 'Search mode only: use a text encoding such as gbk, shift_jis or big5. Omit to detect each file; encodings reports non-UTF-8 matching files.'
+                    },
                     maxResults: {
                         type: 'number',
                         description: isZh ? '仅 search 模式：每页最多返回的命中行数。' : 'Search mode only: maximum matching lines per page.',
@@ -208,6 +216,9 @@ function createSearchInFilesTool(): Tool {
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
             const mode = typed.mode || 'search';
             const isReplaceMode = mode === 'replace';
+            if (isReplaceMode && typed.encoding !== undefined) {
+                return { success: false, error: 'encoding 仅用于搜索；替换模式会自动识别并保留原文件编码。' };
+            }
             const offset = typed.offset ?? 0;
             if (!Number.isSafeInteger(offset) || offset < 0) {
                 return { success: false, error: 'offset must be a non-negative safe integer' };
@@ -261,6 +272,7 @@ function createSearchInFilesTool(): Tool {
 
             let computation: TextSearchWorker | undefined;
             try {
+                const encoding = typed.encoding?.trim() ? normalizeTextEncodingName(typed.encoding) : undefined;
                 // 创建搜索正则表达式（均为全局匹配）
                 // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
                 const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
@@ -497,7 +509,7 @@ function createSearchInFilesTool(): Tool {
                                 searchConfig,
                                 budget,
                                 page,
-                                { computation, signal: context?.abortSignal, includeIgnored }
+                                { computation, signal: context?.abortSignal, includeIgnored, encoding }
                             );
                             results.push(...pass.matches);
                             skippedFiles.push(...pass.skippedFiles);
@@ -518,7 +530,7 @@ function createSearchInFilesTool(): Tool {
                                     searchConfig,
                                     budget,
                                     page,
-                                    { computation, signal: context?.abortSignal, includeIgnored }
+                                    { computation, signal: context?.abortSignal, includeIgnored, encoding }
                                 );
                                 results.push(...wsPass.matches);
                                 skippedFiles.push(...wsPass.skippedFiles);
@@ -546,7 +558,7 @@ function createSearchInFilesTool(): Tool {
                                 searchConfig,
                                 budget,
                                 page,
-                                { computation, signal: context?.abortSignal, includeIgnored }
+                                { computation, signal: context?.abortSignal, includeIgnored, encoding }
                             );
                             results.push(...pass.matches);
                             skippedFiles.push(...pass.skippedFiles);
@@ -610,6 +622,8 @@ function createSearchInFilesTool(): Tool {
                         ...(nextOffset !== undefined ? [`Continue with offset=${nextOffset} and unchanged search parameters; restart at offset=0 if files changed.`] : []),
                         ...(searchPass.budgetTruncated ? ['Output budget omitted matches: narrow query/path/pattern or pass a smaller context, then restart at offset=0.'] : [])
                     ].join(' ');
+                    const encodings = Object.fromEntries(allResults.filter(result => result.encoding)
+                        .map(result => [result.file, result.encoding]));
                     return {
                         success: true,
                         data: {
@@ -631,6 +645,7 @@ function createSearchInFilesTool(): Tool {
                             effectiveExclude: excludePattern,
                             respectsGitIgnore: !!host.gitIgnoreSupported && !includeIgnored,
                             includeIgnored,
+                            ...(Object.keys(encodings).length ? { encodings } : {}),
                             // 处理失败/被护栏跳过的文件及原因：与 replace 模式的 skippedFiles 同构，
                             // 让模型能区分「真没有匹配」与「N 个文件因权限/IO/大小被跳过」
                             skippedFiles: searchPass.skippedFiles.length > 0 ? searchPass.skippedFiles : undefined,

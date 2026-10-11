@@ -26,7 +26,7 @@ describe('original UI history operations on the independent core', () => {
       calls.push(input);
       return input.messages.some(message => message.parts.some(part => part.functionResponse))
         ? { role: 'model', parts: [{ text: `answer-${calls.length}` }], modelVersion: 'fixture' }
-        : { role: 'model', parts: [{ functionCall: { id: 'file-list', name: 'workspace_files', args: { action: 'list', path: '.' } } }] };
+        : { role: 'model', parts: [{ functionCall: { id: 'file-list', name: 'list_files', args: { paths: ['.'] } } }] };
     } } });
     app.subscribe(event => { if (event.type === 'event' && (event.event as any).type === 'tool.started') toolExecutions++; });
     router = new ApplicationRouter(app);

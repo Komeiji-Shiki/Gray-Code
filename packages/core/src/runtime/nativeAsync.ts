@@ -43,7 +43,8 @@ export function nativeToolDeclaration(tool: ToolDeclaration, description?: strin
           type: 'string',
           minLength: 1,
           maxLength: 120,
-          description: 'A handle for this call that is unique among all task handles, including completed ones. Pass it to wait_for_tasks.',
+          description: '本次调用的任务句柄，不能与任何已有句柄重复，包括已完成任务；'
+          + '传给 wait_for_tasks 等待结果。',
         },
       },
       required: [...new Set([...((tool.parameters.required as string[]) ?? []), 'task_handle'])],
@@ -53,7 +54,9 @@ export function nativeToolDeclaration(tool: ToolDeclaration, description?: strin
 export const waitForTasksDeclaration: ToolDeclaration = {
   name: WAIT_FOR_TASKS,
   description:
-    'Wait for the listed native async task_handles only. Their results are delivered on the original calls before this wait returns. Do not wait for results you do not need yet; continue independent work instead.',
+    '只等待指定的原生异步 task_handles；'
+          + '等待返回前，结果会送回各自原始调用。'
+          + '暂时不依赖这些结果时，先继续其他工作。',
   parameters: {
     type: 'object',
     additionalProperties: false,

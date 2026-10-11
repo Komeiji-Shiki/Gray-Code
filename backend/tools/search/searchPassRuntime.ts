@@ -17,6 +17,7 @@ export interface SearchMatch {
     column: number;
     match: string;
     context: string;
+    encoding?: string;
     /** 同一行有多处命中时的全部列号（1-based，含 column）；单处命中时省略。 */
     columns?: number[];
     /** 同行命中超过记录上限，columns 只列出前面的部分。 */
@@ -70,7 +71,7 @@ type PreparedFile =
     | { kind: 'failed'; skipped: SkippedFileInfo }
     | { kind: 'noMatch' }
     | { kind: 'stream'; relativePath: string; file: FileLocation; detection: TextDetectionResult }
-    | { kind: 'ready'; relativePath: string; lines: string[] };
+    | { kind: 'ready'; relativePath: string; lines: string[]; detection: TextDetectionResult };
 
 export function createSearchPass(host: SearchFileHost) {
 const {tryGetFileSizeBytes,readHeaderBytes}=createTextReader(host);
@@ -135,7 +136,7 @@ async function searchInDirectory(
     config: Readonly<SearchInFilesToolConfig>,
     budget?: SearchBudget,
     page?: SearchPageState,
-    execution?: { computation?: TextSearchWorker; signal?: AbortSignal; includeIgnored?: boolean }
+    execution?: { computation?: TextSearchWorker; signal?: AbortSignal; includeIgnored?: boolean; encoding?: string }
 ): Promise<{ matches: SearchMatch[]; skippedFiles: SkippedFileInfo[] }> {
     // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
     // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
@@ -205,7 +206,9 @@ async function searchInDirectory(
                 try {
                     // 快速二进制判断保留原样本长度，流式编码识别复用同一次读取的大样本。
                     header = await readHeaderBytes(fileUri, streaming ? streamHeaderBytes : headerSampleBytes);
-                    detection = detectTextFromHeader(header.subarray(0, headerSampleBytes));
+                    detection = execution?.encoding
+                        ? detectTextEncoding(header, execution.encoding)
+                        : detectTextFromHeader(header.subarray(0, headerSampleBytes));
                     if (!detection.isText) {
                         return { kind: 'binary' };
                     }
@@ -217,14 +220,15 @@ async function searchInDirectory(
             }
 
             if (streaming) {
-                detection = detectStreamingEncoding(header ?? await readHeaderBytes(fileUri, streamHeaderBytes));
+                const sample = header ?? await readHeaderBytes(fileUri, streamHeaderBytes);
+                detection = execution?.encoding ? detectTextEncoding(sample, execution.encoding) : detectStreamingEncoding(sample);
                 if (!detection.isText) return { kind: 'binary' };
                 return { kind: 'stream', relativePath: host.toRelativePath(fileUri, workspaceName !== null), file: fileUri, detection };
             }
             const content = await host.readFile(fileUri);
             // 文件头只用于快速排除二进制；未带 BOM 的文本按完整内容识别 UTF-8 或 GBK/Shift-JIS/Big5
-            if (!detection.bomLength && detection.encoding === 'utf-8') {
-                detection = detectTextEncoding(content);
+            if (execution?.encoding || !detection.bomLength && detection.encoding === 'utf-8') {
+                detection = detectTextEncoding(content, execution?.encoding);
                 if (!detection.isText) return { kind: 'binary' };
             }
             const text = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
@@ -244,7 +248,8 @@ async function searchInDirectory(
             return {
                 kind: 'ready',
                 relativePath: host.toRelativePath(fileUri, workspaceName !== null),
-                lines: text.split('\n')
+                lines: text.split('\n'),
+                detection
             };
         } catch (e) {
             // 处理失败不再静默吞掉：与 replacePass 一致记录原因，
@@ -300,7 +305,9 @@ async function searchInDirectory(
             try {
                 const batches = outcome.kind === 'stream'
                     ? streamingSearchBatches(host, outcome.file, outcome.detection, contextBefore, contextAfter, execution?.signal)
-                    : (async function* () { yield { lines: outcome.lines, base: 0, start: 0, end: outcome.lines.length }; })();
+                    : (async function* () {
+                        yield { lines: outcome.lines, base: 0, start: 0, end: outcome.lines.length, encoding: outcome.detection.encoding };
+                    })();
                 for await (const batch of batches) {
                     execution?.signal?.throwIfAborted();
                     const input: TextSearchInput = { kind: 'fileSearch', source: searchRegex.source, flags: searchRegex.flags,
@@ -313,6 +320,7 @@ async function searchInDirectory(
                     if (budget) { budget.remainingChars = computed.remainingChars!; budget.truncated ||= computed.budgetTruncated === true; }
                     for (const match of computed.matches) results.push({ file: relativePath, workspace: workspaceName || undefined,
                         line: batch.base + match.fragment + 1, column: match.index + 1, match: match.text, context: match.context!,
+                        ...(batch.encoding !== 'utf-8' ? { encoding: batch.encoding } : {}),
                         ...(match.indexes ? { columns: match.indexes.map(index => index + 1) } : {}),
                         ...(match.indexesTruncated ? { columnsTruncated: true } : {}) });
                     if (results.length >= maxResults || budget && budget.remainingChars <= 0) break;

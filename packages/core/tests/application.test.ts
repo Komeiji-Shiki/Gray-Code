@@ -22,13 +22,17 @@ describe('application composition and local clients', () => {
       },
       models: { generate: async input => input.messages.some(message => message.role === 'model')
         ? { role: 'model', parts: [{ text: 'File created.' }] }
-        : { role: 'model', parts: [{ functionCall: { id: 'write-once', name: 'workspace_files',
-          args: { action: 'write', path: 'result.txt', content: 'written by model', expectedHash: null, oldText: null, newText: null } } }] } },
+        : { role: 'model', parts: [{ functionCall: { id: 'write-once', name: 'write_file',
+          args: { path: 'result.txt', content: 'written by model' } } }] } },
     });
     const draft = app.settings.snapshot();
     draft.settings.workspaces.push({ id: 'project', name: 'Fixture', directory: f.source, deviceId: 'local' });
     draft.settings.accounts.push({ id: 'guest', displayName: '主人', role: 'guest', effects: ['public_read'], workspaceIds: [] });
     await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
+    const toolSettings = await app.product.draft();
+    // 本夹具验证公开应用链路，文件确认交由既有 Diff 自动应用配置完成。
+    await toolSettings.settings.updateApplyDiffConfig({ autoSave: true, autoApplyWithoutDiffView: true });
+    await app.product.save(toolSettings);
     router = new ApplicationRouter(app);
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });

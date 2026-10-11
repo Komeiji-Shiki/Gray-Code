@@ -4,18 +4,15 @@
  * OptMem 风格的永久记忆系统：追加式日志 + 二叉树摘要
  */
 
-/** 长期记忆工具名称 */
-export const MEMORY_TOOL_NAMES = [
-    'memory_wake',
-    'memory_note',
-    'memory_recall',
-    'memory_compress',
-    'memory_zoom',
-    'memory_forget',
-    'memory_config',
-] as const;
+/** 工程日志的旧名称仍用于读取已有启用与审批设置。 */
+import { ENGINEERING_LOG_LEGACY_NAMES } from '../../../shared/toolNameUpgrades';
+export { ENGINEERING_LOG_LEGACY_NAMES };
 
-const MEMORY_TOOL_NAME_SET = new Set<string>(MEMORY_TOOL_NAMES);
+export type EngineeringLogAction = keyof typeof ENGINEERING_LOG_LEGACY_NAMES;
+
+export const MEMORY_TOOL_NAMES = ['engineering_log'] as const;
+
+const MEMORY_TOOL_NAME_SET = new Set<string>([...MEMORY_TOOL_NAMES, ...Object.values(ENGINEERING_LOG_LEGACY_NAMES)]);
 for(const name of ['memory_topics','memory_search','memory_read','memory_remember','memory_revise','memory_remove','memory_summarize'])MEMORY_TOOL_NAME_SET.add(name);
 
 export function isMemoryToolName(toolName: string): boolean {

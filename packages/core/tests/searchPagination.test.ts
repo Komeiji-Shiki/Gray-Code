@@ -4,7 +4,6 @@ import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
 import { NodeFileHost } from '../../../apps/server/src/workspace/fileHost';
-import { createLiteralSearchTool } from '../../../apps/server/src/workspace/literalSearchTool';
 import { createSearchDeclaration } from '../../../backend/tools/search/declarationRuntime';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../../backend/modules/settings/types';
 import { TEMP_DIR_REMOVE_OPTIONS } from './fixtures';
@@ -31,15 +30,14 @@ function tools(maxFindFiles = DEFAULT_SEARCH_IN_FILES_CONFIG.maxFindFiles) {
     workspace: { id: 'project', name: 'Fixture', directory, deviceId: 'local' },
     progress: () => {}, askUser: async () => { throw new Error('unused'); } } satisfies ToolContext;
   const advanced = createSearchDeclaration(new NodeFileHost(app, context)).createSearchInFilesTool();
-  const basic = createLiteralSearchTool(new NodeFileHost(app, context));
-  return { advanced, basic };
+  return { advanced };
 }
 
-test('真实 Node 文件宿主中，两种搜索分页无重复、无遗漏并保留各自顺序', async () => {
-  const { advanced, basic } = tools();
+test('真实 Node 文件宿主中，字面量与正则搜索分页无重复、无遗漏并保留各自顺序', async () => {
+  const { advanced } = tools();
   const variants = [
     { query: (offset: number, limit: number) => advanced.handler({ query: 'hit', offset, maxResults: limit }), key: 'results' },
-    { query: (offset: number, limit: number) => basic.handler({ query: 'hit', offset, limit }), key: 'matches' },
+    { query: (offset: number, limit: number) => advanced.handler({ query: 'h.t', isRegex: true, offset, maxResults: limit }), key: 'results' },
   ];
   for (const variant of variants) {
     const complete = (await variant.query(0, 100)).data as any;

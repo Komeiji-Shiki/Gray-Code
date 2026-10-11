@@ -1,4 +1,4 @@
-import { shellCommandEffects } from '../workspace/commandRisk';
+import { executableEffects, shellCommandEffects } from '../workspace/commandRisk';
 import { randomUUID } from 'node:crypto';
 import type { RuntimeTool, ToolContext } from '@graycode/core';
 import type { ToolDeclaration, ToolOutcome } from '@graycode/contracts';
@@ -9,12 +9,13 @@ import { createOutputRuntime } from '../../../../backend/tools/terminal/outputDe
 import { createTerminalPrompts } from '../../../../backend/tools/terminal/promptDescriptionsRuntime';
 import { windowsProcessTreePort } from '../../../../backend/tools/terminal/processTree';
 import { existsSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { computerHostExecutable } from '../computer/native';
 import { getDefaultExecuteCommandConfig, type ExecuteCommandToolConfig } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
 import { TerminalTaskPort } from './tasks';
 import { TerminalOutputBuffer } from './output';
-import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../workspace/processes';
+import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessOutputBuffer } from '../../../../shared/processOutput';
 import { getActualLanguage, t } from '../../../../backend/i18n';
 import { AnsiStreamStripper } from '../../../../shared/ansi';
 
@@ -58,15 +59,6 @@ export class PlatformTerminals {
     const shells = {
       ...nativeShells,
       getEnabledShellTypesForEnum: () => ['default', ...config.shells.filter((shell) => shell.enabled).map((shell) => shell.type)],
-      getAvailableShellsDescription: () =>
-        config.shells
-          .filter((shell) => shell.enabled)
-          .map((shell) => `- ${shell.displayName ?? shell.type} (${shell.type})`)
-          .join('\n'),
-      getUnavailableShellsDescription: () =>
-        getActualLanguage() === 'zh-CN'
-          ? '- 已启用的 Shell 会在每次执行前检查是否可用。'
-          : '- Each enabled shell is checked for availability right before it runs.',
     };
     const output = createOutputRuntime({ getConfig });
     const prompts = createTerminalPrompts({ shells, getMaxOutputLines: output.getMaxOutputLines, roots: () => [], workspaceBinding: 'task' });
@@ -86,20 +78,25 @@ export class PlatformTerminals {
 
   tool(config = getDefaultExecuteCommandConfig()): RuntimeTool {
     const declaration = this.runtime(config, new TerminalTaskPort(() => {})).createExecuteCommandTool().declaration;
+    const isZh = getActualLanguage() === 'zh-CN';
     declaration.description +=
-      getActualLanguage() === 'zh-CN'
-        ? '\n后台 taskId 可交给 terminal_task 查询状态、增量读取或停止。默认等待完成通知；需要诊断无进展的任务时按需查询，不循环轮询。'
-        : '\nUse terminal_task with the returned background taskId to inspect status, read incremental output or stop the managed task. Prefer automatic completion notices; inspect stalled tasks when needed without polling loops.';
+      isZh
+        ? '\n返回的 taskId 交给 terminal_task 查询、续读、输入或停止。background=true 的任务有完成通知；普通 argv 会话按需读取。'
+        : '\nUse terminal_task with the returned taskId to inspect, read, send input or stop. background=true tasks send completion notices; read ordinary argv sessions when needed.';
     return {
       declaration: declaration as ToolDeclaration,
+      approvalName: (args) => (args.mode === 'argv' ? 'run_command' : 'execute_command'),
       nativeAsync: true,
-      nativeAsyncDescription:
-        'In native async mode, background=true returns the final command output on the original call. Use run_command for persistent servers that should return a managed process session without waiting for exit.',
+      nativeAsyncDescription: isZh
+        ? '原生异步模式下，background=true 在原调用返回最终输出。常驻服务或交互进程使用 mode=argv 并省略 background，最多等待 300 毫秒后返回可管理的 taskId。'
+        : 'In native async mode, background=true returns the final output on the original call. For persistent servers or interactive processes, use mode=argv without background: the call returns a managed taskId after up to 300 ms.',
       nativeAsyncParameterDescriptions: {
-        background:
-          'Keep the command running if the current generation is cancelled; ignore the foreground timeout. The native async call stays pending until exit and returns the final output on its original call, without a separate background message. Continue independent work; use wait_for_tasks when its result is needed.',
+        background: isZh
+          ? '当前生成取消后继续执行，并忽略前台超时。原生异步调用等到进程退出后在原调用返回最终输出，不另发后台消息。先继续独立工作，需要结果时使用 wait_for_tasks。'
+          : 'Keep the command running if the current generation is cancelled; ignore the foreground timeout. The native async call stays pending until exit and returns the final output on its original call, without a separate background message. Continue independent work; use wait_for_tasks when its result is needed.',
       },
-      effects: (args) => shellCommandEffects(String(args.command)),
+      effects: (args) =>
+        args.mode === 'argv' ? executableEffects(String(args.command), (args.args ?? []) as string[]) : shellCommandEffects(String(args.command)),
       execute: (args, context) => this.execute(args, context, declaration, structuredClone(config)),
     };
   }
@@ -111,11 +108,25 @@ export class PlatformTerminals {
     config: ExecuteCommandToolConfig,
   ) {
     if (this.closing) throw new Error('宿主正在关闭，不能启动新命令。');
+    const enabled = this.app.product.runtimeSettings().getToolsEnabled();
+    if (args.mode === 'argv' && !Object.hasOwn(enabled, 'execute_command') && enabled.run_command === false) {
+      throw new Error('argv 命令已被原 run_command 工具设置关闭；请在工具设置中启用 execute_command。');
+    }
     if (!context.workspace || !context.conversationId) throw new Error('请先为任务选择工作区。');
     context.signal.throwIfAborted();
+    const argv = args.mode === 'argv';
     // 工作目录属于本轮绑定的工作区，之后切换界面工作区不影响当前命令。
-    const cwd = await this.app.files.resolve(context.workspace, String(args.cwd || context.workspace.directory));
+    const requestedCwd = String(args.cwd ?? '');
+    const cwd = await this.app.files.resolve(
+      context.workspace,
+      requestedCwd === '' || (argv && requestedCwd === '.') ? context.workspace.directory : requestedCwd,
+    );
+    if (!(await stat(cwd)).isDirectory()) throw new Error('cwd must be a directory within the workspace.');
+    context.signal.throwIfAborted();
     if (this.closing) throw new Error('宿主正在关闭，不能启动新命令。');
+    if (argv && [...this.active.values()].filter((task) => task.record.data.mode === 'argv').length >= 24) {
+      throw new Error('Too many managed processes are already running.');
+    }
     const id = `terminal-${randomUUID()}`;
     const record: TerminalRecord = {
       id,
@@ -126,7 +137,13 @@ export class PlatformTerminals {
       status: 'queued',
       startTime: Date.now(),
       updatedAt: Date.now(),
-      data: { command: args.command, cwd, shell: args.shell ?? 'default', background: args.background === true },
+      data: {
+        command: args.command,
+        mode: argv ? 'argv' : 'shell',
+        ...(argv ? { args: args.args } : { shell: args.shell ?? 'default' }),
+        cwd,
+        background: args.background === true,
+      },
       outputBuffer: { output: '', outputOffset: 0, truncated: false },
     };
     if (context.nativeAsync && args.background === true && context.toolCallId) record.nativeCallId = context.toolCallId;
@@ -179,7 +196,7 @@ export class PlatformTerminals {
         .createExecuteCommandTool(declaration)
         .handler({ ...args, cwd }, { toolId: id, conversationId: context.conversationId, abortSignal: context.signal });
       await task.events;
-      if (!result.data?.background && this.active.has(id)) {
+      if (!result.data?.background && !result.data?.running && this.active.has(id)) {
         record.status = result.cancelled ? 'cancelled' : result.success ? 'completed' : 'error';
         record.data = { ...record.data, ...result.data, error: result.error };
         await this.finish(record);
@@ -190,6 +207,7 @@ export class PlatformTerminals {
         ? this.withNextActions(
             {
               ...result.data,
+              ...(argv ? { mode: 'argv', args: args.args, ...readProcessOutput(record.outputBuffer!) } : {}),
               taskId: id,
               status: record.status,
               running,
@@ -204,6 +222,9 @@ export class PlatformTerminals {
         error: result.error,
         ...(record.nativeCallId && result.data?.background ? { deferred: true } : {}),
         ...(result.cancelled ? { code: 'CANCELLED' } : {}),
+        ...(argv && !result.success && !result.cancelled && typeof result.data?.exitCode === 'number' && result.data.exitCode !== 0
+          ? { code: 'COMMAND_EXIT_NONZERO' }
+          : {}),
       };
     } catch (error) {
       if (this.active.has(id)) {
@@ -377,13 +398,13 @@ export class PlatformTerminals {
   }
   async output(actorId: string, id: string) {
     const record = await this.accessible(actorId, id);
-    const live = this.active.get(id)?.runner.getTerminalOutput(id);
+    const live = record.data.mode === 'argv' ? undefined : this.active.get(id)?.runner.getTerminalOutput(id);
     return live?.success
       ? live
       : {
           success: true,
-          output: String(record.data.output ?? ''),
-          running: false,
+          output: String(record.data.mode === 'argv' ? (record.outputBuffer?.output ?? record.data.output ?? '') : (record.data.output ?? '')),
+          running: this.active.has(id) && ['queued', 'running'].includes(record.status),
           exitCode: record.data.exitCode,
           killed: record.data.killed === true || record.status === 'cancelled',
           duration: record.data.duration,
@@ -409,6 +430,7 @@ export class PlatformTerminals {
       status: record.status,
       running: this.active.has(record.id) && ['queued', 'running'].includes(record.status),
       command: String(record.data.command ?? '').slice(0, 1000),
+      ...(record.data.mode === 'argv' ? { mode: 'argv', args: record.data.args } : {}),
       background: record.data.background === true,
       startTime: record.startTime,
       updatedAt: record.updatedAt,
@@ -448,6 +470,10 @@ export class PlatformTerminals {
     return nextActions.length ? { ...data, nextActions } : data;
   }
   async manageTask(args: Record<string, unknown>, context: ToolContext) {
+    const enabled = this.app.product.runtimeSettings().getToolsEnabled();
+    if (args.action === 'input' && !Object.hasOwn(enabled, 'terminal_task') && enabled.process_session === false) {
+      throw new Error('终端输入已被原 process_session 工具设置关闭；请在工具设置中启用 terminal_task。');
+    }
     if (!context.conversationId || !context.workspace) throw new Error('请先为当前会话选择工作区。');
     await this.app.conversation(context.actorId, context.conversationId);
     const run = await this.app.storage.getRun(context.runId);
@@ -473,7 +499,7 @@ export class PlatformTerminals {
           limit: 200,
           projection: {
             fields: ['id', 'actorId', 'conversationId', 'runId', 'workspaceId', 'status', 'startTime', 'updatedAt', 'data'],
-            properties: { data: { fields: ['command', 'background', 'exitCode', 'error'] } },
+            properties: { data: { fields: ['command', 'mode', 'args', 'background', 'exitCode', 'error'] } },
           },
         });
         for (const saved of page) {
@@ -510,9 +536,29 @@ export class PlatformTerminals {
     if (typeof args.taskId !== 'string' || !args.taskId) throw new Error('需要 execute_command 返回的 taskId。');
     const task = this.active.get(args.taskId);
     const record = task?.record ?? ((await this.app.storage.getRecord('terminal-records', args.taskId)) as TerminalRecord | null);
-    if (!record) throw new ProcessSessionError('NOT_FOUND', '终端任务不存在。');
+    if (!record) {
+      // 旧模型会话只持久化已完成结果，继续复用原归属校验读取，不重建进程或注册旧工具。
+      const saved = await this.app.processes.read(
+        args.taskId,
+        { actorId: context.actorId, conversationId: context.conversationId, workspaceId: context.workspace.id, runId: context.runId },
+        args.action === 'read' ? { cursor: args.cursor as number | undefined, maxChars: args.maxChars as number | undefined } : undefined,
+      );
+      if (args.action === 'input') throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
+      const { id, ...output } = saved;
+      const data = this.withNextActions(
+        { ...output, taskId: id, mode: 'argv', status: saved.running ? 'running' : saved.exitCode === 0 ? 'completed' : 'error' },
+        undefined,
+        args.action === 'read',
+      );
+      return this.sessionOutcome(data, args.action === 'read');
+    }
     if (!owned(record)) throw new ProcessSessionError('FORBIDDEN', '只能管理同一账号、会话和工作区的终端任务。');
-    if (!['status', 'read', 'stop'].includes(String(args.action))) throw new Error('不支持的终端管理动作。');
+    if (!['status', 'read', 'input', 'stop'].includes(String(args.action))) throw new Error('不支持的终端管理动作。');
+    if (args.action === 'input') {
+      if (typeof args.text !== 'string') throw new Error('Supply process input.');
+      if (!task) throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
+      await task.runner.inputTerminalProcess(record.id, args.text, context.signal);
+    }
     if (args.action === 'stop') {
       context.signal.throwIfAborted();
       const stopped = await this.kill(context.actorId, record.id);
@@ -532,7 +578,7 @@ export class PlatformTerminals {
     }
     const summary = this.taskSummary(record);
     const data =
-      args.action === 'read'
+      args.action === 'read' || args.action === 'input'
         ? {
             ...summary,
             ...readProcessOutput(
@@ -541,12 +587,27 @@ export class PlatformTerminals {
                 outputOffset: 0,
                 truncated: !!record.data.truncatedNote,
               },
-              { cursor: args.cursor as number | undefined, maxChars: (args.maxChars ?? 12000) as number },
+              args.action === 'read'
+                ? { cursor: args.cursor as number | undefined, maxChars: (args.maxChars ?? (record.data.mode === 'argv' ? 256000 : 12000)) as number }
+                : { maxChars: record.data.mode === 'argv' ? 256000 : 12000 },
             ),
             cursorOriginKnown: !!record.outputBuffer,
           }
         : summary;
-    return { success: true, data: this.withNextActions(data, undefined, args.action === 'read') };
+    return this.sessionOutcome(
+      this.withNextActions(data, undefined, args.action === 'read'),
+      record.data.mode === 'argv' && (args.action === 'read' || args.action === 'input'),
+    );
+  }
+  private sessionOutcome(data: Record<string, unknown>, commandResult: boolean): ToolOutcome {
+    // shell 的管理动作仍表示查询成功；argv 的续读沿用原会话工具的非零退出失败语义。
+    if (commandResult && data.running === false && typeof data.exitCode === 'number' && data.exitCode !== 0) {
+      return { success: false, code: 'COMMAND_EXIT_NONZERO', error: String(data.error || `Command exited with code ${data.exitCode}`), data };
+    }
+    if (commandResult && data.status === 'error' && data.error) {
+      return { success: false, code: 'COMMAND_FAILED', error: String(data.error), data };
+    }
+    return { success: true, data };
   }
   async detach(actorId: string, conversationId: string) {
     await this.app.conversation(actorId, conversationId);

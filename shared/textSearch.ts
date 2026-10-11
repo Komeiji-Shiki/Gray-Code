@@ -32,14 +32,20 @@ export interface TextSearchResult {
 
 /** 片段格式和成本一起计算，正文预算可在扫描过程中应用，而不必收集整文件的命中。 */
 export function presentToolMatch(input: Extract<TextSearchInput, { kind: 'fileSearch' }>, lineIndex: number, index: number, length: number, text: string) {
-    const match = text.length <= input.previewChars ? text : input.previewChars > 0 ? text.slice(0, input.previewChars - 1) + '…' : '';
+    // 预览可能落在 emoji 等字符的中间，裁剪边界必须保留完整的 UTF-16 代理对。
+    let matchEnd = Math.max(0, input.previewChars - 1);
+    if (matchEnd > 0 && /[\uD800-\uDBFF]/.test(text[matchEnd - 1]) && /[\uDC00-\uDFFF]/.test(text[matchEnd])) matchEnd--;
+    const match = text.length <= input.previewChars ? text
+        : input.previewChars > 0 ? text.slice(0, matchEnd) + '…' : '';
     const lines = input.fragments, line = lines[lineIndex], context: string[] = [];
     const before = Math.max(0, lineIndex - input.contextBefore), after = Math.min(lines.length - 1, lineIndex + input.contextAfter);
     for (let current = before; current <= after; current++) {
         let preview: string;
         if (current !== lineIndex) {
             const limit = input.linePreviewChars, value = lines[current];
-            preview = limit <= 0 ? '' : value.length <= limit ? value : value.slice(0, limit - 1) + '…';
+            let end = Math.max(0, limit - 1);
+            if (end > 0 && /[\uD800-\uDBFF]/.test(value[end - 1]) && /[\uDC00-\uDFFF]/.test(value[end])) end--;
+            preview = limit <= 0 ? '' : value.length <= limit ? value : value.slice(0, end) + '…';
         } else if (input.previewChars <= 0) preview = '';
         else if (line.length <= input.previewChars) preview = line;
         else {
@@ -47,6 +53,8 @@ export function presentToolMatch(input: Extract<TextSearchInput, { kind: 'fileSe
             let start = Math.max(0, index - half), end = start + input.previewChars;
             if (end < index + length) { end = Math.min(line.length, index + length + half); start = Math.max(0, end - input.previewChars); }
             if (end > line.length) { end = line.length; start = Math.max(0, end - input.previewChars); }
+            if (start > 0 && /[\uDC00-\uDFFF]/.test(line[start]) && /[\uD800-\uDBFF]/.test(line[start - 1])) start--;
+            if (end > 0 && /[\uD800-\uDBFF]/.test(line[end - 1]) && /[\uDC00-\uDFFF]/.test(line[end])) end--;
             preview = (start > 0 ? '…' : '') + line.slice(start, end) + (end < line.length ? '…' : '');
         }
         context.push(String((input.lineOffset ?? 0) + current + 1) + ': ' + preview);

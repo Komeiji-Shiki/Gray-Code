@@ -1,28 +1,16 @@
-import { executableEffects } from './commandRisk';
 import { randomUUID } from 'node:crypto';
 import { spawn as nativeSpawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import crossSpawn from 'cross-spawn';
-import type { ToolEffect, WorkspaceDefinition } from '@graycode/contracts';
+import type { WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformStorage } from '@graycode/core';
 import { stopOwnedProcess } from './processLifecycle';
 import { AnsiStreamStripper } from '../../../../shared/ansi';
+import { appendProcessOutput, readProcessOutput, ProcessSessionError, type ProcessReadOptions } from '../../../../shared/processOutput';
+import { writeProcessInput } from '../../../../backend/tools/terminal/processInput';
 
 /** 字符串始终代表 RPC 客户端；模型身份只能来自可信 ToolContext，不能来自模型参数。 */
 export type ProcessOwner = string | { actorId: string; conversationId?: string; runId: string; workspaceId?: string };
-export interface ProcessReadOptions {
-  cursor?: number;
-  maxChars?: number;
-}
-export class ProcessSessionError extends Error {
-  constructor(
-    readonly code: 'NOT_FOUND' | 'FORBIDDEN' | 'EXITED' | 'INPUT_CLOSED' | 'INVALID_CURSOR',
-    message: string,
-  ) {
-    super(message);
-    this.name = 'ProcessSessionError';
-  }
-}
 export interface ProcessResult {
   id: string;
   output: string;
@@ -44,33 +32,6 @@ interface ManagedProcess extends ProcessOutput {
 }
 type SavedProcess = Omit<ProcessOutput, 'outputOffset'> & { outputOffset?: number; ownerId: string; owner?: ProcessOwner };
 const spawn: typeof nativeSpawn = crossSpawn;
-const outputLimit = 256_000;
-export type ProcessOutputBuffer = Pick<ProcessResult, 'output' | 'outputOffset' | 'truncated'>;
-export function appendProcessOutput(entry: ProcessOutputBuffer, text: string): void {
-  entry.output += text;
-  if (entry.output.length > outputLimit) {
-    entry.outputOffset += entry.output.length - outputLimit;
-    entry.output = entry.output.slice(-outputLimit);
-    entry.truncated = true;
-  }
-}
-export function readProcessOutput(entry: ProcessOutputBuffer, options: ProcessReadOptions = {}) {
-  const end = entry.outputOffset + entry.output.length;
-  if (options.cursor !== undefined && (!Number.isSafeInteger(options.cursor) || options.cursor < 0 || options.cursor > end))
-    throw new ProcessSessionError('INVALID_CURSOR', 'cursor must be a non-negative UTF-16 integer no later than nextCursor.');
-  if (options.maxChars !== undefined && (!Number.isSafeInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > outputLimit))
-    throw new ProcessSessionError('INVALID_CURSOR', `maxChars must be an integer between 1 and ${outputLimit}.`);
-  const cursor = options.cursor ?? entry.outputOffset;
-  const offset = Math.max(cursor, entry.outputOffset);
-  const output = entry.output.slice(offset - entry.outputOffset, offset - entry.outputOffset + (options.maxChars ?? outputLimit));
-  const nextCursor = offset + output.length;
-  return { output, outputOffset: offset, nextCursor, hasMore: nextCursor < end, outputLost: cursor < entry.outputOffset, truncated: entry.truncated };
-}
-
-/** 按命令内容生成审批分类，不因使用 Shell 就统一判为高风险。 */
-export function commandEffects(args: Record<string, unknown>): ToolEffect[] {
-  return executableEffects(String(args.command), args.args as string[]);
-}
 export class WorkspaceProcesses {
   private readonly entries = new Map<string, ManagedProcess>();
   private closing = false;
@@ -227,8 +188,7 @@ export class WorkspaceProcesses {
       return active;
     }
     const record = (await this.storage.getRecord('workspace-processes', id)) as SavedProcess | null;
-    if (!record)
-      throw new ProcessSessionError('NOT_FOUND', 'Managed process was not found. Use the id returned by run_command, not an execute_command taskId.');
+    if (!record) throw new ProcessSessionError('NOT_FOUND', 'Managed process was not found.');
     await this.authorize(record.owner, owner, record.ownerId);
     // 旧记录未存绝对偏移，无法推断截断前长度；以现存输出为 0 起点，不伪造丢失数量。
     return { ...record, outputOffset: record.outputOffset ?? 0 };
@@ -243,23 +203,8 @@ export class WorkspaceProcesses {
     const entry = await this.get(id, owner);
     signal?.throwIfAborted();
     // 完成记录先授权再报告退出；不能把本任务已完成的命令误报为不存在或无权限。
-    if (!entry.running || !('child' in entry) || !entry.child || entry.child.exitCode !== null || entry.child.signalCode !== null)
-      throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
-    const input = entry.child.stdin;
-    if (entry.inputError || !input || input.destroyed || input.writableEnded || !input.writable)
-      throw new ProcessSessionError('INPUT_CLOSED', '命令输入管道已关闭，进程输出仍可读取。');
-    // 等待实际写入回调，避免提前报告成功；检查之后关闭管道的竞态也必须回到工具回执。
-    let abort: (() => void) | undefined;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        // 子进程可能一直不读取 stdin；取消只结束本次等待，已提交的输入不能撤回。
-        abort = () => reject(signal!.reason);
-        signal?.addEventListener('abort', abort, { once: true });
-        input.write(text, (error) => (error ? reject(new ProcessSessionError('INPUT_CLOSED', `命令输入写入失败：${error.message}`)) : resolve()));
-      });
-    } finally {
-      if (abort) signal?.removeEventListener('abort', abort);
-    }
+    if (!entry.running || !('child' in entry) || !entry.child) throw new ProcessSessionError('EXITED', '命令已经退出，不能再发送输入。');
+    await writeProcessInput(entry.child, text, signal, entry.inputError);
   }
   async stop(id: string, owner: ProcessOwner): Promise<void> {
     const entry = await this.get(id, owner);

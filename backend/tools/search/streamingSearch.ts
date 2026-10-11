@@ -40,7 +40,7 @@ async function* readLines(host: SearchFileHost, file: FileLocation, detection: T
 
 /** ASCII 开头不能代表整个大文件的编码；增量确认 UTF-8，失败时复用出错位置的完整块识别旧编码。 */
 async function detectFileEncoding(host: SearchFileHost, file: FileLocation, initial: TextDetectionResult, signal?: AbortSignal): Promise<TextDetectionResult> {
-    if (initial.bomLength || initial.encoding !== 'utf-8') return initial;
+    if (initial.source === 'explicit' || initial.bomLength || initial.encoding !== 'utf-8') return initial;
     const decoder = new TextDecoder('utf-8', { fatal: true });
     let previous: Uint8Array = new Uint8Array();
     for await (const bytes of host.readChunks!(file, signal)) {
@@ -64,7 +64,9 @@ async function detectFileEncoding(host: SearchFileHost, file: FileLocation, init
 
 /** 批次保留两侧上下文；只搜索中间区域，既不漏边界行，也不重复上一批的命中。 */
 export async function* streamingSearchBatches(host: SearchFileHost, file: FileLocation, detection: TextDetectionResult,
-    before: number, after: number, signal?: AbortSignal): AsyncGenerator<{ lines: string[]; base: number; start: number; end: number }> {
+    before: number, after: number, signal?: AbortSignal): AsyncGenerator<{
+        lines: string[]; base: number; start: number; end: number; encoding: string;
+    }> {
     let lines: string[] = [], base = 0, start = 0, characters = 0;
     detection = await detectFileEncoding(host, file, detection, signal);
     if (!detection.isText) throw new Error('大文件的编码样本不是文本，未完成搜索。');
@@ -72,11 +74,11 @@ export async function* streamingSearchBatches(host: SearchFileHost, file: FileLo
         lines.push(line); characters += line.length;
         if (lines.length > start + after && (lines.length >= start + after + 128 || characters >= 512 * 1024)) {
             const end = lines.length - after;
-            yield { lines, base, start, end };
+            yield { lines, base, start, end, encoding: detection.encoding };
             const remove = Math.max(0, end - before);
             lines = lines.slice(remove); base += remove; start = end - remove;
             characters = lines.reduce((total, value) => total + value.length, 0);
         }
     }
-    if (lines.length > start) yield { lines, base, start, end: lines.length };
+    if (lines.length > start) yield { lines, base, start, end: lines.length, encoding: detection.encoding };
 }

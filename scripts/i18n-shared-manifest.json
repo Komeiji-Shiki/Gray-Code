@@ -255,6 +255,8 @@
     { "frontend": "components.settings.summarizeSettings.methodControls.channelTitle", "backend": "modules.settings.contextMethod.channelTitle" },
     { "frontend": "components.settings.summarizeSettings.methodControls.channelHint", "backend": "modules.settings.contextMethod.channelHint" },
     { "frontend": "components.settings.toolsSettings.toolDisplayNames.context_status", "backend": "tools.runtimeControl.contextStatusName" },
+    { "frontend": "components.settings.toolsSettings.toolDisplayNames.engineering_log", "backend": "tools.runtimeControl.engineeringLogName" },
+    { "frontend": "components.settings.toolsSettings.toolDescriptions.engineering_log", "backend": "tools.runtimeControl.engineeringLogDescription" },
     { "frontend": "components.settings.toolsSettings.toolDescriptions.context_status", "backend": "tools.runtimeControl.contextStatusDescription" },
     { "frontend": "components.settings.toolsSettings.toolDisplayNames.terminal_task", "backend": "tools.runtimeControl.terminalTaskName" },
     { "frontend": "components.settings.toolsSettings.toolDescriptions.terminal_task", "backend": "tools.runtimeControl.terminalTaskDescription" },

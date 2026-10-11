@@ -6,7 +6,8 @@ import ToolResultPanel from '../common/ToolResultPanel.vue'
 import ToolReceiptDetails from '../common/ToolReceiptDetails.vue'
 import ToolNextActions from '../common/ToolNextActions.vue'
 import ProcessOutput from './ProcessOutput.vue'
-import { label, number, object, pick, records, resultBody, text, type PlatformToolProps } from './platformResult'
+import PlatformText from './PlatformText.vue'
+import { label, number, object, pick, records, resultBody, strings, successfulResult, text, type PlatformToolProps } from './platformResult'
 
 defineOptions({ inheritAttrs: false })
 const props = defineProps<PlatformToolProps>()
@@ -31,7 +32,7 @@ function taskStatus(task: Record<string, unknown>) {
   <div class="platform-panel terminal-task-result">
     <ToolResultPanel v-bind="props">
       <div class="platform-header">
-        <strong>{{ label('process.taskActions', args?.action) }}</strong>
+        <strong>{{ label(args?.action === 'input' ? 'process.actions' : 'process.taskActions', args?.action) }}</strong>
       </div>
       <template #result="{ metadata }">
         <div v-if="listing && number(data.total) !== undefined" class="platform-statbar">
@@ -48,8 +49,11 @@ function taskStatus(task: Record<string, unknown>) {
               >
             </div>
             <pre v-if="text(task.command)" class="task-command">{{ text(task.command) }}</pre>
+            <div v-if="task.mode === 'argv'" class="task-arguments">
+              <code v-for="(argument, argumentIndex) in strings(task.args)" :key="argumentIndex">{{ JSON.stringify(argument) }}</code>
+            </div>
             <p v-if="text(task.error)" class="platform-notice task-error" role="alert">{{ text(task.error) }}</p>
-            <ProcessOutput v-if="!listing && args?.action === 'read'" :data="task" />
+            <ProcessOutput v-if="!listing && (args?.action === 'read' || args?.action === 'input')" :data="task" />
             <ToolNextActions :value="task.nextActions" />
             <ToolReceiptDetails
               :value="
@@ -68,6 +72,10 @@ function taskStatus(task: Record<string, unknown>) {
             />
           </article>
         </div>
+        <template v-if="args?.action === 'input' && typeof args.text === 'string' && successfulResult(props)">
+          <h4 class="platform-section-title">{{ t('components.tools.platform.process.input') }}</h4>
+          <PlatformText :text="args.text" code />
+        </template>
         <p v-if="listing && !tasks.length" class="platform-empty">
           {{ t(Array.isArray(data.tasks) ? 'components.tools.platform.process.noTasks' : 'components.tools.platform.noData') }}
         </p>
@@ -91,6 +99,14 @@ function taskStatus(task: Record<string, unknown>) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: 12px/1.6 var(--gc-font-code);
+}
+.task-arguments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-family: var(--gc-font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .task-exit-code {
   font-family: var(--gc-font-code);

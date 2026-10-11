@@ -330,6 +330,7 @@ const sharedEn = {
                 },
                 toolDescriptions: {
                     context_status: backendEn.tools.runtimeControl.contextStatusDescription,
+                    engineering_log: backendEn.tools.runtimeControl.engineeringLogDescription,
                     office_create: backendEn.tools.office.createDescription,
                     office_edit: backendEn.tools.office.editDescription,
                     office_read: backendEn.tools.office.readDescription,
@@ -337,6 +338,7 @@ const sharedEn = {
                 },
                 toolDisplayNames: {
                     context_status: backendEn.tools.runtimeControl.contextStatusName,
+                    engineering_log: backendEn.tools.runtimeControl.engineeringLogName,
                     office_create: backendEn.tools.office.createName,
                     office_edit: backendEn.tools.office.editName,
                     office_read: backendEn.tools.office.readName,

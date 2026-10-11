@@ -24,6 +24,9 @@ test.each(['zh-CN', 'en'] as const)('%s 声明沿用用户的超时、工作区�
   expect(declaration.description).not.toContain('## WSL');
   for (const syntax of ['argv', '$env:NAME', '$(hostname)', 'SSH', 'UTF-8']) expect(declaration.description).toContain(syntax);
   expect(declaration.description).toMatch(/默认不截断|not truncated/);
+  // 可选 Shell 只由枚举表达，说明里不再重复清单或放置无信息的占位行。
+  expect(declaration.description).not.toMatch(/可用的 Shell|Available shells|可能不可用|may be unavailable|执行前检查|checked for availability/);
+  expect(fields.shell.description).not.toContain('powershell');
   expect(fields.background.description).toContain('[Background task completed]');
 });
 

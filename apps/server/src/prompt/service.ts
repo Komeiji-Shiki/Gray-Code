@@ -20,6 +20,9 @@ import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
+import { filterPromptModeToolNames } from '../../../../backend/modules/settings/modeToolsPolicy';
+import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
+import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 
 /** Capture each turn once. Tool iterations reuse the captured prompt; history retains prior snapshots. */
 export class PlatformPromptService {
@@ -59,6 +62,7 @@ export class PlatformPromptService {
     const settings = input.settingsOverride ?? this.app.product.runtimeSettings();
     const conversationMode = (input.conversation.custom as Record<string, unknown> | undefined)?.platformMode;
     const profile = typeof conversationMode === 'string' ? this.app.settings.read('modeProfiles').modeProfiles?.[conversationMode as 'chat' | 'code' | 'character'] : undefined;
+    const profileToolNames = profile?.toolNames ? new Set(upgradeToolNames(profile.toolNames)) : undefined;
     const mode = settings.resolvePromptMode(input.request.promptModeId ?? profile?.promptModeId ?? input.agent.promptModeId);
     const channelWorkspace = botEnvironment?.version === 1 && typeof conversation.workspaceId === 'string'
       ? this.app.settings.find('workspaces', conversation.workspaceId) : undefined;
@@ -138,8 +142,13 @@ export class PlatformPromptService {
       systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
       // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
-      toolNames: [...new Set([...input.agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name))),
+      toolNames: [...new Set([...filterPromptModeToolNames(mode, input.agent.toolNames)
+        .filter(name => !profileToolNames || profileToolNames.has(name)),
         ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])],
+      toolApproval: {
+        ...engineeringLogActionRestrictions(mode.toolPolicy ?? []),
+        ...engineeringLogActionRestrictions(profile?.toolNames ?? []),
+      },
       promptContext: { beforeHistoryMessages,
         afterHistoryMessages: [...((resumed ?? bundle).afterHistoryMessages as PlatformMessage[]).filter(message => botEnvironment?.version !== 1
           || !message.parts.some(part => typeof part.text === 'string' && isLegacyBotIdentityText(part.text))), ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,

@@ -120,7 +120,7 @@ test('the existing UI protocol uses original settings services and streams core 
   const notifications: Record<string, any>[] = [];
   const app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async input => {
     if (input.messages.some(message => message.parts.some(part => part.functionResponse))) return { role: 'model', parts: [{ text: 'Restored interface works.' }] };
-    return { role: 'model', parts: [{ functionCall: { id: 'read', name: 'workspace_files', args: { action: 'list', path: '.' } } }] };
+    return { role: 'model', parts: [{ functionCall: { id: 'read', name: 'list_files', args: { paths: ['.'] } } }] };
   } } });
   const router = new ApplicationRouter(app);
   const owner = { actorId: 'owner', clientId: 'original-ui' };

@@ -51,7 +51,7 @@ test('新内容含原编码无法表示的字符时拒绝修改，文件保持�
   expect(Buffer.compare(await readFile(file), original)).toBe(0);
 });
 
-test('UTF-16 文件保留 BOM 与编码；workspace_files 对非 UTF-8 文件给出明确说明', async () => {
+test('UTF-16 文件保留 BOM 与编码，read_file 自动识别非 UTF-8 文本', async () => {
   const file = path.join(f.root, 'wide.txt');
   await writeFile(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('第一行\n第二行\n', 'utf16le')]));
   expect(await tool('apply_diff', { path: 'wide.txt', hunks: [{ oldContent: '第二行', newContent: '已修改' }] })).toMatchObject({ success: true });
@@ -59,5 +59,6 @@ test('UTF-16 文件保留 BOM 与编码；workspace_files 对非 UTF-8 文件给
   expect([...bytes.subarray(0, 2)]).toEqual([0xff, 0xfe]);
   expect(bytes.subarray(2).toString('utf16le')).toBe('第一行\n已修改\n');
   await writeFile(path.join(f.root, 'gbk.txt'), iconv.encode('中文内容', 'gbk'));
-  await expect(tool('workspace_files', { action: 'read', path: 'gbk.txt' })).rejects.toThrow('ENCODING_NOT_UTF8');
+  expect(await tool('read_file', { path: 'gbk.txt' }))
+    .toMatchObject({ success: true, data: { results: [{ encoding: 'gbk' }] } });
 });

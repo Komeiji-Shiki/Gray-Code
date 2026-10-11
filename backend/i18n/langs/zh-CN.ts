@@ -707,6 +707,8 @@ const zhCN = {
             thresholdTokens: '阈值 token 数', contextId: '上下文编号', initial: '初始上下文',
         },
         runtimeControl: {
+            engineeringLogName: '工程日志',
+            engineeringLogDescription: '管理项目约定与技术经验，可读取、记录和整理工程日志。',
             contextStatusName: '上下文状态',
             contextStatusDescription: '查询当前token用量与总结策略',
             terminalTaskName: '后台终端任务',

@@ -23,14 +23,14 @@ export function createValidateProgressDocumentToolDeclaration(): ToolDeclaration
     readOnly: true,
     strict: true,
     description:
-      'Check the progress document at .graycode/progress.md without modifying it. The result reports problems with its metadata, section order and basic consistency rules.',
+      '只读校验 .graycode/progress.md 的元数据、章节顺序与一致性，返回问题列表。',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path of the progress document. It must be .graycode/progress.md (in a multi-root workspace, workspace/.graycode/progress.md).'
+          description: '进度文档路径，必须是 .graycode/progress.md（多根工作区为 workspace/.graycode/progress.md）。'
         }
       },
       required: ['path']

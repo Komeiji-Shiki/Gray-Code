@@ -7,7 +7,14 @@ export function teamTools(app: PlatformApplication): RuntimeTool[] {
       declaration: {
         name: 'team_tasks',
         description:
-          "Coordinate tasks shared by this main conversation and its sub-agents. Create tasks with dependencies, then use claim_ready to atomically claim the oldest unclaimed task whose dependencies are complete. list returns compact summaries and get returns full details. claim, complete, release and set_dependencies require the task's current expectedRevision. Only the execution that claimed a task can complete it; the main agent can explicitly release abandoned work, and claims held by failed or stopped members stay in place until released. Give workers concrete task IDs, and when your work depends on other members, call team_wait with the returned sequence.",
+          '协调主会话及其子代理共享的任务。'
+          + '创建任务并声明依赖后，用 claim_ready 原子领取依赖已完成的最早未领取任务。'
+          + 'list 返回摘要，get 返回详情；'
+          + 'claim、complete、release、set_dependencies 需传入当前 expectedRevision。'
+          + '只有领取任务的执行才能完成任务；'
+          + '主代理可明确释放遗留任务，失败或停止成员的占用会保留到释放。'
+          + '给成员提供具体任务 ID；'
+          + '依赖其他成员进展时，用返回的 sequence 调用 team_wait。',
         parameters: {
           type: 'object',
           additionalProperties: false,
@@ -33,7 +40,14 @@ export function teamTools(app: PlatformApplication): RuntimeTool[] {
       declaration: {
         name: 'team_wait',
         description:
-          'Wait for saved team changes after the sequence returned by team_tasks or an earlier team_wait. Events you missed are returned without waiting, up to 50 compact events per call; if hasMore is true, call again with the returned sequence. While waiting, a sub-agent gives up its concurrency slot. When readyTaskIds is nonempty, claim that work. noProgress=true means no other active member or ready task can move the team forward: resolve the blocked work, report the blocker or finish, rather than waiting again. timeoutMs defaults to 30 seconds, up to 60 seconds. This tool never restarts failed or paused members.',
+          '等待 team_tasks 或上次 team_wait 返回的 sequence 之后的团队变更。'
+          + '已有未读事件立即返回，每次最多 50 条；'
+          + 'hasMore 为 true 时使用返回的 sequence 继续。'
+          + '子代理等待期间释放并发名额。'
+          + 'readyTaskIds 非空时应领取任务；'
+          + 'noProgress=true 表示没有活跃成员或可领取任务能够继续推进，应处理或报告阻塞，或结束任务。'
+          + 'timeoutMs 默认 30 秒、最多 60 秒。'
+          + '本工具不会重启失败或暂停的成员。',
         parameters: {
           type: 'object',
           additionalProperties: false,

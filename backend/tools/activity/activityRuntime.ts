@@ -115,22 +115,25 @@ export function createGetActivityStatsToolDeclaration(): ToolDeclaration {
         strict: true,
         readOnly: true,
         category: 'activity',
-        description: 'Get statistics on how the user spends time in the IDE: how long they have worked, in which blocks, and how long the current stretch has lasted. Use it to understand the user\'s work and rest rhythm, spot long unbroken sessions, or check whether the user is active right now.\n\nActivity is recorded as separate sessions: 15 or more minutes without activity ends a session, and the next activity starts a new one. A gap therefore means the user left the IDE (a break, sleep or time away), so do not assume they worked continuously from firstActiveAt to lastActiveAt. "sessions" covers the last 7 days and lists each day\'s actual work blocks as local "HH:mm-HH:mm (Nm)"; "gaps" covers the most recent day and lists the idle intervals between blocks; "currentSession.startedAt" is when the ongoing session began, including the date because a session can start before midnight. The data holds timestamps only, with no user content, and all times are local (HH:mm or YYYY-MM-DD HH:mm).',
+        // 结果字段名已自解释，说明只保留模型容易误读的会话边界。
+        description: '查看用户每天的工作时段、空闲间隔和当前会话，用于了解工作休息节奏及当前是否活跃。'
+            + '连续空闲至少 15 分钟便结束一个会话，不能将 firstActiveAt 到 lastActiveAt 当作持续工作时间。'
+            + '时间采用本地时区，只记录活动时间戳。',
         parameters: {
             type: 'object',
             properties: {
                 range: {
                     type: 'string',
                     enum: [...RANGES],
-                    description: 'Time range: today, 7d (last 7 days), 30d, 90d, 365d or all (entire history); default 7d.'
+                    description: '查询时间范围，默认 7d。'
                 },
                 includeHourly: {
                     type: 'boolean',
-                    description: 'Whether to include an hourly heatmap (24 slots per day with active minutes per hour, local time), which helps when analyzing the user\'s sleep and work schedule; default false.'
+                    description: '是否附带每天按本地小时统计的活跃分钟数，默认 false。'
                 },
                 includeMonthly: {
                     type: 'boolean',
-                    description: 'Whether to include monthly totals (minutes, active days and session count per month) for a long-term overview; default false.'
+                    description: '是否附带每月汇总，默认 false。'
                 }
             }
         }

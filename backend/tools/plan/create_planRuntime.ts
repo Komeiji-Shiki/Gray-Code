@@ -32,32 +32,33 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_plan',
     description:
-      'Create a new Markdown plan document with a TODO checklist under .graycode/plans/**.md. This tool only writes the plan; it does not carry it out. If the target file already exists, the call fails; use update_plan to revise an existing plan. When the plan is based on a confirmed design or review, pass that document as sourceArtifact so you can later check whether the plan still matches it.',
+      '在 .graycode/plans/**.md 创建带 TODO 清单的 Markdown 计划，创建后需要用户确认。目标已存在时调用失败，修改请用 update_plan。' +
+      '基于已确认设计或审查时传入 sourceArtifact，以检查计划是否仍与来源文档一致。',
     category: 'plan',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Optional plan title, also used to build the default file name.' },
-        overview: { type: 'string', description: 'Optional one-line overview.' },
-        plan: { type: 'string', description: 'Plan content in Markdown.' },
+        title: { type: 'string', description: '可选的计划标题，也用于生成默认文件名。' },
+        overview: { type: 'string', description: '可选的一行概述。' },
+        plan: { type: 'string', description: '计划内容，使用 Markdown。' },
         todos: {
           type: 'array',
-          description: 'TODO checklist for the plan. Required; each item has id, content and status.',
+          description: '必填的 TODO 清单。',
           items: TODO_ITEM_SCHEMA
         },
         sourceArtifact: {
           type: 'object',
-          description: 'Optional confirmed design or review document that the plan is based on.',
+          description: '可选，计划所依据的已确认设计或审查文档。',
           properties: {
-            type: { type: 'string', enum: ['design', 'review'] },
-            path: { type: 'string' }
+            type: { description: '来源文档类型。', type: 'string', enum: ['design', 'review'] },
+            path: { description: '来源文档路径。', type: 'string' }
           },
           required: ['type', 'path']
         },
         path: {
           type: 'string',
           description:
-            'Optional output path. It must be under .graycode/plans/**.md (in a multi-root workspace, workspace/.graycode/plans/**.md). If omitted, the path is derived from the title.'
+            '可选的输出路径，必须位于 .graycode/plans/**.md 下（多根工作区为 workspace/.graycode/plans/**.md）。不传时根据标题生成。'
         }
       },
       required: ['plan', 'todos']

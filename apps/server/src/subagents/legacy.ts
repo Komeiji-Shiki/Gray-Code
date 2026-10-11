@@ -7,6 +7,9 @@ import { buildLastSentHistoryProjection, restoreLastSentHistory } from '../../..
 import { ensureSubAgentTranscriptTracking, getSubAgentSummaryCoverage, getSubAgentTranscriptIndex } from '../../../../backend/tools/subagents/executor/historyMetadata';
 import type { PlatformApplication } from '../application';
 import { configuredAgent } from '../settings/agent';
+import { filterPromptModeToolNames } from '../../../../backend/modules/settings/modeToolsPolicy';
+import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
+import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { createSubagentRecord } from './profile';
 import { legacySubagentSnapshot, readLegacySubagent } from './legacySource';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
@@ -131,9 +134,13 @@ export class LegacySubagents {
     const base = appSettings.agents[0]; if (!base) throw new Error('请先配置主 Agent。');
     const agent = configuredAgent(this.app, base);
     const profile = appSettings.modeProfiles?.[custom?.platformMode as 'chat' | 'code' | 'character'];
+    const profileToolNames = profile?.toolNames ? new Set(upgradeToolNames(profile.toolNames)) : undefined;
     const promptModeId = custom?.promptModeConfig?.modeId ?? profile?.promptModeId ?? agent.promptModeId;
     const mode = preferences.resolvePromptMode(promptModeId);
-    agent.toolNames = agent.toolNames.filter(name => (!mode.toolPolicy || mode.toolPolicy.includes(name)) && (!profile?.toolNames || profile.toolNames.includes(name)));
+    agent.toolNames = filterPromptModeToolNames(mode, agent.toolNames)
+      .filter(name => !profileToolNames || profileToolNames.has(name));
+    agent.toolApproval = { ...agent.toolApproval, ...engineeringLogActionRestrictions(mode.toolPolicy ?? []),
+      ...engineeringLogActionRestrictions(profile?.toolNames ?? []) };
     const workspaceId = source.state.metadata.workspaceId;
     const workspace = typeof workspaceId === 'string' ? this.app.workspace(actorId, workspaceId, []) : undefined;
     const modelSelection = { providerId: provider.id, modelOverride: selected?.modelId || undefined };

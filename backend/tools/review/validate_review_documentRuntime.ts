@@ -25,12 +25,12 @@ export function createValidateReviewDocumentToolDeclaration(): ToolDeclaration {
     name: 'validate_review_document',
     readOnly: true,
     description:
-      'Check an existing review document under .graycode/review/**.md without modifying it. The result reports problems with its format, metadata and consistency rules.',
+      '只读校验 .graycode/review/**.md 中审查文档的格式、元数据与一致性，返回问题列表。',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Path of the review document, under .graycode/review/**.md.' }
+        path: { type: 'string', description: '审查文档路径，位于 .graycode/review/**.md 下。' }
       },
       required: ['path']
     }

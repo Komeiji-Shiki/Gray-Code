@@ -705,6 +705,8 @@ const en: BackendLanguageMessages = {
             thresholdTokens: 'Threshold tokens', contextId: 'Context ID', initial: 'Initial context',
         },
         runtimeControl: {
+            engineeringLogName: 'Engineering log',
+            engineeringLogDescription: 'Read, record and organize project conventions and technical experience.',
             contextStatusName: 'Context Status',
             contextStatusDescription: 'Check current token usage and summary policy',
             terminalTaskName: 'Background Terminal Task',

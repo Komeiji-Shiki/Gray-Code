@@ -349,9 +349,7 @@ async function checkAllShellsAvailability(shells: Array<{ type: string; path?: s
  * Shell 可用性检测结果缓存（模块级 Map，带时间戳 TTL 过期）。
  *
  * 修改原因：工具创建时 getAvailableShells 会对每个启用的 shell 同步 execSync
- * （which/where/wsl --status，各最多 3s），且 getAvailableShellsDescription /
- * getEnabledShellTypesForEnum / getUnavailableShellsDescription 会多次触发
- * getAvailableShells，一次工具创建可能重复执行多轮外部检测，阻塞 extension host。
+ * （which/where/wsl --status，各最多 3s），一次工具创建可能重复执行多轮外部检测，阻塞 extension host。
  * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存；
  *           缓存条目记录检测时间戳，超过 SHELL_AVAILABILITY_CACHE_TTL_MS 后视为过期
  *           并重新检测（用户新装 shell / 修改 PATH 后能在 TTL 内自动反映）。
@@ -455,33 +453,9 @@ function getAvailableShells(): Array<{ type: string; displayName: string; isDefa
 
 
 /**
- * 获取可用的 Shell 描述
- */
-function getAvailableShellsDescription(): string {
-    const availableShells = getAvailableShells();
-    
-    if (availableShells.length === 0) {
-        return '- No available Shell';
-    }
-    
-    return availableShells
-        .map(s => `- ${s.type}: ${s.displayName}${s.isDefault ? ' (default)' : ''}`)
-        .join('\n');
-}
-
-
-/**
- * 获取默认 Shell 名称
- */
-function getDefaultShellName(): string {
-    const config = host.getConfig();
-    const defaultShell = config.shells.find(s => s.type === config.defaultShell);
-    return defaultShell?.displayName || config.defaultShell;
-}
-
-
-/**
  * 获取启用且可用的 Shell 类型列表（用于 enum）
+ *
+ * 可选 Shell 只由这个枚举告诉模型，说明文字不再另列一份清单。
  */
 function getEnabledShellTypesForEnum(): string[] {
     const availableShells = getAvailableShells();
@@ -500,23 +474,5 @@ function getDefaultShellType(): string {
     const config = host.getConfig();
     return config.defaultShell;
 }
-
-
-/**
- * 获取已启用但当前不可用的 Shell 描述
- */
-function getUnavailableShellsDescription(): string {
-    const config = host.getConfig();
-    const availableTypes = new Set(getAvailableShells().map(s => s.type));
-    const unavailableShells = config.shells
-        .filter(s => s.enabled && !availableTypes.has(s.type))
-        .map(s => `- ${s.type}: ${s.displayName}`);
-
-    if (unavailableShells.length === 0) {
-        return '- 无';
-    }
-
-    return unavailableShells.join('\n');
-}
-return { getShellConfig, getEnabledShellTypes, checkShellAvailability, checkAllShellsAvailability, getAvailableShellsDescription, getDefaultShellName, getEnabledShellTypesForEnum, getDefaultShellType, getUnavailableShellsDescription };
+return { getShellConfig, getEnabledShellTypes, checkShellAvailability, checkAllShellsAvailability, getEnabledShellTypesForEnum, getDefaultShellType };
 }
