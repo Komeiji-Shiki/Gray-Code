@@ -773,6 +773,7 @@ const en: BackendLanguageMessages = {
             "loading": "Loading",
             "userControlled": "User has control",
             "controlledBy": "Controlling run",
+            "otherTask": "In use by another run",
             "windowVisible": "Workbench window visible",
             "logs": "Page logs",
             "noLogs": "No new logs",

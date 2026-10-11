@@ -14,7 +14,15 @@ const { t, actualLanguage } = useI18n()
 const safeResult = computed(() => safeAutomationResult(props.result))
 const data = computed(() => payload(safeResult.value))
 const action = computed(() => text(props.args?.action))
-const observation = computed(() => Object.keys(record(data.value.observation)).length ? record(data.value.observation) : data.value.screenshot ? data.value : {})
+// 当前结果的截图是 data.screenshot（带 id）；旧历史使用 data.observation 或把截图元数据铺在 data 上。
+const observation = computed(() => {
+  const legacy = record(data.value.observation)
+  if (Object.keys(legacy).length) return legacy
+  const screenshot = record(data.value.screenshot)
+  return screenshot.id ? { id: screenshot.id, screenshot } : data.value.screenshot ? data.value : {}
+})
+// 成功动作不再携带 status，回执按工具结果显示完成状态。
+const receipt = computed(() => ({ ...data.value, status: data.value.status ?? (record(safeResult.value).success === true ? 'completed' : undefined) }))
 const page = computed(() => ({ ...observation.value, ...data.value }))
 const tabs = computed(() => records(data.value.tabs ?? data.value.openedTabs))
 const openedTabs = computed(() => Array.isArray(data.value.openedTabs) && !Array.isArray(data.value.tabs))
@@ -39,7 +47,7 @@ function logTime(value: unknown) {
     <ToolResultPanel :args="args" :result="safeResult" :error="error" :status="status" :tool-name="toolName">
       <div class="automation-heading"><span class="codicon codicon-globe" aria-hidden="true" /><div><div class="automation-kicker">{{ getToolDisplayName(toolName || 'browser_read') }}</div><h3>{{ actionLabel(action) }}</h3></div></div>
       <template #result>
-        <VisualActionReceipt v-if="toolName === 'browser_action'" :value="data" />
+        <VisualActionReceipt v-if="toolName === 'browser_action'" :value="receipt" />
         <p v-if="typeof data.conditionMet === 'boolean'" class="automation-notice" :class="{ 'automation-error': data.timedOut === true }">{{ t(`components.tools.automation.${data.conditionMet ? 'conditionMet' : 'conditionTimedOut'}`) }}</p>
         <div v-if="tabId && (toolName === 'browser_files' || !page.title && !page.url)" class="automation-meta">{{ toolFieldLabel('tabId') }} <code>{{ tabId }}</code></div>
 
@@ -49,7 +57,7 @@ function logTime(value: unknown) {
           <p v-if="!tabs.length" class="automation-empty">{{ t('components.tools.automation.noTabs') }}</p>
           <ul v-else class="automation-list browser-tabs">
             <li v-for="(tab, index) in tabs.slice(0, visible)" :key="text(tab.id) || index" :class="{ 'is-active': tab.id === data.activeTabId }">
-              <div class="automation-item-head"><strong>{{ text(tab.title) || t('components.tools.automation.untitled') }}</strong><span v-if="tab.id === data.activeTabId && tab.id" class="automation-badge">{{ t('components.tools.automation.activeTab') }}</span><span v-if="tab.loading === true || tab.status === 'opening'" class="automation-badge">{{ t('components.tools.automation.loading') }}</span><span v-if="tab.status === 'closed'" class="automation-badge">{{ t('components.tools.automation.closedTab') }}</span><span v-if="tab.userControlled === true" class="automation-badge is-warning">{{ t('components.tools.automation.userControlled') }}</span></div>
+              <div class="automation-item-head"><strong>{{ text(tab.title) || t('components.tools.automation.untitled') }}</strong><span v-if="tab.id === data.activeTabId && tab.id" class="automation-badge">{{ t('components.tools.automation.activeTab') }}</span><span v-if="tab.loading === true || tab.status === 'opening'" class="automation-badge">{{ t('components.tools.automation.loading') }}</span><span v-if="tab.status === 'closed'" class="automation-badge">{{ t('components.tools.automation.closedTab') }}</span><span v-if="tab.userControlled === true" class="automation-badge is-warning">{{ t('components.tools.automation.userControlled') }}</span><span v-if="tab.otherTask === true" class="automation-badge is-warning">{{ t('components.tools.automation.otherTask') }}</span></div>
               <a v-if="toolLink(tab.url || tab.requestedUrl)" class="automation-link" :href="toolLink(tab.url || tab.requestedUrl)" target="_blank" rel="noopener noreferrer">{{ text(tab.url || tab.requestedUrl) }}</a><span v-else class="automation-muted">{{ text(tab.url || tab.requestedUrl) }}</span>
               <div v-if="tab.requestedUrl && tab.requestedUrl !== tab.url && tab.url" class="automation-meta">{{ t('components.tools.automation.requestedUrl') }} · {{ text(tab.requestedUrl) }}</div>
               <div class="automation-meta"><span v-if="tab.id">{{ toolFieldLabel('tabId') }} <code>{{ text(tab.id) }}</code></span><span v-if="tab.profileId">{{ toolFieldLabel('profileId') }} · {{ profileName(tab.profileId) }}</span><span v-if="record(tab.controlledBy).runId">{{ t('components.tools.automation.controlledBy') }} <code>{{ text(record(tab.controlledBy).runId) }}</code></span></div>
@@ -62,7 +70,7 @@ function logTime(value: unknown) {
 
         <section v-if="toolName !== 'browser_files' && (page.title || page.url)" class="automation-section current-page">
           <div class="automation-kicker">{{ t('components.tools.automation.currentPage') }}</div>
-          <div class="automation-item-head"><strong>{{ text(page.title) || t('components.tools.automation.untitled') }}</strong><span v-if="page.loading === true" class="automation-badge">{{ t('components.tools.automation.loading') }}</span><span v-if="page.userControlled === true" class="automation-badge is-warning">{{ t('components.tools.automation.userControlled') }}</span></div>
+          <div class="automation-item-head"><strong>{{ text(page.title) || t('components.tools.automation.untitled') }}</strong><span v-if="page.loading === true" class="automation-badge">{{ t('components.tools.automation.loading') }}</span><span v-if="page.userControlled === true" class="automation-badge is-warning">{{ t('components.tools.automation.userControlled') }}</span><span v-if="page.otherTask === true" class="automation-badge is-warning">{{ t('components.tools.automation.otherTask') }}</span></div>
           <a v-if="toolLink(page.url)" class="automation-link" :href="toolLink(page.url)" target="_blank" rel="noopener noreferrer">{{ text(page.url) }}</a><span v-else class="automation-muted">{{ text(page.url) }}</span>
           <div class="automation-meta"><span v-if="tabId">{{ toolFieldLabel('tabId') }} <code>{{ tabId }}</code></span><span v-if="page.profileId">{{ toolFieldLabel('profileId') }} <code>{{ text(page.profileId) }}</code></span><span v-if="record(page.controlledBy).runId">{{ t('components.tools.automation.controlledBy') }} <code>{{ text(record(page.controlledBy).runId) }}</code></span></div>
           <div v-if="typeof data.windowVisible === 'boolean'" class="automation-meta">{{ t('components.tools.automation.windowVisible') }} · {{ t(`components.tools.structured.${data.windowVisible ? 'yes' : 'no'}`) }}</div>

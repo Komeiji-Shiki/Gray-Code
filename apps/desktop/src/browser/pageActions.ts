@@ -2,43 +2,24 @@ import { browserKey } from './keys';
 
 const invalid = (message: string): never => { throw Object.assign(new Error(message), { code: 'INVALID_ARGUMENTS' }); };
 
-/** 派发前校验纯参数，让调用方准确区分未执行与执行后结果未知。 */
+/** 参数类型和范围已由工具 schema 校验；这里只检查 schema 表达不了的按动作组合，在派发前区分"未执行"。 */
 export function validateActionArguments(args: Record<string, unknown>): void {
-  const action = args.action;
-  if (['navigate', 'back', 'forward', 'reload'].includes(String(action))) {
-    if (action === 'navigate' && (typeof args.url !== 'string' || !args.url.trim())) invalid('navigate 需要 url 指定页面地址。');
-    return;
-  }
-  if (!['click', 'hover', 'scroll', 'drag', 'type', 'fill', 'select', 'check', 'press', 'dialog'].includes(String(action))) invalid('不支持的页面操作。');
-  if (args.ref !== undefined && (typeof args.ref !== 'string' || !args.ref)) invalid('ref 必须是页面返回的元素引用。');
-  if (['fill', 'select', 'check'].includes(String(action)) && !args.ref) invalid(`${action} 需要目标控件的 ref。`);
-  if (['type', 'fill'].includes(String(action)) && typeof args.text !== 'string') invalid('请提供需要输入的文本。');
-  if (action === 'select') {
-    const choices = args.values ?? args.labels;
-    if ((args.values !== undefined) === (args.labels !== undefined) || !Array.isArray(choices) || choices.some(value => typeof value !== 'string'))
-      invalid('select 需要 values 或 labels 字符串数组，两者只能提供一个。');
-  }
+  const action = String(args.action);
+  if (action === 'navigate' && (typeof args.url !== 'string' || !args.url.trim())) invalid('navigate 需要 url 指定页面地址。');
+  if (['fill', 'select', 'check'].includes(action) && !args.ref) invalid(`${action} 需要目标控件的 ref。`);
+  if (['type', 'fill'].includes(action) && typeof args.text !== 'string') invalid('请提供需要输入的文本。');
+  if (action === 'select' && (args.values !== undefined) === (args.labels !== undefined)) invalid('select 需要 values 或 labels，两者只能提供一个。');
   if (action === 'check' && typeof args.checked !== 'boolean') invalid('check 需要 checked 指定目标状态。');
+  if (action === 'check' && (args.button !== undefined && args.button !== 'left' || args.clickCount !== undefined && args.clickCount !== 1)) invalid('check 仅使用一次左键点击。');
   if (action === 'press') {
     if (typeof args.key !== 'string' || !args.key) invalid('press 需要 key 指定按键。');
     try { browserKey(String(args.key)); } catch (error) { invalid((error as Error).message); }
   }
-  if (args.button !== undefined && !['left', 'middle', 'right'].includes(String(args.button))) invalid('不支持的鼠标按键。');
-  if (args.clickCount !== undefined && args.clickCount !== 1 && args.clickCount !== 2) invalid('clickCount 只能是 1 或 2。');
-  if (action === 'check' && (args.button !== undefined && args.button !== 'left' || args.clickCount !== undefined && args.clickCount !== 1)) invalid('check 仅使用一次左键点击。');
-  if (action === 'scroll') {
-    if (!['up', 'down', 'left', 'right'].includes(String(args.direction))) invalid('请提供滚动方向。');
-    if (args.distance !== undefined && (typeof args.distance !== 'number' || !Number.isFinite(args.distance) || args.distance <= 0)) invalid('滚动距离必须是正数。');
-  }
-  const coordinates = action === 'drag' || !args.ref && (action === 'click' || action === 'hover' || action === 'scroll' && (args.x !== undefined || args.y !== undefined));
-  if (coordinates) for (const key of action === 'drag' ? ['x', 'y', 'toX', 'toY'] : ['x', 'y']) {
-    if (typeof args[key] !== 'number' || !Number.isFinite(args[key]) || Number(args[key]) < 0) invalid(`${key} 必须是截图范围内的非负坐标。`);
-  }
-  if (action === 'drag' && args.durationMs !== undefined && (typeof args.durationMs !== 'number' || !Number.isFinite(args.durationMs) || args.durationMs < 0)) invalid('拖动时间必须是非负数。');
-  if (action === 'dialog') {
-    if (typeof args.accept !== 'boolean') invalid('dialog 需要 accept 指定接受或取消。');
-    if (args.promptText !== undefined && typeof args.promptText !== 'string') invalid('promptText 必须是字符串。');
-  }
+  if (action === 'scroll' && args.direction === undefined) invalid('请提供滚动方向。');
+  const coordinates = action === 'drag' ? ['x', 'y', 'toX', 'toY']
+    : !args.ref && (action === 'click' || action === 'hover' || action === 'scroll' && (args.x !== undefined || args.y !== undefined)) ? ['x', 'y'] : [];
+  for (const key of coordinates) if (args[key] === undefined) invalid(`${action} 需要 ref，或截图坐标 ${coordinates.join('、')}。`);
+  if (action === 'dialog' && typeof args.accept !== 'boolean') invalid('dialog 需要 accept 指定接受或取消。');
 }
 
 export interface BrowserDialog { type: string; message: string; defaultPrompt?: string; url?: string }

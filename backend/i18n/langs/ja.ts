@@ -773,6 +773,7 @@ const ja: BackendLanguageMessages = {
             "loading": "読み込み中",
             "userControlled": "ユーザーが制御中",
             "controlledBy": "制御中のタスク",
+            "otherTask": "他のタスクが操作中",
             "windowVisible": "ワークベンチが表示中",
             "logs": "ページログ",
             "noLogs": "新しいログはありません",

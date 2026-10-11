@@ -242,15 +242,16 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     expect(connections).toBe(1); expect(requests).toHaveLength(1);
   });
 
-  test('真实后台命令与浏览器跨轮执行，原始结果和截图只回传一次', async () => {
+  // 浏览器只有可能持续很久的文件传输作为原生异步任务；同一标签的点击与读取按顺序同步执行。
+  test('真实后台命令与浏览器下载跨轮执行，原始结果和附件只回传一次', async () => {
     const f = await fixture(); await f.store.close();
     const browserStarted = deferred(), browserRelease = deferred(); let browserExecutions = 0, rounds = 0;
     const image = 'aW1hZ2U=';
     const app = await PlatformApplication.open({ dataDirectory: f.data, models: adapter, browser: () => ({
       tool: async (name, args, context) => {
-        expect(name).toBe('browser_action'); expect(args.task_handle).toBeUndefined(); expect(context.nativeAsync).toBe(true);
+        expect(name).toBe('browser_files'); expect(args.task_handle).toBeUndefined(); expect(context.nativeAsync).toBe(true);
         browserExecutions++; browserStarted.resolve(); await browserRelease.promise;
-        return { success: true, data: { observationId: 'new-observation', url: args.url }, attachments: [{ mimeType: 'image/png', data: image }] };
+        return { success: true, data: { path: args.path, downloadId: args.downloadId }, attachments: [{ mimeType: 'image/png', data: image }] };
       }, call: async () => ({}), finishRun: () => {}, close: () => {},
     }) });
     app.tools.register({ declaration: { name: 'native_independent', description: '独立工作', parameters: { type: 'object', properties: {} } },
@@ -259,7 +260,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
     await writeFile(path.join(f.root, 'native-terminal.cjs'), "console.log('native-output'); setTimeout(() => { process.exitCode = 7; }, 500);");
     const nativeCall = (id: string, name: string, args: object) => ({ type: 'function_call', id: `fc-${id}`, call_id: id, name, arguments: JSON.stringify(args), async: true });
     const commandCall = nativeCall('command-call', 'execute_command', { command, shell: process.platform === 'win32' ? 'powershell' : 'default', background: true, task_handle: 'command' });
-    const browserCall = nativeCall('browser-call', 'browser_action', { action: 'navigate', tabId: 'fixture-tab', url: 'https://fixture.test/', task_handle: 'browser' });
+    const browserCall = nativeCall('browser-call', 'browser_files', { action: 'download', tabId: 'fixture-tab', downloadId: 'fixture-download', path: 'saved.png', expectedHash: null, task_handle: 'browser' });
     handler = async (socket, event) => {
       expect(event.type).toBe('response.create'); rounds++;
       send(socket, { type: 'response.created', response: { id: `migration-${rounds}` } });
@@ -282,7 +283,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
       const snapshot = app.settings.snapshot();
       snapshot.settings.workspaces.push({ id: 'native-workspace', name: 'Native fixture', directory: f.root, deviceId: 'local' });
       snapshot.settings.agents.push({ ...snapshot.settings.agents[0], id: 'native-migration', providerId, maxIterations: 8,
-        toolNames: ['execute_command', 'browser_action', 'native_independent'], toolApproval: { execute_command: 'auto', browser_action: 'auto' } });
+        toolNames: ['execute_command', 'browser_files', 'native_independent'], toolApproval: { execute_command: 'auto', browser_files: 'auto' } });
       await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
       const conversation = await app.createConversation('owner', 'native migration');
       await app.storage.appendHistory(conversation.id, [
@@ -291,7 +292,7 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
         { id: 'native-boundary', role: 'user', isSummary: true, parts: [{ text: '继续当前窗口。' }] },
       ]);
       const run = await app.runtime.start({ actorId: 'owner', agentId: 'native-migration', workspaceId: 'native-workspace', conversationId: conversation.id,
-        requestKey: 'native-migration', message: { role: 'user', parts: [{ text: '启动命令并打开页面，同时继续其他工作。' }] } });
+        requestKey: 'native-migration', message: { role: 'user', parts: [{ text: '启动命令并保存下载，同时继续其他工作。' }] } });
       expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(browserExecutions).toBe(1);
       expect(requests[1].previous_response_id).toBe('migration-1');
       expect(JSON.stringify(requests)).not.toContain('summarized-native-evidence');

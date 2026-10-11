@@ -7,7 +7,7 @@ import { DesktopBrowser } from '../../../apps/desktop/src/browser';
 const mockViews: any[] = []; const mockHosts: any[] = []; const mockPages: any[] = [];
 const mockConnect = jest.fn(async () => {});
 jest.mock('@graycode/core', () => ({ authorizeEffects: () => undefined }));
-jest.mock('../../../apps/desktop/src/browser/page', () => ({ validateActionArguments: jest.requireActual('../../../apps/desktop/src/browser/pageActions').validateActionArguments, BrowserPage: class {
+jest.mock('../../../apps/desktop/src/browser/page', () => ({ BrowserPage: class {
   automated = false; revision = 0; connect = mockConnect; invalidate = jest.fn(() => { this.revision++; });
   allowManualInput = jest.fn(() => { this.automated = false; });
   action = jest.fn(async () => {}); snapshot = jest.fn(async (..._args: unknown[]) => ({ nodes: [] }));
@@ -16,7 +16,7 @@ jest.mock('../../../apps/desktop/src/browser/page', () => ({ validateActionArgum
   waitForSnapshot = jest.fn(async () => ({ conditionMet: false, timedOut: true, nodes: [] }));
   screenshot = jest.fn(async (signal: AbortSignal) => {
     signal.throwIfAborted();
-    return { observation: { id: 'fixture-observation', url: 'about:blank' }, attachment: { mimeType: 'image/png', data: 'fixture' } };
+    return { screenshot: { id: 'fixture-observation', width: 800, height: 600, scrollX: 0, scrollY: 0 }, url: 'about:blank', attachment: { mimeType: 'image/png', data: 'fixture' } };
   });
   constructor() { mockPages.push(this); }
 } }));
@@ -151,7 +151,7 @@ const activeMouseInputs: (MouseInputEvent | MouseWheelInputEvent)[] = [
 
 test.each([undefined, '', ' \t\r\n '])('browser_tabs.create 可选 profileId %j 使用默认配置', async profileId => {
   const f = await automatedTab(profileId);
-  try { expect(f.tab.profileId).toBe('default:owner'); } finally { f.browser.close(); }
+  try { expect((await f.browser.state('owner')).tabs[0].profileId).toBe('default:owner'); } finally { f.browser.close(); }
 });
 
 test('仅选择显示标签或被动鼠标经过不会取消租约，随后仍能截图', async () => {
@@ -172,12 +172,12 @@ test('仅选择显示标签或被动鼠标经过不会取消租约，随后仍�
   } finally { f.browser.close(); }
 });
 
-test.each(activeMouseInputs)('主动鼠标 $type $modifiers 立即中止租约并保留事件原因', async mouse => {
+test.each(activeMouseInputs)('主动鼠标 $type $modifiers 立即中止租约', async mouse => {
   const f = await automatedTab();
   try {
     f.contents.emit('before-mouse-event', {}, mouse);
     expect(f.signal.aborted).toBe(true);
-    expect(f.signal.reason.message).toContain(`before-mouse-event: ${mouse.type}`);
+    expect(f.signal.reason.message).toContain('用户已接管');
     expect(f.page.invalidate).toHaveBeenCalledTimes(1); expect(f.page.allowManualInput).toHaveBeenCalledTimes(1);
     const current = (await f.browser.state('owner')).tabs[0];
     expect(current.userControlled).toBe(true); expect(current.controlledBy).toBeUndefined();
@@ -190,7 +190,7 @@ test.each([keyboardInput('keyDown'), keyboardInput('keyUp'), keyboardInput('keyD
   try {
     f.contents.emit('before-input-event', {}, input);
     expect(f.signal.aborted).toBe(true);
-    expect(f.signal.reason.message).toContain(`before-input-event: ${input.type}`);
+    expect(f.signal.reason.message).toContain('用户已接管');
     expect(f.signal.reason.message).not.toContain(input.key);
     await expect(f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context)).resolves.toMatchObject({ success: true });
   } finally { f.browser.close(); }
@@ -205,8 +205,9 @@ test.each([false, true])('模型动作自身的鼠标键盘事件不触发接管
       f.contents.emit('before-input-event', {}, keyboardInput('keyUp'));
       if (fails) throw new Error('fixture action failed');
     });
-    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', observationId: 'fixture-observation', x: 20, y: 30 }, f.context);
-    expect(result).toMatchObject({ success: !fails, data: { status: fails ? 'unknown' : 'completed' } });
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, observationId: 'fixture-observation', x: 20, y: 30 }, f.context);
+    expect(result.success).toBe(!fails);
+    if (fails) expect(result.data).toMatchObject({ status: 'unknown' }); else expect(result.data).not.toHaveProperty('status');
     expect(f.signal.aborted).toBe(false); expect(f.page.allowManualInput).not.toHaveBeenCalled();
     f.contents.emit('before-mouse-event', {}, activeMouseInputs[0]);
     expect(f.signal.aborted).toBe(true); expect(f.page.allowManualInput).toHaveBeenCalledTimes(1);
@@ -227,7 +228,51 @@ test('明确接管在模型工具进行中立即中止，之后选择显示和�
     await f.browser.call('owner', 'browser.select', { tabId: f.tab.id });
     f.contents.emit('before-mouse-event', {}, { type: 'mouseMove', x: 20, y: 30 } satisfies MouseInputEvent);
     expect((await f.browser.state('owner')).tabs[0].userControlled).toBe(true);
-    await expect(f.browser.tool('browser_tabs', { action: 'show', tabId: f.tab.id }, f.context)).rejects.toThrow('用户已接管');
+    await expect(f.browser.tool('browser_tabs', { action: 'show', tabId: f.tab.id }, f.context)).rejects.toThrow('本次任务中接管');
+  } finally { f.browser.close(); }
+});
+
+test('接管只拒绝当时的任务，其他任务可以申领，任务结束后标签自动交还', async () => {
+  const f = await automatedTab();
+  try {
+    f.contents.emit('before-mouse-event', {}, activeMouseInputs[0]);
+    await expect(f.browser.tool('browser_action', { action: 'press', tabId: f.tab.id, key: 'Enter', after: 'none' }, f.context)).rejects.toThrow('本次任务中接管');
+    expect((await f.browser.state('owner')).tabs[0].userControlled).toBe(true);
+    const listed = await f.browser.tool('browser_tabs', { action: 'list' }, f.context);
+    expect((listed.data as any).tabs[0]).toMatchObject({ id: f.tab.id, userControlled: true });
+    f.browser.finishRun(f.context.runId);
+    expect((await f.browser.state('owner')).tabs[0].userControlled).toBe(false);
+    const next = { ...f.context, runId: 'next-run' };
+    await expect(f.browser.tool('browser_action', { action: 'press', tabId: f.tab.id, key: 'Enter', after: 'none' }, next)).resolves.toMatchObject({ success: true });
+    expect((await f.browser.state('owner')).tabs[0].controlledBy).toEqual({ runId: 'next-run', conversationId: undefined });
+  } finally { f.browser.close(); }
+});
+
+test('任务结束恢复人工模式，用户之后的点击不算接管，下一轮直接使用标签', async () => {
+  const f = await automatedTab();
+  try {
+    f.browser.finishRun(f.context.runId);
+    expect(f.signal.aborted).toBe(true);
+    expect(f.page.allowManualInput).toHaveBeenCalledTimes(1); expect(f.page.automated).toBe(false);
+    for (const mouse of activeMouseInputs) f.contents.emit('before-mouse-event', {}, mouse);
+    f.contents.emit('before-input-event', {}, keyboardInput('keyDown'));
+    expect(f.page.invalidate).not.toHaveBeenCalled();
+    expect((await f.browser.state('owner')).tabs[0].userControlled).toBe(false);
+    const next = { ...f.context, runId: 'next-run' };
+    await expect(f.browser.tool('browser_action', { action: 'press', tabId: f.tab.id, key: 'Enter', after: 'none' }, next)).resolves.toMatchObject({ success: true });
+    expect(f.page.automated).toBe(true);
+  } finally { f.browser.close(); }
+});
+
+test('另一个任务持有租约时，标签列表只标记 otherTask，不暴露运行身份', async () => {
+  const f = await automatedTab();
+  try {
+    const other = await f.browser.tool('browser_tabs', { action: 'list' }, { ...f.context, runId: 'other-run' });
+    const [tab] = (other.data as any).tabs;
+    expect(tab).toEqual({ id: f.tab.id, url: 'about:blank', title: '', otherTask: true, profileId: 'default:owner' });
+    expect((other.data as any).profiles).toEqual([{ id: 'default:owner', name: '默认登录配置' }]);
+    await expect(f.browser.tool('browser_action', { action: 'press', tabId: f.tab.id, key: 'Enter' }, { ...f.context, runId: 'other-run' })).rejects.toThrow('另一个任务');
+    await expect(f.browser.tool('browser_read', { action: 'snapshot', tabId: 'missing-tab' }, f.context)).rejects.toThrow(`当前可用标签：${f.tab.id}`);
   } finally { f.browser.close(); }
 });
 
@@ -270,8 +315,8 @@ test('截图超时允许安全重读，动作后的观察错误明确禁止重�
       success: true, attachments: [{ mimeType: 'image/png', data: 'fixture' }],
     });
     f.page.screenshot.mockRejectedValueOnce(timeout());
-    const action = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', observationId: 'fixture-observation', x: 20, y: 30 }, f.context);
-    expect(action).toMatchObject({ success: true, data: { status: 'completed', observationError: {
+    const action = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, observationId: 'fixture-observation', x: 20, y: 30, after: 'screenshot' }, f.context);
+    expect(action).toMatchObject({ success: true, data: { observationError: {
       code: 'BROWSER_CAPTURE_TIMEOUT', message: expect.stringContaining('不要重复刚才的动作'),
     } } });
     expect(action.retryable).toBeUndefined(); expect(f.page.action).toHaveBeenCalledTimes(1);
@@ -300,7 +345,7 @@ test.each(['hidden', 'minimized'] as const)('后台截图在主窗 %s 时挂到�
   } finally { f.browser.close(); }
 });
 
-test.each(['click', 'back'])('%s 后导航发生在观察期间，外层 URL/title 与新观察一致，重放仅补读', async action => {
+test.each(['click', 'back'])('%s 后导航发生在观察期间，外层 URL/title 与新观察一致', async action => {
   const f = await automatedTab();
   try {
     let url = 'about:blank', title = '';
@@ -308,28 +353,49 @@ test.each(['click', 'back'])('%s 后导航发生在观察期间，外层 URL/tit
     f.contents.navigationHistory = { canGoBack: () => true, canGoForward: () => false, goBack: jest.fn() };
     f.page.screenshot.mockImplementation(async () => {
       url = 'https://example.test/next'; title = 'Next page';
-      return { observation: { id: 'new-shot', url }, attachment: { mimeType: 'image/png', data: 'fixture' } };
+      return { screenshot: { id: 'new-shot', width: 800, height: 600, scrollX: 0, scrollY: 0 }, url, attachment: { mimeType: 'image/png', data: 'fixture' } };
     });
-    const args = { action, tabId: f.tab.id, url: 'about:blank', ref: 'before' };
-    const result = await f.browser.tool('browser_action', args, f.context);
-    expect(result).toMatchObject({ success: true, data: { status: 'completed', url, title, observation: { url } } });
+    const result = await f.browser.tool('browser_action', { action, tabId: f.tab.id, ref: 'before', after: 'screenshot' }, f.context);
+    expect(result).toMatchObject({ success: true, data: { url, title, screenshot: { id: 'new-shot' } } });
     expect(f.app.storage.putRecord).not.toHaveBeenCalled();
-    const replay = await f.browser.tool('browser_action', args, f.context);
-    expect(replay).toMatchObject({ success: true, data: { repeated: true, url, title } });
     expect(action === 'click' ? f.page.action : f.contents.navigationHistory.goBack).toHaveBeenCalledTimes(1);
   } finally { f.browser.close(); }
 });
 
-test('none 跳过观察，参数错误在输入和去重登记前返回 failed', async () => {
+test('none 跳过观察，参数错误在输入前返回 failed', async () => {
   const f = await automatedTab();
   try {
     f.page.screenshot.mockClear();
     expect(await f.browser.tool('browser_action', { action: 'fill', tabId: f.tab.id, ref: 'field' }, f.context))
       .toMatchObject({ success: false, code: 'INVALID_ARGUMENTS', data: { status: 'failed' } });
     expect(f.page.action).not.toHaveBeenCalled();
-    expect(await f.browser.tool('browser_action', { action: 'fill', tabId: f.tab.id, ref: 'field', text: 'ready', after: 'none' }, f.context))
-      .toMatchObject({ success: true, data: { status: 'completed' } });
+    const filled = await f.browser.tool('browser_action', { action: 'fill', tabId: f.tab.id, ref: 'field', text: 'ready', after: 'none' }, f.context);
+    expect(filled).toEqual({ success: true, data: { id: f.tab.id, url: 'about:blank', title: '' } });
     expect(f.page.screenshot).not.toHaveBeenCalled(); expect(f.page.snapshot).not.toHaveBeenCalled();
+  } finally { f.browser.close(); }
+});
+
+test('动作默认只返回页面状态和新快照，没有截图、回执编号或空下载列表', async () => {
+  const f = await automatedTab();
+  try {
+    f.page.screenshot.mockClear();
+    f.page.snapshot.mockResolvedValueOnce({ url: 'about:blank', nodes: ['[e1] button "下一步"'], total: 1 });
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'before' }, f.context);
+    expect(result).toEqual({ success: true, data: { id: f.tab.id, url: 'about:blank', title: '', snapshot: { url: 'about:blank', nodes: ['[e1] button "下一步"'], total: 1 } } });
+    expect(f.page.screenshot).not.toHaveBeenCalled();
+  } finally { f.browser.close(); }
+});
+
+test('带地址新建标签按 after 返回观察，不带地址只返回标签', async () => {
+  const f = await automatedTab();
+  try {
+    f.page.snapshot.mockClear();
+    const opening = f.browser.tool('browser_tabs', { action: 'create', url: 'https://example.test/' }, f.context);
+    await settle(); mockViews[1].finish(); await settle(); mockViews[1].webContents.emit('dom-ready');
+    const created = await opening;
+    expect(created).toMatchObject({ success: true, data: { id: expect.any(String), snapshot: { nodes: [] } } });
+    expect(mockPages[1].snapshotAfterAction).toHaveBeenCalledTimes(1);
+    expect(f.tab).toEqual({ id: f.tab.id, url: 'about:blank', title: '' });
   } finally { f.browser.close(); }
 });
 
@@ -339,8 +405,8 @@ test.each(['snapshot', 'both'] as const)('after=%s 返回新 ref 和筛选结果
     f.page.screenshot.mockClear();
     f.page.snapshot.mockResolvedValueOnce({ url: 'about:blank', nodes: [{ ref: 'after-ref', role: 'button' }], nextOffset: 1 });
     const snapshotOptions = { compact: false, query: 'Next', role: 'button', maxNodes: 1, interactiveOnly: true };
-    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before-ref', after, snapshotOptions }, f.context);
-    expect(result).toMatchObject({ success: true, data: { status: 'completed', snapshot: { nodes: [{ ref: 'after-ref' }], nextOffset: 1 } } });
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'before-ref', after, snapshotOptions }, f.context);
+    expect(result).toMatchObject({ success: true, data: { snapshot: { nodes: [{ ref: 'after-ref' }], nextOffset: 1 } } });
     expect(f.page.snapshot).toHaveBeenCalledWith(expect.any(AbortSignal), snapshotOptions);
     expect(f.page.screenshot).toHaveBeenCalledTimes(after === 'both' ? 1 : 0);
     expect(result.attachments?.length ?? 0).toBe(after === 'both' ? 1 : 0);
@@ -351,9 +417,9 @@ test.each(['screenshot', 'snapshot'])('both 的 %s 失败保留另一种观察�
   const f = await automatedTab();
   try {
     f.page[failed].mockRejectedValueOnce(new Error('fixture observation failure'));
-    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', after: 'both' }, f.context);
-    expect(result).toMatchObject({ success: true, data: { status: 'completed', [failed === 'screenshot' ? 'observationError' : 'snapshotError']: { message: expect.stringContaining('不要重复刚才的动作') } } });
-    expect(result.data).toHaveProperty(failed === 'screenshot' ? 'snapshot' : 'observation');
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'before', after: 'both' }, f.context);
+    expect(result).toMatchObject({ success: true, data: { [failed === 'screenshot' ? 'observationError' : 'snapshotError']: { message: expect.stringContaining('不要重复刚才的动作') } } });
+    expect(result.data).toHaveProperty(failed === 'screenshot' ? 'snapshot' : 'screenshot');
     expect(result.retryable).toBeUndefined(); expect(f.page.action).toHaveBeenCalledTimes(1);
   } finally { f.browser.close(); }
 });
@@ -362,17 +428,18 @@ test('both 两次观察之间同址导航，丢弃过期图片但保留新快照
   const f = await automatedTab();
   try {
     f.page.snapshot.mockImplementationOnce(async () => { f.page.invalidate(); return { url: 'about:blank', nodes: ['new document'] }; });
-    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', after: 'both' }, f.context);
-    expect(result).toMatchObject({ success: true, data: { status: 'completed', snapshot: { nodes: ['new document'] }, observationError: { code: 'BROWSER_PAGE_CHANGED' } } });
-    expect(result.data).not.toHaveProperty('observation'); expect(result.attachments).toBeUndefined();
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'before', after: 'both' }, f.context);
+    expect(result).toMatchObject({ success: true, data: { snapshot: { nodes: ['new document'] }, observationError: { code: 'BROWSER_PAGE_CHANGED' } } });
+    expect(result.data).not.toHaveProperty('screenshot'); expect(result.attachments).toBeUndefined();
   } finally { f.browser.close(); }
 });
 
-test.each([{ after: 'invalid' }, { after: 'snapshot', snapshotOptions: { ref: 'old' } }, { after: 'both', snapshotOptions: { maxNodes: 0 } }, { snapshotOptions: {} }, { maxImageDimension: -1 }])('无效观察参数 %j 在派发前拒绝', async options => {
+test.each([{ after: 'screenshot', snapshotOptions: {} }, { after: 'none', snapshotOptions: { query: '结果' } }])('矛盾的观察参数 %j 在派发前拒绝', async options => {
   const f = await automatedTab();
   try {
-    await expect(f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'before', ...options }, f.context)).rejects.toThrow();
-    expect(f.page.action).not.toHaveBeenCalled(); expect(f.app.storage.commitRecords).not.toHaveBeenCalled();
+    expect(await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'before', ...options }, f.context))
+      .toMatchObject({ success: false, code: 'INVALID_ARGUMENTS', data: { status: 'failed' } });
+    expect(f.page.action).not.toHaveBeenCalled();
   } finally { f.browser.close(); }
 });
 
@@ -383,23 +450,24 @@ function finishPopup(view: any) {
   view.finish();
 }
 
-test.each([false, true])('新标签回执保留原页面，动作失败=%s 时同样保留打开事实及幂等回放', async fails => {
+test.each([false, true])('新标签回执保留原页面，动作失败=%s 时同样保留打开事实', async fails => {
   const f = await automatedTab();
   try {
     f.page.action.mockImplementationOnce(async () => {
       f.contents.openHandler({ url: 'https://example.test/library' });
       if (fails) throw new Error('input acknowledgement lost');
     });
-    const args = { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link', after: 'both' };
+    const args = { action: 'click', tabId: f.tab.id, ref: 'link', after: 'both' };
     const pending = f.browser.tool('browser_action', args, f.context);
     await settle(); expect(mockViews).toHaveLength(2); finishPopup(mockViews[1]);
     const result = await pending;
     expect(result).toMatchObject({ success: !fails, data: {
-      status: fails ? 'unknown' : 'completed', openedTabs: [{ id: expect.any(String), status: 'opened', requestedUrl: 'https://example.test/library', url: 'https://example.test/library', controlledBy: { runId: f.context.runId } }],
+      openedTabs: [{ id: expect.any(String), status: 'opened', requestedUrl: 'https://example.test/library', url: 'https://example.test/library' }],
     } });
-    if (!fails) expect(result.data).toMatchObject({ id: f.tab.id, url: 'about:blank', observation: { url: 'about:blank' } });
+    expect((result.data as any).openedTabs[0]).not.toHaveProperty('otherTask');
+    if (fails) expect(result.data).toMatchObject({ status: 'unknown' });
+    else expect(result.data).toMatchObject({ id: f.tab.id, url: 'about:blank', screenshot: { id: 'fixture-observation' } });
     expect(f.app.storage.putRecord).not.toHaveBeenCalled();
-    expect(await f.browser.tool('browser_action', args, f.context)).toMatchObject({ data: { repeated: true, openedTabs: (result.data as any).openedTabs } });
     expect(f.page.action).toHaveBeenCalledTimes(1); expect(mockViews).toHaveLength(2);
   } finally { f.browser.close(); }
 });
@@ -413,7 +481,7 @@ test('并行来源的新标签不会混入当前动作回执', async () => {
       f.contents.openHandler({ url: 'https://example.test/own' });
       mockViews[1].webContents.openHandler({ url: 'https://example.test/other' });
     });
-    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'link' }, f.context);
     await settle(); finishPopup(mockViews[2]); finishPopup(mockViews[3]);
     const result = await pending;
     expect((result.data as any).openedTabs).toHaveLength(1);
@@ -425,9 +493,9 @@ test('新标签初始化失败作为新页错误返回，原动作仍已完成',
   const f = await automatedTab();
   try {
     f.page.action.mockImplementationOnce(async () => { f.contents.openHandler({ url: 'https://example.test/library' }); });
-    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'link' }, f.context);
     await settle(); mockViews[1].fail(new Error('popup failed'));
-    expect(await pending).toMatchObject({ success: true, data: { status: 'completed', openedTabs: [{ status: 'failed', error: 'popup failed' }] } });
+    expect(await pending).toMatchObject({ success: true, data: { openedTabs: [{ status: 'failed', error: 'popup failed' }] } });
     expect(mockViews[1].destroyed).toBe(false);
   } finally { f.browser.close(); }
 });
@@ -438,7 +506,7 @@ test('慢新页有界返回 opening，后续工具排在新页导航之后', asy
   let finish!: () => void;
   try {
     f.page.action.mockImplementationOnce(async () => { f.contents.openHandler({ url: 'https://example.test/slow' }); });
-    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'link' }, f.context);
     await settle();
     finish = () => mockViews[1].finish();
     await jest.advanceTimersByTimeAsync(1000);
@@ -454,7 +522,7 @@ test('接管发生在新页初始化期间时中止新页，不继续导航', as
   const f = await automatedTab();
   try {
     f.page.action.mockImplementationOnce(async () => { f.contents.openHandler({ url: 'https://example.test/library' }); });
-    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context);
+    const pending = f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'link' }, f.context);
     await settle();
     f.contents.emit('before-mouse-event', {}, activeMouseInputs[0]);
     expect(f.signal.aborted).toBe(true);
@@ -470,7 +538,7 @@ test('已取消动作的迟到自动弹窗不再创建标签', async () => {
       controller.abort(new Error('任务取消'));
       expect(f.contents.openHandler({ url: 'https://example.test/late' })).toEqual({ action: 'deny' });
     });
-    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, { ...f.context, signal: controller.signal });
+    const result = await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'link' }, { ...f.context, signal: controller.signal });
     expect(result).toMatchObject({ success: false, data: { status: 'unknown' } });
     expect(mockViews).toHaveLength(1); expect(result.data).not.toHaveProperty('openedTabs');
   } finally { f.browser.close(); }
@@ -483,8 +551,8 @@ test('动作后的观察期间真实键盘输入立即接管', async () => {
       f.contents.emit('before-input-event', {}, keyboardInput('keyDown'));
       signal.throwIfAborted();
     });
-    expect(await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, url: 'about:blank', ref: 'link' }, f.context)).toMatchObject({
-      success: true, data: { status: 'completed', observationError: { message: expect.stringContaining('用户已接管') } },
+    expect(await f.browser.tool('browser_action', { action: 'click', tabId: f.tab.id, ref: 'link', after: 'screenshot' }, f.context)).toMatchObject({
+      success: true, data: { observationError: { message: expect.stringContaining('用户已接管') } },
     });
     expect(f.signal.aborted).toBe(true); expect(f.page.action).toHaveBeenCalledTimes(1);
   } finally { f.browser.close(); }
@@ -501,7 +569,7 @@ test('不同标签只读截图并行时，一个完成不会隐藏另一个正�
     f.browser.finishRun(f.context.runId);
     const finish: Array<() => void> = [];
     for (const page of mockPages) page.screenshot.mockImplementationOnce(() => new Promise(resolve => finish.push(() => resolve({
-      observation: { id: 'parallel', url: 'about:blank' }, attachment: { mimeType: 'image/png', data: 'fixture' },
+      screenshot: { id: 'parallel', width: 800, height: 600, scrollX: 0, scrollY: 0 }, url: 'about:blank', attachment: { mimeType: 'image/png', data: 'fixture' },
     }))));
     const firstRead = f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context);
     const secondRead = f.browser.tool('browser_read', { action: 'screenshot', tabId: second.id }, f.context);
@@ -520,7 +588,7 @@ test('租约和截图期间关闭后台节流，任务与截图都结束后才�
     let release!: () => void;
     f.page.screenshot.mockImplementationOnce(async () => {
       await new Promise<void>(resolve => { release = resolve; });
-      return { observation: { id: 'late', url: 'about:blank' }, attachment: { mimeType: 'image/png', data: 'fixture' } };
+      return { screenshot: { id: 'late', width: 800, height: 600, scrollX: 0, scrollY: 0 }, url: 'about:blank', attachment: { mimeType: 'image/png', data: 'fixture' } };
     });
     const capturing = f.browser.tool('browser_read', { action: 'screenshot', tabId: f.tab.id }, f.context);
     await settle(); expect(f.page.screenshot).toHaveBeenCalledTimes(2);

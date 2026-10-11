@@ -775,6 +775,7 @@ const zhCN = {
             "loading": "加载中",
             "userControlled": "用户已接管",
             "controlledBy": "控制任务",
+            "otherTask": "其他任务操作中",
             "windowVisible": "工作台窗口可见",
             "logs": "页面日志",
             "noLogs": "没有新日志",

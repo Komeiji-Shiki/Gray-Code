@@ -458,6 +458,7 @@ const sharedJa = {
                 openedTabsHint: backendJa.tools.automation.openedTabsHint,
                 operationStatus: backendJa.tools.automation.operationStatus,
                 operationUnknown: backendJa.tools.automation.operationUnknown,
+                otherTask: backendJa.tools.automation.otherTask,
                 parameterRanges: backendJa.tools.automation.parameterRanges,
                 petActions: backendJa.tools.automation.petActions,
                 petModel: backendJa.tools.automation.petModel,

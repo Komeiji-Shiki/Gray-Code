@@ -381,6 +381,7 @@
     { "frontend": "components.tools.automation.loading", "backend": "tools.automation.loading" },
     { "frontend": "components.tools.automation.userControlled", "backend": "tools.automation.userControlled" },
     { "frontend": "components.tools.automation.controlledBy", "backend": "tools.automation.controlledBy" },
+    { "frontend": "components.tools.automation.otherTask", "backend": "tools.automation.otherTask" },
     { "frontend": "components.tools.automation.windowVisible", "backend": "tools.automation.windowVisible" },
     { "frontend": "components.tools.automation.logs", "backend": "tools.automation.logs" },
     { "frontend": "components.tools.automation.noLogs", "backend": "tools.automation.noLogs" },

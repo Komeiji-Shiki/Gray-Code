@@ -458,6 +458,7 @@ const sharedZhCN = {
                 openedTabsHint: backendZhCN.tools.automation.openedTabsHint,
                 operationStatus: backendZhCN.tools.automation.operationStatus,
                 operationUnknown: backendZhCN.tools.automation.operationUnknown,
+                otherTask: backendZhCN.tools.automation.otherTask,
                 parameterRanges: backendZhCN.tools.automation.parameterRanges,
                 petActions: backendZhCN.tools.automation.petActions,
                 petModel: backendZhCN.tools.automation.petModel,

@@ -23,14 +23,6 @@ interface PendingDownload {
   saved?: { workspaceId: string; expectedHash: string | null; result: SavedDownload };
 }
 const defaultMaximumBytes = 64 * 1024 * 1024;
-const maximumAllowedBytes = 1024 * 1024 * 1024;
-
-function downloadLimit(value: unknown): number {
-  if (value === undefined) return defaultMaximumBytes;
-  if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > maximumAllowedBytes)
-    throw new Error('maxBytes 必须是 1 至 1073741824 之间的整数，默认 64 MiB。');
-  return value as number;
-}
 
 /** 原始下载只发起一次，先保留会话、POST 正文与文件，再按下载引用提交工作区事务。 */
 export class BrowserTransfers {
@@ -60,11 +52,11 @@ export class BrowserTransfers {
     return transfer;
   }
 
-  receive(contents: WebContents, item: DownloadItem, options?: { retain: true; signal?: AbortSignal; maxBytes?: number }): boolean {
+  receive(contents: WebContents, item: DownloadItem, options?: { retain: true; signal?: AbortSignal }): boolean {
     let transfer = this.waiting.get(contents.id);
     if (!transfer || transfer.item) {
       if (!options || options.signal?.aborted) return false;
-      transfer = this.create(contents.id, downloadLimit(options.maxBytes), options.signal);
+      transfer = this.create(contents.id, defaultMaximumBytes, options.signal);
     }
     const current = transfer;
     current.item = item; current.info.filename = item.getFilename(); current.info.url = item.getURL();
@@ -138,7 +130,7 @@ export class BrowserTransfers {
     await Promise.all(this.cleanup);
   }
   async upload(page: BrowserPage, args: Record<string, unknown>, context: ToolContext) {
-    if (!Array.isArray(args.paths) || !args.paths.length || args.paths.length > 20 || args.paths.some(value => typeof value !== 'string')) throw new Error('请提供 1 至 20 个文件路径。');
+    if (!Array.isArray(args.paths)) throw Object.assign(new Error('upload 需要 paths 指定文件。'), { code: 'INVALID_ARGUMENTS' });
     const access = new FileReadAccess(this.app, context); const files: string[] = [];
     for (const requested of args.paths as string[]) {
       const file = await access.resolve(requested);
@@ -150,13 +142,12 @@ export class BrowserTransfers {
   }
   async download(page: BrowserPage, args: Record<string, unknown>, context: ToolContext, click?: () => Promise<unknown>): Promise<SavedDownload> {
     if (!context.workspace || !context.conversationId) throw new Error('下载需要任务绑定工作区。');
-    if (typeof args.path !== 'string' || !args.path.trim() || !Object.hasOwn(args, 'expectedHash') || args.expectedHash !== null && typeof args.expectedHash !== 'string')
-      throw new Error('请提供保存路径及预期文件哈希；新文件使用 expectedHash: null。');
-    const maximumBytes = downloadLimit(args.maxBytes);
+    if (typeof args.path !== 'string' || !args.path.trim() || !Object.hasOwn(args, 'expectedHash'))
+      throw Object.assign(new Error('请提供保存路径及预期文件哈希；新文件使用 expectedHash: null。'), { code: 'INVALID_ARGUMENTS' });
+    const maximumBytes = (args.maxBytes as number | undefined) ?? defaultMaximumBytes;
     let transfer: PendingDownload | undefined;
     if (args.downloadId !== undefined) {
-      if (typeof args.downloadId !== 'string') throw new Error('downloadId 必须是当前标签的下载引用。');
-      transfer = this.downloads.get(args.downloadId);
+      transfer = this.downloads.get(String(args.downloadId));
       if (!transfer || transfer.contentsId !== page.contents.id) throw new Error('下载引用已失效或不属于此标签。');
       if (transfer.saved) {
         if (transfer.saved.workspaceId !== context.workspace.id || transfer.saved.result.path !== args.path || transfer.saved.expectedHash !== args.expectedHash)
@@ -165,7 +156,7 @@ export class BrowserTransfers {
       }
       if (args.maxBytes !== undefined) transfer.maximumBytes = maximumBytes;
     } else {
-      if (typeof args.ref !== 'string' || !args.ref) throw new Error('请提供 downloadId，或用于发起下载的 ref。');
+      if (!args.ref) throw Object.assign(new Error('请提供 downloadId，或用于发起下载的 ref。'), { code: 'INVALID_ARGUMENTS' });
       if (this.waiting.has(page.contents.id)) throw new Error('此标签已经在等待文件下载。');
     }
     await prepareExternalWrite(this.app, context, 'write_file', { path: args.path });

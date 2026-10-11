@@ -458,6 +458,7 @@ const sharedEn = {
                 openedTabsHint: backendEn.tools.automation.openedTabsHint,
                 operationStatus: backendEn.tools.automation.operationStatus,
                 operationUnknown: backendEn.tools.automation.operationUnknown,
+                otherTask: backendEn.tools.automation.otherTask,
                 parameterRanges: backendEn.tools.automation.parameterRanges,
                 petActions: backendEn.tools.automation.petActions,
                 petModel: backendEn.tools.automation.petModel,

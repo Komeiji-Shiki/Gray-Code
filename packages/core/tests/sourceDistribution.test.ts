@@ -42,7 +42,8 @@ test('真实源码归档可核对版本、排除忽略文件，并检测修改�
     const archive = path.join(root, 'release/source', manifest.fileName);
     expect(createHash('sha256').update(await readFile(archive)).digest('hex')).toBe(manifest.sha256);
     const extracted = path.join(fixture, 'extracted'); await mkdir(extracted);
-    execFileSync('tar', ['-xzf', archive, '-C', extracted], { windowsHide: true });
+    // GNU tar 会把带盘符的绝对路径（如 A:\...）当成远程主机；在解压目录内用相对路径，bsdtar 与 GNU tar 都适用。
+    execFileSync('tar', ['-xzf', path.relative(extracted, archive)], { cwd: extracted, windowsHide: true });
     const sourceRoot = path.join(extracted, 'GrayCode-source');
     expect(await readFile(path.join(sourceRoot, 'app.ts'), 'utf8')).toContain('42');
     await expect(readFile(path.join(sourceRoot, 'ignored/private.txt'))).rejects.toMatchObject({ code: 'ENOENT' });

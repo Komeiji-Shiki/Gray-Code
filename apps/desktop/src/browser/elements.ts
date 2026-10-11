@@ -1,6 +1,7 @@
-// 这些固定函数只接收值参数，不接受模型提供的脚本或选择器。
+// 这些固定函数只接收值参数，不接受模型提供的脚本或选择器；节点已离开文档时返回 missing 标记，省去单独的连通性检查。
 export const prepareTextInput = `function(text) {
-  if (!this.isConnected || this.matches(':disabled') || this.readOnly || this.closest('[inert]')) return 'not-editable';
+  if (!this.isConnected) return 'missing';
+  if (this.nodeType !== 1 || this.matches(':disabled') || this.readOnly || this.closest('[inert]')) return 'not-editable';
   const view = this.ownerDocument.defaultView;
   if (this instanceof view.HTMLInputElement || this instanceof view.HTMLTextAreaElement) {
     if (this instanceof view.HTMLInputElement && ['file', 'checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'hidden'].includes(this.type)) return 'not-editable';
@@ -25,8 +26,9 @@ export const prepareTextInput = `function(text) {
 
 export const selectElement = `function(values, labels) {
   const view = this.ownerDocument.defaultView;
+  if (!this.isConnected) return { missing: true };
   if (!(this instanceof view.HTMLSelectElement)) return '此元素不是原生下拉框；自定义菜单请使用 click、press 或 hover。';
-  if (!this.isConnected || this.matches(':disabled') || this.closest('[inert]')) return '此下拉框当前不可用。';
+  if (this.matches(':disabled') || this.closest('[inert]')) return '此下拉框当前不可用。';
   const requested = values === undefined ? labels : values;
   if (!this.multiple && requested.length !== 1) return '单选下拉框需要且只能选择一个选项。';
   const selected = [];
@@ -45,7 +47,8 @@ export const selectElement = `function(values, labels) {
 }`;
 
 export const checkedState = `function() {
-  if (!this.isConnected || this.matches(':disabled') || this.getAttribute('aria-disabled') === 'true' || this.closest('[inert]')) return { error: '此选项当前不可用。' };
+  if (!this.isConnected) return { missing: true };
+  if (this.nodeType !== 1 || this.matches(':disabled') || this.getAttribute('aria-disabled') === 'true' || this.closest('[inert]')) return { error: '此选项当前不可用。' };
   const view = this.ownerDocument.defaultView;
   if (this instanceof view.HTMLInputElement && ['checkbox', 'radio'].includes(this.type))
     return { checked: this.indeterminate ? 'mixed' : this.checked, radio: this.type === 'radio' };
@@ -56,7 +59,7 @@ export const checkedState = `function() {
 
 // 文字引用用 Range 定位实际字形；命中检测穿过 Shadow DOM，可见区域提供可执行的定位结果。
 export const pointInElement = `function() {
-  if (!this.isConnected) return null;
+  if (!this.isConnected) return { missing: true };
   const text = this.nodeType === 3, element = text ? this.parentElement : this;
   if (!element || element.nodeType !== 1) return null;
   const view = element.ownerDocument.defaultView;

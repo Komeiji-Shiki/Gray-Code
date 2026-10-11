@@ -107,14 +107,14 @@ async function run(output) {
           if (step === 1) { modelTab = last.data.id; call = { name: 'browser_read', args: { action: 'snapshot', tabId: modelTab, query: 'Search papers', role: 'searchbox', compact: false } }; }
           if (step === 2) {
             modelRef = last.data.nodes[0].ref;
-            call = { name: 'browser_action', args: { action: 'fill', tabId: modelTab, url: origin + '/', ref: modelRef, text: 'quantum methods', after: 'both', snapshotOptions: { compact: false, query: 'Search papers', role: 'searchbox' } } };
+            call = { name: 'browser_action', args: { action: 'fill', tabId: modelTab, ref: modelRef, text: 'quantum methods', after: 'both', snapshotOptions: { compact: false, query: 'Search papers', role: 'searchbox' } } };
           }
           if (step === 3) {
-            assert.equal(last.data.url, last.data.observation.url); assert.equal(last.data.url, last.data.snapshot.url);
+            assert(last.data.screenshot?.id); assert.equal(last.data.url, last.data.snapshot.url);
             modelRef = last.data.snapshot.nodes[0].ref;
             assert.notEqual(modelRef, undefined);
             assert(input.messages.some(message => message.parts.some(part => part.inlineData)));
-            call = { name: 'browser_action', args: { action: 'press', tabId: modelTab, url: last.data.url, ref: modelRef, key: 'Enter' } };
+            call = { name: 'browser_action', args: { action: 'press', tabId: modelTab, ref: modelRef, key: 'Enter' } };
           }
           if (step === 4) call = { name: 'browser_read', args: { action: 'wait', tabId: modelTab, query: 'Results ready', timeoutMs: 4000 } };
           if (step === 5) assert.equal(last.data.conditionMet, true);
@@ -157,6 +157,7 @@ async function run(output) {
     const tool = (name, args) => browser.tool(name, args, { ...context, toolCallId: `smoke-${++sequence}` });
     const created = await tool('browser_tabs', { action: 'create', url: origin });
     assert.equal(created.success, true); const tabId = created.data.id;
+    assert(created.data.snapshot.total > 0, JSON.stringify(created)); assert.equal(created.attachments, undefined);
     const url = origin + '/';
     const read = args => tool('browser_read', { action: 'snapshot', tabId, compact: false, ...args });
     const find = async (query, role, extra = {}) => {
@@ -165,58 +166,56 @@ async function run(output) {
       return result.data.nodes[0].ref;
     };
     const action = async args => {
-      const result = await tool('browser_action', { tabId, url, ...args });
+      const result = await tool('browser_action', { tabId, ...args });
       assert.equal(result.success, true, JSON.stringify({ args, code: result.code, error: result.error, dialog: result.data?.dialog, observationError: result.data?.observationError }));
-      assert.equal(result.data.status, 'completed');
+      // 成功回执只有页面状态与观察，不再附带编号、状态和空下载列表。
+      for (const key of ['status', 'operationId', 'repeated', 'profileId', 'canGoBack']) assert.equal(result.data[key], undefined, key);
       if (args.after === 'none' || result.data.dialog) { assert.equal(result.attachments, undefined); }
-      else if (args.after === 'snapshot') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.attachments, undefined); }
-      else { assert(result.data.observation, JSON.stringify(result)); assert.equal(result.data.url, result.data.observation.url); }
+      else if (!args.after || args.after === 'snapshot') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.attachments, undefined); }
+      else { assert(result.data.screenshot?.id, JSON.stringify(result)); assert.equal(result.attachments.length, 1); }
       if (args.after === 'both') { assert(result.data.snapshot, JSON.stringify(result)); assert.equal(result.data.url, result.data.snapshot.url); }
       return result;
     };
     const shot = await tool('browser_read', { action: 'screenshot', tabId });
-    assert.equal(shot.success, true, JSON.stringify(shot));
+    assert.equal(shot.success, true, JSON.stringify(shot)); assert.match(shot.data.screenshot.id, /^s\d+$/);
     const first = await read({ maxNodes: 20 });
-    assert.equal(first.data.nextOffset, 20); assert(first.data.total > 310);
+    assert.equal(first.data.nextOffset, 20); assert(first.data.total > 310); assert.match(first.data.nodes[0].ref, /^e\d+$/);
     const second = await read({ maxNodes: 20, offset: first.data.nextOffset });
-    assert.equal(second.data.offset, 20); assert.notEqual(second.data.nodes[0].name, first.data.nodes[0].name);
-    await action({ action: 'hover', observationId: shot.data.id, x: 20, y: 20 });
+    assert.equal(second.data.nodes.length, 20); assert.notEqual(second.data.nodes[0].name, first.data.nodes[0].name);
+    await action({ action: 'hover', observationId: shot.data.screenshot.id, x: 20, y: 20 });
     checks.push('pagination-and-screenshot-preservation');
     // 同一个路由场景同时覆盖自定义导航、文字引用、旧截图、旧地址与任务结束后的继续操作。
     const routeRef = await find('SPA guide route', 'generic', { interactiveOnly: true });
     const pointerRef = await find('Pointer-only menu', 'generic', { interactiveOnly: true });
     const routeText = await find('SPA guide route', 'StaticText');
     const routeHover = await action({ action: 'hover', ref: routeRef, after: 'snapshot' });
-    assert.equal(routeHover.data.pointer.source, 'element');
-    assert(Number.isFinite(routeHover.data.pointer.viewport.x)); assert(Number.isFinite(routeHover.data.pointer.viewport.y));
     assert.equal(routeHover.data.pointer.hit.name, 'SPA guide route');
     const routeShot = await tool('browser_read', { action: 'screenshot', tabId });
     assert.equal(routeShot.success, true, JSON.stringify(routeShot));
+    // 模型从图片读坐标；冒烟用页面几何换算出同一位置的截图像素。
+    const routeBox = await browser.tabs.get(tabId).view.webContents.executeJavaScript(`(() => {
+      const element = document.evaluate("//*[normalize-space(text())='SPA guide route']", document, null, 9, null).singleNodeValue;
+      const rect = element.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, width: innerWidth, height: innerHeight };
+    })()`);
     const routePoint = {
-      x: routeHover.data.pointer.viewport.x * routeShot.data.screenshot.width / routeShot.data.viewport.width,
-      y: routeHover.data.pointer.viewport.y * routeShot.data.screenshot.height / routeShot.data.viewport.height,
+      x: Math.round(routeBox.x * routeShot.data.screenshot.width / routeBox.width),
+      y: Math.round(routeBox.y * routeShot.data.screenshot.height / routeBox.height),
     };
-    const guide = await action({ action: 'click', ref: routeText, url: undefined, observationId: shot.data.id,
+    const guide = await action({ action: 'click', ref: routeText, observationId: shot.data.screenshot.id,
       after: 'snapshot', snapshotOptions: { query: 'Guide clicks: 1', compact: false } });
     assert.equal(guide.data.url, origin + '/guide'); assert(guide.data.snapshot.total > 0);
-    assert.equal(guide.data.pointer.source, 'element'); assert.equal(guide.data.pointer.hit.name, 'SPA guide route');
+    assert.equal(guide.data.pointer.hit.name, 'SPA guide route');
     assert.equal(await find('SPA guide route', 'generic', { interactiveOnly: true }), routeRef);
-    const oldUrl = origin + '/previous-route';
-    const repeatedGuide = await action({ action: 'click', ...routePoint, url: oldUrl, observationId: routeShot.data.id,
+    const repeatedGuide = await action({ action: 'click', ...routePoint, observationId: routeShot.data.screenshot.id,
       after: 'snapshot', snapshotOptions: { query: 'Guide clicks: 2', compact: false } });
-    assert.equal(repeatedGuide.data.requestedUrl, oldUrl); assert.equal(repeatedGuide.data.url, origin + '/guide');
-    assert(repeatedGuide.data.snapshot.total > 0); assert.equal(repeatedGuide.data.pointer.source, 'image');
-    assert.equal(repeatedGuide.data.pointer.observationId, routeShot.data.id);
+    assert.equal(repeatedGuide.data.url, origin + '/guide'); assert(repeatedGuide.data.snapshot.total > 0);
     assert.equal(repeatedGuide.data.pointer.hit.name, 'SPA guide route');
-    assert(Math.abs(repeatedGuide.data.pointer.viewport.x - routeHover.data.pointer.viewport.x) < 0.01);
-    assert(Math.abs(repeatedGuide.data.pointer.viewport.y - routeHover.data.pointer.viewport.y) < 0.01);
     browser.finishRun(context.runId);
     await read({ query: 'SPA guide route', interactiveOnly: true });
-    const resumedGuide = await action({ action: 'click', ...routePoint, url: undefined, observationId: routeShot.data.id,
+    const resumedGuide = await action({ action: 'click', ...routePoint, observationId: routeShot.data.screenshot.id,
       after: 'snapshot', snapshotOptions: { query: 'Guide clicks: 3', compact: false } });
     assert(resumedGuide.data.snapshot.total > 0); assert.equal(resumedGuide.data.pointer.hit.name, 'SPA guide route');
-    assert.equal(resumedGuide.data.pointer.observationId, routeShot.data.id);
-    const pointerMenu = await action({ action: 'click', ref: pointerRef, url: undefined, observationId: shot.data.id,
+    const pointerMenu = await action({ action: 'click', ref: pointerRef, observationId: shot.data.screenshot.id,
       after: 'snapshot', snapshotOptions: { query: 'Pointer clicks: 1', compact: false } });
     assert(pointerMenu.data.snapshot.total > 0); assert.equal(pointerMenu.data.pointer.hit.name, 'Pointer-only menu');
     checks.push('js-route-and-pointer-menu-in-interactive-snapshot');
@@ -237,12 +236,13 @@ async function run(output) {
     assert((await read({ query: 'Meaning clicks: 2' })).data.total > 0);
     const removedRef = await find('Remove this control', 'button');
     await action({ action: 'click', ref: removedRef });
-    assert.equal((await tool('browser_action', { tabId, url, action: 'click', ref: removedRef })).success, false);
+    const removed = await tool('browser_action', { tabId, action: 'click', ref: removedRef });
+    assert.equal(removed.success, false); assert.equal(removed.code, 'BROWSER_TARGET_MISSING'); assert.equal(removed.data.status, 'failed');
     checks.push('stable-reference-across-label-changes-with-removal-detection');
     checks.push('snapshot-only-ref-chaining-without-extra-read');
     assert.equal((await read({ query: 'Search papers', role: 'searchbox' })).data.nodes[0].value ?? '', '');
     const submitted = await action({ action: 'type', ref: await find('Search papers', 'searchbox'), text: 'quantum methods' });
-    await action({ action: 'press', observationId: submitted.data.observation.id, key: 'Enter' });
+    assert(submitted.data.snapshot); await action({ action: 'press', key: 'Enter', after: 'none' });
     const waited = await tool('browser_read', { action: 'wait', tabId, query: 'Results ready', timeoutMs: 4000 });
     assert.equal(waited.success, true, JSON.stringify(waited));
     const link = await read({ query: 'Quantum methods', role: 'link' }); assert.equal(link.data.nodes[0].url, origin + '/paper');
@@ -265,7 +265,7 @@ async function run(output) {
     assert.equal((await read({ query: 'Shadow clicked' })).data.total > 0, true);
     checks.push('hover-menu-and-shadow-dom');
     const frames = (await read({ query: 'Frame field', role: 'textbox' })).data;
-    assert.equal(frames.total, 2, JSON.stringify(frames)); assert.equal(frames.partial, false);
+    assert.equal(frames.total, 2, JSON.stringify(frames)); assert.equal(frames.partial, undefined); assert.equal(frames.frames.length, 3);
     const frameIds = frames.nodes.map(node => node.frameId);
     for (const frameId of frameIds) {
       await action({ action: 'fill', ref: await find('Frame field', 'textbox', { frameId }), text: 'embedded query' });
@@ -278,7 +278,6 @@ async function run(output) {
     checks.push('same-origin-and-cross-origin-frame-actions');
     const covered = await action({ action: 'click', ref: await find('Covered control', 'button') });
     assert.equal(covered.data.pointer.overlapped, true); assert.equal(covered.data.pointer.hit.name, 'Overlay');
-    assert(Number.isFinite(covered.data.pointer.viewport.x)); assert(Number.isFinite(covered.data.pointer.viewport.y));
     assert((await read({ query: 'Overlay clicks: 1' })).data.total > 0);
     assert((await read({ query: 'Covered control clicks: 0' })).data.total > 0);
     await action({ action: 'click', ref: await find('Large surface', 'button') });
@@ -299,11 +298,11 @@ async function run(output) {
     checks.push('popup-receipt-to-child-read-without-listing-or-reclicking');
     const delayed = await action({ action: 'click', ref: await find('Read delayed paper', 'link'), after: 'snapshot', snapshotOptions: { query: 'Delayed article body', role: 'heading' } });
     assert.equal(delayed.data.url, origin + '/delayed-paper'); assert.equal(delayed.data.snapshot.total, 1, JSON.stringify(delayed));
-    await action({ action: 'back', url: delayed.data.url, after: 'snapshot' });
+    await action({ action: 'back', after: 'snapshot' });
     checks.push('snapshot-only-waits-for-main-document-body');
     const navigated = await action({ action: 'click', ref: await find('Read paper here', 'link') });
     assert.equal(navigated.data.url, origin + '/paper'); assert.equal(navigated.data.title, 'Quantum paper');
-    const back = await action({ action: 'back', url: navigated.data.url, after: 'both', snapshotOptions: { query: 'Search papers', role: 'searchbox' } });
+    const back = await action({ action: 'back', after: 'both', snapshotOptions: { query: 'Search papers', role: 'searchbox' } });
     assert.equal(back.data.url, url); assert.equal(back.data.title, 'Research browser fixture');
     checks.push('click-and-back-refresh-url-title-and-observations');
     const dialog = await action({ action: 'click', ref: await find('Confirm fixture', 'button') });
@@ -331,8 +330,13 @@ async function run(output) {
       await tool('browser_tabs', { action: 'close', tabId: id });
     }
     checks.push('native-popup-post-body-and-opener');
-    await action({ action: 'click', ref: await find('Download fixture', 'link') });
-    const downloads = (await tool('browser_files', { action: 'list', tabId })).data.downloads;
+    const clicked = await action({ action: 'click', ref: await find('Download fixture', 'link') });
+    // 下载事件可能晚于动作回执；回执没带上时用 state 查询同一份记录。
+    let downloads = clicked.data.downloads ?? [];
+    for (let attempt = 0; !downloads.length && attempt < 50; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      downloads = (await tool('browser_read', { action: 'state', tabId })).data.downloads;
+    }
     assert.equal(downloads.length, 1); assert(downloads[0].downloadId);
     const downloadDirectory = path.join(output, 'downloads'); await fs.mkdir(downloadDirectory);
     context.workspace = { id: 'browser-downloads', name: 'Browser fixture', directory: downloadDirectory, deviceId: 'local' };

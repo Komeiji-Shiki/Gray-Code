@@ -1,13 +1,14 @@
 import { inside, workspaceFilePath, workspaceRootFor } from '../../server/src/workspace/paths';
 import { BaseWindow, BrowserWindow, WebContentsView, session, net, type Session, type BrowserWindowConstructorOptions } from 'electron';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { BrowserLayout, BrowserObservation, BrowserState, BrowserTab, BrowserActionFeedback, ToolOutcome, VisualActionResult } from '@graycode/contracts';
+import type { BrowserLayout, BrowserScreenshot, BrowserState, BrowserTab, ToolOutcome } from '@graycode/contracts';
 import { authorizeEffects, type ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../server/src/application';
 import type { BrowserHost } from '../../server/src/browser/port';
-import { BrowserPage, validateActionArguments } from './browser/page';
+import { BrowserPage } from './browser/page';
+import { validateActionArguments } from './browser/pageActions';
 import { BrowserProfiles } from './browser/profiles';
 import { isActiveMouseInput } from './browser/input';
 import { BrowserTransfers } from './browser/transfers';
@@ -17,8 +18,11 @@ interface OwnedTab {
   id: string; actorId: string; profileId: string; view: WebContentsView; page: BrowserPage;
   loading: boolean; error?: string; source?: { workspaceId: string; path: string };
   lease?: { runId: string; conversationId?: string; controller: AbortController };
-  userControlled: boolean; takeoverSource?: string; queue: Promise<unknown>; modelInput: boolean;
-  readers: Set<AbortController>;
+  /** 用户接管时正在操作或读取此标签的运行；只拒绝这些运行继续操作，运行结束后下一轮自动交还给模型。 */
+  blockedRuns: Set<string>;
+  queue: Promise<unknown>; modelInput: boolean;
+  /** 进行中的读取及其运行；读取不申领租约，但同样可被用户输入打断。 */
+  readers: Map<AbortController, string>;
   actionPopups?: ActionPopups;
   /** 与 webContents 当前的后台节流设置一致；capturing 计数并行截图，最后一个结束后才允许恢复节流。 */
   throttled: boolean; capturing: number;
@@ -29,15 +33,11 @@ interface PopupResult {
 interface ActionPopups {
   signal: AbortSignal; entries: PopupResult[]; pending: Promise<void>[];
 }
-interface BrowserOperation {
-  id: string; fingerprint: string; tabId: string; runId: string; requestedAt: number; finishedAt?: number;
-  status: VisualActionResult['status']; outcome?: ToolOutcome; error?: string;
-}
+/** 在派发输入前就失败的错误码：动作一定没有执行，模型可以修正后重试。 */
+const notDispatched = new Set(['INVALID_ARGUMENTS', 'OBSERVATION_STALE', 'BROWSER_TARGET_MISSING', 'BROWSER_NO_GEOMETRY', 'BROWSER_DIALOG_PENDING']);
 
 export class DesktopBrowser implements BrowserHost {
   private readonly tabs = new Map<string, OwnedTab>();
-  // 去重只服务当前进程的活标签，历史回执由运行器保存。
-  private readonly operations = new Map<string, BrowserOperation>();
   private readonly profiles: BrowserProfiles;
   private readonly transfers: BrowserTransfers;
   private readonly sessions = new Map<string, Promise<Session>>();
@@ -71,20 +71,39 @@ export class DesktopBrowser implements BrowserHost {
     if (denied) throw new Error(denied);
   }
   private tab(actorId: string, id: unknown): OwnedTab {
-    this.actor(actorId);
     const value = typeof id === 'string' ? this.tabs.get(id) : undefined;
-    if (!value || value.actorId !== actorId || value.view.webContents.isDestroyed()) throw new Error('网页标签不存在或不属于当前账号。');
+    if (!value || value.actorId !== actorId || value.view.webContents.isDestroyed()) {
+      const available = [...this.tabs.values()].filter(tab => tab.actorId === actorId).map(tab => tab.id);
+      throw new Error(`网页标签不存在或已关闭；当前可用标签：${available.join('、') || '无'}。`);
+    }
     return value;
   }
+  /** 桌面界面使用的完整标签状态。 */
   private describe(tab: OwnedTab): BrowserTab {
     const wc = tab.view.webContents;
     return { id: tab.id, profileId: tab.profileId, url: wc.getURL(), title: wc.getURL() === 'about:blank' ? '' : wc.getTitle(), loading: tab.loading,
       canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(), error: tab.error,
-      userControlled: tab.userControlled, ...(tab.lease ? { controlledBy: { runId: tab.lease.runId, conversationId: tab.lease.conversationId } } : {}) };
+      userControlled: tab.blockedRuns.size > 0, ...(tab.lease ? { controlledBy: { runId: tab.lease.runId, conversationId: tab.lease.conversationId } } : {}) };
+  }
+  /** 交给模型的标签状态：只保留下一步决策需要的字段，默认值省略。 */
+  private modelTab(tab: OwnedTab, runId?: string): Record<string, unknown> {
+    const wc = tab.view.webContents;
+    if (wc.isDestroyed()) return { id: tab.id, closed: true };
+    return { id: tab.id, url: wc.getURL(), title: wc.getURL() === 'about:blank' ? '' : wc.getTitle(),
+      ...(tab.loading ? { loading: true } : {}), ...(tab.error ? { error: tab.error } : {}),
+      ...(tab.blockedRuns.size ? { userControlled: true } : {}), ...(tab.lease && tab.lease.runId !== runId ? { otherTask: true } : {}) };
   }
   async state(actorId: string): Promise<BrowserState> {
-    this.actor(actorId);
     return { profiles: await this.profiles.list(actorId), tabs: [...this.tabs.values()].filter(tab => tab.actorId === actorId).map(tab => this.describe(tab)), activeTabId: this.active.get(actorId) };
+  }
+  private async modelState(context: ToolContext): Promise<Record<string, unknown>> {
+    const profiles = await this.profiles.list(context.actorId);
+    return { tabs: [...this.tabs.values()].filter(tab => tab.actorId === context.actorId).map(tab => ({ ...this.modelTab(tab, context.runId), profileId: tab.profileId })),
+      activeTabId: this.active.get(context.actorId), profiles: profiles.map(({ id, name }) => ({ id, name })) };
+  }
+  /** 动作或读取期间新出现、尚未保存的下载；已保存的下载不再重复报告。 */
+  private downloads(tab: OwnedTab, known?: Set<string>) {
+    return this.transfers.list(tab.view.webContents.id).filter(item => item.status !== 'saved' && !known?.has(item.downloadId));
   }
   private changed(actorId: string): void {
     // 桌面仅订阅本机主人标签，不广播其他账号的网页与登录配置。
@@ -130,7 +149,7 @@ export class DesktopBrowser implements BrowserHost {
   private async create(actorId: string, profileId?: string, foreground = false, signal?: AbortSignal): Promise<OwnedTab> {
     signal?.throwIfAborted();
     if (this.closing) throw new Error('浏览器正在关闭。');
-    this.actor(actorId); const selected = await this.browserSession(actorId, profileId); this.actor(actorId);
+    const selected = await this.browserSession(actorId, profileId);
     signal?.throwIfAborted();
     if (this.closing) throw new Error('浏览器正在关闭。');
     const parent = this.getWindow();
@@ -143,14 +162,14 @@ export class DesktopBrowser implements BrowserHost {
       if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
       return tab.page.connect();
     });
-    const abort = () => { if (this.tabs.has(id) && !tab.userControlled) this.closeTab(tab); };
+    const abort = () => { if (this.tabs.has(id) && !tab.blockedRuns.size) this.closeTab(tab); };
     signal?.addEventListener('abort', abort, { once: true });
     try {
       signal?.throwIfAborted(); await tab.queue; signal?.throwIfAborted();
       if (this.closing || !this.tabs.has(id)) throw new Error('网页标签已关闭。');
     } catch (error) {
       // 初始化失败的临时标签需要释放，但不能关闭已经被人工接管的页面。
-      if (this.tabs.has(id) && !tab.userControlled) this.closeTab(tab);
+      if (this.tabs.has(id) && !tab.blockedRuns.size) this.closeTab(tab);
       throw error;
     } finally { signal?.removeEventListener('abort', abort); }
     if (foreground || !this.active.has(actorId)) this.active.set(actorId, id);
@@ -162,7 +181,7 @@ export class DesktopBrowser implements BrowserHost {
   private registerTab(actorId: string, profileId: string, view: WebContentsView): OwnedTab {
     const id = randomUUID();
     const tab: OwnedTab = { id, actorId, profileId, view, page: new BrowserPage(view.webContents, () => this.changed(actorId)), loading: false,
-      userControlled: false, queue: Promise.resolve(), modelInput: false, throttled: false, capturing: 0, readers: new Set() };
+      blockedRuns: new Set(), queue: Promise.resolve(), modelInput: false, throttled: false, capturing: 0, readers: new Map() };
     this.tabs.set(id, tab);
     view.setBounds({ x: 0, y: 0, width: 1100, height: 800 }); view.setVisible(false);
     this.attach(tab);
@@ -186,11 +205,11 @@ export class DesktopBrowser implements BrowserHost {
       return { action: 'allow', createWindow: options => this.popup(tab, url, options, details.disposition === 'background-tab').view.webContents };
     });
     // before-input-event only emits keyboard input; showing/focusing a tab is not a takeover.
-    wc.on('before-input-event', (_event, input) => {
-      if ((tab.page.automated || tab.readers.size > 0) && !tab.modelInput) this.takeover(tab, `before-input-event: ${input.type}`);
+    wc.on('before-input-event', () => {
+      if ((tab.page.automated || tab.readers.size > 0) && !tab.modelInput) this.takeover(tab);
     });
     wc.on('before-mouse-event', (_event, mouse) => {
-      if ((tab.page.automated || tab.readers.size > 0) && !tab.modelInput && isActiveMouseInput(mouse)) this.takeover(tab, `before-mouse-event: ${mouse.type}`);
+      if ((tab.page.automated || tab.readers.size > 0) && !tab.modelInput && isActiveMouseInput(mouse)) this.takeover(tab);
     });
     return tab;
   }
@@ -210,7 +229,7 @@ export class DesktopBrowser implements BrowserHost {
     tab.queue = this.documentLoaded(tab, signal, deferred ? () => view.webContents.loadURL(requestedUrl) : undefined).then(() => tab.page.connect()).then(() => { result.status = 'opened'; })
       .catch(error => {
         result.status = 'failed'; result.error = error instanceof Error ? error.message : String(error); tab.page.log('error', result.error);
-        if (signal?.aborted && !tab.userControlled && this.tabs.has(tab.id)) this.closeTab(tab);
+        if (signal?.aborted && !tab.blockedRuns.size && this.tabs.has(tab.id)) this.closeTab(tab);
       });
     tracking?.pending.push(tab.queue as Promise<void>);
     if (!tab.page.automated) this.show(tab);
@@ -239,7 +258,7 @@ export class DesktopBrowser implements BrowserHost {
   private describePopups(tracking: ActionPopups): Record<string, unknown>[] {
     return tracking.entries.map(result => {
       const alive = result.tab && this.tabs.has(result.tab.id) && !result.tab.view.webContents.isDestroyed();
-      return { requestedUrl: result.requestedUrl, ...(alive ? this.describe(result.tab!) : result.tab ? { id: result.tab.id } : {}),
+      return { requestedUrl: result.requestedUrl, ...(alive ? this.modelTab(result.tab!, result.tab!.lease?.runId) : result.tab ? { id: result.tab.id } : {}),
         status: result.tab && !alive ? 'closed' : result.status, ...(result.error ? { error: result.error } : {}) };
     });
   }
@@ -273,10 +292,10 @@ export class DesktopBrowser implements BrowserHost {
     }
     this.changed(tab.actorId);
   }
-  private takeover(tab: OwnedTab, source?: string): void {
-    tab.userControlled = true; tab.takeoverSource = source;
-    for (const reader of tab.readers) reader.abort(new Error('用户已接管此网页标签。'));
-    tab.lease?.controller.abort(new Error(`用户已接管此网页标签${source ? `（${source}）` : ''}。`)); tab.lease = undefined;
+  private takeover(tab: OwnedTab): void {
+    if (tab.lease) tab.blockedRuns.add(tab.lease.runId);
+    for (const [reader, runId] of tab.readers) { tab.blockedRuns.add(runId); reader.abort(new Error('用户已接管此网页标签。')); }
+    tab.lease?.controller.abort(new Error('用户已接管此网页标签。')); tab.lease = undefined;
     tab.page.invalidate(); tab.page.allowManualInput(); this.changed(tab.actorId);
     this.throttle(tab); this.pauseIdleCapture();
   }
@@ -349,7 +368,7 @@ export class DesktopBrowser implements BrowserHost {
     else tab = this.tab(actorId, selectedId);
     if (method === 'browser.select') { this.show(tab); return this.describe(tab); }
     if (method === 'browser.takeover') { this.takeover(tab); return this.describe(tab); }
-    if (method === 'browser.allowAutomation') { tab.userControlled = false; tab.takeoverSource = undefined; this.changed(actorId); return this.describe(tab); }
+    if (method === 'browser.allowAutomation') { tab.blockedRuns.clear(); this.changed(actorId); return this.describe(tab); }
     if (method === 'browser.closeTab') { this.closeTab(tab); return this.state(actorId); }
     if (method === 'browser.open' || method === 'browser.control') {
       if (tab.page.automated) this.takeover(tab);
@@ -367,8 +386,8 @@ export class DesktopBrowser implements BrowserHost {
     throw new Error(`未知的浏览器请求：${method}`);
   }
   private claim(tab: OwnedTab, context: ToolContext): AbortSignal {
-    this.actor(context.actorId); context.signal.throwIfAborted();
-    if (tab.userControlled) throw new Error(`用户已接管此标签${tab.takeoverSource ? `（${tab.takeoverSource}）` : ''}，请等待用户允许模型操作，或新建自己的标签。`);
+    context.signal.throwIfAborted();
+    if (tab.blockedRuns.has(context.runId)) throw new Error('用户在本次任务中接管了此标签，请改用其他标签；下一轮任务可以重新使用它。');
     if (tab.lease && tab.lease.runId !== context.runId) throw new Error('此标签正在由另一个任务操作，请使用其他标签。');
     if (!tab.lease) {
       tab.lease = { runId: context.runId, conversationId: context.conversationId, controller: new AbortController() };
@@ -423,133 +442,120 @@ export class DesktopBrowser implements BrowserHost {
     const host = this.captureWindow;
     if (host && !host.isDestroyed() && ![...this.tabs.values()].some(tab => (tab.lease || tab.capturing > 0 || tab.readers.size > 0) && host.contentView.children.includes(tab.view))) host.hide();
   }
-  private async capture(tab: OwnedTab, signal: AbortSignal, dimension = 1280): Promise<ToolOutcome> {
+  private async capture(tab: OwnedTab, signal: AbortSignal, dimension = 1280): Promise<{ screenshot: BrowserScreenshot; url: string; attachment: NonNullable<ToolOutcome['attachments']>[number] }> {
     // 截图通常已持有租约；单独计数是为了租约在截图中途被接管或结束时，仍在等帧和采集完成后才恢复节流。
     tab.capturing++; this.throttle(tab);
     try {
       this.attach(tab);
-      const frame = await tab.page.screenshot(signal, tab.view.getBounds(), dimension);
-      const observation: BrowserObservation = { ...frame.observation, tabId: tab.id };
-      return { success: true, data: observation, attachments: [frame.attachment] };
+      return await tab.page.screenshot(signal, tab.view.getBounds(), dimension);
     } finally { tab.capturing--; this.settle(tab); this.pauseIdleCapture(); }
   }
-  private async actionResult(tab: OwnedTab, outcome: ToolOutcome, signal: AbortSignal, options: ActionObservationOptions): Promise<ToolOutcome> {
-    const data: Record<string, unknown> = { ...outcome.data as Record<string, unknown> };
-    let captured: ToolOutcome | undefined, captureRevision: number | undefined;
+  /** 动作或新页面之后的观察：页面状态在前，随后是按 after 读取的快照或截图；观察失败不改变动作结果。 */
+  private async actionResult(tab: OwnedTab, outcome: ToolOutcome, signal: AbortSignal, options: ActionObservationOptions, context: ToolContext, known?: Set<string>): Promise<ToolOutcome> {
+    const observed: Record<string, unknown> = {};
+    let captured: Awaited<ReturnType<DesktopBrowser['capture']>> | undefined, captureRevision: number | undefined;
     const failure = (error: unknown, kind: 'CAPTURE' | 'SNAPSHOT') => ({
       code: (error as { code?: string })?.code ?? `BROWSER_${kind}_FAILED`,
       message: `${error instanceof Error ? error.message : String(error)} 观察失败不代表动作失败；请用 browser_read 重新观察，不要重复刚才的动作。`,
     });
-    Object.assign(data, tab.page.interactionState(), { downloads: this.transfers.list(tab.view.webContents.id) });
-    if (options.after === 'none' || data.dialog) return { ...outcome, data: { ...data, ...this.describe(tab) } };
-    if (options.after !== 'snapshot') {
-      try { captured = await this.capture(tab, signal, options.maxImageDimension); captureRevision = tab.page.revision; }
-      catch (error) { data.observationError = failure(error, 'CAPTURE'); }
+    // 弹窗挡住页面脚本，此时观察只会超时；模型先处理 dialog。
+    if (options.after !== 'none' && !tab.page.interactionState().dialog) {
+      if (options.after === 'screenshot' || options.after === 'both') {
+        try { captured = await this.capture(tab, signal, options.maxImageDimension); captureRevision = tab.page.revision; }
+        catch (error) { observed.observationError = failure(error, 'CAPTURE'); }
+      }
+      if (options.after === 'snapshot' || options.after === 'both') {
+        try { observed.snapshot = await tab.page.snapshotAfterAction(signal, options.snapshotOptions); }
+        catch (error) { observed.snapshotError = failure(error, 'SNAPSHOT'); }
+      }
     }
-    if (options.after === 'snapshot' || options.after === 'both') {
-      try { data.snapshot = await tab.page.snapshotAfterAction(signal, options.snapshotOptions); }
-      catch (error) { data.snapshotError = failure(error, 'SNAPSHOT'); }
-    }
-    // 回执保存的是派发时状态；补读结束后再描述当前页，不能返回旧 url/title。
-    if (!tab.view.webContents.isDestroyed()) Object.assign(data, this.describe(tab));
+    // 页面状态在补读结束后描述，不能返回派发时的旧 url/title。
+    const page = this.modelTab(tab, context.runId);
     // 两次观察之间即使同址重载也可能使旧坐标失效，只保留仍属于当前文档的图像。
-    if (captured && (captureRevision !== tab.page.revision || (captured.data as BrowserObservation).url !== data.url)) {
+    if (captured && (captureRevision !== tab.page.revision || captured.url !== page.url)) {
       captured = undefined;
-      data.observationError = failure(Object.assign(new Error('页面在后续观察期间发生变化，旧截图已省略。'), { code: 'BROWSER_PAGE_CHANGED' }), 'CAPTURE');
+      observed.observationError = failure(Object.assign(new Error('页面在后续观察期间发生变化，旧截图已省略。'), { code: 'BROWSER_PAGE_CHANGED' }), 'CAPTURE');
     }
-    if (captured) data.observation = captured.data;
-    Object.assign(data, tab.page.interactionState(), { downloads: this.transfers.list(tab.view.webContents.id) });
-    return { ...outcome, data, attachments: captured?.attachments };
+    const downloads = tab.view.webContents.isDestroyed() ? [] : this.downloads(tab, known);
+    return { ...outcome, data: { ...page, ...outcome.data as Record<string, unknown>, ...tab.page.interactionState(),
+      ...(downloads.length ? { downloads } : {}), ...(captured ? { screenshot: captured.screenshot } : {}), ...observed },
+    ...(captured ? { attachments: [captured.attachment] } : {}) };
   }
   private async performAction(tab: OwnedTab, args: Record<string, unknown>, context: ToolContext, signal: AbortSignal): Promise<ToolOutcome> {
-    const observationOptions = actionObservationOptions(args);
-    if (!context.toolCallId) throw new Error('浏览器动作需要运行器提供唯一的工具调用 ID。');
-    const id = createHash('sha256').update(JSON.stringify([context.actorId, context.runId, context.iteration, context.toolCallId])).digest('hex');
-    const fingerprint = createHash('sha256').update(JSON.stringify(args)).digest('hex');
-    const previous = this.operations.get(id);
-    if (previous) {
-      if (previous.fingerprint !== fingerprint) throw new Error('同一工具调用 ID 不能用于不同的浏览器动作。');
-      if (previous.status === 'failed' && previous.outcome) return { ...previous.outcome, data: { ...previous.outcome.data as Record<string, unknown>, repeated: true } };
-      if (previous.status !== 'completed' || !previous.outcome)
-        return { success: false, code: 'BROWSER_ACTION_UNKNOWN', error: previous.error ?? '这次动作已经派发但结果未确认，请重新观察。',
-          data: { ...previous.outcome?.data as Record<string, unknown>, operationId: id, status: previous.status, repeated: true } };
-      return this.actionResult(tab, { ...previous.outcome, data: { ...previous.outcome.data as Record<string, unknown>, repeated: true } }, signal, observationOptions);
-    }
+    const options = actionObservationOptions(args);
     validateActionArguments(args);
-    if (args.action === 'navigate' && (typeof args.url !== 'string' || !this.allowed(args.url, tab.profileId)))
+    if (args.action === 'navigate' && !this.allowed(String(args.url), tab.profileId))
       return { success: false, code: 'INVALID_ARGUMENTS', error: 'navigate 需要有效的 HTTP(S) 地址或工作区预览地址。', data: { status: 'failed' } };
     this.attach(tab);
-    const operation: BrowserOperation = { id, fingerprint, tabId: tab.id, runId: context.runId, requestedAt: Date.now(), status: 'dispatching' };
-    this.operations.set(id, operation);
+    const wc = tab.view.webContents;
+    const known = new Set(this.transfers.list(wc.id).map(item => item.downloadId));
     const tracking: ActionPopups = { signal, entries: [], pending: [] };
     tab.actionPopups = tracking;
-    const addPopups = (outcome: ToolOutcome) => tracking.entries.length
-      ? { ...outcome, data: { ...outcome.data as Record<string, unknown>, openedTabs: this.describePopups(tracking) } } : outcome;
     try {
+      let outcome: ToolOutcome;
       try {
-        const wc = tab.view.webContents;
-        let feedback: BrowserActionFeedback | undefined;
         signal.throwIfAborted();
+        let feedback: Record<string, unknown> | undefined;
         if (args.action === 'navigate') { tab.source = undefined; await this.navigate(tab, args.url, signal); }
         else if (args.action === 'back') { if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); }
         else if (args.action === 'forward') { if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); }
         else if (args.action === 'reload') wc.reload();
         else {
           tab.modelInput = true;
-          try { feedback = await tab.page.action(args, signal); } finally { tab.modelInput = false; }
+          try { feedback = { ...await tab.page.action(args, signal) }; } finally { tab.modelInput = false; }
         }
-        signal.throwIfAborted(); operation.status = 'completed';
-        const receipt: VisualActionResult = { operationId: id, status: 'completed' };
-        operation.outcome = { success: true, data: { ...this.describe(tab), ...receipt, ...feedback,
-          ...(typeof args.url === 'string' && args.url !== wc.getURL() ? { requestedUrl: args.url } : {}) } };
-
+        signal.throwIfAborted();
+        outcome = { success: true, data: feedback ?? {} };
       } catch (error) {
-        operation.status = ['INVALID_ARGUMENTS', 'OBSERVATION_STALE', 'BROWSER_TARGET_MISSING', 'BROWSER_NO_GEOMETRY', 'BROWSER_DIALOG_PENDING'].includes((error as { code?: string }).code ?? '') ? 'failed' : 'unknown'; operation.error = (error as Error).message;
-        operation.outcome = { success: false, code: (error as { code?: string }).code ?? 'BROWSER_ACTION_UNKNOWN', error: operation.error,
-          data: { operationId: id, status: operation.status } };
+        const code = (error as { code?: string }).code;
+        outcome = { success: false, code: code ?? 'BROWSER_ACTION_UNKNOWN', error: (error as Error).message,
+          data: { status: code && notDispatched.has(code) ? 'failed' : 'unknown' } };
       }
-      // 先记录动作事实；观察失败不会使同一调用再次派发输入。
-      operation.finishedAt = Date.now(); operation.outcome = addPopups(operation.outcome!);
       await this.settlePopups(tracking);
-      const observed = await this.actionResult(tab, operation.outcome, signal, observationOptions);
-      if (tracking.entries.length) {
-        operation.outcome = addPopups(operation.outcome);
-      }
-      return addPopups(observed);
+      const observed = await this.actionResult(tab, outcome, signal, options, context, known);
+      return tracking.entries.length ? { ...observed, data: { ...observed.data as Record<string, unknown>, openedTabs: this.describePopups(tracking) } } : observed;
     } finally { tab.actionPopups = undefined; }
   }
+  private async createForTool(args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
+    if (args.url && args.path) throw Object.assign(new Error('url 和 path 只能提供一个。'), { code: 'INVALID_ARGUMENTS' });
+    if (args.path && !context.workspace) throw new Error('预览本地文件需要任务绑定工作区。');
+    const options = actionObservationOptions(args, args.url || args.path ? 'snapshot' : 'none');
+    const tab = await this.create(context.actorId, args.profileId as string | undefined, false, context.signal);
+    const signal = this.claim(tab, context);
+    try {
+      if (args.url) await this.navigate(tab, args.url, signal);
+      if (args.path) await this.preview(tab, context.workspace!.id, String(args.path), signal);
+    } catch (error) {
+      return { success: false, code: (error as { code?: string }).code ?? 'BROWSER_NAVIGATION_FAILED',
+        error: error instanceof Error ? error.message : String(error), data: this.modelTab(tab, context.runId) };
+    }
+    return this.actionResult(tab, { success: true }, signal, options, context);
+  }
   async tool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
+    // 运行器已在执行前授权；这里只确认账号仍然存在，避免排队期间被删除的账号继续访问私人页面。
     this.actor(context.actorId); context.signal.throwIfAborted();
-    if (name === 'browser_tabs' && args.action === 'list') return { success: true, data: await this.state(context.actorId) };
-    if (name === 'browser_tabs' && args.action === 'create') {
-      if (args.url && args.path) throw new Error('url 和 path 只能提供一个。');
-      if (args.path && !context.workspace) throw new Error('预览本地文件需要任务绑定工作区。');
-      const tab = await this.create(context.actorId, args.profileId as string | undefined, false, context.signal);
-      const signal = this.claim(tab, context);
-      try {
-        if (args.url) await this.navigate(tab, args.url, signal);
-        if (args.path) await this.preview(tab, context.workspace!.id, String(args.path), signal);
-      } catch (error) {
-        return { success: false, code: (error as { code?: string }).code ?? 'BROWSER_NAVIGATION_FAILED',
-          error: error instanceof Error ? error.message : String(error), data: tab.view.webContents.isDestroyed() ? { id: tab.id } : this.describe(tab) };
-      }
-      return { success: true, data: this.describe(tab) };
+    try {
+      if (name === 'browser_tabs' && args.action === 'list') return { success: true, data: await this.modelState(context) };
+      if (name === 'browser_tabs' && args.action === 'create') return await this.createForTool(args, context);
+    } catch (error) {
+      if ((error as { code?: string }).code === 'INVALID_ARGUMENTS') return { success: false, code: 'INVALID_ARGUMENTS', error: (error as Error).message };
+      throw error;
     }
     const tab = this.tab(context.actorId, args.tabId);
     const operation = tab.queue.catch(() => {}).then(async (): Promise<ToolOutcome> => {
       this.tab(context.actorId, tab.id); context.signal.throwIfAborted();
-      const reader = name === 'browser_read' || name === 'browser_files' && args.action === 'list' ? new AbortController() : undefined;
-      if (reader) { tab.readers.add(reader); this.throttle(tab); }
+      const reader = name === 'browser_read' ? new AbortController() : undefined;
+      if (reader) { tab.readers.set(reader, context.runId); this.throttle(tab); }
       const signal = reader ? AbortSignal.any([context.signal, reader.signal]) : this.claim(tab, context);
       try {
         if (name === 'browser_tabs' && args.action === 'close') { this.closeTab(tab); return { success: true }; }
         if (name === 'browser_tabs' && args.action === 'show') {
           if (context.actorId !== 'owner') throw new Error('只有本机主人可以把自己的网页显示在桌面工作台。');
-          this.show(tab); return { success: true, data: { ...this.describe(tab), windowVisible: this.getWindow()?.isVisible() === true } };
+          this.show(tab); return { success: true, data: { ...this.modelTab(tab, context.runId), windowVisible: this.getWindow()?.isVisible() === true } };
         }
         if (name === 'browser_read') {
-          if (args.action === 'state') return { success: true, data: { ...this.describe(tab), ...tab.page.interactionState(), downloads: this.transfers.list(tab.view.webContents.id) } };
-          if (args.action === 'text') return { success: true, data: await tab.page.readText(signal, args as any) };
+          if (args.action === 'state') return { success: true, data: { ...this.modelTab(tab, context.runId), ...tab.page.interactionState(), downloads: this.downloads(tab) } };
+          if (args.action === 'text') return { success: true, data: await tab.page.readText(signal, args as { ref?: string; startChar?: number; maxChars?: number }) };
           if (args.action === 'snapshot') return { success: true, data: await tab.page.snapshot(signal, args) };
           if (args.action === 'wait') {
             const data = await tab.page.waitForSnapshot(signal, args);
@@ -557,27 +563,27 @@ export class DesktopBrowser implements BrowserHost {
               : { success: false, code: 'BROWSER_WAIT_TIMEOUT', error: '等待结束，页面尚未满足指定条件；请检查当前页面，不要重复提交之前的动作。', data };
           }
           if (args.action === 'screenshot') {
-            return await this.capture(tab, signal, args.maxImageDimension as number | undefined);
+            const frame = await this.capture(tab, signal, args.maxImageDimension as number | undefined);
+            return { success: true, data: { ...this.modelTab(tab, context.runId), screenshot: frame.screenshot }, attachments: [frame.attachment] };
           }
-          if (args.action === 'logs') return { success: true, data: tab.page.logs(args) };
+          if (args.action === 'logs') return { success: true, data: tab.page.logs(args as { since?: number; maxEntries?: number; kind?: 'console' | 'network' | 'error' }) };
         }
         if (name === 'browser_action') return await this.performAction(tab, args, context, signal);
         if (name === 'browser_files') {
           const currentContext = { ...context, signal };
-          if (args.action === 'list') return { success: true, data: { downloads: this.transfers.list(tab.view.webContents.id) } };
-          if (args.action === 'upload') return { success: true, data: { ...await this.transfers.upload(tab.page, args, currentContext), pageUrl: tab.view.webContents.getURL() } };
-          if (args.action === 'download') return { success: true, data: { ...await this.transfers.download(tab.page, args, currentContext, async () => {
+          if (args.action === 'upload') return { success: true, data: await this.transfers.upload(tab.page, args, currentContext) };
+          if (args.action === 'download') return { success: true, data: await this.transfers.download(tab.page, args, currentContext, async () => {
             tab.modelInput = true;
             try { return await tab.page.action({ action: 'click', ref: args.ref }, signal); }
             finally { tab.modelInput = false; }
-          }), pageUrl: tab.view.webContents.getURL() } };
+          }) };
         }
         throw new Error('不支持的浏览器工具操作。');
       } catch (error) {
         const code = (error as { code?: string }).code;
         if (code === 'INVALID_ARGUMENTS') return { success: false, code, error: (error as Error).message, data: { status: 'failed' } };
         // 纯观察的暂时超时可以安全重读；不要把这个标记加到 browser_action 上，动作可能已经完成。
-        if (code === 'BROWSER_VIEW_REQUIRED' || code === 'BROWSER_CAPTURE_TIMEOUT') return { success: false, code, error: String((error as Error).message), retryable: code === 'BROWSER_CAPTURE_TIMEOUT', data: this.describe(tab) };
+        if (code === 'BROWSER_VIEW_REQUIRED' || code === 'BROWSER_CAPTURE_TIMEOUT') return { success: false, code, error: String((error as Error).message), retryable: code === 'BROWSER_CAPTURE_TIMEOUT', data: this.modelTab(tab, context.runId) };
         throw error;
       } finally {
         tab.modelInput = false;
@@ -586,18 +592,20 @@ export class DesktopBrowser implements BrowserHost {
     });
     tab.queue = operation; return operation;
   }
+  /** 运行结束交还标签：释放租约并恢复人工模式，用户之后的点击不再算作接管，下一轮任务可以直接使用。 */
   finishRun(runId: string): void {
-    for (const [id, operation] of this.operations) if (operation.runId === runId) this.operations.delete(id);
-    for (const tab of this.tabs.values()) if (tab.lease?.runId === runId) {
-      tab.lease.controller.abort(new Error('任务已结束。')); tab.lease = undefined; this.changed(tab.actorId);
-      this.settle(tab);
+    for (const tab of this.tabs.values()) {
+      const unblocked = tab.blockedRuns.delete(runId);
+      if (tab.lease?.runId === runId) {
+        tab.lease.controller.abort(new Error('任务已结束。')); tab.lease = undefined;
+        tab.page.allowManualInput(); this.settle(tab); this.changed(tab.actorId);
+      } else if (unblocked) this.changed(tab.actorId);
     }
     this.pauseIdleCapture();
   }
   private closeTab(tab: OwnedTab): void {
     void this.transfers.cancel(tab.view.webContents.id).catch(error => tab.page.log('error', error));
-    for (const reader of tab.readers) reader.abort(new Error('网页标签已关闭。'));
-    for (const [id, operation] of this.operations) if (operation.tabId === tab.id) this.operations.delete(id);
+    for (const reader of tab.readers.keys()) reader.abort(new Error('网页标签已关闭。'));
     tab.lease?.controller.abort(new Error('网页标签已关闭。')); this.tabs.delete(tab.id);
     for (const [host, value] of this.previewRoots) if (value.tabId === tab.id) this.previewRoots.delete(host);
     for (const parent of [this.getWindow(), this.captureWindow])

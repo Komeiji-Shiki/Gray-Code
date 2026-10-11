@@ -119,6 +119,21 @@ test('动作后嵌套快照显示新引用与分页，快照失败不覆盖已�
   expect(wrapper.find('.action-status').text()).toBe('已完成'); expect(wrapper.text()).toContain('Snapshot failed')
 })
 
+test('精简后的动作结果按工具成功显示完成，截图编号、尺寸和其他任务标记可见', async () => {
+  const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_action', args: { action: 'click', after: 'screenshot' }, result: { success: true, data: {
+    id: 'tab-1', title: 'Next page', url: 'https://example.com/next', pointer: { hit: { tagName: 'button', name: 'Next' } },
+    screenshot: { id: 's7', width: 1280, height: 720, scrollX: 0, scrollY: 400 },
+  }, attachments: [screenshot] } } }))
+  expect(wrapper.find('.action-status').text()).toBe('已完成')
+  expect(wrapper.text()).toContain('s7'); expect(wrapper.text()).toContain('1280 × 720')
+  expect(wrapper.find('.current-page').text()).toContain('Next page')
+  await wrapper.setProps({ toolName: 'browser_tabs', args: { action: 'list' }, result: { success: true, data: {
+    tabs: [{ id: 'tab-2', title: 'Busy', url: 'https://example.com/busy', otherTask: true, profileId: 'default:owner' }], profiles: [{ id: 'default:owner', name: '默认登录配置' }],
+  } } })
+  expect(wrapper.find('.browser-tabs>li').text()).toContain('其他任务操作中')
+  expect(wrapper.find('.browser-tabs>li').text()).toContain('默认登录配置')
+})
+
 test('未知/失败动作不被展示为已完成', () => {
   const wrapper = track(mount(BrowserToolPanel, { props: { toolName: 'browser_action', args: { action: 'click' }, result: { success: false, code: 'BROWSER_ACTION_UNKNOWN', error: 'Disconnected', data: { status: 'unknown', repeated: true } } } }))
   expect(wrapper.find('[role="alert"]').text()).toContain('Disconnected')

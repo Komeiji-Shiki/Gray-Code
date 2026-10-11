@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { BrowserPage } from '../../../apps/desktop/src/browser/page';
+import { validateActionArguments } from '../../../apps/desktop/src/browser/pageActions';
+import { browserKey } from '../../../apps/desktop/src/browser/keys';
 import { compactSnapshot, type AxNode, type SnapshotNode } from '../../../apps/desktop/src/browser/snapshot';
 
 
@@ -123,18 +125,81 @@ test('字符续读返回完整文本的后续片段和明确位置', async () =>
   const first = await f.page.readText(signal(), { ref: ref.ref!, maxChars: 3000 });
   const second = await f.page.readText(signal(), { ref: ref.ref!, startChar: first.nextChar, maxChars: 3000 });
   const last = await f.page.readText(signal(), { ref: ref.ref!, startChar: second.nextChar, maxChars: 3000 });
-  expect(first).toMatchObject({ startChar: 0, returned: 3000, total: text.length, nextChar: 3000, truncated: true });
+  expect(first).toEqual({ text: text.slice(0, 3000), total: text.length, nextChar: 3000 });
   expect(first.text + second.text + last.text).toBe(text);
-  expect(last).toMatchObject({ startChar: 6000, nextChar: undefined, truncated: false });
+  expect(last).not.toHaveProperty('nextChar');
+});
+
+test('省略 ref 时读取主文档正文', async () => {
+  const f = fixture([]), base = f.sendCommand.getMockImplementation()!;
+  f.sendCommand.mockImplementation(async (method, params, sessionId) => method === 'Runtime.evaluate' && String(params.expression).includes('document.body')
+    ? { result: { value: { text: '整页正文', total: 4 } } } : base(method, params, sessionId));
+  expect(await f.page.readText(signal(), {})).toEqual({ text: '整页正文', total: 4 });
+  expect(f.sendCommand.mock.calls.some(([method]) => method === 'DOM.resolveNode')).toBe(false);
 });
 
 test.each([
-  { action: 'fill', ref: 'unused' }, { action: 'check', ref: 'unused' }, { action: 'click', x: 1, y: 2, button: 'other' },
-  { action: 'press', ref: 'unused', key: 'Control+Unknown' }, { action: 'dialog' },
-])('无效参数在连接和输入之前拒绝：%p', async args => {
+  { action: 'fill', ref: 'unused' }, { action: 'check', ref: 'unused' }, { action: 'click' }, { action: 'drag', x: 1, y: 2 },
+  { action: 'press', ref: 'unused', key: 'Control+Unknown' }, { action: 'dialog' }, { action: 'select', ref: 'unused', values: ['a'], labels: ['a'] },
+  { action: 'navigate', url: ' ' }, { action: 'check', ref: 'unused', checked: true, clickCount: 2 },
+])('schema 表达不了的组合在派发前拒绝：%p', args => {
+  expect(() => validateActionArguments(args)).toThrow(expect.objectContaining({ code: 'INVALID_ARGUMENTS' }));
+});
+
+test('按键支持别名、单个标点和 Shift 字符', () => {
+  expect(browserKey('esc')).toMatchObject({ key: 'Escape', code: 'Escape' });
+  expect(browserKey('Return')).toMatchObject({ key: 'Enter', text: '\r' });
+  expect(browserKey('/')).toEqual({ key: '/', code: 'Slash', windowsVirtualKeyCode: 191, modifiers: 0, text: '/' });
+  expect(browserKey('?')).toMatchObject({ key: '?', code: 'Slash', modifiers: 8, text: '?' });
+  expect(browserKey('Control++')).toMatchObject({ key: '+', code: 'Equal', modifiers: 10 });
+  expect(browserKey('!')).toMatchObject({ key: '!', code: 'Digit1', modifiers: 8 });
+  expect(browserKey('Ctrl+Shift+k')).toMatchObject({ key: 'K', code: 'KeyK', modifiers: 10 });
+  expect(browserKey('f5')).toMatchObject({ key: 'F5', windowsVirtualKeyCode: 116 });
+  expect(() => browserKey('Hyper+A')).toThrow('修饰符');
+});
+
+test('元素引用和截图 ID 使用短的递增编号', async () => {
+  const f = fixture([ax('1', '保存'), ax('2', '取消')]);
+  f.contents.capturePage.mockResolvedValue({ isEmpty: () => false, getSize: () => ({ width: 800, height: 600 }), toPNG: () => Buffer.from('fixture') });
+  const rows = (await f.page.snapshot(signal(), { compact: false })).nodes as SnapshotNode[];
+  expect(rows.map(row => row.ref)).toEqual([expect.stringMatching(/^e\d+$/), expect.stringMatching(/^e\d+$/)]);
+  expect(new Set(rows.map(row => row.ref)).size).toBe(2);
+  const frame = await f.page.screenshot(signal(), { width: 800, height: 600 });
+  expect(frame.screenshot).toEqual({ id: expect.stringMatching(/^s\d+$/), width: 800, height: 600, scrollX: 0, scrollY: 0 });
+});
+
+test('点击、填写、选择和勾选由固定脚本报告节点已移除，并释放失效引用', async () => {
+  const f = fixture([ax('1', '字段')]), base = f.sendCommand.getMockImplementation()!;
+  for (const [args, missing] of [
+    [{ action: 'click' }, { missing: true }], [{ action: 'fill', text: '值' }, 'missing'],
+    [{ action: 'select', values: ['a'] }, { missing: true }], [{ action: 'check', checked: true }, { missing: true }],
+  ] as const) {
+    const ref = ((await f.page.snapshot(signal(), { compact: false })).nodes as SnapshotNode[])[0].ref!;
+    f.sendCommand.mockClear();
+    f.sendCommand.mockImplementation(async (method, params, sessionId) => method === 'Runtime.callFunctionOn' ? { result: { value: missing } } : base(method, params, sessionId));
+    await expect(f.page.action({ ...args, ref }, signal())).rejects.toMatchObject({ code: 'BROWSER_TARGET_MISSING', message: expect.stringContaining('已移除') });
+    // 单独的 isConnected 预检已合并进固定脚本，失败前只调用一次页面函数。
+    expect(f.sendCommand.mock.calls.filter(([method]) => method === 'Runtime.callFunctionOn')).toHaveLength(1);
+    expect(f.sendCommand.mock.calls.some(([method]) => method.startsWith('Input.'))).toBe(false);
+    await expect(f.page.action({ ...args, ref }, signal())).rejects.toThrow('找不到这个元素引用');
+    f.sendCommand.mockImplementation(base);
+  }
+});
+
+test('文件选择拦截在模型操作期间按会话只开启一次，交还人工后关闭', async () => {
   const f = fixture([]);
-  await expect(f.page.action(args, signal())).rejects.toMatchObject({ code: 'INVALID_ARGUMENTS' });
-  expect(f.sendCommand).not.toHaveBeenCalled();
+  f.page.automated = true;
+  await f.page.action({ action: 'press', key: 'Tab' }, signal());
+  await f.page.action({ action: 'press', key: 'Tab' }, signal());
+  const intercepts = () => f.sendCommand.mock.calls.filter(([method]) => method === 'Page.setInterceptFileChooserDialog');
+  expect(intercepts()).toEqual([['Page.setInterceptFileChooserDialog', { enabled: true }, undefined]]);
+  f.contents.debugger.emit('message', {}, 'Target.attachedToTarget', { sessionId: 'child-session', targetInfo: { type: 'iframe', targetId: 'child-frame', url: 'https://frame.test/' } });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  await f.page.action({ action: 'press', key: 'Tab' }, signal());
+  expect(intercepts().filter(([, params]) => params.enabled)).toHaveLength(2);
+  f.page.allowManualInput();
+  expect(intercepts().filter(([, params]) => !params.enabled).map(([, , session]) => session).sort()).toEqual(['child-session', undefined].sort());
+  expect(f.page.automated).toBe(false);
 });
 
 test('原生提示框保留输入入口，在途页面脚本暂停时动作及时返回', async () => {
@@ -165,7 +230,7 @@ test('释放鼠标时打开 confirm，释放命令已派发而弹窗不会使清
     }
     return base(method, params, sessionId);
   });
-  expect(await f.page.action({ action: 'click', x: 10, y: 20 }, signal())).toMatchObject({ pointer: { method: 'pointer' }, dialog: { type: 'confirm', message: '确认操作？' } });
+  expect(await f.page.action({ action: 'click', x: 10, y: 20 }, signal())).toMatchObject({ pointer: {}, dialog: { type: 'confirm', message: '确认操作？' } });
   expect(f.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mouseReleased' }), undefined);
   expect(f.sendCommand.mock.calls.some(([method]) => method === 'Page.handleJavaScriptDialog')).toBe(false);
 });
@@ -196,7 +261,7 @@ test('没有几何位置时只允许普通单次左键使用 DOM 点击', async 
   for (const extra of [{ button: 'right' }, { button: 'middle' }, { clickCount: 2 }])
     await expect(f.page.action({ action: 'click', ref: ref.ref, ...extra }, signal())).rejects.toMatchObject({ code: 'BROWSER_NO_GEOMETRY' });
   expect(f.sendCommand.mock.calls.some(([method, params]) => method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('element.click()'))).toBe(false);
-  expect(await f.page.action({ action: 'click', ref: ref.ref }, signal())).toMatchObject({ pointer: { method: 'dom-click' } });
+  expect(await f.page.action({ action: 'click', ref: ref.ref }, signal())).toMatchObject({ pointer: { domClick: true, hit: { tagName: 'button' } } });
 });
 
 test('URL 与控件条件等待直接读状态，控件禁用时不会提前返回', async () => {
@@ -224,9 +289,10 @@ test('URL 与控件条件等待直接读状态，控件禁用时不会提前返�
 test('默认节点预算明确报告截断，并允许按需扩大读取', async () => {
   const f = fixture(Array.from({ length: 300 }, (_, index) => ax(String(index + 1), `条目 ${index}`)));
   const compact = await f.page.snapshot(signal());
-  expect(compact).toMatchObject({ format: 'compact', truncated: true }); expect(compact.nodes).toHaveLength(250);
+  expect(compact).toMatchObject({ total: 300, nextOffset: 250 }); expect(compact.nodes).toHaveLength(250);
+  expect(typeof compact.nodes[0]).toBe('string'); expect(compact).not.toHaveProperty('frames');
   const expanded = await f.page.snapshot(signal(), { maxNodes: 500, compact: false });
-  expect(expanded).toMatchObject({ format: 'full', truncated: false }); expect(expanded.nodes).toHaveLength(300);
+  expect(expanded).not.toHaveProperty('nextOffset'); expect(expanded.nodes).toHaveLength(300);
 });
 
 test('筛选发生在分页之前，后面的链接、描述和深层控件仍能读取', async () => {
@@ -235,13 +301,13 @@ test('筛选发生在分页之前，后面的链接、描述和深层控件仍�
     properties: [{ name: 'url', value: { value: 'https://fixture.test/paper/DOI-123' } }] });
   const f = fixture(nodes);
   const first = await f.page.snapshot(signal(), { maxNodes: 100, compact: false });
-  expect(first).toMatchObject({ total: 311, nextOffset: 100, returned: 100 });
+  expect(first).toMatchObject({ total: 311, nextOffset: 100 }); expect(first.nodes).toHaveLength(100);
   const rest = await f.page.snapshot(signal(), { offset: 300, compact: false });
-  expect(rest).toMatchObject({ total: 311, offset: 300, returned: 11, truncated: false });
+  expect(rest).toMatchObject({ total: 311 }); expect(rest.nodes).toHaveLength(11); expect(rest).not.toHaveProperty('nextOffset');
   expect((rest.nodes as SnapshotNode[]).at(-1)).toMatchObject({ name: '论文全文', url: 'https://fixture.test/paper/DOI-123', description: '同行评审' });
   for (const query of ['doi-123', '同行评审']) {
     const found = await f.page.snapshot(signal(), { query, role: 'link', interactiveOnly: true, compact: false });
-    expect(found).toMatchObject({ total: 1, returned: 1, truncated: false });
+    expect(found).toMatchObject({ total: 1 }); expect(found.nodes).toHaveLength(1);
     expect((found.nodes as SnapshotNode[])[0].name).toBe('论文全文');
   }
   expect(f.sendCommand).toHaveBeenCalledWith('Accessibility.getFullAXTree', { frameId: 'main-frame' }, undefined);
@@ -266,7 +332,7 @@ test('正文按父子顺序聚合碎片且保留链接引用，长文本预算�
     ['RootWebArea', '网页'], ['paragraph', '阅读参考资料后继续。'], ['link', '参考资料'], ['paragraph', '下一段。'],
   ]);
   const found = await fragmented.page.snapshot(signal(), { query: '阅读参考资料后继续。', maxNodes: 1, compact: false });
-  expect(found).toMatchObject({ total: 1, returned: 1, truncated: false });
+  expect(found).toMatchObject({ total: 1 }); expect(found).not.toHaveProperty('nextOffset');
   const links = await fragmented.page.snapshot(signal(), { ref: (found.nodes as SnapshotNode[])[0].ref, interactiveOnly: true, compact: false });
   expect((links.nodes as SnapshotNode[])[0]).toMatchObject({ role: 'link', name: '参考资料', url: 'https://fixture.test/reference', ref: expect.any(String) });
   await fragmented.page.action({ action: 'press', ref: (links.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal());
@@ -277,7 +343,7 @@ test('正文按父子顺序聚合碎片且保留链接引用，长文本预算�
     properties: [{ name: 'url', value: { value: index === 0 ? embeddedImage : index === 1 ? embeddedSvg : 'https://fixture.test/image.png' } }] }));
   const long = fixture(nodes);
   const page = await long.page.snapshot(signal(), { query: '关键结论', compact: false });
-  expect(page).toMatchObject({ total: 40, truncated: false });
+  expect(page).toMatchObject({ total: 40 }); expect(page).not.toHaveProperty('nextOffset');
   expect((page.nodes as SnapshotNode[])[0]).toMatchObject({ name: expect.stringContaining('关键结论'), textTruncated: true });
   expect((page.nodes as SnapshotNode[]).slice(0, 3).map(node => node.url)).toEqual([
     'data:image/png;base64,[内嵌图片已省略]', 'data:image/svg+xml,[内嵌图片已省略]', 'https://fixture.test/image.png',
@@ -285,9 +351,9 @@ test('正文按父子顺序聚合碎片且保留链接引用，长文本预算�
   expect(compactSnapshot(page.nodes as SnapshotNode[]).join('\n')).not.toContain('a'.repeat(100));
   expect(nodes[0].properties[0].value.value).toBe(embeddedImage);
   const limited = await long.page.snapshot(signal(), { compact: false });
-  expect(limited).toMatchObject({ total: 40, characterLimit: 60000, truncated: true });
-  expect(limited.nextOffset).toBe(limited.returned);
-  expect(limited.returned).toBeGreaterThan(1);
+  expect(limited).toMatchObject({ total: 40, characterLimit: 60000 });
+  expect(limited.nextOffset).toBe(limited.nodes.length);
+  expect(limited.nodes.length).toBeGreaterThan(1);
 });
 
 test('frameId 可以读取超出首页预算的嵌入页，失败的 OOPIF 重读后不误报 partial', async () => {
@@ -300,7 +366,7 @@ test('frameId 可以读取超出首页预算的嵌入页，失败的 OOPIF 重�
     return command(method, params, sessionId);
   });
   const result = await f.page.snapshot(signal(), { frameId: 'child-frame', compact: false });
-  expect(result).toMatchObject({ total: 1, partial: false, frames: [{ frameId: 'child-frame', url: 'https://frame.test/' }] });
+  expect(result).toMatchObject({ total: 1 }); expect(result).not.toHaveProperty('partial');
   expect((result.nodes as SnapshotNode[])[0].frameId).toBe('child-frame');
   await expect(f.page.snapshot(signal(), { frameId: 'missing' })).rejects.toThrow('页面框架不存在');
 });
@@ -314,7 +380,7 @@ test('区域分页保留独立续查引用，日期及可聚焦自定义控件�
   expect(page).toMatchObject({ total: 3, nextOffset: 1, scopeRef: expect.any(String) });
   const next = await f.page.snapshot(signal(), { ref: page.scopeRef, offset: 1, interactiveOnly: true, compact: false });
   expect((next.nodes as SnapshotNode[]).map(node => node.role)).toEqual(['Date', 'generic']);
-  expect(next).toMatchObject({ total: 3, returned: 2, truncated: false });
+  expect(next).toMatchObject({ total: 3 }); expect(next.nodes).toHaveLength(2); expect(next).not.toHaveProperty('nextOffset');
 });
 
 test('快照、子框架通知和同文档路由保持截图可用，hover 只移动鼠标', async () => {
@@ -326,7 +392,7 @@ test('快照、子框架通知和同文档路由保持截图可用，hover 只�
   f.contents.debugger.emit('message', {}, 'DOM.documentUpdated', {});
   f.contents.debugger.emit('message', {}, 'Target.detachedFromTarget', { sessionId: 'unrelated' });
   await f.page.snapshot(signal(), { query: '菜单' });
-  await f.page.action({ action: 'hover', observationId: screenshot.observation.id, x: 120, y: 60 }, signal());
+  await f.page.action({ action: 'hover', observationId: screenshot.screenshot.id, x: 120, y: 60 }, signal());
   const inputs = f.sendCommand.mock.calls.filter(([method]) => method === 'Input.dispatchMouseEvent');
   expect(inputs).toEqual([['Input.dispatchMouseEvent', { type: 'mouseMoved', x: 120, y: 60, button: 'none' }, undefined]]);
 });
@@ -363,7 +429,7 @@ test('截图保持比例并报告实际尺寸，小图片不放大', async () =>
   const small = { isEmpty: () => false, getSize: () => ({ width: 1280, height: 720 }), toPNG: () => Buffer.from('fixture'), resize: jest.fn() };
   const large = { ...small, getSize: () => ({ width: 3840, height: 2160 }), resize: jest.fn(() => small) };
   f.contents.capturePage.mockResolvedValueOnce(large).mockResolvedValueOnce(small);
-  expect(await f.page.screenshot(signal(), { width: 1280, height: 720 })).toMatchObject({ observation: { screenshot: { width: 1280, height: 720, mimeType: 'image/png' } } });
+  expect(await f.page.screenshot(signal(), { width: 1280, height: 720 })).toMatchObject({ screenshot: { width: 1280, height: 720 }, attachment: { mimeType: 'image/png' } });
   expect(large.resize).toHaveBeenCalledWith({ width: 1280, height: 720, quality: 'best' });
   await f.page.screenshot(signal(), { width: 1280, height: 720 }, 2560); expect(small.resize).not.toHaveBeenCalled();
 });
@@ -374,14 +440,14 @@ test('截图按实际像素比例换算，观察可跨动作、缩放和时间�
   f.contents.capturePage.mockResolvedValue(picture);
   const zoom = jest.spyOn(f.contents, 'getZoomFactor').mockReturnValue(1);
   const frame = await f.page.screenshot(signal(), { width: 879, height: 830 });
-  expect(frame.observation.imageToViewportScale).toEqual({ x: 879 / 1099, y: 830 / 1038 });
-  const args = { action: 'click', observationId: frame.observation.id, x: 550, y: 519 };
+  const args = { action: 'click', observationId: frame.screenshot.id, x: 550, y: 519 };
   const viewport = { x: 550 * 879 / 1099, y: 519 * 830 / 1038 };
-  expect(await f.page.action(args, signal())).toMatchObject({ pointer: { source: 'image', method: 'pointer', image: { x: 550, y: 519 }, viewport } });
+  expect(await f.page.action(args, signal())).toHaveProperty('pointer');
   expect(f.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mousePressed', ...viewport }), undefined);
   await expect(f.page.action(args, signal())).resolves.toHaveProperty('pointer');
+  await expect(f.page.action({ ...args, x: 1099 }, signal())).rejects.toMatchObject({ code: 'INVALID_ARGUMENTS', message: expect.stringContaining('1099 × 1038') });
   zoom.mockReturnValue(1.5);
-  const clock = jest.spyOn(Date, 'now').mockReturnValue(frame.observation.capturedAt + 180000);
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 180000);
   try { await expect(f.page.action({ action: 'click', x: 550, y: 519 }, signal())).resolves.toHaveProperty('pointer'); }
   finally { clock.mockRestore(); }
 });
@@ -402,6 +468,24 @@ test('日志游标只读取新增记录，缓冲丢失和条数限制均报告�
   expect(f.page.logs({ since: 81 }).entries).toEqual([]);
   for (let index = 0; index < 200; index++) f.page.log('console', index);
   expect(f.page.logs({ since: 0, maxEntries: 200 })).toMatchObject({ truncated: true, outputLost: true, hasMore: false });
+});
+
+test('网络日志只记录页面、接口和失败请求，失败记录带地址，可按类别读取', () => {
+  const f = fixture([]);
+  const event = (method: string, params: unknown) => f.contents.debugger.emit('message', {}, method, params);
+  event('Network.responseReceived', { type: 'Image', response: { status: 200, url: 'https://fixture.test/logo.png' } });
+  event('Network.responseReceived', { type: 'Fetch', response: { status: 200, url: 'https://fixture.test/api/items' } });
+  event('Network.responseReceived', { type: 'Stylesheet', response: { status: 404, url: 'https://fixture.test/missing.css' } });
+  event('Network.requestWillBeSent', { requestId: 'r1', request: { url: 'https://fixture.test/api/save' } });
+  event('Network.loadingFailed', { requestId: 'r1', type: 'XHR', errorText: 'net::ERR_CONNECTION_RESET' });
+  event('Network.requestWillBeSent', { requestId: 'r2', request: { url: 'https://fixture.test/aborted' } });
+  event('Network.loadingFailed', { requestId: 'r2', type: 'Fetch', errorText: 'net::ERR_ABORTED', canceled: true });
+  event('Runtime.exceptionThrown', { exceptionDetails: { text: '脚本错误' } });
+  expect(f.page.logs({ kind: 'network' }).entries.map(entry => entry.text)).toEqual([
+    '200 Fetch https://fixture.test/api/items', '404 Stylesheet https://fixture.test/missing.css', 'net::ERR_CONNECTION_RESET XHR https://fixture.test/api/save',
+  ]);
+  expect(f.page.logs({ kind: 'error' }).entries.map(entry => entry.text)).toEqual(['脚本错误']);
+  expect(f.page.logs()).not.toHaveProperty('capacity');
 });
 
 // 不只验证错误码：同一“截图超时”必须说明卡在绘制同步还是 native capture，且不要求 reload。
@@ -429,7 +513,7 @@ test('原生绘制表面不可用时建议读快照，不要求可能重复提�
   await expect(f.page.screenshot(signal(), { width: 1280, height: 800 })).rejects.toMatchObject({
     code: 'BROWSER_VIEW_REQUIRED', message: expect.stringContaining('snapshot'),
   });
-  await expect(f.page.snapshot(signal())).resolves.toMatchObject({ format: 'compact' });
+  await expect(f.page.snapshot(signal())).resolves.toHaveProperty('nodes');
 });
 
 test('导航销毁绘制上下文时截图等待新文档后只重读一次，不重放输入', async () => {
@@ -467,7 +551,7 @@ test('动作后快照等主文档解析与同步布局，后台无绘制帧也�
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(f.sendCommand.mock.calls.some(([method]) => method === 'Accessibility.getFullAXTree')).toBe(false);
   f.contents.emit('dom-ready');
-  expect(await reading).toMatchObject({ total: 0, partial: false });
+  expect(await reading).toMatchObject({ total: 0 }); expect(await reading).not.toHaveProperty('partial');
   expect(layout).toHaveBeenCalledTimes(1); expect(paint).not.toHaveBeenCalled();
   expect(f.contents.listenerCount('dom-ready')).toBe(1); expect(f.contents.listenerCount('destroyed')).toBe(0);
 });
@@ -547,11 +631,12 @@ test('连续分页在页面未变时复用同一棵树，变化、换筛选、�
   const second = await f.page.snapshot(signal(), { offset: 10, maxNodes: 10, compact: false });
   expect(f.reads()).toBe(1);
   // 分页保留先前观察到的元素引用，直到节点或文档真正改变。
-  expect(second).toMatchObject({ total: 30, offset: 10, returned: 10, nextOffset: 20, partial: false });
+  expect(second).toMatchObject({ total: 30, nextOffset: 20 }); expect(second.nodes).toHaveLength(10);
   expect((second.nodes as SnapshotNode[]).map(node => node.name)).toEqual(Array.from({ length: 10 }, (_, index) => `条目 ${index + 10}`));
   await expect(f.page.action({ action: 'press', ref: (first.nodes as SnapshotNode[])[0].ref, key: 'Enter' }, signal())).resolves.toEqual({});
   f.change();
-  expect(await f.page.snapshot(signal(), { offset: 20, maxNodes: 10, compact: false })).toMatchObject({ offset: 20, returned: 10, truncated: false });
+  const last = await f.page.snapshot(signal(), { offset: 20, maxNodes: 10, compact: false });
+  expect(last.nodes).toHaveLength(10); expect(last).not.toHaveProperty('nextOffset');
   expect(f.reads()).toBe(2);
   // 不是严格续页（筛选不同或 offset 不等于上次 nextOffset）时始终读取当前页面。
   await f.page.snapshot(signal(), { maxNodes: 10 }); expect(f.reads()).toBe(3);

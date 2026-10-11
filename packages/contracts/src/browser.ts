@@ -1,5 +1,3 @@
-import type { ScreenshotMetadata, VisualObservation } from './visual';
-
 export interface BrowserProfile {
   id: string;
   name: string;
@@ -29,15 +27,14 @@ export interface BrowserLayout {
   height: number;
   visible: boolean;
 }
-export interface BrowserObservation extends VisualObservation {
-  tabId: string;
-  url: string;
-  coordinateSpace: 'image';
-  screenshot: ScreenshotMetadata;
-  /** 图片像素乘以对应比例，得到浏览器接收的 CSS 视口坐标。 */
-  imageToViewportScale?: { x: number; y: number };
-  /** 宽高和滚动位置使用 CSS 像素；zoomFactor 是页面缩放，不包含显示器像素缩放。 */
-  viewport: { width: number; height: number; scrollX: number; scrollY: number; zoomFactor: number };
+/** 交给模型的截图元数据：坐标动作用 id 指定截图，宽高就是坐标范围，换算由工具完成。 */
+export interface BrowserScreenshot {
+  id: string;
+  width: number;
+  height: number;
+  /** 截图时页面的 CSS 滚动位置，用来判断画面与当前页面是否仍对应。 */
+  scrollX: number;
+  scrollY: number;
 }
 
 export interface BrowserHitTarget {
@@ -51,12 +48,9 @@ export interface BrowserHitTarget {
 
 export interface BrowserActionFeedback {
   pointer?: {
-    source: 'image' | 'element';
-    method: 'pointer' | 'dom-click';
-    observationId?: string;
-    image?: { x: number; y: number };
-    viewport?: { x: number; y: number };
     hit?: BrowserHitTarget;
     overlapped?: boolean;
+    /** 元素没有几何位置时改用 DOM click，模型据此判断悬停或坐标类效果没有发生。 */
+    domClick?: boolean;
   };
 }

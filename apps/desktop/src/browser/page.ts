@@ -1,17 +1,23 @@
 import type { WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { BrowserObservation, BrowserActionFeedback, BrowserHitTarget } from '@graycode/contracts';
+import type { BrowserActionFeedback, BrowserHitTarget, BrowserScreenshot } from '@graycode/contracts';
 import { compactSnapshot, snapshotClickables, snapshotRows, snapshotUrl, type AxNode, type SnapshotNode, type SnapshotOptions } from './snapshot';
 import { browserKey } from './keys';
 import { checkedState, pointInElement, prepareTextInput, selectElement } from './elements';
-import { validateActionArguments, readElementText, readElementState, type BrowserDialog, type BrowserFileChooser, type BrowserInteractionState } from './pageActions';
+import { readElementText, readElementState, type BrowserDialog, type BrowserFileChooser, type BrowserInteractionState } from './pageActions';
 import { nativePromptScripts } from './pageDialogs';
-export { validateActionArguments } from './pageActions';
 
 interface ElementReference { backendNodeId: number; sessionId?: string; frameId?: string }
 const referenceKey = (reference: Pick<ElementReference, 'backendNodeId' | 'sessionId' | 'frameId'>) => JSON.stringify([reference.sessionId, reference.frameId, reference.backendNodeId]);
 interface PageLog { cursor: number; time: number; kind: 'console' | 'network' | 'error'; text: string }
+/** 坐标换算所需的截图记录；交给模型的只是其中的 BrowserScreenshot。 */
+interface Capture { id: string; width: number; height: number; viewport: { width: number; height: number } }
+// 引用与截图 ID 在整个宿主内递增：短到便于模型照抄，又不会和其他标签或已失效文档的编号重合。
+let referenceCounter = 0, screenshotCounter = 0;
+const nextReference = () => `e${++referenceCounter}`;
+// 网络日志只记录对调试页面行为有意义的请求；成功的图片、字体、样式和脚本会很快挤掉控制台错误。
+const loggedResources = new Set(['Document', 'XHR', 'Fetch', 'EventSource', 'WebSocket']);
 /** 一次完整读取的原始 AX 节点；marker 是读树前在该框架隔离世界里布置的变更标记。 */
 interface FrameRead { frameId?: string; identity?: string; sessionId?: string; nodes: AxNode[]; wholeDocument?: boolean; marker?: { contextId: number; id: number } }
 interface PageRead { epoch: number; topology: number; frames: Array<Record<string, unknown>>; reads: FrameRead[] }
@@ -58,8 +64,12 @@ export class BrowserPage {
   private dialog?: BrowserDialog & { sessionId?: string };
   private fileChooser?: BrowserFileChooser;
   private readonly dialogWaiters = new Set<() => void>();
+  /** 已开启文件选择拦截的会话（主文档为 undefined）；只在模型操作期间开启，跟随调试会话的增减。 */
+  private readonly intercepting = new Set<string | undefined>();
+  /** 失败事件不带地址，按请求 ID 暂存，完成或失败后释放。 */
+  private readonly requests = new Map<string, string>();
   private readonly promptScripts = nativePromptScripts(`graycode-prompt-${randomUUID()}`);
-  private observation?: Omit<BrowserObservation, 'tabId'>;
+  private observation?: Capture;
   private mainDocumentPending = false;
   /** 框架或 OOPIF 会话增减时递增；只用于判断缓存的读取是否还覆盖全部框架，不影响引用或截图。 */
   private topology = 0;
@@ -72,7 +82,7 @@ export class BrowserPage {
     const ready = () => { this.mainDocumentPending = false; };
     contents.on('dom-ready', ready); contents.on('did-stop-loading', ready);
     contents.debugger.on('detach', (_event, reason) => {
-      this.ready = undefined; this.debuggerOwned = false; this.sessions.clear(); this.invalidate();
+      this.ready = undefined; this.debuggerOwned = false; this.sessions.clear(); this.intercepting.clear(); this.requests.clear(); this.invalidate();
       this.log('error', `页面调试连接已断开：${reason}`); changed();
     });
     contents.debugger.on('message', (_event, method, params, sessionId) => {
@@ -80,12 +90,18 @@ export class BrowserPage {
         this.sessions.set(params.sessionId, params.targetInfo); this.topology++;
         void this.enable(params.sessionId).catch(error => this.log('error', String(error)));
       }
-      if (method === 'Target.detachedFromTarget' && this.sessions.delete(params.sessionId)) { this.topology++; this.forget(); }
+      if (method === 'Target.detachedFromTarget' && this.sessions.delete(params.sessionId)) { this.intercepting.delete(params.sessionId); this.topology++; this.forget(); }
       if (method === 'Page.frameAttached' || method === 'Page.frameDetached') this.topology++;
       if (method === 'Runtime.consoleAPICalled') this.log('console', `${params.type}: ${(params.args ?? []).map((value: { value?: unknown; description?: string }) => value.value ?? value.description ?? '').join(' ')}`);
       if (method === 'Runtime.exceptionThrown') this.log('error', params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.text ?? '页面脚本异常');
-      if (method === 'Network.responseReceived') this.log('network', `${params.response.status} ${params.type} ${params.response.url}`);
-      if (method === 'Network.loadingFailed') this.log('network', `${params.type} ${params.errorText}`);
+      if (method === 'Network.requestWillBeSent') this.requests.set(params.requestId, params.request.url);
+      if (method === 'Network.responseReceived' && (loggedResources.has(params.type) || params.response.status >= 400))
+        this.log('network', `${params.response.status} ${params.type} ${params.response.url}`);
+      if (method === 'Network.loadingFinished') this.requests.delete(params.requestId);
+      if (method === 'Network.loadingFailed') {
+        if (!params.canceled) this.log('network', `${params.errorText} ${params.type} ${this.requests.get(params.requestId) ?? ''}`.trim());
+        this.requests.delete(params.requestId);
+      }
       if (method === 'Page.frameNavigated') {
         if (!sessionId && !params.frame?.parentId) this.invalidate();
         else { this.topology++; this.forget(); }
@@ -114,7 +130,7 @@ export class BrowserPage {
     return { ...(this.dialog ? { dialog: dialog as BrowserDialog } : {}), ...(this.fileChooser ? { fileChooser: { ...this.fileChooser } } : {}) };
   }
   private registerReference(reference: ElementReference): string {
-    const key = referenceKey(reference), id = this.referenceIds.get(key) ?? randomUUID().slice(0, 8);
+    const key = referenceKey(reference), id = this.referenceIds.get(key) ?? nextReference();
     this.references.set(id, reference); this.referenceIds.set(key, id); return id;
   }
   // 页面变化使在途快照重新读取，截图仍保留坐标映射，模型可以继续使用已知位置尝试操作。
@@ -127,12 +143,12 @@ export class BrowserPage {
     this.records.push({ cursor: ++this.logCursor, time: Date.now(), kind, text: String(value).slice(0, 3000) });
     if (this.records.length > 200) this.records.splice(0, this.records.length - 200);
   }
-  logs(options: { since?: number; maxEntries?: number } = {}) {
-    const entries = this.records.filter(record => options.since === undefined || record.cursor > options.since);
+  logs(options: { since?: number; maxEntries?: number; kind?: PageLog['kind'] } = {}) {
+    const entries = this.records.filter(record => (options.since === undefined || record.cursor > options.since) && (!options.kind || record.kind === options.kind));
     const maximum = options.maxEntries ?? 50;
     const page = options.since === undefined ? entries.slice(-maximum) : entries.slice(0, maximum);
     const outputLost = options.since !== undefined && options.since < (this.records[0]?.cursor ?? 1) - 1;
-    return { entries: page, nextCursor: page.at(-1)?.cursor ?? this.logCursor, capacity: 200,
+    return { entries: page, nextCursor: page.at(-1)?.cursor ?? this.logCursor,
       hasMore: options.since !== undefined && entries.length > maximum, outputLost,
       truncated: entries.length > maximum || outputLost };
   }
@@ -142,7 +158,7 @@ export class BrowserPage {
     await this.contents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: this.promptScripts.isolated, worldName: 'graycode-native-dialogs', runImmediately: true }, sessionId);
     await this.contents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: this.promptScripts.main, runImmediately: true }, sessionId);
     await this.contents.debugger.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, sessionId);
-    if (this.automated) await this.contents.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }, sessionId);
+    if (this.automated) { await this.contents.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }, sessionId); this.intercepting.add(sessionId); }
   }
   async connect(): Promise<void> {
     if (this.contents.isDestroyed()) throw new Error('网页标签已关闭。');
@@ -184,30 +200,31 @@ export class BrowserPage {
   async snapshot(signal: AbortSignal, options: SnapshotOptions = {}) {
     return (await this.observe(signal, options)).result;
   }
-  async readText(signal: AbortSignal, options: { ref: string; startChar?: number; maxChars?: number }) {
+  /** 省略 ref 时读取主文档正文，适合文章或搜索结果整页阅读。 */
+  async readText(signal: AbortSignal, options: { ref?: string; startChar?: number; maxChars?: number }) {
     signal.throwIfAborted();
     const startChar = options.startChar ?? 0, maxChars = options.maxChars ?? 12000;
-    if (!Number.isInteger(startChar) || startChar < 0 || !Number.isInteger(maxChars) || maxChars < 1 || maxChars > 60000)
-      throw Object.assign(new Error('startChar 必须是非负整数，maxChars 必须介于 1 与 60000。'), { code: 'INVALID_ARGUMENTS' });
     await this.pending(this.connect(), signal);
-    const reference = this.reference(options.ref);
+    const reference = options.ref ? this.reference(options.ref) : undefined;
     try {
-      const objectId = await this.element(reference, signal);
-      const result = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true, functionDeclaration: readElementText,
-        arguments: [{ value: startChar }, { value: maxChars }] }, signal, reference.sessionId);
+      const result = reference
+        ? await this.command('Runtime.callFunctionOn', { objectId: await this.element(reference, signal), returnByValue: true, functionDeclaration: readElementText,
+          arguments: [{ value: startChar }, { value: maxChars }] }, signal, reference.sessionId)
+        : await this.command('Runtime.evaluate', { returnByValue: true,
+          expression: `(${readElementText}).call(document.body ?? document.documentElement, ${startChar}, ${maxChars})` }, signal);
       const value = result.result?.value as { text: string; total: number } | null;
-      if (!value) throw Object.assign(new Error('页面元素已移除，请重新读取。'), { code: 'BROWSER_TARGET_MISSING' });
+      if (!value) throw reference ? this.missing(reference) : new Error('页面文档尚未建立。');
       const nextChar = startChar + value.text.length < value.total ? startChar + value.text.length : undefined;
-      return { ref: options.ref, text: value.text, startChar, returned: value.text.length, total: value.total, nextChar, truncated: nextChar !== undefined };
+      return { text: value.text, total: value.total, ...(nextChar !== undefined ? { nextChar } : {}) };
     } finally {
-      if (this.contents.debugger.isAttached()) void this.contents.debugger.sendCommand('Runtime.releaseObjectGroup', { objectGroup: 'graycode-browser' }, reference.sessionId).catch(() => {});
+      if (reference && this.contents.debugger.isAttached()) void this.contents.debugger.sendCommand('Runtime.releaseObjectGroup', { objectGroup: 'graycode-browser' }, reference.sessionId).catch(() => {});
     }
   }
   private async observe(signal: AbortSignal, options: SnapshotOptions) {
     signal.throwIfAborted(); await this.pending(this.connect(), signal);
     const scope = options.ref ? this.reference(options.ref) : undefined;
     // 同一 DOM 节点继续使用原引用，名称和路由变化由新快照展示，不要求模型重新绑定。
-    const epoch = this.epoch; const prefix = randomUUID().slice(0, 8);
+    const epoch = this.epoch;
     const references = new Map<string, ElementReference>();
     let scopeRef: string | undefined;
     const rows: SnapshotNode[] = [];
@@ -236,7 +253,7 @@ export class BrowserPage {
         characters += size;
         const reference = node.backendDOMNodeId ? { backendNodeId: node.backendDOMNodeId, sessionId, frameId } : undefined;
         const previousId = reference && (scopeRef && referenceKey(reference) === referenceKey(scope!) ? scopeRef : this.referenceIds.get(referenceKey(reference)));
-        const id = reference ? previousId ?? `${prefix}-${rows.length + 1}` : undefined;
+        const id = reference ? previousId ?? nextReference() : undefined;
         if (id) references.set(id, reference!);
         rows.push({ ...(id ? { ref: id } : {}), frameId: identity, ...row });
       }
@@ -260,10 +277,11 @@ export class BrowserPage {
       timer.unref?.();
       this.continuation = { key, offset: nextOffset, read, timer };
     }
-    return { read, result: { url: this.contents.getURL(), title: this.contents.getTitle(), frames,
-      format: options.compact === false ? 'full' : 'compact', nodes: options.compact === false ? rows : compactSnapshot(rows),
-      offset, returned: rows.length, total, nextOffset, truncated: nextOffset !== undefined,
-      partial, ...(scopeRef ? { scopeRef } : {}), ...(budgetReached ? { characterLimit: 60000 } : {}) } };
+    // 单框架页面的框架 ID 已在节点的 frame= 行里，只有嵌入页面或读取失败时才单独列出。
+    return { read, result: { url: this.contents.getURL(), title: this.contents.getTitle(),
+      nodes: options.compact === false ? rows : compactSnapshot(rows), total,
+      ...(nextOffset !== undefined ? { nextOffset } : {}), ...(partial ? { partial } : {}), ...(frames.length > 1 || partial ? { frames } : {}),
+      ...(scopeRef ? { scopeRef } : {}), ...(budgetReached ? { characterLimit: 60000 } : {}) } };
   }
   /** 按框架顺序读取完整 AX 树；框架顺序和失败重试规则决定输出顺序。 */
   private async collect(signal: AbortSignal, options: SnapshotOptions, scope?: ElementReference): Promise<PageRead> {
@@ -495,16 +513,12 @@ export class BrowserPage {
           const original = picture.getSize();
           const ratio = Math.min(1, maxImageDimension / Math.max(original.width, original.height));
           const image = ratio < 1 ? picture.resize({ width: Math.max(1, Math.round(original.width * ratio)), height: Math.max(1, Math.round(original.height * ratio)), quality: 'best' }) : picture;
-          const observation: Omit<BrowserObservation, 'tabId'> = {
-            id: randomUUID(), capturedAt: Date.now(), url: this.contents.getURL(), coordinateSpace: 'image',
-            screenshot: { mimeType: 'image/png', ...image.getSize() },
-            imageToViewportScale: { x: bounds.width / zoomFactor / image.getSize().width, y: bounds.height / zoomFactor / image.getSize().height },
-            // 视图 DIP 尺寸包括滚动条，除以页面缩放后与整张截图一一对应。
-            viewport: { width: bounds.width / zoomFactor, height: bounds.height / zoomFactor,
-              scrollX: metrics.cssVisualViewport.pageX, scrollY: metrics.cssVisualViewport.pageY, zoomFactor },
-          };
-          this.observation = observation;
-          return { observation, attachment: { mimeType: 'image/png', data: image.toPNG().toString('base64'), name: 'browser.png' } };
+          const { width, height } = image.getSize();
+          // 视图 DIP 尺寸包括滚动条，除以页面缩放后与整张截图一一对应。
+          this.observation = { id: `s${++screenshotCounter}`, width, height, viewport: { width: bounds.width / zoomFactor, height: bounds.height / zoomFactor } };
+          const screenshot: BrowserScreenshot = { id: this.observation.id, width, height,
+            scrollX: Math.round(metrics.cssVisualViewport.pageX), scrollY: Math.round(metrics.cssVisualViewport.pageY) };
+          return { screenshot, url: this.contents.getURL(), attachment: { mimeType: 'image/png', data: image.toPNG().toString('base64'), name: 'browser.png' } };
         } catch (error) {
           waiting.throwIfAborted();
           const changed = (error as { code?: string }).code === 'BROWSER_PAGE_CHANGED'
@@ -528,17 +542,22 @@ export class BrowserPage {
       throw Object.assign(new Error(value ? `找不到截图 ${String(id)}，最近截图为 ${value.id}；也可省略 observationId 使用最近截图。` : '还没有截图，请先截图，或使用元素 ref 定位。'), { code: 'OBSERVATION_STALE' });
     return value;
   }
-  private imagePoint(observation: Omit<BrowserObservation, 'tabId'>, x: unknown, y: unknown) {
-    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)
-      || x < 0 || y < 0 || x >= observation.screenshot.width || y >= observation.screenshot.height)
-      throw Object.assign(new Error('坐标必须位于返回的截图范围内。'), { code: 'INVALID_ARGUMENTS' });
-    return { x: x * observation.viewport.width / observation.screenshot.width,
-      y: y * observation.viewport.height / observation.screenshot.height };
+  private imagePoint(observation: Capture, x: unknown, y: unknown) {
+    if (typeof x !== 'number' || typeof y !== 'number' || x >= observation.width || y >= observation.height)
+      throw Object.assign(new Error(`坐标必须位于截图 ${observation.id} 的 ${observation.width} × ${observation.height} 范围内。`), { code: 'INVALID_ARGUMENTS' });
+    return { x: x * observation.viewport.width / observation.width, y: y * observation.viewport.height / observation.height };
   }
   private reference(value: unknown): ElementReference {
     const reference = typeof value === 'string' ? this.references.get(value) : undefined;
-    if (!reference) throw Object.assign(new Error('找不到这个元素引用，请读取当前页面取得目标 ref。'), { code: 'BROWSER_TARGET_MISSING' });
+    if (!reference) throw Object.assign(new Error('找不到这个元素引用，页面可能已换页；请读取当前页面取得目标 ref。'), { code: 'BROWSER_TARGET_MISSING' });
     return reference;
+  }
+  /** 节点已离开文档：释放引用，之后使用同一 ref 得到同样的提示。 */
+  private missing(reference: ElementReference): Error {
+    const key = referenceKey(reference), id = this.referenceIds.get(key);
+    if (id) this.references.delete(id);
+    this.referenceIds.delete(key);
+    return Object.assign(new Error('页面元素已移除，请重新读取目标区域。'), { code: 'BROWSER_TARGET_MISSING' });
   }
   private async element(reference: ElementReference, signal: AbortSignal) {
     const { object } = await this.command('DOM.resolveNode', { backendNodeId: reference.backendNodeId, objectGroup: 'graycode-browser' }, signal, reference.sessionId)
@@ -550,19 +569,22 @@ export class BrowserPage {
     if (!object?.objectId) throw Object.assign(new Error('页面元素已移除，请重新读取。'), { code: 'BROWSER_TARGET_MISSING' });
     return object.objectId as string;
   }
+  /** 只给不经过固定脚本的焦点和上传操作使用；点击、填写等由各自脚本返回 missing。 */
   private async validateReference(reference: ElementReference, signal: AbortSignal): Promise<void> {
     const objectId = await this.element(reference, signal);
     const connected = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
       functionDeclaration: 'function() { return this.isConnected === true; }' }, signal, reference.sessionId);
-    if (connected.result?.value !== true) {
-      const key = referenceKey(reference), id = this.referenceIds.get(key);
-      if (id) this.references.delete(id);
-      this.referenceIds.delete(key);
-      throw Object.assign(new Error('页面元素已移除，请重新读取目标区域。'), { code: 'BROWSER_TARGET_MISSING' });
+    if (connected.result?.value !== true) throw this.missing(reference);
+  }
+  /** 新的 OOPIF 会话或接管后重新操作时补开拦截，避免原生文件框出现在后台标签。 */
+  private async interceptFileChooser(signal: AbortSignal): Promise<void> {
+    for (const sessionId of [undefined, ...this.sessions.keys()]) if (!this.intercepting.has(sessionId)) {
+      await this.command('Page.setInterceptFileChooserDialog', { enabled: true }, signal, sessionId);
+      this.intercepting.add(sessionId);
     }
   }
   async action(args: Record<string, unknown>, signal: AbortSignal): Promise<BrowserActionFeedback & BrowserInteractionState> {
-    signal.throwIfAborted(); validateActionArguments(args); await this.pending(this.connect(), signal);
+    signal.throwIfAborted(); await this.pending(this.connect(), signal);
     const action = String(args.action);
     if (action === 'dialog') {
       const pendingDialog = this.dialog;
@@ -573,7 +595,7 @@ export class BrowserPage {
       catch (error) { this.dialog ??= pendingDialog; throw error; }
       this.invalidateVisual(); return this.interactionState();
     }
-    for (const sessionId of [undefined, ...this.sessions.keys()]) await this.command('Page.setInterceptFileChooserDialog', { enabled: true }, signal, sessionId);
+    await this.interceptFileChooser(signal);
     const reference = args.ref && action !== 'drag' ? this.reference(args.ref) : undefined;
     // 元素引用优先；坐标动作才读取截图，省略 ID 时沿用最近截图，键盘操作可直接使用当前焦点。
     const usesImage = !reference && (['click', 'hover', 'drag'].includes(action) || action === 'scroll' && (args.x !== undefined || args.y !== undefined));
@@ -584,7 +606,7 @@ export class BrowserPage {
     }
     const feedback: BrowserActionFeedback = {};
     try {
-      if (reference) await this.validateReference(reference, signal);
+      if (reference && (action === 'type' || action === 'press')) await this.validateReference(reference, signal);
       if (action === 'scroll') {
         const distance = typeof args.distance === 'number' ? args.distance : 600;
         const size = await this.command('Page.getLayoutMetrics', {}, signal);
@@ -614,7 +636,7 @@ export class BrowserPage {
               functionDeclaration: `function() { const element = this.nodeType === 3 ? this.parentElement : this; if (!element?.isConnected || typeof element.click !== 'function') return false;
                 const hit = { tagName: element.tagName.toLowerCase(), role: element.getAttribute('role') || undefined, name: (element.getAttribute('aria-label') || element.textContent || '').trim().slice(0, 160) };
                 element.click(); return hit; }` }, signal, reference.sessionId);
-            if (clicked.result?.value) return { pointer: { source: 'element', method: 'dom-click', hit: clicked.result.value }, ...this.interactionState() };
+            if (clicked.result?.value) return { pointer: { hit: clicked.result.value, domClick: true }, ...this.interactionState() };
           }
           throw error;
         }
@@ -622,10 +644,7 @@ export class BrowserPage {
         const count = args.clickCount === 2 ? 2 : 1;
         const viewport = { x: point.x, y: point.y };
         await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...viewport, button: 'none' }, signal, reference?.sessionId);
-        feedback.pointer = { source: reference ? 'element' : 'image', method: 'pointer', viewport,
-          ...(observation ? { observationId: observation.id, image: { x: Number(args.x), y: Number(args.y) } } : {}),
-          hit: point.hit ?? await this.hitAtPoint(viewport, signal, reference?.sessionId),
-          ...(point.overlapped ? { overlapped: true } : {}) };
+        feedback.pointer = { hit: point.hit ?? await this.hitAtPoint(viewport, signal, reference?.sessionId), ...(point.overlapped ? { overlapped: true } : {}) };
         if (action === 'hover') return { ...feedback, ...this.interactionState() };
         for (let clickCount = 1; clickCount <= count; clickCount++) {
           try { await this.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...viewport, button, clickCount }, signal, reference?.sessionId); }
@@ -655,6 +674,7 @@ export class BrowserPage {
         const prepared = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
           functionDeclaration: prepareTextInput, arguments: [{ value: args.text }] }, signal, reference!.sessionId);
         const status = prepared.result?.value;
+        if (status === 'missing') throw this.missing(reference!);
         if (status === 'invalid-value') throw Object.assign(new Error('文本不符合该输入框的原生格式，请按页面要求填写数值或日期。'), { code: 'INVALID_ARGUMENTS' });
         if (status !== 'filled' && status !== 'selected') throw Object.assign(new Error('此元素不是可编辑文本框。'), { code: 'INVALID_ARGUMENTS' });
         if (status === 'selected') {
@@ -667,6 +687,7 @@ export class BrowserPage {
         const selected = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
           functionDeclaration: selectElement, arguments: [{ value: args.values }, { value: args.labels }] }, signal, reference!.sessionId);
         if (selected.exceptionDetails) throw new Error('下拉框操作失败，请重新观察页面。');
+        if (selected.result?.value?.missing) throw this.missing(reference!);
         if (selected.result?.value !== null) throw Object.assign(new Error(selected.result?.value ?? '下拉框当前不可操作。'), { code: 'INVALID_ARGUMENTS' });
       } else if (action === 'press') {
         if (reference) await this.command('DOM.focus', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId);
@@ -704,6 +725,7 @@ export class BrowserPage {
     const objectId = await this.element(reference, signal);
     const result = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true, functionDeclaration: checkedState }, signal, reference.sessionId);
     const state = result.result?.value;
+    if (state?.missing) throw this.missing(reference);
     if (!state || state.error) throw Object.assign(new Error(state?.error ?? '无法读取选项状态。'), { code: 'INVALID_ARGUMENTS' });
     return { checked: state.checked === true || state.checked === 'true' ? true : state.checked === false || state.checked === 'false' ? false : 'mixed', radio: state.radio };
   }
@@ -722,6 +744,7 @@ export class BrowserPage {
     const result = await this.command('Runtime.callFunctionOn', { objectId, returnByValue: true,
       functionDeclaration: pointInElement }, signal, reference.sessionId);
     const location = result.result?.value;
+    if (location?.missing) throw this.missing(reference);
     if (!location) throw Object.assign(new Error('元素没有可用的位置。'), { code: 'BROWSER_NO_GEOMETRY' });
     const resultQuads = await this.command('DOM.getContentQuads', { backendNodeId: reference.backendNodeId }, signal, reference.sessionId).catch(error => { signal.throwIfAborted(); return undefined; });
     const quad = resultQuads?.quads?.[location.index] as number[] | undefined;
@@ -736,8 +759,9 @@ export class BrowserPage {
   }
   allowManualInput(): void {
     this.automated = false;
-    if (this.debuggerOwned && this.contents.debugger.isAttached()) for (const sessionId of [undefined, ...this.sessions.keys()])
+    if (this.debuggerOwned && this.contents.debugger.isAttached()) for (const sessionId of this.intercepting)
       void this.contents.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }, sessionId).catch(() => {});
+    this.intercepting.clear();
   }
   async upload(value: unknown, files: string[], signal: AbortSignal): Promise<void> {
     signal.throwIfAborted(); await this.pending(this.connect(), signal);

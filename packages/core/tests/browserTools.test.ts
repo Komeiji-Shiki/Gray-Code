@@ -6,11 +6,24 @@ import { browserTools } from '../../../apps/server/src/browser/tools';
 import { initialSettings } from '../../../apps/server/src/settings/service';
 import { fixture } from './fixtures';
 
-test('表单状态与悬停操作沿用外部发送权限，读取和条件等待保持只读权限', () => {
+test('提交输入的动作沿用外部发送权限，悬停、滚动、读取和条件等待保持只读权限', () => {
   const tools = browserTools();
   const action = tools.find(tool => tool.declaration.name === 'browser_action')!;
-  for (const name of ['select', 'check', 'hover', 'fill', 'type']) expect(action.effects({ action: name })).toEqual(['private_browser', 'external_send']);
+  for (const name of ['select', 'check', 'fill', 'type', 'click', 'press']) expect(action.effects({ action: name })).toEqual(['private_browser', 'external_send']);
+  for (const name of ['hover', 'scroll', 'navigate']) expect(action.effects({ action: name })).toEqual(['private_browser']);
   expect(tools.find(tool => tool.declaration.name === 'browser_read')!.effects({ action: 'wait', query: 'result' })).toEqual(['private_browser']);
+});
+
+test('只有可能持续很久的文件传输作为原生异步任务，动作参数不再暴露遗留的页面地址', () => {
+  const tools = browserTools();
+  expect(Object.fromEntries(tools.map(tool => [tool.declaration.name, tool.nativeAsync]))).toEqual({
+    browser_tabs: false, browser_read: false, browser_action: false, browser_files: true,
+  });
+  const files = tools.find(tool => tool.declaration.name === 'browser_files')!.declaration.parameters as any;
+  expect(files.properties.url).toBeUndefined(); expect(files.properties.action.enum).toEqual(['upload', 'download']);
+  const action = tools.find(tool => tool.declaration.name === 'browser_action')!.declaration as any;
+  expect(action.parameters.properties.after.default).toBe('snapshot');
+  expect(action.description).not.toContain('imageToViewportScale');
 });
 
 test('浏览器声明不随身份或宿主变化，拒绝与审批在访问私人页面之前执行', async () => {
