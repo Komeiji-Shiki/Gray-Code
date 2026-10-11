@@ -82,8 +82,8 @@ export class PlatformTerminals {
     const isZh = getActualLanguage() === 'zh-CN';
     declaration.description +=
       isZh
-        ? '\n返回的 taskId 交给 terminal_task 查询、续读、输入或停止。background=true 的任务有完成通知；普通 argv 会话按需读取。'
-        : '\nUse terminal_task with the returned taskId to inspect, read, send input or stop. background=true tasks send completion notices; read ordinary argv sessions when needed.';
+        ? '\n返回的 taskId 交给 terminal_task 查询、续读、输入或停止；argv 会话没有完成通知，需要结果时再读取。'
+        : '\nUse terminal_task with the returned taskId to inspect, read, send input or stop. argv sessions send no completion notice; read them when you need the result.';
     return {
       declaration: declaration as ToolDeclaration,
       approvalName: (args) => (args.mode === 'argv' ? 'run_command' : 'execute_command'),

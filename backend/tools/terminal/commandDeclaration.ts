@@ -39,12 +39,11 @@ export function createExecuteCommandDeclaration(host: createTerminalRuntimeHost)
         category: 'terminal',
         strict: true, // API 端强制 schema 校验
         description: isZh
-            ? '执行命令并返回输出。默认通过 Shell 执行；argv 直接启动可执行文件并原样传递 args，不解析管道、重定向或环境变量。' +
-              'argv 启动后最多等待 300 毫秒便返回 taskId，进程继续运行，可用 terminal_task 续读、输入或停止。' +
+            ? '执行命令并返回输出。默认交给 Shell 解析；mode=argv 直接启动可执行文件并原样传递 args，不解析管道、重定向或环境变量，' +
+              '启动后最多等待 300 毫秒即返回 taskId，进程继续运行。' +
               `操作系统：${osName} (${osArch})，版本 ${osRelease}。${workspaceDescription}\n\n${getExecuteCommandShellGuidanceDescription()}`
-            : 'Run a command and return its output. Shell mode is the default; argv starts an executable with literal args ' +
-              'without parsing pipes, redirection or environment variables. argv waits up to 300 ms after launch, then returns a taskId ' +
-              'while the process keeps running; use terminal_task to read, send input or stop it. ' +
+            : 'Run a command and return its output. Commands go through a shell by default; mode=argv starts an executable with literal args ' +
+              'without parsing pipes, redirection or environment variables, and returns a taskId within 300 ms while the process keeps running. ' +
               `OS: ${osName} (${osArch}), version ${osRelease}.${workspaceDescription}\n\n${getExecuteCommandShellGuidanceDescription()}`,
         parameters: {
             type: 'object',
