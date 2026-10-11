@@ -28,20 +28,22 @@ import type { Tool, ToolResult } from '../../tools/types';
 let mockSettingsManager: any = null;
 
 jest.mock('../../core/settingsContext', () => ({
-    getGlobalSettingsManager: () => mockSettingsManager
+    getGlobalSettingsManager: () => mockSettingsManager,
 }));
 
 jest.mock('child_process', () => ({
     spawn: jest.fn(),
     exec: jest.fn(),
     execFile: jest.fn(),
-    execSync: jest.fn()
+    execSync: jest.fn(),
 }));
 
 // 隔离 tree-kill：超时/终止路径不产生真实系统调用（CI 安全）
-jest.mock('tree-kill', () => jest.fn((_pid: number, _signal?: string, callback?: (error?: Error) => void) => {
-    callback?.();
-}));
+jest.mock('tree-kill', () =>
+    jest.fn((_pid: number, _signal?: string, callback?: (error?: Error) => void) => {
+        callback?.();
+    }),
+);
 
 // 保留真实 getShellConfig 等实现，仅隔离 shell 可用性检测（避免真实 where/which/execSync）
 jest.mock('../../tools/terminal/shellConfig', () => {
@@ -49,7 +51,7 @@ jest.mock('../../tools/terminal/shellConfig', () => {
     return {
         ...actual,
         checkShellAvailability: jest.fn(async () => ({ available: true })),
-        checkShellAvailabilitySync: jest.fn(() => true)
+        checkShellAvailabilitySync: jest.fn(() => true),
     };
 });
 
@@ -74,10 +76,10 @@ const WINDOWS_EXEC_CONFIG = {
     shells: [
         { type: 'powershell', enabled: true, displayName: 'PowerShell' },
         { type: 'cmd', enabled: true, displayName: 'CMD' },
-        { type: 'bash', enabled: true, displayName: 'Bash (Git)' }
+        { type: 'bash', enabled: true, displayName: 'Bash (Git)' },
     ],
     defaultTimeout: 60000,
-    maxOutputLines: 50
+    maxOutputLines: 50,
 };
 
 function useWindowsConfig(): void {
@@ -101,16 +103,14 @@ function makeFakeProc(): FakeChildProcess {
 }
 
 function flush(): Promise<void> {
-    return new Promise(resolve => setImmediate(resolve));
+    return new Promise((resolve) => setImmediate(resolve));
 }
 
 let tmpDir: string;
 
 beforeAll(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exec-smoke-'));
-    (vscode.workspace as any).workspaceFolders = [
-        { name: 'test-ws', index: 0, uri: { fsPath: tmpDir, scheme: 'file' } }
-    ];
+    (vscode.workspace as any).workspaceFolders = [{ name: 'test-ws', index: 0, uri: { fsPath: tmpDir, scheme: 'file' } }];
 });
 
 afterAll(() => {
@@ -128,7 +128,7 @@ describe('outputDecoder：GBK 回退与输出护栏', () => {
         const modeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
         const utf8Decoder = new StringDecoder('utf8');
         const gbkDecoder = new TextDecoder('gbk');
-        const chunk = Buffer.from([0xD6, 0xD0, 0xCE, 0xC4]); // GBK 编码的「中文」
+        const chunk = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]); // GBK 编码的「中文」
 
         const text = decodeWithMode(chunk, modeRef, utf8Decoder, gbkDecoder);
 
@@ -138,20 +138,20 @@ describe('outputDecoder：GBK 回退与输出护栏', () => {
 
     test('纯 ASCII 内容保持 utf8 不降级', () => {
         const modeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
-        const text = decodeWithMode(
-            Buffer.from('hello'),
-            modeRef,
-            new StringDecoder('utf8'),
-            new TextDecoder('gbk')
-        );
+        const text = decodeWithMode(Buffer.from('hello'), modeRef, new StringDecoder('utf8'), new TextDecoder('gbk'));
         expect(text).toBe('hello');
         expect(modeRef.mode).toBe('utf8');
     });
 
     test('pushOutputLines 超过 50000 行丢弃旧行并计数', () => {
         const tp: TerminalProcess = {
-            id: 't1', command: 'x', cwd: '/', shell: 'cmd',
-            process: {} as any, output: [], startTime: 0
+            id: 't1',
+            command: 'x',
+            cwd: '/',
+            shell: 'cmd',
+            process: {} as any,
+            output: [],
+            startTime: 0,
         };
         const lines = Array.from({ length: 50010 }, (_, i) => `line-${i}`);
         pushOutputLines(tp, lines);
@@ -202,8 +202,8 @@ describe('shellConfig：Windows shell 选择', () => {
         mockSettingsManager = {
             getExecuteCommandConfig: () => ({
                 ...WINDOWS_EXEC_CONFIG,
-                shells: [{ type: 'cmd', enabled: true, displayName: 'CMD', path: 'C:\\tools\\cmd.exe' }]
-            })
+                shells: [{ type: 'cmd', enabled: true, displayName: 'CMD', path: 'C:\\tools\\cmd.exe' }],
+            }),
         };
         const cfg = getShellConfig('cmd');
         expect(cfg.shell).toBe('C:\\tools\\cmd.exe');
@@ -256,9 +256,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
             expect(result.success).toBe(false);
             expect(result.error).toContain('No workspace folder open');
         } finally {
-            (vscode.workspace as any).workspaceFolders = [
-                { name: 'test-ws', index: 0, uri: { fsPath: tmpDir, scheme: 'file' } }
-            ];
+            (vscode.workspace as any).workspaceFolders = [{ name: 'test-ws', index: 0, uri: { fsPath: tmpDir, scheme: 'file' } }];
         }
         expect(spawnMock).not.toHaveBeenCalled();
     });
@@ -272,14 +270,14 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
                 command: '"C:\\Program Files\\node\\node.exe" --version',
                 cwd: tmpDir,
                 shell: 'cmd',
-                timeout: 0
+                timeout: 0,
             });
             await flush();
 
             expect(spawnMock).toHaveBeenCalledWith(
                 'C:\\Windows\\System32\\cmd.exe',
                 ['/s', '/c', 'chcp 65001 >nul && "C:\\Program Files\\node\\node.exe" --version'],
-                expect.objectContaining({ cwd: tmpDir, windowsHide: true, windowsVerbatimArguments: true })
+                expect.objectContaining({ cwd: tmpDir, windowsHide: true, windowsVerbatimArguments: true }),
             );
 
             proc.emit('close', 0); // 清理 TaskManager 注册
@@ -301,7 +299,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(spawnMock).toHaveBeenCalledWith(
             'powershell.exe',
             ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', expect.stringContaining('echo hi')],
-            expect.objectContaining({ cwd: tmpDir, windowsHide: true })
+            expect.objectContaining({ cwd: tmpDir, windowsHide: true }),
         );
         const finalArg = spawnMock.mock.calls[0][1]![4] as string;
         expect(finalArg).toContain('$OutputEncoding');
@@ -348,7 +346,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         await flush();
 
         // GBK 编码的「中文」+ 换行
-        proc.stdout.write(Buffer.from([0xD6, 0xD0, 0xCE, 0xC4, 0x0A]));
+        proc.stdout.write(Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a]));
         proc.emit('close', 0);
 
         const result = await promise;
@@ -359,7 +357,11 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
     test('background=true 时立即返回任务信息，不等待进程结束', async () => {
         const proc = makeFakeProc();
         const promise = runCommand({
-            command: 'sleep 1', cwd: tmpDir, shell: 'powershell', timeout: 0, background: true
+            command: 'sleep 1',
+            cwd: tmpDir,
+            shell: 'powershell',
+            timeout: 0,
+            background: true,
         });
         await flush();
 
@@ -377,7 +379,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         await flush();
 
         // 等待超时回调触发（tree-kill 已 mock，不产生真实系统调用）
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, 250));
 
         // 超时强杀后 close 以非零退出码到达
         proc.emit('close', 1);
@@ -413,7 +415,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 });
         await flush();
 
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, 250));
         proc.emit('close', 0);
 
         const result = await promise;
@@ -425,14 +427,11 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
     test('超时后用户中止：isExternalAbort 分支仍判 cancelled=true（竞态护栏）', async () => {
         const abortController = new AbortController();
         const proc = makeFakeProc();
-        const promise = runCommand(
-            { command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 },
-            { abortSignal: abortController.signal }
-        );
+        const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 }, { abortSignal: abortController.signal });
         await flush();
 
         // 等待超时回调触发（killed 与 timedOut 同时置位）
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, 250));
 
         // 超时后用户中止：外部 signal abort 触发 killTerminalProcess（等待 close），
         // close 到达时 isExternalAbort=true → 仍按用户取消处理，不破坏取消语义
@@ -452,20 +451,41 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         const wow64: ProcessRecord = { pid: 5001, ppid: 5000, createdAt: now + 40, name: 'gm8emulator-wow64.exe', sessionId: 1 };
         // 采样时还能看到启动器；中断时只剩孙进程，补杀后全部退出
         const snapshots = [[shellRecord, launcher, wow64], [wow64], []];
-        const processTree = { snapshot: jest.fn(async () => ({ records: snapshots.length > 1 ? snapshots.shift()! : snapshots[0], unresolved: [] })), terminate: jest.fn(async () => {}) };
+        const processTree = {
+            snapshot: jest.fn(async () => ({ records: snapshots.length > 1 ? snapshots.shift()! : snapshots[0], unresolved: [] })),
+            terminate: jest.fn(async () => {}),
+        };
         const treeKillMock = require('tree-kill') as jest.Mock;
-        const runtime = createTerminalRuntime({ getConfig: () => WINDOWS_EXEC_CONFIG as any, shells: shellModule as any, output: outputModule as any, prompts: promptModule as any,
-            tasks: TaskManager, getAllWorkspaces: () => [{ name: 'test-ws', fsPath: tmpDir }], parseWorkspacePath: value => ({ workspace: { name: 'test-ws', fsPath: tmpDir }, relativePath: value }), processTree });
+        const runtime = createTerminalRuntime({
+            getConfig: () => WINDOWS_EXEC_CONFIG as any,
+            shells: shellModule as any,
+            output: outputModule as any,
+            prompts: promptModule as any,
+            tasks: TaskManager,
+            getAllWorkspaces: () => [{ name: 'test-ws', fsPath: tmpDir }],
+            parseWorkspacePath: (value) => ({ workspace: { name: 'test-ws', fsPath: tmpDir }, relativePath: value }),
+            processTree,
+        });
         const abort = new AbortController();
         const proc = makeFakeProc();
-        const promise = runtime.createExecuteCommandTool().handler({ command: 'gm8emulator.exe game.exe', cwd: tmpDir, shell: 'powershell', timeout: 0 },
-            { toolId: 'orphan-pipe', conversationId: 'conv-1', abortSignal: abort.signal } as any);
+        const promise = runtime
+            .createExecuteCommandTool()
+            .handler({ command: 'gm8emulator.exe game.exe', cwd: tmpDir, shell: 'powershell', timeout: 0 }, {
+                toolId: 'orphan-pipe',
+                conversationId: 'conv-1',
+                abortSignal: abort.signal,
+            } as any);
         await flush();
         // 先让追踪器记录完整的链，再模拟 Shell 退出、管道仍被占用
         await (runtime.getActiveTerminals().get('orphan-pipe') as any).tracker.sample();
         // 退出必须晚于夹具里的子孙创建，不能由测试机器是否耗时超过 40 毫秒来决定归属。
         const exitClock = jest.spyOn(Date, 'now').mockReturnValue(now + 100);
-        try { proc.exitCode = 0; proc.emit('exit', 0); } finally { exitClock.mockRestore(); }
+        try {
+            proc.exitCode = 0;
+            proc.emit('exit', 0);
+        } finally {
+            exitClock.mockRestore();
+        }
         // 本端管道被关闭后，Node 才会发出 close
         proc.stdout.on('close', () => setImmediate(() => proc.emit('close', 0)));
         abort.abort(new Error('Cancelled by user.'));
@@ -474,8 +494,10 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(treeKillMock).not.toHaveBeenCalled(); // Shell 已退出，不再按可能被复用的 PID 发信号
         expect(processTree.terminate).toHaveBeenCalledWith([5001]);
         expect(result.cancelled).toBe(true);
-        expect(result.data.interruption).toMatchObject({ reason: 'user_cancelled',
-            processTree: { verified: true, cleaned: true, detached: [{ pid: 5001, name: 'gm8emulator-wow64.exe' }] } });
+        expect(result.data.interruption).toMatchObject({
+            reason: 'user_cancelled',
+            processTree: { verified: true, cleaned: true, detached: [{ pid: 5001, name: 'gm8emulator-wow64.exe' }] },
+        });
         expect(result.error).toContain('User cancelled');
         expect(result.error).toContain('gm8emulator-wow64.exe (PID 5001)');
     }, 15000);
@@ -495,7 +517,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         const timedProc = makeFakeProc();
         const timed = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 });
         await flush();
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, 250));
         timedProc.emit('close', 1);
         expect((await timed).data.interruption).toMatchObject({ reason: 'timeout' });
     });

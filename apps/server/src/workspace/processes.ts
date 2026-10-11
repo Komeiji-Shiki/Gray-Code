@@ -1,18 +1,24 @@
 import { executableEffects } from './commandRisk';
-import { randomUUID } from "node:crypto";
-import { spawn as nativeSpawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from 'node:crypto';
+import { spawn as nativeSpawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import crossSpawn from "cross-spawn";
-import type { ToolEffect, WorkspaceDefinition } from "@graycode/contracts";
+import crossSpawn from 'cross-spawn';
+import type { ToolEffect, WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformStorage } from '@graycode/core';
 import { stopOwnedProcess } from './processLifecycle';
 import { AnsiStreamStripper } from '../../../../shared/ansi';
 
 /** 字符串始终代表 RPC 客户端；模型身份只能来自可信 ToolContext，不能来自模型参数。 */
 export type ProcessOwner = string | { actorId: string; conversationId?: string; runId: string; workspaceId?: string };
-export interface ProcessReadOptions { cursor?: number; maxChars?: number }
+export interface ProcessReadOptions {
+  cursor?: number;
+  maxChars?: number;
+}
 export class ProcessSessionError extends Error {
-  constructor(readonly code: 'NOT_FOUND' | 'FORBIDDEN' | 'EXITED' | 'INPUT_CLOSED' | 'INVALID_CURSOR', message: string) {
+  constructor(
+    readonly code: 'NOT_FOUND' | 'FORBIDDEN' | 'EXITED' | 'INPUT_CLOSED' | 'INVALID_CURSOR',
+    message: string,
+  ) {
     super(message);
     this.name = 'ProcessSessionError';
   }
@@ -68,10 +74,19 @@ export function commandEffects(args: Record<string, unknown>): ToolEffect[] {
 export class WorkspaceProcesses {
   private readonly entries = new Map<string, ManagedProcess>();
   private closing = false;
-  constructor(private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord' | 'getRun'>, private readonly changed?: () => void) {}
-  get activeCount(): number { return [...this.entries.values()].filter(entry => entry.running).length; }
+  constructor(
+    private readonly storage: Pick<PlatformStorage, 'putRecord' | 'getRecord' | 'getRun'>,
+    private readonly changed?: () => void,
+  ) {}
+  get activeCount(): number {
+    return [...this.entries.values()].filter((entry) => entry.running).length;
+  }
   activeConversationIds(): Set<string> {
-    return new Set([...this.entries.values()].flatMap(entry => entry.running && typeof entry.owner !== 'string' && entry.owner.conversationId ? [entry.owner.conversationId] : []));
+    return new Set(
+      [...this.entries.values()].flatMap((entry) =>
+        entry.running && typeof entry.owner !== 'string' && entry.owner.conversationId ? [entry.owner.conversationId] : [],
+      ),
+    );
   }
   async start(
     workspace: WorkspaceDefinition,
@@ -82,23 +97,16 @@ export class WorkspaceProcesses {
     options: { cwd?: string } = {},
   ): Promise<ProcessResult> {
     if (this.closing) throw new Error('宿主正在关闭，不能启动新命令。');
-    if (
-      !command ||
-      !Array.isArray(args) ||
-      args.some((arg) => typeof arg !== "string" || arg.includes("\0"))
-    )
-      throw new Error("Use an executable and an array of arguments.");
-    if (
-      [...this.entries.values()].filter((entry) => entry.running).length >= 24
-    )
-      throw new Error("Too many managed processes are already running.");
+    if (!command || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string' || arg.includes('\0')))
+      throw new Error('Use an executable and an array of arguments.');
+    if ([...this.entries.values()].filter((entry) => entry.running).length >= 24) throw new Error('Too many managed processes are already running.');
     // cwd 已由工具入口按工作区及符号链接授权；RPC 不传此选项，仍从原工作区启动。
     const child = spawn(command, args, {
       cwd: options.cwd ?? workspace.directory,
       shell: false,
       windowsHide: true,
-      env: { ...process.env, FORCE_COLOR: "0" },
-      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, FORCE_COLOR: '0' },
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     let finish!: () => void;
     let fail!: (error: unknown) => void;
@@ -106,7 +114,7 @@ export class WorkspaceProcesses {
       id: randomUUID(),
       owner: typeof owner === 'string' ? owner : { ...owner },
       child,
-      output: "",
+      output: '',
       outputOffset: 0,
       truncated: false,
       exitCode: null,
@@ -127,20 +135,23 @@ export class WorkspaceProcesses {
     // 两条管道可能交错且都拆开 UTF-8 多字节字符，必须独立解码，不能逐块 toString。
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
-    const stdoutAnsi = new AnsiStreamStripper(), stderrAnsi = new AnsiStreamStripper();
+    const stdoutAnsi = new AnsiStreamStripper(),
+      stderrAnsi = new AnsiStreamStripper();
     const stdout = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk), stdoutAnsi);
     const stderr = (chunk: Buffer | string) => output(typeof chunk === 'string' ? chunk : stderrDecoder.write(chunk), stderrAnsi);
-    child.stdout!.on("data", stdout);
-    child.stderr!.on("data", stderr);
+    child.stdout!.on('data', stdout);
+    child.stderr!.on('data', stderr);
     // 子进程可在继续运行时关闭 stdin；Writable 的 error 不会转发到 ChildProcess。
-    const onInputError = (error: Error) => { entry.inputError = error; };
+    const onInputError = (error: Error) => {
+      entry.inputError = error;
+    };
     child.stdin!.on('error', onInputError);
     const onError = (error: Error) => {
       output(error.message, stderrAnsi);
       entry.exitCode = -1;
     };
-    child.once("error", onError);
-    child.once("close", (code) => {
+    child.once('error', onError);
+    child.once('close', (code) => {
       output(stdoutDecoder.end(), stdoutAnsi);
       output(stderrDecoder.end(), stderrAnsi);
       for (const rest of [stdoutAnsi.flush(), stderrAnsi.flush()]) if (rest) appendProcessOutput(entry, rest);
@@ -154,20 +165,32 @@ export class WorkspaceProcesses {
       void this.persistCompleted(entry).then(finish, fail);
       this.changed?.();
     });
-    void entry.done.catch(error => console.error('命令结果保存失败：', entry.id, error));
+    void entry.done.catch((error) => console.error('命令结果保存失败：', entry.id, error));
     // 只发布运行状态边界，输出分块继续走原来的 progress 通道。
     this.changed?.();
     let timer: ReturnType<typeof setTimeout>;
     try {
-      await Promise.race([entry.done, new Promise(resolve => { timer = setTimeout(resolve, 300); timer.unref(); })]);
-    } finally { clearTimeout(timer!); }
+      await Promise.race([
+        entry.done,
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 300);
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer!);
+    }
     return this.result(entry);
   }
   private async persistCompleted(entry: ManagedProcess): Promise<void> {
     // ownerId 保留旧索引用途，owner 的类型继续隔离 RPC 客户端与模型运行身份。
     const ownerId = typeof entry.owner === 'string' ? entry.owner : entry.owner.runId;
-    await this.storage.putRecord({ namespace: 'workspace-processes', id: entry.id,
-      ownerId, value: { ...this.result(entry), ownerId, owner: entry.owner } });
+    await this.storage.putRecord({
+      namespace: 'workspace-processes',
+      id: entry.id,
+      ownerId,
+      value: { ...this.result(entry), ownerId, owner: entry.owner },
+    });
     this.entries.delete(entry.id);
   }
   private result(entry: ProcessOutput, options: ProcessReadOptions = {}): ProcessResult {
@@ -175,8 +198,11 @@ export class WorkspaceProcesses {
   }
   private sameModelOwner(saved: Exclude<ProcessOwner, string>, owner: Exclude<ProcessOwner, string>): boolean {
     // 同一对话继续运行会换 runId；无对话上下文时收紧到原 run，不能退化成账号级共享。
-    return saved.actorId === owner.actorId && saved.workspaceId === owner.workspaceId &&
-      (saved.conversationId && owner.conversationId ? saved.conversationId === owner.conversationId : saved.runId === owner.runId);
+    return (
+      saved.actorId === owner.actorId &&
+      saved.workspaceId === owner.workspaceId &&
+      (saved.conversationId && owner.conversationId ? saved.conversationId === owner.conversationId : saved.runId === owner.runId)
+    );
   }
   private async authorize(saved: ProcessOwner | undefined, owner: ProcessOwner, legacyOwnerId?: string): Promise<void> {
     let allowed = false;
@@ -187,8 +213,10 @@ export class WorkspaceProcesses {
     } else if (legacyOwnerId) {
       // 旧 value 只有 runId，必须查可信运行记录核验全部边界；查不到时不猜测身份。
       const run = await this.storage.getRun(legacyOwnerId);
-      allowed = !!run && run.id === legacyOwnerId && this.sameModelOwner({ actorId: run.actorId,
-        conversationId: run.conversationId, workspaceId: run.workspaceId, runId: run.id }, owner);
+      allowed =
+        !!run &&
+        run.id === legacyOwnerId &&
+        this.sameModelOwner({ actorId: run.actorId, conversationId: run.conversationId, workspaceId: run.workspaceId, runId: run.id }, owner);
     }
     if (!allowed) throw new ProcessSessionError('FORBIDDEN', 'Managed process belongs to another client, account, conversation or workspace.');
   }
@@ -198,8 +226,9 @@ export class WorkspaceProcesses {
       await this.authorize(active.owner, owner);
       return active;
     }
-    const record = await this.storage.getRecord('workspace-processes', id) as SavedProcess | null;
-    if (!record) throw new ProcessSessionError('NOT_FOUND', 'Managed process was not found. Use the id returned by run_command, not an execute_command taskId.');
+    const record = (await this.storage.getRecord('workspace-processes', id)) as SavedProcess | null;
+    if (!record)
+      throw new ProcessSessionError('NOT_FOUND', 'Managed process was not found. Use the id returned by run_command, not an execute_command taskId.');
     await this.authorize(record.owner, owner, record.ownerId);
     // 旧记录未存绝对偏移，无法推断截断前长度；以现存输出为 0 起点，不伪造丢失数量。
     return { ...record, outputOffset: record.outputOffset ?? 0 };
@@ -226,9 +255,7 @@ export class WorkspaceProcesses {
         // 子进程可能一直不读取 stdin；取消只结束本次等待，已提交的输入不能撤回。
         abort = () => reject(signal!.reason);
         signal?.addEventListener('abort', abort, { once: true });
-        input.write(text, error => error
-          ? reject(new ProcessSessionError('INPUT_CLOSED', `命令输入写入失败：${error.message}`))
-          : resolve());
+        input.write(text, (error) => (error ? reject(new ProcessSessionError('INPUT_CLOSED', `命令输入写入失败：${error.message}`)) : resolve()));
       });
     } finally {
       if (abort) signal?.removeEventListener('abort', abort);
@@ -240,8 +267,9 @@ export class WorkspaceProcesses {
     if ('child' in entry && entry.child) await stopOwnedProcess(entry.child);
     if ('done' in entry) {
       const done = entry.done;
-      try { await done; }
-      catch (error) {
+      try {
+        await done;
+      } catch (error) {
         if (entry.running) throw error;
         // 已退出进程只需重试提交同一份终态记录；并发关闭复用更新后的保存 Promise。
         if (entry.done === done) entry.done = this.persistCompleted(entry);
@@ -251,13 +279,12 @@ export class WorkspaceProcesses {
   }
   async close(): Promise<void> {
     this.closing = true;
-    const results = await Promise.allSettled(
-      [...this.entries.values()].map((entry) =>
-        this.stop(entry.id, entry.owner),
-      ),
-    );
+    const results = await Promise.allSettled([...this.entries.values()].map((entry) => this.stop(entry.id, entry.owner)));
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
-      `受管进程关闭失败：${failures.map(result => String(result.reason)).join('；')}`);
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        `受管进程关闭失败：${failures.map((result) => String(result.reason)).join('；')}`,
+      );
   }
 }

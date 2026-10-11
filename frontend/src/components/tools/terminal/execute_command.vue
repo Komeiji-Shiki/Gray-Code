@@ -50,9 +50,9 @@ const outputScrollbar = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 const autoScroll = ref(true)
 
 // 获取命令参数
-const command = computed(() => props.args.command as string || '')
-const cwd = computed(() => props.args.cwd as string || '')
-const shell = computed(() => props.args.shell as string || 'default')
+const command = computed(() => (props.args.command as string) || '')
+const cwd = computed(() => (props.args.cwd as string) || '')
+const shell = computed(() => (props.args.shell as string) || 'default')
 
 // 获取结果数据（来自工具执行结果）
 const resultData = computed(() => {
@@ -61,17 +61,17 @@ const resultData = computed(() => {
 })
 
 // 终端 ID（来自工具执行结果）
-const terminalId = computed(() => resultData.value.terminalId as string || '')
+const terminalId = computed(() => (resultData.value.terminalId as string) || '')
 
 // 回执 ID 或调用身份决定终端归属，相同命令可以在多个项目同时运行。
 const terminalState = computed(() => {
   if (terminalId.value) {
     return terminalStore.getTerminal(terminalId.value)
   }
-  
+
   return props.toolId ? terminalStore.findTerminalByTool(props.toolId, conversation?.value) : undefined
 })
-const executionError = computed(() => props.error || props.result?.error as string || resultData.value.error || terminalState.value?.error)
+const executionError = computed(() => props.error || (props.result?.error as string) || resultData.value.error || terminalState.value?.error)
 
 // 输出内容 - 优先使用 store 中的实时输出，否则使用结果中的静态输出
 const output = computed(() => {
@@ -80,7 +80,7 @@ const output = computed(() => {
     return terminalState.value.output
   }
   // 否则使用结果中的静态输出（历史记录）
-  return resultData.value.output as string || ''
+  return (resultData.value.output as string) || ''
 })
 
 // 执行状态
@@ -97,13 +97,13 @@ const killed = computed(() => {
   if (terminalState.value) {
     return terminalState.value.killed || false
   }
-  return resultData.value.killed as boolean || false
+  return (resultData.value.killed as boolean) || false
 })
 
 // 是否被用户取消
 const cancelled = computed(() => {
   const result = props.result as Record<string, any> | undefined
-  return result?.cancelled as boolean || false
+  return (result?.cancelled as boolean) || false
 })
 
 const duration = computed(() => {
@@ -115,8 +115,8 @@ const duration = computed(() => {
 })
 
 const truncated = computed(() => terminalState.value?.truncated || resultData.value.truncated === true)
-const totalLines = computed(() => resultData.value.totalLines as number || 0)
-const outputLines = computed(() => resultData.value.outputLines as number || 0)
+const totalLines = computed(() => (resultData.value.totalLines as number) || 0)
+const outputLines = computed(() => (resultData.value.outputLines as number) || 0)
 
 // 是否正在运行
 const isRunning = computed(() => {
@@ -124,7 +124,7 @@ const isRunning = computed(() => {
   if (terminalState.value) {
     return terminalState.value.running
   }
-  
+
   if (killed.value) return false
   if (exitCode.value !== undefined) return false
   if (typeof resultData.value.running === 'boolean') return resultData.value.running
@@ -171,15 +171,15 @@ async function handleKillTerminal() {
   if (!effectiveTerminalId.value || killing.value) {
     return
   }
-  
+
   killing.value = true
   operationError.value = ''
   const id = effectiveTerminalId.value
-  
+
   try {
     const result = await terminalStore.killTerminal(id)
     if (disposed || effectiveTerminalId.value !== id) return
-    
+
     if (result.success) {
       // 更新结果显示被杀掉
       emit('update-result', {
@@ -188,8 +188,8 @@ async function handleKillTerminal() {
           ...resultData.value,
           killed: true,
           output: result.output ?? resultData.value.output,
-          endTime: Date.now()
-        }
+          endTime: Date.now(),
+        },
       })
     } else {
       operationError.value = result.error || t('stores.terminalStore.errors.killTerminalFailed')
@@ -205,7 +205,7 @@ async function handleKillTerminal() {
 const copied = ref(false)
 async function copyOutput() {
   if (!output.value) return
-  
+
   const ok = await copyToClipboard(output.value)
   if (!ok) {
     await showNotification(t('common.copyFailed'), 'error')
@@ -218,17 +218,33 @@ async function copyOutput() {
   }, 1000)
 }
 
-watch(autoScroll, enabled => { if (enabled) outputScrollbar.value?.scrollToBottom({ instant: true }) })
+watch(autoScroll, (enabled) => {
+  if (enabled) outputScrollbar.value?.scrollToBottom({ instant: true })
+})
 
-watch(effectiveTerminalId, () => { operationError.value = ''; killing.value = false })
-watch(effectiveTerminalId, (id, _old, onCleanup) => {
-  if (id) onCleanup(terminalStore.retainTerminal(id))
-}, { immediate: true })
-watch(() => [terminalId.value, resultData.value.background] as const, async ([id, background]) => {
-  if (!id || background !== true || terminalStore.getTerminal(id)) return
-  try { await terminalStore.restoreTerminal(id) }
-  catch (error) { if (!disposed && terminalId.value === id) operationError.value = error instanceof Error ? error.message : String(error) }
-}, { immediate: true })
+watch(effectiveTerminalId, () => {
+  operationError.value = ''
+  killing.value = false
+})
+watch(
+  effectiveTerminalId,
+  (id, _old, onCleanup) => {
+    if (id) onCleanup(terminalStore.retainTerminal(id))
+  },
+  { immediate: true },
+)
+watch(
+  () => [terminalId.value, resultData.value.background] as const,
+  async ([id, background]) => {
+    if (!id || background !== true || terminalStore.getTerminal(id)) return
+    try {
+      await terminalStore.restoreTerminal(id)
+    } catch (error) {
+      if (!disposed && terminalId.value === id) operationError.value = error instanceof Error ? error.message : String(error)
+    }
+  },
+  { immediate: true },
+)
 onBeforeUnmount(() => {
   disposed = true
   if (copyTimer) clearTimeout(copyTimer)
@@ -261,7 +277,7 @@ onBeforeUnmount(() => {
         <button
           v-if="output"
           class="action-btn"
-          :class="{ 'copied': copied }"
+          :class="{ copied: copied }"
           :title="copied ? t('components.tools.terminal.executeCommandPanel.copied') : t('components.tools.terminal.executeCommandPanel.copyOutput')"
           @click="copyOutput"
         >
@@ -269,7 +285,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </div>
-    
+
     <!-- 命令信息 -->
     <div class="command-info">
       <div class="command-row">
@@ -285,27 +301,27 @@ onBeforeUnmount(() => {
         <span class="meta-text">{{ shell }}</span>
       </div>
     </div>
-    
+
     <!-- 错误信息 -->
     <div v-if="executionError || operationError" class="panel-error" role="alert">
       <span class="codicon codicon-error error-icon"></span>
       <span class="error-text">{{ executionError || operationError }}</span>
     </div>
-    
+
     <!-- 输出内容（即使有错误也显示，方便用户查看具体报错） -->
     <div v-if="output || isRunning" class="output-section">
       <div class="output-header">
         <span class="output-title">{{ t('components.tools.terminal.executeCommandPanel.output') }}</span>
         <div class="output-header-right">
           <span v-if="truncated" class="truncated-info">
-            {{ totalLines ? t('components.tools.terminal.executeCommandPanel.truncatedInfo', { outputLines, totalLines }) : t('components.tools.platform.process.truncated') }}
+            {{
+              totalLines
+                ? t('components.tools.terminal.executeCommandPanel.truncatedInfo', { outputLines, totalLines })
+                : t('components.tools.platform.process.truncated')
+            }}
           </span>
           <label v-if="isRunning" class="auto-scroll-toggle">
-            <input
-              type="checkbox"
-              v-model="autoScroll"
-              class="auto-scroll-checkbox"
-            />
+            <input type="checkbox" v-model="autoScroll" class="auto-scroll-checkbox" />
             <span class="auto-scroll-label">{{ t('components.tools.terminal.executeCommandPanel.autoScroll') }}</span>
           </label>
         </div>
@@ -318,13 +334,13 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    
+
     <!-- 无输出 -->
     <div v-else-if="!isRunning && !executionError && (result || terminalState)" class="no-output">
       <span class="codicon codicon-info"></span>
       <span>{{ t('components.tools.terminal.executeCommandPanel.noOutput') }}</span>
     </div>
-    
+
     <!-- 运行中指示器 -->
     <ToolNextActions :value="isRunning || resultData.running !== true ? resultData.nextActions : undefined" />
     <div v-if="isRunning" class="running-indicator">

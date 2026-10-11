@@ -24,68 +24,119 @@ interface PendingTool {
 }
 
 export function nativeToolDeclaration(tool: ToolDeclaration, description?: string, parameterDescriptions: Record<string, string> = {}): ToolDeclaration {
-  const properties = Object.fromEntries(Object.entries(tool.parameters.properties as Record<string, object> ?? {})
-    .map(([name, schema]) => [name, parameterDescriptions[name] ? { ...schema, description: parameterDescriptions[name] } : schema]));
-  return { ...tool, async: true,
+  const properties = Object.fromEntries(
+    Object.entries((tool.parameters.properties as Record<string, object>) ?? {}).map(([name, schema]) => [
+      name,
+      parameterDescriptions[name] ? { ...schema, description: parameterDescriptions[name] } : schema,
+    ]),
+  );
+  return {
+    ...tool,
+    async: true,
     // 通用等待规则由 wait_for_tasks 统一说明；工具自身只补宿主特有边界，减少稳定前缀中的重复文本。
     description: `${tool.description}${description ? `\n${description}` : ''}`,
-    parameters: { ...tool.parameters, properties: { ...properties,
-      task_handle: { type: 'string', minLength: 1, maxLength: 120, description: 'A handle for this call that is unique among all task handles, including completed ones. Pass it to wait_for_tasks.' } },
-      required: [...new Set([...(tool.parameters.required as string[] ?? []), 'task_handle'])] } };
+    parameters: {
+      ...tool.parameters,
+      properties: {
+        ...properties,
+        task_handle: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 120,
+          description: 'A handle for this call that is unique among all task handles, including completed ones. Pass it to wait_for_tasks.',
+        },
+      },
+      required: [...new Set([...((tool.parameters.required as string[]) ?? []), 'task_handle'])],
+    },
+  };
 }
 export const waitForTasksDeclaration: ToolDeclaration = {
-  name: WAIT_FOR_TASKS, description: 'Wait for the listed native async task_handles only. Their results are delivered on the original calls before this wait returns. Do not wait for results you do not need yet; continue independent work instead.',
-  parameters: { type: 'object', additionalProperties: false, required: ['task_handles'], properties: {
-    task_handles: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 120 } },
-  } },
+  name: WAIT_FOR_TASKS,
+  description:
+    'Wait for the listed native async task_handles only. Their results are delivered on the original calls before this wait returns. Do not wait for results you do not need yet; continue independent work instead.',
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['task_handles'],
+    properties: {
+      task_handles: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 120 } },
+    },
+  },
 };
 
 /** 调用身份和结果沿用正式记录与历史；此处只管理执行中的 Promise，不另建任务宿主。 */
 export class NativeAsyncTools {
   private readonly calls = new Map<string, PendingTool>();
   private readonly lanes = new Map<string, { promises: Promise<void>[]; next: number }>();
-  constructor(private readonly storage: PlatformStorage,
+  constructor(
+    private readonly storage: PlatformStorage,
     private readonly deliver: (record: NativeToolRecord, detached: boolean) => Promise<void>,
-    private readonly lifecycle: (runId: string) => 'active' | 'settling' | 'finished') {}
+    private readonly lifecycle: (runId: string) => 'active' | 'settling' | 'finished',
+  ) {}
 
-  private key(runId: string, callId: string) { return `${runId}:${callId}`; }
-  has(runId: string, callId: string) { return this.calls.has(this.key(runId, callId)); }
+  private key(runId: string, callId: string) {
+    return `${runId}:${callId}`;
+  }
+  has(runId: string, callId: string) {
+    return this.calls.has(this.key(runId, callId));
+  }
   pending(conversationId: string): PendingTool[] {
     return [...this.calls.values()].filter(value => value.record.run.conversationId === conversationId && value.published && !value.delivered);
   }
-  pendingIds(conversationId: string) { return this.pending(conversationId).map(value => value.record.call.id); }
+  pendingIds(conversationId: string) {
+    return this.pending(conversationId).map(value => value.record.call.id);
+  }
 
   launch(run: RunRecord, call: ModelToolCall, usedHandles: ReadonlySet<string>, execute: () => Promise<ToolOutcome>): boolean {
     if (this.has(run.id, call.id)) return false;
     const handle = call.args.task_handle;
-    const reused = typeof handle === 'string' && (usedHandles.has(handle) || [...this.calls.values()].some(value =>
-      value.record.run.conversationId === run.conversationId && value.record.handle === handle));
+    const reused =
+      typeof handle === 'string' &&
+      (usedHandles.has(handle) ||
+        [...this.calls.values()].some(value => value.record.run.conversationId === run.conversationId && value.record.handle === handle));
     let resolve!: () => void;
-    const done = new Promise<void>(complete => { resolve = complete; });
-    const value: PendingTool = { record: { run: structuredClone(run), call: structuredClone(call), handle: String(handle ?? ''), detached: false },
-      started: Promise.resolve(), done, resolve, published: false, delivered: false, executing: false };
+    const done = new Promise<void>(complete => {
+      resolve = complete;
+    });
+    const value: PendingTool = {
+      record: { run: structuredClone(run), call: structuredClone(call), handle: String(handle ?? ''), detached: false },
+      started: Promise.resolve(),
+      done,
+      resolve,
+      published: false,
+      delivered: false,
+      executing: false,
+    };
     this.calls.set(this.key(run.id, call.id), value);
     let lanes = this.lanes.get(run.id);
-    if (!lanes) { lanes = { promises: Array.from({ length: 4 }, () => Promise.resolve()), next: 0 }; this.lanes.set(run.id, lanes); }
+    if (!lanes) {
+      lanes = { promises: Array.from({ length: 4 }, () => Promise.resolve()), next: 0 };
+      this.lanes.set(run.id, lanes);
+    }
     const lane = lanes.next++ % lanes.promises.length;
-    value.started = lanes.promises[lane].then(async () => {
-      if (value.cancelled) return;
-      value.executing = true;
-      await this.persist(value);
-      if (typeof handle !== 'string' || !handle.trim() || handle.length > 120 || reused) {
-        await this.complete(run.id, call.id, { success: false, code: 'INVALID_TASK_HANDLE', error: 'task_handle 必须非空，并且在当前会话中从未使用。' });
-        return;
-      }
-      const outcome = await execute();
-      if (outcome.deferred === true) {
-        value.record.detached = true;
-        // 命令可能在启动回执到达前退出，已经保存的终态不能被启动状态覆盖。
-        if (!value.record.outcome) await this.persist(value);
-      } else await this.complete(run.id, call.id, outcome);
-    }).catch(async error => {
-      if (!value.record.outcome) await this.complete(run.id, call.id, { success: false, code: 'TOOL_FAILED', error: String(error) });
-      else { value.resolve(); throw error; }
-    });
+    value.started = lanes.promises[lane]
+      .then(async () => {
+        if (value.cancelled) return;
+        value.executing = true;
+        await this.persist(value);
+        if (typeof handle !== 'string' || !handle.trim() || handle.length > 120 || reused) {
+          await this.complete(run.id, call.id, { success: false, code: 'INVALID_TASK_HANDLE', error: 'task_handle 必须非空，并且在当前会话中从未使用。' });
+          return;
+        }
+        const outcome = await execute();
+        if (outcome.deferred === true) {
+          value.record.detached = true;
+          // 命令可能在启动回执到达前退出，已经保存的终态不能被启动状态覆盖。
+          if (!value.record.outcome) await this.persist(value);
+        } else await this.complete(run.id, call.id, outcome);
+      })
+      .catch(async error => {
+        if (!value.record.outcome) await this.complete(run.id, call.id, { success: false, code: 'TOOL_FAILED', error: String(error) });
+        else {
+          value.resolve();
+          throw error;
+        }
+      });
     lanes.promises[lane] = value.started.then(() => value.done).catch(() => {});
     return true;
   }
@@ -95,7 +146,10 @@ export class NativeAsyncTools {
     if (!value || value.record.outcome) return false;
     const { deferred: _deferred, ...result } = outcome;
     value.record.outcome = result;
-    if (value.delivered) { value.resolve(); return true; }
+    if (value.delivered) {
+      value.resolve();
+      return true;
+    }
     await this.persist(value);
     value.resolve();
     if (value.published && value.record.detached && this.lifecycle(runId) !== 'active') await this.deliverOne(value, true);
@@ -105,14 +159,20 @@ export class NativeAsyncTools {
   async publish(runId: string, calls: ModelToolCall[]): Promise<void> {
     for (const call of calls) {
       const value = this.calls.get(this.key(runId, call.id));
-      if (value) { value.published = true; value.record.published = true; await this.persist(value); }
+      if (value) {
+        value.published = true;
+        value.record.published = true;
+        await this.persist(value);
+      }
     }
   }
   async flush(conversationId: string): Promise<boolean> {
     let delivered = false;
-    for (const value of this.pending(conversationId)) if (value.record.outcome) {
-      await this.deliverOne(value, false); delivered = true;
-    }
+    for (const value of this.pending(conversationId))
+      if (value.record.outcome) {
+        await this.deliverOne(value, false);
+        delivered = true;
+      }
     return delivered;
   }
   private async deliverOne(value: PendingTool, detached: boolean): Promise<void> {
@@ -126,17 +186,22 @@ export class NativeAsyncTools {
     await value.delivering;
   }
   private persist(value: PendingTool) {
-    return this.storage.putRecord({ namespace: NATIVE_ASYNC_NAMESPACE, id: this.key(value.record.run.id, value.record.call.id),
-      ownerId: value.record.run.conversationId, value: structuredClone(value.record) });
+    return this.storage.putRecord({
+      namespace: NATIVE_ASYNC_NAMESPACE,
+      id: this.key(value.record.run.id, value.record.call.id),
+      ownerId: value.record.run.conversationId,
+      value: structuredClone(value.record),
+    });
   }
   async reconcile(conversationId: string) {
     const history = await this.storage.readHistoryOutline(conversationId);
     const calls = new Set(history.entries.flatMap(message => (message.calls ?? []).map(call => call.id)));
     const results = new Set(history.entries.flatMap(message => (message.responses ?? []).map(response => response.id)));
-    for (const value of this.pending(conversationId)) if (!calls.has(value.record.call.id) || results.has(value.record.call.id)) {
-      value.delivered = true;
-      await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(value.record.run.id, value.record.call.id));
-    }
+    for (const value of this.pending(conversationId))
+      if (!calls.has(value.record.call.id) || results.has(value.record.call.id)) {
+        value.delivered = true;
+        await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(value.record.run.id, value.record.call.id));
+      }
   }
 
   async wait(conversationId: string, handles: unknown, signal: AbortSignal): Promise<ToolOutcome> {
@@ -144,18 +209,21 @@ export class NativeAsyncTools {
       return { success: false, code: 'INVALID_ARGUMENTS', error: '请提供非空且不重复的 task_handles。' };
     // 多个句柄共用一次索引；无效的重复句柄仍按最早受理的调用匹配。
     const byHandle = new Map<string, PendingTool>();
-    for (const value of this.calls.values()) if (value.record.run.conversationId === conversationId && !byHandle.has(value.record.handle))
-      byHandle.set(value.record.handle, value);
+    for (const value of this.calls.values())
+      if (value.record.run.conversationId === conversationId && !byHandle.has(value.record.handle)) byHandle.set(value.record.handle, value);
     const selected = handles.map(handle => byHandle.get(handle));
     if (selected.some(value => !value)) {
       const history = await this.storage.readHistoryOutline(conversationId);
       const responded = new Set(history.entries.flatMap(message => (message.responses ?? []).map(response => response.id)));
-      const completed = new Set(history.entries.flatMap(message => (message.calls ?? []).flatMap(call =>
-        typeof call.taskHandle === 'string' && responded.has(call.id) ? [call.taskHandle] : [])));
+      const completed = new Set(
+        history.entries.flatMap(message =>
+          (message.calls ?? []).flatMap(call => (typeof call.taskHandle === 'string' && responded.has(call.id) ? [call.taskHandle] : [])),
+        ),
+      );
       if (handles.some((handle, index) => !selected[index] && !completed.has(handle)))
         return { success: false, code: 'UNKNOWN_TASK_HANDLE', error: '指定的异步任务不存在。' };
     }
-    await this.abortable(Promise.all(selected.flatMap(value => value ? [value.done] : [])), signal);
+    await this.abortable(Promise.all(selected.flatMap(value => (value ? [value.done] : []))), signal);
     await this.flush(conversationId);
     return { success: true, data: { status: 'completed', completed_task_handles: handles } };
   }
@@ -166,23 +234,35 @@ export class NativeAsyncTools {
   private async abortable(work: Promise<unknown>, signal: AbortSignal) {
     signal.throwIfAborted();
     let abort!: () => void;
-    const cancelled = new Promise<never>((_resolve, reject) => { abort = () => reject(signal.reason ?? new Error('任务已取消。')); });
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason ?? new Error('任务已取消。'));
+    });
     signal.addEventListener('abort', abort, { once: true });
-    try { await Promise.race([work, cancelled]); signal.throwIfAborted(); }
-    finally { signal.removeEventListener('abort', abort); }
+    try {
+      await Promise.race([work, cancelled]);
+      signal.throwIfAborted();
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
   }
 
   async interrupt(runId: string): Promise<string[]> {
     const values = [...this.calls.values()].filter(value => value.record.run.id === runId);
-    for (const value of values) if (!value.executing) { value.cancelled = true; value.resolve(); }
+    for (const value of values)
+      if (!value.executing) {
+        value.cancelled = true;
+        value.resolve();
+      }
     await Promise.allSettled(values.filter(value => value.executing).map(value => value.started));
-    for (const value of values) if (!value.record.detached) {
-      // 已发布到历史、工具也已给出结果时交付真实结果（含中断原因与子进程清理情况），
-      // 不用通用的中断占位结果覆盖；交付失败时仍由调用方补占位结果。
-      if (value.published && value.record.outcome && !value.delivered) await this.deliverOne(value, false).catch(() => {});
-      this.calls.delete(this.key(runId, value.record.call.id)); value.resolve();
-      await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(runId, value.record.call.id));
-    }
+    for (const value of values)
+      if (!value.record.detached) {
+        // 已发布到历史、工具也已给出结果时交付真实结果（含中断原因与子进程清理情况），
+        // 不用通用的中断占位结果覆盖；交付失败时仍由调用方补占位结果。
+        if (value.published && value.record.outcome && !value.delivered) await this.deliverOne(value, false).catch(() => {});
+        this.calls.delete(this.key(runId, value.record.call.id));
+        value.resolve();
+        await this.storage.deleteRecord(NATIVE_ASYNC_NAMESPACE, this.key(runId, value.record.call.id));
+      }
     return values.filter(value => value.record.detached).map(value => value.record.call.id);
   }
   async release(runId: string) {
