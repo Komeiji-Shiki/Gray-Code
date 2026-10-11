@@ -34,22 +34,22 @@ const APPLY_DIFF_DECLARATION: ToolDeclaration = {
                 items: {
                     type: 'object',
                     properties: {
-                        path: { type: 'string', description: 'File path in batch mode.' }
-                    }
-                }
+                        path: { type: 'string', description: 'File path in batch mode.' },
+                    },
+                },
             },
             hunks: {
                 type: 'array',
                 items: {
                     type: 'object',
                     properties: {
-                        oldContent: { type: 'string', description: 'Exact original content to match.' }
-                    }
-                }
+                        oldContent: { type: 'string', description: 'Exact original content to match.' },
+                    },
+                },
             },
-            mode: { type: 'string', enum: ['search', 'replace'], description: 'Operation mode.', default: 'search' }
-        }
-    }
+            mode: { type: 'string', enum: ['search', 'replace'], description: 'Operation mode.', default: 'search' },
+        },
+    },
 };
 
 /** 多层对象+数组路径形态（create_review 的 structuredFindings 结构） */
@@ -70,28 +70,28 @@ const REVIEW_DECLARATION: ToolDeclaration = {
                             items: {
                                 type: 'object',
                                 properties: {
-                                    path: { type: 'string', description: 'Evidence file path.' }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+                                    path: { type: 'string', description: 'Evidence file path.' },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
 };
 
 describe('localizeToolDeclaration 说明替换', () => {
     test('顶层 description 替换', () => {
         const result = localizeToolDeclaration(APPLY_DIFF_DECLARATION, {
-            description: '对文件应用结构化编辑。'
+            description: '对文件应用结构化编辑。',
         });
         expect(result.description).toBe('对文件应用结构化编辑。');
     });
 
     test('普通参数 description 替换（path）', () => {
         const result = localizeToolDeclaration(APPLY_DIFF_DECLARATION, {
-            parameters: { path: '要编辑的文件路径。' }
+            parameters: { path: '要编辑的文件路径。' },
         });
         expect(result.parameters.properties.path.description).toBe('要编辑的文件路径。');
     });
@@ -100,8 +100,8 @@ describe('localizeToolDeclaration 说明替换', () => {
         const result = localizeToolDeclaration(APPLY_DIFF_DECLARATION, {
             parameters: {
                 'files[].path': '批量模式下的文件路径。',
-                'hunks[].oldContent': '需要精确匹配的原文内容。'
-            }
+                'hunks[].oldContent': '需要精确匹配的原文内容。',
+            },
         });
         expect(result.parameters.properties.files.items!.properties!.path.description).toBe('批量模式下的文件路径。');
         expect(result.parameters.properties.hunks.items!.properties!.oldContent.description).toBe('需要精确匹配的原文内容。');
@@ -110,8 +110,8 @@ describe('localizeToolDeclaration 说明替换', () => {
     test('多层对象+数组路径替换（structuredFindings[].evidence[].path）', () => {
         const result = localizeToolDeclaration(REVIEW_DECLARATION, {
             parameters: {
-                'structuredFindings[].evidence[].path': '证据文件路径。'
-            }
+                'structuredFindings[].evidence[].path': '证据文件路径。',
+            },
         });
         const findings = result.parameters.properties.structuredFindings;
         expect(findings.items!.properties!.evidence.items!.properties!.path.description).toBe('证据文件路径。');
@@ -121,7 +121,7 @@ describe('localizeToolDeclaration 说明替换', () => {
 describe('localizeToolDeclaration 保留语义', () => {
     test('未配置项保留原文：localization 缺 description 时顶层说明不变，未覆盖路径不变', () => {
         const result = localizeToolDeclaration(APPLY_DIFF_DECLARATION, {
-            parameters: { path: '要编辑的文件路径。' }
+            parameters: { path: '要编辑的文件路径。' },
         });
         expect(result.description).toBe(APPLY_DIFF_DECLARATION.description);
         // 未配置的嵌套路径保留原文
@@ -134,10 +134,10 @@ describe('localizeToolDeclaration 保留语义', () => {
         const result = localizeToolDeclaration(APPLY_DIFF_DECLARATION, {
             description: '中文顶层说明。',
             parameters: {
-                'noSuchParam': '不存在的路径',
+                noSuchParam: '不存在的路径',
                 'files[].noSuchProp': '不存在的嵌套属性',
-                path: '要编辑的文件路径。'
-            }
+                path: '要编辑的文件路径。',
+            },
         });
         expect(result.description).toBe('中文顶层说明。');
         expect(result.parameters.properties.path.description).toBe('要编辑的文件路径。');
@@ -151,8 +151,8 @@ describe('localizeToolDeclaration 保留语义', () => {
             parameters: {
                 path: '要编辑的文件路径。',
                 'files[].path': '批量模式下的文件路径。',
-                'hunks[].oldContent': '需要精确匹配的原文内容。'
-            }
+                'hunks[].oldContent': '需要精确匹配的原文内容。',
+            },
         });
         expect(result.name).toBe('apply_diff');
         expect(result.parameters.type).toBe('object');
@@ -170,8 +170,8 @@ describe('localizeToolDeclaration 保留语义', () => {
             parameters: {
                 path: '要编辑的文件路径。',
                 'files[].path': '批量模式下的文件路径。',
-                'hunks[].oldContent': '需要精确匹配的原文内容。'
-            }
+                'hunks[].oldContent': '需要精确匹配的原文内容。',
+            },
         });
         expect(result).not.toBe(APPLY_DIFF_DECLARATION);
         expect(APPLY_DIFF_DECLARATION).toEqual(snapshot);
@@ -198,13 +198,13 @@ describe('localizeToolDeclaration required 数组隔离', () => {
                 required: ['path'],
                 properties: {
                     path: { type: 'string', description: 'The path.' },
-                    files: { type: 'array', description: 'Files.' }
-                }
-            }
+                    files: { type: 'array', description: 'Files.' },
+                },
+            },
         };
         const result = localizeToolDeclaration(declaration, {
             description: '中文说明。',
-            parameters: { path: '路径说明。' }
+            parameters: { path: '路径说明。' },
         });
         // 修复点：required 数组必须克隆（否则对返回对象 push 会污染原声明的 required）
         expect(result.parameters.required).not.toBe(declaration.parameters.required);
@@ -256,8 +256,9 @@ describe('getToolDescriptionLocalization 目录查找', () => {
             expect(localization).toBeUndefined();
             return;
         }
-        const texts = [localization.description, ...Object.values(localization.parameters ?? {})]
-            .filter((text): text is string => typeof text === 'string');
+        const texts = [localization.description, ...Object.values(localization.parameters ?? {})].filter(
+            (text): text is string => typeof text === 'string',
+        );
         expect(texts.length).toBeGreaterThan(0);
         for (const text of texts) {
             expect(text).not.toMatch(/[\u4e00-\u9fff]/);
@@ -348,7 +349,7 @@ describe('目录参数路径键格式校验', () => {
         for (const toolName of toolNames) {
             const parameters = catalog[toolName].parameters ?? {};
             for (const key of Object.keys(parameters)) {
-                errors.push(...validateKeyFormat(key).map(error => `${toolName} → ${error}`));
+                errors.push(...validateKeyFormat(key).map((error) => `${toolName} → ${error}`));
                 // 用与 setDescriptionAtPath 相同的遍历逻辑在最小 fixture 上解析，必须能找到叶子
                 if (!resolvePathInSchema(buildFixtureFromKey(key), key)) {
                     errors.push(`${toolName} → ${key}：按路径解析逻辑无法定位`);

@@ -25,20 +25,20 @@ afterEach(() => {
 const userMsg = (text: string, extra: Partial<Content> = {}): Content => ({
     role: 'user',
     parts: [{ text }],
-    ...extra
+    ...extra,
 });
 
 const modelMsg = (text: string, extra: Partial<Content> = {}): Content => ({
     role: 'model',
     parts: [{ text }],
-    ...extra
+    ...extra,
 });
 
 const summaryMsg = (id: string, text: string): Content => ({
     id,
     role: 'user',
     parts: [{ text }],
-    isSummary: true
+    isSummary: true,
 });
 
 /** 总结后的历史形态：[首条(不标记), m1/a1(标记), 总结, m3/a3(活跃)] */
@@ -49,7 +49,7 @@ function summarizedHistory(): Content[] {
         modelMsg('a1', { isSummarized: true }),
         summaryMsg('sum-1', '摘要'),
         userMsg('m3'),
-        modelMsg('a3')
+        modelMsg('a3'),
     ];
 }
 
@@ -66,7 +66,7 @@ describe('restoreSummarizedRange 纯函数', () => {
         expect(result.contents[3].isSummary).toBe(true);
         expect(result.contents[4].parts[0].text).toBe('m3');
         // 不改变长度与顺序
-        expect(result.contents.map(m => m.parts[0]?.text ?? m.role)).toHaveLength(6);
+        expect(result.contents.map((m) => m.parts[0]?.text ?? m.role)).toHaveLength(6);
         // 原数组不被污染（纯函数）
         expect(history[1].isSummarized).toBe(true);
     });
@@ -78,7 +78,7 @@ describe('restoreSummarizedRange 纯函数', () => {
             summaryMsg('sum-0', '旧摘要'),
             userMsg('late', { isSummarized: true }),
             summaryMsg('sum-1', '新摘要'),
-            userMsg('active')
+            userMsg('active'),
         ];
         const result = restoreSummarizedRange(history, 4);
 
@@ -92,11 +92,7 @@ describe('restoreSummarizedRange 纯函数', () => {
         expect(restoreSummarizedRange(history, 0).restoredCount).toBe(0);
         expect(restoreSummarizedRange(history, 99).restoredCount).toBe(0);
 
-        const noMarked = [
-            userMsg('r0'),
-            summaryMsg('sum-1', '摘要'),
-            userMsg('m3')
-        ];
+        const noMarked = [userMsg('r0'), summaryMsg('sum-1', '摘要'), userMsg('m3')];
         const result = restoreSummarizedRange(noMarked, 1);
         expect(result.restoredCount).toBe(0);
         expect(result.contents[1].isSummary).toBe(true);
@@ -146,7 +142,7 @@ describe('ConversationManager 删除总结消息自动恢复原文', () => {
             summaryMsg('sum-0', '旧摘要'),
             userMsg('late', { isSummarized: true }),
             summaryMsg('sum-1', '新摘要'),
-            userMsg('active')
+            userMsg('active'),
         ];
         const { manager, id } = await seedManager(history);
 
@@ -164,10 +160,10 @@ describe('ConversationManager 删除总结消息自动恢复原文', () => {
 });
 
 describe('SummarizeService.restoreSummarizedMessages（恢复按钮 API）', () => {
-/**
- * 保持本地的 createHarness（createHarness 收敛批次）：liveHistory 以 getter 返回 + 动态 getHistoryRef，
- * 返回结构与共享的 createSummarizeHarness（数组引用）不同，不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
- */
+    /**
+     * 保持本地的 createHarness（createHarness 收敛批次）：liveHistory 以 getter 返回 + 动态 getHistoryRef，
+     * 返回结构与共享的 createSummarizeHarness（数组引用）不同，不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
+     */
     function createHarness(history: Content[]) {
         let liveHistory = JSON.parse(JSON.stringify(history)) as Content[];
         const mutateContents = jest.fn(async (mutator: (h: Content[]) => Content[]) => {
@@ -182,13 +178,13 @@ describe('SummarizeService.restoreSummarizedMessages（恢复按钮 API）', () 
         });
         const conversationManager = {
             getTranscriptRepository: jest.fn(() => ({ mutateContents })),
-            getHistoryRef: jest.fn(async () => JSON.parse(JSON.stringify(liveHistory)))
+            getHistoryRef: jest.fn(async () => JSON.parse(JSON.stringify(liveHistory))),
         };
         const service = new SummarizeService(
             { getConfig: jest.fn() } as any,
             { generate: jest.fn() } as any,
             conversationManager as any,
-            { findLastSummaryIndex: jest.fn(() => -1), identifyRounds: jest.fn(() => []) } as any
+            { findLastSummaryIndex: jest.fn(() => -1), identifyRounds: jest.fn(() => []) } as any,
         );
         return { service, liveHistory: () => liveHistory, mutateContents };
     }
@@ -209,7 +205,7 @@ describe('SummarizeService.restoreSummarizedMessages（恢复按钮 API）', () 
         expect(history[1].isSummarized).toBeUndefined();
         expect(history[2].isSummarized).toBeUndefined();
         // 总结消息已删除
-        expect(history.some(m => m.id === 'sum-1')).toBe(false);
+        expect(history.some((m) => m.id === 'sum-1')).toBe(false);
         expect(structuralSync).toHaveBeenCalledWith('conv1', 'summary_restored');
     });
 

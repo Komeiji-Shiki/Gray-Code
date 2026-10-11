@@ -13,16 +13,8 @@
 import { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
 import type { ResolvedPromptModeSnapshot } from '../../modules/settings/types';
 import { MEMORY_TOOL_NAMES } from '../../modules/memory/types';
-import {
-    DESIGN_PROMPT_MODE,
-    PLAN_PROMPT_MODE,
-    REVIEW_PROMPT_MODE,
-    ASK_PROMPT_MODE,
-} from '../../modules/settings/promptModes';
-import {
-    isSearchInFilesReplaceForbidden,
-    GENERAL_FILE_WRITE_TOOLS,
-} from '../../modules/settings/modeToolsPolicy';
+import { DESIGN_PROMPT_MODE, PLAN_PROMPT_MODE, REVIEW_PROMPT_MODE, ASK_PROMPT_MODE } from '../../modules/settings/promptModes';
+import { isSearchInFilesReplaceForbidden, GENERAL_FILE_WRITE_TOOLS } from '../../modules/settings/modeToolsPolicy';
 import { setGlobalSettingsManager } from '../../core/settingsContext';
 import { SettingsManager, MemorySettingsStorage } from '../../modules/settings';
 import type { FunctionCallInfo } from '../../modules/api/chat/utils';
@@ -38,29 +30,29 @@ const SEARCH_DECLARATION: ToolDeclaration = {
             mode: { type: 'string', enum: ['search', 'replace'], description: 'Operation mode.', default: 'search' },
             query: { type: 'string' },
             replace: { type: 'string', description: '[Replace mode] Replacement string.' },
-            maxFiles: { type: 'number', description: '[Replace mode] Maximum number of files.' }
+            maxFiles: { type: 'number', description: '[Replace mode] Maximum number of files.' },
         },
-        required: ['query']
-    }
+        required: ['query'],
+    },
 };
 
 const OTHER_DECLARATION: ToolDeclaration = {
     name: 'read_file',
     description: 'Read a file',
-    parameters: { type: 'object', properties: { path: { type: 'string' } } }
+    parameters: { type: 'object', properties: { path: { type: 'string' } } },
 };
 
 function createResolverHarness() {
     const toolRegistry = {
         getDeclarationsBy: jest.fn(() => [
             { ...SEARCH_DECLARATION, parameters: JSON.parse(JSON.stringify(SEARCH_DECLARATION.parameters)) },
-            { ...OTHER_DECLARATION }
-        ])
+            { ...OTHER_DECLARATION },
+        ]),
     };
     const settingsManager = {
         getSettings: jest.fn(() => ({ toolsEnabled: {}, toolAutoExec: {}, toolsConfig: {} })),
         isToolEnabled: jest.fn(() => true),
-        getGenerateImageConfig: jest.fn(() => ({}))
+        getGenerateImageConfig: jest.fn(() => ({})),
     };
     const resolver = new ToolDeclarationResolver(toolRegistry as any, settingsManager as any, undefined as any);
     return { resolver };
@@ -74,9 +66,9 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
             channelType: 'openai',
             toolMode: 'function_call',
             multimodalEnabled: false,
-            promptModeSnapshot: mode
+            promptModeSnapshot: mode,
         })!;
-        const search = declarations.find(d => d.name === 'search_in_files')!;
+        const search = declarations.find((d) => d.name === 'search_in_files')!;
         const modeProp = (search.parameters as any).properties.mode;
         expect(modeProp.enum).toEqual(['search']);
         expect((search.parameters as any).properties.replace).toBeUndefined();
@@ -92,15 +84,15 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
             channelType: 'openai',
             toolMode: 'function_call',
             multimodalEnabled: false,
-            promptModeSnapshot: mode
+            promptModeSnapshot: mode,
         })!;
         const baseline = resolver.resolve({
             channelType: 'openai',
             toolMode: 'function_call',
-            multimodalEnabled: false
+            multimodalEnabled: false,
         })!;
-        const readFile = declarations.find(d => d.name === 'read_file')!;
-        const baselineReadFile = baseline.find(d => d.name === 'read_file')!;
+        const readFile = declarations.find((d) => d.name === 'read_file')!;
+        const baselineReadFile = baseline.find((d) => d.name === 'read_file')!;
         expect(readFile.parameters).toEqual(baselineReadFile.parameters);
     });
 
@@ -109,9 +101,9 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
         const codeDecls = resolver.resolve({
             channelType: 'openai',
             toolMode: 'function_call',
-            multimodalEnabled: false
+            multimodalEnabled: false,
         })!;
-        const codeSearch = codeDecls.find(d => d.name === 'search_in_files')!;
+        const codeSearch = codeDecls.find((d) => d.name === 'search_in_files')!;
         expect((codeSearch.parameters as any).properties.mode.enum).toEqual(['search', 'replace']);
 
         const writeMode = makeMode('custom', ['search_in_files', 'write_file']);
@@ -119,9 +111,9 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
             channelType: 'openai',
             toolMode: 'function_call',
             multimodalEnabled: false,
-            promptModeSnapshot: writeMode
+            promptModeSnapshot: writeMode,
         })!;
-        const writeSearch = writeDecls.find(d => d.name === 'search_in_files')!;
+        const writeSearch = writeDecls.find((d) => d.name === 'search_in_files')!;
         expect((writeSearch.parameters as any).properties.mode.enum).toEqual(['search', 'replace']);
         expect((writeSearch.parameters as any).properties.replace).toBeDefined();
     });
@@ -132,18 +124,18 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
             channelType: 'openai',
             toolMode: 'function_call',
             multimodalEnabled: false,
-            promptModeSnapshot: makeMode('ask', READONLY_LIKE_POLICY)
+            promptModeSnapshot: makeMode('ask', READONLY_LIKE_POLICY),
         })!;
-        expect((restricted.find(d => d.name === 'search_in_files')!.parameters as any).properties.mode.enum).toEqual(['search']);
+        expect((restricted.find((d) => d.name === 'search_in_files')!.parameters as any).properties.mode.enum).toEqual(['search']);
 
         // 同一 resolver 实例、不同模式快照：完整声明不受之前受限模式缓存影响
         const unrestricted = resolver.resolve({
             channelType: 'openai',
             toolMode: 'function_call',
             multimodalEnabled: false,
-            promptModeSnapshot: makeMode('custom', ['search_in_files', 'write_file'])
+            promptModeSnapshot: makeMode('custom', ['search_in_files', 'write_file']),
         })!;
-        expect((unrestricted.find(d => d.name === 'search_in_files')!.parameters as any).properties.mode.enum).toEqual(['search', 'replace']);
+        expect((unrestricted.find((d) => d.name === 'search_in_files')!.parameters as any).properties.mode.enum).toEqual(['search', 'replace']);
     });
 });
 
@@ -170,14 +162,7 @@ async function createService(): Promise<ToolExecutionService> {
 }
 
 async function runCall(service: ToolExecutionService, call: FunctionCallInfo, mode?: ResolvedPromptModeSnapshot) {
-    const result = await service.executeFunctionCallsWithResults(
-        [call],
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        mode
-    );
+    const result = await service.executeFunctionCallsWithResults([call], undefined, undefined, undefined, undefined, mode);
     return result.toolResults[0].result as Record<string, unknown>;
 }
 

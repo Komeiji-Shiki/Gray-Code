@@ -13,7 +13,6 @@ import type { Content } from '../../modules/conversation/types';
 import { createContextTrimHarness } from '../__fixtures__/harnessFixtures';
 
 describe('ContextTrimService.getHistoryWithGranularFallback - stable start index', () => {
-
     /** 工具循环历史：从 index 3（fc-a）开始的 suffix 恰好 700 tokens（+ preserved 100 ≤ 预算 936） */
     function buildToolLoopHistory(): Content[] {
         return [
@@ -21,10 +20,20 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
             { role: 'model', parts: [{ text: 'old answer' }], tokenCountByChannel: { custom: 100 } },
             { role: 'user', parts: [{ text: 'current' }], isUserInput: true, tokenCountByChannel: { custom: 150 } },
             { role: 'model', parts: [{ functionCall: { id: 'a', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 150 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'a', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 150 } },
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'a', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 150 },
+            },
             { role: 'model', parts: [{ functionCall: { id: 'b', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 150 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'b', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 150 } },
-            { role: 'model', parts: [{ text: 'done' }], tokenCountByChannel: { custom: 100 } }
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'b', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 150 },
+            },
+            { role: 'model', parts: [{ text: 'done' }], tokenCountByChannel: { custom: 100 } },
         ];
     }
 
@@ -33,7 +42,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         model: 'test-model',
         models: [{ id: 'test-model', contextWindow: 1_300 }],
         maxContextTokens: 1_300,
-        contextThreshold: '80%'
+        contextThreshold: '80%',
     } as any;
     // threshold/input limit = 1040；provider reserve = 104；history budget = 936；总历史 1050（超预算触发裁剪）
 
@@ -54,7 +63,12 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         history = [
             ...history,
             { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 50 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 50 } }
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 50 },
+            },
         ];
 
         const second = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
@@ -78,7 +92,12 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         history = [
             ...history,
             { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 550 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 550 } }
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 550 },
+            },
         ];
 
         const result = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
@@ -102,7 +121,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
             { role: 'user', parts: [{ text: 'summary' }], isSummary: true, tokenCountByChannel: { custom: 100 } },
             { role: 'model', parts: [{ text: 'after summary' }], tokenCountByChannel: { custom: 200 } },
             { role: 'user', parts: [{ text: 'new' }], isUserInput: true, tokenCountByChannel: { custom: 200 } },
-            { role: 'model', parts: [{ text: 'new answer' }], tokenCountByChannel: { custom: 200 } }
+            { role: 'model', parts: [{ text: 'new answer' }], tokenCountByChannel: { custom: 200 } },
         ];
         const { service: s2 } = createContextTrimHarness(() => summarizedHistory);
         const result = await s2.getHistoryWithGranularFallback('c2', config, {}, undefined, 'single', 1);
@@ -123,7 +142,12 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         history = [
             ...history,
             { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 50 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 50 } }
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 50 },
+            },
         ];
 
         const second = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
@@ -140,15 +164,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
 
         // input limit 1040 - provider reserve 104 - fixed prompt 400 = history budget 536。
         // 起点 3 的最终历史约 800，必须继续推进到起点 5（约 500）。
-        const result = await service.getHistoryWithGranularFallback(
-            'c1',
-            config,
-            {},
-            undefined,
-            'single',
-            undefined,
-            400
-        );
+        const result = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', undefined, 400);
 
         expect(result.trimStartIndex).toBe(7);
         expect(result.contextManagementDecision?.action).toBe('fallback_trim_applied');
@@ -160,15 +176,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
 
         // 软预算只剩 36 tokens，任何候选都无法达到；模型硬窗口仍给 history 留有 335 tokens。
         // 应选择硬窗口内最早的合法候选继续请求，而不是报 CONTEXT_OVERFLOW。
-        const result = await service.getHistoryWithGranularFallback(
-            'c1',
-            config,
-            {},
-            undefined,
-            'single',
-            undefined,
-            900
-        );
+        const result = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', undefined, 900);
 
         expect(result.contextManagementDecision?.action).toBe('fallback_hard_limit_applied');
         expect(result.history.length).toBeGreaterThan(0);
@@ -178,20 +186,10 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         const history = buildToolLoopHistory();
         const { service } = createContextTrimHarness(() => history);
 
-        await expect(
-            service.getHistoryWithGranularFallback(
-                'c1',
-                config,
-                {},
-                undefined,
-                'single',
-                undefined,
-                1_101
-            )
-        ).rejects.toMatchObject({
+        await expect(service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', undefined, 1_101)).rejects.toMatchObject({
             code: 'CONTEXT_OVERFLOW',
             estimatedInputTokens: 1_401,
-            inputTokenLimit: 1_300
+            inputTokenLimit: 1_300,
         });
     });
 
@@ -201,18 +199,10 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         const configWithoutKnownWindow = {
             type: 'custom',
             maxContextTokens: 1_300,
-            contextThreshold: '80%'
+            contextThreshold: '80%',
         } as any;
 
-        const result = await service.getHistoryWithGranularFallback(
-            'c1',
-            configWithoutKnownWindow,
-            {},
-            undefined,
-            'single',
-            undefined,
-            1_101
-        );
+        const result = await service.getHistoryWithGranularFallback('c1', configWithoutKnownWindow, {}, undefined, 'single', undefined, 1_101);
 
         expect(result.contextManagementDecision?.action).toBe('fallback_best_effort_applied');
         expect(result.history.length).toBeGreaterThan(0);
