@@ -74,12 +74,33 @@ function createPossibleMultiplePathsWarning(searchPath: string): SearchPathWarni
     };
 }
 
-function createSearchInFilesTool(): Tool {
+/** 只读声明去掉的替换参数；完整声明保持字面量，前端工具元数据可以静态提取。 */
+const REPLACE_ONLY_PARAMETERS = ['mode', 'replace', 'maxFiles'] as const;
+
+function withoutReplaceParameters(tool: Tool): Tool {
+    const properties = { ...tool.declaration.parameters.properties };
+    for (const key of REPLACE_ONLY_PARAMETERS) delete properties[key];
+    return { ...tool, declaration: { ...tool.declaration, parameters: { ...tool.declaration.parameters, properties } } };
+}
+
+/**
+ * readOnly 生成只读模式使用的声明：不列 mode、replace 与 maxFiles，说明也不提替换。
+ * 执行逻辑不变，替换仍由运行器按审批规则拒绝。
+ */
+function createSearchInFilesTool(options: { readOnly?: boolean } = {}): Tool {
+    const readOnly = options.readOnly === true;
     // 获取工作区信息用于描述
     const workspaces = host.getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
     const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
+    /** 只适用于搜索的参数在完整声明里注明范围；只读声明没有其他模式，不再加前缀。 */
+    const searchOnly = (zh: string, en: string) => isZh
+        ? (readOnly ? zh : '仅 search 模式：' + zh)
+        : (readOnly ? en.charAt(0).toUpperCase() + en.slice(1) : 'Search mode only: ' + en);
+    const summary = readOnly
+        ? (isZh ? '在工作区文件中搜索内容，支持正则表达式。' : 'Search workspace files for content, with optional regular expressions.')
+        : (isZh ? '在工作区文件中搜索内容，或搜索后替换，支持正则表达式。' : 'Search workspace files for content, or search and replace it, with optional regular expressions.');
     
     // 路径写法、多根工作区格式和可用名称只写在 path 参数里，主说明不重复。
     let pathDescription = isZh
@@ -91,17 +112,13 @@ function createSearchInFilesTool(): Tool {
             : `One search path in the "workspace_name/path" format. Write directories as "workspace_name/dir/" (with a trailing slash) and single files as "workspace_name/file.ext"; "." searches all workspaces. To search several paths, make separate calls. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`;
     }
     
-    return {
+    const tool: Tool = {
         declaration: {
             name: 'search_in_files',
             strict: true,  // API 端强制 schema 校验
-            description: (isMultiRoot
-                ? isZh
-                    ? '在工作区文件中搜索内容，或搜索后替换，支持正则表达式。当前是多根工作区，path 的写法见参数说明。'
-                    : 'Search workspace files for content, or search and replace it, with optional regular expressions. This is a multi-root workspace; see the path parameter for how to write paths.'
-                : isZh
-                    ? '在工作区文件中搜索内容，或搜索后替换，支持正则表达式。'
-                    : 'Search workspace files for content, or search and replace it, with optional regular expressions.') + (isZh
+            description: summary + (isMultiRoot
+                ? isZh ? '当前是多根工作区，path 的写法见参数说明。' : ' This is a multi-root workspace; see the path parameter for how to write paths.'
+                : '') + (isZh
                         ? '\n\n搜索会检查全部候选文件，不会因为文件多而提前停止。结果、maxResults 和 offset 都按命中行计数，同一行的多处命中算一条。结果按文件分组："行号:列号: 内容" 是命中行，多处命中的列号用逗号分隔；"行号- 内容" 是上下文；"--" 分隔不相邻的片段。返回 nextOffset 时，把它作为 offset 传入即可读取下一页，其他参数保持不变；文件变化后从 offset=0 重新查询。truncationReasons 说明结果是因为命中数还是输出长度受限；输出长度不够时，请按 continuationHint 缩小范围。'
                         : '\n\nThe search checks every candidate file and does not stop early because there are many files. Results, maxResults and offset all count matching lines, and several matches on one line count as one. Results are grouped by file: "line:col: text" is a matching line, with comma-separated columns when a line matches more than once; "line- text" is context; "--" separates non-adjacent snippets. When nextOffset is returned, pass it as offset to read the next page, keeping the other parameters unchanged; restart from offset 0 if files change. truncationReasons tells you whether the match count or the output size was the limit; when output size is the limit, narrow the search as continuationHint suggests.'),
             category: 'search',
@@ -144,8 +161,8 @@ function createSearchInFilesTool(): Tool {
                     keywordFallback: {
                         type: 'boolean', default: false,
                         description: isZh
-                            ? '设为 true 时，如果完整短语没有命中，会按空白拆成关键词并用 OR 重试。默认 false，保持查询原意。只在 search 模式且 isRegex=false 时生效。'
-                            : 'When true and the full phrase has no matches, the query is split on whitespace and retried as keywords joined with OR. Defaults to false, which keeps the exact query. Only applies in search mode with isRegex=false.'
+                            ? `设为 true 时，如果完整短语没有命中，会按空白拆成关键词并用 OR 重试。默认 false，保持查询原意。只在${readOnly ? '' : ' search 模式且'} isRegex=false 时生效。`
+                            : `When true and the full phrase has no matches, the query is split on whitespace and retried as keywords joined with OR. Defaults to false, which keeps the exact query. Only applies${readOnly ? '' : ' in search mode'} with isRegex=false.`
                     },
                     includeIgnored: {
                         type: 'boolean', default: false,
@@ -155,32 +172,32 @@ function createSearchInFilesTool(): Tool {
                     },
                     caseSensitive: {
                         type: 'boolean',
-                        description: isZh
-                            ? '是否区分大小写。search 模式默认不区分，便于定位；replace 模式默认区分，避免误替换。可以显式传值覆盖，例如在 replace 模式下传 false，替换不区分大小写搜到的内容。'
-                            : 'Whether matching is case-sensitive. Search mode defaults to false so matches are easier to find; replace mode defaults to true to avoid unintended replacements. Pass a value to override, for example false in replace mode to replace matches found case-insensitively.'
+                        description: readOnly
+                            ? (isZh ? '是否区分大小写，默认不区分。' : 'Whether matching is case-sensitive; default false.')
+                            : isZh
+                                ? '是否区分大小写。search 模式默认不区分，便于定位；replace 模式默认区分，避免误替换。可以显式传值覆盖，例如在 replace 模式下传 false，替换不区分大小写搜到的内容。'
+                                : 'Whether matching is case-sensitive. Search mode defaults to false so matches are easier to find; replace mode defaults to true to avoid unintended replacements. Pass a value to override, for example false in replace mode to replace matches found case-insensitively.'
                     },
                     encoding: {
                         type: 'string',
-                        description: isZh
-                            ? '仅 search 模式：指定文本编码，例如 gbk、shift_jis、big5。省略时逐文件自动识别，命中文件的非 UTF-8 编码在 encodings 中返回。'
-                            : 'Search mode only: use a text encoding such as gbk, shift_jis or big5. Omit to detect each file; encodings reports non-UTF-8 matching files.'
+                        description: searchOnly(
+                            '指定文本编码，例如 gbk、shift_jis、big5。省略时逐文件自动识别，命中文件的非 UTF-8 编码在 encodings 中返回。',
+                            'use a text encoding such as gbk, shift_jis or big5. Omit to detect each file; encodings reports non-UTF-8 matching files.')
                     },
                     maxResults: {
                         type: 'number',
-                        description: isZh ? '仅 search 模式：每页最多返回的命中行数。' : 'Search mode only: maximum matching lines per page.',
+                        description: searchOnly('每页最多返回的命中行数。', 'maximum matching lines per page.'),
                         default: 100
                     },
                     context: {
                         type: 'integer', minimum: 0, maximum: MAX_CONTEXT_LINES,
-                        description: isZh
-                            ? `仅 search 模式：每个命中前后显示的上下文行数，范围 0-${MAX_CONTEXT_LINES}。省略时使用搜索设置，0 表示只返回命中行。`
-                            : `Search mode only: context lines before and after each match, 0-${MAX_CONTEXT_LINES}. When omitted, the search settings apply; 0 returns only the matching lines.`
+                        description: searchOnly(
+                            `每个命中前后显示的上下文行数，范围 0-${MAX_CONTEXT_LINES}。省略时使用搜索设置，0 表示只返回命中行。`,
+                            `context lines before and after each match, 0-${MAX_CONTEXT_LINES}. When omitted, the search settings apply; 0 returns only the matching lines.`)
                     },
                     offset: {
                         type: 'integer', minimum: 0, default: 0,
-                        description: isZh
-                            ? '仅 search 模式：要跳过的命中行数，用于分页。'
-                            : 'Search mode only: number of matching lines to skip, used for paging.'
+                        description: searchOnly('要跳过的命中行数，用于分页。', 'number of matching lines to skip, used for paging.')
                     },
                     replace: {
                         type: 'string',
@@ -670,6 +687,7 @@ function createSearchInFilesTool(): Tool {
             }
         }
     };
+    return readOnly ? withoutReplaceParameters(tool) : tool;
 }
 
 function registerSearchInFiles(): Tool {

@@ -76,7 +76,8 @@ import { WorkspaceDiffs } from './workspace/diffs';
 import { WorkspaceCheckpoints } from './workspace/checkpoints';
 import { CheckpointLifecycle } from './workspace/checkpointLifecycle';
 import { mutationTools } from './workspace/mutationTools';
-import { readTools } from './workspace/readTools';
+import { readOnlySearchTool, readTools } from './workspace/readTools';
+import { isSearchInFilesReplaceForbidden } from '../../../backend/modules/settings/modeToolsPolicy';
 import { officeTools } from './office/tools';
 import { DEFAULT_APPLY_DIFF_CONFIG } from '../../../backend/modules/settings/types/toolsTypes';
 import { DiscordBotService } from "./bots/discord";
@@ -323,6 +324,8 @@ export class PlatformApplication {
         const media = this.media.tools(this.product.runtimeSettings(), channel?.toolOptions);
         const overrides = new Map(media.map(tool => [tool.declaration.name, tool]));
         if (names.includes('goal_update')) overrides.set('goal_update', this.automations.tool());
+        // 与提示词准备的替换拒绝使用同一份名单：只授予搜索时不向模型展示替换参数。
+        if (isSearchInFilesReplaceForbidden(names)) overrides.set('search_in_files', readOnlySearchTool(this));
         return this.tools.catalog(names, overrides);
       },
       preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),

@@ -6,6 +6,7 @@ import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
 import { GENERAL_WORKER_SYSTEM_PROMPT, SUBAGENT_COMPLETION_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from '../../../../backend/tools/subagents/executor/prompts';
 import type { PlatformApplication } from '../application';
+import { searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
 
 /** 监控中的第 0 项只展示系统配置；Context/Task 已在真实用户历史中，不能再拼一份。 */
@@ -42,7 +43,9 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
   return { id, parentConversationId: context.conversationId, parentRunId: context.runId, sourceToolCallId: context.toolCallId, conversationId: randomUUID(), actorId: context.actorId,
     agentName: general ? 'General Worker' : config!.name, workspace: structuredClone(context.workspace ?? null), depth, background: args.background === true,
     parentConfiguration: context.parentConfiguration, createdAt: now, updatedAt: now, status: 'queued',
-    profile: { ...structuredClone(context.agent), id: `subagent_${id.replaceAll('-', '')}`, providerId: selection.providerId, modelId: selection.modelOverride, toolNames,
+    // 白名单可能去掉全部写工具；替换拒绝按子代理自己的工具集合计算，与其收窄后的搜索声明一致。
+    profile: { ...structuredClone(context.agent), toolApproval: { ...context.agent.toolApproval, ...searchReplaceRestriction(toolNames) },
+      id: `subagent_${id.replaceAll('-', '')}`, providerId: selection.providerId, modelId: selection.modelOverride, toolNames,
       systemPrompt: `${systemPrompt}\n\n${environment}`, maxIterations: config?.maxIterations ?? settings.defaultMaxIterations! },
     selection, invocation: { id: `invocation-${id}`, role: 'user', timestamp: now,
       parts: [{ text: `# SubAgent Invocation\n\n## Agent System Prompt\n${systemPrompt}\n\n## Context\n${environment}\n${typeof args.context === 'string' ? args.context : ''}\n\n## User Prompt\n${args.prompt ?? ''}` }] },

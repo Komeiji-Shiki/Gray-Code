@@ -12,15 +12,19 @@ describe('按操作审批：受限模式与合并工具', () => {
   let app: PlatformApplication;
   let router: ApplicationRouter;
   let call: Call;
+  let searchDeclaration: { description: string; parameters: { properties?: Record<string, unknown> } } | undefined;
   let requests = 0;
   const owner = { actorId: 'owner', clientId: 'operation-approval' };
   beforeEach(async () => {
     f = await fixture(); await f.store.close();
     await writeFile(path.join(f.source, 'note.txt'), 'old value');
     app = await PlatformApplication.open({ dataDirectory: f.data,
-      models: { generate: async input => input.messages.some(message => message.role === 'model')
-        ? { role: 'model', parts: [{ text: 'done' }] }
-        : { role: 'model', parts: [{ functionCall: { id: 'operation', ...call } }] } } });
+      models: { generate: async input => {
+        searchDeclaration = input.tools.find(tool => tool.name === 'search_in_files') as typeof searchDeclaration;
+        return input.messages.some(message => message.role === 'model')
+          ? { role: 'model', parts: [{ text: 'done' }] }
+          : { role: 'model', parts: [{ functionCall: { id: 'operation', ...call } }] };
+      } } });
     const draft = app.settings.snapshot();
     draft.settings.workspaces.push({ id: 'project', name: 'Fixture', directory: f.source, deviceId: 'local' });
     await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
@@ -47,6 +51,17 @@ describe('按操作审批：受限模式与合并工具', () => {
     expect(await readFile(path.join(f.source, 'note.txt'), 'utf8')).toBe('old value');
     const searched = await run({ name: 'search_in_files', args: { mode: 'search', query: 'old' } }, { promptModeId: 'ask' });
     expect(searched).toMatchObject({ success: true });
+    // 声明里不再展示替换参数，模型也就不会把替换当作可用操作。
+    expect(Object.keys(searchDeclaration!.parameters.properties ?? {})).not.toEqual(expect.arrayContaining(['replace']));
+    expect(searchDeclaration!.parameters.properties).not.toHaveProperty('mode');
+    expect(searchDeclaration!.parameters.properties).not.toHaveProperty('maxFiles');
+    expect(searchDeclaration!.description).not.toContain('替换');
+  });
+
+  test('授予写工具的模式仍展示完整的搜索替换声明', async () => {
+    await run({ name: 'read_file', args: { path: 'note.txt' } });
+    expect(searchDeclaration!.parameters.properties).toHaveProperty('replace');
+    expect(searchDeclaration!.parameters.properties).toHaveProperty('mode');
   });
 
   test('旧清单划定的工程日志操作范围不会被新名称上的自动执行覆盖', async () => {
