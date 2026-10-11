@@ -142,6 +142,7 @@ const emit = defineEmits<{
 const scrollContainer = ref<HTMLElement | null>(null)
 const scrollTrack = ref<HTMLElement | null>(null)
 const hScrollTrack = ref<HTMLElement | null>(null)
+const tooltipRef = ref<HTMLElement | null>(null)
 
 // 垂直滚动条状态
 const thumbHeight = ref(0)
@@ -190,10 +191,12 @@ const geometry = useScrollbarGeometry(
 )
 const { getVerticalLayoutMetrics, hasGlobalTail, isAtBottom } = geometry
 const {
-  markerPositions, tooltipVisible, tooltipContent, tooltipIndex, tooltipMarkerPrefix, tooltipTop, tooltipRef,
+  markerPositions, tooltipVisible, tooltipContent, tooltipIndex, tooltipMarkerPrefix, tooltipTop,
   initializeMarkers, updateMarkers, requestMarkerScan, handleMarkerClick, handleMarkerMouseEnter,
   handleMarkerMouseLeave, handleTooltipMouseEnter, handleTooltipWheel
-} = useScrollbarMarkers(props, scrollContainer, scrollTrack, isVirtualScroll, index => emit('seek', index))
+} = useScrollbarMarkers(
+  props, scrollContainer, scrollTrack, tooltipRef, isVirtualScroll, index => emit('seek', index)
+)
 
 // 记录是否在底部（内容变化前检查）
 let wasAtBottom = true

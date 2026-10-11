@@ -13,6 +13,7 @@ export function useScrollbarMarkers(
   props: ScrollbarMarkerProps,
   scrollContainer: Ref<HTMLElement | null>,
   scrollTrack: Ref<HTMLElement | null>,
+  tooltipRef: Ref<HTMLElement | null>,
   isVirtualScroll: Readonly<Ref<boolean>>,
   seek: (index: number) => void
 ) {
@@ -33,7 +34,6 @@ export function useScrollbarMarkers(
   const tooltipMarkerPrefix = ref('')
   const tooltipTop = ref(0)
   let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null
-  const tooltipRef = ref<HTMLElement | null>(null)
   let tooltipRafId: number | null = null
 
   const virtualMarkerTrackHeight = ref(0)
@@ -252,7 +252,6 @@ export function useScrollbarMarkers(
     tooltipIndex,
     tooltipMarkerPrefix,
     tooltipTop,
-    tooltipRef,
     initializeMarkers,
     updateMarkers,
     requestMarkerScan,

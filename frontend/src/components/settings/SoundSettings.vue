@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { CustomCheckbox } from '../common'
 import { formatFileSize } from '@/utils/file'
 import NotificationQuietHours from './NotificationQuietHours.vue'
 import { useSoundSettings } from './useSoundSettings'
+
+const assetFileInputRef = ref<HTMLInputElement | null>(null)
 
 const {
   t,
@@ -42,7 +45,6 @@ const {
   assetError,
   assetTaskComplete,
   assetTaskError,
-  assetFileInputRef,
   MAX_ASSET_BYTES,
   triggerSelectAsset,
   handleAssetFileChange,
@@ -51,7 +53,7 @@ const {
   triggerWindowsNotificationPreview,
   saveConfig,
   resetToDefault
-} = useSoundSettings()
+} = useSoundSettings(assetFileInputRef)
 </script>
 
 <template>

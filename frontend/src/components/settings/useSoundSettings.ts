@@ -1,4 +1,4 @@
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, type Ref } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { validateNotificationQuietHours } from '@shared/notificationPolicy'
 import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
@@ -18,7 +18,7 @@ import {
 import { useSoundSettingsPreview } from './useSoundSettingsPreview'
 
 /** 设置草稿统一负责读取、导入、序列化与保存，组件只绑定表单。 */
-export function useSoundSettings() {
+export function useSoundSettings(assetFileInputRef: Ref<HTMLInputElement | null>) {
   const { t } = useI18n()
 
   const isLoading = ref(true)
@@ -79,7 +79,6 @@ export function useSoundSettings() {
     taskError?: UISoundAsset
   }>({})
 
-  const assetFileInputRef = ref<HTMLInputElement | null>(null)
   const selectingAssetCue = ref<SoundCue | null>(null)
   const MAX_ASSET_BYTES = 10 * 1024 * 1024
 
@@ -445,7 +444,6 @@ export function useSoundSettings() {
     assetError,
     assetTaskComplete,
     assetTaskError,
-    assetFileInputRef,
     MAX_ASSET_BYTES,
     triggerSelectAsset,
     handleAssetFileChange,
