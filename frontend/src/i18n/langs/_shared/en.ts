@@ -493,6 +493,7 @@ const sharedEn = {
                 alreadyProvided: backendEn.tools.contextNotes.alreadyProvided,
                 budget: backendEn.tools.contextNotes.budget,
                 empty: backendEn.tools.contextNotes.empty,
+                failedEntries: backendEn.tools.contextNotes.failedEntries,
                 historyActions: {
                     list: backendEn.tools.contextNotes.historyActions.list,
                     read: backendEn.tools.contextNotes.historyActions.read,
@@ -506,6 +507,8 @@ const sharedEn = {
                     hypothesis: backendEn.tools.contextNotes.kinds.hypothesis,
                     lesson: backendEn.tools.contextNotes.kinds.lesson,
                     observation: backendEn.tools.contextNotes.kinds.observation,
+                    procedure: backendEn.tools.contextNotes.kinds.procedure,
+                    state: backendEn.tools.contextNotes.kinds.state,
                     task: backendEn.tools.contextNotes.kinds.task,
                 },
                 missingDependencies: backendEn.tools.contextNotes.missingDependencies,

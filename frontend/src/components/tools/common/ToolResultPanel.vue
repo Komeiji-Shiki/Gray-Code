@@ -13,7 +13,7 @@ const hasResult = computed(() => props.result !== undefined && props.result !== 
 const envelope = computed(() => recordValue(props.result) ? props.result : undefined)
 const failure = computed(() => props.error || (typeof envelope.value?.error === 'string' ? envelope.value.error : ''))
 const hasData = computed(() => !!envelope.value && Object.hasOwn(envelope.value, 'data'))
-const partialResult = computed(() => isPartialToolData(envelope.value?.data))
+const partialResult = computed(() => isPartialToolData(envelope.value?.data ?? envelope.value))
 const metadata = computed(() => envelope.value ? Object.fromEntries(Object.entries(envelope.value)
   .filter(([key]) => !['success', 'data', 'error', 'attachments', 'multimodal'].includes(key))) : {})
 const payload = computed(() => hasData.value ? envelope.value?.data : envelope.value ? metadata.value : props.result)

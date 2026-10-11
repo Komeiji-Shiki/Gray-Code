@@ -1,7 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import type { PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
-import { buildNoteGraph, createNoteReceipt, parseNoteEntries } from '../../../apps/server/src/context/noteGraph';
+import { buildNoteGraph, recordContextNotes } from '../../../apps/server/src/context/noteGraph';
+import { RuntimeToolRegistry } from '../src/runtime/tools';
+import { contextTools } from '../../../apps/server/src/context/tools';
 import { recallContextNotes } from '../../../apps/server/src/context/noteRecall';
 import { runNoteGraphTool } from '../../../apps/server/src/context/noteTool';
 import { memoryTokens } from '../src/storage/longMemory/text';
@@ -9,16 +11,102 @@ import { contextMessageText, legacyContextMessageText } from '../../../apps/serv
 import { fixture } from './fixtures';
 
 const source: PlatformMessage = { id: 'requirement', role: 'user', isUserInput: true, parts: [{ text: '保留缓存前缀。观察：原型已经完成，接下来检查窗口恢复。' }] };
-function record(history: PlatformMessage[], entries: unknown[], now: number, callId = `record-${now}`) {
+function recordBatch(history: PlatformMessage[], entries: unknown[], now: number, callId = `record-${now}`) {
   const call: PlatformMessage = { id: `call-${callId}`, role: 'model', parts: [{ functionCall: { id: callId, name: 'context_notes', args: { action: 'record', entries } } }] };
   history.push(call);
-  const receipt = createNoteReceipt(history, callId, parseNoteEntries(entries), now);
+  const result = recordContextNotes(history, callId, entries, now);
   history.push({ id: `result-${callId}`, role: 'user', isFunctionResponse: true,
-    parts: [{ functionResponse: { id: callId, name: 'context_notes', response: { success: true, noteEvent: receipt } } }] });
-  return Object.fromEntries(receipt.records.map(item => [item.key, item.id]));
+    parts: [{ functionResponse: { id: callId, name: 'context_notes', response: result } }] });
+  return result;
+}
+function record(history: PlatformMessage[], entries: unknown[], now: number, callId = `record-${now}`) {
+  const result = recordBatch(history, entries, now, callId);
+  if (!result.noteEvent) throw new Error(result.errors.map(item => item.error).join('；'));
+  return Object.fromEntries(result.noteEvent.records.map(item => [item.key, item.id]));
 }
 const entry = (key: string, text: string, extra: Record<string, unknown> = {}) => ({ key, kind: 'decision', text,
   sources: [{ messageId: 'requirement', quote: '保留缓存前缀。' }], ...extra });
+
+test('逐条 schema 校验隔离字段错误，成功回执按原位置重放并继承同条来源', () => {
+  const history = [structuredClone(source)];
+  const entries = [entry('bad-kind', '错误类型', { kind: 'unknown' }), null,
+    entry('loop', '每轮先检查进度，再继续工作。', { kind: 'procedure', sources: [
+      { messageId: 'last_user', quote: '保留缓存前缀。' }, { quote: '原型已经完成' },
+    ] }),
+    entry('missing-source', '缺少首项来源', { sources: [{ quote: '原型已经完成' }] }),
+    entry('unknown-field', '多余字段不能静默忽略', { typo: true })];
+  const registry = new RuntimeToolRegistry();
+  registry.register(contextTools({} as PlatformApplication).find(tool => tool.declaration.name === 'context_notes')!);
+  const validator = registry.catalog(['context_notes']).entries.get('context_notes')!;
+  // 错误条目必须能到达逐条校验，但批次数量与未知顶层参数仍在入口拒绝。
+  expect(validator.validate({ action: 'record', entries })).toBe(true);
+  expect(validator.validate({ action: 'record', entries: Array(33).fill(entries[2]) })).toBe(false);
+  expect(validator.validate({ action: 'record', entries, typo: true })).toBe(false);
+  const result = recordBatch(history, entries, 100);
+  expect(result).toMatchObject({ success: true, partial: true, recordedCount: 1, failedCount: 4 });
+  expect(result.errors.map(error => error.index)).toEqual([0, 1, 3, 4]);
+  expect(result.noteEvent!.records[0]).toMatchObject({ index: 2, key: 'loop', sources: [
+    { messageId: source.id, length: '保留缓存前缀。'.length }, { messageId: source.id, length: '原型已经完成'.length },
+  ] });
+  const graph = buildNoteGraph(JSON.parse(JSON.stringify(history)), 200, 200);
+  expect([...graph.notes.values()]).toMatchObject([{ kind: 'procedure', key: 'loop', text: '每轮先检查进度，再继续工作。' }]);
+});
+
+test('跨批 key 和 @key 都能引用并保留解析后的 ID，重名返回候选且不影响其他条目', () => {
+  const history = [structuredClone(source)];
+  const first = record(history, [entry('auto-run-loop', '固定流程', { kind: 'procedure' })], 100);
+  const next = record(history, [entry('task', '继续任务', { kind: 'task', relations: [{ kind: 'requires', target: 'auto-run-loop' }] }),
+    entry('observation', '完成一轮', { relations: [{ kind: 'supports', target: '@auto-run-loop' }] })], 200);
+  const graph = buildNoteGraph(history, 300, 300);
+  expect(graph.notes.get(next.task)?.relations).toEqual([{ kind: 'requires', target: first['auto-run-loop'] }]);
+  expect(graph.notes.get(next.observation)?.relations).toEqual([{ kind: 'supports', target: first['auto-run-loop'] }]);
+  expect(runNoteGraphTool({ action: 'inspect', noteId: 'auto-run-loop' }, history, undefined, [])).toMatchObject({ id: first['auto-run-loop'] });
+  const duplicate = record(history, [entry('auto-run-loop', '另一个流程', { kind: 'procedure' })], 400);
+  const ambiguous = recordBatch(history, [entry('ambiguous', '不能猜目标', { relations: [{ kind: 'requires', target: 'auto-run-loop' }] }),
+    entry('unrelated', '仍然保存')], 500);
+  expect(ambiguous).toMatchObject({ partial: true, recordedCount: 1, failedCount: 1 });
+  expect(ambiguous.errors[0].error).toContain(first['auto-run-loop']);
+  expect(ambiguous.errors[0].error).toContain(duplicate['auto-run-loop']);
+});
+
+test('失败引用与替代循环只拒绝相关条目，普通前向依赖仍能保存', () => {
+  const history = [structuredClone(source)];
+  const result = recordBatch(history, [
+    entry('independent', '可以保存', { relations: [{ kind: 'requires', target: '@forward' }] }),
+    entry('forward', '前向目标'),
+    entry('failed', '来源无效', { sources: [{ messageId: 'absent' }] }),
+    entry('dependent', '依赖失败项', { relations: [{ kind: 'requires', target: 'failed' }] }),
+    entry('transitive', '间接依赖失败项', { relations: [{ kind: 'supports', target: '@dependent' }] }),
+    entry('a', '循环 A', { relations: [{ kind: 'supersedes', target: '@b' }] }),
+    entry('b', '循环 B', { relations: [{ kind: 'supersedes', target: '@a' }] }),
+    entry('duplicate', '重复 A'), entry('duplicate', '重复 B'),
+  ], 100);
+  expect(result).toMatchObject({ partial: true, recordedCount: 2, failedCount: 7 });
+  expect(result.errors.map(error => error.index)).toEqual([2, 3, 4, 5, 6, 7, 8]);
+  expect([...buildNoteGraph(history, 200, 200).notes.values()].map(note => note.key)).toEqual(['independent', 'forward']);
+});
+
+test('同 key 状态自动替代并保留历史，失败更新不改变状态，召回省略预算也能估算', () => {
+  const history = [structuredClone(source)];
+  const first = record(history, [entry('progress', '已修到第 0740 章', { kind: 'state' })], 100);
+  const branch = structuredClone(history);
+  const next = record(history, [entry('progress', '已修到第 0741 章', { kind: 'state' })], 200);
+  const failed = recordBatch(history, [entry('progress', '已修到第 0742 章', { kind: 'state', sources: [{ messageId: 'absent' }] })], 300);
+  expect(failed).toMatchObject({ success: false, recordedCount: 0, failedCount: 1 });
+  expect(failed.noteEvent).toBeUndefined();
+  const graph = buildNoteGraph(history, 400, 400);
+  expect(graph.states.get(first.progress)).toBe('superseded');
+  expect(graph.notes.get(next.progress)?.relations).toEqual([{ kind: 'supersedes', target: first.progress }]);
+  expect(runNoteGraphTool({ action: 'inspect', noteId: 'progress' }, history, undefined, [])).toMatchObject({ id: next.progress, text: '已修到第 0741 章' });
+  expect(runNoteGraphTool({ action: 'inspect', noteId: first.progress }, history, undefined, [])).toMatchObject({ text: '已修到第 0740 章' });
+  expect(runNoteGraphTool({ action: 'inspect', noteId: 'progress', knownAt: 150, asOf: 150 }, history, undefined, [])).toMatchObject({ id: first.progress });
+  expect(runNoteGraphTool({ action: 'inspect', noteId: 'progress' }, branch, undefined, [])).toMatchObject({ id: first.progress });
+  const recalled = runNoteGraphTool({ action: 'recall', ids: ['progress'] }, history, undefined, []);
+  expect(recalled).toMatchObject({ success: true, tokenBudget: 4096, items: [{ id: next.progress, key: 'progress', kind: 'state' }] });
+  if (!('estimatedTokens' in recalled)) throw new Error('没有召回结果');
+  expect(recalled.estimatedTokens).toBe(memoryTokens(JSON.stringify(recalled)));
+  expect(recalled.estimatedTokens).toBeLessThanOrEqual(4096);
+});
 
 test('任务依赖能找回没有共同关键词的依据，替代关系尊重两个时间和当前分支', () => {
   const history = [structuredClone(source)];
@@ -78,8 +166,10 @@ test('来源变化后停止召回，失败记录不生效，超预算时明确�
   const failed = structuredClone(history); (failed[2].parts[0].functionResponse as any).response.success = false;
   expect(buildNoteGraph(failed, 200, 200).notes.size).toBe(0);
   const invalid = [...history, { id: 'bad', role: 'model', parts: [{ functionCall: { id: 'bad-call', name: 'context_notes' } }] }];
-  expect(() => createNoteReceipt(invalid, 'bad-call', parseNoteEntries([entry('a', 'A', { relations: [{ kind: 'supersedes', target: '@b' }] }),
-    entry('b', 'B', { relations: [{ kind: 'supersedes', target: '@a' }] })]), 300)).toThrow('循环');
+  expect(recordContextNotes(invalid, 'bad-call', [entry('a', 'A', { relations: [{ kind: 'supersedes', target: '@b' }] }),
+    entry('b', 'B', { relations: [{ kind: 'supersedes', target: '@a' }] })], 300)).toMatchObject({
+    success: false, failedCount: 2, errors: [{ error: expect.stringContaining('循环') }, { error: expect.stringContaining('循环') }],
+  });
 });
 
 test('工具结果来源按模型可见文本记录偏移；旧回执的偏移换算到新文本，无法对应时去掉', () => {
@@ -93,12 +183,14 @@ test('工具结果来源按模型可见文本记录偏移；旧回执的偏移�
   const entries = [{ key: 'plain', kind: 'observation', text: '文件末尾是 here。', sources: [{ messageId: 'tool-source', quote: 'here' }] },
     { key: 'escaped', kind: 'observation', text: '文件含引号。', sources: [{ messageId: 'tool-source', quote: '"quoted"' }] }];
   history.push({ id: 'call-legacy', role: 'model', parts: [{ functionCall: { id: 'legacy', name: 'context_notes', args: { action: 'record', entries } } }] });
-  const receipt = createNoteReceipt(history, 'legacy', parseNoteEntries(entries), 100);
+  const receipt = recordContextNotes(history, 'legacy', entries, 100).noteEvent!;
   expect(receipt.textFormat).toBe(3);
   expect(receipt.records[0].sources[0].offset).toBe(current.indexOf('here'));
 
   // 模拟旧版本写入的回执：没有 textFormat，偏移按整段 JSON 文本计算。
   const legacyReceipt = structuredClone(receipt);
+  legacyReceipt.version = 1;
+  for (const record of legacyReceipt.records) { delete record.index; delete record.relations; }
   delete legacyReceipt.textFormat;
   legacyReceipt.records[0].sources[0].offset = legacy.indexOf('here');
   legacyReceipt.records[1].sources[0] = { ...legacyReceipt.records[1].sources[0], offset: legacy.indexOf('\\"quoted\\"'), length: '\\"quoted\\"'.length };
@@ -152,12 +244,18 @@ describe('真实 HTTP 请求中的笔记事件与召回快照', () => {
         const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
         switch (requests.length) {
           case 1: calls.push({ name: 'context_notes', args: { action: 'record', entries: [entry('rule', '旧请求前缀保持不变。', { kind: 'constraint' }),
+            entry('bad', '错误字段不影响其他条目。', { kind: 'unknown' }),
+            entry('progress', '已修到第 0740 章。', { kind: 'state' }),
+            entry('loop', '检查进度，再继续任务。', { kind: 'procedure' }),
             entry('task', '恢复取消流程。', { kind: 'task', relations: [{ kind: 'requires', target: '@rule' }] })] } }); break;
-          case 2: calls.push({ name: 'context_notes', args: { action: 'recall', taskId: ids.task, tokenBudget: 2500 } }); break;
+          case 2: calls.push({ name: 'context_notes', args: { action: 'recall', taskId: 'task' } }); break;
           case 3: calls.push({ name: 'new_context', args: {} }); break;
           case 4: calls.push({ name: 'context_notes', args: { action: 'recall', taskId: ids.task, tokenBudget: 2500 } }); break;
           case 5: calls.push({ name: 'context_notes', args: { action: 'record', entries: [entry('updated', '已召回的内容保持固定，更新作为新的工具结果追加。', {
-            relations: [{ kind: 'supersedes', target: ids.rule }] })] } }); break;
+            relations: [{ kind: 'supersedes', target: 'rule' }] }),
+            entry('progress', '已修到第 0741 章。', { kind: 'state', sources: [
+              { messageId: 'requirement', quote: '保留缓存前缀。' }, { quote: '原型已经完成' },
+            ] })] } }); break;
           case 6: calls.push({ name: 'context_notes', args: { action: 'recall', taskId: ids.task, tokenBudget: 2500 } }); break;
         }
         const delta = calls.length ? { tool_calls: calls.map((call, index) => ({ index, id: `call-${requests.length}-${index}`, type: 'function',
@@ -185,6 +283,9 @@ describe('真实 HTTP 请求中的笔记事件与召回快照', () => {
       expect(requests[index + 1].messages.slice(0, requests[index].messages.length)).toEqual(requests[index].messages);
     }
     const output = (index: number) => JSON.parse(requests[index].messages.filter((message: any) => message.role === 'tool').at(-1).content);
+    expect(output(1)).toMatchObject({ partial: true, recordedCount: 4, failedCount: 1, errors: [{ index: 1, key: 'bad' }] });
+    expect(output(2).tokenBudget).toBe(4096);
+    expect(output(5)).toMatchObject({ recordedCount: 2, failedCount: 0 });
     expect(output(2)).toMatchObject({ items: [], alreadyProvided: expect.arrayContaining([expect.objectContaining({ id: ids.task })]) });
     expect(output(4).items.map((item: any) => item.id)).toEqual(expect.arrayContaining([ids.task, ids.rule]));
     expect(output(6).items).toHaveLength(0);
@@ -197,5 +298,8 @@ describe('真实 HTTP 请求中的笔记事件与召回快照', () => {
     const graph = buildNoteGraph(copied.messages);
     expect(graph.states.get(ids.rule)).toBe('superseded'); expect(graph.states.get(ids.updated)).toBe('current');
     expect(graph.notes.get(ids.task)?.relations).toContainEqual({ kind: 'requires', target: ids.rule });
+    const progress = [...graph.notes.values()].filter(note => note.key === 'progress');
+    expect(progress).toHaveLength(2);
+    expect(progress.filter(note => graph.states.get(note.id) === 'current').map(note => note.text)).toEqual(['已修到第 0741 章。']);
   });
 });

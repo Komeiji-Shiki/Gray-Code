@@ -92,6 +92,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 - Never 顺手整文件重排或格式化无关代码；缩进与引号跟随所在文件既有风格。
 - Never 不带配置直接 `npx jest backend/...`：backend 测试必须用 `--config jest.backend.config.js`（或 `npm test`），否则会按 Babel 解析 TypeScript，整批报语法错误。
 - Never 把临时探针或一次性测试留在 `packages/core/tests/`、`backend/__tests__/` 等测试目录；用完删除，需要长期防回归的场景写成正式测试。
+- Never 让支持部分成功的批量工具在共享入口因单项字段错误整批失败；逐项校验复用模型声明的约束，成功回执、历史恢复和结果展示必须一致区分成功项与失败项。
 
 ## 验证
 

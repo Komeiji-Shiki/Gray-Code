@@ -991,6 +991,7 @@ const zhCN = {
         },
         contextNotes: {
             recorded: '已记录 {count} 条笔记', submitted: '本次提交 {count} 条笔记',
+            failedEntries: '{count} 条笔记未保存，仅需修正并重试这些条目',
             recalled: '本次返回 {count} 条笔记正文', budget: '本地估算 {used} / {budget} tokens',
             alreadyProvided: '{count} 条笔记已在当前上下文中提供',
             providedExplanation: '这些笔记的正文仍对模型可见，本次返回历史引用；需要重读时可按笔记编号使用 inspect。',
@@ -999,7 +1000,7 @@ const zhCN = {
             truncated: '本次召回未取得完整依据，可缩小范围或增加 token 预算后继续读取。',
             empty: '未找到当前有效的笔记。', replacements: '笔记的替代关系', about: '相关主题：',
             sourceRange: '来源 offset={offset}，length={length}', nextOffset: '续读 offset={offset}。',
-            kinds: { constraint: '约束', decision: '决定', observation: '观察', hypothesis: '推测', task: '任务', lesson: '经验' },
+            kinds: { constraint: '约束', decision: '决定', observation: '观察', hypothesis: '推测', task: '任务', lesson: '经验', procedure: '流程', state: '状态' },
             states: { current: '当前有效', superseded: '已被替代', outside_time: '不在查询时间范围内', source_unavailable: '来源已失效' },
             relations: { requires: '依赖', supports: '支持', contradicts: '与此冲突', applies_to: '适用于', supersedes: '替代' },
             providedReasons: { recorded: '已在记录调用中提供', recalled: '已在召回结果中提供', verbatim: '原文已在当前上下文中提供' },

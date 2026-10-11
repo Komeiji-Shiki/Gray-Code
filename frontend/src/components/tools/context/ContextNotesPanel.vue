@@ -17,20 +17,22 @@ const records = (value: unknown) => Array.isArray(value) ? value.filter(recordVa
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 const receipt = computed(() => recordValue(data.value.noteEvent) ? data.value.noteEvent : {})
 const eventRecords = computed(() => records(receipt.value.records))
+const entryErrors = computed(() => records(data.value.errors))
 const recordedNotes = computed<Record<string, unknown>[]>(() => {
   // 记录调用没有返回确认等级或有效状态；不把额外参数当成服务端确认的元数据。
-  const submitted = records(props.args?.entries).map(entry => ({ key: entry.key, kind: entry.kind, text: entry.text,
-    about: entry.about, sources: entry.sources, relations: entry.relations }))
+  const submitted: Record<string, unknown>[] = (Array.isArray(props.args?.entries) ? props.args.entries : []).map(entry => recordValue(entry)
+    ? { key: entry.key, kind: entry.kind, text: entry.text, about: entry.about, sources: entry.sources, relations: entry.relations }
+    : {})
   if (!succeeded.value || !eventRecords.value.length) return submitted
   const entriesByKey = new Map(submitted.map(entry => [typeof entry.key === 'string' ? entry.key.trim() : entry.key, entry]))
   const idsByKey = new Map(eventRecords.value.map(record => [record.key, record.id]))
-  // 回执只保存编号与来源；正文按同批 key 对应原调用，不按位置猜配，也不重复保存。
+  // 新回执明确保存成功项的位置及解析后的关系，旧回执继续按 key 对应原调用。
   return eventRecords.value.map(record => {
-    const entry: Record<string, unknown> = entriesByKey.get(record.key) ?? {}
+    const entry: Record<string, unknown> = typeof record.index === 'number' ? submitted[record.index] ?? {} : entriesByKey.get(record.key) ?? {}
     return { ...entry, ...record,
       ...(typeof entry.text === 'string' ? { text: entry.text.trim() } : {}),
       about: [...new Set(ids(entry.about).map(value => value.trim()))],
-      relations: records(entry.relations).map(relation => {
+      relations: Array.isArray(record.relations) ? record.relations : records(entry.relations).map(relation => {
         const target = typeof relation.target === 'string' ? relation.target.trim() : relation.target
         return { ...relation, target: typeof target === 'string' && target.startsWith('@') ? idsByKey.get(target.slice(1)) ?? target : target }
       }) }
@@ -54,6 +56,12 @@ const providedReason = (value: unknown) => {
     <section v-if="action === 'record' && recordedNotes.length" class="context-records">
       <h4>{{ t(succeeded && eventRecords.length ? 'components.tools.contextNotes.recorded' : 'components.tools.contextNotes.submitted', { count: recordedNotes.length }) }}</h4>
       <ContextNoteCard v-for="(note, index) in recordedNotes" :key="String(note.id ?? note.key ?? index)" :note="note" />
+    </section>
+    <section v-if="entryErrors.length" class="context-warning-list">
+      <h4>{{ t('components.tools.contextNotes.failedEntries', { count: entryErrors.length }) }}</h4>
+      <p v-for="(item, index) in entryErrors" :key="index" class="context-warning">
+        <code>#{{ Number(item.index) + 1 }}<template v-if="item.key"> {{ item.key }}</template></code> {{ item.error }}
+      </p>
     </section>
     <template #result="{ payload, metadata }">
       <template v-if="succeeded">

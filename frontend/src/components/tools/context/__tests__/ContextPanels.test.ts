@@ -118,3 +118,23 @@ test('关联笔记的记录、召回和明确重读展示正文、真实来源�
     expect(inspect.find('.context-warning').text()).toContain('12')
   } finally { record.unmount(); recall.unmount(); inspect.unmount() }
 })
+
+test('部分记录按原位置展示成功项、真实关系与失败原因', () => {
+  const wrapper = mount(ContextToolPanel, { props: {
+    toolName: 'context_notes', args: { action: 'record', entries: [null,
+      { key: 'progress', kind: 'state', text: '已修到第 0741 章', sources: [{ messageId: 'last_user' }] },
+    ] }, result: {
+      success: true, partial: true, recordedCount: 1, failedCount: 1, errors: [{ index: 0, error: '条目必须是对象' }],
+      noteEvent: { version: 2, records: [{ index: 1, key: 'progress', id: 'current',
+        sources: [{ messageId: 'source' }], relations: [{ kind: 'supersedes', target: 'previous' }] }] },
+    },
+  } })
+  try {
+    expect(wrapper.findAll('.context-note-card')).toHaveLength(1)
+    expect(wrapper.find('.document-text').text()).toBe('已修到第 0741 章')
+    expect(wrapper.find('.note-relations').text()).toContain('previous')
+    expect(wrapper.find('.context-note-card header').text()).toContain('状态')
+    expect(wrapper.find('.context-warning-list').text()).toContain('条目必须是对象')
+    expect(wrapper.find('.result-outcome').text()).toContain('部分')
+  } finally { wrapper.unmount() }
+})

@@ -493,6 +493,7 @@ const sharedZhCN = {
                 alreadyProvided: backendZhCN.tools.contextNotes.alreadyProvided,
                 budget: backendZhCN.tools.contextNotes.budget,
                 empty: backendZhCN.tools.contextNotes.empty,
+                failedEntries: backendZhCN.tools.contextNotes.failedEntries,
                 historyActions: {
                     list: backendZhCN.tools.contextNotes.historyActions.list,
                     read: backendZhCN.tools.contextNotes.historyActions.read,
@@ -506,6 +507,8 @@ const sharedZhCN = {
                     hypothesis: backendZhCN.tools.contextNotes.kinds.hypothesis,
                     lesson: backendZhCN.tools.contextNotes.kinds.lesson,
                     observation: backendZhCN.tools.contextNotes.kinds.observation,
+                    procedure: backendZhCN.tools.contextNotes.kinds.procedure,
+                    state: backendZhCN.tools.contextNotes.kinds.state,
                     task: backendZhCN.tools.contextNotes.kinds.task,
                 },
                 missingDependencies: backendZhCN.tools.contextNotes.missingDependencies,

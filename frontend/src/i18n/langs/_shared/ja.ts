@@ -493,6 +493,7 @@ const sharedJa = {
                 alreadyProvided: backendJa.tools.contextNotes.alreadyProvided,
                 budget: backendJa.tools.contextNotes.budget,
                 empty: backendJa.tools.contextNotes.empty,
+                failedEntries: backendJa.tools.contextNotes.failedEntries,
                 historyActions: {
                     list: backendJa.tools.contextNotes.historyActions.list,
                     read: backendJa.tools.contextNotes.historyActions.read,
@@ -506,6 +507,8 @@ const sharedJa = {
                     hypothesis: backendJa.tools.contextNotes.kinds.hypothesis,
                     lesson: backendJa.tools.contextNotes.kinds.lesson,
                     observation: backendJa.tools.contextNotes.kinds.observation,
+                    procedure: backendJa.tools.contextNotes.kinds.procedure,
+                    state: backendJa.tools.contextNotes.kinds.state,
                     task: backendJa.tools.contextNotes.kinds.task,
                 },
                 missingDependencies: backendJa.tools.contextNotes.missingDependencies,

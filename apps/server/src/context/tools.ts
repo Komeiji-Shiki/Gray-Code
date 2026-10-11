@@ -25,6 +25,14 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
     return id;
   };
   const schema = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
+  const noteParameters = schema({
+    action: { type: 'string', enum: ['list', 'read', 'write', 'append', 'record', 'recall', 'inspect'] },
+    name: { type: 'string', minLength: 1, maxLength: 120 },
+    text: { type: 'string', maxLength: 100000 },
+    offset: { type: 'integer', minimum: 0 },
+    limit: { type: 'integer', minimum: 1, maximum: 20000 },
+    ...NOTE_GRAPH_PROPERTIES,
+  }, ['action']);
   return [
     {
       declaration: {
@@ -41,19 +49,13 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
       declaration: {
         name: 'context_notes',
         description:
-          '管理当前会话的工作笔记。write 和 append 保存自由笔记，list 和 read 读取。record 批量记录带原文来源的约束、决定、观察、推测、任务和经验，并可标明依赖、适用对象或替代关系。recall 按当前意图或 taskId 找回仍有效的依据，必须提供 tokenBudget；当前上下文中已可见的内容只返回引用，被省略或缺失的依据会单独列出。inspect 按 noteId 重新读取一条笔记。笔记随当前对话分支和历史保存。',
-        parameters: schema(
-          {
-            action: { type: 'string', enum: ['list', 'read', 'write', 'append', 'record', 'recall', 'inspect'] },
-            name: { type: 'string', minLength: 1, maxLength: 120 },
-            text: { type: 'string', maxLength: 100000 },
-            offset: { type: 'integer', minimum: 0 },
-            limit: { type: 'integer', minimum: 1, maximum: 20000 },
-            ...NOTE_GRAPH_PROPERTIES,
-          },
-          ['action'],
-        ),
+          '管理当前会话的工作笔记。write/append 保存自由笔记，list/read 读取。record 逐条记录有来源的结构化笔记与关系；procedure 保存流程惯例，state 用固定 key 原子更新当前状态并保留历史，无需手动 supersedes。部分成功返回 partial 和 errors，仅重试失败项。recall 按意图或 taskId 召回有效依据，自动估算用量；已可见内容只返回引用，缺失和省略项单独列出。inspect 按 noteId 重读。笔记随对话分支和历史保存。',
+        parameters: noteParameters,
       },
+      // 条目使用声明中的同一份 schema 在记录入口逐条校验，避免一项错误阻断整批。
+      validationSchema: { ...noteParameters, properties: {
+        ...noteParameters.properties, entries: { ...NOTE_GRAPH_PROPERTIES.entries, items: {} },
+      } },
       parallelRead: args => ['list', 'read', 'recall', 'inspect'].includes(String(args.action)),
       effects: () => [],
       execute: async (args, context) => {

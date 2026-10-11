@@ -988,6 +988,7 @@ const en: BackendLanguageMessages = {
             }
         },
         contextNotes: {
+            failedEntries: '{count} notes were not saved; correct and retry only these entries',
             recorded: 'Recorded {count} notes', submitted: 'Submitted {count} notes',
             recalled: 'Returned {count} note bodies', budget: 'Local estimate: {used} / {budget} tokens',
             alreadyProvided: '{count} notes already provided in the current context',
@@ -997,7 +998,7 @@ const en: BackendLanguageMessages = {
             truncated: 'This recall did not return all supporting information. Narrow the scope or increase the token budget to continue.',
             empty: 'No currently valid notes found.', replacements: 'Note replacements', about: 'Related topics:',
             sourceRange: 'Source offset={offset}, length={length}', nextOffset: 'Continue with offset={offset}.',
-            kinds: { constraint: 'Constraint', decision: 'Decision', observation: 'Observation', hypothesis: 'Hypothesis', task: 'Task', lesson: 'Lesson' },
+            kinds: { constraint: 'Constraint', decision: 'Decision', observation: 'Observation', hypothesis: 'Hypothesis', task: 'Task', lesson: 'Lesson', procedure: 'Procedure', state: 'State' },
             states: { current: 'Current', superseded: 'Superseded', outside_time: 'Outside the query time range', source_unavailable: 'Source unavailable' },
             relations: { requires: 'Requires', supports: 'Supports', contradicts: 'Contradicts', applies_to: 'Applies to', supersedes: 'Supersedes' },
             providedReasons: { recorded: 'Provided in the record call', recalled: 'Provided in a recall result', verbatim: 'Present verbatim in the current context' },

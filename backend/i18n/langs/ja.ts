@@ -988,6 +988,7 @@ const ja: BackendLanguageMessages = {
             }
         },
         contextNotes: {
+            failedEntries: '{count} 件のノートを保存できませんでした。この項目のみ修正して再試行してください',
             recorded: '{count} 件のノートを記録しました', submitted: '今回送信したノート：{count} 件',
             recalled: '今回返されたノート本文：{count} 件', budget: 'ローカル推定：{used} / {budget} tokens',
             alreadyProvided: '{count} 件のノートは現在のコンテキストに提供済みです',
@@ -997,7 +998,7 @@ const ja: BackendLanguageMessages = {
             truncated: '今回の取得には必要な情報がすべて含まれていません。範囲を絞るか token 予算を増やして続けてください。',
             empty: '現在有効なノートは見つかりませんでした。', replacements: 'ノートの置換関係', about: '関連する対象：',
             sourceRange: '情報源 offset={offset}、length={length}', nextOffset: 'offset={offset} で続きを読み取れます。',
-            kinds: { constraint: '制約', decision: '決定', observation: '観察', hypothesis: '仮説', task: 'タスク', lesson: '経験' },
+            kinds: { constraint: '制約', decision: '決定', observation: '観察', hypothesis: '仮説', task: 'タスク', lesson: '経験', procedure: '手順', state: '状態' },
             states: { current: '現在有効', superseded: '置換済み', outside_time: '指定した時間の範囲外', source_unavailable: '情報源が無効' },
             relations: { requires: '依存先', supports: '支持する対象', contradicts: '矛盾する対象', applies_to: '適用先', supersedes: '置換する対象' },
             providedReasons: { recorded: '記録時の呼び出しで提供済み', recalled: '取得結果で提供済み', verbatim: '原文が現在のコンテキストに存在' },

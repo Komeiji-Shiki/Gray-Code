@@ -3,9 +3,10 @@ import type { LongMemoryConfidence, PlatformMessage } from '@graycode/contracts'
 import { sourceMessageOrigin } from '../memory/longTerm/content';
 import { isHistoricalUserInput } from './retention';
 import { CONTEXT_TEXT_FORMAT, contextMessageText, legacyContextMessageText } from './textPage';
+import { ToolSchemaValidators } from '../../../../packages/core/src/runtime/toolSchemaValidation';
+import { NOTE_ENTRY_SCHEMA, NOTE_KINDS, NOTE_RELATIONS } from './noteSchema';
 
-export const NOTE_KINDS = ['constraint', 'decision', 'observation', 'hypothesis', 'task', 'lesson'] as const;
-export const NOTE_RELATIONS = ['requires', 'supports', 'contradicts', 'applies_to', 'supersedes'] as const;
+export { NOTE_KINDS, NOTE_RELATIONS } from './noteSchema';
 type NoteKind = typeof NOTE_KINDS[number];
 type RelationKind = typeof NOTE_RELATIONS[number];
 export interface NoteRelation { kind: RelationKind; target: string }
@@ -16,24 +17,27 @@ export interface NoteEntry {
 }
 export interface NoteSource { messageId: string; digest: string; offset?: number; length?: number }
 export interface NoteReceipt {
-  version: 1; anchorMessageId: string; inputHash: string; recordedAt: number;
+  version: 1 | 2; anchorMessageId: string; inputHash: string; recordedAt: number;
   /** 来源偏移所用的文本视图版本；旧回执没有此字段，偏移按旧版文本计算。 */
   textFormat?: number;
-  records: Array<{ id: string; key: string; sources: NoteSource[] }>;
+  records: Array<{ id: string; key: string; sources: NoteSource[]; index?: number; relations?: NoteRelation[] }>;
 }
+export interface NoteEntryError { index: number; key?: string; error: string }
 export interface ContextNote {
-  id: string; kind: NoteKind; text: string; about: string[]; relations: NoteRelation[];
+  id: string; key: string; kind: NoteKind; text: string; about: string[]; relations: NoteRelation[];
   sources: NoteSource[]; recordedAt: number; validFrom: number; validTo?: number; eventAt?: number;
   origin: 'user' | 'model' | 'tool' | 'fiction'; confidence: LongMemoryConfidence; anchorMessageId: string; resultMessageId: string;
 }
 export type NoteState = 'current' | 'superseded' | 'outside_time' | 'source_unavailable';
 export interface ContextNoteGraph {
   notes: Map<string, ContextNote>; states: Map<string, NoteState>; replacements: Map<string, string[]>;
+  keys: Map<string, string[]>;
   asOf: number; knownAt: number;
 }
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sourceDigest = (message: PlatformMessage) => digest([message.role, message.parts]);
+const noteEntryValidator = new ToolSchemaValidators().compile(NOTE_ENTRY_SCHEMA);
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('笔记条目必须是对象。');
   return value as Record<string, unknown>;
@@ -52,32 +56,46 @@ function array(value: unknown, label: string, max: number): unknown[] {
   return value;
 }
 
-/** 调用与回执共同构成事件；正文只保存在调用参数里，回执不重复整份笔记。 */
+function parseNoteEntry(value: unknown, validate = true): NoteEntry {
+  const item = validate ? noteEntryValidator.normalizeArguments(object(value)) : object(value);
+  if (validate && !noteEntryValidator.validate(item)) {
+    const error = noteEntryValidator.validate.errors![0];
+    throw new Error(`${error.instancePath || '条目'} ${error.message}`);
+  }
+  const key = text(item.key, 'key', 80);
+  if (key.startsWith('@')) throw new Error('key 不能以 @ 开头。');
+  if (!NOTE_KINDS.includes(item.kind as NoteKind)) throw new Error('笔记 kind 无效。');
+  let previousMessageId: string | undefined;
+  const sources = array(item.sources, 'sources', 8).map(value => {
+    const source = object(value);
+    if (source.messageId == null && !previousMessageId) throw new Error('sources 首项必须提供 messageId；后续项可省略并沿用上一项。');
+    previousMessageId = text(source.messageId ?? previousMessageId, 'messageId', 200);
+    return { messageId: previousMessageId,
+      ...(source.quote == null ? {} : { quote: text(source.quote, 'quote', 4000) }) };
+  });
+  if (!sources.length) throw new Error('每条笔记必须引用真实历史来源。');
+  const relations = array(item.relations ?? [], 'relations', 32).map(value => {
+    const relation = object(value);
+    if (!NOTE_RELATIONS.includes(relation.kind as RelationKind)) throw new Error('笔记关系 kind 无效。');
+    return { kind: relation.kind as RelationKind, target: text(relation.target, 'target', 200) };
+  });
+  const validFrom = time(item.validFrom, 'validFrom'), validTo = time(item.validTo, 'validTo');
+  if (validFrom !== undefined && validTo !== undefined && validTo <= validFrom) throw new Error('validTo 必须晚于 validFrom。');
+  return { key, kind: item.kind as NoteKind, text: text(item.text, 'text', 4000),
+    about: [...new Set(array(item.about ?? [], 'about', 16).map(value => text(value, 'about', 200)))],
+    sources, relations, validFrom, validTo, eventAt: time(item.eventAt, 'eventAt') };
+}
+
+/** 旧回执按原来的整批解析规则重放，避免新增的 schema 约束改变历史指纹。 */
 export function parseNoteEntries(value: unknown): NoteEntry[] {
   const values = array(value, 'entries', 32);
   if (!values.length) throw new Error('至少需要一条笔记。');
   const keys = new Set<string>();
   return values.map(value => {
-    const item = object(value), key = text(item.key, 'key', 80);
-    if (key.startsWith('@') || keys.has(key)) throw new Error('同批 key 必须唯一，且不能以 @ 开头。');
-    keys.add(key);
-    if (!NOTE_KINDS.includes(item.kind as NoteKind)) throw new Error('笔记 kind 无效。');
-    const sources = array(item.sources, 'sources', 8).map(value => {
-      const source = object(value);
-      return { messageId: text(source.messageId, 'messageId', 200),
-        ...(source.quote == null ? {} : { quote: text(source.quote, 'quote', 4000) }) };
-    });
-    if (!sources.length) throw new Error('每条笔记必须引用真实历史来源。');
-    const relations = array(item.relations ?? [], 'relations', 32).map(value => {
-      const relation = object(value);
-      if (!NOTE_RELATIONS.includes(relation.kind as RelationKind)) throw new Error('笔记关系 kind 无效。');
-      return { kind: relation.kind as RelationKind, target: text(relation.target, 'target', 200) };
-    });
-    const validFrom = time(item.validFrom, 'validFrom'), validTo = time(item.validTo, 'validTo');
-    if (validFrom !== undefined && validTo !== undefined && validTo <= validFrom) throw new Error('validTo 必须晚于 validFrom。');
-    return { key, kind: item.kind as NoteKind, text: text(item.text, 'text', 4000),
-      about: [...new Set(array(item.about ?? [], 'about', 16).map(value => text(value, 'about', 200)))],
-      sources, relations, validFrom, validTo, eventAt: time(item.eventAt, 'eventAt') };
+    const entry = parseNoteEntry(value, false);
+    if (keys.has(entry.key)) throw new Error('同批 key 必须唯一。');
+    keys.add(entry.key);
+    return entry;
   });
 }
 
@@ -103,7 +121,9 @@ function resolveSourceMessage(reference: string, messages: PlatformMessage[], by
   return byId.get(reference);
 }
 
-export function createNoteReceipt(messages: PlatformMessage[], toolCallId: string | undefined, entries: NoteEntry[], now = Date.now()): NoteReceipt {
+export function recordContextNotes(messages: PlatformMessage[], toolCallId: string | undefined, value: unknown, now = Date.now()) {
+  const values = array(value, 'entries', 32);
+  if (!values.length) throw new Error('至少需要一条笔记。');
   const anchor = messages.findLast(message => message.role === 'model' && message.parts.some(part => {
     const call = part.functionCall as { id?: string; name?: string } | undefined;
     return call?.id === toolCallId && call?.name === 'context_notes';
@@ -112,42 +132,103 @@ export function createNoteReceipt(messages: PlatformMessage[], toolCallId: strin
   const previous = buildNoteGraph(messages, now, now);
   const byId = new Map(messages.map(message => [message.id, message]));
   const sourceTexts = new Map<string, string>(), sourceDigests = new Map<string, string>();
-  const localIds = new Map(entries.map(entry => [entry.key, `note_${digest([anchor.id, toolCallId, entry.key]).slice(0, 24)}`]));
-  const resolveTarget = (target: string) => target.startsWith('@') ? localIds.get(target.slice(1)) : previous.notes.has(target) ? target : undefined;
-  const records = entries.map(entry => {
-    if (entry.validTo !== undefined && entry.validTo <= (entry.validFrom ?? now)) throw new Error('validTo 必须晚于 validFrom。');
-    for (const relation of entry.relations) {
-      const target = resolveTarget(relation.target);
-      if (!target || previous.states.get(target) === 'source_unavailable') throw new Error(`关系目标 ${relation.target} 不在当前分支的有效笔记中。`);
-      if (target === localIds.get(entry.key)) throw new Error('笔记不能关联自身。');
+  const keys = values.map(value => value && typeof value === 'object' && 'key' in value && typeof value.key === 'string'
+    ? value.key.trim() : undefined);
+  const keyCounts = new Map<string, number>();
+  for (const key of keys) if (key) keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+  // 无效条目的 key 也占用本批引用，避免引用失败项时意外连到历史中的同名笔记。
+  const localIds = new Map([...keyCounts.keys()].map(key => [key, `note_${digest([anchor.id, toolCallId, key]).slice(0, 24)}`]));
+  const errors = new Map<number, NoteEntryError>();
+  const accepted = new Map<string, { entry: NoteEntry; record: NoteReceipt['records'][number] }>();
+  const reject = (index: number, error: string) => errors.set(index, { index, ...(keys[index] ? { key: keys[index] } : {}), error });
+  const resolveTarget = (reference: string) => {
+    if (previous.notes.has(reference)) return reference;
+    const key = reference.startsWith('@') ? reference.slice(1) : reference;
+    return localIds.get(key) ?? resolveNoteReference(previous, key);
+  };
+  values.forEach((value, index) => {
+    try {
+      const entry = parseNoteEntry(value);
+      if (keyCounts.get(entry.key)! > 1) throw new Error('同批 key 必须唯一；请为重复条目使用不同 key。');
+      if (entry.validTo !== undefined && entry.validTo <= (entry.validFrom ?? now)) throw new Error('validTo 必须晚于 validFrom。');
+      const id = localIds.get(entry.key)!;
+      const relations = entry.relations.map(relation => {
+        const target = resolveTarget(relation.target);
+        if (!target || previous.states.get(target) === 'source_unavailable') {
+          throw new Error(`关系目标 ${relation.target} 不在当前分支的有效笔记中。`);
+        }
+        if (target === id) throw new Error('笔记不能关联自身。');
+        return { ...relation, target };
+      });
+      if (entry.kind === 'state') {
+        const replacedId = resolveNoteReference(previous, `@${entry.key}`);
+        if (replacedId) {
+          if (previous.notes.get(replacedId)!.kind !== 'state') throw new Error(`key ${entry.key} 已被其他类型的笔记使用，请为状态选择独立 key。`);
+          if (!relations.some(relation => relation.kind === 'supersedes' && relation.target === replacedId)) {
+            relations.push({ kind: 'supersedes', target: replacedId });
+          }
+        }
+      }
+      const sources = entry.sources.map(source => {
+        const message = resolveSourceMessage(source.messageId, messages, byId, anchor);
+        if (!message?.id || message.memoryRedacted || message === anchor) throw new Error(`来源 ${source.messageId} 不在当前可读的历史中。`);
+        // 同批笔记经常共用一个来源，完整工具结果的正文和指纹只计算一次。
+        if (!sourceTexts.has(message.id)) sourceTexts.set(message.id, contextMessageText(message));
+        if (!sourceDigests.has(message.id)) sourceDigests.set(message.id, sourceDigest(message));
+        const body = sourceTexts.get(message.id)!;
+        const offset = source.quote === undefined ? undefined : body.indexOf(source.quote);
+        if (offset === -1) throw new Error(`来源摘录必须逐字来自消息 ${message.id}。`);
+        if (source.quote !== undefined && body.indexOf(source.quote, offset! + 1) !== -1) throw new Error('来源摘录出现多次，请提供更完整、唯一的片段。');
+        return { messageId: message.id, digest: sourceDigests.get(message.id)!,
+          ...(offset === undefined ? {} : { offset, length: source.quote!.length }) };
+      });
+      accepted.set(id, { entry, record: { id, key: entry.key, index, sources, relations } });
+    } catch (error) {
+      reject(index, error instanceof Error ? error.message : String(error));
     }
-    const sources = entry.sources.map(source => {
-      const message = resolveSourceMessage(source.messageId, messages, byId, anchor);
-      if (!message?.id || message.memoryRedacted || message === anchor) throw new Error(`来源 ${source.messageId} 不在当前可读的历史中。`);
-      // 同批笔记经常共用一个来源，完整工具结果的正文和指纹只计算一次。
-      if (!sourceTexts.has(message.id)) sourceTexts.set(message.id, contextMessageText(message));
-      if (!sourceDigests.has(message.id)) sourceDigests.set(message.id, sourceDigest(message));
-      const body = sourceTexts.get(message.id)!;
-      const offset = source.quote === undefined ? undefined : body.indexOf(source.quote);
-      if (offset === -1) throw new Error(`来源摘录必须逐字来自消息 ${message.id}。`);
-      if (source.quote !== undefined && body.indexOf(source.quote, offset! + 1) !== -1) throw new Error('来源摘录出现多次，请提供更完整、唯一的片段。');
-      return { messageId: message.id, digest: sourceDigests.get(message.id)!,
-        ...(offset === undefined ? {} : { offset, length: source.quote!.length }) };
-    });
-    return { id: localIds.get(entry.key)!, key: entry.key, sources };
   });
-  // 批内允许前向引用，但替代关系不能形成循环，否则两条决定会同时消失。
-  const supersedes = new Map(entries.map(entry => [localIds.get(entry.key)!, entry.relations
-    .filter(relation => relation.kind === 'supersedes').map(relation => resolveTarget(relation.target)!)]));
-  const checked = new Set<string>();
-  const visit = (id: string, path: Set<string>) => {
-    if (path.has(id)) throw new Error('supersedes 不能形成循环。');
+  // 仅拒绝替代循环本身及引用失败项的条目，保留与它们无关的有效记录。
+  const checked = new Set<string>(), cyclic = new Set<string>();
+  const visit = (id: string, path: string[]) => {
+    const start = path.indexOf(id);
+    if (start !== -1) { for (const member of path.slice(start)) cyclic.add(member); return; }
     if (checked.has(id)) return;
-    for (const target of supersedes.get(id) ?? []) visit(target, new Set([...path, id]));
+    for (const relation of accepted.get(id)?.record.relations ?? []) {
+      if (relation.kind === 'supersedes') visit(relation.target, [...path, id]);
+    }
     checked.add(id);
   };
-  for (const id of supersedes.keys()) visit(id, new Set());
-  return { version: 1, anchorMessageId: anchor.id, inputHash: digest(entries), recordedAt: now, textFormat: CONTEXT_TEXT_FORMAT, records };
+  for (const id of accepted.keys()) visit(id, []);
+  for (const id of cyclic) {
+    reject(accepted.get(id)!.record.index!, 'supersedes 不能形成循环。');
+    accepted.delete(id);
+  }
+  const localTargets = new Set(localIds.values());
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [id, candidate] of accepted) {
+      const missing = candidate.record.relations!.find(relation => localTargets.has(relation.target) && !accepted.has(relation.target));
+      if (!missing) continue;
+      const targetKey = [...localIds].find(([, target]) => target === missing.target)![0];
+      reject(candidate.record.index!, `本批关系目标 ${targetKey} 未保存，请先修正该条目。`);
+      accepted.delete(id);
+      changed = true;
+    }
+  }
+  const candidates = [...accepted.values()];
+  const receipt: NoteReceipt = {
+    version: 2, anchorMessageId: anchor.id, inputHash: digest(candidates.map(candidate => candidate.entry)),
+    recordedAt: now, textFormat: CONTEXT_TEXT_FORMAT, records: candidates.map(candidate => candidate.record),
+  };
+  return {
+    success: candidates.length > 0,
+    partial: candidates.length > 0 && errors.size > 0,
+    recordedCount: candidates.length,
+    failedCount: errors.size,
+    errors: [...errors.values()].sort((a, b) => a.index - b.index),
+    ...(candidates.length ? { noteEvent: receipt } : { error: '本批没有保存任何笔记，请按 errors 修正失败条目。' }),
+  };
 }
 
 /**
@@ -203,11 +284,23 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
         calls.set(call.id, { message, entries: call.args.entries });
       const response = part.functionResponse as { id?: string; name?: string; response?: { success?: boolean; noteEvent?: NoteReceipt } } | undefined;
       const receipt = response?.response?.noteEvent;
-      if (!message.id || message.memoryRedacted || response?.name !== 'context_notes' || response.response?.success !== true || receipt?.version !== 1) continue;
+      if (!message.id || message.memoryRedacted || response?.name !== 'context_notes' || response.response?.success !== true
+        || !receipt || ![1, 2].includes(receipt.version)) continue;
       const original = calls.get(response.id!);
       if (!original || original.message.id !== receipt.anchorMessageId || original.message.memoryRedacted) continue;
       let entries: NoteEntry[];
-      try { entries = parseNoteEntries(original.entries); } catch { continue; }
+      try {
+        if (receipt.version === 1) entries = parseNoteEntries(original.entries);
+        else {
+          const values = array(original.entries, 'entries', 32);
+          entries = receipt.records.map(record => {
+            if (!Number.isInteger(record.index) || record.index! < 0 || record.index! >= values.length || !record.relations) {
+              throw new Error('笔记回执缺少有效的条目位置或关系。');
+            }
+            return parseNoteEntry(values[record.index!]);
+          });
+        }
+      } catch { continue; }
       if (digest(entries) !== receipt.inputHash || entries.length !== receipt.records.length) continue;
       const localIds = new Map(receipt.records.map(record => [record.key, record.id]));
       entries.forEach((entry, index) => {
@@ -230,8 +323,10 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
         // 引用存在只能证明来源可追溯，不能把模型转述提升为用户已确认的原话。
         const confidence = origin !== 'model' && origin !== 'fiction' && sourceMessages.some(source => source && sourceText(source).includes(entry.text))
           ? 'confirmed' : 'inferred';
-        const node: ContextNote = { id: record.id, kind: entry.kind, text: entry.text, about: entry.about,
-          relations: entry.relations.map(relation => ({ ...relation, target: relation.target.startsWith('@') ? localIds.get(relation.target.slice(1))! : relation.target })),
+        const node: ContextNote = { id: record.id, key: entry.key, kind: entry.kind, text: entry.text, about: entry.about,
+          relations: receipt.version === 2 ? record.relations! : entry.relations.map(relation => ({
+            ...relation, target: relation.target.startsWith('@') ? localIds.get(relation.target.slice(1))! : relation.target,
+          })),
           sources, origin, confidence, recordedAt: receipt.recordedAt, validFrom: entry.validFrom ?? receipt.recordedAt,
           validTo: entry.validTo, eventAt: entry.eventAt, anchorMessageId: receipt.anchorMessageId, resultMessageId: message.id! };
         notes.set(node.id, node);
@@ -246,7 +341,9 @@ export function buildNoteGraph(messages: PlatformMessage[], asOf = Date.now(), k
       replacements.set(relation.target, [...replacements.get(relation.target) ?? [], node.id]);
   }
   for (const id of replacements.keys()) if (states.get(id) === 'current') states.set(id, 'superseded');
-  return { notes, states, replacements, asOf, knownAt };
+  const keys = new Map<string, string[]>();
+  for (const note of notes.values()) keys.set(note.key, [...keys.get(note.key) ?? [], note.id]);
+  return { notes, states, replacements, keys, asOf, knownAt };
 }
 
 /** 一个旧决定可以有多个并行修订；返回所有有效候选，让模型看到分歧而非按时间猜一个。 */
@@ -257,8 +354,17 @@ export function currentNoteIds(graph: ContextNoteGraph, id: string, visited = ne
   return [...new Set((graph.replacements.get(id) ?? []).flatMap(next => currentNoteIds(graph, next, new Set([...visited, id]))))];
 }
 
+/** ID 精确读取历史；key 沿替代关系找到有效版本，重名时明确返回候选而不猜测。 */
+export function resolveNoteReference(graph: ContextNoteGraph, reference: string): string | undefined {
+  if (graph.notes.has(reference)) return reference;
+  const key = reference.startsWith('@') ? reference.slice(1) : reference;
+  const candidates = [...new Set((graph.keys.get(key) ?? []).flatMap(id => currentNoteIds(graph, id)))];
+  if (candidates.length > 1) throw new Error(`笔记 key ${key} 有多个有效候选，请使用笔记 ID：${candidates.join('、')}。`);
+  return candidates[0];
+}
+
 export function noteDetails(note: ContextNote, state: NoteState | undefined) {
-  return { id: note.id, kind: note.kind, text: note.text, about: note.about, state, origin: note.origin, confidence: note.confidence,
+  return { id: note.id, key: note.key, kind: note.kind, text: note.text, about: note.about, state, origin: note.origin, confidence: note.confidence,
     recordedAt: note.recordedAt, validFrom: note.validFrom, validTo: note.validTo, eventAt: note.eventAt,
     relations: note.relations, sources: note.sources.map(({ digest: _digest, ...source }) => source),
     resultMessageId: note.resultMessageId };
