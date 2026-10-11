@@ -12,7 +12,7 @@ Earlier copies remain available under the terms under which they were received. 
 
 本次切换不会撤回旧版本的 MIT 授权，也不会把其他作者的版权转让给 GrayCode。历史来源的原有许可继续有效；后续 GrayCode 新代码按本说明发布。
 
-The default scope includes GrayCode code in `apps/`, `packages/`, `backend/`, `frontend/`, `shared/`, `webview/`, `native/`, build scripts, and the extension entry point, unless a more specific third-party notice applies. Repository documentation follows the same default unless otherwise marked. Models, user content and third-party assets retain their own rights.
+The default scope includes GrayCode code in `apps/`, `packages/`, `backend/`, `frontend/`, `shared/`, `native/` and build scripts, unless a more specific third-party notice applies. Repository documentation follows the same default unless otherwise marked. Models, user content and third-party assets retain their own rights.
 
 `fast-tavern-main/` remains an MIT-licensed component under its own [LICENSE](fast-tavern-main/LICENSE). Vendored libraries, SDKs, debugger files, fonts and other third-party materials keep their respective licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). A package metadata label never overrides a component's original license text.
 

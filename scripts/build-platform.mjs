@@ -32,7 +32,7 @@ for (const [entry, output] of [
     external: PLATFORM_RUNTIME_EXTERNALS,
   });
   const forbidden = entry.startsWith('packages/core/')
-    ? Object.keys(result.metafile.inputs).filter(file => /^(backend|webview|frontend)\//.test(file)) : [];
+    ? Object.keys(result.metafile.inputs).filter(file => /^(backend|frontend)\//.test(file)) : [];
   const hostImports = Object.values(result.metafile.inputs).flatMap(input => input.imports)
     .filter(input => input.path === 'vscode' || input.path === 'electron');
   if (forbidden.length || hostImports.length) {

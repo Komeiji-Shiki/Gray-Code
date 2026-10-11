@@ -49,7 +49,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 
 ## 修改边界
 
-- **core 不依赖宿主**：`packages/core` 不导入 Electron、VS Code、frontend、webview 或 backend；宿主能力经应用服务与端口注入。`scripts/build-platform.mjs` 构建时检查这条边界，越界直接报错。
+- **core 不依赖宿主**：`packages/core` 不导入 Electron、VS Code、frontend 或 backend；宿主能力经应用服务与端口注入。`scripts/build-platform.mjs` 构建时检查这条边界，越界直接报错。
 - **shared 不用 DOM 类型**：`shared/` 除了被前端与外壳打包，也由根 tsconfig（ES2023 库、无 DOM）检查；需要操作页面元素时用结构类型描述用到的属性。
 - **contracts 全链路**：新增字段时同步检查写入、读取、列表、备份恢复与旧数据读取。
 - **模型请求保持稳定**：维持既有消息与图片顺序，新增输入不删除旧图；改变工具目录、系统提示或压缩边界时，说明它对请求前缀（缓存命中）的影响。
@@ -64,6 +64,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 ## 工具与提示词
 
 - **工具声明是每次请求都发送的前缀**：默认 Agent 会把全部启用工具的说明和 schema 发给模型，新增或修改时控制长度。枚举值不在说明里重复列举；结果字段只解释模型容易误读的部分；跨工具共用的句子提取成常量（如 `backend/tools/shared/batchingGuidance.ts`）。
+- **文档工具按模式发送**：设计、计划、审查与进度工具由 `backend/modules/settings/modeToolsPolicy.ts` 决定随哪些模式发送；未定制的 Code 模式不带它们，只有已确认执行计划时保留计划回写与进度同步工具。
 - **环境工具按环境追加**：Bot 附件、上下文笔记等只在特定会话有意义的工具由 `apps/server/src/prompt/service.ts` 追加，并登记在 `apps/server/src/settings/agent.ts` 的环境工具表里，不进入默认 Agent 的常驻清单。没有对应宿主能力（如内置浏览器）时也不常驻。
 - **先扩展参数，再加工具**：新增工具前确认现有工具无法用一个参数或 action 覆盖。功能相近的工具族会让模型选择困难，也会让说明成倍增长。
 - **工具说明的语言**：平台工具的说明直接写在 `apps/server` 或其调用的 `backend/tools` 工厂里；保留双语的动态说明经 `backend/tools/localization/dynamicDescriptions.ts` 按语言生成，新增说明应覆盖中文。

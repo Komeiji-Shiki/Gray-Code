@@ -21,17 +21,12 @@
   - 渲染层：流式节流（leading + trailing + max-wait，120ms/180ms）、已完成消息 LRU 缓存（128 条，含工作区文件存在性签名）、内容快照跳过无变化重渲染
 - **结论**：不再存在对完整累积内容的重复全量解析（渲染输入被限制为小得多的已定型前缀且周期性归零）；MarkdownRenderer 内部再做增量渲染不再必要
 
-### 2. activationEvents 使用 onStartupFinished — 已解决
-- **原位置**：`package.json:19-21`
-- **解决方式**：已移除 `activationEvents` 字段，改由 VS Code 对 `contributes.commands/views` 的默认按需激活；`extension.ts` 的 `activate` 已收敛为轻量初始化（Logger / productMetadata / ChatViewProvider 注册 / 基础命令），不再有每次启动触发的后端初始化与历史迁移
-- **结论**：未使用聊天面板的用户不再承担扩展启动开销
-
-### 3. jest / vitest 前端测试归属 — 已解决
+### 2. jest / vitest 前端测试归属 — 已解决
 - **原位置**：`test/unit/`（jest）与 `frontend/src/__tests__/`（vitest）
 - **解决方式**：`test/unit` 整体归位删除（tools/settings → `backend/__tests__`，前端用例并入 frontend vitest 域）；`jest.backend.config.js` roots 仅扫描 `backend/__tests__` 与 `test/benchmark`；前端唯一测试域为 `frontend/src/__tests__/`（vitest）
 - **结论**：测试归属清晰，本地命令分工明确（`npm test` 后端 jest / `npm run test:frontend` vitest / `npm run ci` 全量门禁）
 
-### 4. design / plan pathUtils 收敛 — 已解决
+### 3. design / plan pathUtils 收敛 — 已解决
 - **原位置**：`backend/tools/design/pathUtils.ts`、`backend/tools/plan/pathUtils.ts`
 - **解决方式**：抽出更通用的共享模块 `backend/tools/shared/pathPolicy.ts`（`isScopedPathAllowedWithMultiRoot` + scope 文案 + 父目录创建），design/plan/progress 三处 pathUtils 均瘦身为薄封装委托同一实现；design 保留 `ensureParentDirWithFs`（fs.promises.mkdir）与 `ensureParentDir`（vscode.workspace.fs）的差异为有意为之（远程/虚拟工作区行为与测试 mock 依赖，注释有说明）
 - **结论**：收敛完成，纯重构零风险目标达成

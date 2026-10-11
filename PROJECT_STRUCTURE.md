@@ -44,7 +44,7 @@ flowchart TB
   Bots[Discord / OneBot / 自动任务 / 节点] --> Application
 ~~~
 
-packages/core 不导入 Electron、VS Code、frontend、webview 或 backend。构建脚本检查这些宿主边界。服务端通过宿主端口使用电脑、浏览器、通知等能力；独立 CLI 没有的能力不会凭空变成可用工具。
+packages/core 不导入 Electron、VS Code、frontend 或 backend。构建脚本检查这些宿主边界。服务端通过宿主端口使用电脑、浏览器、通知等能力；独立 CLI 没有的能力不会凭空变成可用工具。
 
 ## 目录职责
 
