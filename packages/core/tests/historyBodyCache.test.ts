@@ -35,7 +35,7 @@ describe('存储线程复用已解码的消息正文', () => {
     await f.store.appendHistory('large', large);
     for (let pass = 0; pass < 2; pass++) {
       const read = (await f.store.readFullHistory('large')).messages;
-      expect(read.map(item => item.parts[0].text?.length)).toEqual(large.map(item => item.parts[0].text?.length));
+      expect(read.map(item => String(item.parts[0].text).length)).toEqual(large.map(item => String(item.parts[0].text).length));
       expect(read.map(item => item.id)).toEqual(large.map(item => item.id));
     }
   });

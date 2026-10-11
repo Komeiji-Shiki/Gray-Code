@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { legacyMemoryImportFixture } from '../__fixtures__/legacyMemoryImport';
-import { TREE_REC } from '../../modules/memory/types';
-import { isValidTreeRecord, pad } from '../../modules/memory/logFormat';
+import { legacyMemoryImportFixture } from '../support/legacyMemoryImport';
+import { TREE_REC } from '../../../../backend/modules/memory/types';
+import { isValidTreeRecord, pad } from '../../../../backend/modules/memory/logFormat';
 
 const legacyTreeRecords = (texts: string[]) => Buffer.concat(texts.map(text => pad(text, 288)));
 

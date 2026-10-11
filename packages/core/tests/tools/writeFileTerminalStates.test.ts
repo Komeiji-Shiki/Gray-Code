@@ -1,5 +1,5 @@
 /** 平台完整写入的 Diff 终态、参数边界与换行行为。 */
-import { createMutationToolFixture } from '../__fixtures__/mutationToolFixture';
+import { createMutationToolFixture } from '../support/mutationToolFixture';
 
 const fixture = createMutationToolFixture('write_file');
 const propose = fixture.propose;

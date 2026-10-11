@@ -135,8 +135,7 @@ describe('getHistoryWithGranularFallback - stable start index', () => {
             { role: 'user', parts: [{ text: 'new' }], isUserInput: true, tokenCountByChannel: { custom: 200 } },
             { role: 'model', parts: [{ text: 'new answer' }], tokenCountByChannel: { custom: 200 } },
         ];
-        const { service: s2 } = createContextTrimHarness(() => summarizedHistory);
-        const result = await s2.getHistoryWithGranularFallback('c2', config, {}, undefined, 'single', 1);
+        const result = await getHistoryWithGranularFallback(createFallbackDeps(() => summarizedHistory), 'c2', config, {}, undefined, 'single', 1);
         expect(result.trimStartIndex).toBe(2);
         // history[0] 是首条用户消息（任务锚点），history[1] 是 preserved 用户输入档案（goal），history[2] 才是总结消息
         expect(result.history[0]).toMatchObject({ role: 'user', parts: [{ text: 'goal' }] });

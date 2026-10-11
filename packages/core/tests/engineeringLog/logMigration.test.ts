@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { legacyMemoryImportFixture } from '../__fixtures__/legacyMemoryImport';
-import { LOG_REC } from '../../modules/memory/types';
+import { legacyMemoryImportFixture } from '../support/legacyMemoryImport';
+import { LOG_REC } from '../../../../backend/modules/memory/types';
 
 describe('旧 LOG 只读导入平台数据库', () => {
     let memory: Awaited<ReturnType<typeof legacyMemoryImportFixture>>;

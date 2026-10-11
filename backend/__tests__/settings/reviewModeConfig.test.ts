@@ -23,6 +23,7 @@ describe('review mode config', () => {
       'subagents',
       'create_review',
       'validate_review_document',
+      'compare_review_documents',
       'create_progress',
       'update_progress',
       'record_progress_milestone',
@@ -30,13 +31,7 @@ describe('review mode config', () => {
       'record_review_milestone',
       'finalize_review',
       'reopen_review',
-      'memory_wake',
-      'memory_note',
-      'memory_recall',
-      'memory_compress',
-      'memory_zoom',
-      'memory_forget',
-      'memory_config'
+      'engineering_log'
     ])
     expect(REVIEW_PROMPT_MODE.toolPolicy).toEqual(REVIEW_MODE_TOOL_POLICY)
     expect(REVIEW_MODE_TEMPLATE).toContain('do the work incrementally instead of reading everything first and writing the review only at the end')

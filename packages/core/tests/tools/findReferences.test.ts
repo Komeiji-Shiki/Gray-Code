@@ -4,8 +4,8 @@
 
 import * as path from 'path';
 import { pathToFileURL } from 'node:url';
-import { createLanguageToolFixture } from '../__fixtures__/languageToolFixture';
-import { MAX_REFERENCE_CONTENT_CHARS } from '../../tools/lsp/referencePage';
+import { createLanguageToolFixture } from '../support/languageToolFixture';
+import { MAX_REFERENCE_CONTENT_CHARS } from '../../../../backend/tools/lsp/referencePage';
 
 const fixture = createLanguageToolFixture('find_references');
 const executeCommandMock = fixture.provider;

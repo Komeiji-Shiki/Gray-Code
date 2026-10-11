@@ -7,7 +7,7 @@
  * 5. 批量删除（乱序/重复 id）：按闭区间聚合，全部移除、其余重编号
  * 6. 删除后树摘要被清空
  */
-import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
+import { memoryEngineFixture } from '../support/memoryEngine';
 
 describe('MemoryEngine.deleteRange', () => {
     test('闭区间删除：仅移除 [lo, hi]，其后记录 id 前移、文本与日期保留', async () => {

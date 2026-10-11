@@ -1,6 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
-import type { MarkerItem } from './CustomScrollbarMarkers.vue'
-import { projectVirtualScrollbarMarkers } from './virtualScrollbarMarkers'
+import { projectVirtualScrollbarMarkers, type MarkerItem } from './virtualScrollbarMarkers'
 
 interface ScrollbarMarkerProps {
   markerSelector: string

@@ -30,7 +30,7 @@ function fixture(nodes: AxNode[]) {
   const debug = Object.assign(new EventEmitter(), { sendCommand, isAttached: () => attached, attach: () => { attached = true; } });
   const contents = Object.assign(new EventEmitter(), {
     debugger: debug, isDestroyed: () => false, isDevToolsOpened: () => false,
-    getURL: () => 'https://fixture.test/', getTitle: () => '验收网页', getZoomFactor: (): number => 1, capturePage: jest.fn(),
+    getURL: (): string => 'https://fixture.test/', getTitle: () => '验收网页', getZoomFactor: (): number => 1, capturePage: jest.fn(),
   });
   return { page: new BrowserPage(contents as any, () => {}), contents, sendCommand };
 }

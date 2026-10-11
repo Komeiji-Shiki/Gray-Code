@@ -15,7 +15,7 @@ function toolsFixture(contents: Record<string, string | Buffer> = { 'a.txt': 'hi
     checkAccess: () => null,
     searchConfig: () => DEFAULT_SEARCH_IN_FILES_CONFIG,
     toRelativePath: (file: { fsPath: string }) => file.fsPath,
-    iterateFiles: async function* () { for (const file of Object.keys(contents)) yield { fsPath: file, scheme: 'file' }; },
+    iterateFiles: async function* (_root?: unknown, _pattern?: string) { for (const file of Object.keys(contents)) yield { fsPath: file, scheme: 'file' }; },
     stat: jest.fn(async (file: { fsPath: string }) => ({ size: Buffer.byteLength(contents[file.fsPath] ?? ''), type: 1 })),
     readFile: jest.fn(async (file: { fsPath: string }) => Buffer.from(contents[file.fsPath])),
   };
@@ -75,7 +75,7 @@ describe('合并后的内容搜索', () => {
     expect(result).toMatchObject({ column: 7295, match: 'browser_read' });
     expect(result.context).toContain('browser_read');
     expect(result.context).toMatch(/^1: ….*…$/);
-    expect(result.context.length).toBeLessThanOrEqual(DEFAULT_SEARCH_IN_FILES_CONFIG.maxMatchPreviewChars + 5);
+    expect(result.context.length).toBeLessThanOrEqual(DEFAULT_SEARCH_IN_FILES_CONFIG.maxMatchPreviewChars! + 5);
   });
 
   test('pattern 传给文件遍历，省略时搜索所有文件', async () => {

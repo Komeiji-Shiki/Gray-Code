@@ -1,18 +1,5 @@
-<script lang="ts">
-export interface MarkerItem {
-  top: number
-  contentPreview: string
-  element?: HTMLElement
-  /** 虚拟轨道的全局消息索引，用于跳转。 */
-  targetIndex?: number
-  /** 原用户消息序号，抽样后仍用于提示。 */
-  index: number
-  color: string
-  tooltipPrefix: string
-}
-</script>
-
 <script setup lang="ts">
+import type { MarkerItem } from './virtualScrollbarMarkers'
 // 独立渲染边界：滑块和提示位置变化时，不再遍历整张标记列表。
 defineProps<{
   markers: MarkerItem[]

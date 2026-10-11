@@ -1,10 +1,10 @@
 import path from 'node:path';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
-import type { RuntimeTool, ToolContext } from '../../../packages/core/src/runtime/tools';
-import type { PlatformApplication } from '../../../apps/server/src/application';
-import { mutationTools } from '../../../apps/server/src/workspace/mutationTools';
-import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
-import { TEMP_DIR_REMOVE_OPTIONS } from './tempDirectory';
+import type { RuntimeTool, ToolContext } from '../../src/runtime/tools';
+import type { PlatformApplication } from '../../../../apps/server/src/application';
+import { mutationTools } from '../../../../apps/server/src/workspace/mutationTools';
+import { WorkspaceFiles } from '../../../../apps/server/src/workspace/files';
+import { TEMP_DIR_REMOVE_OPTIONS } from '../fixtures';
 
 /** 实际文件事务负责读取与编码，测试只控制用户审阅返回的终态。 */
 export function createMutationToolFixture(name: string) {

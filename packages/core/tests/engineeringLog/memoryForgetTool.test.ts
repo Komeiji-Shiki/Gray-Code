@@ -1,5 +1,5 @@
-import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
-import { createEngineeringLogTool } from '../../tools/memory/engineeringLog';
+import { memoryEngineFixture } from '../support/memoryEngine';
+import { createEngineeringLogTool } from '../../../../backend/tools/memory/engineeringLog';
 
 let memory: Awaited<ReturnType<typeof memoryEngineFixture>>;
 /**

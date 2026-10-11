@@ -5,9 +5,9 @@
  * 3. totalEntries / listEntries(limit) 截断语义
  * 4. wake 连续原始块批量读取后输出与逐块读取一致
  */
-import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
-import { LOG_REC } from '../../modules/memory/types';
-import { MAX_ENTRY_CHARS } from '../../modules/memory/logFormat';
+import { memoryEngineFixture } from '../support/memoryEngine';
+import { LOG_REC } from '../../../../backend/modules/memory/types';
+import { MAX_ENTRY_CHARS } from '../../../../backend/modules/memory/logFormat';
 
 describe('MemoryEngine.note 手动新增', () => {
     test('entryChars 可调高到 1280 并写入 1280 字节文本（不再被旧上限 1000 拒绝）', async () => {

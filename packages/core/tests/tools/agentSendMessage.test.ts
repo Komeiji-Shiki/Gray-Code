@@ -1,13 +1,13 @@
 import type { RecordMutation, RunRecord } from '@graycode/contracts';
 import type { ToolContext } from '@graycode/core';
-import { createAgentMessageDeclaration } from '../../tools/subagents/createAgentMessageDeclaration';
-import { MAIN_SESSION_RUN_ID } from '../../core/services/agentMessages';
-import { cleanFunctionResponseForAPI } from '../../modules/conversation/helpers';
-import { PlatformAgentMessages } from '../../../apps/server/src/subagents/messages';
-import { subagentTools } from '../../../apps/server/src/subagents/tools';
-import type { PlatformApplication } from '../../../apps/server/src/application';
-import type { SubagentExecutionService } from '../../../apps/server/src/subagents/service';
-import type { PendingFeedback } from '../../../apps/server/src/subagents/feedback';
+import { createAgentMessageDeclaration } from '../../../../backend/tools/subagents/createAgentMessageDeclaration';
+import { MAIN_SESSION_RUN_ID } from '../../../../backend/core/services/agentMessages';
+import { cleanFunctionResponseForAPI } from '../../../../backend/modules/conversation/helpers';
+import { PlatformAgentMessages } from '../../../../apps/server/src/subagents/messages';
+import { subagentTools } from '../../../../apps/server/src/subagents/tools';
+import type { PlatformApplication } from '../../../../apps/server/src/application';
+import type { SubagentExecutionService } from '../../../../apps/server/src/subagents/service';
+import type { PendingFeedback } from '../../../../apps/server/src/subagents/feedback';
 
 /** 只替换存储与调度端口；身份校验、寻址、消息内容和回执均经过真实平台发送入口。 */
 function fixture() {
@@ -40,7 +40,11 @@ function fixture() {
             pending.filter((item) => item.conversationId === conversationId && !item.displayOnly).map((item) => item.id),
         ),
         enqueueMessages: jest.fn(async (messages: PendingFeedback[], mutations: RecordMutation[]) => {
-            for (const mutation of mutations) records.set(`${mutation.namespace}:${mutation.id}`, structuredClone(mutation.value));
+            for (const mutation of mutations) {
+                const key = `${mutation.namespace}:${mutation.id}`;
+                if ('delete' in mutation) records.delete(key);
+                else records.set(key, structuredClone(mutation.value));
+            }
             pending.push(...structuredClone(messages));
         }),
         flush: jest.fn(async () => true),
@@ -109,7 +113,7 @@ describe('agent_send_message - 平台发送入口', () => {
         const result = await f.messages.send({ targetRunId: 'run_b', message: 'hello' }, f.context());
 
         expect(result).toMatchObject({ success: true, data: { toRunId: 'run_b', hopDepth: 1 } });
-        expect(typeof result.data!.threadId).toBe('string');
+        expect(typeof (result.data as { threadId: string }).threadId).toBe('string');
         const delivered = f.pending.filter((item) => item.conversationId === 'conv_1:run_b');
         expect(delivered).toHaveLength(1);
         expect(delivered[0].message.agentMessage).toMatchObject({ fromRunId: 'run_a', fromAgentName: 'Agent A', text: 'hello' });
@@ -215,12 +219,12 @@ describe('agent_send_message - 历史回执与卡片', () => {
         const delivered = f.pending.find((item) => item.conversationId === 'conv_1:run_b')!;
         const display = f.pending.find((item) => item.conversationId === f.rootId)!;
         expect(delivered.message.agentMessage).toMatchObject({
-            messageId: result.data!.messageId,
+            messageId: (result.data as { messageId: string }).messageId,
             fromRunId: 'run_a',
             fromAgentName: 'Agent A',
             toRunId: 'run_b',
             toAgentName: 'Agent B',
-            threadId: result.data!.threadId,
+            threadId: (result.data as { threadId: string }).threadId,
             hopDepth: 1,
             text: 'please check the file',
         });

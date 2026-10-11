@@ -98,7 +98,7 @@ describe('向量候选矩阵缓存', () => {
         await f.store.longMemoryWrite({ scope, sources: items.map(item => source(`${item.id}-source`)), records: items.map(item => record(item.id, item.values, item.topic)) });
       }
       const queries = [query(scopes[0]), query(scopes[1]), query(scopes[0], '奇'), query(scopes[1], '偶')];
-      const baseline = [];
+      const baseline: Awaited<ReturnType<typeof ranking>>[] = [];
       for (const value of queries) baseline.push(await ranking(f.store, value));
       // 交替多轮，结果必须与首次（未命中缓存）完全相同。
       for (let round = 0; round < 3; round++) for (const [index, value] of queries.entries()) expect(await ranking(f.store, value)).toEqual(baseline[index]);
@@ -106,7 +106,7 @@ describe('向量候选矩阵缓存', () => {
       // 修改 A 范围中一条向量：A 的结果变化并与重新打开存储得到的结果一致，B 不变。
       const top = baseline[0][0][0] as string;
       await f.store.longMemoryVector({ scope: scopes[0], id: top, version: 1, vector: { model: 'fixture-vector', dimensions: 3, values: [-1, -0.5, -0.25] } });
-      const changed = [];
+      const changed: Awaited<ReturnType<typeof ranking>>[] = [];
       for (const value of queries) changed.push(await ranking(f.store, value));
       expect(changed[0]).not.toEqual(baseline[0]); expect(changed[0].map(item => item[0])).not.toContain(top);
       expect(changed[1]).toEqual(baseline[1]); expect(changed[3]).toEqual(baseline[3]);
@@ -117,7 +117,7 @@ describe('向量候选矩阵缓存', () => {
       // 删除后再写入：行号可能复用，结果仍须与重新打开一致。
       await f.store.longMemoryWrite({ scope: scopes[1], remove: [{ kind: 'record', id: 'project-b-0', action: 'delete', expectedVersion: 1 }] });
       await f.store.longMemoryWrite({ scope: scopes[0], sources: [source('late-source')], records: [{ ...record('late', [1, 0.5, 0.25], '偶'), dependencies: [{ kind: 'source', id: 'late-source', version: 1 }] }] });
-      const rewritten = [];
+      const rewritten: Awaited<ReturnType<typeof ranking>>[] = [];
       for (const value of queries) rewritten.push(await ranking(f.store, value));
       expect(rewritten[0][0][0]).toBe('late'); expect(rewritten[1].map(item => item[0])).not.toContain('project-b-0');
       await f.store.close();

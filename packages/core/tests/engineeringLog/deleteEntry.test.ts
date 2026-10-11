@@ -7,7 +7,7 @@
  * 5. 删除后树摘要被清空（覆盖块的下层文件被截断）
  * 6. 删除后继续 note 追加：新记录 id 连续无冲突
  */
-import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
+import { memoryEngineFixture } from '../support/memoryEngine';
 
 describe('MemoryEngine.deleteEntry', () => {
     test('删除中间条目：仅该条被移除，其后记录 id 前移、文本与日期保留', async () => {

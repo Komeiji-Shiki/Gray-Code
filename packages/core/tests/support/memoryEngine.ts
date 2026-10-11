@@ -1,10 +1,10 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { fixture } from '../../../packages/core/tests/fixtures';
-import { DatabaseMemoryStore } from '../../../apps/server/src/memory/store';
-import { MemoryEngine } from '../../modules/memory/MemoryEngine';
-import { DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../modules/memory/types';
-import type { MemoryToolHost } from '../../tools/memory/host';
+import { fixture } from '../fixtures';
+import { DatabaseMemoryStore } from '../../../../apps/server/src/memory/store';
+import { MemoryEngine } from '../../../../backend/modules/memory/MemoryEngine';
+import { DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../../../backend/modules/memory/types';
+import type { MemoryToolHost } from '../../../../backend/tools/memory/host';
 
 /** 使用正式数据库存储，只把旧全局注册器替换为显式的测试宿主。 */
 export async function memoryEngineFixture(config: Partial<MemoryConfig> = {}) {

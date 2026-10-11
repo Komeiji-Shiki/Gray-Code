@@ -281,8 +281,8 @@ test('恢复默认显示完整记忆规则，保存时继续使用后端默认�
   try {
     await wrapper.findAll('button').find(button => button.text() === t('components.settings.settingsPanel.memory.reset'))!.trigger('click');
     const text = wrapper.get<HTMLTextAreaElement>('[data-search-anchor="memory-custom-prompt"] textarea').element.value;
-    expect(text).toContain('memory_wake');
-    expect(text).toContain('memory_note');
+    expect(text).toContain('engineering_log');
+    expect(text).toContain('action=wake');
     expect(text).not.toContain('components.settings.');
     await wrapper.findAll('button').find(button => button.text() === t('components.settings.settingsPanel.memory.save'))!.trigger('click');
     await flushPromises();

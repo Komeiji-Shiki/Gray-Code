@@ -153,7 +153,7 @@ test('未选择工作区不能启动，任意工作区外绝对路径也不能�
 
 test('terminal_task read 按 cursor/maxChars 续读，缺少对话和工作区时不能接管任务', async () => {
   const { run, session, active } = fixture();
-  const taskId = (await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data!.taskId as string;
+  const taskId = ((await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data as { taskId: string }).taskId;
   active(taskId).outputBuffer = { output: 'first-second', outputOffset: 0, truncated: false };
   expect(await session.execute({ action: 'read', taskId, cursor: 6, maxChars: 3 }, { ...context, runId: 'run-2' })).toMatchObject({
     data: { output: 'sec', nextCursor: 9, hasMore: true },
@@ -165,7 +165,7 @@ test('terminal_task read 按 cursor/maxChars 续读，缺少对话和工作区�
 
 test('input 必须等待异步授权和写入成功才返回；stop 使用同一受管任务', async () => {
   const { run, session, runner } = fixture();
-  const taskId = (await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data!.taskId as string;
+  const taskId = ((await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data as { taskId: string }).taskId;
   let resolve!: () => void;
   runner.inputTerminalProcess.mockImplementation(
     () =>
@@ -186,7 +186,7 @@ test.each(['NOT_FOUND', 'FORBIDDEN', 'EXITED', 'INVALID_CURSOR'] as const)(
   'terminal_task 保留错误码 %s，异步 input 拒绝时不伪报成功',
   async (code) => {
     const { run, session, runner } = fixture();
-    const taskId = (await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data!.taskId as string;
+    const taskId = ((await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data as { taskId: string }).taskId;
     runner.inputTerminalProcess.mockRejectedValueOnce(new ProcessSessionError(code, '明确原因'));
     const expected = {
       success: false,
@@ -213,7 +213,7 @@ test.each(['NOT_FOUND', 'FORBIDDEN', 'EXITED', 'INVALID_CURSOR'] as const)(
 
 test('未知异常不被伪装为进程权限或状态错误', async () => {
   const { run, session, runner } = fixture();
-  const taskId = (await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data!.taskId as string;
+  const taskId = ((await run.execute({ mode: 'argv', command: 'fixture', args: [] }, context)).data as { taskId: string }).taskId;
   runner.killTerminalProcess.mockRejectedValueOnce(new Error('storage unavailable'));
   await expect(session.execute({ action: 'stop', taskId }, context)).rejects.toThrow('storage unavailable');
 });

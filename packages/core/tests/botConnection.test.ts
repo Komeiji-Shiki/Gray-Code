@@ -7,7 +7,7 @@ import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
 const deferred = <T = void>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 
 test('Discord 重新登录完成后恢复连接状态', async () => {
-  jest.spyOn(Client.prototype, 'login').mockImplementation(async function () {
+  jest.spyOn(Client.prototype, 'login').mockImplementation(async function (this: Client) {
     Object.defineProperty(this, 'user', { configurable: true, value: { id: '900', username: '测试', displayAvatarURL: () => '' } });
     Object.defineProperty(this, 'application', { configurable: true, value: { commands: { create: async () => {} } } });
     return 'fixture';

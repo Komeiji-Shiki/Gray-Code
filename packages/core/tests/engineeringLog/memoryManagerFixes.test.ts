@@ -4,7 +4,7 @@
  * 2. wake 缺失摘要时基于实际缺失的块构造提示（而非 nextNap 的第一个待压缩块）
  * 3. 普通待压缩提示与阻塞 wake 的必要压缩具有不同紧迫度
  */
-import { memoryEngineFixture } from '../__fixtures__/memoryEngine';
+import { memoryEngineFixture } from '../support/memoryEngine';
 
 
 describe('MemoryEngine.compress', () => {

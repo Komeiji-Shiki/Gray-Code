@@ -102,7 +102,7 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     const readHistory = jest.fn(() => messages);
     Object.defineProperty(request, 'messages', { get: readHistory });
     adapter = new ProviderModelAdapter({ profile: async () => profile, credential: async () => '',
-      channel: async () => { controller.abort(reason); return undefined; } });
+      channel: async () => { controller.abort(reason); return null; } });
     await expect(adapter.generate(request)).rejects.toBe(reason);
     expect(readHistory).not.toHaveBeenCalled(); expect(requests).toEqual([]);
   });

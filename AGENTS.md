@@ -50,7 +50,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 ## 修改边界
 
 - **core 不依赖宿主**：`packages/core` 不导入 Electron、VS Code、frontend、webview 或 backend；宿主能力经应用服务与端口注入。`scripts/build-platform.mjs` 构建时检查这条边界，越界直接报错。
-- **shared 不用 DOM 类型**：`shared/` 除了被前端与外壳打包，也由根 tsconfig（ES2020、无 DOM 库）检查；需要操作页面元素时用结构类型描述用到的属性。
+- **shared 不用 DOM 类型**：`shared/` 除了被前端与外壳打包，也由根 tsconfig（ES2023 库、无 DOM）检查；需要操作页面元素时用结构类型描述用到的属性。
 - **contracts 全链路**：新增字段时同步检查写入、读取、列表、备份恢复与旧数据读取。
 - **模型请求保持稳定**：维持既有消息与图片顺序，新增输入不删除旧图；改变工具目录、系统提示或压缩边界时，说明它对请求前缀（缓存命中）的影响。
 - **存储格式向后兼容**：格式变更保持旧记录可读；优化时沿用既有结构与读取路径，不另建平行存储。
@@ -95,7 +95,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 ## 验证
 
 - 开发中只做必要的快速检查，改完后集中跑回归；条件没变时不重复跑已经通过的整套检查。
-- 测试位置：`backend/__tests__/`（根 Jest）、`packages/core/tests/`（平台 Jest）、`frontend/src` 下的测试目录（Vitest）。
+- 测试位置：`backend/__tests__/`（根 Jest，只测 backend 与 shared 自身）、`packages/core/tests/`（平台 Jest；凡是导入 `apps/server` 或 `packages/core` 的用例都放这里，类型由 `packages/core/tests/tsconfig.json` 按服务端严格度检查）、`frontend/src` 下的测试目录（Vitest）。
 - 按改动范围选择命令：
   - 类型：`npm run typecheck:all`
   - backend：`npm test`；frontend：`npm --prefix frontend test`

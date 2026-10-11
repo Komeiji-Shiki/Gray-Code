@@ -93,7 +93,7 @@ describe('持久目标和定时触发', () => {
     const options = await app.automations.options('owner');
     expect(metadataReads).not.toHaveBeenCalled();
     expect(options.eventConversations).toEqual(expect.arrayContaining([{ id: 'auto-chat', title: '自动任务测试' }, { id: 'untitled-chat', title: 'untitled-chat' }]));
-    expect(options.eventConversations.some(row => row.id === 'guest-chat')).toBe(false);
+    expect(options.eventConversations!.some(row => row.id === 'guest-chat')).toBe(false);
   });
 
   test('目标跨轮继续，完成工具结算后结束，并保留原目标消息与调用用量', async () => {

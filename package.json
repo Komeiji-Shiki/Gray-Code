@@ -17,7 +17,7 @@
     "package:desktop": "npm run license:check && npm run package:source && npm run build:desktop && node scripts/package-desktop.mjs",
     "desktop": "electron apps/desktop/dist/main.cjs",
     "build:platform": "node scripts/build-platform.mjs",
-    "typecheck:platform": "tsc -p packages/core/tsconfig.json && tsc -p apps/server/tsconfig.json",
+    "typecheck:platform": "tsc -p packages/core/tsconfig.json && tsc -p apps/server/tsconfig.json && tsc -p packages/core/tests/tsconfig.json",
     "typecheck:desktop": "tsc -p apps/desktop/tsconfig.json --noEmit && npm --workspace @graycode/client run typecheck",
     "test:platform": "npm run build:platform && jest --config jest.platform.config.cjs",
     "benchmark:platform": "npm run build:platform && node scripts/benchmark-platform.mjs",

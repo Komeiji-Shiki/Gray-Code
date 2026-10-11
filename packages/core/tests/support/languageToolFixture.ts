@@ -1,9 +1,9 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { ToolContext } from '../../../packages/core/src/runtime/tools';
-import type { PlatformApplication } from '../../../apps/server/src/application';
-import { languageTools } from '../../../apps/server/src/development/tools';
-import { LanguageServices } from '../../../apps/server/src/development/languages';
+import type { ToolContext } from '../../src/runtime/tools';
+import type { PlatformApplication } from '../../../../apps/server/src/application';
+import { languageTools } from '../../../../apps/server/src/development/tools';
+import { LanguageServices } from '../../../../apps/server/src/development/languages';
 
 /** 保留平台工具、文件访问和请求超时链路，只替换磁盘句柄与 JSON-RPC 会话。 */
 export function createLanguageToolFixture(name: string) {
@@ -41,7 +41,7 @@ export function createLanguageToolFixture(name: string) {
                 return { stat: async () => ({ size: Buffer.byteLength(text) }), readFile: async () => text, close: async () => {} } as any;
             });
             definitionSpy = jest.spyOn(languages, 'definitions').mockReturnValue([
-                { id: 'fixture', name: '测试语言服务', languages: ['typescript'], command: 'fixture' }
+                { id: 'fixture', name: '测试语言服务', languages: ['typescript'], command: 'fixture', args: [] }
             ]);
             sessionSpy = jest.spyOn(languages as any, 'sessionFor').mockResolvedValue({
                 info: { id: 'fixture' }, changes: Promise.resolve(), documents: new Map(),

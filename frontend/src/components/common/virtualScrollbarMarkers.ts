@@ -1,3 +1,15 @@
+export interface MarkerItem {
+  top: number
+  contentPreview: string
+  element?: HTMLElement
+  /** 虚拟轨道的全局消息索引，用于跳转。 */
+  targetIndex?: number
+  /** 原用户消息序号，抽样后仍用于提示。 */
+  index: number
+  color: string
+  tooltipPrefix: string
+}
+
 /** 保留既有均匀采样与真实索引映射，投影只读取最终显示的标记。 */
 export function projectVirtualScrollbarMarkers(markers: readonly { index: number; preview?: string }[], total: number, trackHeight: number) {
   if (total <= 0 || trackHeight <= 0) return []

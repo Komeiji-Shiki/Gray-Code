@@ -1,11 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fixture } from '../../../packages/core/tests/fixtures';
-import type { PlatformApplication } from '../../../apps/server/src/application';
-import { LegacyMemoryImporter } from '../../../apps/server/src/memory/import';
-import { PlatformMemory } from '../../../apps/server/src/memory/service';
-import { LOG_REC } from '../../modules/memory/types';
-import { pad } from '../../modules/memory/logFormat';
+import { fixture } from '../fixtures';
+import type { PlatformApplication } from '../../../../apps/server/src/application';
+import { LegacyMemoryImporter } from '../../../../apps/server/src/memory/import';
+import { PlatformMemory } from '../../../../apps/server/src/memory/service';
+import { LOG_REC } from '../../../../backend/modules/memory/types';
+import { pad } from '../../../../backend/modules/memory/logFormat';
 
 /** 导入器只需要账号边界与正式存储；不启动模型、工作区和桌面服务。 */
 export async function legacyMemoryImportFixture() {

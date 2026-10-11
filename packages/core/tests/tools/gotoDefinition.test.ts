@@ -4,7 +4,7 @@
 
 import * as path from 'path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createLanguageToolFixture } from '../__fixtures__/languageToolFixture';
+import { createLanguageToolFixture } from '../support/languageToolFixture';
 
 const fixture = createLanguageToolFixture('goto_definition');
 const executeCommandMock = fixture.provider;

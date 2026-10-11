@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { SymbolKind } from 'vscode-languageserver-protocol';
-import { createLanguageToolFixture } from '../__fixtures__/languageToolFixture';
+import { createLanguageToolFixture } from '../support/languageToolFixture';
 
 const fixture = createLanguageToolFixture('get_symbols');
 const executeCommandMock = fixture.provider;
