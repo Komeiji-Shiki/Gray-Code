@@ -20,6 +20,7 @@ let server;
 const petOnly = process.argv.includes('--pet-only');
 let petReply = '';
 const petRequests = [];
+const workflowRequests = [];
 async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
@@ -200,6 +201,12 @@ async function main() {
       }
       return;
     }
+    if (body.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('workflow-vocabulary-smoke'))) {
+      workflowRequests.push(body);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '陪伴流程烟测完成。' }, finish_reason: 'stop' }] }));
+      return;
+    }
     if (rendererBenchmark?.streamRendererWorkload(body, res)) return;
     const answerReceived = body.messages.some(message => typeof message.content === 'string' && message.content.includes('Answer to optional question'));
     const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
@@ -264,6 +271,9 @@ async function main() {
     process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
   const petSmoke = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId });
+  const workflowSmoke = require('./smoke-workflows.cjs');
+  const companionWorkflow = await workflowSmoke.runCompanionWorkflow({ window, rpc, evaluate, chat, until, output, configId,
+    getRequests: () => workflowRequests });
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
   await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
   // 选择项目只切换工作台；通过项目新建按钮明确建立绑定该工作区的代码任务。
@@ -319,6 +329,7 @@ async function main() {
   await until(() => chat('Array.from(document.querySelectorAll(".branch-switcher-position-text")).some(node => node.textContent.replace(/\\s/g, "") === "1/2")'), 'original candidate rendered');
   await sleep(300);
   await fs.writeFile(path.join(output, 'workbench.png'), (await window.webContents.capturePage()).toPNG());
+  const inputToolbar = await workflowSmoke.verifyInputToolbar({ window, chat, until, output });
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".settings-panel")'), 'settings panel');
   assert((await chat('document.querySelectorAll(".settings-sidebar .settings-tab").length')) >= 20);
@@ -328,15 +339,29 @@ async function main() {
   await chat('const section=document.querySelector("[data-search-anchor=advanced-options]"); if (!section.querySelector(".advanced-options")) section.querySelector(".advanced-toggle").click()');
   await until(() => chat('!!document.querySelector(".thinking-backfill-section .checkmark")'), 'channel thinking checkboxes');
   await require('./smoke-ui-layout.cjs').verifyCheckboxLayout(chat);
-  await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.includes("总结")).click()');
+  await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.trim()==="上下文").click()');
   await until(() => chat('!!document.querySelector("[data-search-anchor=context-user-retention] .select-trigger")'), 'user retention setting');
-  assert(await chat('document.querySelector("[data-search-anchor=context-user-retention]").innerText.includes("首条用户消息＋最近一次输入")'));
+  assert(await chat('!!document.querySelector(".unified-context-settings [data-search-anchor=context-method]")'));
+  assert(await chat('!!document.querySelector("details[data-search-anchor=context-token-count]") && !!document.querySelector("details[data-search-anchor=context-awareness]")'));
+  assert(await chat('document.querySelector("[data-search-anchor=context-user-retention]").innerText.includes("首条与最新一条用户消息")'));
+  await chat('document.querySelector(".settings-tab.active").scrollIntoView({ block: "nearest" })');
+  await workflowSmoke.screenshot(window, output, 'settings-context.png');
   const retentionRevision = (await rpc('settings.get')).revision;
   await chat('document.querySelector("[data-search-anchor=context-user-retention] .select-trigger").click()');
-  await until(() => chat('Array.from(document.querySelectorAll("[role=option]")).some(node=>node.textContent.includes("全部用户消息"))'), 'retention option');
-  await chat('Array.from(document.querySelectorAll("[role=option]")).find(node=>node.textContent.includes("全部用户消息")).click(); document.querySelector(".platform-settings-footer button.primary").click()');
+  await until(() => chat('Array.from(document.querySelectorAll("[role=option]")).some(node=>node.textContent.includes("预算内保留全部用户原文"))'), 'retention option');
+  await chat('Array.from(document.querySelectorAll("[role=option]")).find(node=>node.textContent.includes("预算内保留全部用户原文")).click(); document.querySelector(".platform-settings-footer button.primary").click()');
   await until(async () => (await rpc('settings.get')).revision > retentionRevision, 'retention immediate save');
   assert.equal((await ui('getSummarizeConfig')).userMessageRetention, 'all');
+  await chat('document.querySelector("[data-search-anchor=summarize-prompts]").scrollIntoView({ block: "start" })');
+  await workflowSmoke.screenshot(window, output, 'settings-context-prompts.png');
+  await chat('const section=document.querySelector("details[data-search-anchor=context-token-count]"); section.open=true; section.scrollIntoView({ block: "start" })');
+  await workflowSmoke.screenshot(window, output, 'settings-context-count.png');
+  await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.trim()==="陪伴").click()');
+  await until(() => chat('!!document.querySelector("[data-search-anchor=companion-pet-preferences] .pet-manager") && !!document.querySelector("[data-search-anchor=companion-vision-defaults] .screen-sense-settings")'), 'global companion preferences');
+  await until(() => chat('!!document.querySelector(".pet-preferences input[type=range]:not(:disabled)") && !document.querySelector(".companion-settings .screen-sense-settings fieldset").disabled'), 'global companion preferences ready');
+  assert(await chat('!document.querySelector(".companion-settings .pet-columns")'));
+  await chat('document.querySelector(".settings-tab.active").scrollIntoView({ block: "nearest" })');
+  await workflowSmoke.screenshot(window, output, 'settings-companion.png');
   await chat('Array.from(document.querySelectorAll(".settings-tab")).find(node=>node.textContent.trim()==="外观").click()');
   const fonts = await rpc('desktop.fonts');
   assert(fonts.length > 0);
@@ -395,7 +420,10 @@ async function main() {
   closingSettings.appearance.codeFontSize += 1;
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
-  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true, chatLayout, rendererPerformance, pets: petSmoke,
+  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
+    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, inputToolbar,
+      settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
+        unifiedContextAndCompanion: true } },
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
