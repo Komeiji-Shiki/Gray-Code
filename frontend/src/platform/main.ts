@@ -7,6 +7,7 @@ import { watch } from 'vue';
 import { actualLanguage } from '../i18n';
 import { WORKSPACE_PANEL_MESSAGE } from '@shared/workspacePanelNavigation';
 import { CHAT_INITIALIZATION_MESSAGE } from '@shared/chatInitialization';
+import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut, type ShellShortcutBinding } from '@shared/shellShortcutBridge';
 import { callDesktopBridge, type DesktopBridge } from '@shared/desktopBridge';
 import './theme.css';
 import '@vscode/codicons/dist/codicon.css';
@@ -27,6 +28,23 @@ if (isMonitorView) {
 }
 const subscribers = new Set<(message: unknown) => void>();
 const lifetime = new AbortController();
+let shellShortcutBindings: ShellShortcutBinding[] = [];
+function receiveShellShortcuts(event: MessageEvent) {
+  if (event.source !== window.parent || event.origin !== window.location.origin || event.data?.type !== SHELL_SHORTCUTS_MESSAGE) return;
+  if (Array.isArray(event.data.bindings)) shellShortcutBindings = event.data.bindings;
+}
+function forwardShellShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.isComposing || event.repeat || (event.target as Element | null)?.closest?.('.monaco-editor')) return;
+  const binding = matchShellShortcut(event, shellShortcutBindings);
+  if (!binding) return;
+  event.preventDefault();
+  window.parent.postMessage({ type: SHELL_SHORTCUT_MESSAGE, command: binding.command }, window.location.origin === 'null' ? '*' : window.location.origin);
+}
+if (!isMonitorView) {
+  window.addEventListener('message', receiveShellShortcuts, { signal: lifetime.signal });
+  window.addEventListener('keydown', forwardShellShortcut, { signal: lifetime.signal });
+  window.parent.postMessage({ type: SHELL_SHORTCUTS_MESSAGE }, window.location.origin === 'null' ? '*' : window.location.origin);
+}
 let unsubscribeDesktop: (() => void) | undefined;
 let activityTimer: number | undefined;
 let assetTimer: ReturnType<typeof setTimeout> | undefined;

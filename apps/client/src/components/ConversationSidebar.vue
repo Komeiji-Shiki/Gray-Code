@@ -478,7 +478,7 @@ onUnmounted(() => {
         <NavigationIcon name="chevron" class="navigation-back" />
         <span v-if="!collapsed">{{ t('uiConversationSidebarBackToProjectsAndConversations') }}</span>
       </button>
-      <button v-else class="new-conversation" :title="t('uiConversationSidebarNewConversation')" @click="guard(() => newConversation())">
+      <button v-else class="new-conversation" :title="t('uiConversationSidebarNewConversation') + ' (Ctrl+N)'" @click="guard(() => newConversation())">
         <NavigationIcon name="plus" />
         <span v-if="!collapsed">{{ t('uiConversationSidebarNewChat') }}</span>
       </button>

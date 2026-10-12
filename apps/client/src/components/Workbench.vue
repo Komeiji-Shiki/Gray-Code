@@ -22,7 +22,7 @@ import ComputerPane from './ComputerPane.vue';
 import NodePane from './NodePane.vue';
 import { computerState } from '../computer';
 import DebugControls from './DebugControls.vue';
-import { connectDebugging, debugControl, debugState, toggleBreakpoint } from '../debugging';
+import { connectDebugging, debugState, toggleBreakpoint } from '../debugging';
 import MobileCodeEditor from './MobileCodeEditor.vue';
 import WorkbenchTabs from './WorkbenchTabs.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
@@ -592,24 +592,12 @@ const unsubscribe = subscribe((event) => {
     }
   });
 });
-function projectSearchShortcut(event: KeyboardEvent) {
-  if (['F5', 'F10', 'F11'].includes(event.key) && debugState.activeId) {
-    event.preventDefault();
-    void debugControl(event.key === 'F5' ? (event.shiftKey ? 'stop' : 'continue') : event.key === 'F10' ? 'next' : event.shiftKey ? 'stepOut' : 'stepIn');
-    return;
-  }
-  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
-    event.preventDefault();
-    activatePanel('search');
-  }
-}
-window.addEventListener('keydown', projectSearchShortcut);
+defineExpose({ activatePanel });
 onUnmounted(() => {
   disposed = true;
   readyWaiters.dispose();
   openSequence++;
   unsubscribe();
-  window.removeEventListener('keydown', projectSearchShortcut);
 });
 </script>
 <template>

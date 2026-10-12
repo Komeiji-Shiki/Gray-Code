@@ -4,6 +4,9 @@ import { appearance, guard, initialize, loadSettings, report, state } from './st
 import { appearanceSystemLight, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
+import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut } from '../../../shared/shellShortcutBridge';
+import { shellShortcuts } from './shortcuts';
+import { debugControl, debugState } from './debugging';
 import { useNavigationIntent } from './navigationIntent';
 import { shellText as t, setShellLanguage } from './i18n';
 import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
@@ -27,6 +30,7 @@ import PetSurface from './components/PetSurface.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
 const productChatFrame = ref<HTMLIFrameElement>();
 const conversationSidebar = ref<InstanceType<typeof ConversationSidebar>>();
+const workbench = ref<InstanceType<typeof Workbench>>();
 function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
   productChatFrame.value?.contentWindow?.postMessage(
     { type: 'graycode.jumpToMessage', ...target },
@@ -42,6 +46,9 @@ function openWorkspacePanel(event: MessageEvent) {
       chatInitializationError.value = typeof event.data.error === 'string' ? event.data.error : '';
       clearTimeout(chatReadyTimer);
     }
+    if (event.data?.type === SHELL_SHORTCUTS_MESSAGE) sendShellShortcuts();
+    if (event.data?.type === SHELL_SHORTCUT_MESSAGE
+      && enabledShortcuts.value.some(binding => binding.command === event.data.command)) executeShellShortcut(event.data.command);
   }
   const panel = readWorkspacePanelMessage(event, productChatFrame.value?.contentWindow, window.location.origin);
   if (panel === 'memory') openLibrary('memory');
@@ -110,8 +117,9 @@ watch(
 import { webUi } from './webBridge';
 const isWeb = window.graycode?.kind === 'web';
 const appMenus = [
-  { label: '编辑', title: 'nativeEditMenu' },
-  { label: '视图', title: 'nativeViewMenu' },
+  { id: 'file', title: 'nativeFileMenu' },
+  { id: 'edit', title: 'nativeEditMenu' },
+  { id: 'view', title: 'nativeViewMenu' },
 ] as const;
 const compactQuery = window.matchMedia('(max-width: 850px)');
 const compactViewport = ref(compactQuery.matches);
@@ -132,6 +140,28 @@ const navigationCollapsed = computed({
     else sidebarCollapsed.value = value;
   },
 });
+const enabledShortcuts = computed(() => !state.ready ? [] : Object.entries(shellShortcuts)
+  .filter(([command]) => !command.startsWith('debug.') || !!debugState.activeId)
+  .map(([command, binding]) => ({ command, ...binding })));
+function sendShellShortcuts() {
+  productChatFrame.value?.contentWindow?.postMessage({ type: SHELL_SHORTCUTS_MESSAGE, bindings: enabledShortcuts.value },
+    window.location.origin === 'null' ? '*' : window.location.origin);
+}
+function executeShellShortcut(command: string) {
+  if (!state.ready) return;
+  if (command === 'newConversation') void guard(() => conversationSidebar.value!.newConversation());
+  else if (command === 'toggleSidebar') navigationCollapsed.value = !navigationCollapsed.value;
+  else if (command === 'projectSearch') workbench.value?.activatePanel('search');
+  else if (command.startsWith('debug.') && debugState.activeId) void debugControl(command.slice('debug.'.length));
+}
+function handleShellShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.isComposing || event.repeat || (event.target as Element | null)?.closest?.('.monaco-editor')) return;
+  const binding = matchShellShortcut(event, enabledShortcuts.value);
+  if (!binding) return;
+  event.preventDefault();
+  executeShellShortcut(binding.command);
+}
+watch(enabledShortcuts, sendShellShortcuts);
 watch(sidebarCollapsed, (value) => localStorage.setItem('graycode.sidebarCollapsed', String(value)));
 if (compactViewport.value) state.chatFocused = true;
 function updateViewport() {
@@ -312,12 +342,15 @@ watch(
 );
 onMounted(() => {
   window.addEventListener('message', openWorkspacePanel);
+  window.addEventListener('keydown', handleShellShortcut);
   compactQuery.addEventListener('change', updateViewport);
   window.addEventListener('resize', updateViewport);
   window.visualViewport?.addEventListener('resize', updateViewport);
   unsubscribeHost = subscribe((event) => {
     if (lifetime.signal.aborted) return;
     if (event.type === 'ui.ready') chatReady.value = true;
+    if (event.type === 'desktop.shortcut' && enabledShortcuts.value.some(binding => binding.command === event.command))
+      executeShellShortcut(event.command);
     if (event.type === 'workspace.selected' && event.source === 'desktop')
       void guard(() => conversationSidebar.value!.selectWorkspace(event.workspaceId));
     if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
@@ -336,6 +369,7 @@ onUnmounted(() => {
   unsubscribeState?.();
   clearTimeout(chatReadyTimer);
   window.removeEventListener('message', openWorkspacePanel);
+  window.removeEventListener('keydown', handleShellShortcut);
   unsubscribeHost?.();
   compactQuery.removeEventListener('change', updateViewport);
   window.removeEventListener('resize', updateViewport);
@@ -353,7 +387,7 @@ onUnmounted(() => {
       <button
         v-if="!state.settingsOpen"
         class="sidebar-toggle"
-        :title="navigationCollapsed ? t('uiAppExpandConversationList') : t('uiAppCollapseConversationList')"
+        :title="(navigationCollapsed ? t('uiAppExpandConversationList') : t('uiAppCollapseConversationList')) + ' (Ctrl+B)'"
         :aria-expanded="!navigationCollapsed"
         :aria-label="t('uiAppToggleConversationList')"
         @click="navigationCollapsed = !navigationCollapsed"
@@ -400,7 +434,7 @@ onUnmounted(() => {
         </div>
       </div>
       <nav v-if="!isWeb && !compactViewport" class="app-menu" :aria-label="t('uiAppApplicationMenu')">
-        <button v-for="menu in appMenus" :key="menu.label" @click="guard(() => call('desktop.menu', { label: menu.label }))">{{ t(menu.title) }}</button>
+        <button v-for="menu in appMenus" :key="menu.id" @click="guard(() => call('desktop.menu', { id: menu.id }))">{{ t(menu.title) }}</button>
       </nav>
       <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center">
         <span class="subtle">{{ t('workspace') }}</span>
@@ -441,7 +475,7 @@ onUnmounted(() => {
         <summary>{{ t('uiAppMore') }}</summary>
         <div @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')">
           <template v-if="!isWeb">
-            <button v-for="menu in appMenus" :key="menu.label" @click="guard(() => call('desktop.menu', { label: menu.label }))">{{ t(menu.title) }}</button>
+            <button v-for="menu in appMenus" :key="menu.id" @click="guard(() => call('desktop.menu', { id: menu.id }))">{{ t(menu.title) }}</button>
           </template>
           <button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? t('chooseFolder') : t('addWorkspace') }}</button>
           <button @click="automationsOpen = true">{{ t('uiConversationSidebarAutomations') }}</button>
@@ -615,7 +649,7 @@ onUnmounted(() => {
             endSplit();
           "
         ></div>
-        <Workbench v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
+        <Workbench ref="workbench" v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
       </div>
     </div>
     <footer class="statusbar">

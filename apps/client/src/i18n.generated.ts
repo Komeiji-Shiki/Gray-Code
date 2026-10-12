@@ -1786,7 +1786,20 @@ export default {
     "chooseData": "从其他数据目录启动",
     "uirunInspectorTaskFailed": "任务失败",
     "uirunInspectorDiffReviewRequested": "等待文件修改审查",
-    "uirunInspectorDiffReviewResolved": "文件修改审查已处理"
+    "uirunInspectorDiffReviewResolved": "文件修改审查已处理",
+    "nativeFileMenu": "文件",
+    "nativeMinimizeToTray": "最小化到托盘",
+    "nativeUndo": "撤销",
+    "nativeRedo": "重做",
+    "nativeCut": "剪切",
+    "nativeCopy": "复制",
+    "nativePaste": "粘贴",
+    "nativeSelectAll": "全选",
+    "nativeToggleSidebar": "显示或隐藏侧栏",
+    "nativeResetZoom": "恢复实际大小",
+    "nativeZoomIn": "放大",
+    "nativeZoomOut": "缩小",
+    "nativeDeveloperTools": "开发者工具"
   },
   "en": {
     "screenAutoStart": "Start automatically when this companion conversation opens",
@@ -3568,7 +3581,20 @@ export default {
     "chooseData": "Start with another data folder",
     "uirunInspectorTaskFailed": "Task failed",
     "uirunInspectorDiffReviewRequested": "Awaiting file change review",
-    "uirunInspectorDiffReviewResolved": "File change review resolved"
+    "uirunInspectorDiffReviewResolved": "File change review resolved",
+    "nativeFileMenu": "File",
+    "nativeMinimizeToTray": "Minimize to tray",
+    "nativeUndo": "Undo",
+    "nativeRedo": "Redo",
+    "nativeCut": "Cut",
+    "nativeCopy": "Copy",
+    "nativePaste": "Paste",
+    "nativeSelectAll": "Select all",
+    "nativeToggleSidebar": "Toggle sidebar",
+    "nativeResetZoom": "Actual size",
+    "nativeZoomIn": "Zoom in",
+    "nativeZoomOut": "Zoom out",
+    "nativeDeveloperTools": "Developer tools"
   },
   "ja": {
     "screenAutoStart": "このコンパニオン会話を開くと自動的に開始する",
@@ -5350,6 +5376,19 @@ export default {
     "chooseData": "別のデータフォルダーで起動",
     "uirunInspectorTaskFailed": "タスクに失敗",
     "uirunInspectorDiffReviewRequested": "ファイル変更のレビュー待ち",
-    "uirunInspectorDiffReviewResolved": "ファイル変更のレビュー完了"
+    "uirunInspectorDiffReviewResolved": "ファイル変更のレビュー完了",
+    "nativeFileMenu": "ファイル",
+    "nativeMinimizeToTray": "トレイに最小化",
+    "nativeUndo": "元に戻す",
+    "nativeRedo": "やり直す",
+    "nativeCut": "切り取り",
+    "nativeCopy": "コピー",
+    "nativePaste": "貼り付け",
+    "nativeSelectAll": "すべて選択",
+    "nativeToggleSidebar": "サイドバーを表示・非表示",
+    "nativeResetZoom": "実際のサイズ",
+    "nativeZoomIn": "拡大",
+    "nativeZoomOut": "縮小",
+    "nativeDeveloperTools": "開発者ツール"
   }
 };

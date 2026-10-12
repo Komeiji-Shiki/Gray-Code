@@ -231,7 +231,7 @@ export class DesktopRequests {
             return result.canceled ? null : { directory: result.filePaths[0], name: path.basename(result.filePaths[0]) };
           } },
           'desktop.menu': { execute: params => {
-            const item = Menu.getApplicationMenu()?.items.find(item => item.label === params.label);
+            const item = Menu.getApplicationMenu()?.getMenuItemById(params.id);
             item?.submenu?.popup({ window: host.getWindow()! });
           } },
           'desktop.fonts': { uiRequest: true, execute: params => systemFonts(params.refresh === true) },

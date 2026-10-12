@@ -47,6 +47,7 @@ import { resolveAppearancePalette } from '../../../shared/appearance';
 import { isTrustedApplicationFrame } from './trustedFrame';
 import { desktopRpcReply } from '../../../shared/desktopBridge';
 import { DesktopRequests } from './requests';
+import { shellShortcuts } from '../../client/src/shortcuts';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: import('../../../shared/distribution').DistributionInfo & { buildTime: string };
@@ -223,6 +224,47 @@ function minimizeToTray(): void {
   closePending = false;
   ensureTray();
   window.hide();
+}
+function setApplicationMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {
+      id: 'file', label: t('desktop.shell.nativeFileMenu'),
+      submenu: [
+        { label: t('desktop.shell.uiConversationSidebarNewChat'), accelerator: shellShortcuts.newConversation.accelerator,
+          registerAccelerator: false, click: () => notify({ type: 'desktop.shortcut', command: 'newConversation' }) },
+        { type: 'separator' },
+        { label: t('desktop.shell.nativeMinimizeToTray'), click: () => minimizeToTray() },
+        { label: t('desktop.quit'), accelerator: 'CmdOrCtrl+Q', click: () => void confirmQuit() },
+      ],
+    },
+    {
+      id: 'edit', label: t('desktop.shell.nativeEditMenu'),
+      submenu: [
+        { role: 'undo', label: t('desktop.shell.nativeUndo') },
+        { role: 'redo', label: t('desktop.shell.nativeRedo') },
+        { type: 'separator' },
+        { role: 'cut', label: t('desktop.shell.nativeCut') },
+        { role: 'copy', label: t('desktop.shell.nativeCopy') },
+        { role: 'paste', label: t('desktop.shell.nativePaste') },
+        { role: 'selectAll', label: t('desktop.shell.nativeSelectAll') },
+        { label: t('desktop.shell.uiConversationSidebarSettings'), visible: false, accelerator: 'CmdOrCtrl+,',
+          click: () => notify({ type: 'settings.open' }) },
+      ],
+    },
+    {
+      id: 'view', label: t('desktop.shell.nativeViewMenu'),
+      submenu: [
+        { label: t('desktop.shell.nativeToggleSidebar'), accelerator: shellShortcuts.toggleSidebar.accelerator,
+          registerAccelerator: false, click: () => notify({ type: 'desktop.shortcut', command: 'toggleSidebar' }) },
+        { type: 'separator' },
+        { role: 'resetZoom', label: t('desktop.shell.nativeResetZoom') },
+        { role: 'zoomIn', label: t('desktop.shell.nativeZoomIn') },
+        { role: 'zoomOut', label: t('desktop.shell.nativeZoomOut') },
+        { label: t('desktop.shell.nativeDeveloperTools'), accelerator: 'CmdOrCtrl+Shift+I',
+          click: () => window?.webContents.openDevTools({ mode: 'detach' }) },
+      ],
+    },
+  ]));
 }
 function desktopColors(): Record<string, string> {
   const appearance = application.settings.snapshot().settings.appearance;
@@ -445,7 +487,10 @@ async function main(): Promise<void> {
   await application.nodes.activate();
   application.subscribe((event) => {
     notify(event);
-    if (event.type === 'settings.changed') updateTrayStatus();
+    if (event.type === 'settings.changed') {
+      updateTrayStatus();
+      setApplicationMenu();
+    }
     if (event.type === 'screenSense.changed') {
       if (application.screenSense.keepsAlive) ensureTray();
       else updateTrayStatus();
@@ -473,39 +518,7 @@ async function main(): Promise<void> {
       return desktopRequests.call(event.sender.id, method, params);
     }),
   );
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      {
-        label: "编辑",
-        submenu: [
-          { role: "undo", label: "撤销" },
-          { role: "redo", label: "重做" },
-          { type: "separator" },
-          { role: "cut", label: "剪切" },
-          { role: "copy", label: "复制" },
-          { role: "paste", label: "粘贴" },
-          { role: "selectAll", label: "全选" },
-          { label: "设置", visible: false, accelerator: "CmdOrCtrl+,", click: () => notify({ type: "settings.open" }) },
-        ],
-      },
-      {
-        label: "视图",
-        submenu: [
-          { label: "最小化到托盘", click: () => minimizeToTray() },
-          { label: t('desktop.quit'), accelerator: 'CmdOrCtrl+Q', click: () => void confirmQuit() },
-          { type: "separator" },
-          { role: "resetZoom", label: "恢复实际大小" },
-          { role: "zoomIn", label: "放大" },
-          { role: "zoomOut", label: "缩小" },
-          {
-            label: "开发者工具",
-            accelerator: "CmdOrCtrl+Shift+I",
-            click: () => window?.webContents.openDevTools({ mode: "detach" }),
-          },
-        ],
-      },
-    ]),
-  );
+  setApplicationMenu();
   await createWindow();
   // 窗口可用后分别连接；一个平台连接失败不会阻塞另一个平台和桌面启动。
   void application.discord.autoConnect();
