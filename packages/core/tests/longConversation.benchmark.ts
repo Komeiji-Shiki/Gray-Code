@@ -2,35 +2,28 @@
  * MIG-09 基准 ②：长对话（1 万条消息历史）。
  *
  * 覆盖生产模块（真实磁盘 IO，临时目录）：
- * - ConversationManager.addBatch → FileSystemStorageAdapter.appendHistory
- *   （分段 append-only 尾段写入：200 条/段、临时文件 + 原子 rename、index 重写）
- * - updateUsageIndexAppend → FileUsageIndexStore.appendUsage（原子写）
- * - getMessagesRaw 全量读取（分段并发读 + 段缓存）
- * - aggregateUsageStats：走 usage.json 索引 vs 全量扫描两种路径
+ * - ConversationManager.addBatch → SqliteStorageAdapter.appendHistory
+ * - getMessagesRaw 全量读取平台存储
+ * - PlatformUsage.stats 精简用量读取，与 aggregateUsageStats 全量扫描对比
  *
- * 全部数据落在 os.tmpdir() 临时目录，完成后清理，不触碰真实数据目录。
+ * 全部数据写入现有平台夹具的 .tmp 隔离目录，完成后关闭存储并清理。
  *
- * R8e-FIX：smoke 上限按 2026-08-04 实测收紧（append 0.89s / 读 27ms / usage 12-34ms）；
- * append 首批发 JIT 预热开销，读取/统计为一次性调用含预热开销（F8 注）。
+ * 沿用历史磁盘基准的 smoke 上限；旧实现的计时不作为 SQLite 平台的实测结果。
  *
  * 运行方式（仓库根目录；命令中的 glob 见 test/benchmark/README.md）：
- *   npx jest --config jest.backend.config.js --testMatch <glob> --runInBand --testTimeout 600000
+ *   npx jest --config jest.platform.config.cjs --testMatch <glob> --runInBand --testTimeout 600000
  */
-import * as path from 'path';
-import { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
-import { FileSystemStorageAdapter } from '../../backend/modules/conversation/storage';
-import { FileUsageIndexStore } from '../../backend/modules/conversation/UsageIndexStore';
-import { aggregateUsageStats } from '../../backend/modules/conversation/usageStats';
-import type { Content } from '../../backend/modules/conversation/types';
+import { PlatformApplication } from '../../../apps/server/src/application';
+import type { ConversationManager } from '../../../backend/modules/conversation/ConversationManager';
+import { aggregateUsageStats } from '../../../backend/modules/conversation/usageStats';
+import type { Content } from '../../../backend/modules/conversation/types';
+import { fixture } from './fixtures';
 import {
-    createRealFsVscodeShim,
-    makeTempDir,
     printHarnessBanner,
     printMetric,
     printSection,
-    removeTempDir,
     withTiming,
-} from './benchmarkHarness';
+} from '../../../test/benchmark/benchmarkHarness';
 
 jest.setTimeout(600000);
 
@@ -57,20 +50,20 @@ function makeMessages(count: number, startIndex: number): Content[] {
 }
 
 describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
-    let rootDir: string;
+    let f: Awaited<ReturnType<typeof fixture>>;
+    let app: PlatformApplication;
     let manager: ConversationManager;
 
     beforeEach(async () => {
-        rootDir = await makeTempDir('long-conversation');
-        const shim = createRealFsVscodeShim();
-        const baseDir = path.join(rootDir, 'data');
-        const adapter = new FileSystemStorageAdapter(shim, baseDir);
-        const usageStore = new FileUsageIndexStore(shim, baseDir);
-        manager = new ConversationManager(adapter, usageStore);
+        f = await fixture();
+        await f.store.close();
+        app = await PlatformApplication.open({ dataDirectory: f.data });
+        manager = app.productUi.conversations;
     });
 
     afterEach(async () => {
-        await removeTempDir(rootDir);
+        await app.close();
+        await f.cleanup();
     });
 
     test('1 万条消息：append 增量写 / 全量读取 / usage 统计', async () => {
@@ -80,7 +73,7 @@ describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
         await manager.createConversation(conversationId, 'Benchmark Long Conversation');
 
         // ---- 0. JIT 预热（F8 同款思路）：主测量前先在独立会话上小规模 append 1 批，
-        // 把 addBatch → appendHistory（分段写入/原子 rename/index 重写）与 usage 索引
+        // 把 addBatch → appendHistory 的事务与对象写入
         // 链路的 JIT 编译与冷缓存开销移出主测量（此前 append 首批发 JIT 预热开销混入主测量）----
         await manager.createConversation('bench-long-warmup', 'Benchmark Warmup');
         await manager.addBatch('bench-long-warmup', makeMessages(BATCH_SIZE, 0));
@@ -113,12 +106,10 @@ describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
             data: { messages: read.result.length },
         });
 
-        // ---- 3. usage 统计：走索引（usage.json 新鲜）----
-        const usageIndexed = await withTiming(() => aggregateUsageStats(manager, {
-            indexStore: manager.getUsageIndexStore(),
-        }));
+        // ---- 3. usage 统计：平台精简用量读取与索引 ----
+        const usageIndexed = await withTiming(() => app.usage.stats('owner', {}));
         printMetric({
-            label: 'usage 统计（走 usage.json 索引）',
+            label: 'usage 统计（平台用量索引）',
             ms: usageIndexed.ms,
             heapDeltaMB: usageIndexed.heapDeltaMB,
             data: { totalTokens: usageIndexed.result.totals.totalTokens },
@@ -134,9 +125,7 @@ describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
         });
         expect(usageScan.result.totals.totalTokens).toBe(usageIndexed.result.totals.totalTokens);
 
-        // ---- smoke 断言（校准：2026-08-04 R8e-FIX 实测 append 0.89s / 读 27ms /
-        //      usage 索引 12ms / 全量扫描 34ms；上限 append 15s（≈17×）、读 2s、usage 1-2s，
-        //      磁盘 IO 留 CI 慢机余量）----
+        // 沿用已有 smoke 上限，不在存储迁移时放宽性能检查。
         expect(append.ms).toBeLessThan(15_000);
         expect(read.ms).toBeLessThan(2_000);
         expect(usageIndexed.ms).toBeLessThan(1_000);

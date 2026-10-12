@@ -6,7 +6,7 @@
 
 - 仓库没有 `tsx` / `ts-node` 运行器（package.json 仅含 ts-jest + jest）；
 - 基准需要直接调用 TypeScript 生产模块（CheckpointSnapshotBuilder、CheckpointRestoreEngine、
-  FileSystemStorageAdapter、BranchGraph 等），纯 JS `.cjs` 无法 require TS 源码；
+  SqliteStorageAdapter、BranchGraph 等），纯 JS `.cjs` 无法 require TS 源码；
 - ts-jest 是现成的 TS 编译通道（tsconfig.test.json 已包含 `test/**/*.ts`）。
 
 因此基准写成 Jest 套件，但使用 `.benchmark.ts` 后缀——主配置 `jest.backend.config.js`
@@ -18,6 +18,9 @@
 ```bash
 # 仓库根目录（glob：--testMatch "**/*.benchmark.ts"，匹配 test/benchmark/ 下的基准文件）
 npx jest --config jest.backend.config.js --testMatch "**/*.benchmark.ts" --runInBand --testTimeout 600000
+
+# 长对话沿用实际平台存储与用量服务，归入平台测试域
+npx jest --config jest.platform.config.cjs --testMatch "**/longConversation.benchmark.ts" --runInBand --testTimeout 600000
 ```
 
 可选：加 `NODE_OPTIONS=--expose-gc` 可获得更准确的内存增量采样（否则 GC 时机不定）：
@@ -32,14 +35,14 @@ NODE_OPTIONS=--expose-gc npx jest --config jest.backend.config.js --testMatch "*
 - `--runInBand`：单进程串行，保证内存采样与计时稳定；
 - `--testTimeout 600000`：基准远超 Jest 默认 5s 超时（每个文件内部也调用了
   `jest.setTimeout(600000)`）；
-- 所有数据写入 `os.tmpdir()` 下的临时目录，`afterEach` 清理，绝不触碰真实数据目录。
+- 后端基准使用 `os.tmpdir()`，平台长对话基准复用 `.tmp/platform-test-*` 夹具；`afterEach` 关闭存储并清理，不触碰真实数据目录。
 
 ## 场景
 
 | 文件 | 场景 | 覆盖模块 |
 | --- | --- | --- |
 | `checkpoint.benchmark.ts` | ① 大工作区：2000 文件快照创建/恢复 | `CheckpointSnapshotBuilder.buildWorkspaceSnapshot`、`CheckpointRestoreEngine.restoreWorkspaceSnapshot`（真实磁盘） |
-| `longConversation.benchmark.ts` | ② 长对话：1 万条消息 append 增量写/全量读取/usage 统计 | `ConversationManager.addBatch` → `FileSystemStorageAdapter.appendHistory`（分段 append-only）、`FileUsageIndexStore.appendUsage`、`aggregateUsageStats`（索引 vs 全量扫描） |
+| `packages/core/tests/longConversation.benchmark.ts` | ② 长对话：1 万条消息 append 增量写/全量读取/usage 统计 | 实际平台 `ConversationManager.addBatch` → `SqliteStorageAdapter.appendHistory`，`PlatformUsage.stats` 与 `aggregateUsageStats` 全量扫描对比 |
 | `branchGraph.benchmark.ts` | ③ 大量分支：100 候选图操作 | `BranchGraph` 纯函数：`insertNode` / `rerollCandidate` / `upsertCandidateSummary` / `activePath` / `validate` / `switchActivePath` |
 
 每个场景输出可读指标（耗时 / 堆内存增量 / 数据量），并在末尾执行 smoke 断言
@@ -49,7 +52,7 @@ NODE_OPTIONS=--expose-gc npx jest --config jest.backend.config.js --testMatch "*
 
 - checkpoint：build / 备份 / 恢复均 < 15s（实测 0.3-2s）；恢复为「增量恢复到已漂移工作区」
   （漂移删除→added、漂移修改→modified 回滚、untracked 保留、备份哈希校验失败路径）；
-- 长对话：append < 15s（实测 0.89s）；全量读 / usage 扫描 < 2s、usage 索引 < 1s（实测 12-34ms）；
+- 长对话：append < 15s；全量读 / usage 扫描 < 2s、usage 索引 < 1s。上限沿用旧磁盘实现，旧的 0.89s / 12-34ms 实测不代表迁移后的 SQLite 平台性能；
 - 分支图：全部微操作 < 1s（实测 < 20ms；含 220 节点压力图 + 100 层深链段）。
 
 校准基准日 2026-08-04（R8e-FIX 实测，关键数字见上方清单；详细实测数据与修改说明记录在

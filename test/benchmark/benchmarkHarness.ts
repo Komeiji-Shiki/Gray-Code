@@ -4,7 +4,7 @@
  * 提供：
  * - withTiming：墙钟时间（hrtime 高精度）+ 堆内存增量（--expose-gc 时先 GC 再采样）
  * - 报告打印：分区标题 / 指标行（耗时 / 内存 / 附加数据）
- * - 真实文件系统版 vscode shim：FileSystemStorageAdapter / FileUsageIndexStore
+ * - 真实文件系统版 vscode shim：检查点基准的工作区文件操作
  *   依赖 vscode.Uri + workspace.fs（stat/readFile/writeFile/createDirectory/delete/
  *   rename/readDirectory），这里用 fs/promises 落到真实临时目录，测真实磁盘 IO。
  * - 临时目录管理（基准绝不触碰真实数据目录）。
@@ -137,7 +137,7 @@ export interface VscodeShim {
 /**
  * 用 fs/promises 落盘的真实 vscode shim。
  *
- * 覆盖 FileSystemStorageAdapter / FileUsageIndexStore 用到的 API 面：
+ * 覆盖检查点构建与恢复需要的文件系统 API：
  * Uri.parse / Uri.joinPath / workspace.fs.{stat, readFile, writeFile,
  * createDirectory, delete, rename, readDirectory}。rename 不做 overwrite 兜底——
  * 适配器自身的 renameOverwrite 会处理目标存在的情况。
