@@ -369,8 +369,13 @@ async function main() {
   const retentionRevision = (await rpc('settings.get')).revision;
   await chat('document.querySelector("[data-search-anchor=context-user-retention] .select-trigger").click()');
   await until(() => chat('Array.from(document.querySelectorAll("[role=option]")).some(node=>node.textContent.includes("预算内保留全部用户原文"))'), 'retention option');
-  await chat('Array.from(document.querySelectorAll("[role=option]")).find(node=>node.textContent.includes("预算内保留全部用户原文")).click(); document.querySelector(".platform-settings-footer button.primary").click()');
+  await chat('Array.from(document.querySelectorAll("[role=option]")).find(node=>node.textContent.includes("预算内保留全部用户原文")).click()');
+  await until(() => chat('!!document.querySelector(".platform-settings-footer button.primary:not(:disabled)")'), 'retention draft becomes dirty');
+  await chat('document.querySelector(".platform-settings-footer button.primary").click()');
   await until(async () => (await rpc('settings.get')).revision > retentionRevision, 'retention immediate save');
+  await until(() => chat('document.querySelector(".platform-settings-footer [role=status]")?.textContent === "已保存"'), 'settings saved feedback');
+  assert(await chat('Array.from(document.querySelectorAll(".platform-settings-footer > button")).every(button => button.disabled)'),
+    'A saved draft must disable both save and discard.');
   assert.equal((await ui('getSummarizeConfig')).userMessageRetention, 'all');
   await chat('document.querySelector("[data-search-anchor=summarize-prompts]").scrollIntoView({ block: "start" })');
   await workflowSmoke.screenshot(window, output, 'settings-context-prompts.png');
