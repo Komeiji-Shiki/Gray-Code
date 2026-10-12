@@ -39,9 +39,11 @@ test('过期刷新失败不覆盖新状态，当前刷新失败仍报告原因',
   expect(f.state.snapshot.revision).toBe(2);
 });
 
-test('启动期间先接收项目选择与设置更新，旧快照不清空新选择，刷新合并后才就绪', async () => {
+test('启动期间工作区跟随项目对话聚焦，旧快照不清空新选择，刷新合并后才就绪', async () => {
   const f = client(), initializing = f.initialize();
   f.emit({ type: 'workspace.selected', source: 'desktop', workspaceId: 'new-project' });
+  expect(f.state.workspaceId).toBe('');
+  f.emit({ type: 'ui.conversation.focused', conversationId: 'project-conversation', workspaceId: 'new-project', mode: 'code' });
   f.emit({ type: 'settings.changed' }); f.emit({ type: 'settings.changed' });
   f.requests[0].resolve(snapshot(1, []));
   await new Promise(resolve => setImmediate(resolve));
