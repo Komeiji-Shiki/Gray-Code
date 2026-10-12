@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rmdir } from 'node:fs/promises';
 import type { PlatformApplication } from '../application';
 import { documentsDirectory } from './documentsDirectory';
 
@@ -25,5 +25,31 @@ export class ConversationWorkspaces {
       return id;
     });
     this.queue = operation; return operation;
+  }
+  release(conversationIds: readonly string[]): Promise<void> {
+    const ids = new Set(conversationIds);
+    const operation = this.queue.catch(() => {}).then(async () => {
+      const snapshot = this.app.settings.snapshot();
+      const released = snapshot.settings.workspaces.filter(item => item.managedConversationId && ids.has(item.managedConversationId));
+      if (!released.length) return;
+      snapshot.settings.workspaces = snapshot.settings.workspaces.filter(item => !item.managedConversationId || !ids.has(item.managedConversationId));
+      await this.app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+      for (const workspace of released) {
+        try {
+          // rmdir 只删除空目录，检查与删除由文件系统一次完成，用户已经写入的文件始终保留。
+          await rmdir(workspace.directory);
+        } catch (error) {
+          if (['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
+          console.warn('[对话工作区] 空目录清理失败，已保留目录：', workspace.directory, String(error));
+        }
+      }
+    });
+    this.queue = operation; return operation;
+  }
+  async cleanupOrphans(): Promise<void> {
+    const ids = new Set(this.app.settings.read('workspaces').workspaces.flatMap(item => item.managedConversationId ? [item.managedConversationId] : []));
+    const orphaned: string[] = [];
+    for (const id of ids) if (!await this.app.storage.getConversation(id)) orphaned.push(id);
+    if (orphaned.length) await this.release(orphaned);
   }
 }

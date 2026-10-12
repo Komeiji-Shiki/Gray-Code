@@ -480,6 +480,7 @@ export class PlatformApplication {
       await application.diffs.initialize();
       await application.mcp.initialize();
       await application.externalAgents.initialize();
+      await application.conversationWorkspaces.cleanupOrphans();
       const snapshot = application.settings.snapshot();
       if ((snapshot.settings.toolCatalogVersion ?? 0) < 11) {
         const baseline = snapshot.settings.agents.find(agent => agent.id === 'default');
