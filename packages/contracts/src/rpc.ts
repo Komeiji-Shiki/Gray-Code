@@ -98,7 +98,7 @@ const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
   'screenSense.start': {}, 'screenSense.stop': {}, 'screenSense.capture': {},
   'screenSense.send': { previewId: text }, 'screenSense.cancelRun': {},
   'companion.get': { conversationId: optional(text) },
-  'companion.save': { conversationId: optional(text), configuration: object, metadataToken: optional(text),
+  'companion.save': { action: optional(oneOf('save', 'syncPetVocabulary')), conversationId: optional(text),
     defaultsRevision: optional(revision), saveAsDefault: optional(boolean) },
   'companion.defaults.clear': { defaultsRevision: revision },
   'pets.position': { position: object }, 'pets.list': {}, 'pets.status': {},

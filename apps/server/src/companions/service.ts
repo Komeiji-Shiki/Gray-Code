@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
 import type {
   CompanionBinding, CompanionConfiguration, CompanionRpcMethods, CompanionTurn, CompanionView,
   ModelInput, PlatformConversation, PlatformMessage, RecordMutation,
 } from '@graycode/contracts';
 import { readCharacterDefinition } from '@graycode/core';
+import { t } from '../../../../backend/i18n';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { requireOwnChatConversation } from '../conversations/ownChat';
@@ -12,6 +14,11 @@ const defaultsNamespace = 'companion-defaults';
 const emptyConfiguration = (): CompanionConfiguration => ({
   enabled: false, name: '', userName: '', tone: '', characterField: 'auto',
 });
+const petVocabularyFingerprint = (pet: NonNullable<CompanionBinding['pet']>): string => createHash('sha256').update(JSON.stringify([
+  pet.id, pet.kind, pet.name, pet.description,
+  pet.actions.map(item => [item.id, item.name, item.description ?? '']),
+  pet.expressions.map(item => [item.id, item.name, item.description ?? '']),
+])).digest('hex');
 
 /** 陪伴是普通对话的一项配置，真实记忆继续使用当前账号的既有作用域。 */
 export class CompanionService {
@@ -72,10 +79,20 @@ export class CompanionService {
       this.app.pets.resources.list(),
     ]);
     const custom = state?.metadata.custom as { companion?: CompanionBinding } | undefined;
-    const binding = custom?.companion;
+    const candidate = state ? custom?.companion : defaults.binding;
+    const binding = candidate?.actorId === client.actorId ? candidate : undefined;
+    const petResourceId = binding?.configuration.petResourceId;
+    let petVocabulary: CompanionView['petVocabulary'];
+    if (petResourceId) {
+      const catalog = binding?.petVocabularyFingerprint && pets.some(item => item.id === petResourceId)
+        ? await this.app.pets.modelCatalog(petResourceId) : undefined;
+      petVocabulary = {
+        resourceId: petResourceId,
+        updated: !!catalog?.resource && petVocabularyFingerprint(catalog.resource) !== binding?.petVocabularyFingerprint,
+      };
+    }
     return {
-      configuration: binding?.actorId === client.actorId ? binding.configuration
-        : !state && defaults.binding?.actorId === client.actorId ? defaults.binding.configuration : emptyConfiguration(),
+      configuration: binding?.configuration ?? emptyConfiguration(),
       title: state?.metadata.title,
       metadataToken: state?.metadataToken,
       defaultsRevision: defaults.revision,
@@ -83,6 +100,7 @@ export class CompanionService {
       characters: characters.filter(item => item?.kind === 'character').map(item => ({ id: item!.id, name: item!.name })),
       pets: pets.map(item => ({ id: item.id, name: item.name, kind: item.kind })),
       petHostAvailable: this.app.pets.hasHost,
+      petVocabulary,
     };
   }
 
@@ -100,23 +118,33 @@ export class CompanionService {
   async save(
     client: ClientSession,
     input: CompanionRpcMethods['companion.save']['params'],
-  ): Promise<{ success: true; conversationId: string }> {
+  ): Promise<CompanionRpcMethods['companion.save']['result']> {
     this.app.requireOwner(client.actorId);
     if (input.conversationId) await requireOwnChatConversation(this.app, client.actorId, input.conversationId);
     const state = input.conversationId ? await this.app.conversations.read(client.actorId, input.conversationId) : undefined;
     if (state && (await this.app.storage.listRuns({ conversationId: state.metadata.id, activeOnly: true, limit: 1 })).length) {
       throw new Error('请等当前回复结束后再修改陪伴配置。');
     }
-    const configuration = await this.validate(input.configuration);
-    const catalog = configuration.petResourceId ? await this.app.pets.modelCatalog(configuration.petResourceId) : undefined;
+    const custom = state?.metadata.custom as { companion?: CompanionBinding } | undefined;
+    const candidate = state ? custom?.companion : (await this.defaults(client.actorId)).binding;
+    const previous = candidate?.actorId === client.actorId ? candidate : undefined;
+    const syncing = input.action === 'syncPetVocabulary';
+    if (syncing && !previous?.configuration.petResourceId) throw new Error(t('desktop.shell.companionVocabularyBindingRequired'));
+    const configuration = input.action === 'syncPetVocabulary' ? previous!.configuration : await this.validate(input.configuration);
+    let pet = configuration.petResourceId ? previous?.pet : undefined;
+    // 普通保存保留原词表；换绑和显式同步才读取当前资源，避免标注修改悄悄改变请求前缀。
+    if (configuration.petResourceId && (syncing || previous?.configuration.petResourceId !== configuration.petResourceId)) {
+      pet = (await this.app.pets.modelCatalog(configuration.petResourceId)).resource;
+    }
     const binding: CompanionBinding = {
       actorId: client.actorId, configuration, updatedAt: Date.now(),
-      ...(catalog?.resource ? { pet: catalog.resource } : {}),
+      ...(pet ? { pet, petVocabularyFingerprint: petVocabularyFingerprint(pet) } : {}),
     };
-    if (input.saveAsDefault === true && input.defaultsRevision === undefined) {
+    const saveDefaults = syncing ? !state : input.saveAsDefault === true;
+    if (saveDefaults && input.defaultsRevision === undefined) {
       throw new Error('请重新加载新对话默认配置。');
     }
-    const records: RecordMutation[] = input.saveAsDefault === true ? [{
+    const records: RecordMutation[] = saveDefaults ? [{
       namespace: defaultsNamespace, id: client.actorId, expectedRevision: input.defaultsRevision, value: binding,
     }] : [];
     if (state) {
@@ -133,7 +161,12 @@ export class CompanionService {
       });
       this.app.productUi.conversations.clearMetadataCache();
       this.app.publish({ type: 'conversation.changed', conversationId: state.metadata.id });
+      if (syncing) return { success: true, view: await this.get(client, { conversationId: state.metadata.id }) };
       return { success: true, conversationId: state.metadata.id };
+    }
+    if (syncing) {
+      await this.app.storage.commitRecords(records);
+      return { success: true, view: await this.get(client, {}) };
     }
     const preset = this.app.settings.read('modeProfiles').modeProfiles?.chat?.promptModeId
       ?? this.app.product.runtimeSettings().getCurrentPromptModeId();

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { CompanionConfiguration, CompanionTurn, ModelInput, PlatformMessage } from '@graycode/contracts';
+import type {
+  CompanionBinding, CompanionConfiguration, CompanionRpcMethods, CompanionTurn, ModelInput, PetResource, PlatformMessage,
+} from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
@@ -70,6 +72,76 @@ describe('陪伴配置与真实记忆', () => {
     expect((await app.companion.capture('owner', conversation, source))?.identity.name).toBe('青禾');
     expect(await app.companion.capture('member', conversation, source)).toBeUndefined();
     expect((await app.companion.capture('owner', conversation))?.identity.name).toBe('新名字');
+  });
+
+  test('词表只在显式同步后更新，默认继承与旧无指纹配置保留原快照', async () => {
+    const pet: PetResource = {
+      id: 'vocabulary-pet', kind: 'live2d', name: '动作词表夹具', description: '陪伴角色', entry: 'pet.model3.json',
+      source: '', license: '', sha256: '', createdAt: 1, files: [],
+      actions: [{ id: 'wave', name: '挥手', description: '轻轻挥手' }],
+      expressions: [{ id: 'smile', name: '微笑', description: '自然微笑' }],
+    };
+    // 此用例覆盖目录快照与存储，不需要加载播放器或二进制模型文件。
+    await app.storage.putRecord({ namespace: 'pet-resource', id: pet.id, value: pet });
+    const configuration = { ...config, petResourceId: pet.id };
+    const current = await save(undefined, configuration, true);
+    const conversationId = current.conversationId;
+    const conversation = await app.conversation('owner', conversationId);
+    const original = (conversation.custom as { companion: CompanionBinding }).companion;
+    expect(original.petVocabularyFingerprint).toBeTruthy();
+    const turn = await app.companion.capture('owner', conversation);
+    const originalPrompt = app.companion.prompt(turn, true);
+    const historicalMessage: PlatformMessage = { role: 'user', parts: [{ text: '你好。' }], companionTurn: turn };
+    await app.storage.appendHistory(conversationId, [historicalMessage]);
+    const history = await app.storage.readFullHistory(conversationId);
+
+    await app.pets.resources.annotate({
+      id: pet.id, actions: [{ id: 'wave', description: '开心地挥手' }], expressions: [{ id: 'smile', description: '灿烂微笑' }],
+    });
+    expect((await app.companion.get(client, { conversationId })).petVocabulary?.updated).toBe(true);
+    await save(conversationId, configuration);
+    expect(app.companion.prompt(await app.companion.capture('owner', await app.conversation('owner', conversationId)), true))
+      .toBe(originalPrompt);
+    const beforeSync = await app.companion.get(client, { conversationId });
+    expect(beforeSync.petVocabulary?.updated).toBe(true);
+    const synced = await router.call(client, 'companion.save', {
+      action: 'syncPetVocabulary', conversationId, metadataToken: beforeSync.metadataToken,
+    }) as CompanionRpcMethods['companion.save']['result'];
+    expect(synced.view?.petVocabulary?.updated).toBe(false);
+    expect(synced.view?.metadataToken).not.toBe(beforeSync.metadataToken);
+    const latest = await app.conversation('owner', conversationId);
+    expect(app.companion.prompt(await app.companion.capture('owner', latest), true)).toContain('开心地挥手');
+    expect(app.companion.prompt(await app.companion.capture('owner', latest, historicalMessage), true)).toBe(originalPrompt);
+    expect(await app.storage.readFullHistory(conversationId)).toEqual(history);
+    await router.call(client, 'companion.save', { conversationId, configuration, metadataToken: synced.view!.metadataToken });
+
+    const defaults = await app.companion.defaults('owner');
+    expect(defaults.binding?.petVocabularyFingerprint).toBe(original.petVocabularyFingerprint);
+    // 默认陪伴配置由新建对话入口继承，底层存储创建不会自行套用默认值。
+    const inheritedResult = await router.call(client, 'ui.request', {
+      type: 'ui.mode.new', data: { mode: 'chat', automaticWorkspace: false },
+    }) as { conversationId: string };
+    const inherited = await app.conversation('owner', inheritedResult.conversationId);
+    expect((inherited.custom as { companion: CompanionBinding }).companion.pet).toEqual(original.pet);
+    const legacy = { ...original };
+    delete legacy.petVocabularyFingerprint;
+    const old = await app.createConversation('owner', '无指纹旧配置', undefined, { platformMode: 'chat', companion: legacy });
+    expect((await app.companion.get(client, { conversationId: old.id })).petVocabulary?.updated).toBe(false);
+    await save(old.id, configuration);
+    const oldBinding = ((await app.conversation('owner', old.id)).custom as { companion: CompanionBinding }).companion;
+    expect(oldBinding.pet).toEqual(original.pet);
+    expect(oldBinding.petVocabularyFingerprint).toBe(original.petVocabularyFingerprint);
+    expect((await app.companion.get(client, { conversationId: old.id })).petVocabulary?.updated).toBe(true);
+
+    const syncedDefaults = await app.companion.save(client, { action: 'syncPetVocabulary', defaultsRevision: defaults.revision });
+    expect(syncedDefaults.conversationId).toBeUndefined();
+    expect(syncedDefaults.view?.petVocabulary?.updated).toBe(false);
+    const nextResult = await router.call(client, 'ui.request', {
+      type: 'ui.mode.new', data: { mode: 'chat', automaticWorkspace: false },
+    }) as { conversationId: string };
+    const next = await app.conversation('owner', nextResult.conversationId);
+    expect((next.custom as { companion: CompanionBinding }).companion.pet?.actions[0].description).toBe('开心地挥手');
+    expect((await app.conversation('owner', old.id)).custom).toHaveProperty('companion.pet', original.pet);
   });
 
   test('自然记忆工具可跨陪伴对话记录、纠正与删除约定', async () => {

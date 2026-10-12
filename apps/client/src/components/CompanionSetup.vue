@@ -60,7 +60,7 @@ async function save() {
       defaultsRevision: defaultsRevision.value,
       saveAsDefault: saveAsDefault.value,
     });
-    emit('applied', result.conversationId);
+    emit('applied', result.conversationId!);
     emit('close');
   } catch (cause) {
     error.value = (cause as Error).message;
