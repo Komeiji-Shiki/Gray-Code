@@ -27,14 +27,15 @@ async function until(check, label, timeout = 20000) {
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
   throw new Error(`Timed out: ${label}`);
 }
-async function verifyQuitDialogLanguage(window, ui, language, expected) {
+async function verifyQuitDialogLanguage(ui, language, expected) {
   await ui('ui.settings.begin');
   const draft = await ui('platform.settings.get');
   draft.appearance.codeFontSize += 1;
   await ui('platform.settings.update', { settings: draft });
   // 制造真实未保存草稿，通过正式菜单打开确认；检查后取消退出，继续同一轮桌面验收。
+  const existingWindows = new Set(BrowserWindow.getAllWindows().map(candidate => candidate.id));
   Menu.getApplicationMenu().getMenuItemById('file').submenu.items.find(item => item.accelerator === 'CmdOrCtrl+Q').click();
-  const confirmation = await until(() => BrowserWindow.getAllWindows().find(candidate => candidate.getParentWindow() === window
+  const confirmation = await until(() => BrowserWindow.getAllWindows().find(candidate => !existingWindows.has(candidate.id)
     && candidate.webContents.getURL().startsWith('data:text/html')), `quit confirmation in ${language}`);
   try {
     await until(() => confirmation.webContents.executeJavaScript('!!document.querySelector("[data-dialog-action=cancel]")'),
@@ -47,7 +48,8 @@ async function verifyQuitDialogLanguage(window, ui, language, expected) {
     assert.equal(actual.cancel, expected.cancel);
     await fs.writeFile(path.join(output, `quit-language-${language}.png`), (await confirmation.capturePage()).toPNG());
   } finally {
-    await confirmation.webContents.executeJavaScript('document.querySelector("[data-dialog-action=cancel]").click()');
+    // 关闭确认窗沿用 cancelId，不等待即将销毁的渲染进程回传执行结果。
+    confirmation.close();
     await until(() => confirmation.isDestroyed(), `cancel quit in ${language}`);
     await ui('ui.settings.discard');
     await ui('ui.settings.end');
@@ -301,7 +303,7 @@ async function main() {
     await ui('ui.settings.end');
     assert.notEqual(Menu.getApplicationMenu(), previousMenu, 'Changing the interface language must rebuild the native menu.');
     assert.equal(Menu.getApplicationMenu().getMenuItemById('file').label, label);
-    await verifyQuitDialogLanguage(window, ui, language, expected);
+    await verifyQuitDialogLanguage(ui, language, expected);
   }
   const configuredMenu = Menu.getApplicationMenu();
   window.webContents.reload();
