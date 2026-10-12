@@ -3,7 +3,6 @@ import type { Content, ContentPart } from '../../../../backend/modules/conversat
 import { isRealUserMessage } from '../../../../backend/modules/conversation/helpers';
 import { computeValidSuffixMap } from '../../../../backend/modules/api/chat/services/contextTrim/historyNormalization';
 import { ContextBudgetExceededError } from '../../../../backend/modules/api/chat/services/contextTrim/granularFallback';
-import { validateHistoryIntegrity } from '../../../../backend/modules/channel/HistoryIntegrityValidator';
 import type { ContextBudget, ContextBudgetCounter } from './budget';
 
 type ModelPart = ContentPart & Record<string, unknown>;
@@ -55,8 +54,6 @@ export function trimContextRequest(messages: PlatformMessage[], budget: ContextB
   if (start < 0) throw new ContextBudgetExceededError(budget.inputTokens, budget.maxInputTokens);
   const selected = [...required].filter(index => index < start).sort((a, b) => a - b).map(index => messages[index])
     .concat(messages.slice(start));
-  if (!validateHistoryIntegrity(selected as Content[], { detectOrphanFunctionCall: true, pendingAsyncCallIds }).valid)
-    throw new Error('临时裁剪无法保留完整的工具调用配对。');
   let selectedBudget = counter.evaluate(selected);
   const truncatedMessageIds: string[] = [];
   if (selectedBudget.exceedsInputLimit) {
@@ -81,8 +78,6 @@ export function trimContextRequest(messages: PlatformMessage[], budget: ContextB
           contextTruncated: true, messageId: message.id, toolCallId: part.functionResponse.id,
           message: `Tool text exceeded the input budget. Read the stored result with context_history action=read messageId=${message.id} using offset and limit.`,
         } } };
-        if (counter.estimateMessage({ role: message.role, parts: [shortened] }) >= counter.estimateMessage({ role: message.role, parts: [part] }))
-          return part;
         changed = true;
         return shortened;
       });

@@ -36,7 +36,6 @@ const summarizeConfig = reactive<SummarizeConfig>({
   method: 'summary',
   userMessageRetention: 'first',
   autoSummarizeTokenLimit: 0,
-  autoSummarizeAfterTurn: false,
   // 手动总结提示词（加载前的占位值，实际默认值由后端 DEFAULT_SUMMARIZE_CONFIG 下发）
   summarizePrompt: '',
   // 自动总结提示词
@@ -459,13 +458,6 @@ onUnmounted(() => {
           <span class="unit">%</span>
         </div>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.maxInputRatioHint') }}</p>
-      </div>
-
-      <div v-if="standaloneContext && summarizeConfig.method !== 'notes'" class="form-group">
-        <CustomCheckbox :model-value="summarizeConfig.autoSummarizeAfterTurn ?? false"
-          :label="t('components.settings.summarizeSettings.executionControls.afterTurn')"
-          @update:model-value="(value: boolean) => updateConfigField('autoSummarizeAfterTurn', value)" />
-        <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.afterTurnHint') }}</p>
       </div>
 
       <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="form-group">

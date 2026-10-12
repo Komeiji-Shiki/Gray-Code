@@ -21,7 +21,7 @@ function recordBatch(history: PlatformMessage[], entries: unknown[], now: number
 }
 function record(history: PlatformMessage[], entries: unknown[], now: number, callId = `record-${now}`) {
   const result = recordBatch(history, entries, now, callId);
-  if (!result.noteEvent) throw new Error(result.errors.map(item => item.error).join('；'));
+  if (!('noteEvent' in result)) throw new Error(result.errors.map(item => item.error).join('；'));
   return Object.fromEntries(result.noteEvent.records.map(item => [item.key, item.id]));
 }
 const entry = (key: string, text: string, extra: Record<string, unknown> = {}) => ({ key, kind: 'decision', text,
@@ -45,7 +45,8 @@ test('逐条 schema 校验隔离字段错误，成功回执按原位置重放并
   const result = recordBatch(history, entries, 100);
   expect(result).toMatchObject({ success: true, partial: true, recordedCount: 1, failedCount: 4 });
   expect(result.errors.map(error => error.index)).toEqual([0, 1, 3, 4]);
-  expect(result.noteEvent!.records[0]).toMatchObject({ index: 2, key: 'loop', sources: [
+  if (!('noteEvent' in result)) throw new Error('成功条目没有保存笔记回执。');
+  expect(result.noteEvent.records[0]).toMatchObject({ index: 2, key: 'loop', sources: [
     { messageId: source.id, length: '保留缓存前缀。'.length }, { messageId: source.id, length: '原型已经完成'.length },
   ] });
   const graph = buildNoteGraph(JSON.parse(JSON.stringify(history)), 200, 200);
@@ -93,7 +94,7 @@ test('同 key 状态自动替代并保留历史，失败更新不改变状态，
   const next = record(history, [entry('progress', '已修到第 0741 章', { kind: 'state' })], 200);
   const failed = recordBatch(history, [entry('progress', '已修到第 0742 章', { kind: 'state', sources: [{ messageId: 'absent' }] })], 300);
   expect(failed).toMatchObject({ success: false, recordedCount: 0, failedCount: 1 });
-  expect(failed.noteEvent).toBeUndefined();
+  expect(failed).not.toHaveProperty('noteEvent');
   const graph = buildNoteGraph(history, 400, 400);
   expect(graph.states.get(first.progress)).toBe('superseded');
   expect(graph.notes.get(next.progress)?.relations).toEqual([{ kind: 'supersedes', target: first.progress }]);
@@ -183,7 +184,9 @@ test('工具结果来源按模型可见文本记录偏移；旧回执的偏移�
   const entries = [{ key: 'plain', kind: 'observation', text: '文件末尾是 here。', sources: [{ messageId: 'tool-source', quote: 'here' }] },
     { key: 'escaped', kind: 'observation', text: '文件含引号。', sources: [{ messageId: 'tool-source', quote: '"quoted"' }] }];
   history.push({ id: 'call-legacy', role: 'model', parts: [{ functionCall: { id: 'legacy', name: 'context_notes', args: { action: 'record', entries } } }] });
-  const receipt = recordContextNotes(history, 'legacy', entries, 100).noteEvent!;
+  const result = recordContextNotes(history, 'legacy', entries, 100);
+  if (!('noteEvent' in result)) throw new Error(result.errors.map(item => item.error).join('；'));
+  const receipt = result.noteEvent;
   expect(receipt.textFormat).toBe(3);
   expect(receipt.records[0].sources[0].offset).toBe(current.indexOf('here'));
 

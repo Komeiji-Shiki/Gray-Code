@@ -294,8 +294,6 @@ const sharedZhCN = {
             },
             summarizeSettings: {
                 executionControls: {
-                    afterTurn: backendZhCN.modules.settings.contextExecution.afterTurn,
-                    afterTurnHint: backendZhCN.modules.settings.contextExecution.afterTurnHint,
                     maxAttempts: backendZhCN.modules.settings.contextExecution.maxAttempts,
                     maxAttemptsHint: backendZhCN.modules.settings.contextExecution.maxAttemptsHint,
                     maxInputRatio: backendZhCN.modules.settings.contextExecution.maxInputRatio,

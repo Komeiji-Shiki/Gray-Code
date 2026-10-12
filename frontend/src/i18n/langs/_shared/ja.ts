@@ -294,8 +294,6 @@ const sharedJa = {
             },
             summarizeSettings: {
                 executionControls: {
-                    afterTurn: backendJa.modules.settings.contextExecution.afterTurn,
-                    afterTurnHint: backendJa.modules.settings.contextExecution.afterTurnHint,
                     maxAttempts: backendJa.modules.settings.contextExecution.maxAttempts,
                     maxAttemptsHint: backendJa.modules.settings.contextExecution.maxAttemptsHint,
                     maxInputRatio: backendJa.modules.settings.contextExecution.maxInputRatio,

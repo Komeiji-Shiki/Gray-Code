@@ -34,7 +34,7 @@ describe('ChannelContextManagement threshold hover help', () => {
       const selector = wrapper.findComponent({ name: 'CustomSelect' })
       expect(selector.props('options').map((option: { value: string }) => option.value)).toEqual(['summary', 'notes'])
       expect(selector.props('modelValue')).toBe('notes')
-      expect(wrapper.text()).toContain('按该渠道独立保存')
+      expect(wrapper.text()).toContain('此渠道沿用全局方式，选择后按渠道独立保存。')
       selector.vm.$emit('update:modelValue', 'summary')
       expect(wrapper.emitted('update:auto-method')).toEqual([['summary']])
       expect(wrapper.emitted('update:mode')).toBeUndefined()

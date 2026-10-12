@@ -430,8 +430,6 @@ const en: BackendLanguageMessages = {
                 maxAttemptsHint: 'For ordinary summaries: 1–5 attempts, default 2. Results without a size reduction are not committed, and the same history is not retried. Notes windows do not call a summary model.',
                 maxInputRatio: 'Summary range when over the input limit',
                 maxInputRatioHint: 'Automatic summaries normally use the full context. If adding the summary request exceeds the hard input budget, reduce the range to this fraction of the available history budget (5%–95%, default 50%), keeping tool calls and results paired.',
-                afterTurn: 'Prepare a summary in the background after a turn',
-                afterTurnHint: 'Off by default. When ordinary summaries reach the same threshold, prepare a candidate after the reply ends. A later request uses it only if the history still matches.',
             },
             clawdSettings: {
                 title: 'Clawd desktop pet integration',

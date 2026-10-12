@@ -60,9 +60,13 @@ export class PlatformPromptService {
     // 手动换到笔记窗口后仍提供恢复工具，自动方式继续服从当前渠道，不强迫两者相同。
     const contextRecovery = this.app.context.configuration(input.conversation).method === 'notes'
       || input.history.findLast(message => message.isSummary && !message.isSummarized)?.contextMethod === 'notes';
-    const contextToolNames = ['context_status', 'context_history', ...(useContextNotes ? [...CONTEXT_TOOL_NAMES] : contextRecovery ? ['context_notes'] : [])];
-    if (typeof (input.conversation.custom as Record<string, unknown> | undefined)?.platformSubagentId === 'string') return {
-      systemPrompt: input.agent.systemPrompt, toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
+    const isSubagent = typeof runtime.platformSubagentId === 'string';
+    // 子代理的普通总结不能扩大已捕获的工具范围；笔记与旧窗口恢复仍沿用环境工具规则。
+    const contextToolNames = ['context_status', ...(useContextNotes ? [...CONTEXT_TOOL_NAMES]
+      : contextRecovery ? ['context_history', 'context_notes'] : isSubagent ? [] : ['context_history'])];
+    if (isSubagent) return {
+      systemPrompt: input.agent.systemPrompt,
+      toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
       turnContext: { contextManagementMethod, contextUserMessageRetention },
       ...(useContextNotes || failure ? { promptContext: { historyPlacement: 'entry' as const,
         beforeHistoryMessages: (useContextNotes ? [{ role: 'user', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] }] : []) as PlatformMessage[],

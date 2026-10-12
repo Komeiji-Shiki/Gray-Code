@@ -335,7 +335,6 @@ export class PlatformApplication {
       previewModel: input => this.context.prepareModel(input, true),
       transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),
       beforeRun: async (run, workspace, signal) => {
-        this.context.beforeRun(run.conversationId);
         await this.nodes.checkRun(run);
         await this.artifacts.beforeRun(run);
         await this.checkpointLifecycle.beforeRun(run, workspace, signal);
@@ -444,7 +443,6 @@ export class PlatformApplication {
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed'].includes(event.event.type)) this.checkpointLifecycle.clear(event.event.runId);
       if (event.type === 'event' && event.event.type === 'run.completed') {
         this.longMemory.background.afterRun(event.event.runId);
-        this.context.afterRun(event.event.runId);
       }
       this.notify(event as unknown as Record<string, unknown>);
     });

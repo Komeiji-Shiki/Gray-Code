@@ -108,9 +108,16 @@ describe('当前完整提示词的只读预览', () => {
       isUserInput: index % 2 === 0, parts: [{ text: '需要在总结前保留的原始对话证据。'.repeat(1500) }] })));
     const before = await app.storage.readConversationState('preview-chat');
     const count = jest.spyOn(TokenCountService.prototype, 'countTokens').mockImplementation(async () => { throw new Error('预览不能调用远程计数'); });
+    const channelCount = jest.spyOn(TokenCountService.prototype, 'countTokensWithChannelConfig')
+      .mockImplementation(async () => { throw new Error('预览不能调用渠道计数 API'); });
     const result = await preview();
-    expect(result.notices.join('')).toContain('自动总结'); expect(JSON.stringify(result.body)).toContain('需要在总结前保留的原始对话证据');
-    expect(count).not.toHaveBeenCalled(); expect(generated).toEqual([]);
+    expect(result.notices.join('')).toContain('自动总结');
+    expect(result.notices.join('')).toContain('输入预算');
+    const originalText = '需要在总结前保留的原始对话证据。'.repeat(1500);
+    expect(JSON.stringify(result.body).split(originalText).length - 1).toBe(10);
+    expect(count).not.toHaveBeenCalled();
+    expect(channelCount).not.toHaveBeenCalled();
+    expect(generated).toEqual([]);
     expect(await app.storage.readConversationState('preview-chat')).toEqual(before); expect(await app.storage.listSnapshots('preview-chat')).toEqual([]);
   });
 

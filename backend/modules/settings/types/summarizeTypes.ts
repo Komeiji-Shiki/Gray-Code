@@ -14,8 +14,6 @@ export interface SummarizeConfig {
     userMessageRetention?: import('../../../../shared/contextManagement').ContextUserMessageRetention;
     /** 自动压缩的可选绝对 token 上限；0 或省略时沿用渠道阈值。 */
     autoSummarizeTokenLimit?: number;
-    /** 回合完成后按相同阈值在后台准备总结，默认关闭。 */
-    autoSummarizeAfterTurn?: boolean;
     /**
      * 手动总结提示词
      */

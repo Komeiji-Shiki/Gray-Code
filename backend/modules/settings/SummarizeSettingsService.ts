@@ -49,9 +49,6 @@ export class SummarizeSettingsService {
             && (!Number.isSafeInteger(config.autoSummarizeTokenLimit) || config.autoSummarizeTokenLimit < 0)) {
             throw new Error('自动压缩 token 上限须为非负整数，0 表示不设绝对上限。');
         }
-        if (config.autoSummarizeAfterTurn !== undefined && typeof config.autoSummarizeAfterTurn !== 'boolean') {
-            throw new Error('后台总结设置须为开关值。');
-        }
         // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
         // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
         await this.core.serializeMutation(async () => {

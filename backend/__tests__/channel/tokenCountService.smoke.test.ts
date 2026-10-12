@@ -3,7 +3,7 @@
  *
  * 覆盖点：
  * - countTokens 基本路径：渠道未启用 / 缺 apiKey 的错误分支
- * - countTokensWithChannelConfig：local 估算公式、channel_default 路由、未知 method、
+ * - countTokensWithChannelConfig：local tokenizer 计数与来源、channel_default 路由、未知 method、
  *   openai_custom 网络路径（URL/Authorization 头/代理 URL 透传）、HTTP 错误、
  *   缺字段错误、fetch 抛错包装
  * - countTokens 全局配置路径（OpenAI 渠道，请求体 model 正确）
@@ -14,6 +14,7 @@
  * 不发起真实网络请求（CI 安全）。
  */
 
+import { get_encoding } from 'tiktoken';
 import { TokenCountService } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
 
@@ -47,11 +48,15 @@ function makeContent(text: string, role: 'user' | 'model' = 'user'): Content {
 
 describe('TokenCountService smoke', () => {
     let service: TokenCountService;
+    let tokenizer: ReturnType<typeof get_encoding>;
 
     beforeAll(() => {
+        tokenizer = get_encoding('o200k_base');
         // 服务内部用 AbortSignal.timeout(30s) 作请求超时，mock 掉以免遗留 30s 定时器拖住 worker 退出
         jest.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal as any);
     });
+
+    afterAll(() => tokenizer.free());
 
     beforeEach(() => {
         jest.clearAllMocks();
@@ -71,13 +76,18 @@ describe('TokenCountService smoke', () => {
         expect(result.error).toContain('API key not configured for openai');
     });
 
-    test('countTokensWithChannelConfig：local 估算（约 4 字符 1 token × 1.5 安全系数）', async () => {
+    test('countTokensWithChannelConfig：local 使用模型 tokenizer 计数并标明来源', async () => {
+        const text = '12345678\n灰魂 tokenizer budget';
         const result = await service.countTokensWithChannelConfig(
-            { type: 'openai', tokenCountMethod: 'local' } as any,
-            [makeContent('12345678')] // 8 字符 → ceil(8/4)=2 → ceil(2*1.5)=3
+            { type: 'openai', model: 'gpt-4o', tokenCountMethod: 'local' } as any,
+            [makeContent(text)]
         );
-        expect(result.success).toBe(true);
-        expect(result.totalTokens).toBe(3);
+        expect(result).toMatchObject({
+            success: true,
+            totalTokens: tokenizer.encode(text, [], []).length,
+            source: 'model-tokenizer',
+            encoding: 'o200k_base'
+        });
         expect(createProxyFetchMock).not.toHaveBeenCalled();
     });
 
@@ -87,7 +97,9 @@ describe('TokenCountService smoke', () => {
             [makeContent('hi')]
         );
         expect(result.success).toBe(true);
-        expect(result.totalTokens).toBe(2); // ceil(ceil(2/4)*1.5) = 2
+        expect(result.totalTokens).toBe(tokenizer.encode('hi', [], []).length);
+        expect(result.source).toBe('generic-tokenizer');
+        expect(result.encoding).toBe('o200k_base');
         expect(createProxyFetchMock).not.toHaveBeenCalled();
     });
 

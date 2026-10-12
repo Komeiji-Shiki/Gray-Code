@@ -87,9 +87,12 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     generate=async()=>({role:'model',completionStatus:'complete',parts:[{
       text:'已读取的长期记忆注明测试代号是青桐-173。当前用户希望核对这条记录，下一步应继续处理当前请求，并保留已经确认的来源和用户要求。',
     }]});
-    const summarized=await summarizeFullContext(app,summaryFrame,{conversationId:'memory-summary',providerId,tools:[]},
-      new AbortController().signal,false,{maxHistoryTokens:32000,
-        messages:[...summaryFrame.state.history.messages.slice(0,2),recalled,summaryFrame.state.history.messages[2]]});
+    const summarized = await summarizeFullContext(app, summaryFrame, {
+      conversationId: 'memory-summary', providerId, systemPrompt: '', tools: [],
+    }, new AbortController().signal, false, {
+      maxHistoryTokens: 32000,
+      messages: [...summaryFrame.state.history.messages.slice(0, 2), recalled, summaryFrame.state.history.messages[2]],
+    });
     const directSummary=summaryFrame.state.history.messages[summarized.insertIndex];
     expect(directSummary.longMemoryReferences).toEqual([{scopeId:scope.id,id:saved.id,version:saved.version}]);
     expect(directSummary.longMemoryInputIds).not.toContain(recalled.id);

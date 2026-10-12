@@ -263,8 +263,6 @@
     { "frontend": "components.settings.summarizeSettings.executionControls.maxAttemptsHint", "backend": "modules.settings.contextExecution.maxAttemptsHint" },
     { "frontend": "components.settings.summarizeSettings.executionControls.maxInputRatio", "backend": "modules.settings.contextExecution.maxInputRatio" },
     { "frontend": "components.settings.summarizeSettings.executionControls.maxInputRatioHint", "backend": "modules.settings.contextExecution.maxInputRatioHint" },
-    { "frontend": "components.settings.summarizeSettings.executionControls.afterTurn", "backend": "modules.settings.contextExecution.afterTurn" },
-    { "frontend": "components.settings.summarizeSettings.executionControls.afterTurnHint", "backend": "modules.settings.contextExecution.afterTurnHint" },
     { "frontend": "components.settings.toolsSettings.toolDisplayNames.context_status", "backend": "tools.runtimeControl.contextStatusName" },
     { "frontend": "components.settings.toolsSettings.toolDisplayNames.engineering_log", "backend": "tools.runtimeControl.engineeringLogName" },
     { "frontend": "components.settings.toolsSettings.toolDescriptions.engineering_log", "backend": "tools.runtimeControl.engineeringLogDescription" },

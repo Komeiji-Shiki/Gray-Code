@@ -33,8 +33,9 @@ test('主视图展示用量与策略，技术字段按需展开且保留原始�
   expect(wrapper.find('.usage-total').text()).toContain('672,000')
   expect(wrapper.find('.usage-percent').text()).toBe('21.19%')
   expect(wrapper.find('[role="progressbar"]').attributes('aria-valuenow')).toBe('21.19')
-  expect(wrapper.text()).toContain('529,599'); expect(wrapper.text()).toContain('90%')
-  expect(wrapper.text()).toContain('笔记管理'); expect(wrapper.text()).toContain('首条与最近一次')
+  expect(wrapper.text()).toContain('529,599')
+  expect(wrapper.find('.usage-policy dd').text()).toBe('90% · 604,800 token')
+  expect(wrapper.text()).toContain('笔记管理'); expect(wrapper.text()).toContain('首条与最新一条')
   expect(wrapper.find('.result-heading').exists()).toBe(false)
   expect(wrapper.find('.usage-details').exists()).toBe(false)
   expect(wrapper.text()).not.toMatch(/measuredAt|budgetSource|换窗|不触发/)
@@ -58,11 +59,18 @@ test('超限保留真实百分比，进度条有界并区分阈值与硬上限',
   expect(wrapper.find('.context-status.overThreshold').exists()).toBe(true)
 })
 
+test('绝对上限生效时同步显示实际比例与 token 数，旧回执仍显示原比例', async () => {
+  const wrapper = panel({ ...data, thresholdTokens: 134400 })
+  expect(wrapper.find('.usage-policy dd').text()).toBe('20% · 134,400 token')
+  await wrapper.setProps({ result: { success: true, data: { ...data, thresholdTokens: undefined } } })
+  expect(wrapper.find('.usage-policy dd').text()).toBe('90%')
+})
+
 test('零值、绝对阈值、缺失字段与非有限数不会伪造成完整用量', async () => {
   const wrapper = panel({ estimatedInputTokens: 0, maxInputTokens: 100, reservedOutputTokens: 0, threshold: 80, thresholdTokens: 80 })
   expect(wrapper.find('.usage-percent').text()).toBe('0%')
   expect(wrapper.find('.usage-stats').text()).toContain('100')
-  expect(wrapper.find('.usage-policy').text()).toContain('80')
+  expect(wrapper.find('.usage-policy dd').text()).toBe('80% · 80 token')
   expect(wrapper.find('.usage-policy').text()).toContain('未提供')
   await wrapper.setProps({ result: { success: true, data: { maxInputTokens: 0, estimatedInputTokens: Number.NaN, inputUsagePercent: Infinity } } })
   expect(wrapper.find('.usage-percent').text()).toBe('—')

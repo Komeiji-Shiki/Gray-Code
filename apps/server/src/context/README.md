@@ -35,7 +35,6 @@
 | `autoSummarizeTokenLimit` | 两种方式共用的可选绝对触发上限，与渠道阈值和硬输入预算取较小值；省略或 0 不启用，旧配置继续使用渠道阈值，未配置时仍为 80%。 |
 | `maxAutoSummarizeAttemptsPerTurn` | 仅普通自动总结，默认 2 次；笔记切窗不调用总结模型。 |
 | `summarizeMaxInputRatio` | 自动普通总结超出硬输入预算后，按可用历史输入预算缩小单次范围，默认 0.5；完整请求能放下时不缩减，手动总结沿用自己的预算。 |
-| `autoSummarizeAfterTurn` | 普通总结回合结束后的后台候选准备，默认关闭；沿用相同阈值和收益判断。 |
 
 以上字段沿用现有总结设置保存、导入和导出路径，新增字段均可省略。Bot 的旧时间总结继续读取已保存的 `keepRecentRounds`、`keepRecentTokens` 和专用模型配置，其独立入口保留时间规则、比例与提示词。
 

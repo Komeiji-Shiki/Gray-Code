@@ -241,7 +241,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     ] }]);
     const run = await start('history-test');
     const completed = await app.runtime.wait(run.id);
-    expect({ status: completed.status, error: completed.error }).toEqual({ status: 'completed', error: undefined });
+    expect({ status: completed?.status, error: completed?.error }).toEqual({ status: 'completed', error: undefined });
     const context = { actorId: 'owner', runId: run.id, conversationId: 'compaction', signal: new AbortController().signal, progress: () => {}, askUser: jest.fn() };
     const tools = app.tools.catalog(['context_history', 'context_notes']).entries;
     const history = tools.get('context_history')!.tool;

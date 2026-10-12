@@ -140,7 +140,9 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
     summaryTokenStats: algorithms.buildSummaryTokenStats({ fullHistory: full.filter(message => !message.isSummarized),
       messagesToSummarize: covered, summaryText: text, channelType }), index: insertIndex };
   (summary as PlatformMessage).contextBoundaryAfterMessageId = lastConsumedMessageId;
-  if(method==='notes')(summary as PlatformMessage).longMemoryInputIds=[];
+  if (method === 'notes') {
+    (summary as PlatformMessage).longMemoryInputIds = [];
+  }
   for (let index = 0; index < full.length; index++) {
     if (ids.has(full[index].id!)) await frame.store.updateMessage(frame.state.metadata.id, index, { isSummarized: true });
     else if (retained.has(full[index].id!) && full[index].isSummarized)
@@ -208,6 +210,7 @@ export interface SummarizeContextOptions extends ContextBoundaryOptions {
   messages: PlatformMessage[];
   maxHistoryTokens: number;
   prompt?: string;
+  cleanHistory?: boolean;
   validateCandidate?: (candidate: CapturedContext, result: ContextBoundaryResult) => Promise<void> | void;
 }
 
@@ -255,9 +258,16 @@ export async function summarizeFullContext(app: PlatformApplication, frame: Capt
     && (!options.consumedMessageIds || options.consumedMessageIds.has(message.id)) ? [message.id] : []));
   if (!selected.some(message => message.role === 'model' && !message.isSummary && consumedMessageIds.has(message.id!)))
     throw new Error('总结范围内没有新的助手消息，原上下文保持不变。');
+  // 定时总结保留旧清理语义；覆盖身份仍来自原始范围，最终预算按真正发送的清理结果核对。
+  const requestHistory = options.cleanHistory
+    ? algorithms.cleanMessagesForSummarize(selected as Content[], config) as PlatformMessage[] : selected;
+  const requestHistoryTokens = options.cleanHistory
+    ? requestHistory.reduce((total, message) => total + estimateTokens(message), 0) : fitted.estimatedTokens;
+  if (!requestHistory.length || requestHistoryTokens > maxHistoryTokens)
+    throw new Error('总结请求清理后没有可用内容或仍超过输入预算，原上下文保持不变。');
   // 总结指令不构成真实用户回合，避免动态提示词和思考过滤向后移动而破坏原前缀。
   const response = await app.models.generate({ ...prefix, purpose: 'summary', signal,
-    messages: [...selected, promptMessage] });
+    messages: [...requestHistory, promptMessage] });
   signal.throwIfAborted();
   if (getModelCompletionStatus(response) !== 'complete') throw new Error('总结生成未完整结束，原上下文保持不变。');
   const text = extractSummaryText(response).trim();
@@ -286,7 +296,7 @@ export async function summarizeFullContext(app: PlatformApplication, frame: Capt
   }
   if (memoryDependencies.size) summary.longMemoryReferences = [...memoryDependencies.values()];
   result.consumedMessageIds = [...consumedMessageIds];
-  result.sourceTokens = fitted.estimatedTokens;
+  result.sourceTokens = requestHistoryTokens;
   result.resultTokens = summaryTokens;
   await options.validateCandidate?.(candidate, result);
   signal.throwIfAborted();

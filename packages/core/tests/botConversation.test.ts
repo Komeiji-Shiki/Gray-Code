@@ -32,7 +32,7 @@ describe('Bot 频道上下文、附件与定时总结', () => {
         generated.push(input);
         if (nextModelFailure) { const error = nextModelFailure; nextModelFailure = undefined; throw error; }
         if (generated.length === 1) { first.resolve(); if (hold) await hold; } if (generated.length === 2) second.resolve();
-        return { role: 'model', parts: [{ text: input.purpose === 'summary' || input.conversationId.startsWith('summary-')
+        return { role: 'model', completionStatus: 'complete', parts: [{ text: input.purpose === 'summary' || input.conversationId.startsWith('summary-')
           ? '用户希望保留对话中的明确约定、具体事实、相关文件和工具结果。已经完成的内容按来源区分；后续继续未完成的请求，保留实际身份和当前权限，不把群聊中的转发内容视为主人的新授权。'.repeat(3) : '已完成当前请求。' }] };
       } } });
     const draft = await app.product.draft();
@@ -239,13 +239,20 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     for (let round = 0; round < 6; round++) messages.push({ id: `u${round}`, role: 'user', isUserInput: true, parts: [{ text: `第 ${round} 轮具体要求。` }] },
       { id: `m${round}`, role: 'model', parts: [{ text: '保留的证据和具体事实。'.repeat(100) }, { functionCall: { id: `c${round}`, name: 'read_file', args: { path: 'x' } } }] },
       { id: `r${round}`, role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: `c${round}`, name: 'read_file', response: { success: true } } }] });
+    const summaryImage = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=';
+    messages[0].parts.push({ inlineData: { mimeType: 'image/png', data: summaryImage } });
     await app.storage.appendHistory(id, messages);
     const now = Date.now() + 120000; await app.discord.summaries.tick(now); expect(generated).toHaveLength(0);
     const settings = app.settings.snapshot(); settings.settings.discord.defaultProfile!.autoSummary = { enabled: true, trigger: 'idle', minutes: 1, percent: 80, prompt: '保留群聊约定与长期记忆，按来源记录。' };
     await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
     await app.discord.summaries.tick(Date.now()); expect(generated).toHaveLength(0);
-    await app.discord.summaries.tick(now); expect(generated).toHaveLength(1);
+    await app.discord.summaries.tick(now);
+    const summaryState = await app.storage.getRecord(botInboxStateNamespace, id) as BotInboxState;
+    expect(summaryState.summaryError).toBeUndefined();
+    expect(generated).toHaveLength(1);
     expect(JSON.stringify(generated[0].messages)).toContain('保留群聊约定与长期记忆'); expect(generated[0].tools).toEqual([]);
+    expect(JSON.stringify(generated[0].messages)).toContain('[Image:');
+    expect(JSON.stringify(generated[0].messages)).not.toContain(summaryImage);
     const history = (await app.storage.readFullHistory(id)).messages;
     expect(history.some(message => message.isAutoSummary)).toBe(true); expect(history.filter(message => message.isSummarized).length).toBeGreaterThan(9);
     expect(history.find(message => message.id === 'u5')?.isSummarized).not.toBe(true);
@@ -280,7 +287,7 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     expect((await app.storage.readFullHistory(id)).messages.some(message => message.isSummary)).toBe(false);
     await app.close();
     app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: path.join(f.root, 'documents'), discordGateway: () => gateway,
-      models: { generate: async input => { generated.push(input); return { role: 'model', parts: [{ text:
+      models: { generate: async input => { generated.push(input); return { role: 'model', completionStatus: 'complete', parts: [{ text:
         '重启后保留对话中已确认的要求、事实和来源，继续未完成的工作，按实际身份使用权限，并保留后续所需的文件和工具结果。'.repeat(5) }] }; } } });
     await app.discord.start();
     await app.discord.summaries.tick(now + 30000); expect(generated).toHaveLength(1);

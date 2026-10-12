@@ -19,7 +19,6 @@ import { conversationContextSettings, manualSummaryPrefix, notesWindowBoundary, 
 import { prepareContextRequest } from './prepare';
 import { createContextBudget } from './budget';
 import { captureSummaryView } from './requestView';
-import { ContextBackgroundSummaries } from './background';
 import { extractSummaryText } from './summaryText';
 import type { TurnContextState } from './decision';
 
@@ -28,14 +27,7 @@ interface SummaryResult { summaryContent: Content; insertIndex: number; removedC
 export class PlatformContextService {
   private readonly localTokens = new MessageTokenEstimator();
   private readonly manual = new Map<string, { actorId: string; controller: AbortController; done: Promise<unknown> }>();
-  private readonly background: ContextBackgroundSummaries;
-  constructor(private readonly app: PlatformApplication) {
-    this.background = new ContextBackgroundSummaries(app, {
-      commit: (frame, snapshot) => this.commit(frame, undefined, snapshot),
-      event: (runId, type, payload) => this.event(runId, type, payload),
-      isManual: id => this.manual.has(id),
-    });
-  }
+  constructor(private readonly app: PlatformApplication) {}
   configuration(conversation: PlatformConversation, automaticChannel?: Parameters<typeof conversationContextSettings>[2]) {
     return conversationContextSettings(this.app, conversation, automaticChannel);
   }
@@ -61,7 +53,6 @@ export class PlatformContextService {
   }
   /** 正式请求和预览共享最终视图、预算和动作决策。 */
   async prepareModel(context: ModelRequestContext, preview = false) {
-    if (!preview) this.beforeRun(context.run.conversationId);
     return prepareContextRequest(this.app, context, { preview, modelView: true,
       commit: (frame, snapshot) => this.commit(frame, context.run.id, snapshot),
       event: (type, payload) => this.event(context.run.id, type, payload) });
@@ -99,14 +90,15 @@ export class PlatformContextService {
     const actualModel = settings.useSeparateModel && settings.summarizeChannelId ? settings.summarizeModelId || undefined : modelOverride;
     const config = await this.app.product.channel(actualProvider, { includeCredential: false });
     if (!config?.enabled) throw new Error('总结渠道不存在或已禁用。');
-    const summaryPrefix = actualProvider === providerId && actualModel === modelOverride ? prefix
-      : { ...prefix, providerId: actualProvider, modelOverride: actualModel, systemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT,
-        tools: [], promptContext: undefined };
+    // 定时整理有独立的保留范围与提示词，即使沿用主渠道也不携带执行任务的工具目录。
+    const summaryPrefix = { conversationId: `summary-${randomUUID()}`, providerId: actualProvider,
+      modelOverride: actualModel, systemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT, tools: [] };
     const summaryBudget = createContextBudget(summaryPrefix, config);
     const before = counter.evaluate(full);
     return summarizeFullContext(this.app, frame, summaryPrefix, signal, mode === 'auto', {
       messages: source, consumedMessageIds: new Set(source.flatMap(message => message.id ? [message.id] : [])),
-      insertAtConsumedEnd: true, maxHistoryTokens: Math.max(0, summaryBudget.maxInputTokens - summaryBudget.fixedTokens),
+      insertAtConsumedEnd: true, cleanHistory: true,
+      maxHistoryTokens: Math.max(0, summaryBudget.maxInputTokens - summaryBudget.fixedTokens),
       retainedUserTokenBudget: Math.max(0, before.maxInputTokens - before.fixedTokens
         - (before.historyTokens - counter.evaluate(source).historyTokens)), estimateTokens: summaryBudget.estimateMessage,
       prompt: override?.prompt.trim() || (mode === 'auto' ? settings.autoSummarizePrompt : settings.summarizePrompt),
@@ -136,8 +128,6 @@ export class PlatformContextService {
     });
   }
 
-  beforeRun(conversationId: string): void { this.background.beforeRun(conversationId); }
-  afterRun(runId: string): void { this.background.afterRun(runId); }
   isSummarizing(id: string): boolean { return this.manual.has(id); }
   /** 修改摘要只替换正文，保留覆盖范围与原文，并与旧版本快照一起提交。 */
   async editSummary(actorId: string, id: string, messageId: string, text: string, expectedText: string) {
@@ -170,7 +160,6 @@ export class PlatformContextService {
   async summarizeManually(actorId: string, id: string, providerId: string, modelOverride?: string, botSchedule?: BotAutoSummarySettings) {
     this.app.requireOwner(actorId);
     if (this.manual.has(id)) throw new Error('当前对话已经在总结。');
-    this.beforeRun(id);
     const controller = new AbortController();
     const done = (async () => {
       try {
@@ -345,6 +334,6 @@ export class PlatformContextService {
   }
   async close(): Promise<void> {
     for (const operation of this.manual.values()) operation.controller.abort(new Error('应用正在关闭。'));
-    await Promise.allSettled([this.background.close(), ...[...this.manual.values()].map(operation => operation.done)]);
+    await Promise.allSettled([...this.manual.values()].map(operation => operation.done));
   }
 }

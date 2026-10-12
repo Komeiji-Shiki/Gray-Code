@@ -560,6 +560,8 @@ export function formatHistoryForAPI(
         if (message.isUserInput) {
             result.isUserInput = true;
         }
+        // 请求视图也用于总结范围规划，工具回执不能在格式化后变成新的用户回合。
+        if (message.isFunctionResponse) result.isFunctionResponse = true;
         // 插话/ask_user 回答仍是用户输入，但复用运行开始时捕获的 promptContext。
         // 必须把可信宿主边界带到 formatter，否则只剩 isUserInput 会让旧上下文移到反馈前。
         // 这些字段不进入上游请求（formatter 仍只序列化 role/parts），也不由正文推断。

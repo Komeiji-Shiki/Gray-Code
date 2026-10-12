@@ -87,24 +87,36 @@ export async function prepareContextRequest(app: PlatformApplication, context: M
     await event('context.summary.started', { method: 'notes' });
     const result = await notesWindowBoundary(app, frame, true, config.type, management.userMessageRetention, reason,
       { retainedUserTokenBudget: Math.max(0, budget.maxInputTokens - budget.fixedTokens), estimateTokens: counter.estimateMessage });
-    turn.fallback = false; turn.fallbackStartId = undefined; turn.fallbackStart = undefined;
+    turn.fallback = false;
+    turn.fallbackStartId = undefined;
+    turn.fallbackStart = undefined;
     await persistTurn();
     await commit(true);
     await event('context.summary.completed', { ...result });
     messages = await view(frame);
     budget = counter.evaluate(messages);
   };
-  if (switchRequested && management.method === 'notes') await switchNotes('model_requested');
-  const action = decideContextAction({ budget, messages, retention: management.userMessageRetention,
+  const decide = () => decideContextAction({ budget, messages, retention: management.userMessageRetention,
     enabled: policy.enabled, method: management.method, frozen: !!pendingIds,
     hasNewModelHistory: messages.some(message => !message.isSummary && (message.role === 'model' || message.parts.some(part => part.functionResponse))),
     lastMessageId: messages.at(-1)?.id, maxAttempts: clampMaxAutoSummarizeAttempts(settings.maxAutoSummarizeAttemptsPerTurn), turn });
+  if (preview) {
+    const action = decide();
+    if (action === 'summarize') notices.push('当前内容预计触发自动总结；这里展示总结前的请求，总结完成后实际历史会变化。');
+    if (action === 'notes-switch' || switchRequested && management.method === 'notes')
+      notices.push('正式发送前将切换到笔记窗口；这里展示切换前的原始内容。');
+    if (budget.exceedsInputLimit || turn.fallbackStartId)
+      notices.push('当前内容需要在正式发送时按输入预算处理；预览保留原始内容，不执行请求裁剪。');
+    input.signal.throwIfAborted();
+    return { history: frame.state, messages, notices };
+  }
+  if (switchRequested && management.method === 'notes') await switchNotes('model_requested');
+  const action = decide();
   if (action === 'notes-switch' || action === 'notes-reminder') {
     if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name)))
       throw new Error('笔记管理需要启用 context_notes、context_history 和 new_context 工具，请启用后重试。');
     if (action === 'notes-switch') {
       await switchNotes('input_budget_exceeded');
-      if (preview) notices.push('当前内容预计超过输入预算，发送前将切换到笔记窗口。');
     } else {
       const windowId = frame.state.history.messages.findLast(message => message.contextWindowId)?.contextWindowId ?? 'initial';
       if (custom?.contextReminderWindowId !== windowId) {
@@ -119,58 +131,60 @@ export async function prepareContextRequest(app: PlatformApplication, context: M
     }
   }
   if (action === 'summarize') {
-    if (preview) notices.push('当前内容预计触发自动总结；这里展示总结前的请求，总结完成后实际历史会变化。');
-    else {
-      turn.summaryAttempts++;
-      turn.lastAttemptMessageId = messages.at(-1)?.id;
+    turn.summaryAttempts++;
+    turn.lastAttemptMessageId = messages.at(-1)?.id;
+    await persistTurn();
+    await commit();
+    await event('context.summary.started', { attempt: turn.summaryAttempts });
+    try {
+      const before = budget.inputTokens;
+      let candidateMessages = messages;
+      let candidateBudget = budget;
+      const result = await summarizeFullContext(app, frame, prefix, input.signal, true, {
+        messages, maxHistoryTokens: Math.max(0, budget.maxInputTokens - budget.fixedTokens),
+        retainedUserTokenBudget: Math.max(0, budget.maxInputTokens - budget.fixedTokens), estimateTokens: counter.estimateMessage,
+        validateCandidate: async candidate => {
+          candidateMessages = await view(candidate);
+          candidateBudget = counter.evaluate(candidateMessages);
+          if (candidateBudget.inputTokens >= before) throw Object.assign(new Error('总结没有减少本次模型请求，保留原上下文。'), { code: 'SUMMARY_NO_GAIN' });
+        },
+      });
+      input.signal.throwIfAborted();
+      messages = candidateMessages;
+      budget = candidateBudget;
+      turn.lastSummaryInputTokens = budget.inputTokens;
+      turn.lastSummarySavedTokens = before - budget.inputTokens;
+      turn.lastSummaryCoveredCount = result.removedCount;
+      turn.summaryBasis = { ...turn.summaryBasis!, boundaryId: result.summaryContent.id };
+      turn.summaryBlocked = false;
+      turn.fallback = false;
+      turn.fallbackStartId = undefined;
+      turn.fallbackStart = undefined;
       await persistTurn();
-      await commit();
-      await event('context.summary.started', { attempt: turn.summaryAttempts });
-      try {
-        const before = budget.inputTokens;
-        let candidateMessages = messages;
-        let candidateBudget = budget;
-        const result = await summarizeFullContext(app, frame, prefix, input.signal, true, {
-          messages, maxHistoryTokens: Math.max(0, budget.maxInputTokens - budget.fixedTokens),
-          retainedUserTokenBudget: Math.max(0, budget.maxInputTokens - budget.fixedTokens), estimateTokens: counter.estimateMessage,
-          validateCandidate: async candidate => {
-            candidateMessages = await view(candidate);
-            candidateBudget = counter.evaluate(candidateMessages);
-            if (candidateBudget.inputTokens >= before) throw Object.assign(new Error('总结没有减少本次模型请求，保留原上下文。'), { code: 'SUMMARY_NO_GAIN' });
-          },
-        });
-        input.signal.throwIfAborted();
-        messages = candidateMessages; budget = candidateBudget;
-        turn.lastSummaryInputTokens = budget.inputTokens;
-        turn.lastSummarySavedTokens = before - budget.inputTokens;
-        turn.lastSummaryCoveredCount = result.removedCount;
-        turn.summaryBasis = { ...turn.summaryBasis!, boundaryId: result.summaryContent.id };
-        turn.summaryBlocked = false; turn.fallback = false; turn.fallbackStartId = undefined; turn.fallbackStart = undefined;
-        await persistTurn();
-        await commit(true);
-        await event('context.summary.completed', { ...result, inputTokensBefore: before, inputTokensAfter: budget.inputTokens,
-          savedTokens: turn.lastSummarySavedTokens });
-      } catch (error) {
-        input.signal.throwIfAborted();
-        if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) throw error;
-        turn.summaryBlocked = true;
-        await persistTurn();
-        await event('context.summary.failed', { message: (error as Error).message, attempt: turn.summaryAttempts });
-      }
+      await commit(true);
+      await event('context.summary.completed', { ...result, inputTokensBefore: before, inputTokensAfter: budget.inputTokens,
+        savedTokens: turn.lastSummarySavedTokens });
+    } catch (error) {
+      input.signal.throwIfAborted();
+      if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) throw error;
+      turn.summaryBlocked = true;
+      await persistTurn();
+      await event('context.summary.failed', { message: (error as Error).message, attempt: turn.summaryAttempts });
     }
   }
   // 软阈值失败可以继续；硬上限始终约束最终请求，异步等待也不例外。
   if (budget.exceedsInputLimit || turn.fallbackStartId) {
     const trimmed = trimContextRequest(messages, budget, counter, pendingIds, turn.fallbackStartId);
-    messages = trimmed.messages; budget = trimmed.budget;
+    messages = trimmed.messages;
+    budget = trimmed.budget;
     if (turn.fallbackStartId !== trimmed.startId || turn.fallback !== !!trimmed.startId) {
-      turn.fallback = !!trimmed.startId; turn.fallbackStartId = trimmed.startId;
+      turn.fallback = !!trimmed.startId;
+      turn.fallbackStartId = trimmed.startId;
       turn.fallbackStart = trimmed.startId ? frame.state.history.messages.findIndex(message => message.id === trimmed.startId) : undefined;
       await persistTurn();
     }
     await event('context.fallback', { trimStartId: trimmed.startId, inputTokens: budget.inputTokens, inputTokenLimit: budget.maxInputTokens,
       truncatedMessageIds: trimmed.truncatedMessageIds });
-    if (preview) notices.push('这次请求需要临时裁剪早期内容，已保存的原始历史保持完整。');
   }
   await commit();
   input.signal.throwIfAborted();
