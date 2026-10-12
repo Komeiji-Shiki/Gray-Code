@@ -12,6 +12,7 @@ export async function runApplicationCommand(
   values: Record<string, string | boolean | undefined>,
 ): Promise<void> {
   const application = await PlatformApplication.open({ dataDirectory,
+    locale: Intl.DateTimeFormat().resolvedOptions().locale,
     ...(command === 'serve' ? { remoteAccess: (app: PlatformApplication) => new RemoteAccessService(app, { clientDirectory: values.web ? path.resolve(__dirname, '../../client/dist') : undefined }) } : {}),
     secretCodec: environmentSecretCodec(typeof values['key-env'] === 'string' ? values['key-env'] : undefined) });
   try {

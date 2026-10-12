@@ -3,11 +3,13 @@ import path from 'node:path';
 import os from 'node:os';
 import type { ActorIdentity, WorkspaceDefinition, ToolDeclaration } from '@graycode/contracts';
 import type { RuntimeTool } from '@graycode/core';
+import { getActualLanguage } from '../../../../backend/i18n';
 import { SkillsRuntime } from '../../../../backend/modules/skills/SkillsRuntime';
 import type { Skill } from '../../../../backend/modules/skills/types';
 import type { SkillConfigItem } from '../../../../backend/modules/settings/types/skillsTypes';
 import type { SkillExportData } from '../../../../backend/modules/skills/types';
 import { createSkillReadRuntime } from '../../../../backend/tools/skills/readSkillRuntime';
+import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
 import type { PlatformApplication } from '../application';
 import type { ProductSettingsDraft } from '../settings/product';
 import { SkillBundleStore, collectSkillBundle, skillBundleId, validateSkillBundle, type PlatformSkillExport, type SavedPlatformSkill } from './bundles';
@@ -84,9 +86,26 @@ export class PlatformSkills {
   }
   tool(): RuntimeTool {
     const legacy = createSkillReadRuntime(() => null).generateReadSkillDeclaration();
-    const declaration: ToolDeclaration = { ...legacy, description:
-      '按名称读取当前任务可用技能的完整正文。省略 name 或传空字符串时列出可用技能；查找失败也返回可用名称。技能范围由当前工作区、账号和对话配置决定。',
-      parameters: { ...legacy.parameters, properties: { name: { type: 'string', description: '技能名称；省略时列出当前可用技能。' } } } };
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
+    const declaration: ToolDeclaration = {
+      ...legacy,
+      description: isZh
+        ? '按名称读取当前任务可用技能的完整正文。省略 name 或传空字符串时列出可用技能；查找失败也返回可用名称。技能范围由当前工作区、账号和对话配置决定。'
+        : 'Read the full content of a skill available to the current task by name. '
+          + 'Omit name or pass an empty string to list available skills; an unknown name also returns available names. '
+          + 'Availability depends on the current workspace, account, and conversation settings.',
+      parameters: {
+        ...legacy.parameters,
+        properties: {
+          name: {
+            type: 'string',
+            description: isZh
+              ? '技能名称；省略时列出当前可用技能。'
+              : 'Skill name; omit it to list skills available to the current task.',
+          },
+        },
+      },
+    };
     return { declaration, effects: () => ['workspace_read'], execute: async (args, context) => {
       const name = typeof args.name === 'string' ? args.name.trim() : '';
       const skills = await this.items(context.actorId, context.conversationId, context.workspace?.id, undefined, { workspace: context.workspace, actor: context.actor, signal: context.signal });

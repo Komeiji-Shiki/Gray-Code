@@ -2,7 +2,6 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { PlatformStorage } from '@graycode/core';
 import type { PlatformConversation, PlatformMessage } from '@graycode/contracts';
-import type { SupportedLanguage } from '../../../backend/i18n';
 
 export function metadata(id: string): PlatformConversation {
   return { id, title: `会话 ${id}`, createdAt: 123456, updatedAt: 123456, custom: { unknownFutureField: '保留' } };
@@ -12,7 +11,7 @@ export const TEMP_DIR_REMOVE_OPTIONS = { recursive: true, force: true, maxRetrie
 export function message(index: number, text = `消息 ${index}`): PlatformMessage {
   return { id: `message_${index}`, role: index % 2 ? 'model' : 'user', parts: [{ text }], timestamp: index + 1000 };
 }
-export async function fixture(language: SupportedLanguage = 'zh-CN'): Promise<{
+export async function fixture(): Promise<{
   root: string; data: string; source: string; store: PlatformStorage; cleanup(): Promise<void>;
 }> {
   const temporaryRoot = path.resolve('.tmp');
@@ -22,8 +21,6 @@ export async function fixture(language: SupportedLanguage = 'zh-CN'): Promise<{
   const source = path.join(root, 'legacy');
   await fs.mkdir(path.join(source, 'conversations'), { recursive: true });
   const store = await PlatformStorage.open(data);
-  // 平台用例沿用中文断言，不受 CI 宿主语言影响；国际化用例显式传入 auto 或其他语言。
-  await store.putRecord({ namespace: 'product-settings', id: 'main', value: { features: { ui: { language } }, channels: [] } });
   const result = { root, data, source, store, cleanup: async () => {
     await result.store.close();
     if (path.dirname(root) !== temporaryRoot || !path.basename(root).startsWith('platform-test-')) throw new Error('Unsafe fixture cleanup path.');

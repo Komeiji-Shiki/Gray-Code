@@ -107,7 +107,7 @@ import { setDetectedLanguage } from '../../../backend/i18n';
 
 export interface ApplicationOptions {
   dataDirectory: string;
-  /** 宿主实际语言；独立服务未指定时使用当前运行环境的 locale。 */
+  /** 由桌面或独立服务入口注入；未提供时沿用 i18n 模块的检测语言。 */
   locale?: string;
   configurationPersistence?: {
     initialize(application: PlatformApplication): Promise<void>;
@@ -467,7 +467,7 @@ export class PlatformApplication {
     this.clawd = new ClawdService(this);
   }
   static async open(options: ApplicationOptions): Promise<PlatformApplication> {
-    setDetectedLanguage(options.locale ?? Intl.DateTimeFormat().resolvedOptions().locale);
+    if (options.locale !== undefined) setDetectedLanguage(options.locale);
     const storage = await PlatformStorage.open(options.dataDirectory);
     let acquired: PlatformApplication | undefined;
     try {
@@ -525,7 +525,7 @@ export class PlatformApplication {
   refreshMutationTools(languageChanged = false): void {
     if (languageChanged) {
       // 这些声明只随语言变化，不因保存其他设置反复重建；运行中的目录仍使用原捕获版本。
-      for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this)]) {
+      for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this), this.skills.tool()]) {
         this.tools.replaceNamespace(tool.declaration.name, [tool]);
       }
     }
