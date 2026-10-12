@@ -19,7 +19,6 @@ import ChannelTokenCountMethod from './channelSettings/ChannelTokenCountMethod.v
 import ChannelProviderOptions from './channelSettings/ChannelProviderOptions.vue'
 import ChannelCustomBody from './channelSettings/ChannelCustomBody.vue'
 import ChannelCustomHeaders from './channelSettings/ChannelCustomHeaders.vue'
-import ChannelOpenCodeSession from './channelSettings/ChannelOpenCodeSession.vue'
 import ChannelAutoRetry from './channelSettings/ChannelAutoRetry.vue'
 
 const emit = defineEmits<{ 'open-context': [] }>()
@@ -47,7 +46,7 @@ const selectorRef = ref<ChannelConfigSelectorExpose | null>(null)
 // 新建配置对话框
 const showNewDialog = ref(false)
 const newConfigName = ref('')
-const newConfigType = ref<ChannelType>('gemini')
+const newConfigType = ref<ChannelType>('openai')
 const newConfigNameError = ref(false)
 const createError = ref('')
 const isCreatingConfig = ref(false)
@@ -81,9 +80,8 @@ const confirmDialogMessage = ref('')
 const confirmDialogAction = ref<() => void>(() => {})
 
 // 获取类型显示名称
-function getTypeName(type: string): string {
-  const key = `components.settings.channelSettings.form.channelType.${type}` as const
-  return t(key)
+function getTypeName(type: ChannelType): string {
+  return typeOptions.value.find(option => option.value === type)!.label
 }
 
 // 更新options字段
@@ -143,11 +141,14 @@ const configOptions = computed<SelectOption[]>(() =>
 
 // 类型选项
 const typeOptions = computed<SelectOption[]>(() => [
-  { value: 'gemini', label: t('components.settings.channelSettings.form.channelType.gemini'), description: 'Google Gemini' },
-  { value: 'gemini-interactions', label: t('components.settings.channelSettings.form.channelType.gemini-interactions'), description: 'Google Gemini Interactions API' },
   { value: 'openai', label: t('components.settings.channelSettings.form.channelType.openai'), description: 'OpenAI Compatible' },
-  { value: 'openai-responses', label: t('components.settings.channelSettings.form.channelType.openai-responses'), description: 'OpenAI Responses API' },
-  { value: 'anthropic', label: t('components.settings.channelSettings.form.channelType.anthropic'), description: 'Anthropic Claude' }
+  { value: 'openai-responses', label: t('components.settings.channelSettings.form.channelType.openaiResponses'), description: 'OpenAI Responses API' },
+  { value: 'anthropic', label: t('components.settings.channelSettings.form.channelType.anthropic'), description: 'Anthropic Claude' },
+  { value: 'gemini', label: t('components.settings.channelSettings.form.channelType.gemini'), description: 'Google Gemini' },
+  {
+    value: 'gemini-interactions', label: t('components.settings.channelSettings.form.channelType.geminiInteractions'),
+    description: 'Google Gemini Interactions API'
+  }
 ])
 
 // 工具调用格式选项
@@ -991,12 +992,6 @@ onUnmounted(() => {
         @update:show="showCustomHeaders = $event"
         @update:enabled="updateCustomHeadersEnabled"
         @update:headers="updateCustomHeaders"
-      />
-
-      <ChannelOpenCodeSession
-        v-if="!(currentConfig.type === 'openai-responses' && currentConfig.authMode === 'chatgpt')"
-        :enabled="currentConfig.openCodeSessionEnabled ?? false"
-        @update:enabled="(v: boolean) => updateConfigField('openCodeSessionEnabled', v)"
       />
 
       <ChannelAutoRetry

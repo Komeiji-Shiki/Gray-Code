@@ -1064,33 +1064,33 @@ const ja: LanguageMessages = {
             },
             channelSettings: {
                 selector: {
-                    placeholder: '設定を選択',
+                    placeholder: sharedJa.components.settings.channelSettings.selector.placeholder,
                     rename: '名前を変更',
-                    add: '新規設定',
-                    delete: '設定を削除',
-                    inputPlaceholder: '設定名を入力',
+                    add: sharedJa.components.settings.channelSettings.selector.add,
+                    delete: sharedJa.components.settings.channelSettings.selector.delete,
+                    inputPlaceholder: sharedJa.components.settings.channelSettings.selector.inputPlaceholder,
                     confirm: sharedJa.components.settings.channelSettings.selector.confirm,
                     cancel: 'キャンセル'
                 },
                 empty: {
                     title: 'チャンネルが設定されていません',
-                    hint: 'チャンネルを作成して接続先を入力し、モデル一覧を取得するか手動で追加します。サービスが要求する場合は API Key を入力してください。保存後、会話に戻ってモデルを選択します。',
+                    hint: sharedJa.components.settings.channelSettings.empty.hint,
                     create: 'チャンネルを作成'
                 },
                 dialog: {
                     new: {
-                        title: '新規設定',
-                        nameLabel: '設定名',
-                        namePlaceholder: '例：マイ Gemini',
-                        nameRequired: '設定名を入力してください',
-                        typeLabel: 'API タイプ',
-                        typePlaceholder: 'API タイプを選択',
+                        title: sharedJa.components.settings.channelSettings.dialog.new.title,
+                        nameLabel: sharedJa.components.settings.channelSettings.dialog.new.nameLabel,
+                        namePlaceholder: sharedJa.components.settings.channelSettings.dialog.new.namePlaceholder,
+                        nameRequired: sharedJa.components.settings.channelSettings.dialog.new.nameRequired,
+                        typeLabel: sharedJa.components.settings.channelSettings.dialog.new.typeLabel,
+                        typePlaceholder: sharedJa.components.settings.channelSettings.dialog.new.typePlaceholder,
                         cancel: 'キャンセル',
                         create: '作成'
                     },
                     delete: {
-                        title: '設定を削除',
-                        message: '設定 "{name}" を削除してもよろしいですか？この操作は元に戻せません。',
+                        title: sharedJa.components.settings.channelSettings.dialog.delete.title,
+                        message: sharedJa.components.settings.channelSettings.dialog.delete.message,
                         cancel: 'キャンセル',
                         confirm: sharedJa.components.settings.channelSettings.dialog.delete.confirm,
                     },
@@ -1119,11 +1119,11 @@ const ja: LanguageMessages = {
                     },
                     channelType: {
                         label: 'チャンネルタイプ',
-                        gemini: 'Gemini API',
-                        'gemini-interactions': 'Gemini Interactions API',
-                        openai: 'OpenAI API',
-                        'openai-responses': 'OpenAI Responses API',
-                        anthropic: 'Anthropic API',
+                        gemini: sharedJa.components.settings.channelSettings.form.channelType.gemini,
+                        geminiInteractions: sharedJa.components.settings.channelSettings.form.channelType.geminiInteractions,
+                        openai: sharedJa.components.settings.channelSettings.form.channelType.openai,
+                        openaiResponses: sharedJa.components.settings.channelSettings.form.channelType.openaiResponses,
+                        anthropic: sharedJa.components.settings.channelSettings.form.channelType.anthropic,
                         changeHint: 'チャンネルタイプを変更すると、このタイプ固有のパラメータ（モデル一覧、詳細オプションなど）がデフォルトにリセットされます。API Key とカスタム API URL は保持され、共通設定は変更されません。'
                     },
                     toolMode: {
@@ -1277,7 +1277,7 @@ const ja: LanguageMessages = {
                         }
                     },
                     enabled: {
-                        label: 'この設定を有効化'
+                        label: sharedJa.components.settings.channelSettings.form.enabled.label
                     }
                 }
             },

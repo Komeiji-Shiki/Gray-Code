@@ -14,6 +14,7 @@ import {
 } from '../channels'
 import { t } from '@/i18n'
 import type { ChannelConfig } from '@/types'
+import ChannelOpenCodeSession from './ChannelOpenCodeSession.vue'
 
 defineProps<{
   show: boolean
@@ -74,6 +75,12 @@ const emit = defineEmits<{
         @update:option="(k: string, v: any) => emit('update:option', k, v)"
         @update:option-enabled="(k: string, enabled: boolean, v?: any) => emit('update:option-enabled', k, enabled, v)"
         @update:field="(f: string, v: any) => emit('update:field', f, v)"
+      />
+
+      <ChannelOpenCodeSession
+        v-if="!(config.type === 'openai-responses' && config.authMode === 'chatgpt')"
+        :enabled="config.openCodeSessionEnabled ?? false"
+        @update:enabled="(value: boolean) => emit('update:field', 'openCodeSessionEnabled', value)"
       />
     </div>
   </div>

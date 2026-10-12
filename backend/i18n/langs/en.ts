@@ -1636,6 +1636,43 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             setDefaultTooltip: "Click to set as the default model",
             enabledTooltip: "Current default model",
         },
+        channelSettings: {
+            selector: {
+                placeholder: "Select a channel",
+                add: "New channel",
+                delete: "Delete channel",
+                inputPlaceholder: "Enter a channel name",
+            },
+            empty: {
+                hint: "Create a channel, enter its service URL, then fetch or add models manually. Add an API key if the service requires one, then save to start a conversation.",
+            },
+            dialog: {
+                new: {
+                    title: "New channel",
+                    nameLabel: "Channel name",
+                    namePlaceholder: "For example: My API channel",
+                    nameRequired: "Please enter a channel name",
+                    typeLabel: "Channel type",
+                    typePlaceholder: "Select a channel type",
+                },
+                delete: {
+                    title: "Delete channel",
+                    message: "Delete the channel \"{name}\"? This action cannot be undone.",
+                },
+            },
+            form: {
+                channelType: {
+                    openai: "OpenAI Compatible",
+                    openaiResponses: "OpenAI Responses",
+                    anthropic: "Anthropic",
+                    gemini: "Gemini",
+                    geminiInteractions: "Gemini Interactions",
+                },
+                enabled: {
+                    label: "Enable this channel",
+                },
+            },
+        },
     },
 
     errors: {

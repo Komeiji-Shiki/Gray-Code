@@ -166,9 +166,32 @@ const sharedJa = {
                 dialog: {
                     delete: {
                         confirm: "確認",
+                        message: "チャネル「{name}」を削除しますか？この操作は取り消せません。",
+                        title: "チャネルを削除",
+                    },
+                    new: {
+                        nameLabel: "チャネル名",
+                        namePlaceholder: "例：自分の API チャネル",
+                        nameRequired: "チャネル名を入力してください",
+                        title: "チャネルを新規作成",
+                        typeLabel: "チャネルの種類",
+                        typePlaceholder: "チャネルの種類を選択",
                     },
                 },
+                empty: {
+                    hint: "チャネルを作成してサービスの URL を入力し、モデルを取得するか手動で追加してください。必要に応じて API キーを入力し、保存すると会話を始められます。",
+                },
                 form: {
+                    channelType: {
+                        anthropic: "Anthropic",
+                        gemini: "Gemini",
+                        geminiInteractions: "Gemini Interactions",
+                        openai: "OpenAI Compatible",
+                        openaiResponses: "OpenAI Responses",
+                    },
+                    enabled: {
+                        label: "このチャネルを有効にする",
+                    },
                     multimodal: {
                         document: "ドキュメント",
                     },
@@ -179,7 +202,11 @@ const sharedJa = {
                     },
                 },
                 selector: {
+                    add: "チャネルを新規作成",
                     confirm: "確認",
+                    delete: "チャネルを削除",
+                    inputPlaceholder: "チャネル名を入力",
+                    placeholder: "チャネルを選択",
                 },
             },
             checkpoint: {

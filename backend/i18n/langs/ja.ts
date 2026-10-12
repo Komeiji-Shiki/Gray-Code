@@ -1636,6 +1636,43 @@ description: "このスキルの機能と使用場面の簡単な説明"
             setDefaultTooltip: "クリックして既定のモデルに設定",
             enabledTooltip: "現在の既定モデル",
         },
+        channelSettings: {
+            selector: {
+                placeholder: "チャネルを選択",
+                add: "チャネルを新規作成",
+                delete: "チャネルを削除",
+                inputPlaceholder: "チャネル名を入力",
+            },
+            empty: {
+                hint: "チャネルを作成してサービスの URL を入力し、モデルを取得するか手動で追加してください。必要に応じて API キーを入力し、保存すると会話を始められます。",
+            },
+            dialog: {
+                new: {
+                    title: "チャネルを新規作成",
+                    nameLabel: "チャネル名",
+                    namePlaceholder: "例：自分の API チャネル",
+                    nameRequired: "チャネル名を入力してください",
+                    typeLabel: "チャネルの種類",
+                    typePlaceholder: "チャネルの種類を選択",
+                },
+                delete: {
+                    title: "チャネルを削除",
+                    message: "チャネル「{name}」を削除しますか？この操作は取り消せません。",
+                },
+            },
+            form: {
+                channelType: {
+                    openai: "OpenAI Compatible",
+                    openaiResponses: "OpenAI Responses",
+                    anthropic: "Anthropic",
+                    gemini: "Gemini",
+                    geminiInteractions: "Gemini Interactions",
+                },
+                enabled: {
+                    label: "このチャネルを有効にする",
+                },
+            },
+        },
     },
 
     errors: {

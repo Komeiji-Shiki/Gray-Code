@@ -166,9 +166,32 @@ const sharedZhCN = {
                 dialog: {
                     delete: {
                         confirm: "确认",
+                        message: "确定要删除渠道“{name}”吗？此操作不可恢复。",
+                        title: "删除渠道",
+                    },
+                    new: {
+                        nameLabel: "渠道名称",
+                        namePlaceholder: "例如：我的 API 渠道",
+                        nameRequired: "请输入渠道名称",
+                        title: "新建渠道",
+                        typeLabel: "渠道类型",
+                        typePlaceholder: "选择渠道类型",
                     },
                 },
+                empty: {
+                    hint: "新建渠道后填写服务地址，再获取或手动添加模型。服务需要密钥时填写 API Key，保存后即可开始对话。",
+                },
                 form: {
+                    channelType: {
+                        anthropic: "Anthropic",
+                        gemini: "Gemini",
+                        geminiInteractions: "Gemini Interactions",
+                        openai: "OpenAI Compatible",
+                        openaiResponses: "OpenAI Responses",
+                    },
+                    enabled: {
+                        label: "启用此渠道",
+                    },
                     multimodal: {
                         document: "文档",
                     },
@@ -179,7 +202,11 @@ const sharedZhCN = {
                     },
                 },
                 selector: {
+                    add: "新建渠道",
                     confirm: "确认",
+                    delete: "删除渠道",
+                    inputPlaceholder: "输入渠道名称",
+                    placeholder: "选择渠道",
                 },
             },
             checkpoint: {

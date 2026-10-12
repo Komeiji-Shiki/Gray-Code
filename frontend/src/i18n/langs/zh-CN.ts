@@ -1066,33 +1066,33 @@ const zhCN = {
             },
             channelSettings: {
                 selector: {
-                    placeholder: '选择配置',
+                    placeholder: sharedZhCN.components.settings.channelSettings.selector.placeholder,
                     rename: '重命名',
-                    add: '新建配置',
-                    delete: '删除配置',
-                    inputPlaceholder: '输入配置名称',
+                    add: sharedZhCN.components.settings.channelSettings.selector.add,
+                    delete: sharedZhCN.components.settings.channelSettings.selector.delete,
+                    inputPlaceholder: sharedZhCN.components.settings.channelSettings.selector.inputPlaceholder,
                     confirm: sharedZhCN.components.settings.channelSettings.selector.confirm,
                     cancel: '取消'
                 },
                 empty: {
                     title: '尚未配置任何渠道',
-                    hint: '新建渠道后填写服务地址，再获取或手动添加模型。服务需要密钥时填写 API Key，保存后返回对话选择模型。',
+                    hint: sharedZhCN.components.settings.channelSettings.empty.hint,
                     create: '新建渠道'
                 },
                 dialog: {
                     new: {
-                        title: '新建配置',
-                        nameLabel: '配置名称',
-                        namePlaceholder: '例如：我的 Gemini',
-                        nameRequired: '请输入配置名称',
-                        typeLabel: '接口类型',
-                        typePlaceholder: '选择接口类型',
+                        title: sharedZhCN.components.settings.channelSettings.dialog.new.title,
+                        nameLabel: sharedZhCN.components.settings.channelSettings.dialog.new.nameLabel,
+                        namePlaceholder: sharedZhCN.components.settings.channelSettings.dialog.new.namePlaceholder,
+                        nameRequired: sharedZhCN.components.settings.channelSettings.dialog.new.nameRequired,
+                        typeLabel: sharedZhCN.components.settings.channelSettings.dialog.new.typeLabel,
+                        typePlaceholder: sharedZhCN.components.settings.channelSettings.dialog.new.typePlaceholder,
                         cancel: '取消',
                         create: '创建'
                     },
                     delete: {
-                        title: '删除配置',
-                        message: '确定要删除配置 "{name}" 吗？此操作不可恢复。',
+                        title: sharedZhCN.components.settings.channelSettings.dialog.delete.title,
+                        message: sharedZhCN.components.settings.channelSettings.dialog.delete.message,
                         cancel: '取消',
                         confirm: sharedZhCN.components.settings.channelSettings.dialog.delete.confirm,
                     },
@@ -1121,11 +1121,11 @@ const zhCN = {
                     },
                     channelType: {
                         label: '渠道类型',
-                        gemini: 'Gemini API',
-                        'gemini-interactions': 'Gemini Interactions API',
-                        openai: 'OpenAI API',
-                        'openai-responses': 'OpenAI Responses API',
-                        anthropic: 'Anthropic API',
+                        gemini: sharedZhCN.components.settings.channelSettings.form.channelType.gemini,
+                        geminiInteractions: sharedZhCN.components.settings.channelSettings.form.channelType.geminiInteractions,
+                        openai: sharedZhCN.components.settings.channelSettings.form.channelType.openai,
+                        openaiResponses: sharedZhCN.components.settings.channelSettings.form.channelType.openaiResponses,
+                        anthropic: sharedZhCN.components.settings.channelSettings.form.channelType.anthropic,
                         changeHint: '更改渠道类型会将该类型特有的参数（模型列表、高级选项等）重置为默认值；API Key 与自定义 API URL 保留，通用设置保持不变。'
                     },
                     toolMode: {
@@ -1279,7 +1279,7 @@ const zhCN = {
                         }
                     },
                     enabled: {
-                        label: '启用此配置'
+                        label: sharedZhCN.components.settings.channelSettings.form.enabled.label
                     }
                 }
             },

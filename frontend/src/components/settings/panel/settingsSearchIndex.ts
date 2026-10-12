@@ -108,7 +108,7 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     key: 'channel-opencode-session', tab: 'channel',
     labelKey: 'components.settings.channelSettings.form.openCodeSession.title',
     keywords: ['OpenCode', 'OpenCode Go', 'opencode', 'x-opencode-session', '会话', 'session', 'セッション'],
-    anchor: '[data-search-anchor="opencode-session"]'
+    anchor: '[data-search-anchor="advanced-options"]'
   },
   {
     key: 'channel-auto-retry', tab: 'channel',

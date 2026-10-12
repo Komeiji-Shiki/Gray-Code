@@ -1639,6 +1639,43 @@ description: "简要描述该技能的功能及使用场景"
             setDefaultTooltip: "点击设为默认模型",
             enabledTooltip: "当前默认模型",
         },
+        channelSettings: {
+            selector: {
+                placeholder: "选择渠道",
+                add: "新建渠道",
+                delete: "删除渠道",
+                inputPlaceholder: "输入渠道名称",
+            },
+            empty: {
+                hint: "新建渠道后填写服务地址，再获取或手动添加模型。服务需要密钥时填写 API Key，保存后即可开始对话。",
+            },
+            dialog: {
+                new: {
+                    title: "新建渠道",
+                    nameLabel: "渠道名称",
+                    namePlaceholder: "例如：我的 API 渠道",
+                    nameRequired: "请输入渠道名称",
+                    typeLabel: "渠道类型",
+                    typePlaceholder: "选择渠道类型",
+                },
+                delete: {
+                    title: "删除渠道",
+                    message: "确定要删除渠道“{name}”吗？此操作不可恢复。",
+                },
+            },
+            form: {
+                channelType: {
+                    openai: "OpenAI Compatible",
+                    openaiResponses: "OpenAI Responses",
+                    anthropic: "Anthropic",
+                    gemini: "Gemini",
+                    geminiInteractions: "Gemini Interactions",
+                },
+                enabled: {
+                    label: "启用此渠道",
+                },
+            },
+        },
     },
 
     errors: {

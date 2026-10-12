@@ -166,9 +166,32 @@ const sharedEn = {
                 dialog: {
                     delete: {
                         confirm: "Confirm",
+                        message: "Delete the channel \"{name}\"? This action cannot be undone.",
+                        title: "Delete channel",
+                    },
+                    new: {
+                        nameLabel: "Channel name",
+                        namePlaceholder: "For example: My API channel",
+                        nameRequired: "Please enter a channel name",
+                        title: "New channel",
+                        typeLabel: "Channel type",
+                        typePlaceholder: "Select a channel type",
                     },
                 },
+                empty: {
+                    hint: "Create a channel, enter its service URL, then fetch or add models manually. Add an API key if the service requires one, then save to start a conversation.",
+                },
                 form: {
+                    channelType: {
+                        anthropic: "Anthropic",
+                        gemini: "Gemini",
+                        geminiInteractions: "Gemini Interactions",
+                        openai: "OpenAI Compatible",
+                        openaiResponses: "OpenAI Responses",
+                    },
+                    enabled: {
+                        label: "Enable this channel",
+                    },
                     multimodal: {
                         document: "Docs",
                     },
@@ -179,7 +202,11 @@ const sharedEn = {
                     },
                 },
                 selector: {
+                    add: "New channel",
                     confirm: "Confirm",
+                    delete: "Delete channel",
+                    inputPlaceholder: "Enter a channel name",
+                    placeholder: "Select a channel",
                 },
             },
             checkpoint: {

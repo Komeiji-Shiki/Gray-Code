@@ -1064,33 +1064,33 @@ const en: LanguageMessages = {
             },
             channelSettings: {
                 selector: {
-                    placeholder: 'Select Config',
+                    placeholder: sharedEn.components.settings.channelSettings.selector.placeholder,
                     rename: 'Rename',
-                    add: 'New Config',
-                    delete: 'Delete Config',
-                    inputPlaceholder: 'Enter config name',
+                    add: sharedEn.components.settings.channelSettings.selector.add,
+                    delete: sharedEn.components.settings.channelSettings.selector.delete,
+                    inputPlaceholder: sharedEn.components.settings.channelSettings.selector.inputPlaceholder,
                     confirm: sharedEn.components.settings.channelSettings.selector.confirm,
                     cancel: 'Cancel'
                 },
                 empty: {
                     title: 'No channel configured',
-                    hint: 'Create a channel, enter the service address, then fetch or manually add models. Enter an API Key if required by the service. Save and return to the conversation to select a model.',
+                    hint: sharedEn.components.settings.channelSettings.empty.hint,
                     create: 'New Channel'
                 },
                 dialog: {
                     new: {
-                        title: 'New Configuration',
-                        nameLabel: 'Config Name',
-                        namePlaceholder: 'e.g.: My Gemini',
-                        nameRequired: 'Please enter a config name',
-                        typeLabel: 'API Type',
-                        typePlaceholder: 'Select API type',
+                        title: sharedEn.components.settings.channelSettings.dialog.new.title,
+                        nameLabel: sharedEn.components.settings.channelSettings.dialog.new.nameLabel,
+                        namePlaceholder: sharedEn.components.settings.channelSettings.dialog.new.namePlaceholder,
+                        nameRequired: sharedEn.components.settings.channelSettings.dialog.new.nameRequired,
+                        typeLabel: sharedEn.components.settings.channelSettings.dialog.new.typeLabel,
+                        typePlaceholder: sharedEn.components.settings.channelSettings.dialog.new.typePlaceholder,
                         cancel: 'Cancel',
                         create: 'Create'
                     },
                     delete: {
-                        title: 'Delete Configuration',
-                        message: 'Are you sure you want to delete config "{name}"? This action cannot be undone.',
+                        title: sharedEn.components.settings.channelSettings.dialog.delete.title,
+                        message: sharedEn.components.settings.channelSettings.dialog.delete.message,
                         cancel: 'Cancel',
                         confirm: sharedEn.components.settings.channelSettings.dialog.delete.confirm,
                     },
@@ -1119,11 +1119,11 @@ const en: LanguageMessages = {
                     },
                     channelType: {
                         label: 'Channel Type',
-                        gemini: 'Gemini API',
-                        'gemini-interactions': 'Gemini Interactions API',
-                        openai: 'OpenAI API',
-                        'openai-responses': 'OpenAI Responses API',
-                        anthropic: 'Anthropic API',
+                        gemini: sharedEn.components.settings.channelSettings.form.channelType.gemini,
+                        geminiInteractions: sharedEn.components.settings.channelSettings.form.channelType.geminiInteractions,
+                        openai: sharedEn.components.settings.channelSettings.form.channelType.openai,
+                        openaiResponses: sharedEn.components.settings.channelSettings.form.channelType.openaiResponses,
+                        anthropic: sharedEn.components.settings.channelSettings.form.channelType.anthropic,
                         changeHint: 'Changing the channel type resets type-specific settings (model list, advanced options, etc.) to defaults; the API Key and a custom API URL are kept, and common settings stay unchanged.'
                     },
                     toolMode: {
@@ -1277,7 +1277,7 @@ const en: LanguageMessages = {
                         }
                     },
                     enabled: {
-                        label: 'Enable this configuration'
+                        label: sharedEn.components.settings.channelSettings.form.enabled.label
                     }
                 }
             },
