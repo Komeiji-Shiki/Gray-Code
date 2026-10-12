@@ -9,16 +9,12 @@
  * - 损坏 sidecar 跳过（不抛错）、无 sidecar 目录跳过；
  * - conversationIds 显式限定 vs 缺省全量（listConversationIds）。
  *
- * 存储：真实 BranchGraphRepository（临时目录），与 branchWorkspaceBind.test.ts 同模式。
+ * 存储：注入 BranchStorage 内存夹具，错误读取由用例设置。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
 import type { ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
 import { computeCheckpointReferenceCounts } from '../../modules/checkpoint';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 构造一个最小合法节点（workspaceCheckpointId 可覆盖） */
 function node(id: string, overrides: Partial<ConversationBranchNode> = {}): ConversationBranchNode {
@@ -49,16 +45,10 @@ const CP_A = 'cp-a';
 const CP_B = 'cp-b';
 
 describe('computeCheckpointReferenceCounts（BCP-06 引用计数扫描）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'bcp06-refcounts-'));
-        repo = new BranchGraphRepository(tempDir);
-    });
-
-    afterEach(async () => {
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
+        repo = new MemoryBranchStorage();
     });
 
     test('同一对话多节点引用同一存档 → 计数累加（去重按节点，非按存档唯一）', async () => {
@@ -121,10 +111,8 @@ describe('computeCheckpointReferenceCounts（BCP-06 引用计数扫描）', () =
     test('损坏 sidecar 跳过（warn 不抛错）；无 sidecar 会话目录跳过', async () => {
         // c1 正常，c2 损坏，c3 只有会话目录没有 branches.json
         await repo.save('c1', graph({ n1: node('n1', { workspaceCheckpointId: CP_A }) }));
-        const corruptPath = repo.getBranchesFilePath('c2');
-        await fsp.mkdir(path.dirname(corruptPath), { recursive: true });
-        await fsp.writeFile(corruptPath, '{ broken json', 'utf8');
-        await fsp.mkdir(path.join(tempDir, 'conversations', 'c3'), { recursive: true });
+        repo.setReadResult('c2', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
+        repo.setReadResult('c3', { graph: null });
 
         const counts = await computeCheckpointReferenceCounts(repo);
         expect(counts.get(CP_A)).toBe(1);

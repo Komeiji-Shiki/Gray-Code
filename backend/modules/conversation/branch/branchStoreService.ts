@@ -12,7 +12,7 @@ import {
     collectDeletedNodes,
     validate,
 } from './BranchGraph';
-import type { BranchGraphReadResult } from './BranchGraphRepository';
+import type { BranchGraphReadResult } from './branchStorage';
 import {
     deleteBranchGraphCached,
     getBranchGraphCacheKey,

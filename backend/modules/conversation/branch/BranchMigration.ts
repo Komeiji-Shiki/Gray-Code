@@ -10,7 +10,7 @@
  * - 失败回滚：升级前对输入图深拷贝备份（JSON 序列化，图是纯数据）；每个 step 执行前
  *   再拷贝当前图。step 抛错时恢复备份并抛 BranchError('BRANCH_STORAGE_CORRUPT')——
  *   迁移发生在内存中、未落盘，恢复「原版本」等价于不持久化任何中间态；调用方
- *   （BranchGraphRepository.migrate / 未来 BranchService 接线）可选择重试或降级线性模式。
+ *   可选择重试或降级线性模式。
  * - 未知版本拒绝：version 非正整数、或高于目标版本（未来版本）→ 抛
  *   BRANCH_STORAGE_CORRUPT，绝不猜测式降级/改写。
  * - 可恢复中间状态：注册表按版本逐步注册，未来新增 v2→v3 时只需注册新 step，

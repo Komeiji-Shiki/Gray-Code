@@ -8,21 +8,17 @@
  * - 节点不存在 → NODE_NOT_FOUND；
  * - 软删节点 → BRANCH_OPERATION_CONFLICT（不复活、不写入）；
  * - 无图（线性对话）→ 返回 false 且不强制建图（不创建 sidecar）；
- * - sidecar 损坏 → BRANCH_STORAGE_CORRUPT（拒绝覆盖，原文件不变）。
+ * - sidecar 损坏 → BRANCH_STORAGE_CORRUPT（拒绝覆盖，存储内容不变）。
  *
- * 存储组合：历史走 MemoryStorageAdapter，sidecar 走真实临时目录（注入 baseDir）。
+ * 存储组合：历史与分支图分别注入内存存储，覆盖业务行为。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { ConversationHistory } from '../../modules/conversation';
 import { BranchService } from '../../modules/conversation/branch/BranchService';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
 import { BranchError } from '../../modules/conversation/branch/types';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -33,20 +29,14 @@ function linearHistory(): ConversationHistory {
 }
 
 describe('BranchService.bindWorkspaceCheckpoint（BCP-02）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'bcp02-bind-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
-    });
-
-    afterEach(async () => {
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史（无 sidecar），返回 [userNodeId, modelNodeId] */
@@ -69,8 +59,8 @@ describe('BranchService.bindWorkspaceCheckpoint（BCP-02）', () => {
         const bound = await service.bindWorkspaceCheckpoint('c1', modelNodeId, 'cp-1');
         expect(bound).toBe(true);
 
-        // 从仓库重新读（新实例）验证持久化
-        const reloaded = (await new BranchGraphRepository(tempDir).load('c1')).graph!;
+        // 从存储读取独立快照，确认字段经保存写回
+        const reloaded = (await repo.load('c1')).graph!;
         expect(reloaded.nodes[modelNodeId]!.workspaceCheckpointId).toBe('cp-1');
         expect(reloaded.nodes[modelNodeId]!.workspaceState).toBe('checkpointed');
         // 其它节点不受影响
@@ -94,14 +84,15 @@ describe('BranchService.bindWorkspaceCheckpoint（BCP-02）', () => {
         const [, modelNodeId] = await seedWithGraph('c1');
         await service.bindWorkspaceCheckpoint('c1', modelNodeId, 'cp-1');
 
-        const filePath = repo.getBranchesFilePath('c1');
-        const before = await fsp.readFile(filePath, 'utf8');
+        const before = (await repo.load('c1')).graph!;
+        const save = jest.spyOn(repo, 'save');
 
         const bound = await service.bindWorkspaceCheckpoint('c1', modelNodeId, 'cp-1');
         expect(bound).toBe(false);
 
-        const after = await fsp.readFile(filePath, 'utf8');
-        expect(after).toBe(before);
+        const after = (await repo.load('c1')).graph!;
+        expect(after).toEqual(before);
+        expect(save).not.toHaveBeenCalled();
     });
 
     test('自定义 workspaceState 透传（非默认 checkpointed）', async () => {
@@ -147,17 +138,14 @@ describe('BranchService.bindWorkspaceCheckpoint（BCP-02）', () => {
         expect(await repo.exists('c1')).toBe(false);
     });
 
-    test('sidecar 损坏 → BRANCH_STORAGE_CORRUPT（拒绝覆盖，原文件不变）', async () => {
+    test('sidecar 损坏 → BRANCH_STORAGE_CORRUPT（拒绝覆盖，存储内容不变）', async () => {
         const [, modelNodeId] = await seedConversation('c1');
-        const filePath = repo.getBranchesFilePath('c1');
-        await fsp.mkdir(path.dirname(filePath), { recursive: true });
-        await fsp.writeFile(filePath, '{ broken json', 'utf8');
+        repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
         await expect(
             service.bindWorkspaceCheckpoint('c1', modelNodeId, 'cp-1')
         ).rejects.toMatchObject({ code: 'BRANCH_STORAGE_CORRUPT' });
-        const raw = await fsp.readFile(filePath, 'utf8');
-        expect(raw).toBe('{ broken json');
+        expect((await repo.load('c1')).errorCode).toBe('BRANCH_STORAGE_CORRUPT');
     });
 
     test('已删除会话拒绝写（BRANCH_OPERATION_CONFLICT，BS-4 迟到写防护）', async () => {

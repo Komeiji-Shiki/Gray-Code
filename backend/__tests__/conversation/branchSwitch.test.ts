@@ -3,9 +3,6 @@
  * 保留内容、父链、工具响应、幂等、同步缺口及写入失败断言；分歧索引直接取真实重写结果。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { ConversationHistory, ConversationMetadata } from '../../modules/conversation';
@@ -13,13 +10,13 @@ import {
     BranchService,
     setGlobalBranchService,
 } from '../../modules/conversation/branch/BranchService';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
+import type { ConversationBranchGraph } from '../../modules/conversation/branch/types';
 import {
     activePath,
     isFunctionResponseMessage,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -85,14 +82,12 @@ class FailingMetadataStorage extends MemoryStorageAdapter {
 }
 
 describe('候选切换与主历史重写（共享服务组合）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-switch-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -100,7 +95,6 @@ describe('候选切换与主历史重写（共享服务组合）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
@@ -477,14 +471,12 @@ describe('候选切换与主历史重写（共享服务组合）', () => {
 });
 
 describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-rewrite-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -492,7 +484,6 @@ describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => 
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     async function seedConversation(conversationId: string): Promise<string[]> {
@@ -528,9 +519,7 @@ describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => 
 
     test('sidecar 损坏时拒绝重写（BRANCH_STORAGE_CORRUPT），主历史保持原样', async () => {
         await seedConversation('c1');
-        const filePath = repo.getBranchesFilePath('c1');
-        await fsp.mkdir(path.dirname(filePath), { recursive: true });
-        await fsp.writeFile(filePath, '{ broken json', 'utf8');
+        repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
         await expect(manager.rewriteHistoryFromBranchGraph('c1'))
             .rejects.toMatchObject({ code: 'BRANCH_STORAGE_CORRUPT' });
@@ -540,8 +529,6 @@ describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => 
 
     test('语义损坏图（可解析但无效）同样拒绝重写', async () => {
         const ids = await seedConversation('c1');
-        const filePath = repo.getBranchesFilePath('c1');
-        await fsp.mkdir(path.dirname(filePath), { recursive: true });
         // parentId 链成环：可解析但语义损坏
         const invalidGraph = {
             version: 1,
@@ -555,7 +542,7 @@ describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => 
             activeChildId: null,
             candidateSummaries: [],
         };
-        await fsp.writeFile(filePath, JSON.stringify(invalidGraph), 'utf8');
+        repo.setReadResult('c1', { graph: invalidGraph as ConversationBranchGraph });
 
         await expect(manager.rewriteHistoryFromBranchGraph('c1'))
             .rejects.toMatchObject({ code: 'BRANCH_STORAGE_CORRUPT' });

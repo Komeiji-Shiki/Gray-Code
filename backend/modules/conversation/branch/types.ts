@@ -23,7 +23,7 @@ export const BRANCH_GRAPH_VERSION = 1;
 /**
  * TREE-09：软删分支默认保留期（天）。
  * 后端配置项：BranchService 构造时可通过 options.retentionDays 覆盖；
- * 持久化配置见 BranchGraphRepository.loadBranchRetentionConfig（数据目录 branches.config.json）。
+ * 持久化配置经 BranchStorage 的配置端口读取。
  * 0 表示不自动清理（永不过期）。
  */
 export const DEFAULT_BRANCH_RETENTION_DAYS = 30;
@@ -225,11 +225,10 @@ export class BranchError extends Error {
 }
 
 /**
- * 分支图轻量结构校验（R8b-L3：从 BranchGraphRepository 提升为共享实现）。
+ * 分支图轻量结构校验。
  * 只校验 sidecar 可解析为图的表层形状：version 为 >=1 的整数且 nodes 为普通对象。
  * 深度一致性（环 / 悬空指针等）交给 BranchGraph.validate。
- * 使用方：BranchGraphRepository.load（解析失败 → 损坏降级）与
- * UsageIndexStore.readBranchGraph（统计读取降级，不阻塞统计）。
+ * UsageIndexStore.readBranchGraph 使用此校验，损坏数据不阻塞统计。
  */
 export function isBranchGraphShape(value: unknown): value is ConversationBranchGraph {
     if (typeof value !== 'object' || value === null) {

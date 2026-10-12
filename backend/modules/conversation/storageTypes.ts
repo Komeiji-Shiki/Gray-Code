@@ -3,7 +3,7 @@
  *
  * 把 IStorageAdapter 接口与所有存储相关的结果类型集中到本文件，storage.ts 通过
  * `export * from './storageTypes'` 再导出，保证既有 import 口径不变；各适配器实现
- * （memoryStorageAdapter / vscodeStorageAdapter / FileSystemStorageAdapter）直接引用本文件，
+ * （内存实现与宿主注入的持久化实现）直接引用本文件，
  * 避免与 storage.ts 形成运行时循环依赖。
  */
 

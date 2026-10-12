@@ -97,6 +97,16 @@ export class SettingsCore {
         this.settings = this.cloneConfig(DEFAULT_GLOBAL_SETTINGS);
     }
 
+    /** 默认值合并属于存储读取边界；主题迁移仍由 SettingsManager 按既有顺序执行。 */
+    async initialize(): Promise<boolean> {
+        const stored = await this.storage.load();
+        if (!stored) return false;
+
+        this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
+        this.settings.lastUpdated = stored.lastUpdated || Date.now();
+        return true;
+    }
+
     /** 递归深拷贝配置对象 */
     cloneConfig<T>(value: T): T {
         if (value === undefined || value === null) return value;

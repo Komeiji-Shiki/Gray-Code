@@ -6,7 +6,7 @@
  * branchReconcileService / branchCandidateService / branchRetentionService /
  * branchHistorySyncService）与 BranchService 委托入口共用同一份实现，保持行为不变。
  *
- * 上下文只依赖 ConversationManager 与 BranchGraphRepository（二者均来自 BranchService
+ * 上下文只依赖 ConversationManager 与 BranchStorage（二者均来自 BranchService
  * 构造入参），外加实例级共享状态（deferredStructuralSyncConversationIds /
  * pendingRewriteExpectations），避免把 BranchService 实例本身暴露给子模块。
  */
@@ -30,7 +30,7 @@ import { getBranchGraphCacheKey, getBranchGraphCached, setBranchGraphCached } fr
 import { MAX_CANDIDATES_PER_PARENT } from './branchServiceTypes';
 import type { BranchCandidateInput } from './branchServiceTypes';
 import { BranchError } from './types';
-import type { BranchGraphRepository } from './BranchGraphRepository';
+import type { BranchStorage } from './branchStorage';
 import type { ConversationBranchGraph, ConversationBranchNode } from './types';
 import type { ConversationManager } from '../ConversationManager';
 
@@ -52,7 +52,7 @@ export interface BranchServiceState {
 /** 各职责服务共享的核心上下文。 */
 export interface BranchServiceCoreContext {
     conversationManager: ConversationManager;
-    repository: BranchGraphRepository;
+    repository: BranchStorage;
     state: BranchServiceState;
 }
 
@@ -231,7 +231,7 @@ export function getChildrenIndex(graph: ConversationBranchGraph): Map<string, st
  * 锁序：本方法在会话写锁之外调用（cleanupZeroReferencedCheckpoints 自身只取存档锁）。
  */
 export async function cleanupZeroReferencedCheckpoints(
-    repository: BranchGraphRepository,
+    repository: BranchStorage,
     conversationId: string,
     removedNodeIds: string[]
 ): Promise<void> {

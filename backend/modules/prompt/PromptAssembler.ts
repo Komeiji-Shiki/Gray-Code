@@ -1,4 +1,7 @@
-import { CHARACTER_PROMPT_MODULES } from '../../../shared/characterPromptModules'
+import { PromptTemplateRenderer } from './PromptTemplateRenderer'
+import type { DynamicRuntimeContext, PromptContextBundle, DynamicContextDiffBase, PromptAssemblyHost } from './promptAssemblyTypes'
+export type { DynamicRuntimeContext, PromptContextBundle, DynamicContextDiffBase, PromptAssemblyHost } from './promptAssemblyTypes'
+
 import { DYNAMIC_CONTEXT_PREAMBLE } from '../../../shared/defaultPromptTemplates'
 /**
  * GrayCode - 系统提示词管理器
@@ -18,14 +21,10 @@ import { DYNAMIC_CONTEXT_PREAMBLE } from '../../../shared/defaultPromptTemplates
 
 import type { PromptConfig, PromptContext } from './types'
 import type { Content, ContentPart } from '../conversation'
-import type { SettingsManager } from '../settings/SettingsManager'
-import type { PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings'
+
+import type { ResolvedPromptModeSnapshot } from '../settings';
 import { promptContextMessagesToText } from './promptContextCache'
-import {
-    DYNAMIC_PROMPT_PLACEHOLDERS,
-    getReferencedPromptPlaceholders as getTemplateReferencedPlaceholders,
-    replacePromptPlaceholders as replaceTemplatePlaceholders,
-} from './templatePlaceholders'
+import { DYNAMIC_PROMPT_PLACEHOLDERS } from './templatePlaceholders';
 import { fingerprint, formatTodoListText } from './textUtils'
 import { matchGlobPattern, shouldIgnorePath } from './ignorePatterns'
 
@@ -38,120 +37,9 @@ export {
 } from './pinnedFiles'
 export { getGlobIgnoreRegexCacheStats } from './ignorePatterns'
 
-export type DynamicRuntimeContext = {
-    /** 由独立角色服务捕获的资料，仅在预设显式引用时输出。 */
-    characterModules?: Record<string, string>
-    characterMacros?: Record<string, string>
-    characterInjections?: Content[]
-    characterOutlets?: Record<string, string>
-    /** ConversationMetadata.custom['todoList'] */
-    todoList?: unknown
-
-    /** ConversationMetadata.custom['inputPinnedFiles'] */
-    pinnedFiles?: unknown
-
-    /** ConversationMetadata.custom['inputSkills'] */
-    skills?: unknown
-
-    /** 会话绑定的工作区 URI（记忆隔离：工具执行按工作区路由记忆存储） */
-    workspaceUri?: string
-}
-
-export interface PromptContextBundle {
-    /** 当前请求中位于真实聊天历史之前的非 system prompt context。 */
-    beforeHistoryMessages: Content[]
-
-    /** 当前请求中位于真实聊天历史之后的非 system prompt context。 */
-    afterHistoryMessages: Content[]
-
-    /** preserve 旧回合快照要插回原位的 before-history 动态子集。 */
-    dynamicSnapshotBeforeHistoryMessages: Content[]
-
-    /** preserve 旧回合快照要插回原位的 after-history 动态子集。 */
-    dynamicSnapshotAfterHistoryMessages: Content[]
-
-    /** 当前请求要插入的完整非 system prompt context（before + after），保留给旧调用兼容。 */
-    messages: Content[]
-
-    /** preserve 旧回合快照要插回原位的动态子集（dynamic before + dynamic after）。 */
-    dynamicSnapshotMessages: Content[]
-
-    /** messages 的纯文本拼接，用于 token 计数。 */
-    text: string
-
-    /** dynamicSnapshotMessages 的纯文本拼接，用于 preserve 历史 token 计数。 */
-    dynamicSnapshotText: string
-
-    /** entry 表示 chat_history 条目显式控制真实历史位置；legacy 表示沿用旧插入逻辑。 */
-    historyPlacement: 'legacy' | 'entry'
-
-    /** 各动态 section 的完整渲染值（key → wrapSection 后的文本），用于下一轮差分基准。 */
-    sectionValues?: Record<string, string>
-
-    /** 动态模板/条目内容指纹；模板变化时强制全量发送一轮。 */
-    dynamicTemplateFingerprint?: string
-}
-
-/**
- * 跨回合差分基准：上一轮（最近一个带 turnDynamicContext 的用户回合）缓存的
- * 各动态 section 完整渲染值与模板指纹。
- *
- * 只有 preserve 策略会提供基准：它把历史快照回插到原位，模型能看到省略的 section，
- * 差分才是安全的；single 策略下省略会导致模型丢失基线信息，必须全量发送。
- */
-export interface DynamicContextDiffBase {
-    /** 上一轮各动态 section 的完整渲染值。缺失/空对象时视为无基准，全量发送。 */
-    sectionValues?: Record<string, string>
-
-    /** 上一轮的动态模板/条目内容指纹；与当前指纹不同时强制全量发送。 */
-    templateFingerprint?: string
-}
-
-/**
- * 系统提示词管理器
- * 
- * 功能：
- * 1. 生成静态系统提示词（可缓存）
- * 2. 生成动态上下文消息（每次请求时插入，不存储）
- * 3. 支持自定义前缀/后缀
- * 4. 缓存和更新机制
- * 
- * 静态部分（放入系统提示词，可被 API provider 缓存）：
- * - 操作系统信息
- * - 时区
- * - 用户语言
- * - 工作区路径
- * - 工具定义（{{$TOOLS}}、{{$MCP_TOOLS}}）
- * 
- * 动态部分（作为 user 消息插入，不存储到历史记录）：
- * - 当前时间
- * - 工作区文件树
- * - 打开的标签页
- * - 当前活动编辑器
- * - 诊断信息
- * - 固定文件内容
- */
-export interface PromptAssemblyHost {
-    settings: () => SettingsManager | null | undefined
-    workspacePaths: () => string[]
-    sections: {
-        wrapSection(title: string, content: string | null): string
-        cleanupEmptyLines(text: string): string
-        getUserLanguage(): string
-        generateStaticEnvironmentSection(): string
-        generateContextBadgeFormatSection(): string
-        generateMemorySection(): string
-        generateFileTreeSection(maxDepth: number, ignorePatterns: string[]): string
-        generateOpenTabsSection(maxTabs: number, ignorePatterns: string[]): string
-        generateActiveEditorSection(ignorePatterns: string[]): string
-        generateDiagnosticsSection(): string
-        generatePinnedFilesSection(runtimePinnedFiles?: unknown): string
-        getContext(): PromptContext
-    }
-}
-
 /** Host-independent preset renderer. Hosts supply context readers; assembly and caching are shared. */
 export class PromptAssembler {
+    private readonly renderer: PromptTemplateRenderer
     private config: PromptConfig
     private cachedPromptValue: string | null = null
     private lastGeneratedAt: number = 0
@@ -168,6 +56,7 @@ export class PromptAssembler {
     
     constructor(private readonly host: PromptAssemblyHost, config: Partial<PromptConfig> = {}) {
         this.sections = host.sections
+        this.renderer = new PromptTemplateRenderer(host, () => this.config)
         this.config = {
             includeWorkspaceFiles: true,
             maxDepth: 2,
@@ -249,13 +138,13 @@ export class PromptAssembler {
      * 时追加 memoryConfig 指纹；两者都未引用时键保持原样。
      */
     private buildEntriesStaticCacheKey(mode?: ResolvedPromptModeSnapshot): string | null {
-        if (!this.usesPromptEntries(mode)) {
+        if (!this.renderer.usesPromptEntries(mode)) {
             return null
         }
-        const entries = this.getEnabledPromptEntries(mode)
+        const entries = this.renderer.getEnabledPromptEntries(mode)
             .filter(entry => (entry.type || 'prompt') === 'prompt')
             .filter(entry => entry.role === 'system' && entry.content.trim() !== '{{$WORLDBOOK_DEPTH}}')
-        if (entries.some(entry => this.hasDynamicPlaceholder(entry.content))) {
+        if (entries.some(entry => this.renderer.hasDynamicPlaceholder(entry.content))) {
             return null
         }
         const contentFingerprint = fingerprint(
@@ -292,7 +181,7 @@ export class PromptAssembler {
      */
     getSystemPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
-        if (this.usesPromptEntries(resolvedMode)) {
+        if (this.renderer.usesPromptEntries(resolvedMode)) {
             // 预设条目允许 system 条目引用动态占位符，不能复用旧静态缓存。
             // 但全部 system entry 为纯静态（不含动态占位符）时，结果与 runtime 无关：
             // 按「模式 id + 启用集合 + 顺序 + 内容指纹」做 TTL 缓存，避免每条消息全量重渲染
@@ -359,195 +248,18 @@ export class PromptAssembler {
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         
-        if (this.usesPromptEntries(resolvedMode)) {
-            return this.getEnabledPromptEntries(resolvedMode)
+        if (this.renderer.usesPromptEntries(resolvedMode)) {
+            return this.renderer.getEnabledPromptEntries(resolvedMode)
                 .filter(entry => (entry.type || 'prompt') === 'prompt')
                 .filter(entry => entry.role === 'system' && entry.content.trim() !== '{{$WORLDBOOK_DEPTH}}')
-                .map(entry => this.renderPromptEntryContent(entry.content, runtime))
+                .map(entry => this.renderer.renderPromptEntryContent(entry.content, runtime))
                 .filter(Boolean)
                 .join('\n\n')
         }
 
         // 请求运行时必须显式使用本次解析出的模式快照，不能依赖全局当前模式。
         const template = resolvedMode?.template ?? promptConfig?.template ?? ''
-        return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
-    }
-    
-    /**
-     * 从模板生成系统提示词（静态部分）
-     *
-     * 只包含静态内容，可被 API provider 缓存：
-     * - {{$ENVIRONMENT}} - 静态环境信息（操作系统、时区、用户语言、工作区路径）
-     * - {{$CONTEXT_BADGE_FORMAT}} - lim-context 徽章结构说明（告诉 AI 标题/正文含义）
-     * - {{$TOOLS}} - 工具定义（由外部填充）
-     * - {{$MCP_TOOLS}} - MCP 工具定义（由外部填充）
-     * 
-     * 动态内容（时间、文件树、标签页等）由 getDynamicContextMessages() 方法生成
-     */
-    private generateFromTemplate(template: string, customPrefix: string, customSuffix: string, runtime?: DynamicRuntimeContext): string {
-        // 自定义模板可能不引用这些段落，只构建实际用到的模块，避免无关的上下文与设置读取。
-        const referencedKeys = this.getReferencedPromptPlaceholders(template)
-        const modules: Record<string, string> = {
-            'ENVIRONMENT': referencedKeys.has('ENVIRONMENT')
-                ? this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()) : '',
-            'CONTEXT_BADGE_FORMAT': referencedKeys.has('CONTEXT_BADGE_FORMAT')
-                ? this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()) : '',
-            // 动态内容占位符 - 这些将被移到动态上下文消息中
-            // 为了向后兼容，如果模板中包含 these placeholders，替换为空字符串
-            'WORKSPACE_FILES': '',
-            'OPEN_TABS': '',
-            'ACTIVE_EDITOR': '',
-            'DIAGNOSTICS': '',
-            'PINNED_FILES': '',
-            // 工具定义由外部在发送前填充，这里返回占位符
-            'TOOLS': '{{$TOOLS}}',
-            'MCP_TOOLS': '{{$MCP_TOOLS}}',
-            // 记忆系统使用说明（用户可在设置中自定义）
-            'MEMORY': referencedKeys.has('MEMORY') ? this.generateMemorySection() : ''
-        }
-        
-        // 替换模板中的占位符（使用 {{$xxx}} 格式）：单次交替正则扫描 + 回调查表替换
-        // （旧实现逐键 new RegExp + replace 为 O(占位符数 × 模板长度)；且字符串替换值会展开 $ 特殊序列）
-        for (const module of CHARACTER_PROMPT_MODULES) modules[module.id] ??= ''
-        const result = this.replacePromptPlaceholders(template, modules).replace(/\{\{\s*(char|user|persona)\s*\}\}/gi,
-            (match, key: string) => runtime?.characterMacros?.[key.toLowerCase()] ?? match)
-        
-        // 清理多余的空行
-        return this.cleanupEmptyLines(result)
-    }
-    
-    /**
-     * 从动态模板生成上下文内容
-     *
-     * 支持的变量：
-     * - {{$TODO_LIST}} - 当前会话的 TODO 列表（来自 ConversationMetadata.custom['todoList']）
-     * - {{$WORKSPACE_FILES}} - 工作区文件树
-     * - {{$OPEN_TABS}} - 打开的标签页
-     * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
-     * - {{$DIAGNOSTICS}} - 诊断信息
-     * - {{$PINNED_FILES}} - 固定文件内容
-     * - {{$SKILLS}} - 当前会话启用的 Skills 列表
-     */
-    private generateDynamicFromTemplate(
-        template: string,
-        contextConfig: any,
-        runtime?: DynamicRuntimeContext,
-        diffBase?: DynamicContextDiffBase
-    ): { content: string; sectionValues: Record<string, string>; templateFingerprint: string } {
-        const referencedKeys = this.getReferencedPromptPlaceholders(template)
-        const fullModules = this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys)
-        const templateFingerprint = fingerprint(template)
-        const modules = this.applySectionDiff(fullModules, diffBase, templateFingerprint)
-        const templateModules: Record<string, string> = {
-            'TODO_LIST': '',
-            'WORKSPACE_FILES': '',
-            'OPEN_TABS': '',
-            'ACTIVE_EDITOR': '',
-            'DIAGNOSTICS': '',
-            'PINNED_FILES': '',
-            'SKILLS': '',
-            ...modules
-        }
-
-        const result = this.replacePromptPlaceholders(template, templateModules)
-
-        // 全部 section 与上一轮相同（被差分剔除）：整条动态消息不发，
-        // 模型仍能从 preserve 回插的历史快照看到内容，请求前缀与上轮一致。
-        // 例外：基准存在的 section 在当前消失（清空，如 TODO 清空/标签全关）时
-        // 必须发送——否则模型持续持有过期快照（MEDIUM-2：消失的 section 不出现在
-        // 当前 modules 里，Object.values().every 恒真导致整条消息持续被省略）。
-        // 前置条件：模板至少引用一个动态占位符键（[...referencedKeys].some(k =>
-        // DYNAMIC_PROMPT_PLACEHOLDERS.has(k))）。只引用非动态键（如 {{$ENVIRONMENT}}/
-        // {{$MEMORY}}）的模板 modules 恒为空，every 对空对象恒真——若仅用
-        // referencedKeys.size > 0 作前置条件，会误把含静态文本的整条消息省略（04 批 LOW）。
-        const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
-        const vanishedSection = baseKeys.some(key => !(key in modules))
-        const allSectionsOmitted = [...referencedKeys].some(key => DYNAMIC_PROMPT_PLACEHOLDERS.has(key)) &&
-            !!diffBase?.sectionValues &&
-            Object.values(modules).every(value => !value) &&
-            !vanishedSection
-        return {
-            content: allSectionsOmitted ? '' : this.cleanupEmptyLines(result),
-            // 完整 section 值（未差分）供下一轮作为对比基准。
-            sectionValues: fullModules,
-            templateFingerprint
-        }
-    }
-
-    private buildDynamicPromptModules(contextConfig: any, runtime?: DynamicRuntimeContext, onlyKeys?: Set<string>): Record<string, string> {
-        const settingsManager = this.host.settings()
-        const modules: Record<string, string> = {}
-        const shouldBuild = (key: string) => !onlyKeys || onlyKeys.has(key)
-
-        if (shouldBuild('CURRENT_TIME')) modules['CURRENT_TIME'] = new Date().toISOString()
-
-        if (shouldBuild('TODO_LIST')) {
-            const todoText = formatTodoListText(runtime?.todoList)
-            if (todoText) {
-                modules['TODO_LIST'] = this.wrapSection('TODO LIST', todoText)
-            }
-        }
-        
-        // 工作区文件树
-        if (shouldBuild('WORKSPACE_FILES') && (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles)) {
-            const fileTreeContent = this.generateFileTreeSection(
-                contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
-                contextConfig?.ignorePatterns ?? []
-            )
-            if (fileTreeContent) {
-                modules['WORKSPACE_FILES'] = this.wrapSection('WORKSPACE FILES', fileTreeContent)
-            }
-        }
-        
-        // 打开的标签页
-        if (shouldBuild('OPEN_TABS') && contextConfig?.includeOpenTabs) {
-            const openTabsContent = this.generateOpenTabsSection(
-                contextConfig.maxOpenTabs,
-                contextConfig.ignorePatterns || []
-            )
-            if (openTabsContent) {
-                modules['OPEN_TABS'] = this.wrapSection('OPEN TABS', openTabsContent)
-            }
-        }
-        
-        // 当前活动编辑器
-        if (shouldBuild('ACTIVE_EDITOR') && contextConfig?.includeActiveEditor) {
-            const activeEditorContent = this.generateActiveEditorSection(
-                contextConfig.ignorePatterns || []
-            )
-            if (activeEditorContent) {
-                modules['ACTIVE_EDITOR'] = this.wrapSection('ACTIVE EDITOR', activeEditorContent)
-            }
-        }
-        
-        // 诊断信息
-        if (shouldBuild('DIAGNOSTICS')) {
-            const diagnosticsContent = this.generateDiagnosticsSection()
-            if (diagnosticsContent) {
-                modules['DIAGNOSTICS'] = this.wrapSection('DIAGNOSTICS', diagnosticsContent)
-            }
-        }
-        
-        // 固定文件内容
-        if (shouldBuild('PINNED_FILES')) {
-            const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
-            if (pinnedFilesContent) {
-                const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
-                modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
-            }
-        }
-
-        if (shouldBuild('SKILLS')) {
-            const skillsText = this.generateSkillsSection(runtime?.skills)
-            if (skillsText) {
-                modules['SKILLS'] = this.wrapSection('SKILLS', skillsText)
-            }
-        }
-
-        for (const module of CHARACTER_PROMPT_MODULES) {
-            if (shouldBuild(module.id) && runtime?.characterModules?.[module.id]) modules[module.id] = runtime.characterModules[module.id]
-        }
-        return modules
+        return this.renderer.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
     }
     
     /**
@@ -564,34 +276,6 @@ export class PromptAssembler {
      */
     private cleanupEmptyLines(text: string): string {
         return this.sections.cleanupEmptyLines(text)
-    }
-
-    /**
-     * 对动态 section 模块做跨回合差分：与上一轮（diffBase）相同的 section 置空，
-     * 变化/新增的 section 保留。模板指纹不同（模板/条目内容被修改）时强制全量发送。
-     *
-     * 无基准（首轮、旧缓存、single 策略）时不做差分，保持原行为。
-     */
-    private applySectionDiff(
-        modules: Record<string, string>,
-        diffBase?: DynamicContextDiffBase,
-        currentTemplateFingerprint?: string
-    ): Record<string, string> {
-        if (!diffBase?.sectionValues) {
-            return modules
-        }
-        // 模板/条目内容变化：模型需要看到新说明，全量发送一轮（含未变化 section）。
-        if (
-            currentTemplateFingerprint &&
-            diffBase.templateFingerprint !== currentTemplateFingerprint
-        ) {
-            return modules
-        }
-        const result: Record<string, string> = {}
-        for (const [key, value] of Object.entries(modules)) {
-            result[key] = diffBase.sectionValues[key] === value ? '' : value
-        }
-        return result
     }
     
     /**
@@ -617,56 +301,6 @@ export class PromptAssembler {
         return this.sections.generateContextBadgeFormatSection()
     }
 
-    private usesPromptEntries(mode?: ResolvedPromptModeSnapshot): boolean {
-        return mode?.promptAssemblyMode === 'entries'
-    }
-
-    private getEnabledPromptEntries(mode?: ResolvedPromptModeSnapshot): PromptEntry[] {
-        if (!Array.isArray(mode?.promptEntries)) {
-            return []
-        }
-
-        return [...mode.promptEntries]
-            .filter(entry => !!entry && entry.enabled !== false)
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    }
-
-    private entryRoleToContentRole(role: PromptEntryRole): Content['role'] {
-        if (role === 'assistant') return 'model'
-        if (role === 'user') return 'user'
-        return 'system'
-    }
-
-    private hasDynamicPlaceholder(content: string): boolean {
-        if (/\{\{outlet::[^}]+\}\}/.test(content)) return true
-        for (const key of DYNAMIC_PROMPT_PLACEHOLDERS) {
-            if (content.includes(`{{$${key}}}`)) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private generateSkillsSection(raw: unknown): string {
-        if (!Array.isArray(raw)) {
-            return ''
-        }
-
-        const lines = raw
-            .filter(item => item && typeof item === 'object')
-            .map(item => {
-                const name = typeof (item as any).name === 'string' ? (item as any).name.trim() : ''
-                const description = typeof (item as any).description === 'string' ? (item as any).description.trim() : ''
-                const id = typeof (item as any).id === 'string' ? (item as any).id.trim() : ''
-                if (!name && !id) return ''
-                const label = name || id
-                return description ? `- ${label}: ${description}` : `- ${label}`
-            })
-            .filter(Boolean)
-
-        return lines.join('\n')
-    }
-
     /**
      * 生成记忆系统的使用说明。
      *
@@ -675,106 +309,6 @@ export class PromptAssembler {
      */
     private generateMemorySection(): string {
         return this.sections.generateMemorySection()
-    }
-
-
-    private getReferencedPromptPlaceholders(template: string): Set<string> {
-        return getTemplateReferencedPlaceholders(template)
-    }
-
-    /**
-     * 用查表替换模板中的 {{$KEY}} 占位符（单次交替正则扫描，见模块级 PROMPT_PLACEHOLDER_REGEX）。
-     * 函数式替换器 () => value 天然规避 JS replace 替换字符串的 $&/$`/$'/$$/$n 特殊序列展开
-     * （值可能来自工作区路径/固定文件内容/用户记忆提示词等不可信内容）。
-     * 查表未命中的占位符保持原样（与旧逐键替换行为一致）。
-     */
-    private replacePromptPlaceholders(template: string, modules: Record<string, string>): string {
-        return replaceTemplatePlaceholders(template, modules)
-    }
-
-    private renderPromptTemplateContent(
-        template: string,
-        runtime?: DynamicRuntimeContext,
-        diffBase?: DynamicContextDiffBase,
-        prebuiltModules?: Record<string, string>,
-        templateFingerprintOverride?: string
-    ): string {
-        const settingsManager = this.host.settings()
-        const contextConfig = settingsManager?.getContextAwarenessConfig()
-        const referencedKeys = this.getReferencedPromptPlaceholders(template)
-
-        const modules: Record<string, string> = {
-            'ENVIRONMENT': '',
-            'CONTEXT_BADGE_FORMAT': '',
-            'TODO_LIST': '',
-            'WORKSPACE_FILES': '',
-            'OPEN_TABS': '',
-            'ACTIVE_EDITOR': '',
-            'DIAGNOSTICS': '',
-            'PINNED_FILES': '',
-            'SKILLS': '',
-            'MEMORY': '',
-            'TOOLS': '{{$TOOLS}}',
-            'MCP_TOOLS': '{{$MCP_TOOLS}}'
-        }
-        if (referencedKeys.has('ENVIRONMENT')) {
-            modules['ENVIRONMENT'] = this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection())
-        }
-        if (referencedKeys.has('CONTEXT_BADGE_FORMAT')) {
-            modules['CONTEXT_BADGE_FORMAT'] = this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection())
-        }
-        if (referencedKeys.has('MEMORY')) {
-            modules['MEMORY'] = this.generateMemorySection()
-        }
-        // prebuiltModules 由 getPromptContextBundle 一次性生成并复用，避免每条 entry 重复渲染文件树/诊断。
-        // 差分指纹：entries 模式下传聚合指纹（全部动态条目内容拼接后的指纹），与上一轮缓存基准一致；
-        // 否则对单条模板内容算指纹（legacy 等路径的原有行为）。
-        const fullModules = prebuiltModules ?? this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys)
-        // vanished 检测：基准存在但当前消失的 section（清空，如 TODO 清空/标签全关）必须让
-        // 本条条目发送——否则差分后渲染结果为空串时调用方（getPromptContextBundle）按
-        // `if (!text.trim()) continue` 跳过，模型持续持有过期快照。与 template 路径
-        // （generateDynamicFromTemplate）和 legacy 路径（getLegacyDynamicContextMessages）
-        // 的 vanished 口径一致；范围收窄到本条模板实际引用的动态占位符。
-        const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
-        const vanishedSection = baseKeys.some(key =>
-            DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) &&
-            !!diffBase?.sectionValues?.[key] && !(key in fullModules)
-        )
-        const dynamicFingerprint = templateFingerprintOverride ?? fingerprint(template)
-        const dynamicModules = this.applySectionDiff(fullModules, diffBase, dynamicFingerprint)
-        const onlyDynamicPlaceholders = referencedKeys.size > 0 &&
-            [...referencedKeys].every(key => DYNAMIC_PROMPT_PLACEHOLDERS.has(key)) &&
-            !/\{\{\s*(?:char|user|persona)\s*\}\}/i.test(template)
-        // 没有动态内容可发送时，连同本条说明文字一起省略；静态模块仍按原模板输出。
-        if (onlyDynamicPlaceholders && diffBase?.sectionValues && diffBase.templateFingerprint === dynamicFingerprint && !vanishedSection &&
-            [...referencedKeys].every(key => !dynamicModules[key]?.trim())) return ''
-        Object.assign(modules, dynamicModules)
-
-        for (const module of CHARACTER_PROMPT_MODULES) modules[module.id] ??= ''
-        const result = this.replacePromptPlaceholders(template, modules).replace(/\{\{\s*(char|user|persona)\s*\}\}/gi,
-            (match, key: string) => runtime?.characterMacros?.[key.toLowerCase()] ?? match)
-        let output = this.cleanupEmptyLines(result)
-        if (vanishedSection) {
-            // 清空也属于变化，明确说明哪些内容已移除，避免只留下无法表达清空的说明文字。
-            const vanished = baseKeys.filter(key =>
-                DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) &&
-                !!diffBase?.sectionValues?.[key] && !(key in fullModules)
-            )
-            output = [output, this.wrapSection('DYNAMIC CONTEXT', `The following dynamic sections are now empty: ${vanished.join(', ')}`)]
-                .filter(Boolean).join('\n\n')
-        }
-        return output
-    }
-
-    private renderPromptEntryContent(
-        content: string,
-        runtime?: DynamicRuntimeContext,
-        diffBase?: DynamicContextDiffBase,
-        prebuiltModules?: Record<string, string>,
-        templateFingerprintOverride?: string
-    ): string {
-        const expanded = content.replace(/\{\{outlet::([^}]+)\}\}/g, (_match, name: string) => runtime?.characterOutlets?.[name.trim()] ?? '')
-        return this.renderPromptTemplateContent(expanded, runtime, diffBase, prebuiltModules, templateFingerprintOverride)
     }
     
     /**
@@ -807,12 +341,12 @@ export class PromptAssembler {
     ): PromptContextBundle {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
 
-        if (this.usesPromptEntries(resolvedMode)) {
+        if (this.renderer.usesPromptEntries(resolvedMode)) {
             const beforeHistoryMessages: Content[] = []
             const afterHistoryMessages: Content[] = []
             const dynamicSnapshotBeforeHistoryMessages: Content[] = []
             const dynamicSnapshotAfterHistoryMessages: Content[] = []
-            const entries = this.getEnabledPromptEntries(resolvedMode)
+            const entries = this.renderer.getEnabledPromptEntries(resolvedMode)
             const chatHistoryIndex = entries.findIndex(entry => entry.type === 'chat_history')
             const historyPlacement: PromptContextBundle['historyPlacement'] = chatHistoryIndex >= 0 ? 'entry' : 'legacy'
 
@@ -824,10 +358,10 @@ export class PromptAssembler {
                 if ((entry.type || 'prompt') !== 'prompt' || entry.role === 'system') {
                     continue
                 }
-                if (!this.hasDynamicPlaceholder(entry.content)) {
+                if (!this.renderer.hasDynamicPlaceholder(entry.content)) {
                     continue
                 }
-                for (const key of this.getReferencedPromptPlaceholders(entry.content)) {
+                for (const key of this.renderer.getReferencedPromptPlaceholders(entry.content)) {
                     if (DYNAMIC_PROMPT_PLACEHOLDERS.has(key)) {
                         dynamicEntryKeys.add(key)
                     }
@@ -841,7 +375,7 @@ export class PromptAssembler {
                 dynamicEntryFingerprintSource += `${entry.role}\u0000${entry.fakeThought ?? ''}\u0000${entry.content}\u0000`
             }
             const sectionValues = dynamicEntryKeys.size > 0
-                ? this.buildDynamicPromptModules(
+                ? this.renderer.buildDynamicPromptModules(
                     this.host.settings()?.getContextAwarenessConfig(),
                     runtime,
                     dynamicEntryKeys
@@ -863,7 +397,7 @@ export class PromptAssembler {
                     continue
                 }
 
-                const role = this.entryRoleToContentRole(entry.role)
+                const role = this.renderer.entryRoleToContentRole(entry.role)
                 if (role !== 'user' && role !== 'model') {
                     continue
                 }
@@ -871,7 +405,7 @@ export class PromptAssembler {
                 // 差分基准指纹必须是聚合指纹（dynamicTemplateFingerprint）：diffBase.templateFingerprint
                 // 存的就是聚合指纹，若按单条 entry 内容算指纹，多动态条目时永远与基准不相等，
                 // 每次都会触发全量发送，差分功能失效。
-                const text = this.renderPromptEntryContent(entry.content, runtime, options?.diffBase, sectionValues, dynamicTemplateFingerprint)
+                const text = this.renderer.renderPromptEntryContent(entry.content, runtime, options?.diffBase, sectionValues, dynamicTemplateFingerprint)
                 if (!text.trim()) {
                     continue
                 }
@@ -893,7 +427,7 @@ export class PromptAssembler {
                     : beforeHistoryMessages
                 targetMessages.push(message)
 
-                if (this.hasDynamicPlaceholder(entry.content)) {
+                if (this.renderer.hasDynamicPlaceholder(entry.content)) {
                     // 快照消息用于 preserve 策略回插历史。保留完整 parts（含伪造思考）：
                     // 缓存层已能无损保存 thought part，回插时由 formatter 按渠道
                     // 「发送历史思考内容」开关统一过滤，与直发路径字节一致。
@@ -961,7 +495,7 @@ export class PromptAssembler {
         
         const dynamicTemplate = resolvedMode?.dynamicTemplate || promptConfig?.dynamicTemplate || ''
         if (dynamicTemplate.trim()) {
-            const rendered = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig, runtime, diffBase)
+            const rendered = this.renderer.generateDynamicFromTemplate(dynamicTemplate, contextConfig, runtime, diffBase)
             if (rendered.content) {
                 return {
                     messages: [{

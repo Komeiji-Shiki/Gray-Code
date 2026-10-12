@@ -17,7 +17,7 @@
  */
 
 import * as fsp from 'fs/promises';
-import type { BranchGraphRepository } from './BranchGraphRepository';
+import type { BranchStorage } from './branchStorage';
 import type { ConversationBranchGraph } from './types';
 
 const BRANCH_GRAPH_CACHE_TTL_MS = 60_000;
@@ -33,7 +33,7 @@ interface BranchGraphCacheEntry {
 
 const branchGraphCache = new Map<string, BranchGraphCacheEntry>();
 
-export function getBranchGraphCacheKey(repository: BranchGraphRepository, conversationId: string): string {
+export function getBranchGraphCacheKey(repository: BranchStorage, conversationId: string): string {
     return repository.getBranchesFilePath(conversationId);
 }
 

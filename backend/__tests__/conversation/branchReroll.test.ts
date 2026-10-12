@@ -16,9 +16,6 @@
  * 风格与 branchService.test.ts 一致。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { ConversationHistory } from '../../modules/conversation';
@@ -27,7 +24,7 @@ import {
     MAX_CANDIDATES_PER_PARENT,
     setGlobalBranchService,
 } from '../../modules/conversation/branch/BranchService';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
 import {
     activePath,
     childrenIndex,
@@ -37,7 +34,6 @@ import {
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
 import { BranchError } from '../../modules/conversation/branch/types';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -68,14 +64,12 @@ async function simulateToolLoopOutput(manager: ConversationManager, conversation
 }
 
 describe('BranchService reroll', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-reroll-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -83,7 +77,7 @@ describe('BranchService reroll', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
+        jest.restoreAllMocks();
     });
 
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
@@ -252,15 +246,13 @@ describe('BranchService reroll', () => {
 
         test('sidecar 损坏时 reroll 拒绝覆盖（BRANCH_STORAGE_CORRUPT）', async () => {
             const [userNodeId] = await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
             await expect(service.startReroll('c1')).rejects.toMatchObject({
                 code: 'BRANCH_STORAGE_CORRUPT'
             });
-            // 原文件未被覆盖
-            expect(await fsp.readFile(filePath, 'utf8')).toBe('{ broken json');
+            // 存储内容未被覆盖
+            expect((await repo.load('c1')).errorCode).toBe('BRANCH_STORAGE_CORRUPT');
             expect(userNodeId).toBeTruthy();
         });
     });
@@ -482,6 +474,8 @@ describe('BranchService reroll', () => {
     describe('多候选与上限', () => {
         test('多次 reroll 形成多个兄弟候选（含 reroll 新候选后再 reroll）', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
+            // 内存存储不产生磁盘延迟；显式推进时间，保证此用例验证创建时间顺序。
+            const now = jest.spyOn(Date, 'now').mockReturnValue(1000);
 
             // 第一次 reroll → A
             const r1 = await service.startReroll('c1', modelNodeId);
@@ -490,6 +484,7 @@ describe('BranchService reroll', () => {
             const aId = f1.candidateNodeId;
 
             // 第二次 reroll（reroll 新候选 A）→ B
+            now.mockReturnValue(2000);
             const r2 = await service.startReroll('c1', aId);
             await manager.addContent('c1', { role: 'model', parts: [{ text: 'second answer' }] } as any);
             const f2 = await service.finishReroll('c1', r2.candidateNodeId);

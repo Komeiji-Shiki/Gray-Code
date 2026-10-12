@@ -23,9 +23,32 @@
  * 本类聚合委托各服务，公共方法签名与导出保持不变。
  */
 
+/**
+ * GrayCode - 设置管理器（门面）
+ *
+ * 负责全局设置的管理、持久化和通知。
+ *
+ * 实现已按主题拆分（纯重构，行为零变化）：
+ * - SettingsCore：共享状态（settings/storage/监听器）与基础设施（深合并、toolsConfig 读写）
+ * - CheckpointSettingsService：存档点配置段
+ * - PromptSettingsService：系统提示词/模式配置段
+ * - ToolsSettingsService：工具启用/自动执行/工具配置/Shell/工具模式段
+ * - MemorySettingsService：记忆配置段
+ * - ContextSettingsService：上下文感知/诊断配置段
+ * - PinnedFilesSettingsService：固定文件配置段
+ * - SkillsSettingsService：Skills 配置段
+ * - ImageToolsSettingsService：图像工具配置段
+ * - ProxySettingsService：代理配置段
+ * - SummarizeSettingsService：总结配置段
+ * - TokenCountSettingsService：Token 计数配置段
+ * - UISettingsService：UI 设置/公告版本段
+ * - StoragePathSettingsService：存储路径配置段
+ * - SubAgentsSettingsService：子代理配置段
+ *
+ * 本类聚合委托各服务，公共方法签名与导出保持不变。
+ */
 import type {
     GlobalSettings,
-    SettingsChangeEvent,
     SettingsChangeListener,
     ToolsEnabledState,
     ToolAutoExecConfig,
@@ -53,10 +76,6 @@ import type {
     PinnedFileItem,
     SystemPromptConfig,
     PromptMode,
-    PromptEntry,
-    PromptAssemblyMode,
-    PromptEntryRole,
-    PromptEntryType,
     ResolvedPromptModeSnapshot,
     DynamicContextStrategy,
     StoragePathConfig,
@@ -67,9 +86,8 @@ import type {
     SubAgentConfigItem,
     SubAgentConfigUpdate,
     HistorySearchToolConfig,
-    MemoryToolConfig
+    MemoryToolConfig,
 } from './types';
-import { DEFAULT_GLOBAL_SETTINGS } from './types';
 import {
     SettingsCore,
     type SettingsStorage
@@ -135,18 +153,8 @@ export class SettingsManager {
         this.subagents = new SubAgentsSettingsService(this.core);
     }
 
-    /**
-     * 初始化：从存储加载设置
-     */
     async initialize(): Promise<void> {
-        const stored = await this.core.storage.load();
-        if (stored) {
-            // 使用深度合并处理所有配置，确保默认值不会因用户配置部分子字段而丢失
-            this.core.settings = this.core.deepMergeConfig(this.core.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
-
-            // lastUpdated 需要使用最新的或当前时间
-            this.core.settings.lastUpdated = stored.lastUpdated || Date.now();
-
+        if (await this.core.initialize()) {
             // 显式迁移内置模式的 toolPolicy（幂等仅未定制时填充默认值）
             await this.prompt.migratePromptModeToolPolicies();
 
@@ -165,9 +173,6 @@ export class SettingsManager {
         return this.core.reloadAndNotify();
     }
 
-    /**
-     * 获取完整设置
-     */
     getSettings(): Readonly<GlobalSettings> {
         return this.core.getSettings();
     }
@@ -189,18 +194,12 @@ export class SettingsManager {
         return this.core.getUpdateSettings();
     }
 
-    /**
-     * 更新设置（部分更新）
-     */
     updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
         return this.core.updateSettings(updates);
     }
 
     // ========== 工具调用配置 ==========
 
-    /**
-     * 获取单回合最大工具调用次数
-     */
     getMaxToolIterations(): number {
         return this.tools.getMaxToolIterations();
     }
@@ -216,25 +215,16 @@ export class SettingsManager {
 
     // ========== 渠道管理 ==========
 
-    /**
-     * 获取当前激活的渠道 ID
-     */
     getActiveChannelId(): string | undefined {
         return this.tools.getActiveChannelId();
     }
 
-    /**
-     * 设置激活的渠道 ID
-     */
     setActiveChannelId(channelId: string): Promise<void> {
         return this.tools.setActiveChannelId(channelId);
     }
 
     // ========== 工具管理 ==========
 
-    /**
-     * 获取工具启用状态
-     */
     getToolsEnabled(): Readonly<ToolsEnabledState> {
         return this.tools.getToolsEnabled();
     }
@@ -280,9 +270,6 @@ export class SettingsManager {
 
     // ========== 工具自动执行管理 ==========
 
-    /**
-     * 获取工具自动执行配置
-     */
     getToolAutoExecConfig(): Readonly<ToolAutoExecConfig> {
         return this.tools.getToolAutoExecConfig();
     }
@@ -307,16 +294,10 @@ export class SettingsManager {
         return this.tools.setToolAutoExec(toolName, autoExec);
     }
 
-    /**
-     * 恢复工具的默认确认方式
-     */
     resetToolAutoExec(toolName: string): Promise<void> {
         return this.tools.resetToolAutoExec(toolName);
     }
 
-    /**
-     * 批量设置工具自动执行配置
-     */
     setToolAutoExecConfig(config: ToolAutoExecConfig): Promise<void> {
         return this.tools.setToolAutoExecConfig(config);
     }
@@ -333,172 +314,100 @@ export class SettingsManager {
 
     // ========== 工具配置管理 ==========
 
-    /**
-     * 获取工具配置
-     */
     getToolsConfig(): Readonly<ToolsConfig> {
         return this.tools.getToolsConfig();
     }
 
-    /**
-     * 获取 read_file 工具配置
-     */
     getReadFileConfig(): Readonly<ReadFileToolConfig> {
         return this.tools.getReadFileConfig();
     }
 
-    /**
-     * 获取 write_file 工具配置
-     */
     getWriteFileConfig(): Readonly<WriteFileToolConfig> {
         return this.tools.getWriteFileConfig();
     }
 
-    /**
-     * 获取 list_files 工具配置
-     */
     getListFilesConfig(): Readonly<ListFilesToolConfig> {
         return this.tools.getListFilesConfig();
     }
 
-    /**
-     * 更新 list_files 工具配置
-     */
     updateListFilesConfig(config: Partial<ListFilesToolConfig>): Promise<void> {
         return this.tools.updateListFilesConfig(config);
     }
 
-    /**
-     * 获取 find_files 工具配置
-     */
     getFindFilesConfig(): Readonly<FindFilesToolConfig> {
         return this.tools.getFindFilesConfig();
     }
 
-    /**
-     * 更新 find_files 工具配置
-     */
     updateFindFilesConfig(config: Partial<FindFilesToolConfig>): Promise<void> {
         return this.tools.updateFindFilesConfig(config);
     }
 
-    /**
-     * 获取 search_in_files 工具配置
-     */
     getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
         return this.tools.getSearchInFilesConfig();
     }
 
-    /**
-     * 更新 search_in_files 工具配置
-     */
     updateSearchInFilesConfig(config: Partial<SearchInFilesToolConfig>): Promise<void> {
         return this.tools.updateSearchInFilesConfig(config);
     }
 
-    /**
-     * 更新工具配置
-     */
     updateToolConfig(toolName: string, config: Record<string, unknown>): Promise<void> {
         return this.tools.updateToolConfig(toolName, config);
     }
 
-    /**
-     * 获取 apply_diff 工具配置
-     */
     getApplyDiffConfig(): Readonly<ApplyDiffToolConfig> {
         return this.tools.getApplyDiffConfig();
     }
 
-    /**
-     * 更新 apply_diff 工具配置
-     */
     updateApplyDiffConfig(config: Partial<ApplyDiffToolConfig>): Promise<void> {
         return this.tools.updateApplyDiffConfig(config);
     }
 
-    /**
-     * 获取 history_search 工具配置
-     */
     getHistorySearchConfig(): Readonly<HistorySearchToolConfig> {
         return this.tools.getHistorySearchConfig();
     }
 
-    /**
-     * 更新 history_search 工具配置
-     */
     updateHistorySearchConfig(config: Partial<HistorySearchToolConfig>): Promise<void> {
         return this.tools.updateHistorySearchConfig(config);
     }
 
-    /**
-     * 获取 delete_file 工具配置
-     */
     getDeleteFileConfig(): Readonly<DeleteFileToolConfig> {
         return this.tools.getDeleteFileConfig();
     }
 
-    /**
-     * 更新 delete_file 工具配置
-     */
     updateDeleteFileConfig(config: Partial<DeleteFileToolConfig>): Promise<void> {
         return this.tools.updateDeleteFileConfig(config);
     }
 
-    /**
-     * 获取 execute_command 工具配置
-     */
     getExecuteCommandConfig(): Readonly<ExecuteCommandToolConfig> {
         return this.tools.getExecuteCommandConfig();
     }
 
-    /**
-     * 更新 execute_command 工具配置
-     */
     updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
         return this.tools.updateExecuteCommandConfig(config);
     }
 
-    /**
-     * 获取启用的 Shell 列表
-     */
     getEnabledShells(): ShellConfig[] {
         return this.tools.getEnabledShells();
     }
 
-    /**
-     * 获取默认 Shell 类型
-     */
     getDefaultShell(): string {
         return this.tools.getDefaultShell();
     }
 
-    /**
-     * 设置默认 Shell
-     */
     setDefaultShell(shellType: string): Promise<void> {
         return this.tools.setDefaultShell(shellType);
     }
 
-    /**
-     * 更新 Shell 配置
-     */
     updateShellConfig(shellType: string, updates: Partial<ShellConfig>): Promise<void> {
         return this.tools.updateShellConfig(shellType, updates);
     }
 
-    /**
-     * 启用/禁用 Shell
-     */
     setShellEnabled(shellType: string, enabled: boolean): Promise<void> {
         return this.tools.setShellEnabled(shellType, enabled);
     }
 
     // ========== 存档点配置管理 ==========
 
-    /**
-     * 获取存档点配置
-     */
     getCheckpointConfig(): Readonly<CheckpointConfig> {
         return this.checkpoint.getCheckpointConfig();
     }
@@ -514,58 +423,34 @@ export class SettingsManager {
         return this.checkpoint.updateCheckpointConfig(config);
     }
 
-    /**
-     * 检查工具是否需要在执行前创建备份
-     */
     shouldCreateBeforeCheckpoint(toolName: string): boolean {
         return this.checkpoint.shouldCreateBeforeCheckpoint(toolName);
     }
 
-    /**
-     * 检查工具是否需要在执行后创建备份
-     */
     shouldCreateAfterCheckpoint(toolName: string): boolean {
         return this.checkpoint.shouldCreateAfterCheckpoint(toolName);
     }
 
-    /**
-     * 启用/禁用存档点功能
-     */
     setCheckpointEnabled(enabled: boolean): Promise<void> {
         return this.checkpoint.setCheckpointEnabled(enabled);
     }
 
-    /**
-     * 设置工具的备份阶段
-     */
     setToolCheckpointPhase(toolName: string, before: boolean, after: boolean): Promise<void> {
         return this.checkpoint.setToolCheckpointPhase(toolName, before, after);
     }
 
-    /**
-     * 检查是否需要在用户消息前创建存档点
-     */
     shouldCreateBeforeUserMessageCheckpoint(): boolean {
         return this.checkpoint.shouldCreateBeforeUserMessageCheckpoint();
     }
 
-    /**
-     * 检查是否需要在用户消息后创建存档点
-     */
     shouldCreateAfterUserMessageCheckpoint(): boolean {
         return this.checkpoint.shouldCreateAfterUserMessageCheckpoint();
     }
 
-    /**
-     * 检查是否需要在模型消息前创建存档点
-     */
     shouldCreateBeforeModelMessageCheckpoint(): boolean {
         return this.checkpoint.shouldCreateBeforeModelMessageCheckpoint();
     }
 
-    /**
-     * 检查是否需要在模型消息后创建存档点（不包含工具调用的纯文本回复）
-     */
     shouldCreateAfterModelMessageCheckpoint(): boolean {
         return this.checkpoint.shouldCreateAfterModelMessageCheckpoint();
     }
@@ -582,25 +467,16 @@ export class SettingsManager {
 
     // ========== 工具模式管理 ==========
 
-    /**
-     * 获取默认工具模式
-     */
     getDefaultToolMode(): 'function_call' | 'xml' | 'json' {
         return this.tools.getDefaultToolMode();
     }
 
-    /**
-     * 设置默认工具模式
-     */
     setDefaultToolMode(mode: 'function_call' | 'xml' | 'json'): Promise<void> {
         return this.tools.setDefaultToolMode(mode);
     }
 
     // ========== 代理设置管理 ==========
 
-    /**
-     * 获取代理设置
-     */
     getProxySettings(): Readonly<ProxySettings> {
         return this.proxy.getProxySettings();
     }
@@ -624,276 +500,160 @@ export class SettingsManager {
         return this.proxy.getProxyInsecureSkipVerify();
     }
 
-    /**
-     * 更新代理设置
-     */
     updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
         return this.proxy.updateProxySettings(proxySettings);
     }
 
-    /**
-     * 设置代理启用状态
-     */
     setProxyEnabled(enabled: boolean): Promise<void> {
         return this.proxy.setProxyEnabled(enabled);
     }
 
-    /**
-     * 设置代理 URL
-     */
     setProxyUrl(url: string | undefined): Promise<void> {
         return this.proxy.setProxyUrl(url);
     }
 
     // ========== 总结配置管理 ==========
 
-    /**
-     * 获取总结配置
-     */
     getSummarizeConfig(): Readonly<SummarizeConfig> {
         return this.summarize.getSummarizeConfig();
     }
 
-    /**
-     * 更新总结配置
-     */
     updateSummarizeConfig(config: Partial<SummarizeConfig>): Promise<void> {
         return this.summarize.updateSummarizeConfig(config);
     }
 
     // ========== 记忆配置管理 ==========
 
-    /**
-     * 长期记忆总开关。
-     */
     isMemoryEnabled(): boolean {
         return this.memory.isMemoryEnabled();
     }
 
-    /**
-     * 获取记忆工具配置
-     */
     getMemoryConfig(): Readonly<MemoryToolConfig> {
         return this.memory.getMemoryConfig();
     }
 
-    /**
-     * 更新记忆工具配置
-     */
     updateMemoryConfig(config: Partial<MemoryToolConfig>): Promise<void> {
         return this.memory.updateMemoryConfig(config);
     }
 
     // ========== 图像生成配置管理 ==========
 
-    /**
-     * 获取图像生成工具配置
-     */
     getGenerateImageConfig(): Readonly<GenerateImageToolConfig> {
         return this.imageTools.getGenerateImageConfig();
     }
 
-    /**
-     * 更新图像生成工具配置
-     */
     updateGenerateImageConfig(config: Partial<GenerateImageToolConfig>): Promise<void> {
         return this.imageTools.updateGenerateImageConfig(config);
     }
 
     // ========== 抠图工具配置管理 ==========
 
-    /**
-     * 获取抠图工具配置
-     */
     getRemoveBackgroundConfig(): Readonly<RemoveBackgroundToolConfig> {
         return this.imageTools.getRemoveBackgroundConfig();
     }
 
-    /**
-     * 更新抠图工具配置
-     */
     updateRemoveBackgroundConfig(config: Partial<RemoveBackgroundToolConfig>): Promise<void> {
         return this.imageTools.updateRemoveBackgroundConfig(config);
     }
 
     // ========== 裁切图片工具配置管理 ==========
 
-    /**
-     * 获取裁切图片工具配置
-     */
     getCropImageConfig(): Readonly<CropImageToolConfig> {
         return this.imageTools.getCropImageConfig();
     }
 
-    /**
-     * 更新裁切图片工具配置
-     */
     updateCropImageConfig(config: Partial<CropImageToolConfig>): Promise<void> {
         return this.imageTools.updateCropImageConfig(config);
     }
 
     // ========== 缩放图片工具配置管理 ==========
 
-    /**
-     * 获取缩放图片工具配置
-     */
     getResizeImageConfig(): Readonly<ResizeImageToolConfig> {
         return this.imageTools.getResizeImageConfig();
     }
 
-    /**
-     * 更新缩放图片工具配置
-     */
     updateResizeImageConfig(config: Partial<ResizeImageToolConfig>): Promise<void> {
         return this.imageTools.updateResizeImageConfig(config);
     }
 
     // ========== 旋转图片工具配置管理 ==========
 
-    /**
-     * 获取旋转图片工具配置
-     */
     getRotateImageConfig(): Readonly<RotateImageToolConfig> {
         return this.imageTools.getRotateImageConfig();
     }
 
-    /**
-     * 更新旋转图片工具配置
-     */
     updateRotateImageConfig(config: Partial<RotateImageToolConfig>): Promise<void> {
         return this.imageTools.updateRotateImageConfig(config);
     }
 
     // ========== 上下文感知配置管理 ==========
 
-    /**
-     * 获取上下文感知配置
-     */
     getContextAwarenessConfig(): Readonly<ContextAwarenessConfig> {
         return this.context.getContextAwarenessConfig();
     }
 
-    /**
-     * 更新上下文感知配置
-     */
     updateContextAwarenessConfig(config: Partial<ContextAwarenessConfig>): Promise<void> {
         return this.context.updateContextAwarenessConfig(config);
     }
 
-    /**
-     * 检查是否应该包含工作区文件树
-     */
     shouldIncludeWorkspaceFiles(): boolean {
         return this.context.shouldIncludeWorkspaceFiles();
     }
 
-    /**
-     * 获取文件树最大深度
-     * @returns 最大深度，-1 表示无限制
-     */
     getMaxFileDepth(): number {
         return this.context.getMaxFileDepth();
     }
 
-    /**
-     * 检查是否应该包含打开的标签页
-     */
     shouldIncludeOpenTabs(): boolean {
         return this.context.shouldIncludeOpenTabs();
     }
 
-    /**
-     * 获取打开标签页最大数量
-     * @returns 最大数量，-1 表示无限制
-     */
     getMaxOpenTabs(): number {
         return this.context.getMaxOpenTabs();
     }
 
-    /**
-     * 检查是否应该包含当前活动编辑器路径
-     */
     shouldIncludeActiveEditor(): boolean {
         return this.context.shouldIncludeActiveEditor();
     }
 
-    /**
-     * 获取自定义忽略模式
-     */
     getContextIgnorePatterns(): string[] {
         return this.context.getContextIgnorePatterns();
     }
 
     // ========== 诊断信息配置管理 ==========
 
-    /**
-     * 获取诊断信息配置
-     */
     getDiagnosticsConfig(): Readonly<DiagnosticsConfig> {
         return this.context.getDiagnosticsConfig();
     }
 
-    /**
-     * 更新诊断信息配置
-     */
     updateDiagnosticsConfig(config: Partial<DiagnosticsConfig>): Promise<void> {
         return this.context.updateDiagnosticsConfig(config);
     }
 
-    /**
-     * 检查诊断功能是否启用
-     */
     isDiagnosticsEnabled(): boolean {
         return this.context.isDiagnosticsEnabled();
     }
 
-    /**
-     * 设置诊断功能启用状态
-     */
     setDiagnosticsEnabled(enabled: boolean): Promise<void> {
         return this.context.setDiagnosticsEnabled(enabled);
     }
 
-    /**
-     * 获取包含的诊断严重程度级别
-     */
     getDiagnosticsSeverities(): string[] {
         return this.context.getDiagnosticsSeverities();
     }
 
-    /**
-     * 设置包含的诊断严重程度级别
-     */
-    setDiagnosticsSeverities(severities: ('error' | 'warning' | 'information' | 'hint')[]): Promise<void> {
-        return this.context.setDiagnosticsSeverities(severities);
-    }
-
-    // ========== 固定文件配置管理 ==========
-
-    /**
-     * 获取固定文件配置
-     */
     getPinnedFilesConfig(): Readonly<PinnedFilesConfig> {
         return this.pinnedFiles.getPinnedFilesConfig();
     }
 
-    /**
-     * 更新固定文件配置
-     */
     updatePinnedFilesConfig(config: Partial<PinnedFilesConfig>): Promise<void> {
         return this.pinnedFiles.updatePinnedFilesConfig(config);
     }
 
-    /**
-     * 获取固定文件列表
-     */
     getPinnedFiles(): PinnedFileItem[] {
         return this.pinnedFiles.getPinnedFiles();
     }
 
-    /**
-     * 获取启用的固定文件列表
-     */
     getEnabledPinnedFiles(): PinnedFileItem[] {
         return this.pinnedFiles.getEnabledPinnedFiles();
     }
@@ -908,26 +668,14 @@ export class SettingsManager {
         return this.pinnedFiles.addPinnedFile(path, workspaceUri);
     }
 
-    /**
-     * 获取当前工作区的固定文件列表
-     * @param workspaceUri 当前工作区 URI
-     */
     getPinnedFilesForWorkspace(workspaceUri: string): PinnedFileItem[] {
         return this.pinnedFiles.getPinnedFilesForWorkspace(workspaceUri);
     }
 
-    /**
-     * 获取当前工作区启用的固定文件列表
-     * @param workspaceUri 当前工作区 URI
-     */
     getEnabledPinnedFilesForWorkspace(workspaceUri: string): PinnedFileItem[] {
         return this.pinnedFiles.getEnabledPinnedFilesForWorkspace(workspaceUri);
     }
 
-    /**
-     * 移除固定文件
-     * @param id 文件 ID
-     */
     removePinnedFile(id: string): Promise<void> {
         return this.pinnedFiles.removePinnedFile(id);
     }
@@ -950,68 +698,40 @@ export class SettingsManager {
         return this.pinnedFiles.updatePinnedFilePath(id, newPath);
     }
 
-    /**
-     * 清空所有固定文件
-     */
     clearPinnedFiles(): Promise<void> {
         return this.pinnedFiles.clearPinnedFiles();
     }
 
-    /**
-     * 检查文件是否已固定
-     * @param path 文件路径
-     */
     isFilePinned(path: string): boolean {
         return this.pinnedFiles.isFilePinned(path);
     }
 
-    /**
-     * 获取固定文件段落标题
-     */
     getPinnedFilesSectionTitle(): string {
         return this.pinnedFiles.getPinnedFilesSectionTitle();
     }
 
     // ========== Skills 配置管理 ==========
 
-    /**
-     * 获取 Skills 配置
-     */
     getSkillsConfig(): Readonly<SkillsConfig> {
         return this.skills.getSkillsConfig();
     }
 
-    /**
-     * 更新 Skills 配置
-     */
     updateSkillsConfig(config: Partial<SkillsConfig>): Promise<void> {
         return this.skills.updateSkillsConfig(config);
     }
 
-    /**
-     * 获取 Skills 列表
-     */
     getSkills(): SkillConfigItem[] {
         return this.skills.getSkills();
     }
 
-    /**
-     * 设置 Skill 启用状态
-     */
     setSkillEnabled(id: string, enabled: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
         return this.skills.setSkillEnabled(id, enabled, metadata);
     }
 
-    /**
-     * 移除 Skill 配置
-     */
     removeSkillConfig(id: string): Promise<void> {
         return this.skills.removeSkillConfig(id);
     }
 
-    /**
-     * 获取启用的 Skills
-     */
     getEnabledSkills(): SkillConfigItem[] {
         return this.skills.getEnabledSkills();
     }
@@ -1029,9 +749,6 @@ export class SettingsManager {
         return this.prompt.getSystemPromptConfig();
     }
 
-    /**
-     * 解析本次请求应使用的动态上下文策略
-     */
     resolveDynamicContextStrategy(
         modeSnapshot?: ResolvedPromptModeSnapshot,
         override?: DynamicContextStrategy
@@ -1039,23 +756,14 @@ export class SettingsManager {
         return this.prompt.resolveDynamicContextStrategy(modeSnapshot, override);
     }
 
-    /**
-     * 更新系统提示词配置
-     */
     updateSystemPromptConfig(config: Partial<SystemPromptConfig>): Promise<void> {
         return this.prompt.updateSystemPromptConfig(config);
     }
 
-    /**
-     * 获取默认提示词模式 ID
-     */
     getDefaultPromptModeId(): string {
         return this.prompt.getDefaultPromptModeId();
     }
 
-    /**
-     * 获取默认提示词模式
-     */
     getDefaultPromptMode(): PromptMode | null {
         return this.prompt.getDefaultPromptMode();
     }
@@ -1069,37 +777,22 @@ export class SettingsManager {
         return this.prompt.resolvePromptMode(modeId);
     }
 
-    /**
-     * 获取当前激活的模式 ID（向后兼容，语义等同于默认模式 ID）
-     */
     getCurrentPromptModeId(): string {
         return this.prompt.getCurrentPromptModeId();
     }
 
-    /**
-     * 获取当前激活的模式（向后兼容，语义等同于默认模式）
-     */
     getCurrentPromptMode(): PromptMode | null {
         return this.prompt.getCurrentPromptMode();
     }
 
-    /**
-     * 获取所有模式
-     */
     getAllPromptModes(): PromptMode[] {
         return this.prompt.getAllPromptModes();
     }
 
-    /**
-     * 设置默认提示词模式
-     */
     setCurrentPromptMode(modeId: string): Promise<void> {
         return this.prompt.setCurrentPromptMode(modeId);
     }
 
-    /**
-     * 添加或更新模式
-     */
     savePromptMode(mode: PromptMode): Promise<void> {
         return this.prompt.savePromptMode(mode);
     }
@@ -1114,60 +807,36 @@ export class SettingsManager {
         return this.prompt.renamePromptMode(modeId, name);
     }
 
-    /**
-     * 删除模式
-     */
     deletePromptMode(modeId: string): Promise<void> {
         return this.prompt.deletePromptMode(modeId);
     }
 
-    /**
-     * 获取系统提示词模板（根据当前模式）
-     */
     getSystemPromptTemplate(): string {
         return this.prompt.getSystemPromptTemplate();
     }
 
-    /**
-     * 获取动态上下文模板（根据当前模式）
-     */
     getDynamicContextTemplate(): string {
         return this.prompt.getDynamicContextTemplate();
     }
 
-    /**
-     * 检查动态上下文是否启用（根据当前模式）
-     */
     isDynamicTemplateEnabled(): boolean {
         return this.prompt.isDynamicTemplateEnabled();
     }
 
-    /**
-     * 获取自定义前缀
-     */
     getSystemPromptPrefix(): string {
         return this.prompt.getSystemPromptPrefix();
     }
 
-    /**
-     * 获取自定义后缀
-     */
     getSystemPromptSuffix(): string {
         return this.prompt.getSystemPromptSuffix();
     }
 
     // ========== Token 计数配置管理 ==========
 
-    /**
-     * 获取 Token 计数配置
-     */
     getTokenCountConfig(): Readonly<TokenCountConfig> {
         return this.tokenCount.getTokenCountConfig();
     }
 
-    /**
-     * 更新 Token 计数配置
-     */
     updateTokenCountConfig(config: Partial<TokenCountConfig>): Promise<void> {
         return this.tokenCount.updateTokenCountConfig(config);
     }
@@ -1184,161 +853,96 @@ export class SettingsManager {
 
     // ========== UI 设置管理 ==========
 
-    /**
-     * 获取 UI 设置
-     */
     getUISettings() {
         return this.ui.getUISettings();
     }
 
-    /**
-     * 更新 UI 设置
-     */
     updateUISettings(uiSettings: Partial<NonNullable<GlobalSettings['ui']>>): Promise<void> {
         return this.ui.updateUISettings(uiSettings);
     }
 
     // ========== 公告版本管理 ==========
 
-    /**
-     * 获取用户上次查看的公告版本
-     */
     getLastReadAnnouncementVersion(): string | undefined {
         return this.ui.getLastReadAnnouncementVersion();
     }
 
-    /**
-     * 设置用户上次查看的公告版本
-     */
     setLastReadAnnouncementVersion(version: string): Promise<void> {
         return this.ui.setLastReadAnnouncementVersion(version);
     }
 
     // ========== 事件监听 ==========
 
-    /**
-     * 添加设置变更监听器
-     */
     addChangeListener(listener: SettingsChangeListener): void {
         this.core.addChangeListener(listener);
     }
 
-    /**
-     * 移除设置变更监听器
-     */
     removeChangeListener(listener: SettingsChangeListener): void {
         this.core.removeChangeListener(listener);
     }
 
     // ========== 存储路径管理 ==========
 
-    /**
-     * 获取存储路径配置
-     */
     getStoragePathConfig(): Readonly<StoragePathConfig> {
         return this.storagePath.getStoragePathConfig();
     }
 
-    /**
-     * 获取自定义数据存储路径
-     * 如果未设置返回 undefined
-     */
     getCustomDataPath(): string | undefined {
         return this.storagePath.getCustomDataPath();
     }
 
-    /**
-     * 更新存储路径配置
-     */
     updateStoragePathConfig(config: Partial<StoragePathConfig>): Promise<void> {
         return this.storagePath.updateStoragePathConfig(config);
     }
 
-    /**
-     * 设置自定义数据存储路径
-     * 设置后需要迁移数据
-     */
     setCustomDataPath(path: string | undefined): Promise<void> {
         return this.storagePath.setCustomDataPath(path);
     }
 
-    /**
-     * 标记迁移开始
-     */
     markMigrationStarted(): Promise<void> {
         return this.storagePath.markMigrationStarted();
     }
 
-    /**
-     * 标记迁移完成
-     */
     markMigrationCompleted(): Promise<void> {
         return this.storagePath.markMigrationCompleted();
     }
 
-    /**
-     * 标记迁移失败
-     */
     markMigrationFailed(error: string): Promise<void> {
         return this.storagePath.markMigrationFailed(error);
     }
 
     // ========== 工具方法 ==========
 
-    /**
-     * 重置为默认设置
-     */
     reset(): Promise<void> {
         return this.core.reset();
     }
 
     // ========== 子代理管理 ==========
 
-    /**
-     * 获取子代理配置
-     */
     getSubAgentsConfig(): SubAgentsConfig {
         return this.subagents.getSubAgentsConfig();
     }
 
-    /**
-     * 获取所有子代理
-     */
     getSubAgents(): SubAgentConfigItem[] {
         return this.subagents.getSubAgents();
     }
 
-    /**
-     * 获取单个子代理
-     */
     getSubAgent(type: string): SubAgentConfigItem | undefined {
         return this.subagents.getSubAgent(type);
     }
 
-    /**
-     * 添加子代理
-     */
     addSubAgent(agent: SubAgentConfigItem): Promise<void> {
         return this.subagents.addSubAgent(agent);
     }
 
-    /**
-     * 更新子代理
-     */
     updateSubAgent(type: string, updates: SubAgentConfigUpdate): Promise<boolean> {
         return this.subagents.updateSubAgent(type, updates);
     }
 
-    /**
-     * 删除子代理
-     */
     deleteSubAgent(type: string): Promise<boolean> {
         return this.subagents.deleteSubAgent(type);
     }
 
-    /**
-     * 更新子代理配置
-     */
     updateSubAgentsConfig(config: Partial<SubAgentsConfig>): Promise<void> {
         return this.subagents.updateSubAgentsConfig(config);
     }

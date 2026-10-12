@@ -12,8 +12,7 @@ export { ConversationManager, ConversationMessageChangedError } from './Conversa
 export { FileUsageIndexStore } from './UsageIndexStore';
 export {
     IStorageAdapter,
-    MemoryStorageAdapter,
-    FileSystemStorageAdapter
+    MemoryStorageAdapter
 } from './storage';
 export type {
     // 对话存储定位结果类型（供 webview/测试复用，保持单一来源）

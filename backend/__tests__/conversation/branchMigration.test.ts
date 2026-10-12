@@ -5,18 +5,12 @@
  * - 迁移注册表：register / unregister / 重复注册拒绝 / 已注册版本列表
  * - migrateBranchGraph：v1→v2 单步、v1→v3 链式、幂等（已最新原样返回）、
  *   未知版本拒绝（未来版本 / 非正整数 / 缺失步骤）、失败回滚（输入图不被污染）
- * - BranchGraphRepository.migrate 集成：落后版本迁移落盘、无 sidecar no-op、
- *   损坏拒绝且不覆盖、已最新不重写
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import {
     createEmptyBranchGraph,
     insertNode,
 } from '../../modules/conversation/branch/BranchGraph';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import {
     getCurrentBranchGraphVersion,
     getRegisteredBranchMigrationSteps,
@@ -25,7 +19,6 @@ import {
     unregisterBranchMigration,
 } from '../../modules/conversation/branch/BranchMigration';
 import { BranchError, ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 function node(id: string, parentId: string | null, overrides: Partial<ConversationBranchNode> = {}): ConversationBranchNode {
     return {
@@ -173,63 +166,5 @@ describe('BranchMigration 迁移注册表', () => {
         unregisterBranchMigration(1);
         expect(getRegisteredBranchMigrationSteps()).toEqual([]);
         expect(() => migrateBranchGraph(v1Graph(), { targetVersion: 2 })).toThrow(/no migration step/);
-    });
-});
-
-describe('BranchGraphRepository.migrate 集成', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
-    const conversationId = 'conv-migrate-1';
-
-    beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-migrate-'));
-        repo = new BranchGraphRepository(tempDir);
-    });
-
-    afterEach(async () => {
-        unregisterBranchMigration(1);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
-    });
-
-    test('sidecar 版本落后 → 迁移并原子保存（saved=true），重新读取为最新版本', async () => {
-        registerBranchMigration(1, g => ({ ...g, nodes: { ...g.nodes } }));
-        await repo.save(conversationId, v1Graph());
-
-        const result = await repo.migrate(conversationId, { targetVersion: 2 });
-        expect(result.migrated).toBe(true);
-        expect(result.saved).toBe(true);
-        expect(result.graph!.version).toBe(2);
-
-        const loaded = await repo.load(conversationId);
-        expect(loaded.graph!.version).toBe(2);
-        // 原子写：无 tmp 残留
-        const convDir = path.join(tempDir, 'conversations', conversationId);
-        const files = await fsp.readdir(convDir);
-        expect(files).toEqual(['branches.json']);
-    });
-
-    test('无 sidecar → no-op（migrated=false, saved=false, graph=null）', async () => {
-        const result = await repo.migrate('no-such-conv');
-        expect(result.migrated).toBe(false);
-        expect(result.saved).toBe(false);
-        expect(result.graph).toBeNull();
-    });
-
-    test('损坏 sidecar → 抛 BRANCH_STORAGE_CORRUPT 且不覆盖原文件', async () => {
-        const filePath = repo.getBranchesFilePath(conversationId);
-        await fsp.mkdir(path.dirname(filePath), { recursive: true });
-        await fsp.writeFile(filePath, '{ this is broken json', 'utf8');
-
-        await expect(repo.migrate(conversationId)).rejects.toThrow(/corrupt/i);
-        // 原文件保持不变（可恢复数据未被覆盖）
-        expect(await fsp.readFile(filePath, 'utf8')).toBe('{ this is broken json');
-    });
-
-    test('版本已最新 → saved=false 且文件不重写', async () => {
-        await repo.save(conversationId, v1Graph());
-        const result = await repo.migrate(conversationId);
-        expect(result.migrated).toBe(false);
-        expect(result.saved).toBe(false);
-        expect(result.graph!.version).toBe(1);
     });
 });

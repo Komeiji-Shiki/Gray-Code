@@ -16,13 +16,10 @@
  * 风格与 branchReroll.test.ts / branchService.test.ts 一致。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { ConversationHistory, Content } from '../../modules/conversation';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
 import {
     BranchService,
     setGlobalBranchService,
@@ -36,7 +33,6 @@ import type {
     ConversationBranchGraph,
     ConversationBranchNode,
 } from '../../modules/conversation/branch/types';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -97,14 +93,12 @@ function makeChainGraph(
 }
 
 describe('决策 6：主历史删除同步软删分支图子树', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-delete-sync-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -112,7 +106,6 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回消息 id 数组 */
@@ -360,9 +353,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
 
         test('sidecar 损坏：抛 BRANCH_STORAGE_CORRUPT，不覆盖', async () => {
             await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
             await expect(
                 service.syncGraphAfterHistoryDelete('c1', 'any-id')
@@ -572,9 +563,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
                 { id: ids[2], role: 'user', activeChildId: ids[3] },
                 { id: ids[3], role: 'model' },
             ]));
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
             const deletedCount = await manager.deleteToMessage('c1', 2);
 
@@ -588,9 +577,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
     describe('损坏 / 异常路径的既有行为保持', () => {
         test('syncGraphAfterHistoryDelete 对 BranchError 错误码透出（供调用方告警）', async () => {
             await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
             await expect(
                 service.syncGraphAfterHistoryDelete('c1', 'any-id')

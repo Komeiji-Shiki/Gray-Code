@@ -1,68 +1,65 @@
 /**
- * updateSummary M3 钳制轻量化（HIS-11 只读 index，0 次逐段 stat）与
+ * updateSummary M3 钳制轻量化（优先使用存储计数端口）与
  * 元数据语义（updatedAt 不在此写 / 批量摘要截断标志）测试。
  *
  * 覆盖：
- * - 多段历史下钳制只读 index JSON，不 stat 任何 .ndjson 段文件（此前每次消息后 O(段数) stat）；
- * - 索引不可读 / legacy 时钳制跳过，按原值保存；
+ * - 钳制优先读取轻量消息总数，不加载完整历史；
+ * - 存储未提供可读消息总数时跳过钳制，按原值保存；
  * - updateSummary 不移动 meta.updatedAt（由历史提交路径统一维护，注释语义落地）；
  * - getConversationMetadataBatch 超过 200 条时返回 truncated 标志（数组主体不变，前端兼容）。
  */
 
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
-import type { ConversationHistory, Content } from '../../modules/conversation';
-import { Uri } from 'vscode';
-import { createAdapter, normPath } from './helpers/fakeVscodeFs';
-import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';
+import { IndexedMemoryStorage } from '../__fixtures__/indexedMemoryStorage';
+import { makeHistory } from '../__fixtures__/conversationFixtures';
 
-describe('updateSummary M3 钳制轻量化（只读 index JSON，不逐段 stat）', () => {
-    test('多段历史下钳制只读 index，不 stat 任何段文件', async () => {
-        const { adapter, fake } = createAdapter();
+describe('updateSummary M3 钳制轻量化（优先读取消息总数）', () => {
+    test('钳制只使用轻量计数端口，不加载完整历史', async () => {
+        const adapter = new IndexedMemoryStorage();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-light', 'Light');
-        await manager.addBatch('conv-light', makeHistory(210)); // 210 条 → 2 段
+        await manager.addBatch('conv-light', makeHistory(210));
+        const totalRead = jest.spyOn(adapter, 'getHistoryTotalMessages');
+        const indexRead = jest.spyOn(adapter, 'getHistoryIndexInfo');
+        const historyRead = jest.spyOn(adapter, 'loadHistory');
 
-        fake.statCalls.length = 0;
         await manager.updateSummary('conv-light', { messageCount: 1000 });
 
         const meta = await adapter.loadMetadata('conv-light');
         expect(meta!.custom!.messageCount).toBe(210);
-        // 钳制路径没有对任何 .ndjson 段文件做 stat（也没有读段文件）
-        expect(fake.statCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
-        expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
+        expect(totalRead).toHaveBeenCalledWith('conv-light');
+        expect(indexRead).not.toHaveBeenCalled();
+        expect(historyRead).not.toHaveBeenCalled();
     });
 
-    test('迟到的较小摘要不会覆盖已提交的消息数，仍只读取索引', async () => {
-        const { adapter, fake } = createAdapter();
+    test('迟到的较小摘要不会覆盖已提交的消息数，仍使用轻量计数', async () => {
+        const adapter = new IndexedMemoryStorage();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-late-summary', 'Late summary');
         await manager.addBatch('conv-late-summary', makeHistory(210));
-        fake.statCalls.length = 0;
-        fake.readCalls.length = 0;
+        const totalRead = jest.spyOn(adapter, 'getHistoryTotalMessages');
+        const historyRead = jest.spyOn(adapter, 'loadHistory');
 
         await manager.updateSummary('conv-late-summary', { messageCount: 6, preview: '旧摘要' });
 
         const meta = await adapter.loadMetadata('conv-late-summary');
         expect(meta!.custom!.messageCount).toBe(210);
         expect(meta!.custom!.preview).toBe('旧摘要');
-        expect(fake.statCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
-        expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
+        expect(totalRead).toHaveBeenCalledWith('conv-late-summary');
+        expect(historyRead).not.toHaveBeenCalled();
     });
 
-    test('legacy 历史（无 index）时钳制跳过，messageCount 按原值保存', async () => {
-        const { adapter, fake } = createAdapter();
+    test('存储未提供消息总数时钳制跳过，messageCount 按原值保存', async () => {
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
-        fake.files.set(
-            normPath(`${(Uri.parse('file:///c%3A/data/graycode') as any).fsPath}/conversations/conv-legacy.json`),
-            JSON.stringify(makeHistory(2))
-        );
+        await adapter.saveHistory('conv-legacy', makeHistory(2));
 
         await manager.updateSummary('conv-legacy', { messageCount: 5 });
 
         const meta = await adapter.loadMetadata('conv-legacy');
         expect(meta).not.toBeNull();
-        expect(meta!.custom!.messageCount).toBe(5); // 未钳制（legacy 无 totalMessages 可读）
+        expect(meta!.custom!.messageCount).toBe(5);
     });
 });
 

@@ -1,8 +1,5 @@
 /** 分支服务写锁与历史/图异步同步的共享行为。旧宿主流式守卫单独从本夹具移除。 */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import {
     ConversationManager,
 } from '../../modules/conversation';
@@ -14,13 +11,12 @@ import {
     BranchService,
     setGlobalBranchService,
 } from '../../modules/conversation/branch/BranchService';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
 import {
     activePath,
     childrenIndex,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -31,8 +27,7 @@ function linearHistory(): ConversationHistory {
 }
 
 describe('分支竞态（服务写锁 + 迟到历史隔离）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
@@ -51,8 +46,7 @@ describe('分支竞态（服务写锁 + 迟到历史隔离）', () => {
     }
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-race-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -60,7 +54,6 @@ describe('分支竞态（服务写锁 + 迟到历史隔离）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     describe('服务层写锁互斥矩阵（BR-07 runExclusive 串行化）', () => {

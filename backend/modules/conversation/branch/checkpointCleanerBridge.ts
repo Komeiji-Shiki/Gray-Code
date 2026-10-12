@@ -33,7 +33,7 @@
  */
 
 import { Logger } from '../../../core/logger';
-import type { BranchGraphReadResult } from './BranchGraphRepository';
+import type { BranchGraphReadResult } from './branchStorage';
 import type { ConversationBranchGraph } from './types';
 
 // 日志类别保持 'checkpointRefCounts'（与解环前逐位一致，日志过滤行为不变）。
@@ -90,7 +90,7 @@ async function runBounded<T>(
 }
 
 /**
- * 只读图源：与 BranchGraphRepository 结构化兼容（listConversationIds + load 均已具备）。
+ * 只读图源：与 BranchStorage 结构化兼容（listConversationIds + load 均已具备）。
  * 定义成最小接口便于 checkpoint 域测试注入轻量假实现。
  */
 export interface CheckpointRefCountGraphSource {
@@ -101,9 +101,9 @@ export interface CheckpointRefCountGraphSource {
 /**
  * 统计每个 checkpointId 被多少存活分支节点引用（节点.workspaceCheckpointId 计数）。
  *
- * @param repo 只读图源（生产传 BranchGraphRepository；listConversationIds + load）
+ * @param repo 只读图源（生产传 BranchStorage；listConversationIds + load）
  * @param conversationIds 显式限定扫描的会话；缺省 = 扫描全部带 sidecar 的会话
- *   （BranchGraphRepository.listConversationIds）
+ *   （BranchStorage.listConversationIds）
  * @returns Map<checkpointId, refCount>；无引用的存档不出现（缺失即 0）
  */
 export async function computeCheckpointReferenceCounts(

@@ -434,7 +434,7 @@ describe('FileUsageIndexStore.readBranchGraph（TREE-08）', () => {
         expect(await store.readBranchGraph('conv-a')).toBeNull();
     });
 
-    test('R8b-L3：shape 校验与 BranchGraphRepository 共用 isBranchGraphShape（非整数版本 / 缺失字段 → null）', async () => {
+    test('R8b-L3：shape 校验复用 isBranchGraphShape（非整数版本 / 缺失字段 → null）', async () => {
         const { store, state } = createStore();
         // 非整数版本（1.5）：共享实现要求 version 为 >=1 的整数
         state.files.set(branchesFilePath('conv-a'), JSON.stringify({ version: 1.5, nodes: {} }));

@@ -10,12 +10,9 @@
  * - BR-09：createBranchConversation → metadata sourceNodeId 双写 + 新对话图（imported +
  *   exportedFrom）+ 源头图 exportedRefs；deleteConversation 级联清理 sidecar。
  *
- * 存储组合：历史走 MemoryStorageAdapter，sidecar 走真实临时目录（注入 baseDir）。
+ * 存储组合：历史与分支图分别注入内存存储，覆盖业务行为。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import {
     ConversationManager,
 } from '../../modules/conversation';
@@ -28,7 +25,8 @@ import {
     getGlobalBranchService,
     setGlobalBranchService,
 } from '../../modules/conversation/branch/BranchService';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
+import type { ConversationBranchGraph } from '../../modules/conversation/branch/types';
 import {
     activePath,
     childrenIndex,
@@ -37,7 +35,6 @@ import {
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
 import { BranchError } from '../../modules/conversation/branch/types';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -48,14 +45,12 @@ function linearHistory(): ConversationHistory {
 }
 
 describe('BranchService', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-service-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -63,7 +58,6 @@ describe('BranchService', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [userNodeId, modelNodeId] */
@@ -182,9 +176,7 @@ describe('BranchService', () => {
 
         test('sidecar 损坏时写操作拒绝覆盖（BRANCH_STORAGE_CORRUPT），读取降级', async () => {
             await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
             // 读取：降级不抛错
             const loaded = await service.getBranchGraph('c1');
@@ -195,9 +187,8 @@ describe('BranchService', () => {
             await expect(
                 service.createRerollCandidate('c1', 'whatever', { parts: [{ text: 'x' }] })
             ).rejects.toMatchObject({ code: 'BRANCH_STORAGE_CORRUPT' });
-            // 原文件未被覆盖
-            const raw = await fsp.readFile(filePath, 'utf8');
-            expect(raw).toBe('{ broken json');
+            // 存储内容未被覆盖
+            expect((await repo.load('c1')).errorCode).toBe('BRANCH_STORAGE_CORRUPT');
         });
 
         test('editCandidate：kind=edit，role=user', async () => {
@@ -370,9 +361,7 @@ describe('BranchService', () => {
     describe('复查修复（M-1/M-2/BS-3/BS-4）', () => {
         test('getBranchGraphMeta：sidecar 损坏（解析失败）→ exists:false + corrupted:true + errorCode（M-1）', async () => {
             await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c1', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
 
             const meta = await service.getBranchGraphMeta('c1');
             expect(meta.exists).toBe(false);
@@ -383,8 +372,6 @@ describe('BranchService', () => {
 
         test('getBranchGraph/getBranchGraphMeta：语义损坏（可解析但结构无效）→ errorCode，写操作拒绝覆盖（M-2）', async () => {
             const ids = await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
             // parentId 链成环：可解析但语义损坏
             const invalidGraph = {
                 version: 1,
@@ -398,7 +385,7 @@ describe('BranchService', () => {
                 activeChildId: null,
                 candidateSummaries: [],
             };
-            await fsp.writeFile(filePath, JSON.stringify(invalidGraph), 'utf8');
+            repo.setReadResult('c1', { graph: invalidGraph as ConversationBranchGraph });
 
             // 读取侧：整图降级 + 元信息降级（均带 errorCode）
             const loaded = await service.getBranchGraph('c1');
@@ -411,10 +398,10 @@ describe('BranchService', () => {
             expect(meta.corrupted).toBe(true);
             expect(meta.errorCode).toBe('BRANCH_STORAGE_CORRUPT');
 
-            // 写路径：拒绝覆盖（与解析损坏同策略），原文件保持原样
+            // 写路径：拒绝覆盖（与解析损坏同策略），存储内容保持原样
             await expect(service.createRerollCandidate('c1', 'root', { parts: [{ text: 'x' }] }))
                 .rejects.toMatchObject({ code: 'BRANCH_STORAGE_CORRUPT' });
-            expect(JSON.parse(await fsp.readFile(filePath, 'utf8'))).toEqual(invalidGraph);
+            expect((await repo.load('c1')).graph!).toEqual(invalidGraph);
             expect(ids).toHaveLength(2);
         });
 
@@ -508,10 +495,8 @@ describe('BranchService', () => {
             expect(await repo.exists('c1')).toBe(false);
         });
 
-        test('语义损坏图 → appendHistoryToGraph 拒绝（BRANCH_STORAGE_CORRUPT），原文件不被覆盖（M-2）', async () => {
+        test('语义损坏图 → appendHistoryToGraph 拒绝（BRANCH_STORAGE_CORRUPT），存储内容不被覆盖（M-2）', async () => {
             const ids = await seedConversation('c1');
-            const filePath = repo.getBranchesFilePath('c1');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
             const invalidGraph = {
                 version: 1,
                 rootNodeId: 'root',
@@ -524,12 +509,12 @@ describe('BranchService', () => {
                 activeChildId: null,
                 candidateSummaries: [],
             };
-            await fsp.writeFile(filePath, JSON.stringify(invalidGraph), 'utf8');
+            repo.setReadResult('c1', { graph: invalidGraph as ConversationBranchGraph });
 
             await expect(service.appendHistoryToGraph('c1', [
                 { role: 'user', parts: [{ text: 'x' }], id: 'x1', timestamp: 1 },
             ] as any)).rejects.toMatchObject({ code: 'BRANCH_STORAGE_CORRUPT' });
-            expect(JSON.parse(await fsp.readFile(filePath, 'utf8'))).toEqual(invalidGraph);
+            expect((await repo.load('c1')).graph!).toEqual(invalidGraph);
             expect(ids).toHaveLength(2);
         });
     });
@@ -560,7 +545,7 @@ describe('BranchService', () => {
             expect(graph.nodes[modelNodeId]!.activeChildId).toBe(historyIds[2]);
             expect(validate(graph).valid).toBe(true);
 
-            const backup = JSON.parse(await fsp.readFile(result.backupPath!, 'utf8'));
+            const backup = repo.backups.find(item => item.path === result.backupPath)!.graph;
             expect(backup.nodes[oldCandidate.nodeId]).toBeDefined();
             expect(backup.activeTailNodeId).toBe(oldCandidate.nodeId);
 
@@ -826,10 +811,10 @@ describe('BranchService', () => {
                 { role: 'user', parts: [{ text: 'q' }], timestamp: 1 },
             ]));
             // 孤儿 sidecar 中标记一个软删节点（旧行为会把它计入，清理后数量不归零）
-            const raw = JSON.parse(await fsp.readFile(repo.getBranchesFilePath('c2'), 'utf8'));
-            const rootId = raw.rootNodeId;
+            const raw = (await repo.load('c2')).graph!;
+            const rootId = raw.rootNodeId!;
             raw.nodes[rootId] = { ...raw.nodes[rootId], deleted: true, deletedAt: Date.now() };
-            await fsp.writeFile(repo.getBranchesFilePath('c2'), JSON.stringify(raw), 'utf8');
+            await repo.save('c2', raw);
 
             const all = await service.getDeletedBranchCount();
             expect(all).toEqual({ conversationCount: 1, deletedNodeCount: 1 }); // 只统计真实会话 c1
@@ -871,12 +856,11 @@ describe('BranchService', () => {
             // 5. 再次软删 → 拨过期 → prune 物理清理整棵子树（软删期内内容可恢复，prune 后才不可恢复）
             await service.deleteBranchCandidate('c1', ids[2]);
             const past = Date.now() - 31 * 24 * 60 * 60 * 1000;
-            const filePath = repo.getBranchesFilePath('c1');
-            const raw = JSON.parse(await fsp.readFile(filePath, 'utf8'));
+            const raw = (await repo.load('c1')).graph!;
             raw.nodes[ids[2]].deletedAt = past;
             raw.nodes['u-sub'].deletedAt = past;
             raw.nodes['m-sub'].deletedAt = past;
-            await fsp.writeFile(filePath, JSON.stringify(raw), 'utf8');
+            await repo.save('c1', raw);
             const pruned = await service.pruneDeletedBranches({ conversationId: 'c1', retentionDays: 30, now: Date.now() });
             expect(pruned.prunedNodeCount).toBe(3); // r1 + u-sub + m-sub
             graph = (await service.getBranchGraph('c1')).graph!;
@@ -897,10 +881,9 @@ describe('BranchService', () => {
             ] as any);
             // 切走 → r1 非活跃；手工把分支头 r1 标记为软删（模拟级联软删落地前的旧数据：父被软删、子仍 live）
             await service.switchBranchCandidate('c1', ids[3]);
-            const filePath = repo.getBranchesFilePath('c1');
-            const raw = JSON.parse(await fsp.readFile(filePath, 'utf8'));
+            const raw = (await repo.load('c1')).graph!;
             raw.nodes[ids[2]] = { ...raw.nodes[ids[2]], deleted: true, deletedAt: Date.now() };
-            await fsp.writeFile(filePath, JSON.stringify(raw), 'utf8');
+            await repo.save('c1', raw);
 
             // 目标 u-sub 自身 live，但其 parentId 链上 r1 已软删 → 业务冲突（非损坏）
             await expect(service.switchBranchCandidate('c1', 'u-sub'))
@@ -909,7 +892,7 @@ describe('BranchService', () => {
             await expect(service.switchBranchCandidate('c1', ids[2]))
                 .rejects.toMatchObject({ code: 'BRANCH_OPERATION_CONFLICT' });
             // 冲突时不得落盘：sidecar 仍保持手工标记的状态（无 validateAndSave 覆盖）
-            const after = JSON.parse(await fsp.readFile(filePath, 'utf8'));
+            const after = (await repo.load('c1')).graph!;
             expect(after.nodes[ids[2]].deleted).toBe(true);
             expect(after.nodes['u-sub'].deleted).toBeUndefined();
         });
@@ -940,10 +923,9 @@ describe('BranchService', () => {
             expect(keep.prunedNodeCount).toBe(0);
             expect(keep.conversationsChanged).toBe(0);
             // 过期：直接改 sidecar 把 deletedAt 拨到 31 天前（服务端 delete 用 Date.now()，这里模拟旧删除）
-            const filePath = repo.getBranchesFilePath('c1');
-            const graph = JSON.parse(await fsp.readFile(filePath, 'utf8'));
+            const graph = (await repo.load('c1')).graph!;
             graph.nodes[ids[2]].deletedAt = past;
-            await fsp.writeFile(filePath, JSON.stringify(graph), 'utf8');
+            await repo.save('c1', graph);
 
             const pruned = await service.pruneDeletedBranches({ conversationId: 'c1', retentionDays: 30, now: Date.now() });
             expect(pruned.conversationsScanned).toBe(1);
@@ -962,9 +944,7 @@ describe('BranchService', () => {
             await seedCandidates('c2');
             await service.deleteBranchCandidate('c1', ids[2]);
             // c2 sidecar 损坏
-            const filePath = repo.getBranchesFilePath('c2');
-            await fsp.mkdir(path.dirname(filePath), { recursive: true });
-            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+            repo.setReadResult('c2', { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' });
             // c3：有 sidecar 但会话不存在（孤儿，如外部复制/残留）——不建会话，直接落 sidecar
             await repo.save('c3', importLinearHistory([
                 { role: 'user', parts: [{ text: 'q' }], timestamp: 1 },
@@ -975,8 +955,8 @@ describe('BranchService', () => {
             expect(result.skippedConversations).toEqual(['c3']);
             expect(result.conversationsScanned).toBe(3);
             expect(result.prunedNodeCount).toBe(0);
-            // 损坏文件未被覆盖
-            expect(await fsp.readFile(filePath, 'utf8')).toBe('{ broken json');
+            // 损坏状态未被覆盖
+            expect((await repo.load('c2')).errorCode).toBe('BRANCH_STORAGE_CORRUPT');
         });
 
         test('保留期配置：默认 30；update 持久化并回读；非法值抛 INVALID_BRANCH_RELATION', async () => {
@@ -995,9 +975,9 @@ describe('BranchService', () => {
             const result = await service.pruneDeletedBranches({ conversationId: 'c1' });
             expect(result.prunedNodeCount).toBe(0);
             // 显式传 1 天 + now 拨到 31 天前 → 过期
-            const graph = JSON.parse(await fsp.readFile(repo.getBranchesFilePath('c1'), 'utf8'));
+            const graph = (await repo.load('c1')).graph!;
             graph.nodes[ids[2]].deletedAt = Date.now() - 31 * 24 * 60 * 60 * 1000;
-            await fsp.writeFile(repo.getBranchesFilePath('c1'), JSON.stringify(graph), 'utf8');
+            await repo.save('c1', graph);
             const pruned = await service.pruneDeletedBranches({ conversationId: 'c1', retentionDays: 1, now: Date.now() });
             expect(pruned.prunedNodeCount).toBe(1);
         });

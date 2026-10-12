@@ -265,8 +265,7 @@ function mergeHistoryPath(
     canonical: ConversationBranchGraph
 ): ConversationBranchGraph {
     const historyPath = activePath(canonical);
-    // nodes 保持对象表（Record）而非 Map：全文件图变更/序列化路径（BranchGraphRepository、
-    // validate、childrenIndex）均按对象表遍历，改 Map 需同步改造所有调用点，收益不抵风险。
+    // nodes 保持对象表（Record）：图序列化、validate、childrenIndex 均依赖对象表结构。
     const nodes: Record<string, ConversationBranchNode> = { ...graph.nodes };
     for (let index = 0; index < historyPath.length; index += 1) {
         const id = historyPath[index]!;

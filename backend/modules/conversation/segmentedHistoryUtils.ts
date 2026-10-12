@@ -1,8 +1,8 @@
 /**
- * 分段历史索引与文件系统纯工具函数（拆分自 storage.ts 的 FileSystemStorageAdapter）。
+ * 旧分段历史索引与文件系统纯工具函数。
  *
  * 这些函数不依赖 VS Code 实例状态，仅做索引校验、分页区间、错误识别与并发限流等纯计算，
- * 供 FileSystemStorageAdapter 的读写路径复用。
+ * 供仍需读取旧索引的调用方复用。
  */
 
 import type { ConversationHistory } from './types';

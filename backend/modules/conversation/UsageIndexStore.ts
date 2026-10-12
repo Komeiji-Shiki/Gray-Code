@@ -72,7 +72,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
 
     constructor(
         private vscode: any, // VS Code API（duck-typed，便于测试注入 fake）
-        private baseDir: string // 数据存储目录 URI 字符串（与 FileSystemStorageAdapter 同源）
+        private baseDir: string // 数据存储目录 URI 字符串
     ) {}
 
     private usagePath(conversationId: string): any {
@@ -112,7 +112,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
         );
     }
 
-    /** 分支图 sidecar 路径（TREE-08 读取侧合并用；与 BranchGraphRepository 同布局） */
+    /** 旧分支图 sidecar 路径（TREE-08 读取侧合并用） */
     private branchesPath(conversationId: string): any {
         assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
@@ -171,9 +171,8 @@ export class FileUsageIndexStore implements UsageIndexStore {
      *
      * - 文件不存在 → null（线性模式，无分支消耗可合并）；
      * - JSON 解析失败 / 结构不符（version < 1 或 nodes 非对象）→ null（损坏降级，
-     *   与 BranchGraphRepository.load 的降级语义一致：统计按主历史，不因分支图损坏阻塞）；
-     *   R8b-L3：表层 shape 校验复用 branch/types.ts 的共享实现 isBranchGraphShape
-     *   （与 BranchGraphRepository.load 同一判定，消除双实现）；
+     *   统计按主历史，不因分支图损坏阻塞）；
+     *   R8b-L3：表层 shape 校验复用 branch/types.ts 的 isBranchGraphShape；
      * - 语义损坏（环 / 悬空指针等）由 usageStats.extractBranchUsageMessages 在合并时兜底
      *   （活跃路径解析失败即放弃合并）。
      * 只读，不进入会话写队列。

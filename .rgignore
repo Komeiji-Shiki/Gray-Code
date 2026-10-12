@@ -1,0 +1,8 @@
+# 默认搜索聚焦源文件；需要核对依赖或生成物时可直接指定文件，或使用 rg --no-ignore。
+/apps/client/src/pets/vendor/
+/resources/debuggers/js-debug/
+/frontend/src/i18n/langs/_shared/
+/frontend/src/utils/tools/__generated__/
+/apps/client/src/i18n.generated.ts
+/package-lock.json
+/frontend/package-lock.json

@@ -12,12 +12,12 @@
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { Content } from '../../modules/conversation';
-import { createAdapter } from './helpers/fakeVscodeFs';
+
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
 describe('deleteConversation 与流式写入的“删除后复活”竞态', () => {
     test('删除后新发起的 append 被短路：历史目录不被重新创建（无幽灵会话）', async () => {
-        const { adapter, fake } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-del', 'Del');
         await manager.addContent('conv-del', makeContent('user', 'before'));
@@ -32,14 +32,12 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
         const result = await adapter.loadHistoryWithStatus('conv-del');
         expect(result.value).toBeNull();
         // conversations 目录下没有 conv-del 目录（segmented 历史未复活）
-        const convDirs = [...fake.dirs].filter(d => d.endsWith('/conv-del'));
-        expect(convDirs).toHaveLength(0);
         // meta 也未复活
         expect(await adapter.loadMetadata('conv-del')).toBeNull();
     });
 
     test('删除后读取（getMessages/getHistory）不自动重建会话', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-del2', 'Del2');
         await manager.deleteConversation('conv-del2');
@@ -53,7 +51,7 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
     });
 
     test('mutate 路径（functionResponse 追加）同样被短路', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-del4', 'Del4');
         await manager.deleteConversation('conv-del4');
@@ -68,7 +66,7 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
     });
 
     test('删除后显式重建（createConversation 同 ID）恢复正常写入', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-del3', 'Del3');
         await manager.deleteConversation('conv-del3');
@@ -80,7 +78,7 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
     });
 
     test('append 在 storage 入队窗口内 delete：会话写锁串行，不产生幽灵会话（R2 3.2）', async () => {
-        const { adapter, fake } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-race6', 'Race6');
         await manager.addContent('conv-race6', makeContent('user', 'one'));
@@ -107,8 +105,6 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
         // 会话被删除：无幽灵历史/目录/meta
         const result = await adapter.loadHistoryWithStatus('conv-race6');
         expect(result.value).toBeNull();
-        const convDirs = [...fake.dirs].filter(d => d.endsWith('/conv-race6'));
-        expect(convDirs).toHaveLength(0);
         expect(await adapter.loadMetadata('conv-race6')).toBeNull();
     });
 
@@ -129,7 +125,7 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
     });
 
     test('删除后元数据写路径（setTitle/updateSummary/setCustomMetadata）不重建 meta.json（无幽灵 meta）', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-del-meta', 'Meta');
         // 删除前元数据写正常
@@ -148,7 +144,7 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
     });
 
     test('删除后 getMessagesPaged 读取返回空页且不重建会话（含悬空工具调用的规范化写回被短路）', async () => {
-        const { adapter, fake } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-paged-del', 'PagedDel');
         await manager.addContent('conv-paged-del', makeContent('user', 'before'));
@@ -168,13 +164,11 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
         // 历史/目录/meta 均未复活
         const result = await adapter.loadHistoryWithStatus('conv-paged-del');
         expect(result.value).toBeNull();
-        const convDirs = [...fake.dirs].filter(d => d.endsWith('/conv-paged-del'));
-        expect(convDirs).toHaveLength(0);
         expect(await adapter.loadMetadata('conv-paged-del')).toBeNull();
     });
 
     test('getMessagesPaged 规范化写回与 delete 并发：会话写锁串行，删除后无幽灵历史（R2 3.2）', async () => {
-        const { adapter, fake } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-paged-race', 'PagedRace');
         await manager.addContent('conv-paged-race', makeContent('user', 'one'));
@@ -206,8 +200,6 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
         // 会话被删除：无幽灵历史/目录/meta
         const result = await adapter.loadHistoryWithStatus('conv-paged-race');
         expect(result.value).toBeNull();
-        const convDirs = [...fake.dirs].filter(d => d.endsWith('/conv-paged-race'));
-        expect(convDirs).toHaveLength(0);
         expect(await adapter.loadMetadata('conv-paged-race')).toBeNull();
     });
 });

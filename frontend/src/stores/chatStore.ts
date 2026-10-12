@@ -1,3 +1,5 @@
+import { createTodoReplay } from './chat/todoReplay'
+import { insertAgentMessageCard as insertAgentMessageCardFn } from './chat/agentMessageCards'
 /**
  * Chat Store - Pinia状态管理
  * 
@@ -28,17 +30,18 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
-import { computed as vueComputed, toRaw, watch } from 'vue'
-import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
+import { computed as vueComputed, watch } from 'vue';
+import type { Attachment, CheckpointRecord, StreamChunk } from '../types';
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { t } from '../composables/useI18n'
 import { messageListUiStateByTab } from '../components/message/messageListUiState'
-import { replayTodoStateFromMessages, type ReplayTodoState } from '../utils/todoList'
+
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
-import { createChatState, getMessagesStructuralVersion, getToolResponseCacheRevision, rebuildMessageIndexById, insertMessageAt, bumpMessagesStructuralVersion } from './chat/state'
-import { clearVisibleChatMessagesCache } from './chat/windowUtils'
+// 导入模块
+import { createChatState, getToolResponseCacheRevision, rebuildMessageIndexById } from './chat/state';
+
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
 import { synchronizeRemoteConversation } from './chat/remoteReconnect'
@@ -46,74 +49,74 @@ import { createInputDraftPersistence } from './chat/inputDraftPersistence'
 import { formatTime } from './chat/utils'
 
 import {
-  createNewConversation as createNewConvAction,
-  loadConversations as loadConvsAction,
-  ensureConversationSummary,
-  resumeDesktopConversation,
-  loadMoreConversations as loadMoreConvsAction,
-  loadHistory,
-  loadOlderMessagesPage as loadOlderMessagesPageAction,
-  loadMessagesAroundIndex as loadMessagesAroundIndexAction,
-  loadCheckpoints,
-  switchConversation as switchConvAction,
-  deleteConversation as deleteConvAction,
-  isDeletingConversation,
-  updateConversationAfterMessage,
-  createBranchConversation as createBranchConversationAction
+    createNewConversation as createNewConvAction,
+    loadConversations as loadConvsAction,
+    ensureConversationSummary,
+    resumeDesktopConversation,
+    loadMoreConversations as loadMoreConvsAction,
+    loadHistory,
+    loadOlderMessagesPage as loadOlderMessagesPageAction,
+    loadMessagesAroundIndex as loadMessagesAroundIndexAction,
+    loadCheckpoints,
+    switchConversation as switchConvAction,
+    deleteConversation as deleteConvAction,
+    isDeletingConversation,
+    updateConversationAfterMessage,
+    createBranchConversation as createBranchConversationAction,
 } from './chat/conversationActions'
 
 import {
-  loadCurrentConfig,
-  setConfigId as setConfigIdAction,
-  loadSavedConfigId,
-  loadCheckpointConfig,
-  setSelectedModelId as setSelectedModelIdAction,
-  setSelectedReasoningEffort as setSelectedReasoningEffortAction,
-  persistConversationModelConfig,
-  setMergeUnchangedCheckpoints,
-  setCurrentWorkspaceUri,
-  setWorkspaceFilter as setWorkspaceFilterAction,
-  setInputValue as setInputValueAction,
-  clearInputValue as clearInputValueAction,
-  handleRetryStatus,
-  setCurrentPromptModeId as setCurrentPromptModeIdAction,
-  persistConversationPromptMode
+    loadCurrentConfig,
+    setConfigId as setConfigIdAction,
+    loadSavedConfigId,
+    loadCheckpointConfig,
+    setSelectedModelId as setSelectedModelIdAction,
+    setSelectedReasoningEffort as setSelectedReasoningEffortAction,
+    persistConversationModelConfig,
+    setMergeUnchangedCheckpoints,
+    setCurrentWorkspaceUri,
+    setWorkspaceFilter as setWorkspaceFilterAction,
+    setInputValue as setInputValueAction,
+    clearInputValue as clearInputValueAction,
+    handleRetryStatus,
+    setCurrentPromptModeId as setCurrentPromptModeIdAction,
+    persistConversationPromptMode,
 } from './chat/configActions'
 
 import {
-  getCheckpointsForMessage as getCheckpointsFn,
-  hasCheckpoint as hasCheckpointFn,
-  addCheckpoint as addCheckpointFn,
-  createManualCheckpoint as createManualCheckpointFn,
-  previewRestore as previewRestoreFn,
-  restoreCheckpoint as restoreCheckpointFn,
-  restoreAndRetry as restoreAndRetryFn,
-  restoreAndDelete as restoreAndDeleteFn,
-  restoreAndEdit as restoreAndEditFn,
-  summarizeContext as summarizeContextFn,
-  cancelSummarizeRequest as cancelSummarizeRequestFn
+    getCheckpointsForMessage as getCheckpointsFn,
+    hasCheckpoint as hasCheckpointFn,
+    addCheckpoint as addCheckpointFn,
+    createManualCheckpoint as createManualCheckpointFn,
+    previewRestore as previewRestoreFn,
+    restoreCheckpoint as restoreCheckpointFn,
+    restoreAndRetry as restoreAndRetryFn,
+    restoreAndDelete as restoreAndDeleteFn,
+    restoreAndEdit as restoreAndEditFn,
+    summarizeContext as summarizeContextFn,
+    cancelSummarizeRequest as cancelSummarizeRequestFn,
 } from './chat/checkpointActions'
 
 import { projectToolResultImages } from '../utils/toolResultImages'
 import {
-  getToolResponseById as getToolResponseByIdFn,
-  hasToolResponse as hasToolResponseFn,
-  getActualIndex as getActualIndexFn,
-  cancelStream as cancelStreamFn,
-  cancelStreamAndRejectTools as cancelStreamAndRejectToolsFn
+    getToolResponseById as getToolResponseByIdFn,
+    hasToolResponse as hasToolResponseFn,
+    getActualIndex as getActualIndexFn,
+    cancelStream as cancelStreamFn,
+    cancelStreamAndRejectTools as cancelStreamAndRejectToolsFn,
 } from './chat/toolActions'
 
 import {
-  sendMessage as sendMessageFn,
-  retryLastMessage as retryLastMessageFn,
-  retryFromMessage as retryFromMessageFn,
-  retryAfterError as retryAfterErrorFn,
-  dismissError as dismissErrorFn,
-  editAndRetry as editAndRetryFn,
-  deleteMessage as deleteMessageFn,
-  deleteSingleMessage as deleteSingleMessageFn,
-  restoreSummarizedMessages as restoreSummarizedMessagesFn,
-  editSummaryMessage as editSummaryMessageFn
+    sendMessage as sendMessageFn,
+    retryLastMessage as retryLastMessageFn,
+    retryFromMessage as retryFromMessageFn,
+    retryAfterError as retryAfterErrorFn,
+    dismissError as dismissErrorFn,
+    editAndRetry as editAndRetryFn,
+    deleteMessage as deleteMessageFn,
+    deleteSingleMessage as deleteSingleMessageFn,
+    restoreSummarizedMessages as restoreSummarizedMessagesFn,
+    editSummaryMessage as editSummaryMessageFn,
 } from './chat/messageActions'
 
 import type { CancelStreamOptions } from './chat/toolActions'
@@ -121,35 +124,35 @@ import type { SendMessageOptions } from './chat/messageActions'
 import type { BuildSession, QueuedMessage } from './chat/types'
 
 import {
-  buildCandidateGroupIndex,
-  loadBranchGraph as loadBranchGraphAction,
-  refreshBranchGraph as refreshBranchGraphAction,
-  switchBranchCandidate as switchBranchCandidateAction,
-  deleteBranchCandidate as deleteBranchCandidateAction,
-  restoreBranchCandidate as restoreBranchCandidateAction,
-  renameBranchCandidate as renameBranchCandidateAction
+    buildCandidateGroupIndex,
+    loadBranchGraph as loadBranchGraphAction,
+    refreshBranchGraph as refreshBranchGraphAction,
+    switchBranchCandidate as switchBranchCandidateAction,
+    deleteBranchCandidate as deleteBranchCandidateAction,
+    restoreBranchCandidate as restoreBranchCandidateAction,
+    renameBranchCandidate as renameBranchCandidateAction,
 } from './chat/branchActions'
 
 import {
-  createTab as createTabAction,
-  closeTab as closeTabAction,
-  switchTab as switchTabAction,
-  findTabByConversationId,
-  updateTabTitle,
-  updateTabConversationId,
-  reorderTab as reorderTabAction
+    createTab as createTabAction,
+    closeTab as closeTabAction,
+    switchTab as switchTabAction,
+    findTabByConversationId,
+    updateTabTitle,
+    updateTabConversationId,
+    reorderTab as reorderTabAction,
 } from './chat/tabActions'
 
 import {
-  enqueueMessage as enqueueMessageFn,
-  dequeueMessage as dequeueMessageFn,
-  removeQueuedMessage as removeQueuedMessageFn,
-  moveQueuedMessage as moveQueuedMessageFn,
-  updateQueuedMessage as updateQueuedMessageFn,
-  sendQueuedMessageNow as sendQueuedMessageNowFn,
-  processQueue as processQueueFn,
-  processQueueAfterAction as processQueueAfterActionFn,
-  type QueueActionDeps
+    enqueueMessage as enqueueMessageFn,
+    dequeueMessage as dequeueMessageFn,
+    removeQueuedMessage as removeQueuedMessageFn,
+    moveQueuedMessage as moveQueuedMessageFn,
+    updateQueuedMessage as updateQueuedMessageFn,
+    sendQueuedMessageNow as sendQueuedMessageNowFn,
+    processQueue as processQueueFn,
+    processQueueAfterAction as processQueueAfterActionFn,
+    type QueueActionDeps,
 } from './chat/queueActions'
 
 import type { StreamHandlerContext } from './chat/streamHandler'
@@ -223,90 +226,7 @@ export const useChatStore = defineStore('chat', () => {
    * - 响应缓存身份与版本、响应索引条数：已有工具的结果变化或新结果到达。
    * 读取路径的静默回填不改变任何响应值，也不改变指纹。
    */
-  interface TodoReplayFingerprint {
-    messages: Message[]
-    structure: number
-    responses: Map<string, Record<string, unknown>>
-    responseRevision: number
-    responseCount: number
-  }
-  const todoReplayFingerprint = (): TodoReplayFingerprint => ({
-    messages: toRaw(state.allMessages.value),
-    structure: getMessagesStructuralVersion(state),
-    responses: toRaw(state.toolResponseCache.value),
-    responseRevision: getToolResponseCacheRevision(state),
-    responseCount: state.toolResponseIndex.value.size
-  })
-  const sameTodoReplayInput = (left: TodoReplayFingerprint, right: TodoReplayFingerprint) =>
-    left.messages === right.messages && left.structure === right.structure && left.responses === right.responses
-    && left.responseRevision === right.responseRevision && left.responseCount === right.responseCount
-  const resolveTodoToolResponse = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId) ?? undefined
-
-  /**
-   * todoSnapshot 增量重放缓存：缓存 [0, scannedCount) 的重放中间态。输入指纹不变时只从上次位置
-   * 重放尾部（含旧尾消息——流式期间其 tools 会被原地追加/改写），其余变化回退全量重放。
-   * 流式增量每批只处理尾消息，不再复制整份响应缓存或扫描全部 functionResponse。
-   */
-  let todoReplayCache: {
-    scannedCount: number
-    input: TodoReplayFingerprint
-    result: ReplayTodoState
-  } | null = null
-
-  const todoSnapshot = vueComputed(() => {
-    const allMessages = state.allMessages.value
-    const len = allMessages.length
-    const prefixCount = Math.max(0, len - 1)
-    const input = todoReplayFingerprint()
-    const cache = todoReplayCache
-    const incremental = cache !== null && cache.scannedCount <= prefixCount && sameTodoReplayInput(cache.input, input)
-
-    const prefix = incremental && cache.scannedCount === prefixCount ? cache.result
-      : replayTodoStateFromMessages(allMessages, {
-          resolveToolResponseById: resolveTodoToolResponse,
-          fromIndex: incremental ? cache.scannedCount : 0,
-          beforeIndex: prefixCount,
-          initialTodos: incremental ? cache.result.todos : null,
-          initialAnchorBackendIndex: incremental ? cache.result.anchorBackendIndex : null,
-          initialTouched: incremental && cache.result.todos !== null
-        })
-
-    // 缓存结果必须与扫描边界一致；尾工具消失时从固定前缀重新计算，不能沿用旧尾的待办。
-    todoReplayCache = {
-      scannedCount: prefixCount,
-      input,
-      result: prefix
-    }
-    return replayTodoStateFromMessages(allMessages, { resolveToolResponseById: resolveTodoToolResponse, fromIndex: prefixCount,
-      initialTodos: prefix.todos, initialAnchorBackendIndex: prefix.anchorBackendIndex, initialTouched: prefix.todos !== null })
-  })
-
-  /**
-   * 单张 TODO 工具卡片的重放：只重放到卡片自身位置，之后的流式增量不影响其结果。
-   * 按停止位置缓存，输入指纹不变、重放读到的消息尚未被尾部更新覆盖时直接复用，
-   * 全局流式期间每张历史卡片不再逐批重新遍历历史。
-   */
-  const todoStateAtTool = new Map<string, { input: TodoReplayFingerprint; length: number; result: ReplayTodoState }>()
-  const replayTodoStateUntil = (stop: { toolId?: string; backendIndex?: number }): ReplayTodoState => {
-    const messages = state.allMessages.value
-    const input = todoReplayFingerprint()
-    const key = `${stop.toolId ?? ''}\n${stop.backendIndex ?? ''}`
-    const cached = todoStateAtTool.get(key)
-    // 消息对象写入窗口后只有尾消息会被原地替换；重放在旧尾之前停止时，尾部更新与追加都不影响结果。
-    if (cached && sameTodoReplayInput(cached.input, input) && cached.result.lastReadIndex < cached.length - 1 && messages.length >= cached.length) {
-      // 仍读取重放范围内的消息位置，让调用方的 computed 在这些位置被替换时重新求值。
-      for (let index = 0; index <= cached.result.lastReadIndex; index++) void messages[index]
-      return cached.result
-    }
-    const result = replayTodoStateFromMessages(messages, {
-      resolveToolResponseById: resolveTodoToolResponse,
-      stopAtToolId: stop.toolId,
-      stopAtBackendIndex: stop.backendIndex
-    })
-    if (todoStateAtTool.size >= 256) todoStateAtTool.clear()
-    todoStateAtTool.set(key, { input, length: messages.length, result })
-    return result
-  }
+  const { todoSnapshot, replayTodoStateUntil } = createTodoReplay(state, toolCallId => getToolResponseByIdFn(state, toolCallId) ?? undefined)
 
   const getToolResponseById = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId)
   const getToolDisplayResult = (toolCallId: string, response?: Record<string, unknown> | null) => {
@@ -334,69 +254,8 @@ export const useChatStore = defineStore('chat', () => {
    * 幂等：同 mailbox messageId 重复事件直接跳过。窗口外（更早历史被折叠）交给
    * 历史加载路径，本地不做越界插入。
    */
-  const insertAgentMessageCard = (payload: AgentMessageCardInsertPayload): void => {
-    const { card, persisted } = payload
-    const all = state.allMessages.value
-    // 幂等：同 mailbox messageId 已插入（taskEvent 重放/重复推送）
-    if (all.some(m => m.agentMessage?.messageId === card.messageId)) return
+  const insertAgentMessageCard = (payload: AgentMessageCardInsertPayload): void => insertAgentMessageCardFn(state, payload)
 
-    let insertAt: number
-    let backendIndex: number | undefined
-    if (persisted) {
-      if (typeof payload.insertPosition !== 'number') return
-      insertAt = payload.insertPosition - state.windowStartIndex.value
-      // 插入点必须真实位于当前窗口内；左右任一侧越界都交给后续历史加载。
-      if (insertAt < 0 || insertAt > all.length) return
-      backendIndex = payload.insertPosition
-    } else {
-      // 持久层连续失败：仍在当前窗口尾部展示本地卡片，但不伪造后端索引。
-      insertAt = all.length
-    }
-
-    const message: Message = {
-      id: `agentmsg:${card.messageId}`,
-      role: 'user',
-      content: '',
-      timestamp: card.createdAt || Date.now(),
-      source: 'agent_message',
-      agentMessage: card,
-      localOnly: !persisted,
-      ...(backendIndex !== undefined ? { backendIndex } : {})
-    }
-    insertMessageAt(state, insertAt, message)
-
-    if (!persisted) return
-
-    // 后端已把插入点之后的消息整体后移 1：窗口内带真实 backendIndex 的后端消息同步 +1。
-    const next = state.allMessages.value
-    let shifted = false
-    for (let i = insertAt + 1; i < next.length; i++) {
-      const m = next[i]
-      if (!m.localOnly && typeof m.backendIndex === 'number') {
-        next[i] = { ...m, backendIndex: m.backendIndex + 1 }
-        shifted = true
-      }
-    }
-    if (shifted) {
-      clearVisibleChatMessagesCache(state)
-      bumpMessagesStructuralVersion(state)
-    }
-
-    // transcript 已真实增加一条：同步后端总数和对话摘要，保证后续分页游标不漏页/重页。
-    const backendWindowEnd = next.reduce(
-      (max, item) => !item.localOnly && typeof item.backendIndex === 'number'
-        ? Math.max(max, item.backendIndex + 1)
-        : max,
-      0
-    )
-    state.totalMessages.value = Math.max(state.totalMessages.value + 1, backendWindowEnd)
-    const conversation = state.conversations.value.find(item => item.id === state.currentConversationId.value)
-    if (conversation) {
-      conversation.messageCount = state.totalMessages.value
-      conversation.updatedAt = Date.now()
-    }
-  }
-  
   const retryLastMessage = () => retryLastMessageFn(state, computed, cancelStream)
   const retryFromMessage = (messageIndex: number) => 
     retryFromMessageFn(state, computed, messageIndex, cancelStream)

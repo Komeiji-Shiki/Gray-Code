@@ -8,8 +8,8 @@
  * / 其它 mutate 串行；无变更返回原引用跳过写回。
  */
 
-import { ConversationManager } from '../../modules/conversation';
-import { createAdapter } from './helpers/fakeVscodeFs';
+import { ConversationManager, MemoryStorageAdapter } from '../../modules/conversation';
+
 import type { Content } from '../../modules/conversation';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
@@ -28,7 +28,7 @@ async function seedToolCallConversation(manager: ConversationManager, convId: st
 
 describe('ConversationManager.rejectToolCalls 原子性（R2 4.1）', () => {
     test('并发 rejectToolCalls 互不覆盖：所有拒绝与 functionResponse 均落盘', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         const toolIds = ['call-1', 'call-2', 'call-3', 'call-4', 'call-5'];
         const modelIndex = await seedToolCallConversation(manager, 'conv-rej-par', toolIds);
@@ -54,7 +54,7 @@ describe('ConversationManager.rejectToolCalls 原子性（R2 4.1）', () => {
     });
 
     test('rejectToolCalls 写回期间并发追加不被覆盖（会话写锁串行）', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         const modelIndex = await seedToolCallConversation(manager, 'conv-rej-ser', ['call-1']);
 
@@ -85,7 +85,7 @@ describe('ConversationManager.rejectToolCalls 原子性（R2 4.1）', () => {
     });
 
     test('messageIndex 越界在锁内抛出，不写回', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await seedToolCallConversation(manager, 'conv-rej-bad', ['call-1']);
 
@@ -97,7 +97,7 @@ describe('ConversationManager.rejectToolCalls 原子性（R2 4.1）', () => {
     });
 
     test('目标消息无 parts（历史中存在无 parts 消息）不抛 TypeError，无拒绝写入', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new MemoryStorageAdapter();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-rej-noparts', 'NoParts');
         await manager.addContent('conv-rej-noparts', makeContent('user', 'run tools'));

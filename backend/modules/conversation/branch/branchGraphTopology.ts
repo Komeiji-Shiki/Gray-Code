@@ -16,7 +16,7 @@ export function createEmptyBranchGraph(): ConversationBranchGraph {
 
 /** 浅拷贝图（nodes 记录复制，节点对象与 parts 共享引用——数据视为不可变）。
  * nodes 用对象表（Record）而非 Map：与全文件 Object.values/entries 遍历、
- * JSON 序列化（BranchGraphRepository）直接兼容，保持现状不迁移。 */
+ * JSON 序列化直接兼容。 */
 export function cloneGraph(graph: ConversationBranchGraph): ConversationBranchGraph {
     return { ...graph, nodes: { ...graph.nodes } };
 }

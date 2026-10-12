@@ -3,9 +3,6 @@
  * 夹具组合真实 BranchService 和 ConversationManager；旧 Webview 与 ChatFlow 专属入口不再参与。
  */
 
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { ConversationHistory } from '../../modules/conversation';
@@ -14,14 +11,13 @@ import {
     MAX_CANDIDATES_PER_PARENT,
     setGlobalBranchService,
 } from '../../modules/conversation/branch/BranchService';
-import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
+import { MemoryBranchStorage } from '../__fixtures__/memoryBranchStorage';
 import {
     activePath,
     childrenIndex,
     importLinearHistory,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import { TEMP_DIR_REMOVE_OPTIONS } from '../__fixtures__/tempDirectory';
 
 /** 线性历史：root(user q1) → model(a1) → user(q2) → model(a2)（编辑目标 U2 非根节点） */
 function branchedHistory(): ConversationHistory {
@@ -122,14 +118,12 @@ async function simulateToolLoopOutput(manager: ConversationManager, conversation
 }
 
 describe('编辑用户消息分支（编排组合）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-edit-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -137,7 +131,6 @@ describe('编辑用户消息分支（编排组合）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     /** 建会话并写入线性历史，返回 [U1, M1, U2, M2] */
@@ -268,8 +261,7 @@ describe('编辑用户消息分支（编排组合）', () => {
         expect(graph.nodes[result.newUserNodeId]!.parts).toEqual([{ text: 'q3 edited' }]);
         expect(validate(graph).valid).toBe(true);
 
-        const files = await fsp.readdir(path.join(tempDir, 'conversations', 'c1'));
-        expect(files.some(file => file.startsWith('branches.backup-history-diverged-'))).toBe(true);
+        expect(repo.backups.some(item => item.conversationId === 'c1' && item.reason === 'history-diverged')).toBe(true);
     });
 
     test('编辑后生成新回答：finishReroll 等价回填写入模型候选（重命名对齐 + 摘要 + 续接节点 + BR-05）', async () => {
@@ -472,14 +464,12 @@ describe('编辑用户消息分支（编排组合）', () => {
 });
 
 describe('keep 模式：原地编辑（保持当前分支）', () => {
-    let tempDir: string;
-    let repo: BranchGraphRepository;
+    let repo: MemoryBranchStorage;
     let manager: ConversationManager;
     let service: BranchService;
 
     beforeEach(async () => {
-        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'branch-edit-keep-'));
-        repo = new BranchGraphRepository(tempDir);
+        repo = new MemoryBranchStorage();
         manager = new ConversationManager(new MemoryStorageAdapter());
         service = new BranchService(manager, repo);
         setGlobalBranchService(service);
@@ -487,7 +477,6 @@ describe('keep 模式：原地编辑（保持当前分支）', () => {
 
     afterEach(async () => {
         setGlobalBranchService(undefined);
-        await fsp.rm(tempDir, TEMP_DIR_REMOVE_OPTIONS);
     });
 
     async function seedConversation(conversationId: string): Promise<string[]> {

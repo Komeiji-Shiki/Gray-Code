@@ -16,7 +16,7 @@ import { ConversationManager } from '../../modules/conversation';
 import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { UsageIndex, UsageIndexStore } from '../../modules/conversation/usageStats';
 import type { Content } from '../../modules/conversation';
-import { createAdapter } from './helpers/fakeVscodeFs';
+import { IndexedMemoryStorage } from '../__fixtures__/indexedMemoryStorage';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
 describe('ConversationManager 会话创建并发', () => {
@@ -325,7 +325,7 @@ describe('updateSummary 合并写入（HIS-09）', () => {
     });
 
     test('消息数按已提交的历史校正，兼顾乐观计数与迟到摘要', async () => {
-        const { adapter } = createAdapter();
+        const adapter = new IndexedMemoryStorage();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-clamp', 'Clamp');
         await manager.addBatch('conv-clamp', [
@@ -388,137 +388,143 @@ describe('getConversationMetadataBatch（HIS-10）', () => {
 });
 
 describe('getMetadata 完整性检查只读 index（HIS-11）', () => {
-    test('不解析末段历史消息（不读 .ndjson）', async () => {
-        const { adapter, fake } = createAdapter();
+    test('完整性检查使用索引端口，不加载完整历史', async () => {
+        const adapter = new IndexedMemoryStorage();
         const manager = new ConversationManager(adapter);
 
         await manager.createConversation('conv-meta', 'Meta');
         await manager.addBatch('conv-meta', [            makeContent('user', 'a'), makeContent('model', 'b'), makeContent('user', 'c')
         ]);
 
-        fake.readCalls.length = 0;
+        const indexRead = jest.spyOn(adapter, 'getHistoryIndexInfo');
+        const historyRead = jest.spyOn(adapter, 'loadHistory');
         const meta = await manager.getMetadata('conv-meta');
 
         expect(meta).not.toBeNull();
         expect(meta!.title).toBe('Meta');
         expect(meta!.integrityStatus).toBeUndefined();
-        // 没有读取任何 .ndjson 段消息
-        expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
-        // 只读了 index.json（与 meta.json）
-        expect(fake.readCalls.some(p => p.includes('history.index.json'))).toBe(true);
+        expect(indexRead).toHaveBeenCalledWith('conv-meta');
+        expect(historyRead).not.toHaveBeenCalled();
     });
 
-    test('历史缺失时返回 null 且 integrityStatus 为 history_missing（只读 index）', async () => {
-        const { adapter, fake } = createAdapter();
+    test('历史缺失时保留元数据并标记 history_missing（只读取索引端口）', async () => {
+        const adapter = new IndexedMemoryStorage();
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-meta2', 'Meta2');
-        // 手动删除 index（模拟历史丢失），保留 meta
-        const indexPath = [...fake.files.keys()].find(p => p.includes('history.index.json'));
-        expect(indexPath).toBeTruthy();
-        fake.files.delete(indexPath!);
+        // 存储报告历史缺失，元数据仍然可读。
+        jest.spyOn(adapter, 'getHistoryIndexInfo').mockResolvedValue({
+            exists: false, readable: false, errorCode: 'not_found',
+        });
+        const historyRead = jest.spyOn(adapter, 'loadHistory');
 
         const meta = await manager.getMetadata('conv-meta2');
         expect(meta).not.toBeNull();
         expect(meta!.integrityStatus).toBe('history_missing');
-        expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
+        expect(historyRead).not.toHaveBeenCalled();
     });
 });
 
 describe('getMetadataLight 元数据缓存（PERF）', () => {
-    test('缓存命中时不读盘（对话列表分页/统计热路径）', async () => {
-        const { adapter, fake } = createAdapter();
+    test('缓存命中时不读取存储（对话列表分页/统计热路径）', async () => {
+        const adapter = new IndexedMemoryStorage();
+        const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-light', 'Light');
         await manager.addBatch('conv-light', [makeContent('user', 'a'), makeContent('model', 'b')]);
         await manager.updateSummary('conv-light', { messageCount: 5, preview: 'p' });
 
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         const meta = await manager.getMetadataLight('conv-light');
         expect(meta).not.toBeNull();
         expect(meta!.title).toBe('Light');
         // M3 钳制：messageCount 不超过实际历史数量（2 条）
         expect(meta!.custom!.messageCount).toBe(2);
-        // 写路径已回填 metaCache：全程无磁盘读取
-        expect(fake.readCalls).toHaveLength(0);
+        // 写路径已回填 metaCache：全程无存储读取
+        expect(metadataRead).not.toHaveBeenCalled();
     });
 
     test('返回深拷贝，调用方修改不污染缓存', async () => {
-        const { adapter, fake } = createAdapter();
+        const adapter = new IndexedMemoryStorage();
+        const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-copy', 'Copy');
 
         const first = await manager.getMetadataLight('conv-copy');
         first!.custom = { polluted: true };
 
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         const second = await manager.getMetadataLight('conv-copy');
         expect(second!.custom).not.toHaveProperty('polluted');
-        expect(fake.readCalls).toHaveLength(0);
+        expect(metadataRead).not.toHaveBeenCalled();
     });
 
-    test('not_found 负缓存命中不读盘；创建对话后由写路径覆盖', async () => {
-        const { adapter, fake } = createAdapter();
+    test('not_found 负缓存命中时不读取存储；创建对话后由写路径覆盖', async () => {
+        const adapter = new IndexedMemoryStorage();
+        const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');
         const manager = new ConversationManager(adapter);
 
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         expect(await manager.getMetadataLight('conv-nc')).toBeNull();
-        expect(fake.readCalls.length).toBeGreaterThan(0); // 首次仍读盘
-        const readsAfterMiss = fake.readCalls.length;
+        expect(metadataRead.mock.calls.length).toBeGreaterThan(0); // 首次仍会读取存储
+        const readsAfterMiss = metadataRead.mock.calls.length;
 
         expect(await manager.getMetadataLight('conv-nc')).toBeNull();
-        expect(fake.readCalls.length).toBe(readsAfterMiss); // 负缓存命中，不再读盘
+        expect(metadataRead.mock.calls.length).toBe(readsAfterMiss); // 负缓存命中，不再读取存储
 
         await manager.createConversation('conv-nc', 'NC');
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         const meta = await manager.getMetadataLight('conv-nc');
         expect(meta?.title).toBe('NC'); // 写路径覆盖负缓存
-        expect(fake.readCalls).toHaveLength(0);
+        expect(metadataRead).not.toHaveBeenCalled();
     });
 
-    test('标题/自定义元数据写路径回填缓存，无需重新读盘', async () => {
-        const { adapter, fake } = createAdapter();
+    test('标题/自定义元数据写路径回填缓存，无需重新读取存储', async () => {
+        const adapter = new IndexedMemoryStorage();
+        const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-write', 'W');
 
         await manager.setTitle('conv-write', 'Renamed');
         await manager.setCustomMetadata('conv-write', 'key', 42);
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
 
         const meta = await manager.getMetadataLight('conv-write');
         expect(meta!.title).toBe('Renamed');
         expect(meta!.custom!.key).toBe(42);
-        expect(fake.readCalls).toHaveLength(0);
+        expect(metadataRead).not.toHaveBeenCalled();
     });
 
-    test('历史追加（appendHistory 刷新 updatedAt）后缓存失效，重新读盘', async () => {
-        const { adapter, fake } = createAdapter();
+    test('历史追加后缓存失效，重新读取存储', async () => {
+        const adapter = new IndexedMemoryStorage();
+        const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-append', 'Append');
 
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         await manager.getMetadataLight('conv-append'); // 缓存回填
 
         await manager.addContent('conv-append', makeContent('user', 'x'));
-        const readsAfterAppend = fake.readCalls.length;
+        const readsAfterAppend = metadataRead.mock.calls.length;
 
         const meta = await manager.getMetadataLight('conv-append');
         expect(meta).not.toBeNull();
-        // append 路径已失效缓存：本次读取必须重新走磁盘
-        expect(fake.readCalls.length).toBeGreaterThan(readsAfterAppend);
+        // append 路径已失效缓存：本次必须重新读取存储。
+        expect(metadataRead.mock.calls.length).toBeGreaterThan(readsAfterAppend);
     });
 
     test('删除会话后缓存失效，不再返回已删除会话的快照', async () => {
-        const { adapter, fake } = createAdapter();
+        const adapter = new IndexedMemoryStorage();
+        const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');
         const manager = new ConversationManager(adapter);
         await manager.createConversation('conv-del', 'Del');
 
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         expect(await manager.getMetadataLight('conv-del')).not.toBeNull(); // 缓存回填
 
         await manager.deleteConversation('conv-del');
-        fake.readCalls.length = 0;
+        metadataRead.mockClear();
         expect(await manager.getMetadataLight('conv-del')).toBeNull();
-        // 删除路径已失效缓存：本次读取重新走磁盘并得到 not_found
-        expect(fake.readCalls.length).toBeGreaterThan(0);
+        // 删除路径已失效缓存：本次重新读取存储并得到 not_found。
+        expect(metadataRead.mock.calls.length).toBeGreaterThan(0);
     });
 });

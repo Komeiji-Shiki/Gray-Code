@@ -27,7 +27,7 @@
 
 import type { Content, ContentPart } from '../types';
 import type { ConversationManager } from '../ConversationManager';
-import type { BranchGraphReadResult, BranchGraphRepository } from './BranchGraphRepository';
+import type { BranchGraphReadResult, BranchStorage } from './branchStorage';
 import {
     getChildrenIndex,
     type BranchServiceCoreContext,
@@ -143,7 +143,7 @@ export class BranchService {
 
     constructor(
         conversationManager: ConversationManager,
-        repository: BranchGraphRepository,
+        repository: BranchStorage,
         options: { retentionDays?: number } = {}
     ) {
         this.retentionDays = options.retentionDays ?? DEFAULT_BRANCH_RETENTION_DAYS;
