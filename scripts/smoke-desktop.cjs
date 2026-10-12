@@ -27,6 +27,32 @@ async function until(check, label, timeout = 20000) {
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
   throw new Error(`Timed out: ${label}`);
 }
+async function verifyQuitDialogLanguage(window, ui, language, expected) {
+  await ui('ui.settings.begin');
+  const draft = await ui('platform.settings.get');
+  draft.appearance.codeFontSize += 1;
+  await ui('platform.settings.update', { settings: draft });
+  // 制造真实未保存草稿，通过正式菜单打开确认；检查后取消退出，继续同一轮桌面验收。
+  Menu.getApplicationMenu().getMenuItemById('file').submenu.items.find(item => item.accelerator === 'CmdOrCtrl+Q').click();
+  const confirmation = await until(() => BrowserWindow.getAllWindows().find(candidate => candidate.getParentWindow() === window
+    && candidate.webContents.getURL().startsWith('data:text/html')), `quit confirmation in ${language}`);
+  try {
+    await until(() => confirmation.webContents.executeJavaScript('!!document.querySelector("[data-dialog-action=cancel]")'),
+      `quit confirmation loaded in ${language}`);
+    const actual = await confirmation.webContents.executeJavaScript(`({ language: document.documentElement.lang, title: document.title,
+      body: document.body.innerText, cancel: document.querySelector('[data-dialog-action=cancel]').textContent })`);
+    assert.equal(actual.language, language);
+    assert.equal(actual.title, expected.title);
+    assert(actual.body.includes(expected.message));
+    assert.equal(actual.cancel, expected.cancel);
+    await fs.writeFile(path.join(output, `quit-language-${language}.png`), (await confirmation.capturePage()).toPNG());
+  } finally {
+    await confirmation.webContents.executeJavaScript('document.querySelector("[data-dialog-action=cancel]").click()');
+    await until(() => confirmation.isDestroyed(), `cancel quit in ${language}`);
+    await ui('ui.settings.discard');
+    await ui('ui.settings.end');
+  }
+}
 async function verifyShutdownRetry(rpc, window) {
   if (process.platform !== 'win32') return false;
   const originalQuit = app.quit.bind(app), originalError = dialog.showErrorBox, originalQuestion = dialog.showMessageBox;
@@ -261,7 +287,13 @@ async function main() {
   const saved = await ui('ui.settings.save');
   assert(!JSON.stringify(saved).includes('smoke-only'));
   await ui('ui.settings.end');
-  for (const [language, label] of [['en', 'File'], ['zh-CN', '文件']]) {
+  const quitLanguages = [
+    { language: 'en', label: 'File', title: 'Quit GrayCode', message: 'Finish this session?', cancel: 'Keep working' },
+    { language: 'ja', label: 'ファイル', title: 'GrayCode を終了', message: '作業を終了しますか？', cancel: '作業を続ける' },
+    { language: 'zh-CN', label: '文件', title: '退出 GrayCode', message: '结束这次工作？', cancel: '继续工作' },
+  ];
+  for (const expected of quitLanguages) {
+    const { language, label } = expected;
     const previousMenu = Menu.getApplicationMenu();
     await ui('ui.settings.begin');
     await ui('updateUISettings', { ui: { language } });
@@ -269,6 +301,7 @@ async function main() {
     await ui('ui.settings.end');
     assert.notEqual(Menu.getApplicationMenu(), previousMenu, 'Changing the interface language must rebuild the native menu.');
     assert.equal(Menu.getApplicationMenu().getMenuItemById('file').label, label);
+    await verifyQuitDialogLanguage(window, ui, language, expected);
   }
   const configuredMenu = Menu.getApplicationMenu();
   window.webContents.reload();
@@ -457,10 +490,12 @@ async function main() {
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
   assert.equal(Menu.getApplicationMenu(), configuredMenu, 'Settings changes that keep the language must reuse the native menu.');
+  assert.deepEqual(errors, [], 'Desktop smoke must not contain renderer errors.');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
     chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
-        unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true } },
+        unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true,
+        quitDialogLanguages: quitLanguages.map(item => item.language) } },
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);

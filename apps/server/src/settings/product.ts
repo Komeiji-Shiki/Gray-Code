@@ -16,6 +16,7 @@ import { channelProfile, projectChannels } from './providers';
 import { revealSettingsFields, sealSettingsFields } from './sealedFields';
 import { isDeepStrictEqual } from 'node:util';
 import type { PendingBackgroundImages } from './images';
+import { getActualLanguage, setLanguage, type SupportedLanguage } from '../../../../backend/i18n';
 
 export interface ProductPreferences { branchRetentionDays?: number; pendingBackgroundImages?: PendingBackgroundImages; pendingConfigurationImports?: PendingConfigurationImport[]; pendingMemoryConfig?: { scopeId: string; value: MemoryConfig; expectedRevision: number | null }; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: ChannelConfig[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
 export interface ProductSettingsDraft {
@@ -34,6 +35,11 @@ export interface ProductSettingsDraft {
 const secretPlaceholder = '••••••••';
 const reference = (id: string) => `channel_${id}`;
 
+function uiLanguage(settings: SettingsManager): SupportedLanguage {
+  const language = settings.getUISettings().language;
+  return language === 'zh-CN' || language === 'en' || language === 'ja' ? language : 'auto';
+}
+
 /** Preserve the existing feature/configuration services; only their persistence host changes. */
 export class ProductConfiguration {
   private saved!: ProductPreferences;
@@ -45,6 +51,7 @@ export class ProductConfiguration {
     const manager = new SettingsManager({ load: async () => persisted?.features ?? null, save: async () => {} });
     await manager.initialize();
     this.activeSettings = manager;
+    setLanguage(uiLanguage(manager));
     const { providers: profiles } = this.application.settings.read('providers');
     this.saved = { features: structuredClone(manager.getSettings()), channels: projectChannels(profiles, persisted?.channels ?? [], profiles) };
     this.saved.branchRetentionDays = persisted?.branchRetentionDays;
@@ -59,7 +66,7 @@ export class ProductConfiguration {
     this.saved.mcpSecrets = persisted?.mcpSecrets ?? {};
     this.saved.mcpServers = await revealMcpSettings(persisted?.mcpServers ?? [], this.saved.mcpSecrets, reference => this.application.settings.credential(reference));
     this.application.settings.setProjection(this);
-    this.application.refreshMutationTools();
+    this.application.refreshMutationTools(true);
   }
   get branchRetentionDays(): number { return this.saved.branchRetentionDays ?? DEFAULT_BRANCH_RETENTION_DAYS; }
   get importedSkills(): SavedPlatformSkill[] { return structuredClone(this.saved.importedSkills ?? []); }
@@ -175,7 +182,16 @@ export class ProductConfiguration {
         ...Object.entries(skillBundles).map(([id, value]) => ({ namespace: 'skill-bundles', id, value })),
         ...configurationImports.map(value => ({ namespace: 'migration-configurations', id: value.id, value: { ...value, importedAt: Date.now() } })),
         ...(memoryConfig ? [{ namespace: 'memory-config', id: memoryConfig.scopeId, value: memoryConfig.value, expectedRevision: memoryConfig.expectedRevision }] : [])], credentials: { ...credentials, ...sealed.credentials },
-      publish: () => { this.saved = saved; this.activeSettings = activeSettings; this.application.refreshMutationTools(); this.application.files.rebindWorkspaces(previous.workspaces, next.workspaces); },
+      publish: () => {
+        const language = uiLanguage(activeSettings);
+        const previousLanguage = getActualLanguage();
+        if (language !== uiLanguage(this.activeSettings)) setLanguage(language);
+        this.saved = saved;
+        this.activeSettings = activeSettings;
+        // 工具工厂会捕获说明语言，必须在创建声明及发布 settings.changed 前同步。
+        this.application.refreshMutationTools(previousLanguage !== getActualLanguage());
+        this.application.files.rebindWorkspaces(previous.workspaces, next.workspaces);
+      },
       activate: async () => {
         this.application.publish({ type: 'settings.changed', revision: this.application.settings.revision });
         if (configurationImports.length) this.application.publish({ type: 'ui.message', message: { type: 'command', command: 'migration.configuration.saved',

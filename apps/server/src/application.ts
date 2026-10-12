@@ -103,9 +103,12 @@ import { subagentTools } from './subagents/tools';
 import { TeamService } from './teams/service';
 import { teamTools } from './teams/tools';
 import { upgradeImportedMemoryGraphs } from './memory/imports/upgrades';
+import { setDetectedLanguage } from '../../../backend/i18n';
 
 export interface ApplicationOptions {
   dataDirectory: string;
+  /** 宿主实际语言；独立服务未指定时使用当前运行环境的 locale。 */
+  locale?: string;
   configurationPersistence?: {
     initialize(application: PlatformApplication): Promise<void>;
     save(application: PlatformApplication): Promise<void>;
@@ -464,6 +467,7 @@ export class PlatformApplication {
     this.clawd = new ClawdService(this);
   }
   static async open(options: ApplicationOptions): Promise<PlatformApplication> {
+    setDetectedLanguage(options.locale ?? Intl.DateTimeFormat().resolvedOptions().locale);
     const storage = await PlatformStorage.open(options.dataDirectory);
     let acquired: PlatformApplication | undefined;
     try {
@@ -518,7 +522,13 @@ export class PlatformApplication {
   private async persistConfiguration(): Promise<void> {
     if (this.configurationReady) await this.configurationPersistence?.save(this);
   }
-  refreshMutationTools(): void {
+  refreshMutationTools(languageChanged = false): void {
+    if (languageChanged) {
+      // 这些声明只随语言变化，不因保存其他设置反复重建；运行中的目录仍使用原捕获版本。
+      for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this)]) {
+        this.tools.replaceNamespace(tool.declaration.name, [tool]);
+      }
+    }
     for (const tool of this.media.tools(this.product.runtimeSettings())) this.tools.replaceNamespace(tool.declaration.name, [tool]);
     const terminal = this.terminals.tool(this.product.runtimeSettings().getExecuteCommandConfig());
     this.tools.replaceNamespace('execute_command', [terminal]);
